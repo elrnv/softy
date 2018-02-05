@@ -1,0 +1,18 @@
+[package]
+name = "sim"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+[lib]
+name = "sim"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nalgebra = "0.14"
+alga = "0.5"
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
+libc = "*"
+
+[build-dependencies]
+cbindgen = "0.4"

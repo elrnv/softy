@@ -8,6 +8,15 @@ project( Sim )
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
 
+# Setup compile flags
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+
+# Set the directory of the sim library to be found by find_package
 set( Sim_DIR ${CMAKE_SOURCE_DIR} )
 
 # Locate Houdini's libraries and header files.

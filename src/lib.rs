@@ -13,7 +13,7 @@ use geo::mesh::attrib;
 use geo::topology as topo;
 use std::slice;
 use std::ffi::{CStr, CString};
-use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, c_ulonglong, size_t};
+use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, size_t};
 use std::any::{TypeId};
 
 use na::{DefaultAllocator, DimName, Real, U3, VectorN};
@@ -143,10 +143,13 @@ pub unsafe extern "C" fn free_index_array(arr: IndexArray) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
-// Required for cbindgen to produce a `struct AttribIter` opaque struct for the enum below.
-mod iter {
+// Required for cbindgen to produce these opaque structs.
+mod missing_structs{
     #[allow(dead_code)]
-    pub struct AttribIter;
+    struct AttribIter;
+
+    #[allow(dead_code)]
+    struct CString;
 }
 
 pub enum AttribIter<'a> {
@@ -265,6 +268,7 @@ pub enum DataType {
     I64,
     F32,
     F64,
+    Str,
     Unsupported,
 }
 
@@ -304,6 +308,7 @@ pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
         x if impl_supported_types!(x, i64, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::I64,
         x if impl_supported_types!(x, f32, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::F32,
         x if impl_supported_types!(x, f64, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::F64,
+        x if impl_supported_types!(x, String, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::Str,
         _ => DataType::Unsupported,
     }
 }
@@ -311,26 +316,26 @@ pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
 pub fn attrib_flat_array<I,T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
     let tuple_size =
         match attrib.type_id() {
-            x if impl_supported_sizes!(x,     i8, i32, i64, f32, f64) => 1,
-            x if impl_supported_sizes!(x, 1,  i8, i32, i64, f32, f64) => 1,
-            x if impl_supported_sizes!(x, 2,  i8, i32, i64, f32, f64) => 2,
-            x if impl_supported_sizes!(x, 3,  i8, i32, i64, f32, f64) => 3,
-            x if impl_supported_sizes!(x, 4,  i8, i32, i64, f32, f64) => 4,
-            x if impl_supported_sizes!(x, 5,  i8, i32, i64, f32, f64) => 5,
-            x if impl_supported_sizes!(x, 6,  i8, i32, i64, f32, f64) => 6,
-            x if impl_supported_sizes!(x, 7,  i8, i32, i64, f32, f64) => 7,
-            x if impl_supported_sizes!(x, 8,  i8, i32, i64, f32, f64) => 8,
-            x if impl_supported_sizes!(x, 9,  i8, i32, i64, f32, f64) => 9,
-            x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64) => 10,
-            x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64) => 11,
-            x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64) => 12,
-            x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64) => 13,
-            x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64) => 14,
-            x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64) => 15,
-            x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64) => 16,
+            x if impl_supported_sizes!(x,     i8, i32, i64, f32, f64, String) => 1,
+            x if impl_supported_sizes!(x, 1,  i8, i32, i64, f32, f64, String) => 1,
+            x if impl_supported_sizes!(x, 2,  i8, i32, i64, f32, f64, String) => 2,
+            x if impl_supported_sizes!(x, 3,  i8, i32, i64, f32, f64, String) => 3,
+            x if impl_supported_sizes!(x, 4,  i8, i32, i64, f32, f64, String) => 4,
+            x if impl_supported_sizes!(x, 5,  i8, i32, i64, f32, f64, String) => 5,
+            x if impl_supported_sizes!(x, 6,  i8, i32, i64, f32, f64, String) => 6,
+            x if impl_supported_sizes!(x, 7,  i8, i32, i64, f32, f64, String) => 7,
+            x if impl_supported_sizes!(x, 8,  i8, i32, i64, f32, f64, String) => 8,
+            x if impl_supported_sizes!(x, 9,  i8, i32, i64, f32, f64, String) => 9,
+            x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64, String) => 10,
+            x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64, String) => 11,
+            x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64, String) => 12,
+            x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64, String) => 13,
+            x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64, String) => 14,
+            x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64, String) => 15,
+            x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64, String) => 16,
             _ => 0,
         };
-    let vec = 
+    let flat_vec = 
         match tuple_size {
             1  => { cast_to_vec!(T, attrib ) },
             2  => { cast_to_vec!(T, attrib, 2 ) },
@@ -350,7 +355,8 @@ pub fn attrib_flat_array<I,T: 'static + Clone>(attrib: &attrib::Attribute<I>) ->
             16 => { cast_to_vec!(T, attrib, 16) },
             _ => Vec::new(),
         };
-    (vec, tuple_size)
+
+    (flat_vec, tuple_size)
 }
 
 #[no_mangle]
@@ -404,9 +410,50 @@ pub struct AttribArrayF64 {
     tuple_size: size_t,
     array: *mut f64,
 }
+
+#[repr(C)]
+pub struct AttribArrayStr { 
+    capacity: size_t,
+    size: size_t,
+    tuple_size: size_t,
+    array: *mut *mut c_char,
+}
 macro_rules! impl_get_attrib_data {
-    ($type:ident, $array_name:ident, $attrib_data:ident) => {
+    (_impl_make_array AttribArrayStr, $vec:ident, $tuple_size:ident) => {
         {
+            let mut vec: Vec<*mut c_char> = $vec.iter()
+                .map(|x: &String| CString::new(x.as_str()).unwrap().into_raw())
+                .collect();
+
+            let arr = AttribArrayStr {
+                capacity: vec.capacity(),
+                size: vec.len(),
+                tuple_size: $tuple_size,
+                array: vec.as_mut_ptr(),
+            };
+
+            ::std::mem::forget(vec);
+
+            arr
+        }
+    };
+    (_impl_make_array $array_name:ident, $vec:ident, $tuple_size:ident) => {
+        {
+            let arr = $array_name {
+                capacity: $vec.capacity(),
+                size: $vec.len(),
+                tuple_size: $tuple_size,
+                array: $vec.as_mut_ptr(),
+            };
+
+            ::std::mem::forget($vec);
+
+            arr
+        }
+    };
+    ($array_name:ident, $attrib_data:ident) => {
+        {
+            #[allow(unused_mut)] // compiler gets confused here, suppress the warning.
             let (mut vec, tuple_size) =
                 if $attrib_data.is_null() {
                     (Vec::new(), 0)
@@ -421,42 +468,34 @@ macro_rules! impl_get_attrib_data {
                     }
                 };
 
-            println!("vec = {:?}", vec);
-
-
-            let arr = $array_name {
-                capacity: vec.capacity(),
-                size: vec.len(),
-                tuple_size,
-                array: vec.as_mut_slice().as_mut_ptr(),
-            };
-
-            ::std::mem::forget(vec);
-
-            arr
+            impl_get_attrib_data!(_impl_make_array $array_name, vec, tuple_size)
         }
     };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn attrib_data_i8(attrib: *mut Attribute) -> AttribArrayI8 {
-    impl_get_attrib_data!(i8, AttribArrayI8, attrib)
+    impl_get_attrib_data!(AttribArrayI8, attrib)
 }
 #[no_mangle]
 pub unsafe extern "C" fn attrib_data_i32(attrib: *mut Attribute) -> AttribArrayI32 {
-    impl_get_attrib_data!(i32, AttribArrayI32, attrib)
+    impl_get_attrib_data!(AttribArrayI32, attrib)
 }
 #[no_mangle]
 pub unsafe extern "C" fn attrib_data_i64(attrib: *mut Attribute) -> AttribArrayI64 {
-    impl_get_attrib_data!(i64, AttribArrayI64, attrib)
+    impl_get_attrib_data!(AttribArrayI64, attrib)
 }
 #[no_mangle]
 pub unsafe extern "C" fn attrib_data_f32(attrib: *mut Attribute) -> AttribArrayF32 {
-    impl_get_attrib_data!(i32, AttribArrayF32, attrib)
+    impl_get_attrib_data!(AttribArrayF32, attrib)
 }
 #[no_mangle]
 pub unsafe extern "C" fn attrib_data_f64(attrib: *mut Attribute) -> AttribArrayF64 {
-    impl_get_attrib_data!(i64, AttribArrayF64, attrib)
+    impl_get_attrib_data!(AttribArrayF64, attrib)
+}
+#[no_mangle]
+pub unsafe extern "C" fn attrib_data_str(attrib: *mut Attribute) -> AttribArrayStr {
+    impl_get_attrib_data!(AttribArrayStr, attrib)
 }
 
 #[no_mangle]
@@ -484,6 +523,14 @@ pub unsafe extern "C" fn free_attrib_data_f64(arr: AttribArrayF64) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn free_attrib_data_str(arr: AttribArrayStr) {
+    for i in 0..arr.size as isize {
+        let _ = CString::from_raw(*arr.array.offset(i));
+    }
+
+    let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn free_iter(iter: *mut AttribIter) {
@@ -586,7 +633,6 @@ macro_rules! ptr_to_vec_of_arrays {
     };
     ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {
         {
-            println!("vec of tuple size 1");
             assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
             let nelem = $size/$tuple_size;
             let mut data = Vec::with_capacity(nelem);
@@ -713,10 +759,14 @@ macro_rules! impl_add_attrib {
 
             let mut vec = Vec::new();
             for &i in indices {
-                assert!(i < $nstrings as u64);
-                let cstr = *$strings.offset(i as isize);
-                if let Ok(s) = CStr::from_ptr(cstr).to_str() {
-                    vec.push(String::from(s))
+                if i >= 0 {
+                    assert!(i < $nstrings as i64);
+                    let cstr = *$strings.offset(i as isize);
+                    if let Ok(s) = CStr::from_ptr(cstr).to_str() {
+                        vec.push(String::from(s))
+                    }
+                } else {
+                    vec.push(String::from(""))
                 }
             }
 
@@ -865,7 +915,7 @@ pub unsafe extern "C" fn add_polymesh_attrib_str(
     nstrings: size_t,
     strings: *const *const c_char,
     len: size_t,
-    data: *const c_ulonglong,
+    data: *const c_longlong,
 ) {
     impl_add_attrib!(
         PolyMesh,
@@ -890,7 +940,7 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     nstrings: size_t,
     strings: *const *const c_char,
     len: size_t,
-    data: *const c_ulonglong,
+    data: *const c_longlong,
 ) {
     impl_add_attrib!(
         TetMesh,

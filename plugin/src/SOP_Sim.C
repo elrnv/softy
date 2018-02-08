@@ -38,17 +38,17 @@ newSopOperator(OP_OperatorTable *table)
 }
 
 
+//parm {
+//    name "rustlib"
+//    cppname "RustLibPath"
+//    label "Rust Library Path"
+//    type string
+//    default { "./" }
+//}
 static const char *theDsFile = R"THEDSFILE(
 {
     name sim
 
-    parm {
-        name "rustlib"
-        cppname "RustLibPath"
-        label "Rust Library Path"
-        type string
-        default { "./" }
-  }
 }
 )THEDSFILE";
 
@@ -103,7 +103,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    std::cerr << "found bool poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -114,7 +113,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    std::cerr << "found i32 poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -125,7 +123,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int64> &data)
 {
-    std::cerr << "found i64 poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -136,7 +133,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    std::cerr << "found f32 poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -147,7 +143,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    std::cerr << "found f64 poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -157,9 +152,8 @@ void add_attrib(
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
-        const std::vector<uint64> &indices)
+        const std::vector<int64> &indices)
 {
-    std::cerr << "found string poly attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_polymesh_attrib_str(
             polymesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
@@ -172,7 +166,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    std::cerr << "found bool tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -183,7 +176,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    std::cerr << "found i32 tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -194,7 +186,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<int64> &data)
 {
-    std::cerr << "found i64 tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -205,7 +196,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    std::cerr << "found f32 tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -216,7 +206,6 @@ void add_attrib(
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    std::cerr << "found f64 tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
@@ -226,9 +215,8 @@ void add_attrib(
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
-        const std::vector<uint64> &indices)
+        const std::vector<int64> &indices)
 {
-    std::cerr << "found string tet attrib: " << std::string(name) << " on " << where << std::endl;
     sim::add_tetmesh_attrib_str(
             tetmesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
@@ -385,7 +373,7 @@ void fill_prim_str_attrib(
         strings.push_back( it.getString() );
     }
 
-    std::vector<uint64> indices(tuple_size*num_elem, 0);
+    std::vector<int64> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset prim_off : detail->getPrimitiveRange() )
@@ -395,7 +383,7 @@ void fill_prim_str_attrib(
         {
             for ( int k = 0, k_end = tuple_size; k < k_end; ++k ) {
                 GA_StringIndexType handle = aif->getHandle(attrib, prim_off, k);
-                indices[tuple_size*i + k] = ids[handle];
+                indices[tuple_size*i + k] = handle > -1 ? ids[handle] : -1;
             }
             i += 1;
         }
@@ -423,7 +411,7 @@ void fill_point_str_attrib(
         strings.push_back( it.getString() );
     }
 
-    std::vector<uint64> indices(tuple_size*num_elem, 0);
+    std::vector<int64> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset pt_off : detail->getPointRange() )
@@ -431,7 +419,7 @@ void fill_point_str_attrib(
         if (!group[pt_off]) continue;
         for ( int k = 0, k_end = tuple_size; k < k_end; ++k ) {
             GA_StringIndexType handle = aif->getHandle(attrib, pt_off, k);
-            indices[tuple_size*i + k] = ids[handle];
+            indices[tuple_size*i + k] = handle > -1 ? ids[handle] : -1;
         }
         i += 1;
     }
@@ -458,7 +446,7 @@ void fill_vertex_str_attrib(
         strings.push_back( it.getString() );
     }
 
-    std::vector<uint64> indices(tuple_size*num_elem, 0);
+    std::vector<int64> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset vtx_off : detail->getVertexRange() )
@@ -466,7 +454,7 @@ void fill_vertex_str_attrib(
         if (!group[vtx_off]) continue;
         for ( int k = 0, k_end = tuple_size; k < k_end; ++k ) {
             GA_StringIndexType handle = aif->getHandle(attrib, vtx_off, k);
-            indices[tuple_size*i + k] = ids[handle];
+            indices[tuple_size*i + k] = handle > -1 ? ids[handle] : -1;
         }
         i += 1;
     }
@@ -612,12 +600,13 @@ void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
     auto n = startoff + (arr.size/arr.tuple_size);
     for ( GA_Offset off = startoff; off < n; ++off, ++i ) {
         for ( int j = 0; j < arr.tuple_size; ++j ) {
-            std::cerr << i << " " << j << ": " << static_cast<int>(arr.array[arr.tuple_size*i + j]) << std::endl;
             h.set(off, j, arr.array[arr.tuple_size*i + j]);
         }
     }
 }
 
+/** Retrieve attributes from the simulation mesh using the given iterator.
+ */
 void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, sim::AttribIter *it, GA_AttributeOwner owner) {
     while ( it ) { // it could be null, but it doesn't change
         auto attrib = sim::attrib_iter_next(it);
@@ -626,7 +615,7 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, sim::AttribIter 
         auto type = sim::attrib_data_type(attrib);
         if (type == sim::DataType::I8 ) {
             auto arr = sim::attrib_data_i8(attrib);
-            auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
+            auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
             sim::free_attrib_data_i8(arr);
         } else if (type == sim::DataType::I32 ) {
@@ -636,7 +625,7 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, sim::AttribIter 
             sim::free_attrib_data_i32(arr);
         } else if (type == sim::DataType::I64 ) {
             auto arr = sim::attrib_data_i64(attrib);
-            auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
+            auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
             sim::free_attrib_data_i64(arr);
         } else if (type == sim::DataType::F32 ) {
@@ -646,16 +635,23 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, sim::AttribIter 
             sim::free_attrib_data_f32(arr);
         } else if (type == sim::DataType::F64 ) {
             auto arr = sim::attrib_data_f64(attrib);
-            auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
+            auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
             sim::free_attrib_data_f64(arr);
+        } else if (type == sim::DataType::Str ) {
+            auto arr = sim::attrib_data_str(attrib);
+            auto h = GA_RWHandleS(detail->addTuple(GA_STORE_STRING, owner, name, arr.tuple_size));
+            fill_attrib(h, arr, startoff);
+            sim::free_attrib_data_str(arr);
         }
         sim::free_attribute(attrib);
     }
     sim::free_attrib_iter(it);
 }
 
-void build_meshes(GU_Detail* detail, sim::TetMesh *tetmesh, sim::PolyMesh *polymesh) {
+/** Add the given simulation meshes into the given detail
+ */
+void add_meshes(GU_Detail* detail, sim::TetMesh *tetmesh, sim::PolyMesh *polymesh) {
     GA_Offset startvtxoff = GA_Offset(0);
     // add tets.
     if (tetmesh) {
@@ -842,11 +838,13 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     sim::sim( tetmesh, polymesh );
 
-    auto &&sopparms = cookparms.parms<SOP_SimParms>();
+    //auto &&sopparms = cookparms.parms<SOP_SimParms>();
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
-    build_meshes(detail, tetmesh, polymesh);
+    // Add the simulation meshes into the current detail
+    add_meshes(detail, tetmesh, polymesh);
 
+    // We must release the memory using the same api that allocated it.
     sim::free_tetmesh(tetmesh);
     sim::free_polymesh(polymesh);
 }

@@ -1,17 +1,15 @@
 [package]
-name = "sim"
+name = "sim-hdk"
 version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 
 [lib]
-name = "sim"
+name = "simhdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nalgebra = "0.14"
-alga = "0.5"
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
-ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
+softy = { git = "ssh://git@gitlab.com/elrnv/softy.git" }
 libc = "*"
 
 [build-dependencies]

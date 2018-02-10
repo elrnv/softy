@@ -1,11 +1,6 @@
-extern crate alga;
 extern crate geometry as geo;
 extern crate libc;
-extern crate nalgebra as na;
-
-pub mod fem;
-
-/// C API
+extern crate softy;
 
 use std::collections::hash_map::Iter;
 use geo::mesh::Attrib;
@@ -16,7 +11,61 @@ use std::ffi::{CStr, CString};
 use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, size_t};
 use std::any::{TypeId};
 
-use na::{DefaultAllocator, DimName, Real, U3, VectorN};
+/// Wrapper around a rust polygon mesh struct.
+#[derive(Clone, Debug)]
+pub struct PolyMesh {
+    pub mesh: geo::mesh::PolyMesh<f64>,
+}
+
+/// Wrapper around a rust tetmesh struct.
+#[derive(Clone, Debug)]
+pub struct TetMesh {
+    pub mesh: geo::mesh::TetMesh<f64>,
+}
+
+impl From<softy::SimResult> for CookResult {
+    fn from(res: softy::SimResult) -> CookResult {
+        match res {
+            softy::SimResult::Success(msg) => CookResult::Success(CString::new(msg).unwrap().into_raw()),
+            softy::SimResult::Warning(msg) => CookResult::Warning(CString::new(msg).unwrap().into_raw()),
+            softy::SimResult::Error(msg) => CookResult::Error(CString::new(msg).unwrap().into_raw()),
+        }
+    }
+}
+
+/// Main entry point from Houdini SOP.
+#[no_mangle]
+pub unsafe extern "C" fn cook(tetmesh: *mut TetMesh, polymesh: *mut PolyMesh) -> CookResult {
+    softy::sim(
+        if tetmesh.is_null() {
+            None
+        } else {
+            Some(&mut (*tetmesh).mesh)
+        },
+        if polymesh.is_null() {
+            None
+        } else {
+            Some(&mut (*polymesh).mesh)
+        },
+    ).into()
+}
+
+/// Result for C interop.
+#[repr(C)]
+pub enum CookResult {
+    Success(*mut c_char),
+    Warning(*mut c_char),
+    Error(*mut c_char),
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_result(res: CookResult) {
+    let _ = match res {
+        CookResult::Success(msg) => CString::from_raw(msg),
+        CookResult::Warning(msg) => CString::from_raw(msg),
+        CookResult::Error(msg) => CString::from_raw(msg),
+    };
+}
 
 pub struct VertexIndex;
 pub struct FaceIndex;
@@ -24,13 +73,6 @@ pub struct CellIndex;
 pub struct FaceVertexIndex;
 pub struct CellVertexIndex;
 
-/// Wrapper around a rust polygon mesh struct.
-#[derive(Clone, Debug)]
-pub struct PolyMesh(geo::mesh::PolyMesh<f64>);
-
-/// Wrapper around a rust tetmesh struct.
-#[derive(Clone, Debug)]
-pub struct TetMesh(geo::mesh::TetMesh<f64>);
 
 #[repr(C)]
 pub struct PointArray {
@@ -51,7 +93,7 @@ pub unsafe extern "C" fn get_tetmesh_points(mesh: *const TetMesh) -> PointArray 
     assert!(!mesh.is_null());
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    for &pt in (*mesh).0.vertex_iter() {
+    for &pt in (*mesh).mesh.vertex_iter() {
         pts.push(pt)
     }
 
@@ -71,7 +113,7 @@ pub unsafe extern "C" fn get_polymesh_points(mesh: *const PolyMesh) -> PointArra
     assert!(!mesh.is_null());
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    for &pt in (*mesh).0.vertex_iter() {
+    for &pt in (*mesh).mesh.vertex_iter() {
         pts.push(pt)
     }
 
@@ -91,7 +133,7 @@ pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for cell in (*mesh).0.cell_iter() {
+    for cell in (*mesh).mesh.cell_iter() {
         for &idx in cell.iter() {
             indices.push(idx);
         }
@@ -115,7 +157,7 @@ pub unsafe extern "C" fn get_polymesh_indices(mesh: *const PolyMesh) -> IndexArr
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for poly in (*mesh).0.face_iter() {
+    for poly in (*mesh).mesh.face_iter() {
         indices.push(poly.len());
         for &idx in poly.iter() {
             indices.push(idx);
@@ -165,7 +207,7 @@ pub enum AttribIter<'a> {
 pub unsafe extern "C" fn tetmesh_attrib_iter<'a>(mesh_ptr: *mut TetMesh, loc: AttribLocation) -> *mut AttribIter<'a> {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr).0;
+    let mesh = &mut (*mesh_ptr).mesh;
 
     let iter = Box::new(
         match loc {
@@ -182,7 +224,7 @@ pub unsafe extern "C" fn tetmesh_attrib_iter<'a>(mesh_ptr: *mut TetMesh, loc: At
 pub unsafe extern "C" fn polymesh_attrib_iter<'a>(mesh_ptr: *mut PolyMesh, loc: AttribLocation) -> *mut AttribIter<'a> {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr).0;
+    let mesh = &mut (*mesh_ptr).mesh;
 
     let iter = Box::new(
         match loc {
@@ -548,18 +590,6 @@ pub enum AttribLocation {
     CellVertex,
 }
 
-#[repr(C)]
-pub enum SimResult {
-    Success,
-    Failure,
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim(_tetmesh: *mut TetMesh, _polymesh: *mut PolyMesh) -> SimResult {
-    println!("Running simulation!");
-    SimResult::Success
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn make_polymesh(
     ncoords: size_t,
@@ -574,12 +604,9 @@ pub unsafe extern "C" fn make_polymesh(
     );
 
     let indices = slice::from_raw_parts(indices, nindices);
-    let verts = ptr_to_vec_of_vectors::<_, U3>((ncoords / 3) as usize, coords)
-        .into_iter()
-        .map(|x| x.into())
-        .collect();
+    let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let polymesh = Box::new(PolyMesh(geo::mesh::PolyMesh::new(verts, indices)));
+    let polymesh = Box::new(PolyMesh { mesh: geo::mesh::PolyMesh::new(verts, indices) });
 
     Box::into_raw(polymesh)
 }
@@ -598,12 +625,9 @@ pub unsafe extern "C" fn make_tetmesh(
     );
 
     let indices = slice::from_raw_parts(indices, nindices).to_vec();
-    let verts = ptr_to_vec_of_vectors::<_, U3>((ncoords / 3) as usize, coords)
-        .into_iter()
-        .map(|x| x.into())
-        .collect();
+    let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let tetmesh = Box::new(TetMesh(geo::mesh::TetMesh::new(verts, indices)));
+    let tetmesh = Box::new(TetMesh { mesh: geo::mesh::TetMesh::new(verts, indices) });
 
     Box::into_raw(tetmesh)
 }
@@ -676,13 +700,13 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    (*$mesh).0.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
                 },
                 AttribLocation::Face => {
-                    (*$mesh).0.add_attrib_data::<_,topo::FaceIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::FaceIndex>($name, $vec).ok();
                 },
                 AttribLocation::FaceVertex => {
-                    (*$mesh).0.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec).ok();
                 },
                 _ => (),
             };
@@ -693,13 +717,13 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    (*$mesh).0.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
                 },
                 AttribLocation::Cell=> {
-                    (*$mesh).0.add_attrib_data::<_,topo::CellIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::CellIndex>($name, $vec).ok();
                 },
                 AttribLocation::CellVertex => {
-                    (*$mesh).0.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec).ok();
+                    (*$mesh).mesh.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec).ok();
                 },
                 _ => (),
             };
@@ -955,36 +979,21 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     );
 }
 
-/// Helper routine for converting C-style data to `nalgebra` `VectorN`s.
-/// `npts` is the number of vectors to output, which means that `data_ptr` must point to an array of
-/// `n*D::dim()` doubles.
-unsafe fn ptr_to_vec_of_vectors<T: Real, D: DimName>(
-    npts: usize,
+/// Helper routine for converting C-style data to `[T;3]`s.
+/// `num` is the number of arrays to output, which means that `data_ptr` must point to an array of
+/// `n*3` elements.
+unsafe fn ptr_to_vec_of_triples<T: Copy>(
+    num_elem: usize,
     data_ptr: *const T,
-) -> Vec<VectorN<T, D>>
-where
-    DefaultAllocator: na::allocator::Allocator<T, D>,
+) -> Vec<[T;3]>
 {
-    let mut data = Vec::with_capacity(npts);
-    for i in 0..npts as isize {
-        data.push(VectorN::from_fn(|r, _| {
-            *data_ptr.offset(D::dim() as isize * i + r as isize)
-        }));
+    let mut data = Vec::with_capacity(num_elem);
+    for i in 0..num_elem as isize {
+        data.push([
+            *data_ptr.offset(3*i),
+            *data_ptr.offset(3*i + 1),
+            *data_ptr.offset(3*i + 2)
+        ]);
     }
     data
 }
-
-///// Helper routine for converting C-style data to `nalgebra` `Point`s.
-///// This function is similar to the one above but produces points instead of vectors.
-//unsafe fn ptr_to_vec_of_points<T: Real, D: DimName>(
-//    npts: usize,
-//    data_ptr: *const T,
-//) -> Vec<Point<T, D>>
-//where
-//    DefaultAllocator: na::allocator::Allocator<T, D>,
-//{
-//    ptr_to_vec_of_vectors(npts, data_ptr)
-//        .into_iter()
-//        .map(|v| Point::from_coordinates(v))
-//        .collect()
-//}

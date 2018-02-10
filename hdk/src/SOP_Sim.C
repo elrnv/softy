@@ -14,7 +14,7 @@
 #include <GEO/GEO_PrimTetrahedron.h>
 #include <GEO/GEO_PrimPoly.h>
 #include <GEO/GEO_PolyCounts.h>
-#include <sim_api.h>
+#include <simhdk.h>
 
 #include <vector>
 #include <array>
@@ -836,7 +836,9 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         polymesh = build_sim_polymesh(input1);
     }
 
-    sim::sim( tetmesh, polymesh );
+    sim::CookResult res = sim::cook( tetmesh, polymesh );
+
+    sim::free_result(res);
 
     //auto &&sopparms = cookparms.parms<SOP_SimParms>();
     GU_Detail *detail = cookparms.gdh().gdpNC();

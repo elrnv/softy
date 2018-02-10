@@ -1,7 +1,7 @@
 set( Sim_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/release" )
 
-find_path( Sim_INCLUDE_DIR sim_api.h PATHS  .. DOC "Sim include directory")
-find_library( Sim_LIBRARY sim PATHS ${Sim_LIB_DIR} DOC "Sim library directory")
+find_path( Sim_INCLUDE_DIR simhdk.h PATHS  .. DOC "Sim include directory")
+find_library( Sim_LIBRARY simhdk PATHS ${Sim_LIB_DIR} DOC "Sim library directory")
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(

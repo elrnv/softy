@@ -15,5 +15,5 @@ fn main() {
 
     cbindgen::generate_with_config(&crate_dir, config)
         .expect("Unable to generate bidnings")
-        .write_to_file("sim_api.h");
+        .write_to_file("simhdk.h");
 }

@@ -4,4 +4,7 @@ version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 
 [dependencies]
-geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+alga = "0.5"
+nalgebra = "0.14"
+ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }

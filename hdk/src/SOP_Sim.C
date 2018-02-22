@@ -6,6 +6,7 @@
 // Required for proper loading.
 #include <UT/UT_DSOVersion.h>
 
+#include <UT/UT_Interrupt.h>
 #include <UT/UT_StringHolder.h>
 #include <PRM/PRM_Include.h>
 #include <PRM/PRM_TemplateBuilder.h>
@@ -680,9 +681,9 @@ void add_meshes(GU_Detail* detail, sim::TetMesh *tetmesh, sim::PolyMesh *polymes
                     indices.size()/4, indices.data());
 
 
-            retrieve_attributes(detail, startptoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::Vertex), GA_ATTRIB_POINT);
-            retrieve_attributes(detail, startprimoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::Cell), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::CellVertex), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, sim::tetmesh_attrib_iter(tetmesh, sim::AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
         }
         sim::free_point_array(sim_points);
         sim::free_index_array(sim_indices);
@@ -729,9 +730,9 @@ void add_meshes(GU_Detail* detail, sim::TetMesh *tetmesh, sim::PolyMesh *polymes
                     detail, startptoff, detail->getNumPointOffsets(),
                     polycounts, poly_pt_numbers.data());
 
-            retrieve_attributes(detail, startptoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::Vertex), GA_ATTRIB_POINT);
-            retrieve_attributes(detail, startprimoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::Face), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::FaceVertex), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, sim::polymesh_attrib_iter(polymesh, sim::AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
         }
 
         sim::free_point_array(sim_points);
@@ -820,6 +821,19 @@ sim::PolyMesh *build_sim_polymesh(const GU_Detail* detail) {
 
 }
 
+// Interrupt checker.
+struct InterruptChecker {
+    UT_AutoInterrupt progress;
+
+    InterruptChecker()
+        : progress("Solving Softy") {
+    }
+};
+
+bool check_interrupt(void *interrupt) {
+    return !static_cast<InterruptChecker*>(interrupt)->progress.wasInterrupted();
+}
+
 // Entry point to the SOP
 void
 SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
@@ -836,7 +850,15 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         polymesh = build_sim_polymesh(input1);
     }
 
-    sim::CookResult res = sim::cook( tetmesh, polymesh );
+    InterruptChecker interrupt;
+
+    sim::CookResult res = sim::cook( tetmesh, polymesh, &interrupt, check_interrupt );
+
+    switch (res.tag) {
+        case sim::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
+        case sim::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
+        case sim::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+    }
 
     sim::free_result(res);
 

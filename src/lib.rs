@@ -8,8 +8,8 @@ use geo::mesh::attrib;
 use geo::topology as topo;
 use std::slice;
 use std::ffi::{CStr, CString};
-use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, size_t};
-use std::any::{TypeId};
+use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, size_t, c_void};
+use std::any::TypeId;
 
 /// Wrapper around a rust polygon mesh struct.
 #[derive(Clone, Debug)]
@@ -26,16 +26,36 @@ pub struct TetMesh {
 impl From<softy::SimResult> for CookResult {
     fn from(res: softy::SimResult) -> CookResult {
         match res {
-            softy::SimResult::Success(msg) => CookResult::Success(CString::new(msg).unwrap().into_raw()),
-            softy::SimResult::Warning(msg) => CookResult::Warning(CString::new(msg).unwrap().into_raw()),
-            softy::SimResult::Error(msg) => CookResult::Error(CString::new(msg).unwrap().into_raw()),
+            softy::SimResult::Success(msg) => CookResult {
+                message: CString::new(msg.as_str()).unwrap().into_raw(),
+                tag: CookResultTag::Success,
+            },
+            softy::SimResult::Warning(msg) => CookResult {
+                message: CString::new(msg.as_str()).unwrap().into_raw(),
+                tag: CookResultTag::Warning,
+            },
+            softy::SimResult::Error(msg) => CookResult {
+                message: CString::new(msg.as_str()).unwrap().into_raw(),
+                tag: CookResultTag::Error,
+            },
         }
     }
 }
 
 /// Main entry point from Houdini SOP.
 #[no_mangle]
-pub unsafe extern "C" fn cook(tetmesh: *mut TetMesh, polymesh: *mut PolyMesh) -> CookResult {
+pub unsafe extern "C" fn cook(
+    tetmesh: *mut TetMesh,
+    polymesh: *mut PolyMesh,
+    interrupt_checker: *mut c_void,
+    check_interrupt: Option<extern "C" fn(*mut c_void) -> bool>,
+) -> CookResult {
+    let interrupt_callback = || {
+        match check_interrupt {
+            Some(cb) => cb(interrupt_checker),
+            None => true,
+        }
+    };
     softy::sim(
         if tetmesh.is_null() {
             None
@@ -47,32 +67,34 @@ pub unsafe extern "C" fn cook(tetmesh: *mut TetMesh, polymesh: *mut PolyMesh) ->
         } else {
             Some(&mut (*polymesh).mesh)
         },
+        interrupt_callback 
     ).into()
+}
+
+#[repr(C)]
+pub enum CookResultTag {
+    Success,
+    Warning,
+    Error,
 }
 
 /// Result for C interop.
 #[repr(C)]
-pub enum CookResult {
-    Success(*mut c_char),
-    Warning(*mut c_char),
-    Error(*mut c_char),
+pub struct CookResult {
+    message: *mut c_char,
+    tag: CookResultTag,
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn free_result(res: CookResult) {
-    let _ = match res {
-        CookResult::Success(msg) => CString::from_raw(msg),
-        CookResult::Warning(msg) => CString::from_raw(msg),
-        CookResult::Error(msg) => CString::from_raw(msg),
-    };
+    let _ = CString::from_raw(res.message);
 }
 
-pub struct VertexIndex;
-pub struct FaceIndex;
-pub struct CellIndex;
-pub struct FaceVertexIndex;
-pub struct CellVertexIndex;
-
+pub enum VertexIndex {}
+pub enum FaceIndex {}
+pub enum CellIndex {}
+pub enum FaceVertexIndex {}
+pub enum CellVertexIndex {}
 
 #[repr(C)]
 pub struct PointArray {
@@ -186,7 +208,7 @@ pub unsafe extern "C" fn free_index_array(arr: IndexArray) {
 }
 
 // Required for cbindgen to produce these opaque structs.
-mod missing_structs{
+mod missing_structs {
     #[allow(dead_code)]
     struct AttribIter;
 
@@ -203,36 +225,58 @@ pub enum AttribIter<'a> {
     None,
 }
 
+// Another workaround for ffi. To ensure the lifetime can be elided in AttribIter in the return
+// results for the two functions below, we need to pass a parameter with a lifetime parameter.
+// Otherwise cbindgen doesn't know how to ignore lifetime parameters on returned types for some
+// reason.
+pub struct Dummy<'a> {
+    p: ::std::marker::PhantomData<&'a u32>,
+}
+
 #[no_mangle]
-pub unsafe extern "C" fn tetmesh_attrib_iter<'a>(mesh_ptr: *mut TetMesh, loc: AttribLocation) -> *mut AttribIter<'a> {
+pub unsafe extern "C" fn tetmesh_attrib_iter(
+    mesh_ptr: *mut TetMesh,
+    loc: AttribLocation,
+    _d: *const Dummy,
+) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
     let mesh = &mut (*mesh_ptr).mesh;
 
-    let iter = Box::new(
-        match loc {
-            AttribLocation::Vertex => AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter()),
-            AttribLocation::Cell => AttribIter::Cell(mesh.attrib_dict::<topo::CellIndex>().iter()),
-            AttribLocation::CellVertex => AttribIter::CellVertex(mesh.attrib_dict::<topo::CellVertexIndex>().iter()),
-            _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
-        });
+    let iter = Box::new(match loc {
+        AttribLocation::Vertex => {
+            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        }
+        AttribLocation::Cell => AttribIter::Cell(mesh.attrib_dict::<topo::CellIndex>().iter()),
+        AttribLocation::CellVertex => {
+            AttribIter::CellVertex(mesh.attrib_dict::<topo::CellVertexIndex>().iter())
+        }
+        _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
+    });
 
     Box::into_raw(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn polymesh_attrib_iter<'a>(mesh_ptr: *mut PolyMesh, loc: AttribLocation) -> *mut AttribIter<'a> {
+pub unsafe extern "C" fn polymesh_attrib_iter(
+    mesh_ptr: *mut PolyMesh,
+    loc: AttribLocation,
+    _d: *const Dummy,
+) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
     let mesh = &mut (*mesh_ptr).mesh;
 
-    let iter = Box::new(
-        match loc {
-            AttribLocation::Vertex => AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter()),
-            AttribLocation::Face => AttribIter::Face(mesh.attrib_dict::<topo::FaceIndex>().iter()),
-            AttribLocation::FaceVertex => AttribIter::FaceVertex(mesh.attrib_dict::<topo::FaceVertexIndex>().iter()),
-            _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
-        });
+    let iter = Box::new(match loc {
+        AttribLocation::Vertex => {
+            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        }
+        AttribLocation::Face => AttribIter::Face(mesh.attrib_dict::<topo::FaceIndex>().iter()),
+        AttribLocation::FaceVertex => {
+            AttribIter::FaceVertex(mesh.attrib_dict::<topo::FaceVertexIndex>().iter())
+        }
+        _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
+    });
 
     Box::into_raw(iter)
 }
@@ -270,21 +314,36 @@ pub unsafe extern "C" fn attrib_iter_next(iter_ptr: *mut AttribIter) -> *mut Att
     let null = ::std::ptr::null::<Attribute>() as *mut Attribute;
 
     match *iter_ptr {
-        AttribIter::Vertex(ref mut iter) => iter.next().map_or(null, |(k, v)|
-            Box::into_raw(Box::new(Attribute { name: CString::new(k.as_str()).unwrap(), data: AttribData::Vertex(v) })),
-        ),
-        AttribIter::Face(ref mut iter) => iter.next().map_or(null, |(k, v)|
-            Box::into_raw(Box::new(Attribute { name: CString::new(k.as_str()).unwrap(), data: AttribData::Face(v) })),
-        ),
-        AttribIter::Cell(ref mut iter) => iter.next().map_or(null, |(k, v)|
-            Box::into_raw(Box::new(Attribute { name: CString::new(k.as_str()).unwrap(), data: AttribData::Cell(v) })),
-        ),
-        AttribIter::FaceVertex(ref mut iter) => iter.next().map_or(null, |(k, v)|
-            Box::into_raw(Box::new(Attribute { name: CString::new(k.as_str()).unwrap(), data: AttribData::FaceVertex(v) })),
-        ),
-        AttribIter::CellVertex(ref mut iter) => iter.next().map_or(null, |(k, v)|
-            Box::into_raw(Box::new(Attribute { name: CString::new(k.as_str()).unwrap(), data: AttribData::CellVertex(v) })),
-        ),
+        AttribIter::Vertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(Attribute {
+                name: CString::new(k.as_str()).unwrap(),
+                data: AttribData::Vertex(v),
+            }))
+        }),
+        AttribIter::Face(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(Attribute {
+                name: CString::new(k.as_str()).unwrap(),
+                data: AttribData::Face(v),
+            }))
+        }),
+        AttribIter::Cell(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(Attribute {
+                name: CString::new(k.as_str()).unwrap(),
+                data: AttribData::Cell(v),
+            }))
+        }),
+        AttribIter::FaceVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(Attribute {
+                name: CString::new(k.as_str()).unwrap(),
+                data: AttribData::FaceVertex(v),
+            }))
+        }),
+        AttribIter::CellVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(Attribute {
+                name: CString::new(k.as_str()).unwrap(),
+                data: AttribData::CellVertex(v),
+            }))
+        }),
         AttribIter::None => null,
     }
 }
@@ -314,7 +373,6 @@ pub enum DataType {
     Unsupported,
 }
 
-
 macro_rules! impl_supported_types {
     ($var:ident, $type:ty, $($array_sizes:expr),*) => {
         $var == TypeId::of::<$type>() ||
@@ -342,61 +400,190 @@ macro_rules! cast_to_vec {
     };
 }
 
-
 pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
     match attrib.type_id() {
-        x if impl_supported_types!(x, i8,  1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::I8,
-        x if impl_supported_types!(x, i32, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::I32,
-        x if impl_supported_types!(x, i64, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::I64,
-        x if impl_supported_types!(x, f32, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::F32,
-        x if impl_supported_types!(x, f64, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::F64,
-        x if impl_supported_types!(x, String, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) => DataType::Str,
+        x if impl_supported_types!(
+            x,
+            i8,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::I8
+        }
+        x if impl_supported_types!(
+            x,
+            i32,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::I32
+        }
+        x if impl_supported_types!(
+            x,
+            i64,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::I64
+        }
+        x if impl_supported_types!(
+            x,
+            f32,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::F32
+        }
+        x if impl_supported_types!(
+            x,
+            f64,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::F64
+        }
+        x if impl_supported_types!(
+            x,
+            String,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+        ) =>
+        {
+            DataType::Str
+        }
         _ => DataType::Unsupported,
     }
 }
 
-pub fn attrib_flat_array<I,T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
-    let tuple_size =
-        match attrib.type_id() {
-            x if impl_supported_sizes!(x,     i8, i32, i64, f32, f64, String) => 1,
-            x if impl_supported_sizes!(x, 1,  i8, i32, i64, f32, f64, String) => 1,
-            x if impl_supported_sizes!(x, 2,  i8, i32, i64, f32, f64, String) => 2,
-            x if impl_supported_sizes!(x, 3,  i8, i32, i64, f32, f64, String) => 3,
-            x if impl_supported_sizes!(x, 4,  i8, i32, i64, f32, f64, String) => 4,
-            x if impl_supported_sizes!(x, 5,  i8, i32, i64, f32, f64, String) => 5,
-            x if impl_supported_sizes!(x, 6,  i8, i32, i64, f32, f64, String) => 6,
-            x if impl_supported_sizes!(x, 7,  i8, i32, i64, f32, f64, String) => 7,
-            x if impl_supported_sizes!(x, 8,  i8, i32, i64, f32, f64, String) => 8,
-            x if impl_supported_sizes!(x, 9,  i8, i32, i64, f32, f64, String) => 9,
-            x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64, String) => 10,
-            x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64, String) => 11,
-            x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64, String) => 12,
-            x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64, String) => 13,
-            x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64, String) => 14,
-            x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64, String) => 15,
-            x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64, String) => 16,
-            _ => 0,
-        };
-    let flat_vec = 
-        match tuple_size {
-            1  => { cast_to_vec!(T, attrib ) },
-            2  => { cast_to_vec!(T, attrib, 2 ) },
-            3  => { cast_to_vec!(T, attrib, 3 ) },
-            4  => { cast_to_vec!(T, attrib, 4 ) },
-            5  => { cast_to_vec!(T, attrib, 5 ) },
-            6  => { cast_to_vec!(T, attrib, 6 ) },
-            7  => { cast_to_vec!(T, attrib, 7 ) },
-            8  => { cast_to_vec!(T, attrib, 8 ) },
-            9  => { cast_to_vec!(T, attrib, 9 ) },
-            10 => { cast_to_vec!(T, attrib, 10) },
-            11 => { cast_to_vec!(T, attrib, 11) },
-            12 => { cast_to_vec!(T, attrib, 12) },
-            13 => { cast_to_vec!(T, attrib, 13) },
-            14 => { cast_to_vec!(T, attrib, 14) },
-            15 => { cast_to_vec!(T, attrib, 15) },
-            16 => { cast_to_vec!(T, attrib, 16) },
-            _ => Vec::new(),
-        };
+pub fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
+    let tuple_size = match attrib.type_id() {
+        x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, String) => 1,
+        x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64, String) => 1,
+        x if impl_supported_sizes!(x, 2, i8, i32, i64, f32, f64, String) => 2,
+        x if impl_supported_sizes!(x, 3, i8, i32, i64, f32, f64, String) => 3,
+        x if impl_supported_sizes!(x, 4, i8, i32, i64, f32, f64, String) => 4,
+        x if impl_supported_sizes!(x, 5, i8, i32, i64, f32, f64, String) => 5,
+        x if impl_supported_sizes!(x, 6, i8, i32, i64, f32, f64, String) => 6,
+        x if impl_supported_sizes!(x, 7, i8, i32, i64, f32, f64, String) => 7,
+        x if impl_supported_sizes!(x, 8, i8, i32, i64, f32, f64, String) => 8,
+        x if impl_supported_sizes!(x, 9, i8, i32, i64, f32, f64, String) => 9,
+        x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64, String) => 10,
+        x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64, String) => 11,
+        x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64, String) => 12,
+        x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64, String) => 13,
+        x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64, String) => 14,
+        x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64, String) => 15,
+        x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64, String) => 16,
+        _ => 0,
+    };
+    let flat_vec = match tuple_size {
+        1 => cast_to_vec!(T, attrib),
+        2 => cast_to_vec!(T, attrib, 2),
+        3 => cast_to_vec!(T, attrib, 3),
+        4 => cast_to_vec!(T, attrib, 4),
+        5 => cast_to_vec!(T, attrib, 5),
+        6 => cast_to_vec!(T, attrib, 6),
+        7 => cast_to_vec!(T, attrib, 7),
+        8 => cast_to_vec!(T, attrib, 8),
+        9 => cast_to_vec!(T, attrib, 9),
+        10 => cast_to_vec!(T, attrib, 10),
+        11 => cast_to_vec!(T, attrib, 11),
+        12 => cast_to_vec!(T, attrib, 12),
+        13 => cast_to_vec!(T, attrib, 13),
+        14 => cast_to_vec!(T, attrib, 14),
+        15 => cast_to_vec!(T, attrib, 15),
+        16 => cast_to_vec!(T, attrib, 16),
+        _ => Vec::new(),
+    };
 
     (flat_vec, tuple_size)
 }
@@ -418,35 +605,35 @@ pub unsafe extern "C" fn attrib_data_type(attrib: *const Attribute) -> DataType 
 }
 
 #[repr(C)]
-pub struct AttribArrayI8 { 
+pub struct AttribArrayI8 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i8,
 }
 #[repr(C)]
-pub struct AttribArrayI32 { 
+pub struct AttribArrayI32 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i32,
 }
 #[repr(C)]
-pub struct AttribArrayI64 { 
+pub struct AttribArrayI64 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i64,
 }
 #[repr(C)]
-pub struct AttribArrayF32 { 
+pub struct AttribArrayF32 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut f32,
 }
 #[repr(C)]
-pub struct AttribArrayF64 { 
+pub struct AttribArrayF64 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
@@ -454,7 +641,7 @@ pub struct AttribArrayF64 {
 }
 
 #[repr(C)]
-pub struct AttribArrayStr { 
+pub struct AttribArrayStr {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
@@ -606,7 +793,9 @@ pub unsafe extern "C" fn make_polymesh(
     let indices = slice::from_raw_parts(indices, nindices);
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let polymesh = Box::new(PolyMesh { mesh: geo::mesh::PolyMesh::new(verts, indices) });
+    let polymesh = Box::new(PolyMesh {
+        mesh: geo::mesh::PolyMesh::new(verts, indices),
+    });
 
     Box::into_raw(polymesh)
 }
@@ -627,7 +816,9 @@ pub unsafe extern "C" fn make_tetmesh(
     let indices = slice::from_raw_parts(indices, nindices).to_vec();
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let tetmesh = Box::new(TetMesh { mesh: geo::mesh::TetMesh::new(verts, indices) });
+    let tetmesh = Box::new(TetMesh {
+        mesh: geo::mesh::TetMesh::new(verts, indices),
+    });
 
     Box::into_raw(tetmesh)
 }
@@ -777,9 +968,9 @@ macro_rules! impl_add_attrib {
         if let Ok(name_str) = CStr::from_ptr($name).to_str() {
             let indices = slice::from_raw_parts($data, $len);
 
-            // TODO: Storing owned srings is expensive for large meshes when strings are shared. This
-            // should be refactored to store shared strings, which may need a refactor of the attribute
-            // system.
+            // TODO: Storing owned srings is expensive for large meshes when strings are shared.
+            // This should be refactored to store shared strings, which may need a refactor of the
+            // attribute system.
 
             let mut vec = Vec::new();
             for &i in indices {
@@ -982,17 +1173,13 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
 /// Helper routine for converting C-style data to `[T;3]`s.
 /// `num` is the number of arrays to output, which means that `data_ptr` must point to an array of
 /// `n*3` elements.
-unsafe fn ptr_to_vec_of_triples<T: Copy>(
-    num_elem: usize,
-    data_ptr: *const T,
-) -> Vec<[T;3]>
-{
+unsafe fn ptr_to_vec_of_triples<T: Copy>(num_elem: usize, data_ptr: *const T) -> Vec<[T; 3]> {
     let mut data = Vec::with_capacity(num_elem);
     for i in 0..num_elem as isize {
         data.push([
-            *data_ptr.offset(3*i),
-            *data_ptr.offset(3*i + 1),
-            *data_ptr.offset(3*i + 2)
+            *data_ptr.offset(3 * i),
+            *data_ptr.offset(3 * i + 1),
+            *data_ptr.offset(3 * i + 2),
         ]);
     }
     data

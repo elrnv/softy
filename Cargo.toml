@@ -9,7 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
-softy = { git = "ssh://git@gitlab.com/elrnv/softy.git" }
+#softy = { git = "ssh://git@gitlab.com/elrnv/softy.git" }
+softy = { path = "../softy" }
 libc = "*"
 
 [build-dependencies]

@@ -1,4 +1,8 @@
-set( Sim_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/release" )
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    set( Sim_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/debug" )
+else()
+    set( Sim_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/release" )
+endif()
 
 find_path( Sim_INCLUDE_DIR simhdk.h PATHS  .. DOC "Sim include directory")
 find_library( Sim_LIBRARY simhdk PATHS ${Sim_LIB_DIR} DOC "Sim library directory")

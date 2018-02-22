@@ -3,11 +3,13 @@ use geo::topology::*;
 use TetMesh;
 use ipopt::*;
 
-pub struct NLP<'a> {
+/// Non-linear problem.
+pub struct NLP<'a, F: Fn() -> bool> {
     pub body: &'a mut TetMesh,
+    pub interrupt_checker: F,
 }
 
-impl<'a> NLP<'a> {
+impl<'a, F: Fn() -> bool> NLP<'a, F> {
     pub fn intermediate_cb(
         &mut self,
         _alg_mod: Index,
@@ -22,7 +24,7 @@ impl<'a> NLP<'a> {
         _alpha_pr: Number,
         _ls_trials: Index) -> bool
     {
-        true
+        (self.interrupt_checker)()
     }
     pub fn update(&mut self, x: &[Number]) {
         for (i, v) in self.body.vertex_iter_mut().enumerate() {
@@ -31,7 +33,7 @@ impl<'a> NLP<'a> {
     }
 }
 
-impl<'a> BasicProblem for NLP<'a> {
+impl<'a, F: Fn() -> bool> BasicProblem for NLP<'a, F> {
     fn num_variables(&self) -> usize {
         self.body.num_verts()*3
     }

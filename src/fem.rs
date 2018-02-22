@@ -29,7 +29,9 @@ pub fn ref_tet(attrib: &Attribute<VertexIndex>, indices: &Vec<usize>, cidx: Cell
     })
 }
 
-pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
+pub fn run<F>(mesh: &mut TetMesh, check_interrupt: F) -> Result<(), Error>
+where F: Fn() -> bool
+{
     {
     let &mut TetMesh {
         ref mut vertices,
@@ -57,7 +59,11 @@ pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
 
         for (i, mtx) in mtx_a.iter_mut::<[[f64;3];3]>().unwrap().enumerate() {
             let cidx = CellIndex::from(i);
-            let ref_shape_matrix = ref_tet(ref_a, indices, cidx).unwrap().shape_matrix();
+            let ref_shape_matrix = match ref_tet(ref_a, indices, cidx) {
+                Some(tet) => tet.shape_matrix(),
+                None => return Err(Error::InvalidReferenceAttribute)
+            };
+
             match ref_shape_matrix.inverse() {
                 Some(ref_inverse) => *mtx = ref_inverse.into(),
                 None => return Err(Error::InvertedReferenceElement),
@@ -94,7 +100,7 @@ pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
     }
 
     let x = {
-        let nlp = NLP { body: mesh };
+        let nlp = NLP { body: mesh, interrupt_checker: check_interrupt };
         let mut ipopt = Ipopt::new_unconstrained(nlp);
 
         ipopt.set_option("tol", 1e-7);
@@ -205,6 +211,7 @@ impl Energy<f64> for TetMesh {
 pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
+    InvalidReferenceAttribute,
 }
 
 impl From<attrib::Error> for Error {

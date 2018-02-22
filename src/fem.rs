@@ -1,8 +1,7 @@
 use nodal_fem_nlp::NLP;
 use energy::Energy;
 use ipopt::Ipopt;
-use alga::general::Inverse;
-use na::{Matrix3, Point3, Vector3};
+use geo::math::{Matrix3, Vector3};
 use geo::topology::*;
 use geo::prim::Tetrahedron;
 use geo::mesh::{self, attrib, Attrib};
@@ -16,16 +15,13 @@ pub type Tet = Tetrahedron<f64>;
 //pub fn ref_tet(tetmesh: &TetMesh, cidx: CellIndex) -> Option<Tet> {
 pub fn ref_tet(attrib: &Attribute<VertexIndex>, indices: &Vec<usize>, cidx: CellIndex) -> Option<Tet> {
     //let attrib = tetmesh.attrib::<VertexIndex>("ref").ok()?;
-    let make_pt = |array: [f64;3]| {
-        Point3::from_coordinates(Vector3::from(array))
-    };
     let mb_i: Option<usize> = cidx.into();
     let i = mb_i.unwrap();
     Some(Tet {
-        a: make_pt(attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 0]))?),
-        b: make_pt(attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 1]))?),
-        c: make_pt(attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 2]))?),
-        d: make_pt(attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 3]))?),
+        a: attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 0]))?.into(),
+        b: attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 1]))?.into(),
+        c: attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 2]))?.into(),
+        d: attrib.get::<[f64;3], _>(VertexIndex::from(indices[4*i + 3]))?.into(),
         //a: make_pt(attrib.get::<[f64;3], _>(tetmesh.cell_vertex(cidx, 0))?),
         //b: make_pt(attrib.get::<[f64;3], _>(tetmesh.cell_vertex(cidx, 1))?),
         //c: make_pt(attrib.get::<[f64;3], _>(tetmesh.cell_vertex(cidx, 2))?),
@@ -44,7 +40,7 @@ pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
 
 
     vertex_attributes.entry("force".to_owned())
-        .or_insert(Attribute::with_size(vertices.len(), Vector3::<f64>::zeros()));
+        .or_insert(Attribute::with_size(vertices.len(), [0.0; 3]));
 
     let ref_a = 
         vertex_attributes.entry("ref".to_owned())
@@ -57,12 +53,15 @@ pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
     //}
     {
         let mtx_a = cell_attributes.entry("ref_shape_mtx_inv".to_owned())
-            .or_insert(Attribute::with_size(indices.len()/4, Matrix3::<f64>::zeros()));
+            .or_insert(Attribute::with_size(indices.len()/4, [[0.0;3];3]));
 
-        for (i, mtx) in mtx_a.iter_mut::<Matrix3<f64>>().unwrap().enumerate() {
+        for (i, mtx) in mtx_a.iter_mut::<[[f64;3];3]>().unwrap().enumerate() {
             let cidx = CellIndex::from(i);
             let ref_shape_matrix = ref_tet(ref_a, indices, cidx).unwrap().shape_matrix();
-            *mtx = ref_shape_matrix.inverse();
+            match ref_shape_matrix.inverse() {
+                Some(ref_inverse) => *mtx = ref_inverse.into(),
+                None => return Err(Error::InvertedReferenceElement),
+            };
         }
     }
 
@@ -99,9 +98,10 @@ pub fn run(mesh: &mut TetMesh) -> Result<(), Error> {
         let mut ipopt = Ipopt::new_unconstrained(nlp);
 
         ipopt.set_option("tol", 1e-7);
-        ipopt.set_option("mu_strategy", "adaptive");
+        //ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes");
         ipopt.set_option("print_level", 5);
+        //ipopt.set_option("derivative_test", "first-order");
         ipopt.set_intermediate_callback(Some(NLP::intermediate_cb));
         let (_r, _obj) = ipopt.solve();
         ipopt.solution().to_vec()
@@ -130,7 +130,7 @@ impl Invariants {
     #[allow(non_snake_case)]
     fn new(F: &Matrix3<f64>) -> Self {
         Invariants {
-            I: F.map(|x| x*x).iter().sum(), // tr(F^TF)
+            I: F.clone().map(|x| x*x).sum(), // tr(F^TF)
             J: F.determinant(),
         }
     }
@@ -140,7 +140,7 @@ impl InvariantDerivatives {
     fn new(F: &Matrix3<f64>) -> Self {
         InvariantDerivatives {
             dIdF: 2.0*F,
-            dJdF: F.determinant()*F.inverse().transpose(),
+            dJdF: F.determinant()*F.inverse().unwrap().transpose(),
         }
     }
 }
@@ -152,10 +152,11 @@ impl Energy<f64> for TetMesh {
         let mu = 5.4;
         let lambda = 263.1;
         self.attrib_iter::<f64,CellIndex>("ref_volume").unwrap()
-            .zip(self.attrib_iter::<Matrix3<f64>,CellIndex>("ref_shape_mtx_inv").unwrap())
+            .zip(self.attrib_iter::<[[f64;3];3],CellIndex>("ref_shape_mtx_inv").unwrap())
             .zip(self.tet_iter())
             .map(|((&vol, &Dminv), tet)| {
-                let F = tet.shape_matrix()*Dminv;
+                let Dminv_mtx: Matrix3<f64> = Dminv.into();
+                let F = tet.shape_matrix()*Dminv_mtx;
                 let i = Invariants::new(&F);
                 if i.J <= 0.0 {
                     ::std::f64::INFINITY
@@ -171,18 +172,19 @@ impl Energy<f64> for TetMesh {
         let lambda = 263.1;
         let force_iter = 
             self.attrib_iter::<f64,CellIndex>("ref_volume").unwrap()
-            .zip(self.attrib_iter::<Matrix3<f64>,CellIndex>("ref_shape_mtx_inv").unwrap())
+            .zip(self.attrib_iter::<[[f64;3];3],CellIndex>("ref_shape_mtx_inv").unwrap())
             .zip(self.tet_iter())
             .map(|((&vol, &Dminv), tet)| {
-                let F = tet.shape_matrix()*Dminv;
-            let i = Invariants::new(&F);
-            if i.J <= 0.0 {
-                ::std::f64::INFINITY*Matrix3::new(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
-            } else {
-                let F_inv_tr = F.inverse().transpose();
-                let logJ = i.J.log2();
-                -vol* (mu * F  + (lambda * logJ - mu) * F_inv_tr)*Dminv.transpose()
-            }
+                let Dminv_mtx: Matrix3<f64> = Dminv.into();
+                let F = tet.shape_matrix()*Dminv_mtx;
+                let i = Invariants::new(&F);
+                if i.J <= 0.0 {
+                    ::std::f64::INFINITY*Matrix3::ones()
+                } else {
+                    let F_inv_tr = F.inverse().unwrap().transpose();
+                    let logJ = i.J.log2();
+                    -vol* (mu * F  + (lambda * logJ - mu) * F_inv_tr)*Dminv_mtx.transpose()
+                }
             });
 
         // Transfer forces from cell-vertices to vertices themeselves
@@ -190,8 +192,8 @@ impl Energy<f64> for TetMesh {
         vtx_forces.resize(self.num_verts(), Vector3::zeros());
         for (cell, forces) in self.cell_iter().zip(force_iter) {
             for i in 0..3 {
-                vtx_forces[cell[i]] += forces.column(i);
-                vtx_forces[cell[3]] -= forces.column(i);
+                vtx_forces[cell[i]] += forces[i];
+                vtx_forces[cell[3]] -= forces[i];
             }
         }
         vtx_forces
@@ -202,6 +204,7 @@ impl Energy<f64> for TetMesh {
 #[derive(Debug)]
 pub enum Error {
     AttribError(attrib::Error),
+    InvertedReferenceElement,
 }
 
 impl From<attrib::Error> for Error {

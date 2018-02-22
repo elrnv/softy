@@ -1,4 +1,4 @@
-use na::{Vector3, Scalar};
+use geo::math::{Vector3, Scalar};
 
 /// Energy trait. This describes relationship between strain and stress.
 pub trait Energy<T: Scalar> {

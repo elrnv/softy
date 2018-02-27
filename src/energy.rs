@@ -10,6 +10,15 @@ pub struct MatrixElementTriplet<T> {
     pub val: T,
 }
 
+impl<T> MatrixElementTriplet<T> {
+    pub fn new(row: usize, col: usize, val: T) -> Self {
+        MatrixElementTriplet {
+            idx: MatrixElementIndex { row, col },
+            val,
+        }
+    }
+}
+
 /// Energy trait. This describes relationship between strain and stress within an elastic material.
 pub trait Energy<T: Scalar> {
     /// Compute the energy of the current configuration.
@@ -32,7 +41,7 @@ pub trait Energy<T: Scalar> {
     fn energy_hessian_values(&self) -> Vec<T> {
         unimplemented!();
     }
-    /// Compute the hessian matrix in triplet form. This effectively computes the matrix row and 
+    /// Compute the hessian matrix in triplet form. This effectively computes the matrix row and
     /// column indices as returned by `energy_hessian_indices` as well as the corresponding values
     /// returned by `energy_hessian_values`.
     fn energy_hessian(&self) -> Vec<MatrixElementTriplet<T>> {

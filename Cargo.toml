@@ -7,4 +7,8 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 alga = "0.5"
 nalgebra = "0.14"
 ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
+geometry-derive = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
+
+[features]
+unstable = []

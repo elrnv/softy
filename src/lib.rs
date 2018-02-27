@@ -1,8 +1,11 @@
+#![cfg_attr(feature = "unstable", feature(test))]
+
 extern crate alga;
 extern crate geometry as geo;
 extern crate ipopt;
 extern crate nalgebra as na;
 
+mod bench;
 mod energy;
 mod nodal_fem_nlp;
 mod fem;
@@ -29,7 +32,7 @@ where
             Err(fem::Error::AttribError(e)) => SimResult::Error(format!("{:?}", e).into()),
             Err(fem::Error::InvertedReferenceElement) => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
-            },
+            }
             Ok(()) => SimResult::Success("".into()),
         }
     } else {

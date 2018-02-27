@@ -1,7 +1,7 @@
 use nodal_fem_nlp::NLP;
 use energy::*;
 use ipopt::Ipopt;
-use geo::math::{Matrix3, Vector3, Vector4};
+use geo::math::{Matrix3, Vector3};
 use geo::topology::*;
 use geo::prim::Tetrahedron;
 use geo::mesh::{self, attrib, Attrib};
@@ -33,7 +33,7 @@ where
     } else {
         // Ensure that the existing reference attribute is of the right type.
         let ref_a = mesh.attrib::<VertexIndex>("ref")?;
-        ref_a.check::<[f64;3]>()?
+        ref_a.check::<[f64; 3]>()?
     }
 
     // Remove attributes, to clear up names we will need.
@@ -44,7 +44,8 @@ where
     // Create vertex force attribute
     mesh.add_attrib::<_, VertexIndex>("force", [0.0; 3])?;
 
-    { // compute reference element signed volumes
+    {
+        // compute reference element signed volumes
         let ref_volumes: Vec<f64> = mesh.cell_iter()
             .map(|cell| ref_tet(mesh, cell).signed_volume())
             .collect();
@@ -54,7 +55,8 @@ where
         mesh.add_attrib_data::<_, CellIndex>("ref_volume", ref_volumes)?;
     }
 
-    { // compute reference shape matrix inverses
+    {
+        // compute reference shape matrix inverses
         let ref_shape_mtx_inverses: Vec<Matrix3<f64>> = mesh.cell_iter()
             .map(|cell| {
                 let ref_shape_matrix = ref_tet(mesh, cell).shape_matrix();
@@ -74,10 +76,10 @@ where
         ipopt.set_option("max_iter", 800);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 5);
-        ipopt.set_option("derivative_test", "second-order");
-        ipopt.set_option("derivative_test_tol", 1e-4);
-        ipopt.set_option("point_perturbation_radius", 0.01);
+        ipopt.set_option("print_level", 0);
+        //ipopt.set_option("derivative_test", "second-order");
+        //ipopt.set_option("derivative_test_tol", 1e-4);
+        //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         ipopt.set_intermediate_callback(Some(NLP::intermediate_cb));
         let (_r, _obj) = ipopt.solve();
@@ -153,7 +155,7 @@ impl Energy<f64> for TetMesh {
     }
 
     fn energy_hessian_size(&self) -> usize {
-        78*self.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
+        78 * self.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
     }
 
     #[allow(non_snake_case)]
@@ -169,87 +171,65 @@ impl Energy<f64> for TetMesh {
             .zip(self.cell_iter())
             .zip(self.tet_iter());
 
-        let mut hess = Vec::with_capacity(self.energy_hessian_size()); 
-        for (((&vol, &Dm_inv), cell), tet) in hess_iter {
-            let Ds = tet.shape_matrix();
-            let F =  Ds * Dm_inv;
-            let J = F.determinant();
-            if J > 0.0 {
-                let A = Dm_inv*Dm_inv.transpose();
-                // Theoretically we known Ds is invertible since F is, but it could have
-                // numerical differences.
-                let Ds_inv_tr = match Ds.inverse_transpose() {
-                    Some(inv) => inv,
-                    None => return hess,
-                };
+        let mut hess = Vec::with_capacity(self.energy_hessian_size());
 
-                let logJ = J.ln();
-                let alpha = mu - lambda * logJ;
+        {
+            let mut push_elem = |row, col, val| {
+                hess.push(MatrixElementTriplet::new(row, col, val));
+            };
 
-                // Fill diagonal elements
-                //for col in 0..3 {
-                //    for row in col..3 {
-                //        let mut last_hess = 0.0; // collect values for the last vertex hessian
-                //        for k in 0..3 { // which vertex
-                //            let c = Ds_inv_tr[k][col]*Ds_inv_tr[k][row];
-                //            let h = vol * (mu * A[k][k] + (alpha + lambda) * c));
-                //            hess.push(h);
-                //            last_hess -= h;
-                //        }
-                //        // last vertex is the negative sum of the other three
-                //        hess.push(last_hess);
-                //    }
-                //}
+            for (((&vol, &Dm_inv), cell), tet) in hess_iter {
+                let Ds = tet.shape_matrix();
+                let F = Ds * Dm_inv;
+                let J = F.determinant();
+                if J > 0.0 {
+                    let A = Dm_inv * Dm_inv.transpose();
+                    // Theoretically we known Ds is invertible since F is, but it could have
+                    // numerical differences.
+                    let Ds_inv_tr = match Ds.inverse_transpose() {
+                        Some(inv) => inv,
+                        None => break,
+                    };
 
-                // Off-diagonal elements
-                for col in 0..3 {
-                    for row in 0..3 {
-                        let mut last_hess = Vector4::zeros();
-                        for k in 0..3 { // which vertex
-                            let mut last_wrt_hess = 0.0;
-                            for n in 0..3 { // with respect to which vertex
-                                let C = Ds_inv_tr[n]*Ds_inv_tr[k].transpose();
-                                let mut h = vol * (alpha * C[row][col] + lambda * C[col][row]);
-                                if col == row {
-                                    h += vol * mu * A[k][n];
+                    let alpha = mu - lambda * J.ln();
+
+                    // Off-diagonal elements
+                    for col in 0..3 {
+                        for row in 0..3 {
+                            let mut last_hess = [0.0; 4];
+                            for k in 0..3 {
+                                // which vertex
+                                let mut last_wrt_hess = 0.0;
+                                for n in 0..3 {
+                                    // with respect to which vertex
+                                    let c_lambda = lambda * Ds_inv_tr[n][row] * Ds_inv_tr[k][col];
+                                    let c_alpha = alpha * Ds_inv_tr[n][col] * Ds_inv_tr[k][row];
+                                    let mut h = vol * (c_alpha + c_lambda);
+                                    if col == row {
+                                        h += vol * mu * A[k][n];
+                                    }
+                                    last_wrt_hess -= h;
+                                    last_hess[n] -= h;
+
+                                    // skip upper trianglar part of the global hessian.
+                                    if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
+                                        push_elem(3 * cell[n] + row, 3 * cell[k] + col, h);
+                                    }
                                 }
-                                last_wrt_hess -= h;
-                                last_hess[n] -= h;
 
-                                // skip upper trianglar part of the global hessian.
-                                if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
-                                    hess.push(MatrixElementTriplet {
-                                        idx: MatrixElementIndex {
-                                            row: 3*cell[n] + row,
-                                            col: 3*cell[k] + col,
-                                        },
-                                        val: h
-                                    });
+                                // with respect to last vertex
+                                last_hess[3] -= last_wrt_hess;
+                                if cell[3] > cell[k] {
+                                    push_elem(3 * cell[3] + row, 3 * cell[k] + col, last_wrt_hess);
                                 }
                             }
-                            // with respect to last vertex
-                            last_hess[3] -= last_wrt_hess;
-                            if cell[3] > cell[k] {
-                                hess.push(MatrixElementTriplet {
-                                    idx: MatrixElementIndex {
-                                        row: 3*cell[3] + row,
-                                        col: 3*cell[k] + col,
-                                    },
-                                    val: last_wrt_hess,
-                                });
-                            }
-                        }
 
-                        // last vertex
-                        for n in 0..4 { // with respect to which vertex
-                            if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
-                                hess.push(MatrixElementTriplet {
-                                    idx: MatrixElementIndex {
-                                        row: 3*cell[n] + row,
-                                        col: 3*cell[3] + col,
-                                    },
-                                    val: last_hess[n],
-                                });
+                            // last vertex
+                            for n in 0..4 {
+                                // with respect to which vertex
+                                if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
+                                    push_elem(3 * cell[n] + row, 3 * cell[3] + col, last_hess[n]);
+                                }
                             }
                         }
                     }
@@ -269,5 +249,37 @@ pub enum Error {
 impl From<attrib::Error> for Error {
     fn from(err: attrib::Error) -> Error {
         Error::AttribError(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn simple_tet_test() {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 2.0],
+        ];
+        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+        let mut mesh = TetMesh::new(verts, indices);
+
+        let ref_verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+
+        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+            .ok();
+
+        assert!(run(&mut mesh, || true).is_ok());
     }
 }

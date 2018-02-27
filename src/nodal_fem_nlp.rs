@@ -97,7 +97,7 @@ impl<'a, F: Fn() -> bool> NewtonProblem for NLP<'a, F> {
     }
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let hess = self.body.energy_hessian();
-        for (i, &MatrixElementTriplet { ref idx, .. } ) in hess.iter().enumerate() {
+        for (i, &MatrixElementTriplet { ref idx, .. }) in hess.iter().enumerate() {
             rows[i] = idx.row as Index;
             cols[i] = idx.col as Index;
         }

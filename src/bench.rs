@@ -8,7 +8,7 @@ mod bench {
     use fem::run;
     use geo::mesh::{Attrib, TetMesh};
     use geo::topology::VertexIndex;
-    use self::test::{Bencher};
+    use self::test::Bencher;
 
     #[bench]
     fn three_tets_bench(b: &mut Bencher) {
@@ -35,6 +35,7 @@ mod bench {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .ok();
 
-        b.iter(|| run(&mut mesh, || true))
+        b.iter(|| assert!(run(&mut mesh, || true).is_ok()))
     }
+
 }

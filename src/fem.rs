@@ -1,11 +1,11 @@
-use nodal_fem_nlp::NLP;
-use energy::*;
-use ipopt::Ipopt;
+use energy_model::NeohookeanEnergyModel;
+use ipopt::{self, Ipopt};
 use geo::math::{Matrix3, Vector3};
 use geo::topology::*;
 use geo::prim::Tetrahedron;
 use geo::mesh::{self, attrib, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
+use util;
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
@@ -28,11 +28,19 @@ where
 {
     // Prepare tet mesh for simulation.
     if !mesh.attrib_exists::<VertexIndex>("ref") {
-        let verts = mesh.vertices();
+        let verts = mesh.vertex_positions().to_vec();
         mesh.add_attrib_data::<_, VertexIndex>("ref", verts)?;
     } else {
         // Ensure that the existing reference attribute is of the right type.
         let ref_a = mesh.attrib::<VertexIndex>("ref")?;
+        ref_a.check::<[f64; 3]>()?
+    }
+
+    if !mesh.attrib_exists::<VertexIndex>("vel") {
+        mesh.add_attrib::<_, VertexIndex>("vel", [0.0; 3])?;
+    } else {
+        // Ensure that the existing reference attribute is of the right type.
+        let ref_a = mesh.attrib::<VertexIndex>("vel")?;
         ref_a.check::<[f64; 3]>()?
     }
 
@@ -67,8 +75,16 @@ where
         mesh.add_attrib_data::<_, CellIndex>("ref_shape_mtx_inv", ref_shape_mtx_inverses)?;
     }
 
-    let x = {
-        let nlp = NLP::new(mesh, check_interrupt);
+    let prev_pos: Vec<Vector3<f64>> = util::reinterpret_slice(mesh.vertex_positions()).to_vec();
+    let (r, new_pos): (ipopt::ReturnStatus, Vec<f64>) = {
+        let mu = 5.4;
+        let lambda = 263.1;
+        let density = 1000.0;
+        let damping = 1.0;
+        let dt = 0.1;
+        let nlp = NeohookeanEnergyModel::new(mesh, check_interrupt)
+            .material(lambda, mu, density)
+            .dynamics(dt, damping);
         let mut ipopt = Ipopt::new_newton(nlp);
 
         ipopt.set_option("tol", 1e-9);
@@ -81,162 +97,21 @@ where
         //ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
-        ipopt.set_intermediate_callback(Some(NLP::intermediate_cb));
-        let (_r, _obj) = ipopt.solve();
-        ipopt.solution().to_vec()
+        ipopt.set_intermediate_callback(Some(NeohookeanEnergyModel::intermediate_cb));
+        let (r, _obj) = ipopt.solve();
+        (r, (*ipopt.solution()).clone())
     };
-    for (i, v) in mesh.vertex_iter_mut().enumerate() {
-        *v = [x[3 * i + 0], x[3 * i + 1], x[3 * i + 2]];
-    }
-
-    Ok(())
-}
-
-/// Define energy for Neohookean materials.
-impl Energy<f64> for TetMesh {
-    #[allow(non_snake_case)]
-    fn energy(&self) -> f64 {
-        let mu = 5.4;
-        let lambda = 263.1;
-        self.attrib_iter::<f64, CellIndex>("ref_volume")
-            .unwrap()
-            .zip(
-                self.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                    .unwrap(),
-            )
-            .zip(self.tet_iter())
-            .map(|((&vol, &Dm_inv), tet)| {
-                let F = tet.shape_matrix() * Dm_inv;
-                let I = F.clone().map(|x| x * x).sum(); // tr(F^TF)
-                let J = F.determinant();
-                if J <= 0.0 {
-                    ::std::f64::INFINITY
-                } else {
-                    let logJ = J.ln();
-                    vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
-                }
-            })
-            .sum()
-    }
-
-    #[allow(non_snake_case)]
-    fn energy_gradient(&self) -> Vec<Vector3<f64>> {
-        let mu = 5.4;
-        let lambda = 263.1;
-        let force_iter = self.attrib_iter::<f64, CellIndex>("ref_volume")
-            .unwrap()
-            .zip(
-                self.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                    .unwrap(),
-            )
-            .zip(self.tet_iter())
-            .map(|((&vol, &Dm_inv), tet)| {
-                let F = tet.shape_matrix() * Dm_inv;
-                let J = F.determinant();
-                if J <= 0.0 {
-                    Matrix3::zeros()
-                } else {
-                    let F_inv_tr = F.inverse_transpose().unwrap();
-                    let logJ = J.ln();
-                    vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose()
-                }
-            });
-
-        // Transfer forces from cell-vertices to vertices themeselves
-        let mut vtx_grad = Vec::new();
-        vtx_grad.resize(self.num_verts(), Vector3::zeros());
-        for (cell, grad) in self.cell_iter().zip(force_iter) {
-            for i in 0..3 {
-                vtx_grad[cell[i]] += grad[i];
-                vtx_grad[cell[3]] -= grad[i];
+    match r {
+        ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
+            // Write back the velocity for the next iteration.
+            let new_pos_slice: &[Vector3<f64>] = util::reinterpret_slice(new_pos.as_slice());
+            for ((vel, &prev_x), &x) in mesh.attrib_iter_mut::<[f64;3], VertexIndex>("vel").unwrap().zip(prev_pos.iter()).zip(new_pos_slice.iter()) {
+                *vel = (x - prev_x).into();
             }
-        }
-        vtx_grad
-    }
-
-    fn energy_hessian_size(&self) -> usize {
-        78 * self.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
-    }
-
-    #[allow(non_snake_case)]
-    fn energy_hessian(&self) -> Vec<MatrixElementTriplet<f64>> {
-        let mu = 5.4;
-        let lambda = 263.1;
-        let hess_iter = self.attrib_iter::<f64, CellIndex>("ref_volume")
-            .unwrap()
-            .zip(
-                self.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                    .unwrap(),
-            )
-            .zip(self.cell_iter())
-            .zip(self.tet_iter());
-
-        let mut hess = Vec::with_capacity(self.energy_hessian_size());
-
-        {
-            let mut push_elem = |row, col, val| {
-                hess.push(MatrixElementTriplet::new(row, col, val));
-            };
-
-            for (((&vol, &Dm_inv), cell), tet) in hess_iter {
-                let Ds = tet.shape_matrix();
-                let F = Ds * Dm_inv;
-                let J = F.determinant();
-                if J > 0.0 {
-                    let A = Dm_inv * Dm_inv.transpose();
-                    // Theoretically we known Ds is invertible since F is, but it could have
-                    // numerical differences.
-                    let Ds_inv_tr = match Ds.inverse_transpose() {
-                        Some(inv) => inv,
-                        None => break,
-                    };
-
-                    let alpha = mu - lambda * J.ln();
-
-                    // Off-diagonal elements
-                    for col in 0..3 {
-                        for row in 0..3 {
-                            let mut last_hess = [0.0; 4];
-                            for k in 0..3 {
-                                // which vertex
-                                let mut last_wrt_hess = 0.0;
-                                for n in 0..3 {
-                                    // with respect to which vertex
-                                    let c_lambda = lambda * Ds_inv_tr[n][row] * Ds_inv_tr[k][col];
-                                    let c_alpha = alpha * Ds_inv_tr[n][col] * Ds_inv_tr[k][row];
-                                    let mut h = vol * (c_alpha + c_lambda);
-                                    if col == row {
-                                        h += vol * mu * A[k][n];
-                                    }
-                                    last_wrt_hess -= h;
-                                    last_hess[n] -= h;
-
-                                    // skip upper trianglar part of the global hessian.
-                                    if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
-                                        push_elem(3 * cell[n] + row, 3 * cell[k] + col, h);
-                                    }
-                                }
-
-                                // with respect to last vertex
-                                last_hess[3] -= last_wrt_hess;
-                                if cell[3] > cell[k] {
-                                    push_elem(3 * cell[3] + row, 3 * cell[k] + col, last_wrt_hess);
-                                }
-                            }
-
-                            // last vertex
-                            for n in 0..4 {
-                                // with respect to which vertex
-                                if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
-                                    push_elem(3 * cell[n] + row, 3 * cell[3] + col, last_hess[n]);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        hess
+                
+            Ok(())
+        },
+        e => Err(Error::SolveError(e)),
     }
 }
 
@@ -244,6 +119,7 @@ impl Energy<f64> for TetMesh {
 pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
+    SolveError(ipopt::ReturnStatus),
 }
 
 impl From<attrib::Error> for Error {
@@ -255,6 +131,9 @@ impl From<attrib::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geo;
+    use std::path::PathBuf;
+
     #[test]
     fn simple_tet_test() {
         let verts = vec![
@@ -280,6 +159,12 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .ok();
 
+        assert!(run(&mut mesh, || true).is_ok());
+    }
+
+    #[test]
+    fn torus_large_test() {
+        let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         assert!(run(&mut mesh, || true).is_ok());
     }
 }

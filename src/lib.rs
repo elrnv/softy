@@ -1,11 +1,10 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 
-extern crate alga;
 extern crate geometry as geo;
 extern crate ipopt;
 extern crate nalgebra as na;
+extern crate rayon;
 
-mod util;
 mod bench;
 mod energy;
 mod energy_model;
@@ -26,7 +25,7 @@ pub fn sim<F>(
     check_interrupt: F,
 ) -> SimResult
 where
-    F: Fn() -> bool,
+    F: Fn() -> bool + Sync,
 {
     if let Some(mesh) = tetmesh {
         match fem::run(mesh, check_interrupt) {

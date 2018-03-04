@@ -7,10 +7,11 @@ use geo::ops::*;
 use geo::math::{Matrix3, Vector3};
 use TetMesh;
 use ipopt::{self, Index, Number};
-use util;
+use geo::reinterpret::*;
+use rayon::prelude::*;
 
 /// Non-linear problem.
-pub struct NeohookeanEnergyModel<'a, F: Fn() -> bool> {
+pub struct NeohookeanEnergyModel<'a, F: Fn() -> bool + Sync> {
     pub body: &'a mut TetMesh,
     pub energy_count: u32,
     /// Position from the previous time step.
@@ -42,10 +43,10 @@ struct ElasticMaterial {
     pub density: f64,
 }
 
-impl<'a, F: Fn() -> bool> NeohookeanEnergyModel<'a, F> {
+impl<'a, F: Fn() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     pub fn new(tetmesh: &'a mut TetMesh, interrupt_checker: F) -> Self {
-        let prev_pos = util::reinterpret_slice(tetmesh.vertex_positions()).to_vec();
-        let prev_vel = util::reinterpret_slice(
+        let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
+        let prev_vel = reinterpret_slice(
             tetmesh
                 .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
                 .unwrap(),
@@ -105,13 +106,13 @@ impl<'a, F: Fn() -> bool> NeohookeanEnergyModel<'a, F> {
 
     /// Update the tetmesh vertex positions.
     pub fn update(&mut self, x: &[Number]) {
-        let x_slice: &[[f64; 3]] = util::reinterpret_slice(x);
+        let x_slice: &[[f64; 3]] = reinterpret_slice(x);
         let verts = self.body.vertex_positions_mut();
         verts.copy_from_slice(x_slice);
     }
 }
 
-impl<'a, F: Fn() -> bool> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: Fn() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
     fn num_variables(&self) -> usize {
         self.body.num_verts() * 3
     }
@@ -127,7 +128,7 @@ impl<'a, F: Fn() -> bool> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
     }
 
     fn initial_point(&self) -> Vec<Number> {
-        util::reinterpret_slice(self.body.vertex_positions()).to_vec()
+        reinterpret_slice(self.body.vertex_positions()).to_vec()
     }
 
     fn objective(&mut self, x: &[Number], obj: &mut Number) -> bool {
@@ -145,13 +146,13 @@ impl<'a, F: Fn() -> bool> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
 
     fn objective_grad(&mut self, x: &[Number], grad_f: &mut [Number]) -> bool {
         self.update(x);
-        self.energy_gradient(util::reinterpret_mut_slice(grad_f));
+        self.energy_gradient(reinterpret_mut_slice(grad_f));
 
         true
     }
 }
 
-impl<'a, F: Fn() -> bool> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: Fn() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> {
     fn num_hessian_non_zeros(&self) -> usize {
         self.energy_hessian_size()
     }
@@ -188,7 +189,7 @@ impl<'a, F: Fn() -> bool> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> 
 }
 
 /// Define energy for Neohookean materials.
-impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: Fn() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
     #[allow(non_snake_case)]
     fn energy(&self) -> f64 {
         let dynamics_params = self.dynamics;
@@ -218,10 +219,10 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
                     vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
                         + if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
                             let dxTdx: f64 = [
-                                tet.a - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
-                                tet.b - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
-                                tet.c - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
-                                tet.d - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
+                                tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
+                                tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
+                                tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
+                                tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
                             ].into_iter()
                                 .map(|&x| x.dot(x))
                                 .sum();
@@ -278,10 +279,10 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
         {
             if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
                 let dx_tet = [
-                    tet.a - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
-                    tet.b - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
-                    tet.c - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
-                    tet.d - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
+                    tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
+                    tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
+                    tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
+                    tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
                 ];
 
                 for i in 0..4 {
@@ -295,6 +296,97 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
         }
     }
 
+    //#[allow(non_snake_case)]
+    //fn energy_gradient(&mut self, vtx_grad: &mut [Vector3<Number>]) {
+    //    let NeohookeanEnergyModel {
+    //        body: TetMesh {
+    //            ref vertices,
+    //            ref vertex_indices,
+    //            ref cell_indices,
+    //            ref cell_offsets,
+    //            ref vertex_attributes,
+    //            ref vertex_attributes,
+    //        },
+    //        ref prev_pos,
+    //        ref prev_vel,
+    //        material: ElasticMaterial {
+    //            ref lambda,
+    //            ref mu,
+    //            ref density,
+    //        },
+    //        ref dynamics,
+    //    } = *self;
+
+    //    self.body.attribs::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
+    //        .zip::<f64, CellIndex>("ref_volume")
+    //        .zip::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+    //        .zip::<TetCell>();
+
+    //    reinterpret_mut_slice::<_,[Vector3<f64>;4]>(self.body
+    //        .attrib_as_mut_slice::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
+    //        .unwrap())
+    //        .par_iter()
+    //        .zip(
+    //            self.body
+    //            .attrib_as_slice::<f64, CellIndex>("ref_volume")
+    //            .unwrap()
+    //            .par_iter()
+    //        )
+    //        .zip(
+    //            self.body
+    //                .attrib_as_slice::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+    //                .unwrap()
+    //                .par_iter(),
+    //        )
+    //        .zip(self.body.cells().par_iter())
+    //        .zip(self.body.cells().par_iter().map(|tet| self.body.tet_from_indices(tet)))
+    //        .for_each(|((((f, &vol), &Dm_inv), cell), tet)| {
+    //            let F = tet.shape_matrix() * Dm_inv;
+    //            let J = F.determinant();
+    //            let H = if J <= 0.0 {
+    //                Matrix3::zeros()
+    //            } else {
+    //                let F_inv_tr = F.inverse_transpose().unwrap();
+    //                let logJ = J.ln();
+    //                vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose()
+    //            };
+    //            f[0] = H[0];
+    //            f[1] = H[1];
+    //            f[2] = H[2];
+    //            f[3] = -H[0] - H[1] - H[2];
+    //            if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
+    //                let dx_tet = [
+    //                    tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
+    //                    tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
+    //                    tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
+    //                    tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
+    //                ];
+
+    //                for i in 0..4 {
+    //                    f[i] += 0.25 * vol * density * dx_tet[i] / (time_step * time_step);
+    //                }
+    //            }
+    //        });
+
+    //    let cell_vertex_forces = self.body
+    //    .attrib_as_slice::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
+    //    .unwrap();
+    //    vtx_grad.par_iter_mut().enumerate().for_each(|(i, g)| {
+    //        *g = Vector3::zeros();
+    //        for vcidx in 0..self.body.num_vert_cells() {
+
+    //            let cidx  = self.body.vertex_cell(i,vcidx);
+    //            for cvidx in 0..4 {
+    //                let vidx = self.body.cell_vertex(cidx, cvidx);
+    //                if vidx == VertexIndex::from(i) {
+    //                    *g += cell_vertex_forces[vidx.unwrap()*4 + cvidx];
+    //                    break;
+    //                }
+    //            }
+    //        }
+    //    });
+    //}
+
     fn energy_hessian_size(&self) -> usize {
         78 * self.body.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
     }
@@ -307,24 +399,31 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
             mu,
             density,
         } = self.material;
-        let hess_iter = self.body
-            .attrib_iter::<f64, CellIndex>("ref_volume")
-            .unwrap()
+
+        let hess_chunks: &mut [[MatrixElementTriplet<f64>; 78]] = reinterpret_mut_slice(hess);
+        let hess_iter = hess_chunks
+            .par_iter_mut()
             .zip(
                 self.body
-                    .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                    .unwrap(),
+                    .attrib_as_slice::<f64, CellIndex>("ref_volume")
+                    .unwrap()
+                    .par_iter(),
             )
-            .zip(self.body.cell_iter())
-            .zip(self.body.tet_iter());
+            .zip(
+                self.body
+                    .attrib_as_slice::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                    .unwrap()
+                    .par_iter(),
+            )
+            .zip(self.body.cells().par_iter())
+            .zip(
+                self.body
+                    .cells()
+                    .par_iter()
+                    .map(|tet| self.body.tet_from_indices(tet)),
+            );
 
-        let mut triplet_idx = 0;
-        let mut push_elem = |row, col, val| {
-            hess[triplet_idx] = MatrixElementTriplet::new(row, col, val);
-            triplet_idx += 1;
-        };
-
-        for (((&vol, &Dm_inv), cell), tet) in hess_iter {
+        hess_iter.for_each(|((((tet_hess, &vol), &Dm_inv), cell), tet)| {
             let Ds = tet.shape_matrix();
             let F = Ds * Dm_inv;
             let J = F.determinant();
@@ -334,10 +433,12 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
                 // numerical differences.
                 let Ds_inv_tr = match Ds.inverse_transpose() {
                     Some(inv) => inv,
-                    None => break,
+                    None => return,
                 };
 
                 let alpha = mu - lambda * J.ln();
+
+                let mut i = 0; // triplet index for the tet. there should be 78 in total
 
                 // Off-diagonal elements
                 for col in 0..3 {
@@ -366,14 +467,24 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
 
                                 // skip upper trianglar part of the global hessian.
                                 if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
-                                    push_elem(3 * cell[n] + row, 3 * cell[k] + col, h);
+                                    tet_hess[i] = MatrixElementTriplet::new(
+                                        3 * cell[n] + row,
+                                        3 * cell[k] + col,
+                                        h,
+                                    );
+                                    i += 1;
                                 }
                             }
 
                             // with respect to last vertex
                             last_hess[3] -= last_wrt_hess;
                             if cell[3] > cell[k] {
-                                push_elem(3 * cell[3] + row, 3 * cell[k] + col, last_wrt_hess);
+                                tet_hess[i] = MatrixElementTriplet::new(
+                                    3 * cell[3] + row,
+                                    3 * cell[k] + col,
+                                    last_wrt_hess,
+                                );
+                                i += 1;
                             }
                         }
 
@@ -388,12 +499,18 @@ impl<'a, F: Fn() -> bool> Energy<f64> for NeohookeanEnergyModel<'a, F> {
                                         h += 0.25 * vol * density / (time_step * time_step);
                                     }
                                 }
-                                push_elem(3 * cell[n] + row, 3 * cell[3] + col, h);
+                                tet_hess[i] = MatrixElementTriplet::new(
+                                    3 * cell[n] + row,
+                                    3 * cell[3] + col,
+                                    h,
+                                );
+                                i += 1;
                             }
                         }
                     }
                 }
+                assert_eq!(i, 78);
             }
-        }
+        });
     }
 }

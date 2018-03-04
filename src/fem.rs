@@ -4,53 +4,37 @@ use geo::math::{Matrix3, Vector3};
 use geo::topology::*;
 use geo::prim::Tetrahedron;
 use geo::mesh::{self, attrib, Attrib};
+use geo::mesh::tetmesh::TetCell;
 use geo::ops::{ShapeMatrix, Volume};
-use util;
+use geo::reinterpret::*;
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
 
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
-pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize]) -> Tet {
+pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
     let attrib = tetmesh.attrib::<VertexIndex>("ref").unwrap();
-    Tet {
-        a: (attrib.get::<[f64; 3], _>(indices[0]).unwrap()).into(),
-        b: (attrib.get::<[f64; 3], _>(indices[1]).unwrap()).into(),
-        c: (attrib.get::<[f64; 3], _>(indices[2]).unwrap()).into(),
-        d: (attrib.get::<[f64; 3], _>(indices[3]).unwrap()).into(),
-    }
+    Tetrahedron(
+        (attrib.get::<[f64; 3], _>(indices[0]).unwrap()).into(),
+        (attrib.get::<[f64; 3], _>(indices[1]).unwrap()).into(),
+        (attrib.get::<[f64; 3], _>(indices[2]).unwrap()).into(),
+        (attrib.get::<[f64; 3], _>(indices[3]).unwrap()).into(),
+    )
 }
 
 pub fn run<F>(mesh: &mut TetMesh, check_interrupt: F) -> Result<(), Error>
 where
-    F: Fn() -> bool,
+    F: Fn() -> bool + Sync,
 {
     // Prepare tet mesh for simulation.
-    if !mesh.attrib_exists::<VertexIndex>("ref") {
-        let verts = mesh.vertex_positions().to_vec();
-        mesh.add_attrib_data::<_, VertexIndex>("ref", verts)?;
-    } else {
-        // Ensure that the existing reference attribute is of the right type.
-        let ref_a = mesh.attrib::<VertexIndex>("ref")?;
-        ref_a.check::<[f64; 3]>()?
-    }
 
-    if !mesh.attrib_exists::<VertexIndex>("vel") {
-        mesh.add_attrib::<_, VertexIndex>("vel", [0.0; 3])?;
-    } else {
-        // Ensure that the existing reference attribute is of the right type.
-        let ref_a = mesh.attrib::<VertexIndex>("vel")?;
-        ref_a.check::<[f64; 3]>()?
-    }
+    let verts = mesh.vertex_positions().to_vec();
+    mesh.attrib_or_add_data::<_, VertexIndex>("ref", verts.as_slice())?;
 
-    // Remove attributes, to clear up names we will need.
-    mesh.remove_attrib::<CellIndex>("ref_volume").ok();
-    mesh.remove_attrib::<CellIndex>("ref_shape_mtx_inv").ok();
-    mesh.remove_attrib::<VertexIndex>("force").ok();
+    mesh.set_attrib::<_, VertexIndex>("vel", [0.0; 3])?;
 
-    // Create vertex force attribute
-    mesh.add_attrib::<_, VertexIndex>("force", [0.0; 3])?;
+    //mesh.set_attrib::<_, CellVertexIndex>("cell_vertex_forces", Vector3([0.0; 3]))?;
 
     {
         // compute reference element signed volumes
@@ -60,7 +44,7 @@ where
         if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
             return Err(Error::InvertedReferenceElement);
         }
-        mesh.add_attrib_data::<_, CellIndex>("ref_volume", ref_volumes)?;
+        mesh.set_attrib_data::<_, CellIndex>("ref_volume", ref_volumes.as_slice())?;
     }
 
     {
@@ -72,11 +56,14 @@ where
                 ref_shape_matrix.inverse().unwrap()
             })
             .collect();
-        mesh.add_attrib_data::<_, CellIndex>("ref_shape_mtx_inv", ref_shape_mtx_inverses)?;
+        mesh.set_attrib_data::<_, CellIndex>(
+            "ref_shape_mtx_inv",
+            ref_shape_mtx_inverses.as_slice(),
+        )?;
     }
 
-    let prev_pos: Vec<Vector3<f64>> = util::reinterpret_slice(mesh.vertex_positions()).to_vec();
-    let (r, new_pos): (ipopt::ReturnStatus, Vec<f64>) = {
+    let prev_pos: Vec<Vector3<f64>> = reinterpret_slice(mesh.vertex_positions()).to_vec();
+    let (r, new_pos) = {
         let mu = 5.4;
         let lambda = 263.1;
         let density = 1000.0;
@@ -93,24 +80,31 @@ where
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", 0);
+        //ipopt.set_option("print_timing_statistics", "yes");
+        //ipopt.set_option("hessian_approximation", "limited-memory");
         //ipopt.set_option("derivative_test", "second-order");
         //ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         ipopt.set_intermediate_callback(Some(NeohookeanEnergyModel::intermediate_cb));
         let (r, _obj) = ipopt.solve();
-        (r, (*ipopt.solution()).clone())
+        (r, ipopt.solution().to_vec())
     };
+
     match r {
         ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
             // Write back the velocity for the next iteration.
-            let new_pos_slice: &[Vector3<f64>] = util::reinterpret_slice(new_pos.as_slice());
-            for ((vel, &prev_x), &x) in mesh.attrib_iter_mut::<[f64;3], VertexIndex>("vel").unwrap().zip(prev_pos.iter()).zip(new_pos_slice.iter()) {
+            let new_pos_slice: &[Vector3<f64>] = reinterpret_slice(new_pos.as_slice());
+            for ((vel, &prev_x), &x) in mesh.attrib_iter_mut::<[f64; 3], VertexIndex>("vel")
+                .unwrap()
+                .zip(prev_pos.iter())
+                .zip(new_pos_slice.iter())
+            {
                 *vel = (x - prev_x).into();
             }
-                
+
             Ok(())
-        },
+        }
         e => Err(Error::SolveError(e)),
     }
 }
@@ -163,8 +157,16 @@ mod tests {
     }
 
     #[test]
-    fn torus_large_test() {
+    fn torus_medium_test() {
         let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+        assert!(run(&mut mesh, || true).is_ok());
+    }
+
+    #[test]
+    #[ignore]
+    fn torus_large_test() {
+        let mut mesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
         assert!(run(&mut mesh, || true).is_ok());
     }
 }

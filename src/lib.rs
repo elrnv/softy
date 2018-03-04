@@ -25,7 +25,7 @@ pub fn sim<F>(
     check_interrupt: F,
 ) -> SimResult
 where
-    F: Fn() -> bool + Sync,
+    F: FnMut() -> bool + Sync,
 {
     if let Some(mesh) = tetmesh {
         match fem::run(mesh, check_interrupt) {

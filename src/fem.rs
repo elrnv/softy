@@ -25,7 +25,7 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
 
 pub fn run<F>(mesh: &mut TetMesh, check_interrupt: F) -> Result<(), Error>
 where
-    F: Fn() -> bool + Sync,
+    F: FnMut() -> bool + Sync,
 {
     // Prepare tet mesh for simulation.
 

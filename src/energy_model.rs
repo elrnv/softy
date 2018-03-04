@@ -11,7 +11,7 @@ use geo::reinterpret::*;
 use rayon::prelude::*;
 
 /// Non-linear problem.
-pub struct NeohookeanEnergyModel<'a, F: Fn() -> bool + Sync> {
+pub struct NeohookeanEnergyModel<'a, F: FnMut() -> bool + Sync> {
     pub body: &'a mut TetMesh,
     pub energy_count: u32,
     /// Position from the previous time step.
@@ -43,7 +43,7 @@ struct ElasticMaterial {
     pub density: f64,
 }
 
-impl<'a, F: Fn() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
+impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     pub fn new(tetmesh: &'a mut TetMesh, interrupt_checker: F) -> Self {
         let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
         let prev_vel = reinterpret_slice(
@@ -112,7 +112,7 @@ impl<'a, F: Fn() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     }
 }
 
-impl<'a, F: Fn() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
     fn num_variables(&self) -> usize {
         self.body.num_verts() * 3
     }
@@ -152,7 +152,7 @@ impl<'a, F: Fn() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'
     }
 }
 
-impl<'a, F: Fn() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> {
     fn num_hessian_non_zeros(&self) -> usize {
         self.energy_hessian_size()
     }
@@ -189,7 +189,7 @@ impl<'a, F: Fn() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyModel<
 }
 
 /// Define energy for Neohookean materials.
-impl<'a, F: Fn() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
+impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
     #[allow(non_snake_case)]
     fn energy(&self) -> f64 {
         let dynamics_params = self.dynamics;

@@ -13,6 +13,9 @@ mod fem;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
+// reexport params structs for interfacing.
+pub use fem::{SimParams, MaterialProperties};
+
 pub enum SimResult {
     Success(String),
     Warning(String),
@@ -22,13 +25,14 @@ pub enum SimResult {
 pub fn sim<F>(
     tetmesh: Option<&mut TetMesh>,
     _polymesh: Option<&mut PolyMesh>,
+    sim_params: SimParams,
     check_interrupt: F,
 ) -> SimResult
 where
     F: FnMut() -> bool + Sync,
 {
     if let Some(mesh) = tetmesh {
-        match fem::run(mesh, check_interrupt) {
+        match fem::run(mesh, sim_params, check_interrupt) {
             Err(fem::Error::AttribError(e)) => {
                 SimResult::Error(format!("Attribute error: {:?}", e).into())
             }

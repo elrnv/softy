@@ -18,29 +18,34 @@ pub struct NeohookeanEnergyModel<'a, F: FnMut() -> bool + Sync> {
     pub prev_pos: Vec<Vector3<f64>>,
     /// Time step scaled velocity (delta of pos) from the previous time step.
     pub prev_vel: Vec<Vector3<f64>>,
+    material: MaterialModel,
+    time_step: Option<f64>,
+    gravity: Vector3<f64>,
     interrupt_checker: F,
-    material: ElasticMaterial,
-    dynamics: Option<DynamicsParams>,
-    //energy_hessian: Vec<MatrixElementTriplet<f64>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-struct DynamicsParams {
-    /// Delta in time. The dynamic simulation is advanced by this much time at every iteration.
-    pub time_step: f64,
+struct MaterialModel {
+    /// First Lame parameter.
+    pub lambda: f64,
+    /// Second Lame parameter.
+    pub mu: f64,
+    /// The density of the material.
+    pub density: f64,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
     /// damping model.
     pub damping: f64,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-struct ElasticMaterial {
-    /// First Lame coefficient.
-    pub lambda: f64,
-    /// Second Lame coefficient.
-    pub mu: f64,
-    /// The density of the material.
-    pub density: f64,
+impl Default for MaterialModel {
+    fn default() -> Self {
+        MaterialModel {
+            lambda: 5.4,
+            mu: 263.1,
+            density: 1000.0,
+            damping: 0.0,
+        }
+    }
 }
 
 impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
@@ -56,12 +61,9 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
             energy_count: 0u32,
             prev_pos,
             prev_vel,
-            material: ElasticMaterial {
-                lambda: 5.4,
-                mu: 263.1,
-                density: 1000.0,
-            },
-            dynamics: None,
+            material: MaterialModel::default(),
+            time_step: None,
+            gravity: Vector3::zeros(),
             interrupt_checker,
         }
     }
@@ -69,20 +71,27 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     // Builder routines.
 
     /// Set the elastic material properties of the volumetric body discretized by the tetmesh.
-    pub fn material(mut self, lambda: f64, mu: f64, density: f64) -> Self {
-        self.material = ElasticMaterial {
+    pub fn material(mut self, lambda: f64, mu: f64, density: f64, damping: f64) -> Self {
+        self.material = MaterialModel {
             lambda,
             mu,
             density,
+            damping
         };
         self
     }
 
-    /// Set the dynamics parameters making the simulation advance in time by the given time step.
-    /// Without these parameters the simulation will assume an infinite time-step making it a
-    /// quasi-static model.
-    pub fn dynamics(mut self, time_step: f64, damping: f64) -> Self {
-        self.dynamics = Some(DynamicsParams { time_step, damping });
+    /// Set the gravity for the simulation.
+    pub fn gravity(mut self, gravity: [f64; 3]) -> Self {
+        self.gravity = gravity.into();
+        self
+    }
+
+    /// Set the time step making this simulation dynamic.
+    /// Without the time step the simulation will assume an infinite time-step making it a
+    /// quasi-static simulator.
+    pub fn time_step(mut self, time_step: f64) -> Self {
+        self.time_step = Some(time_step);
         self
     }
 
@@ -118,13 +127,25 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyMode
     }
 
     fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let n = self.num_variables();
+        let n = self.body.num_verts();
         let mut lo = Vec::with_capacity(n);
         let mut hi = Vec::with_capacity(n);
         // unbounded
-        lo.resize(n, -2e19);
-        hi.resize(n, 2e19);
-        (lo, hi)
+        lo.resize(n, [-2e19;3]);
+        hi.resize(n, [2e19;3]);
+
+        if let Ok(fixed_verts) = self.body.attrib_as_slice::<i8, VertexIndex>("fixed") {
+            // find and set fixed vertices
+            lo.iter_mut().zip(hi.iter_mut())
+                .zip(
+                    fixed_verts
+                    .iter()
+                    .zip(self.body.vertex_positions().iter())
+                )
+                .filter(|&(_, (&fixed, _))| fixed != 0)
+                .for_each(|((l,u), (_, p))| { *l = *p; *u = *p; });
+        }
+        (reinterpret_vec(lo), reinterpret_vec(hi))
     }
 
     fn initial_point(&self) -> Vec<Number> {
@@ -192,12 +213,13 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyMod
 impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
     #[allow(non_snake_case)]
     fn energy(&self) -> f64 {
-        let dynamics_params = self.dynamics;
-        let ElasticMaterial {
+        let MaterialModel {
             lambda,
             mu,
             density,
+            damping,
         } = self.material;
+
         self.body
             .attrib_iter::<f64, CellIndex>("ref_volume")
             .unwrap()
@@ -216,17 +238,27 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                     ::std::f64::INFINITY
                 } else {
                     let logJ = J.ln();
+
                     vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
-                        + if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
-                            let dxTdx: f64 = [
-                                tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
-                                tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
-                                tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
-                                tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
+                        - 0.25 * vol * density * self.gravity.dot(tet.0 + tet.1 + tet.2 + tet.3)
+                        + if let Some(dt) = self.time_step {
+                            let v = [
+                                tet.0 - self.prev_pos[cell[0]],
+                                tet.1 - self.prev_pos[cell[1]],
+                                tet.2 - self.prev_pos[cell[2]],
+                                tet.3 - self.prev_pos[cell[3]],
+                            ];
+                            let dvTdv: f64 = [
+                                v[0] - self.prev_vel[cell[0]],
+                                v[1] - self.prev_vel[cell[1]],
+                                v[2] - self.prev_vel[cell[2]],
+                                v[3] - self.prev_vel[cell[3]],
                             ].into_iter()
-                                .map(|&x| x.dot(x))
+                                .map(|&dv| dv.dot(dv))
                                 .sum();
-                            0.5 * 0.25 * vol * density * dxTdx / (time_step * time_step)
+                            let Dv = Matrix3([(v[0] - v[3]).into(), (v[1] - v[3]).into(), (v[2] - v[3]).into()]);
+                            0.5 * 0.25 * vol * density * dvTdv / (dt * dt)
+                            + 0.5 * (damping / dt) * (Dv * Dm_inv).map(|x| x*x).sum()
                         } else {
                             0.0
                         }
@@ -237,11 +269,11 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
 
     #[allow(non_snake_case)]
     fn energy_gradient(&self, vtx_grad: &mut [Vector3<Number>]) {
-        let dynamics_params = self.dynamics;
-        let ElasticMaterial {
+        let MaterialModel {
             lambda,
             mu,
             density,
+            damping
         } = self.material;
         let force_iter = self.body
             .attrib_iter::<f64, CellIndex>("ref_volume")
@@ -251,8 +283,9 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                     .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
                     .unwrap(),
             )
+            .zip(self.body.cell_iter())
             .zip(self.body.tet_iter())
-            .map(|((&vol, &Dm_inv), tet)| {
+            .map(|(((&vol, &Dm_inv), cell), tet)| {
                 let F = tet.shape_matrix() * Dm_inv;
                 let J = F.determinant();
                 if J <= 0.0 {
@@ -260,13 +293,24 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                 } else {
                     let F_inv_tr = F.inverse_transpose().unwrap();
                     let logJ = J.ln();
-                    vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose()
+                    let mut g = vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose();
+                    if let Some(dt) = self.time_step {
+                        let v = [
+                            tet.0 - self.prev_pos[cell[0]],
+                            tet.1 - self.prev_pos[cell[1]],
+                            tet.2 - self.prev_pos[cell[2]],
+                            tet.3 - self.prev_pos[cell[3]],
+                        ];
+                        let Dv = Matrix3([(v[0] - v[3]).into(), (v[1] - v[3]).into(), (v[2] - v[3]).into()]);
+                        g += (damping/dt)*Dv*Dm_inv*Dm_inv.transpose();
+                    }
+                    g
                 }
             });
 
         // Clear gradient vector.
-        for v in vtx_grad.iter_mut() {
-            *v = Vector3::zeros();
+        for grad in vtx_grad.iter_mut() {
+            *grad = Vector3::zeros();
         }
 
         // Transfer forces from cell-vertices to vertices themeselves
@@ -277,7 +321,7 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
             .zip(self.body.cell_iter())
             .zip(force_iter)
         {
-            if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
+            if let Some(time_step) = self.time_step {
                 let dx_tet = [
                     tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
                     tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
@@ -289,8 +333,13 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                     vtx_grad[cell[i]] += 0.25 * vol * density * dx_tet[i] / (time_step * time_step);
                 }
             }
+
+            for i in 0..4 {
+                // energy gradient is in opposite direction to the force hence minus here.
+                vtx_grad[cell[i]] -= 0.25 * vol * density * self.gravity;
+            }
             for i in 0..3 {
-                vtx_grad[cell[i]] += grad[i];
+                vtx_grad[cell[i]] += grad[i]; 
                 vtx_grad[cell[3]] -= grad[i];
             }
         }
@@ -309,7 +358,7 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
     //        },
     //        ref prev_pos,
     //        ref prev_vel,
-    //        material: ElasticMaterial {
+    //        elasticity: MaterialModel {
     //            ref lambda,
     //            ref mu,
     //            ref density,
@@ -393,11 +442,11 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
 
     #[allow(non_snake_case)]
     fn energy_hessian(&self, hess: &mut [MatrixElementTriplet<f64>]) {
-        let dynamics_params = self.dynamics;
-        let ElasticMaterial {
+        let MaterialModel {
             lambda,
             mu,
             density,
+            damping,
         } = self.material;
 
         let hess_chunks: &mut [[MatrixElementTriplet<f64>; 78]] = reinterpret_mut_slice(hess);
@@ -437,6 +486,10 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                 };
 
                 let alpha = mu - lambda * J.ln();
+                let mut factor = 1.0;
+                if let Some(time_step) = self.time_step {
+                    factor += damping/time_step;
+                }
 
                 let mut i = 0; // triplet index for the tet. there should be 78 in total
 
@@ -451,15 +504,15 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                                 // with respect to which vertex
                                 let c_lambda = lambda * Ds_inv_tr[n][row] * Ds_inv_tr[k][col];
                                 let c_alpha = alpha * Ds_inv_tr[n][col] * Ds_inv_tr[k][row];
-                                let mut h = vol * (c_alpha + c_lambda);
+                                let mut h = factor * vol * (c_alpha + c_lambda);
                                 if col == row {
-                                    h += vol * mu * A[k][n];
+                                    h += factor * vol * mu * A[k][n];
                                 }
                                 last_wrt_hess -= h;
                                 last_hess[n] -= h;
 
                                 if col == row && k == n {
-                                    if let Some(DynamicsParams { time_step, .. }) = dynamics_params
+                                    if let Some(time_step) = self.time_step
                                     {
                                         h += 0.25 * vol * density / (time_step * time_step);
                                     }
@@ -494,7 +547,7 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
                             if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
                                 let mut h = last_hess[n];
                                 if col == row && 3 == n {
-                                    if let Some(DynamicsParams { time_step, .. }) = dynamics_params
+                                    if let Some(time_step) = self.time_step
                                     {
                                         h += 0.25 * vol * density / (time_step * time_step);
                                     }

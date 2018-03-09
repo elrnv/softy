@@ -1,4 +1,4 @@
-use energy_model::NeohookeanEnergyModel;
+use energy_model::{self, NeohookeanEnergyModel};
 use ipopt::{self, Ipopt};
 use geo::math::{Matrix3, Vector3};
 use geo::topology::*;
@@ -10,6 +10,12 @@ use geo::reinterpret::*;
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SolveResult {
+    pub iterations: u32,
+    pub objective_value: f64,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MaterialProperties {
@@ -30,8 +36,9 @@ pub struct MaterialProperties {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SimParams {
     pub material: MaterialProperties,
-    pub gravity: [f32;3],
+    pub gravity: [f32; 3],
     pub time_step: Option<f32>,
+    pub tolerance: f32,
 }
 
 /// Get reference tetrahedron.
@@ -46,7 +53,12 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
     )
 }
 
-pub fn run<F>(mesh: &mut TetMesh, params: SimParams, check_interrupt: F) -> Result<(), Error>
+/// Run the optimization solver on one time step.
+pub fn run<F>(
+    mesh: &mut TetMesh,
+    params: SimParams,
+    check_interrupt: F,
+) -> Result<SolveResult, Error>
 where
     F: FnMut() -> bool + Sync,
 {
@@ -56,8 +68,6 @@ where
     mesh.attrib_or_add_data::<_, VertexIndex>("ref", verts.as_slice())?;
 
     mesh.attrib_or_add::<_, VertexIndex>("vel", [0.0; 3])?;
-
-    //mesh.set_attrib::<_, CellVertexIndex>("cell_vertex_forces", Vector3([0.0; 3]))?;
 
     {
         // compute reference element signed volumes
@@ -86,38 +96,52 @@ where
     }
 
     let prev_pos: Vec<Vector3<f64>> = reinterpret_slice(mesh.vertex_positions()).to_vec();
-    let (r, new_pos) = {
-        let mu = params.material.shear_modulus as f64;
-        let lambda = params.material.bulk_modulus as f64 - 2.0*params.material.shear_modulus as f64/3.0;
+
+    let mu = params.material.shear_modulus as f64;
+    let lambda =
+        params.material.bulk_modulus as f64 - 2.0 * params.material.shear_modulus as f64 / 3.0;
+
+    let (status, new_pos, result) = {
         let density = params.material.density as f64;
         let damping = params.material.damping as f64;
-        let gravity = [params.gravity[0] as f64, params.gravity[1] as f64, params.gravity[2] as f64];
+        let gravity = [
+            params.gravity[0] as f64,
+            params.gravity[1] as f64,
+            params.gravity[2] as f64,
+        ];
         let mut nlp = NeohookeanEnergyModel::new(mesh, check_interrupt)
-            .material(lambda, mu, density, damping)
+            .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
         if let Some(dt) = params.time_step {
             nlp = nlp.time_step(dt as f64);
         }
         let mut ipopt = Ipopt::new_newton(nlp);
 
-        ipopt.set_option("tol", 1e-9);
-        ipopt.set_option("acceptable_tol", 1e-8);
+        ipopt.set_option("tol", params.tolerance as f64);
+        ipopt.set_option("acceptable_tol", 10.0 * params.tolerance as f64);
         ipopt.set_option("max_iter", 800);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", 0);
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         //ipopt.set_option("derivative_test", "second-order");
         //ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         ipopt.set_intermediate_callback(Some(NeohookeanEnergyModel::intermediate_cb));
-        let (r, _obj) = ipopt.solve();
-        (r, ipopt.solution().to_vec())
+        let (status, obj) = ipopt.solve();
+        (
+            status,
+            ipopt.solution().to_vec(),
+            SolveResult {
+                iterations: ipopt.problem().iteration_count() as u32,
+                objective_value: obj,
+            },
+        )
     };
 
-    match r {
+    match status {
         ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
             // Write back the velocity for the next iteration.
             let new_pos_slice: &[Vector3<f64>] = reinterpret_slice(new_pos.as_slice());
@@ -129,9 +153,31 @@ where
                 *vel = (x - prev_x).into();
             }
 
-            Ok(())
+            // Write back elastic strain for visualization.
+            let strain: Vec<f64> = mesh.attrib_iter::<f64, CellIndex>("ref_volume")
+                .unwrap()
+                .zip(
+                    mesh.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                        .unwrap(),
+                )
+                .zip(mesh.tet_iter())
+                .map(|((&vol, &ref_shape_mtx_inv), tet)| {
+                    energy_model::element_strain_energy(
+                        tet.shape_matrix(),
+                        ref_shape_mtx_inv,
+                        vol,
+                        lambda,
+                        mu,
+                    )
+                })
+                .collect();
+
+            mesh.set_attrib_data::<_, CellIndex>("elastic_strain", strain.as_slice())
+                .ok();
+
+            Ok(result)
         }
-        e => Err(Error::SolveError(e)),
+        e => Err(Error::SolveError(e, result)),
     }
 }
 
@@ -139,7 +185,7 @@ where
 pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
-    SolveError(ipopt::ReturnStatus),
+    SolveError(ipopt::ReturnStatus, SolveResult),
 }
 
 impl From<attrib::Error> for Error {
@@ -154,31 +200,31 @@ mod tests {
     use geo;
     use std::path::PathBuf;
     const DYNAMIC_PARAMS: SimParams = SimParams {
-        material: 
-            MaterialProperties {
-                bulk_modulus: 1750e6,
-                shear_modulus: 10e6,
-                density: 1000.0,
-                damping: 0.0,
-            },
+        material: MaterialProperties {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+            density: 1000.0,
+            damping: 1.0,
+        },
         gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.1),
+        time_step: Some(0.01),
+        tolerance: 1e-9,
     };
 
     const STATIC_PARAMS: SimParams = SimParams {
-        material: 
-            MaterialProperties {
-                bulk_modulus: 1750e6,
-                shear_modulus: 10e6,
-                density: 1000.0,
-                damping: 0.0,
-            },
+        material: MaterialProperties {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+            density: 1000.0,
+            damping: 0.0,
+        },
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
+        tolerance: 1e-9,
     };
 
     #[test]
-    fn simple_tet_test() {
+    fn simple_tet_static_test() {
         let verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -189,7 +235,8 @@ mod tests {
         ];
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0,0,1,1,0,0]).ok();
+        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
+            .ok();
 
         let ref_verts = vec![
             [0.0, 0.0, 0.0],
@@ -204,6 +251,36 @@ mod tests {
             .ok();
 
         assert!(run(&mut mesh, STATIC_PARAMS, || true).is_ok());
+    }
+
+    #[test]
+    fn simple_tet_dynamic_test() {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 2.0],
+        ];
+        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+        let mut mesh = TetMesh::new(verts, indices);
+        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
+            .ok();
+
+        let ref_verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+
+        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+            .ok();
+
+        assert!(run(&mut mesh, DYNAMIC_PARAMS, || true).is_ok());
     }
 
     #[test]

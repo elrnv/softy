@@ -12,25 +12,43 @@ use rayon::prelude::*;
 
 /// Non-linear problem.
 pub struct NeohookeanEnergyModel<'a, F: FnMut() -> bool + Sync> {
-    pub body: &'a mut TetMesh,
-    pub energy_count: u32,
+    /// The discretization of the solid domain using a tetrahedral mesh.
+    pub solid: &'a mut TetMesh,
     /// Position from the previous time step.
     pub prev_pos: Vec<Vector3<f64>>,
-    /// Time step scaled velocity (delta of pos) from the previous time step.
-    pub prev_vel: Vec<Vector3<f64>>,
+    /// Material parameters.
     material: MaterialModel,
-    time_step: Option<f64>,
+    /// Step size in seconds for dynamics time integration scheme. If the time step is zero (meaning
+    /// the reciprocal would be infinite) then this value is set to zero and the simulation becomes
+    /// effectively quasi-static.
+    /// This field stores the reciprocal of the time step since this is what we compute with and it
+    /// naturally determines if the simulation is dynamic.
+    time_step_inv: f64,
+    /// Gravitational acceleration in m/s².
     gravity: Vector3<f64>,
+    /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
+    /// returns `false`.
     interrupt_checker: F,
+
+    // Workspace fields for storing intermediate results
+    /// Energy gradient.
+    energy_gradient: Vec<Vector3<f64>>,
+    /// Energy hessian triplets. Keep this memory around and reuse it to avoid unnecessary allocations.
+    energy_hessian_triplets: Vec<MatrixElementTriplet<f64>>,
+
+    /// Count the number of iterations.
+    iterations: usize,
 }
 
+/// The material model including elasticity Lame parameters as well as dynamics specific parameters
+/// like material density and damping coefficient.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct MaterialModel {
-    /// First Lame parameter.
+    /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
     pub lambda: f64,
-    /// Second Lame parameter.
+    /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
     pub mu: f64,
-    /// The density of the material.
+    /// The density of the material. Measured in kg/m³
     pub density: f64,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
     /// damping model.
@@ -49,34 +67,35 @@ impl Default for MaterialModel {
 }
 
 impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
+    /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
+    /// using a non-linear solver like Ipopt.
+    /// This function takes a tetrahedron mesh specifying a discretization of the solid domain and
+    /// a closure that interrupts the solver if it returns `false`.
     pub fn new(tetmesh: &'a mut TetMesh, interrupt_checker: F) -> Self {
         let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
-        let prev_vel = reinterpret_slice(
-            tetmesh
-                .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
-                .unwrap(),
-        ).to_vec();
+
         NeohookeanEnergyModel {
-            body: tetmesh,
-            energy_count: 0u32,
+            solid: tetmesh,
             prev_pos,
-            prev_vel,
             material: MaterialModel::default(),
-            time_step: None,
+            time_step_inv: 0.0,
             gravity: Vector3::zeros(),
             interrupt_checker,
+            energy_gradient: Vec::new(),
+            energy_hessian_triplets: Vec::new(),
+            iterations: 0,
         }
     }
 
     // Builder routines.
 
-    /// Set the elastic material properties of the volumetric body discretized by the tetmesh.
+    /// Set the elastic material properties of the volumetric solid discretized by the tetmesh.
     pub fn material(mut self, lambda: f64, mu: f64, density: f64, damping: f64) -> Self {
         self.material = MaterialModel {
             lambda,
             mu,
             density,
-            damping
+            damping,
         };
         self
     }
@@ -91,9 +110,20 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     /// Without the time step the simulation will assume an infinite time-step making it a
     /// quasi-static simulator.
     pub fn time_step(mut self, time_step: f64) -> Self {
-        self.time_step = Some(time_step);
+        self.time_step_inv = if time_step > 0.0 {
+            1.0 / time_step
+        } else {
+            0.0
+        };
         self
     }
+
+    // Get information about the current simulation
+    pub fn iteration_count(&self) -> usize {
+        self.iterations
+    }
+
+    // Solver specific functions
 
     /// Intermediate callback for `Ipopt`.
     pub fn intermediate_cb(
@@ -110,64 +140,118 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
         _alpha_pr: Number,
         _ls_trials: Index,
     ) -> bool {
+        self.iterations += 1;
         (self.interrupt_checker)()
     }
 
     /// Update the tetmesh vertex positions.
     pub fn update(&mut self, x: &[Number]) {
         let x_slice: &[[f64; 3]] = reinterpret_slice(x);
-        let verts = self.body.vertex_positions_mut();
+        let verts = self.solid.vertex_positions_mut();
         verts.copy_from_slice(x_slice);
+    }
+
+    /// Elasticity Hessian*velocity product per cell. Respresented by a 3x3 matrix where column `i`
+    /// produces the hessian product contribution for the vertex `i` within the current element.
+    /// The contribution to the last vertex is given by the negative sum of all the columns.
+    #[allow(non_snake_case)]
+    #[inline]
+    fn elastic_cell_hess_prod(
+        dx: [Vector3<f64>; 4],
+        Dx: Matrix3<f64>,
+        DX_inv: Matrix3<f64>,
+        vol: f64,
+        lambda: f64,
+        mu: f64,
+    ) -> Matrix3<f64> {
+        // Build differential dDx
+        let dDx = Matrix3([
+            (dx[0] - dx[3]).into(),
+            (dx[1] - dx[3]).into(),
+            (dx[2] - dx[3]).into(),
+        ]);
+        let F = Dx * DX_inv;
+        let dF = dDx * DX_inv;
+        let J = F.determinant();
+        if J > 0.0 {
+            let alpha = mu - lambda * J.ln();
+
+            let F_inv_tr = F.inverse_transpose().unwrap();
+            let F_inv = F_inv_tr.transpose();
+
+            let dP = mu * dF + alpha * F_inv_tr * dF.transpose() * F_inv_tr
+                + lambda * (F_inv * dF).trace() * F_inv_tr;
+
+            vol * dP * DX_inv.transpose()
+        } else {
+            Matrix3::zeros()
+        }
+    }
+
+    /// Elastic strain energy per element.
+    /// This is a helper function that computes the strain energy given shape matrices, which can
+    /// be obtained from a tet and its reference configuration.
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn element_strain_energy(
+        Dx: Matrix3<f64>,
+        DX_inv: Matrix3<f64>,
+        vol: f64,
+        lambda: f64,
+        mu: f64,
+        ) -> f64 {
+        let F = Dx * DX_inv;
+        let I = F.norm_squared(); // tr(F^TF)
+        let J = F.determinant();
+        if J <= 0.0 {
+            ::std::f64::INFINITY
+        } else {
+            let logJ = J.ln();
+            vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
+        }
     }
 }
 
 impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
     fn num_variables(&self) -> usize {
-        self.body.num_verts() * 3
+        self.solid.num_verts() * 3
     }
 
     fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let n = self.body.num_verts();
+        let n = self.solid.num_verts();
         let mut lo = Vec::with_capacity(n);
         let mut hi = Vec::with_capacity(n);
-        // unbounded
-        lo.resize(n, [-2e19;3]);
-        hi.resize(n, [2e19;3]);
+        // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
+        lo.resize(n, [-2e19; 3]);
+        hi.resize(n, [2e19; 3]);
 
-        if let Ok(fixed_verts) = self.body.attrib_as_slice::<i8, VertexIndex>("fixed") {
-            // find and set fixed vertices
-            lo.iter_mut().zip(hi.iter_mut())
-                .zip(
-                    fixed_verts
-                    .iter()
-                    .zip(self.body.vertex_positions().iter())
-                )
+        if let Ok(fixed_verts) = self.solid.attrib_as_slice::<i8, VertexIndex>("fixed") {
+            // Find and set fixed vertices.
+            lo.iter_mut()
+                .zip(hi.iter_mut())
+                .zip(fixed_verts.iter().zip(self.solid.vertex_positions().iter()))
                 .filter(|&(_, (&fixed, _))| fixed != 0)
-                .for_each(|((l,u), (_, p))| { *l = *p; *u = *p; });
+                .for_each(|((l, u), (_, p))| {
+                    *l = *p;
+                    *u = *p;
+                });
         }
         (reinterpret_vec(lo), reinterpret_vec(hi))
     }
 
     fn initial_point(&self) -> Vec<Number> {
-        reinterpret_slice(self.body.vertex_positions()).to_vec()
+        reinterpret_slice(self.solid.vertex_positions()).to_vec()
     }
 
     fn objective(&mut self, x: &[Number], obj: &mut Number) -> bool {
         self.update(x);
-
-        //save_tetmesh(
-        //    self.body,
-        //    Path::new(format!("./tetmesh_{}.vtk", self.energy_count).as_str()),
-        //);
-        self.energy_count += 1;
-
         *obj = self.energy();
         true
     }
 
     fn objective_grad(&mut self, x: &[Number], grad_f: &mut [Number]) -> bool {
         self.update(x);
-        self.energy_gradient(reinterpret_mut_slice(grad_f));
+        grad_f.copy_from_slice(reinterpret_slice(self.energy_gradient()));
 
         true
     }
@@ -178,14 +262,7 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyMod
         self.energy_hessian_size()
     }
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        let mut hess = Vec::new();
-        hess.resize(
-            self.energy_hessian_size(),
-            MatrixElementTriplet::new(0, 0, 0.0),
-        );
-
-        self.energy_hessian(hess.as_mut_slice());
-        for (i, &MatrixElementTriplet { ref idx, .. }) in hess.iter().enumerate() {
+        for (i, &MatrixElementTriplet { ref idx, .. }) in self.energy_hessian().iter().enumerate() {
             rows[i] = idx.row as Index;
             cols[i] = idx.col as Index;
         }
@@ -194,14 +271,8 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyMod
     }
     fn hessian_values(&mut self, x: &[Number], vals: &mut [Number]) -> bool {
         self.update(x);
-        let mut hess = Vec::new();
-        hess.resize(
-            self.energy_hessian_size(),
-            MatrixElementTriplet::new(0, 0, 0.0),
-        );
 
-        self.energy_hessian(hess.as_mut_slice());
-        for (i, elem) in hess.iter().enumerate() {
+        for (i, elem) in self.energy_hessian().iter().enumerate() {
             vals[i] = elem.val as Number;
         }
 
@@ -212,358 +283,309 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyMod
 /// Define energy for Neohookean materials.
 impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
     #[allow(non_snake_case)]
-    fn energy(&self) -> f64 {
-        let MaterialModel {
-            lambda,
-            mu,
-            density,
-            damping,
-        } = self.material;
+    fn energy(&mut self) -> f64 {
+        let NeohookeanEnergyModel {
+            ref solid,
+            ref prev_pos,
+            material:
+                MaterialModel {
+                    lambda,
+                    mu,
+                    density,
+                    damping,
+                },
+            time_step_inv: dt_inv,
+            gravity,
+            ..
+        } = *self;
 
-        self.body
+        let prev_vel: &[Vector3<f64>] = reinterpret_slice(
+            solid
+                .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
+                .unwrap(),
+        );
+
+        solid
             .attrib_iter::<f64, CellIndex>("ref_volume")
             .unwrap()
             .zip(
-                self.body
+                solid
                     .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
                     .unwrap(),
             )
-            .zip(self.body.cell_iter())
-            .zip(self.body.tet_iter())
-            .map(|(((&vol, &Dm_inv), cell), tet)| {
-                let F = tet.shape_matrix() * Dm_inv;
-                let I = F.clone().map(|x| x * x).sum(); // tr(F^TF)
-                let J = F.determinant();
-                if J <= 0.0 {
-                    ::std::f64::INFINITY
-                } else {
-                    let logJ = J.ln();
-
-                    vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
-                        - 0.25 * vol * density * self.gravity.dot(tet.0 + tet.1 + tet.2 + tet.3)
-                        + if let Some(dt) = self.time_step {
-                            let v = [
-                                tet.0 - self.prev_pos[cell[0]],
-                                tet.1 - self.prev_pos[cell[1]],
-                                tet.2 - self.prev_pos[cell[2]],
-                                tet.3 - self.prev_pos[cell[3]],
-                            ];
-                            let dvTdv: f64 = [
-                                v[0] - self.prev_vel[cell[0]],
-                                v[1] - self.prev_vel[cell[1]],
-                                v[2] - self.prev_vel[cell[2]],
-                                v[3] - self.prev_vel[cell[3]],
-                            ].into_iter()
-                                .map(|&dv| dv.dot(dv))
-                                .sum();
-                            let Dv = Matrix3([(v[0] - v[3]).into(), (v[1] - v[3]).into(), (v[2] - v[3]).into()]);
-                            0.5 * 0.25 * vol * density * dvTdv / (dt * dt)
-                            + 0.5 * (damping / dt) * (Dv * Dm_inv).map(|x| x*x).sum()
-                        } else {
-                            0.0
-                        }
-                }
+            .zip(solid.cell_iter())
+            .zip(solid.tet_iter())
+            .map(|(((&vol, &DX_inv), cell), tet)| {
+                let Dx = tet.shape_matrix();
+                // elasticity
+                element_strain_energy(Dx, DX_inv, vol, lambda, mu)
+                // gravity (external forces)
+                - vol * density * gravity.dot(tet.centroid())
+                    // dynamics (including damping)
+                    + 0.5 * dt_inv * {
+                        let dx = [
+                            tet.0 - prev_pos[cell[0]],
+                            tet.1 - prev_pos[cell[1]],
+                            tet.2 - prev_pos[cell[2]],
+                            tet.3 - prev_pos[cell[3]],
+                        ];
+                        let dH = Self::elastic_cell_hess_prod(dx, Dx, DX_inv, vol, lambda, mu);
+                        let dvTdv: f64 = [
+                            dx[0] - prev_vel[cell[0]],
+                            dx[1] - prev_vel[cell[1]],
+                            dx[2] - prev_vel[cell[2]],
+                            dx[3] - prev_vel[cell[3]],
+                        ].into_iter()
+                            .map(|&dv| dv.dot(dv))
+                            .sum();
+                        // momentum
+                        0.25 * vol * density * dvTdv * dt_inv
+                            // damping (viscosity)
+                            + damping
+                            * (dH[0].dot(dx[0]) + dH[1].dot(dx[1]) + dH[2].dot(dx[2]) -
+                               (dx[3].transpose()*dH).sum())
+                    }
             })
             .sum()
     }
 
     #[allow(non_snake_case)]
-    fn energy_gradient(&self, vtx_grad: &mut [Vector3<Number>]) {
-        let MaterialModel {
-            lambda,
-            mu,
-            density,
-            damping
-        } = self.material;
-        let force_iter = self.body
+    fn energy_gradient(&mut self) -> &[Vector3<Number>] {
+        let NeohookeanEnergyModel {
+            ref solid,
+            ref prev_pos,
+            material:
+                MaterialModel {
+                    lambda,
+                    mu,
+                    density,
+                    damping,
+                },
+            time_step_inv: dt_inv,
+            gravity,
+            energy_gradient: ref mut gradient,
+            ..
+        } = *self;
+
+        let prev_vel: &[Vector3<f64>] = reinterpret_slice(
+            solid
+                .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
+                .unwrap(),
+        );
+
+        gradient.resize(solid.num_verts(), Vector3::zeros());
+
+        let force_iter = solid
             .attrib_iter::<f64, CellIndex>("ref_volume")
             .unwrap()
             .zip(
-                self.body
+                solid
                     .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
                     .unwrap(),
             )
-            .zip(self.body.cell_iter())
-            .zip(self.body.tet_iter())
-            .map(|(((&vol, &Dm_inv), cell), tet)| {
-                let F = tet.shape_matrix() * Dm_inv;
+            .zip(solid.tet_iter())
+            .map(|((&vol, &DX_inv), tet)| {
+                let F = tet.shape_matrix() * DX_inv;
                 let J = F.determinant();
                 if J <= 0.0 {
                     Matrix3::zeros()
                 } else {
                     let F_inv_tr = F.inverse_transpose().unwrap();
                     let logJ = J.ln();
-                    let mut g = vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose();
-                    if let Some(dt) = self.time_step {
-                        let v = [
-                            tet.0 - self.prev_pos[cell[0]],
-                            tet.1 - self.prev_pos[cell[1]],
-                            tet.2 - self.prev_pos[cell[2]],
-                            tet.3 - self.prev_pos[cell[3]],
-                        ];
-                        let Dv = Matrix3([(v[0] - v[3]).into(), (v[1] - v[3]).into(), (v[2] - v[3]).into()]);
-                        g += (damping/dt)*Dv*Dm_inv*Dm_inv.transpose();
-                    }
-                    g
+                    vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * DX_inv.transpose()
                 }
             });
 
         // Clear gradient vector.
-        for grad in vtx_grad.iter_mut() {
+        for grad in gradient.iter_mut() {
             *grad = Vector3::zeros();
         }
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (((&vol, tet), cell), grad) in self.body
+        for ((((&vol, &DX_inv), tet), cell), grad) in solid
             .attrib_iter::<f64, CellIndex>("ref_volume")
             .unwrap()
-            .zip(self.body.tet_iter())
-            .zip(self.body.cell_iter())
+            .zip(
+                solid
+                    .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                    .unwrap(),
+            )
+            .zip(solid.tet_iter())
+            .zip(solid.cell_iter())
             .zip(force_iter)
         {
-            if let Some(time_step) = self.time_step {
-                let dx_tet = [
-                    tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
-                    tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
-                    tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
-                    tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
-                ];
+            let dx = [
+                // current displacement
+                tet.0 - prev_pos[cell[0]],
+                tet.1 - prev_pos[cell[1]],
+                tet.2 - prev_pos[cell[2]],
+                tet.3 - prev_pos[cell[3]],
+            ];
 
-                for i in 0..4 {
-                    vtx_grad[cell[i]] += 0.25 * vol * density * dx_tet[i] / (time_step * time_step);
-                }
-            }
+            let dv = [
+                // current displacement - previous displacement
+                dx[0] - prev_vel[cell[0]],
+                dx[1] - prev_vel[cell[1]],
+                dx[2] - prev_vel[cell[2]],
+                dx[3] - prev_vel[cell[3]],
+            ];
 
             for i in 0..4 {
-                // energy gradient is in opposite direction to the force hence minus here.
-                vtx_grad[cell[i]] -= 0.25 * vol * density * self.gravity;
+                gradient[cell[i]] += dt_inv * dt_inv * 0.25 * vol * density * dv[i];
+
+                // Energy gradient is in opposite direction to the force hence minus here.
+                gradient[cell[i]] -= 0.25 * vol * density * gravity;
             }
+
+            // Needed for damping.
+            let dH = Self::elastic_cell_hess_prod(dx, tet.shape_matrix(), DX_inv, vol, lambda, mu);
+
             for i in 0..3 {
-                vtx_grad[cell[i]] += grad[i]; 
-                vtx_grad[cell[3]] -= grad[i];
+                gradient[cell[i]] += grad[i];
+                gradient[cell[3]] -= grad[i];
+
+                // Damping
+                gradient[cell[i]] += dt_inv * damping * dH[i];
+                gradient[cell[3]] -= dt_inv * damping * dH[i];
             }
         }
+        gradient
     }
 
-    //#[allow(non_snake_case)]
-    //fn energy_gradient(&mut self, vtx_grad: &mut [Vector3<Number>]) {
-    //    let NeohookeanEnergyModel {
-    //        body: TetMesh {
-    //            ref vertices,
-    //            ref vertex_indices,
-    //            ref cell_indices,
-    //            ref cell_offsets,
-    //            ref vertex_attributes,
-    //            ref vertex_attributes,
-    //        },
-    //        ref prev_pos,
-    //        ref prev_vel,
-    //        elasticity: MaterialModel {
-    //            ref lambda,
-    //            ref mu,
-    //            ref density,
-    //        },
-    //        ref dynamics,
-    //    } = *self;
-
-    //    self.body.attribs::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
-    //        .zip::<f64, CellIndex>("ref_volume")
-    //        .zip::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-    //        .zip::<TetCell>();
-
-    //    reinterpret_mut_slice::<_,[Vector3<f64>;4]>(self.body
-    //        .attrib_as_mut_slice::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
-    //        .unwrap())
-    //        .par_iter()
-    //        .zip(
-    //            self.body
-    //            .attrib_as_slice::<f64, CellIndex>("ref_volume")
-    //            .unwrap()
-    //            .par_iter()
-    //        )
-    //        .zip(
-    //            self.body
-    //                .attrib_as_slice::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-    //                .unwrap()
-    //                .par_iter(),
-    //        )
-    //        .zip(self.body.cells().par_iter())
-    //        .zip(self.body.cells().par_iter().map(|tet| self.body.tet_from_indices(tet)))
-    //        .for_each(|((((f, &vol), &Dm_inv), cell), tet)| {
-    //            let F = tet.shape_matrix() * Dm_inv;
-    //            let J = F.determinant();
-    //            let H = if J <= 0.0 {
-    //                Matrix3::zeros()
-    //            } else {
-    //                let F_inv_tr = F.inverse_transpose().unwrap();
-    //                let logJ = J.ln();
-    //                vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * Dm_inv.transpose()
-    //            };
-    //            f[0] = H[0];
-    //            f[1] = H[1];
-    //            f[2] = H[2];
-    //            f[3] = -H[0] - H[1] - H[2];
-    //            if let Some(DynamicsParams { time_step, .. }) = dynamics_params {
-    //                let dx_tet = [
-    //                    tet.0 - self.prev_pos[cell[0]] - self.prev_vel[cell[0]],
-    //                    tet.1 - self.prev_pos[cell[1]] - self.prev_vel[cell[1]],
-    //                    tet.2 - self.prev_pos[cell[2]] - self.prev_vel[cell[2]],
-    //                    tet.3 - self.prev_pos[cell[3]] - self.prev_vel[cell[3]],
-    //                ];
-
-    //                for i in 0..4 {
-    //                    f[i] += 0.25 * vol * density * dx_tet[i] / (time_step * time_step);
-    //                }
-    //            }
-    //        });
-
-    //    let cell_vertex_forces = self.body
-    //    .attrib_as_slice::<Vector3<f64>, CellVertexIndex>("cell_vertex_forces")
-    //    .unwrap();
-    //    vtx_grad.par_iter_mut().enumerate().for_each(|(i, g)| {
-    //        *g = Vector3::zeros();
-    //        for vcidx in 0..self.body.num_vert_cells() {
-
-    //            let cidx  = self.body.vertex_cell(i,vcidx);
-    //            for cvidx in 0..4 {
-    //                let vidx = self.body.cell_vertex(cidx, cvidx);
-    //                if vidx == VertexIndex::from(i) {
-    //                    *g += cell_vertex_forces[vidx.unwrap()*4 + cvidx];
-    //                    break;
-    //                }
-    //            }
-    //        }
-    //    });
-    //}
-
     fn energy_hessian_size(&self) -> usize {
-        78 * self.body.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
+        78 * self.solid.num_cells() // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian(&self, hess: &mut [MatrixElementTriplet<f64>]) {
-        let MaterialModel {
-            lambda,
-            mu,
-            density,
-            damping,
-        } = self.material;
+    fn energy_hessian(&mut self) -> &[MatrixElementTriplet<f64>] {
+        let num_hess_triplets = self.energy_hessian_size();
+        let NeohookeanEnergyModel {
+            ref solid,
+            material:
+                MaterialModel {
+                    lambda,
+                    mu,
+                    density,
+                    damping,
+                },
+            time_step_inv: dt_inv,
+            energy_hessian_triplets: ref mut hess,
+            ..
+        } = *self;
 
-        let hess_chunks: &mut [[MatrixElementTriplet<f64>; 78]] = reinterpret_mut_slice(hess);
-        let hess_iter = hess_chunks
-            .par_iter_mut()
-            .zip(
-                self.body
-                    .attrib_as_slice::<f64, CellIndex>("ref_volume")
-                    .unwrap()
-                    .par_iter(),
-            )
-            .zip(
-                self.body
-                    .attrib_as_slice::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                    .unwrap()
-                    .par_iter(),
-            )
-            .zip(self.body.cells().par_iter())
-            .zip(
-                self.body
-                    .cells()
-                    .par_iter()
-                    .map(|tet| self.body.tet_from_indices(tet)),
-            );
+        // Ensure there are enough entries in our hessian triplet buffer.
+        hess.resize(num_hess_triplets, MatrixElementTriplet::new(0, 0, 0.0));
 
-        hess_iter.for_each(|((((tet_hess, &vol), &Dm_inv), cell), tet)| {
-            let Ds = tet.shape_matrix();
-            let F = Ds * Dm_inv;
-            let J = F.determinant();
-            if J > 0.0 {
-                let A = Dm_inv * Dm_inv.transpose();
-                // Theoretically we known Ds is invertible since F is, but it could have
-                // numerical differences.
-                let Ds_inv_tr = match Ds.inverse_transpose() {
-                    Some(inv) => inv,
-                    None => return,
-                };
+        {
+            // Break up the hessian triplets into chunks of elements for each tet.
+            let hess_chunks: &mut [[MatrixElementTriplet<f64>; 78]] = reinterpret_mut_slice(hess);
 
-                let alpha = mu - lambda * J.ln();
-                let mut factor = 1.0;
-                if let Some(time_step) = self.time_step {
-                    factor += damping/time_step;
-                }
+            let hess_iter = hess_chunks
+                .par_iter_mut()
+                .zip(
+                    solid
+                        .attrib_as_slice::<f64, CellIndex>("ref_volume")
+                        .unwrap()
+                        .par_iter(),
+                )
+                .zip(
+                    solid
+                        .attrib_as_slice::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                        .unwrap()
+                        .par_iter(),
+                )
+                .zip(solid.cells().par_iter())
+                .zip(
+                    solid
+                        .cells()
+                        .par_iter()
+                        .map(|tet| solid.tet_from_indices(tet).shape_matrix()),
+                );
 
-                let mut i = 0; // triplet index for the tet. there should be 78 in total
+            hess_iter.for_each(|((((tet_hess, &vol), &DX_inv), cell), Dx)| {
+                let F = Dx * DX_inv;
+                let J = F.determinant();
+                if J > 0.0 {
+                    let A = DX_inv * DX_inv.transpose();
+                    // Theoretically we known Dx is invertible since F is, but it could have
+                    // numerical differences.
+                    let Dx_inv_tr = match Dx.inverse_transpose() {
+                        Some(inv) => inv,
+                        None => return,
+                    };
 
-                // Off-diagonal elements
-                for col in 0..3 {
-                    for row in 0..3 {
-                        let mut last_hess = [0.0; 4];
-                        for k in 0..3 {
-                            // which vertex
-                            let mut last_wrt_hess = 0.0;
-                            for n in 0..3 {
-                                // with respect to which vertex
-                                let c_lambda = lambda * Ds_inv_tr[n][row] * Ds_inv_tr[k][col];
-                                let c_alpha = alpha * Ds_inv_tr[n][col] * Ds_inv_tr[k][row];
-                                let mut h = factor * vol * (c_alpha + c_lambda);
-                                if col == row {
-                                    h += factor * vol * mu * A[k][n];
-                                }
-                                last_wrt_hess -= h;
-                                last_hess[n] -= h;
+                    let alpha = mu - lambda * J.ln();
+                    let factor = 1.0 + damping * dt_inv;
 
-                                if col == row && k == n {
-                                    if let Some(time_step) = self.time_step
-                                    {
-                                        h += 0.25 * vol * density / (time_step * time_step);
+                    let mut i = 0; // triplet index for the tet. there should be 78 in total
+
+                    // Off-diagonal elements
+                    for col in 0..3 {
+                        for row in 0..3 {
+                            let mut last_hess = [0.0; 4];
+                            for k in 0..3 {
+                                // which vertex
+                                let mut last_wrt_hess = 0.0;
+                                for n in 0..3 {
+                                    // with respect to which vertex
+                                    let c_lambda = lambda * Dx_inv_tr[n][row] * Dx_inv_tr[k][col];
+                                    let c_alpha = alpha * Dx_inv_tr[n][col] * Dx_inv_tr[k][row];
+                                    let mut h = factor * vol * (c_alpha + c_lambda);
+                                    if col == row {
+                                        h += factor * vol * mu * A[k][n];
+                                    }
+                                    last_wrt_hess -= h;
+                                    last_hess[n] -= h;
+
+                                    if col == row && k == n {
+                                        h += 0.25 * vol * density * dt_inv * dt_inv;
+                                    }
+
+                                    // skip upper trianglar part of the global hessian.
+                                    if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
+                                        tet_hess[i] = MatrixElementTriplet::new(
+                                            3 * cell[n] + row,
+                                            3 * cell[k] + col,
+                                            h,
+                                        );
+                                        i += 1;
                                     }
                                 }
 
-                                // skip upper trianglar part of the global hessian.
-                                if (cell[n] == cell[k] && row >= col) || cell[n] > cell[k] {
+                                // with respect to last vertex
+                                last_hess[3] -= last_wrt_hess;
+                                if cell[3] > cell[k] {
                                     tet_hess[i] = MatrixElementTriplet::new(
-                                        3 * cell[n] + row,
+                                        3 * cell[3] + row,
                                         3 * cell[k] + col,
-                                        h,
+                                        last_wrt_hess,
                                     );
                                     i += 1;
                                 }
                             }
 
-                            // with respect to last vertex
-                            last_hess[3] -= last_wrt_hess;
-                            if cell[3] > cell[k] {
-                                tet_hess[i] = MatrixElementTriplet::new(
-                                    3 * cell[3] + row,
-                                    3 * cell[k] + col,
-                                    last_wrt_hess,
-                                );
-                                i += 1;
-                            }
-                        }
-
-                        // last vertex
-                        for n in 0..4 {
-                            // with respect to which vertex
-                            if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
-                                let mut h = last_hess[n];
-                                if col == row && 3 == n {
-                                    if let Some(time_step) = self.time_step
-                                    {
-                                        h += 0.25 * vol * density / (time_step * time_step);
+                            // last vertex
+                            for n in 0..4 {
+                                // with respect to which vertex
+                                if (cell[n] == cell[3] && row >= col) || cell[n] > cell[3] {
+                                    let mut h = last_hess[n];
+                                    if col == row && 3 == n {
+                                        h += 0.25 * vol * density * dt_inv * dt_inv;
                                     }
+                                    tet_hess[i] = MatrixElementTriplet::new(
+                                        3 * cell[n] + row,
+                                        3 * cell[3] + col,
+                                        h,
+                                    );
+                                    i += 1;
                                 }
-                                tet_hess[i] = MatrixElementTriplet::new(
-                                    3 * cell[n] + row,
-                                    3 * cell[3] + col,
-                                    h,
-                                );
-                                i += 1;
                             }
                         }
                     }
+                    assert_eq!(i, 78);
                 }
-                assert_eq!(i, 78);
-            }
-        });
+            });
+        }
+        hess
     }
 }

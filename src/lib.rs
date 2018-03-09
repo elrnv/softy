@@ -14,7 +14,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{SimParams, MaterialProperties};
+pub use fem::{MaterialProperties, SimParams};
 
 pub enum SimResult {
     Success(String),
@@ -39,10 +39,18 @@ where
             Err(fem::Error::InvertedReferenceElement) => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
             }
-            Err(fem::Error::SolveError(e)) => {
-                SimResult::Error(format!("Solve failed: {:?}", e).into())
-            }
-            Ok(()) => SimResult::Success("".into()),
+            Err(fem::Error::SolveError(e, result)) => SimResult::Error(
+                format!(
+                    "Solve failed: {:?}\nIterations: {}\nObjective: {}",
+                    e, result.iterations, result.objective_value
+                ).into(),
+            ),
+            Ok(fem::SolveResult {
+                iterations,
+                objective_value,
+            }) => SimResult::Success(
+                format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
+            ),
         }
     } else {
         SimResult::Error("Tetmesh not found".into())

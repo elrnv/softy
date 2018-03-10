@@ -14,12 +14,31 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{MaterialProperties, SimParams};
+pub use fem::{FemEngine, MaterialProperties, SimParams};
 
 pub enum SimResult {
     Success(String),
     Warning(String),
     Error(String),
+}
+
+impl From<fem::Error> for SimResult {
+    fn from(err: fem::Error) -> SimResult {
+        match err {
+            fem::Error::AttribError(e) => {
+                SimResult::Error(format!("Attribute error: {:?}", e).into())
+            }
+            fem::Error::InvertedReferenceElement => {
+                SimResult::Error(format!("Inverted reference element detected.").into())
+            }
+            fem::Error::SolveError(e, result) => SimResult::Error(
+                format!(
+                    "Solve failed: {:?}\nIterations: {}\nObjective: {}",
+                    e, result.iterations, result.objective_value
+                ).into(),
+            ),
+        }
+    }
 }
 
 pub fn sim<F>(
@@ -32,25 +51,17 @@ where
     F: FnMut() -> bool + Sync,
 {
     if let Some(mesh) = tetmesh {
-        match fem::run(mesh, sim_params, check_interrupt) {
-            Err(fem::Error::AttribError(e)) => {
-                SimResult::Error(format!("Attribute error: {:?}", e).into())
-            }
-            Err(fem::Error::InvertedReferenceElement) => {
-                SimResult::Error(format!("Inverted reference element detected.").into())
-            }
-            Err(fem::Error::SolveError(e, result)) => SimResult::Error(
-                format!(
-                    "Solve failed: {:?}\nIterations: {}\nObjective: {}",
-                    e, result.iterations, result.objective_value
-                ).into(),
-            ),
-            Ok(fem::SolveResult {
-                iterations,
-                objective_value,
-            }) => SimResult::Success(
-                format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
-            ),
+        match FemEngine::new(mesh, sim_params, check_interrupt) {
+            Ok(mut engine) => match engine.step() {
+                Err(e) => e.into(),
+                Ok(fem::SolveResult {
+                    iterations,
+                    objective_value,
+                }) => SimResult::Success(
+                    format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
+                ),
+            },
+            Err(e) => e.into(),
         }
     } else {
         SimResult::Error("Tetmesh not found".into())

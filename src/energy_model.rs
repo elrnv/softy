@@ -6,12 +6,11 @@ use geo::mesh::Attrib;
 use geo::ops::*;
 use geo::math::{Matrix3, Vector3};
 use TetMesh;
-use ipopt::{self, Index, Number};
 use geo::reinterpret::*;
 use rayon::prelude::*;
 
 /// Non-linear problem.
-pub struct NeohookeanEnergyModel<'a, F: FnMut() -> bool + Sync> {
+pub struct NeohookeanEnergyModel<'a> {
     /// The discretization of the solid domain using a tetrahedral mesh.
     pub solid: &'a mut TetMesh,
     /// Position from the previous time step.
@@ -26,18 +25,12 @@ pub struct NeohookeanEnergyModel<'a, F: FnMut() -> bool + Sync> {
     time_step_inv: f64,
     /// Gravitational acceleration in m/s².
     gravity: Vector3<f64>,
-    /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
-    /// returns `false`.
-    interrupt_checker: F,
 
     // Workspace fields for storing intermediate results
     /// Energy gradient.
     energy_gradient: Vec<Vector3<f64>>,
     /// Energy hessian triplets. Keep this memory around and reuse it to avoid unnecessary allocations.
     energy_hessian_triplets: Vec<MatrixElementTriplet<f64>>,
-
-    /// Count the number of iterations.
-    iterations: usize,
 }
 
 /// The material model including elasticity Lame parameters as well as dynamics specific parameters
@@ -66,12 +59,12 @@ impl Default for MaterialModel {
     }
 }
 
-impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
+impl<'a> NeohookeanEnergyModel<'a> {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.
     /// This function takes a tetrahedron mesh specifying a discretization of the solid domain and
     /// a closure that interrupts the solver if it returns `false`.
-    pub fn new(tetmesh: &'a mut TetMesh, interrupt_checker: F) -> Self {
+    pub fn new(tetmesh: &'a mut TetMesh) -> Self {
         let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
 
         NeohookeanEnergyModel {
@@ -80,10 +73,8 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
             material: MaterialModel::default(),
             time_step_inv: 0.0,
             gravity: Vector3::zeros(),
-            interrupt_checker,
             energy_gradient: Vec::new(),
             energy_hessian_triplets: Vec::new(),
-            iterations: 0,
         }
     }
 
@@ -118,34 +109,10 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
         self
     }
 
-    // Get information about the current simulation
-    pub fn iteration_count(&self) -> usize {
-        self.iterations
-    }
-
     // Solver specific functions
 
-    /// Intermediate callback for `Ipopt`.
-    pub fn intermediate_cb(
-        &mut self,
-        _alg_mod: Index,
-        _iter_count: Index,
-        _obj_value: Number,
-        _inf_pr: Number,
-        _inf_du: Number,
-        _mu: Number,
-        _d_norm: Number,
-        _regularization_size: Number,
-        _alpha_du: Number,
-        _alpha_pr: Number,
-        _ls_trials: Index,
-    ) -> bool {
-        self.iterations += 1;
-        (self.interrupt_checker)()
-    }
-
     /// Update the tetmesh vertex positions.
-    pub fn update(&mut self, x: &[Number]) {
+    pub fn update(&mut self, x: &[f64]) {
         let x_slice: &[[f64; 3]] = reinterpret_slice(x);
         let verts = self.solid.vertex_positions_mut();
         verts.copy_from_slice(x_slice);
@@ -199,7 +166,7 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
         vol: f64,
         lambda: f64,
         mu: f64,
-        ) -> f64 {
+    ) -> f64 {
         let F = Dx * DX_inv;
         let I = F.norm_squared(); // tr(F^TF)
         let J = F.determinant();
@@ -212,76 +179,8 @@ impl<'a, F: FnMut() -> bool + Sync> NeohookeanEnergyModel<'a, F> {
     }
 }
 
-impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NeohookeanEnergyModel<'a, F> {
-    fn num_variables(&self) -> usize {
-        self.solid.num_verts() * 3
-    }
-
-    fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let n = self.solid.num_verts();
-        let mut lo = Vec::with_capacity(n);
-        let mut hi = Vec::with_capacity(n);
-        // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        lo.resize(n, [-2e19; 3]);
-        hi.resize(n, [2e19; 3]);
-
-        if let Ok(fixed_verts) = self.solid.attrib_as_slice::<i8, VertexIndex>("fixed") {
-            // Find and set fixed vertices.
-            lo.iter_mut()
-                .zip(hi.iter_mut())
-                .zip(fixed_verts.iter().zip(self.solid.vertex_positions().iter()))
-                .filter(|&(_, (&fixed, _))| fixed != 0)
-                .for_each(|((l, u), (_, p))| {
-                    *l = *p;
-                    *u = *p;
-                });
-        }
-        (reinterpret_vec(lo), reinterpret_vec(hi))
-    }
-
-    fn initial_point(&self) -> Vec<Number> {
-        reinterpret_slice(self.solid.vertex_positions()).to_vec()
-    }
-
-    fn objective(&mut self, x: &[Number], obj: &mut Number) -> bool {
-        self.update(x);
-        *obj = self.energy();
-        true
-    }
-
-    fn objective_grad(&mut self, x: &[Number], grad_f: &mut [Number]) -> bool {
-        self.update(x);
-        grad_f.copy_from_slice(reinterpret_slice(self.energy_gradient()));
-
-        true
-    }
-}
-
-impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NeohookeanEnergyModel<'a, F> {
-    fn num_hessian_non_zeros(&self) -> usize {
-        self.energy_hessian_size()
-    }
-    fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for (i, &MatrixElementTriplet { ref idx, .. }) in self.energy_hessian().iter().enumerate() {
-            rows[i] = idx.row as Index;
-            cols[i] = idx.col as Index;
-        }
-
-        true
-    }
-    fn hessian_values(&mut self, x: &[Number], vals: &mut [Number]) -> bool {
-        self.update(x);
-
-        for (i, elem) in self.energy_hessian().iter().enumerate() {
-            vals[i] = elem.val as Number;
-        }
-
-        true
-    }
-}
-
 /// Define energy for Neohookean materials.
-impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F> {
+impl<'a> Energy<f64> for NeohookeanEnergyModel<'a> {
     #[allow(non_snake_case)]
     fn energy(&mut self) -> f64 {
         let NeohookeanEnergyModel {
@@ -318,7 +217,7 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
             .map(|(((&vol, &DX_inv), cell), tet)| {
                 let Dx = tet.shape_matrix();
                 // elasticity
-                element_strain_energy(Dx, DX_inv, vol, lambda, mu)
+                Self::element_strain_energy(Dx, DX_inv, vol, lambda, mu)
                 // gravity (external forces)
                 - vol * density * gravity.dot(tet.centroid())
                     // dynamics (including damping)
@@ -350,7 +249,7 @@ impl<'a, F: FnMut() -> bool + Sync> Energy<f64> for NeohookeanEnergyModel<'a, F>
     }
 
     #[allow(non_snake_case)]
-    fn energy_gradient(&mut self) -> &[Vector3<Number>] {
+    fn energy_gradient(&mut self) -> &[Vector3<f64>] {
         let NeohookeanEnergyModel {
             ref solid,
             ref prev_pos,

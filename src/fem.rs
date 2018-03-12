@@ -217,7 +217,36 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
                     .collect();
 
                 mesh.set_attrib_data::<_, CellIndex>("elastic_strain", strain.as_slice())
-                    .ok();
+                    .unwrap();
+
+                // Write back elastic forces on each node.
+                let mut forces = vec![Vector3::<f64>::zeros(); mesh.num_verts()];
+
+                for (grad, cell) in mesh.attrib_iter::<f64, CellIndex>("ref_volume")
+                    .unwrap()
+                    .zip(
+                        mesh.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                            .unwrap(),
+                    )
+                    .zip(mesh.tet_iter())
+                    .map(|((&vol, &ref_shape_mtx_inv), tet)| {
+                        NeohookeanEnergyModel::element_energy_gradient(
+                            tet.shape_matrix(),
+                            ref_shape_mtx_inv,
+                            vol,
+                            lambda,
+                            mu,
+                        )
+                    })
+                    .zip(mesh.cells().iter())
+                {
+                    for j in 0..4 {
+                        forces[cell[j]] -= grad[j];
+                    }
+                }
+
+                mesh.set_attrib_data::<[f64;3], VertexIndex>("elastic_force", reinterpret_vec(forces).as_slice())
+                    .unwrap();
 
                 Ok(result)
             }
@@ -390,7 +419,7 @@ mod tests {
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
         mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
-            .ok();
+            .unwrap();
 
         let ref_verts = vec![
             [0.0, 0.0, 0.0],
@@ -402,7 +431,7 @@ mod tests {
         ];
 
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
-            .ok();
+            .unwrap();
 
         assert!(
             FemEngine::new(&mut mesh, STATIC_PARAMS, || true)
@@ -425,7 +454,7 @@ mod tests {
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
         mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
-            .ok();
+            .unwrap();
 
         let ref_verts = vec![
             [0.0, 0.0, 0.0],
@@ -437,7 +466,7 @@ mod tests {
         ];
 
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
-            .ok();
+            .unwrap();
 
         assert!(
             FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true)
@@ -459,7 +488,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn torus_large_test() {
         let mut mesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();

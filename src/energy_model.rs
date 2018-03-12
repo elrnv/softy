@@ -177,6 +177,30 @@ impl<'a> NeohookeanEnergyModel<'a> {
             vol * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
         }
     }
+
+    /// Elastic energy gradient per element vertex.
+    /// This is a helper function that computes the energy gradient given shape matrices, which can
+    /// be obtained from a tet and its reference configuration.
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn element_energy_gradient(
+        Dx: Matrix3<f64>,
+        DX_inv: Matrix3<f64>,
+        vol: f64,
+        lambda: f64,
+        mu: f64,
+    ) -> [Vector3<f64>; 4] {
+        let F = Dx * DX_inv;
+        let J = F.determinant();
+        if J <= 0.0 {
+            [Vector3::zeros(); 4]
+        } else {
+            let F_inv_tr = F.inverse_transpose().unwrap();
+            let logJ = J.ln();
+            let H = vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * DX_inv.transpose();
+            [H[0], H[1], H[2], -H[0] - H[1] - H[2]]
+        }
+    }
 }
 
 /// Define energy for Neohookean materials.
@@ -284,15 +308,7 @@ impl<'a> Energy<f64> for NeohookeanEnergyModel<'a> {
             )
             .zip(solid.tet_iter())
             .map(|((&vol, &DX_inv), tet)| {
-                let F = tet.shape_matrix() * DX_inv;
-                let J = F.determinant();
-                if J <= 0.0 {
-                    Matrix3::zeros()
-                } else {
-                    let F_inv_tr = F.inverse_transpose().unwrap();
-                    let logJ = J.ln();
-                    vol * (mu * F + (lambda * logJ - mu) * F_inv_tr) * DX_inv.transpose()
-                }
+                Self::element_energy_gradient(tet.shape_matrix(), DX_inv, vol, lambda, mu)
             });
 
         // Clear gradient vector.
@@ -334,15 +350,12 @@ impl<'a> Energy<f64> for NeohookeanEnergyModel<'a> {
 
                 // Energy gradient is in opposite direction to the force hence minus here.
                 gradient[cell[i]] -= 0.25 * vol * density * gravity;
+                gradient[cell[i]] += grad[i];
             }
 
             // Needed for damping.
             let dH = Self::elastic_cell_hess_prod(dx, tet.shape_matrix(), DX_inv, vol, lambda, mu);
-
             for i in 0..3 {
-                gradient[cell[i]] += grad[i];
-                gradient[cell[3]] -= grad[i];
-
                 // Damping
                 gradient[cell[i]] += dt_inv * damping * dH[i];
                 gradient[cell[3]] -= dt_inv * damping * dH[i];

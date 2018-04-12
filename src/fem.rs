@@ -3,10 +3,8 @@ use energy::*;
 use energy_model::NeohookeanEnergyModel;
 use ipopt::{self, Index, Ipopt, Number};
 use geo::math::{Matrix3, Vector3};
-use geo::topology::*;
 use geo::prim::Tetrahedron;
-use geo::mesh::{self, attrib, Attrib};
-use geo::mesh::tetmesh::TetCell;
+use geo::mesh::{self, attrib, Attrib, topology::*, tetmesh::TetCell};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::reinterpret::*;
 
@@ -165,6 +163,10 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         Ok(FemEngine { solver: ipopt })
     }
 
+    pub fn mesh(&self) -> TetMesh {
+        self.solver.problem().energy_model.borrow().solid.clone()
+    }
+
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         let FemEngine { ref mut solver } = *self;
@@ -179,21 +181,22 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         // Update mesh
         let NeohookeanEnergyModel {
             solid: ref mut mesh,
-            ref prev_pos,
+            ref mut prev_pos,
             ..
         } = *solver.problem().energy_model.borrow_mut();
 
         match status {
             ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
-                let prev_pos: &[Vector3<f64>] = reinterpret_slice(prev_pos.as_slice());
+                let prev_pos = prev_pos.as_mut_slice();
                 let new_pos: &[Vector3<f64>] = reinterpret_slice(solver.solution());
                 // Write back the velocity for the next iteration.
-                for ((vel, &prev_x), &x) in mesh.attrib_iter_mut::<[f64; 3], VertexIndex>("vel")
+                for ((vel, prev_x), &x) in mesh.attrib_iter_mut::<[f64; 3], VertexIndex>("vel")
                     .unwrap()
-                    .zip(prev_pos.iter())
+                    .zip(prev_pos.iter_mut())
                     .zip(new_pos.iter())
                 {
-                    *vel = (x - prev_x).into();
+                    *vel = (x - *prev_x).into();
+                    *prev_x = x;
                 }
 
                 // Write back elastic strain for visualization.
@@ -220,7 +223,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
                     .unwrap();
 
                 // Write back elastic forces on each node.
-                let mut forces = vec![Vector3::<f64>::zeros(); mesh.num_verts()];
+                let mut forces = vec![Vector3::<f64>::zeros(); mesh.num_vertices()];
 
                 for (grad, cell) in mesh.attrib_iter::<f64, CellIndex>("ref_volume")
                     .unwrap()
@@ -245,8 +248,10 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
                     }
                 }
 
-                mesh.set_attrib_data::<[f64;3], VertexIndex>("elastic_force", reinterpret_vec(forces).as_slice())
-                    .unwrap();
+                mesh.set_attrib_data::<[f64; 3], VertexIndex>(
+                    "elastic_force",
+                    reinterpret_vec(forces).as_slice(),
+                ).unwrap();
 
                 Ok(result)
             }
@@ -291,12 +296,12 @@ impl<'a, F: FnMut() -> bool + Sync> NonLinearProblem<'a, F> {
 /// Prepare the problem for Newton iterations.
 impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NonLinearProblem<'a, F> {
     fn num_variables(&self) -> usize {
-        self.energy_model().solid.num_verts() * 3
+        self.energy_model().solid.num_vertices() * 3
     }
 
     fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
         let solid = &self.energy_model().solid;
-        let n = solid.num_verts();
+        let n = solid.num_vertices();
         let mut lo = Vec::with_capacity(n);
         let mut hi = Vec::with_capacity(n);
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
@@ -384,10 +389,10 @@ mod tests {
     use std::path::PathBuf;
     const DYNAMIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
+            bulk_modulus: 1e6,
+            shear_modulus: 1e5,
             density: 1000.0,
-            damping: 1.0,
+            damping: 0.0,
         },
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(0.01),
@@ -497,5 +502,20 @@ mod tests {
                 .step()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn torus_long_test() {
+        //use std::path::PathBuf;
+        //use geo::io::save_tetmesh_ascii;
+        let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+
+        let mut engine = FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true).unwrap();
+        for _i in 0..50 {
+            assert!(engine.step().is_ok());
+
+            //save_tetmesh_ascii(
+            //&engine.mesh(), &PathBuf::from(format!("./mesh{:?}.vtk", i))).unwrap();
+        }
     }
 }

@@ -1,8 +1,7 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
 use energy::*;
-use geo::topology::*;
-use geo::mesh::Attrib;
+use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::math::{Matrix3, Vector3};
 use TetMesh;
@@ -296,7 +295,7 @@ impl<'a> Energy<f64> for NeohookeanEnergyModel<'a> {
                 .unwrap(),
         );
 
-        gradient.resize(solid.num_verts(), Vector3::zeros());
+        gradient.resize(solid.num_vertices(), Vector3::zeros());
 
         let force_iter = solid
             .attrib_iter::<f64, CellIndex>("ref_volume")

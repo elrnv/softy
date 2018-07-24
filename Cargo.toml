@@ -1,0 +1,16 @@
+[package]
+name = "test-hdk"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+[lib]
+name = "testhdk"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+#geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+geometry = { path = "../rust/geometry" }
+libc = "*"
+
+[build-dependencies]
+cbindgen = "0.6"

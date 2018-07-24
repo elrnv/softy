@@ -4,8 +4,6 @@ else()
     set( Test_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/release" )
 endif()
 
-message(STATUS "CMAKE SOurce dir = ${CMAKE_SOURCE_DIR}")
-
 find_path( Test_INCLUDE_DIR testhdk.h PATHS  .. DOC "Test include directory")
 find_library( Test_LIBRARY testhdk PATHS ${Test_LIB_DIR} DOC "Test library directory")
 

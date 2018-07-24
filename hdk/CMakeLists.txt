@@ -31,6 +31,9 @@ houdini_generate_proto_headers( FILES src/SOP_Test.C )
 
 # Add a library and its source files.
 add_library( ${library_name} SHARED
+  src/mesh.C
+  src/mesh.h
+  src/interrupt.h
   src/SOP_Test.C
   src/SOP_Test.h
 )

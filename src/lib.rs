@@ -9,7 +9,7 @@ use na::{dot, DMatrix, DVector, Dynamic, Matrix, MatrixVec, U1, Vector3};
 type BasisMatrix = Matrix<f64, Dynamic, U1, MatrixVec<f64, Dynamic, U1>>;
 
 pub struct Params {
-    tolerance: f32,
+    pub tolerance: f32,
 }
 
 #[allow(non_snake_case)]

@@ -1,0 +1,9 @@
+[package]
+name = "mls"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+[dependencies]
+rayon = "1.0"
+nalgebra = "0.16"
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }

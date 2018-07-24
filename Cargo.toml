@@ -8,9 +8,10 @@ name = "testhdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-#geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
-geometry = { path = "../rust/geometry" }
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
 libc = "*"
+nalgebra = "0.16"
+
 
 [build-dependencies]
 cbindgen = "0.6"

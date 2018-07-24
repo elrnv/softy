@@ -9,7 +9,8 @@ namespace mesh {
 /**
  * Add the given meshes into the given detail
  */
-void add_meshes(GU_Detail* detail, test::TetMesh *tetmesh, test::PolyMesh *polymesh);
+void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh);
+void add_tetmesh(GU_Detail* detail, test::TetMesh *tetmesh);
 
 test::TetMesh *build_tetmesh(const GU_Detail *detail);
 

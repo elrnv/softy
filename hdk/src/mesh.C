@@ -576,10 +576,10 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, test::AttribIter
 }
 
 /**
- * Add the given meshes into the given detail
+ * Add a tetmesh to the current detail
  */
-void add_meshes(GU_Detail* detail, test::TetMesh *tetmesh, test::PolyMesh *polymesh) {
-    GA_Offset startvtxoff = GA_Offset(0);
+void add_tetmesh(GU_Detail* detail, test::TetMesh *tetmesh) {
+    GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
     // add tets.
     if (tetmesh) {
         auto test_points = test::get_tetmesh_points(tetmesh);
@@ -614,8 +614,13 @@ void add_meshes(GU_Detail* detail, test::TetMesh *tetmesh, test::PolyMesh *polym
         test::free_point_array(test_points);
         test::free_index_array(test_indices);
     }
+}
 
-    startvtxoff = GA_Offset(detail->getNumVertexOffsets());
+/**
+ * Add a polymesh to the current detail
+ */
+void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh) {
+    GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     // add polygons
     if (polymesh) {
@@ -663,7 +668,6 @@ void add_meshes(GU_Detail* detail, test::TetMesh *tetmesh, test::PolyMesh *polym
 
         test::free_point_array(test_points);
         test::free_index_array(test_indices);
-
     }
 }
 

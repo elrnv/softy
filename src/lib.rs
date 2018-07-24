@@ -1,16 +1,18 @@
 extern crate geometry as geo;
 extern crate libc;
+extern crate nalgebra as na;
 
 mod api;
+mod mls;
 
-use std::collections::hash_map::Iter;
-use geo::mesh::Attrib;
 use geo::mesh::attrib;
 use geo::mesh::topology as topo;
-use std::slice;
-use std::ffi::{CStr, CString};
-use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, size_t, c_void};
+use geo::mesh::Attrib;
+use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, c_void, size_t};
 use std::any::TypeId;
+use std::collections::hash_map::Iter;
+use std::ffi::{CStr, CString};
+use std::slice;
 
 /// Wrapper around a rust polygon mesh struct.
 #[derive(Clone, Debug)]
@@ -47,24 +49,22 @@ impl From<api::CookResult> for CookResult {
 /// The purpose of this function is to cleanup the inputs for use in Rust code.
 #[no_mangle]
 pub unsafe extern "C" fn cook(
-    tetmesh: *mut TetMesh,
+    samplemesh: *mut PolyMesh,
     polymesh: *mut PolyMesh,
     params: api::Params,
     interrupt_checker: *mut c_void,
     check_interrupt: Option<extern "C" fn(*mut c_void) -> bool>,
 ) -> CookResult {
     let interrupt_ref = &mut *interrupt_checker; // conversion needed sicne *mut c_void is not Send
-    let interrupt_callback = || {
-        match check_interrupt {
-            Some(cb) => cb(interrupt_ref as *mut c_void),
-            None => true,
-        }
+    let interrupt_callback = || match check_interrupt {
+        Some(cb) => cb(interrupt_ref as *mut c_void),
+        None => true,
     };
     api::cook(
-        if tetmesh.is_null() {
+        if samplemesh.is_null() {
             None
         } else {
-            Some(&mut (*tetmesh).mesh)
+            Some(&mut (*samplemesh).mesh)
         },
         if polymesh.is_null() {
             None
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn cook(
             Some(&mut (*polymesh).mesh)
         },
         params.into(),
-        interrupt_callback
+        interrupt_callback,
     ).into()
 }
 
@@ -399,148 +399,49 @@ macro_rules! cast_to_vec {
         (*$data).into_vec::<$type>().unwrap_or(Vec::new())
     };
     ($type:ident, $data:ident, $tuple_size:expr) => {
-        (*$data).into_vec::<[$type;$tuple_size]>().unwrap_or(Vec::new())
+        (*$data)
+            .into_vec::<[$type; $tuple_size]>()
+            .unwrap_or(Vec::new())
             .iter()
-            .flat_map(|x| x.iter().cloned()).collect()
+            .flat_map(|x| x.iter().cloned())
+            .collect()
     };
 }
 
 pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
     match attrib.type_id() {
         x if impl_supported_types!(
-            x,
-            i8,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, i8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::I8
         }
         x if impl_supported_types!(
-            x,
-            i32,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, i32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::I32
         }
         x if impl_supported_types!(
-            x,
-            i64,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, i64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::I64
         }
         x if impl_supported_types!(
-            x,
-            f32,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, f32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::F32
         }
         x if impl_supported_types!(
-            x,
-            f64,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, f64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::F64
         }
         x if impl_supported_types!(
-            x,
-            String,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15,
-            16
+            x, String, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
             DataType::Str
@@ -653,58 +554,52 @@ pub struct AttribArrayStr {
     array: *mut *mut c_char,
 }
 macro_rules! impl_get_attrib_data {
-    (_impl_make_array AttribArrayStr, $vec:ident, $tuple_size:ident) => {
-        {
-            let mut vec: Vec<*mut c_char> = $vec.iter()
-                .map(|x: &String| CString::new(x.as_str()).unwrap().into_raw())
-                .collect();
+    (_impl_make_array AttribArrayStr, $vec:ident, $tuple_size:ident) => {{
+        let mut vec: Vec<*mut c_char> = $vec
+            .iter()
+            .map(|x: &String| CString::new(x.as_str()).unwrap().into_raw())
+            .collect();
 
-            let arr = AttribArrayStr {
-                capacity: vec.capacity(),
-                size: vec.len(),
-                tuple_size: $tuple_size,
-                array: vec.as_mut_ptr(),
-            };
+        let arr = AttribArrayStr {
+            capacity: vec.capacity(),
+            size: vec.len(),
+            tuple_size: $tuple_size,
+            array: vec.as_mut_ptr(),
+        };
 
-            ::std::mem::forget(vec);
+        ::std::mem::forget(vec);
 
-            arr
-        }
-    };
-    (_impl_make_array $array_name:ident, $vec:ident, $tuple_size:ident) => {
-        {
-            let arr = $array_name {
-                capacity: $vec.capacity(),
-                size: $vec.len(),
-                tuple_size: $tuple_size,
-                array: $vec.as_mut_ptr(),
-            };
+        arr
+    }};
+    (_impl_make_array $array_name:ident, $vec:ident, $tuple_size:ident) => {{
+        let arr = $array_name {
+            capacity: $vec.capacity(),
+            size: $vec.len(),
+            tuple_size: $tuple_size,
+            array: $vec.as_mut_ptr(),
+        };
 
-            ::std::mem::forget($vec);
+        ::std::mem::forget($vec);
 
-            arr
-        }
-    };
-    ($array_name:ident, $attrib_data:ident) => {
-        {
-            #[allow(unused_mut)] // compiler gets confused here, suppress the warning.
-            let (mut vec, tuple_size) =
-                if $attrib_data.is_null() {
-                    (Vec::new(), 0)
-                } else {
-                    match (*$attrib_data).data {
-                        AttribData::Vertex(data) => attrib_flat_array(data),
-                        AttribData::Face(data) => attrib_flat_array(data),
-                        AttribData::Cell(data) => attrib_flat_array(data),
-                        AttribData::FaceVertex(data) => attrib_flat_array(data),
-                        AttribData::CellVertex(data) => attrib_flat_array(data),
-                        AttribData::None => (Vec::new(), 0),
-                    }
-                };
+        arr
+    }};
+    ($array_name:ident, $attrib_data:ident) => {{
+        #[allow(unused_mut)] // compiler gets confused here, suppress the warning.
+        let (mut vec, tuple_size) = if $attrib_data.is_null() {
+            (Vec::new(), 0)
+        } else {
+            match (*$attrib_data).data {
+                AttribData::Vertex(data) => attrib_flat_array(data),
+                AttribData::Face(data) => attrib_flat_array(data),
+                AttribData::Cell(data) => attrib_flat_array(data),
+                AttribData::FaceVertex(data) => attrib_flat_array(data),
+                AttribData::CellVertex(data) => attrib_flat_array(data),
+                AttribData::None => (Vec::new(), 0),
+            }
+        };
 
-            impl_get_attrib_data!(_impl_make_array $array_name, vec, tuple_size)
-        }
-    };
+        impl_get_attrib_data!(_impl_make_array $array_name, vec, tuple_size)
+    }};
 }
 
 #[no_mangle]
@@ -846,27 +741,23 @@ pub unsafe extern "C" fn free_polymesh(mesh: *mut PolyMesh) {
 /// `data` is the const pointer of to the data to be copied.
 /// `size` is the number of elements returned in the vector.
 macro_rules! ptr_to_vec_of_arrays {
-    ($size:ident, $data:ident, $ty:ty) => {
-        {
-            slice::from_raw_parts($data, $size).to_vec()
-        }
-    };
-    ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {
-        {
-            assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
-            let nelem = $size/$tuple_size;
-            let mut data = Vec::with_capacity(nelem);
-            for i in 0..nelem as isize {
-                let mut s: [$ty; $tuple_size] = ::std::mem::uninitialized();
-                for k in 0..$tuple_size {
-                    s[k] = (*$data.offset($tuple_size * i + k as isize)).clone();
-                }
-
-                data.push( s );
+    ($size:ident, $data:ident, $ty:ty) => {{
+        slice::from_raw_parts($data, $size).to_vec()
+    }};
+    ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {{
+        assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
+        let nelem = $size / $tuple_size;
+        let mut data = Vec::with_capacity(nelem);
+        for i in 0..nelem as isize {
+            let mut s: [$ty; $tuple_size] = ::std::mem::uninitialized();
+            for k in 0..$tuple_size {
+                s[k] = (*$data.offset($tuple_size * i + k as isize)).clone();
             }
-            data
+
+            data.push(s);
         }
-    }
+        data
+    }};
 }
 
 macro_rules! impl_add_attrib {
@@ -1137,17 +1028,7 @@ pub unsafe extern "C" fn add_polymesh_attrib_str(
     len: size_t,
     data: *const c_longlong,
 ) {
-    impl_add_attrib!(
-        PolyMesh,
-        mesh,
-        loc,
-        name,
-        tuple_size,
-        nstrings,
-        strings,
-        len,
-        data
-    );
+    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1162,17 +1043,7 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     len: size_t,
     data: *const c_longlong,
 ) {
-    impl_add_attrib!(
-        TetMesh,
-        mesh,
-        loc,
-        name,
-        tuple_size,
-        nstrings,
-        strings,
-        len,
-        data
-    );
+    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
 /// Helper routine for converting C-style data to `[T;3]`s.

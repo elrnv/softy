@@ -2,27 +2,35 @@
  * Application specific code goes here.
  * C Parameter interface and the Rust cook entry point are defined here.
  */
-
 use geo;
+use mls;
 
 /// A C interface for passing parameters from SOP parameters to the Rust code.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
-    tolerance: f32,
+    pub tolerance: f32,
 }
 
 /// Main entry point to Rust code.
 pub fn cook<F>(
-    _tetmesh: Option<&mut geo::mesh::TetMesh<f64>>,
-    _polymesh: Option<&mut geo::mesh::PolyMesh<f64>>,
-    _params: Params,
-    _check_interrupt: F,
+    samplemesh: Option<&mut geo::mesh::PolyMesh<f64>>,
+    polymesh: Option<&mut geo::mesh::PolyMesh<f64>>,
+    params: Params,
+    check_interrupt: F,
 ) -> CookResult
 where
     F: FnMut() -> bool + Sync,
 {
-    CookResult::Success("It Works!".to_string())
+    if let Some(samples) = samplemesh {
+        if let Some(surface) = polymesh {
+            mls::compute_mls(samples, surface, params, check_interrupt).into()
+        } else {
+            CookResult::Error("Missing Polygonal Surface".to_string())
+        }
+    } else {
+        CookResult::Error("Missing Sample Mesh".to_string())
+    }
 }
 
 /// The Rust version of the cook result enum.
@@ -32,3 +40,14 @@ pub enum CookResult {
     Error(String),
 }
 
+impl From<Result<(), mls::Error>> for CookResult {
+    fn from(res: Result<(), mls::Error>) -> Self {
+        match res {
+            Ok(()) => CookResult::Success("".to_string()),
+            Err(mls::Error::MissingNormals) => {
+                CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
+            }
+            Err(mls::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
+        }
+    }
+}

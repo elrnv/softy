@@ -28,8 +28,8 @@ newSopOperator(OP_OperatorTable *table)
                 "Test",                     // UI name
                 SOP_Test::myConstructor,    // How to build the SOP
                 SOP_Test::buildTemplates(), // My parameters
-                0,                              // Min # of sources
-                4,                              // Max # of sources
+                2,                              // Min # of sources
+                2,                              // Max # of sources
                 nullptr,                        // Local variables
                 OP_FLAG_GENERATOR));            // Flag it as generator
 }
@@ -89,9 +89,9 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     auto &&sopparms = cookparms.parms<SOP_TestParms>();
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    test::TetMesh *tetmesh = nullptr;
+    test::PolyMesh *samplemesh = nullptr;
     if (input0) {
-        tetmesh = build_tetmesh(input0);
+        samplemesh = build_polymesh(input0);
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
@@ -100,13 +100,13 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         polymesh = build_polymesh(input1);
     }
 
-    InterruptChecker interrupt;
+    InterruptChecker interrupt("Solving MLS");
 
     // Gather parameters
     test::Params test_params;
     test_params.tolerance = sopparms.getTolerance();
 
-    test::CookResult res = test::cook( tetmesh, polymesh, test_params, &interrupt, check_interrupt );
+    test::CookResult res = test::cook( samplemesh, polymesh, test_params, &interrupt, check_interrupt );
 
     switch (res.tag) {
         case test::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
@@ -118,10 +118,10 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
-    // Add the simulation meshes into the current detail
-    add_meshes(detail, tetmesh, polymesh);
+    // Add the samples back into the current detail
+    add_polymesh(detail, samplemesh);
 
     // We must release the memory using the same api that allocated it.
-    test::free_tetmesh(tetmesh);
     test::free_polymesh(polymesh);
+    test::free_polymesh(samplemesh);
 }

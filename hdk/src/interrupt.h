@@ -6,8 +6,8 @@ namespace interrupt {
 struct InterruptChecker {
     UT_AutoInterrupt progress;
 
-    InterruptChecker()
-        : progress("Solving Softy") {
+    InterruptChecker(const char * status_message)
+        : progress(status_message) {
     }
 };
 

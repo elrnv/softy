@@ -56,6 +56,9 @@ pub fn compute_mls<F>(
             .unwrap()
             .par_iter_mut()
     ).for_each(|(q, potential)| {
+        if interrupt() {
+            return;
+        }
         let W = DMatrix::from_fn(n, n, |i, j| if i == j { w(*q, pos[i]) } else { 0.0 });
         let S = DVector::from_fn(n, |i, _| {
             dot(
@@ -70,10 +73,6 @@ pub fn compute_mls<F>(
 
         if let Some(c) = A.lu().solve(&b) {
             *potential = c[0] as f32;
-        }
-
-        if interrupt() {
-            return;
         }
     });
 

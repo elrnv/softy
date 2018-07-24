@@ -10,8 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
 libc = "*"
-nalgebra = "0.16"
-
+mls = { path = "../mls" }
 
 [build-dependencies]
 cbindgen = "0.6"

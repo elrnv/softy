@@ -13,6 +13,8 @@ fn main() {
     config.tab_width = 4;
     config.language = cbindgen::Language::Cxx;
 
+    println!("crate dir = {:?}", crate_dir);
+
     cbindgen::generate_with_config(&crate_dir, config)
         .expect("Unable to generate bidnings")
         .write_to_file("testhdk.h");

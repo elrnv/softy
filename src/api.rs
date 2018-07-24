@@ -12,6 +12,15 @@ pub struct Params {
     pub tolerance: f32,
 }
 
+impl Into<mls::Params> for Params {
+    fn into(self) -> mls::Params {
+        let Params { tolerance } = self;
+        mls::Params {
+            tolerance,
+        }
+    }
+}
+
 /// Main entry point to Rust code.
 pub fn cook<F>(
     samplemesh: Option<&mut geo::mesh::PolyMesh<f64>>,
@@ -20,11 +29,11 @@ pub fn cook<F>(
     check_interrupt: F,
 ) -> CookResult
 where
-    F: FnMut() -> bool + Sync,
+    F: Fn() -> bool + Sync + Send,
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            mls::compute_mls(samples, surface, params, check_interrupt).into()
+            mls::compute_mls(samples, surface, params.into(), check_interrupt).into()
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())
         }
@@ -44,6 +53,9 @@ impl From<Result<(), mls::Error>> for CookResult {
     fn from(res: Result<(), mls::Error>) -> Self {
         match res {
             Ok(()) => CookResult::Success("".to_string()),
+            Err(mls::Error::Interrupted) => {
+                CookResult::Error("Execution was interrupted.".to_string())
+            }
             Err(mls::Error::MissingNormals) => {
                 CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
             }

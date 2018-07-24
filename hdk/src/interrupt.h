@@ -11,8 +11,8 @@ struct InterruptChecker {
     }
 };
 
-bool check_interrupt(void *interrupt) {
-    return !static_cast<InterruptChecker*>(interrupt)->progress.wasInterrupted();
+bool check_interrupt(const void *interrupt) {
+    return static_cast<InterruptChecker*>(interrupt)->progress.wasInterrupted();
 }
 
 } // namespace interrupt

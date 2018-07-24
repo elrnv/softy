@@ -1,9 +1,8 @@
+extern crate mls;
 extern crate geometry as geo;
 extern crate libc;
-extern crate nalgebra as na;
 
 mod api;
-mod mls;
 
 use geo::mesh::attrib;
 use geo::mesh::topology as topo;
@@ -53,11 +52,11 @@ pub unsafe extern "C" fn cook(
     polymesh: *mut PolyMesh,
     params: api::Params,
     interrupt_checker: *mut c_void,
-    check_interrupt: Option<extern "C" fn(*mut c_void) -> bool>,
+    check_interrupt: Option<extern "C" fn(*const c_void) -> bool>,
 ) -> CookResult {
-    let interrupt_ref = &mut *interrupt_checker; // conversion needed sicne *mut c_void is not Send
+    let interrupt_ref = &*interrupt_checker; // conversion needed sicne *mut c_void is not Send
     let interrupt_callback = || match check_interrupt {
-        Some(cb) => cb(interrupt_ref as *mut c_void),
+        Some(cb) => cb(interrupt_ref as *const c_void),
         None => true,
     };
     api::cook(

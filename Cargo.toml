@@ -7,3 +7,4 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 rayon = "1.0"
 nalgebra = "0.16"
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+spade = "1.5"

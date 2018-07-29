@@ -176,12 +176,14 @@ template<>
 test::AttribLocation mesh_vertex_attrib_location<test::TetMesh>() { return test::AttribLocation::CellVertex; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
+// All points are marked though even ones disconnected from the primitives or connected to other
+// primitives.
 std::pair<std::vector<bool>, std::vector<bool>>
 mark_points_and_vertices(
         const GU_Detail *detail,
         GA_PrimitiveTypeId prim_type_id)
 {
-    std::vector<bool> points(detail->getNumPointOffsets(), false);
+    std::vector<bool> points(detail->getNumPointOffsets(), true);
     std::vector<bool> vertices(detail->getNumVertexOffsets(), false);
     for ( GA_Offset prim_off : detail->getPrimitiveRange() )
     {
@@ -192,8 +194,8 @@ mark_points_and_vertices(
             for ( GA_Size idx = 0; idx < num_verts; ++idx ) {
                 auto vtx_off = detail->getPrimitiveVertexOffset(prim_off, idx);
                 vertices[vtx_off] = true;
-                auto pt_off = detail->vertexPoint(vtx_off);
-                points[pt_off] = true;
+                //auto pt_off = detail->vertexPoint(vtx_off);
+                //points[pt_off] = true;
             }
         }
     }
@@ -392,9 +394,6 @@ void fill_vertex_str_attrib(
 template<typename M>
 void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims)
 {
-    std::vector<bool> pt_grp, vtx_grp;
-    std::tie(pt_grp, vtx_grp) = mark_points_and_vertices(detail, mesh_prim_type_id<M>());
-
     // Get polygon data attributes
     for (auto it = detail->getAttributeDict(GA_ATTRIB_PRIMITIVE).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
     {
@@ -434,6 +433,9 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
         //aif = attrib->getAIFNumericArray(); // variable sized array
         //aif = attrib->getAIFSharedStringArray(); // variable sized array of strings
     }
+
+    std::vector<bool> pt_grp, vtx_grp;
+    std::tie(pt_grp, vtx_grp) = mark_points_and_vertices(detail, mesh_prim_type_id<M>());
 
     std::size_t num_points = std::count(pt_grp.begin(), pt_grp.end(), true);
     for (auto it = detail->getAttributeDict(GA_ATTRIB_POINT).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
@@ -661,11 +663,11 @@ void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh) {
                     detail, startptoff, detail->getNumPointOffsets(),
                     polycounts, poly_pt_numbers.data());
 
-            retrieve_attributes(detail, startptoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
             retrieve_attributes(detail, startprimoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
             retrieve_attributes(detail, startvtxoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
         }
 
+        retrieve_attributes(detail, startptoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
         test::free_point_array(test_points);
         test::free_index_array(test_indices);
     }
@@ -739,15 +741,12 @@ test::PolyMesh *build_polymesh(const GU_Detail* detail) {
         }
     }
 
-    if (num_polys > 0) {
-        test::PolyMesh *polymesh = test::make_polymesh(poly_vertices.size(), poly_vertices.data(),
-                                                     poly_indices.size(), poly_indices.data());
-        assert(polymesh);
+    test::PolyMesh *polymesh = test::make_polymesh(poly_vertices.size(), poly_vertices.data(),
+                                                 poly_indices.size(), poly_indices.data());
+    assert(polymesh);
 
-        transfer_attributes(detail, polymesh, num_polys);
-        return polymesh;
-    }
-    return nullptr;
+    transfer_attributes(detail, polymesh, num_polys);
+    return polymesh;
 }
 
 } // namespace mesh

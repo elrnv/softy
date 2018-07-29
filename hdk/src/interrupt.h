@@ -12,7 +12,7 @@ struct InterruptChecker {
 };
 
 bool check_interrupt(const void *interrupt) {
-    return static_cast<InterruptChecker*>(interrupt)->progress.wasInterrupted();
+    return static_cast<InterruptChecker*>(const_cast<void *>(interrupt))->progress.wasInterrupted();
 }
 
 } // namespace interrupt

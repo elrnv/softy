@@ -39,11 +39,32 @@ static const char *theDsFile = R"THEDSFILE(
     name test
 
     parm {
+        name "kernel"
+        label "Kernel"
+        type ordinal
+        default { "interpolating" }
+        menu {
+            "interpolating" "Local interpolating"
+            "cubic" "Local cubic"
+            "global" "Global inverse squared distance"
+        }
+    }
+    parm {
+        name "radius"
+        label "Radius"
+        type float
+        default { "20" }
+        range { 0.0 100.0 }
+        hidewhen "{ kernel == 2 }"
+    }
+
+    parm {
         name "tolerance"
         label "Tolerance"
         type float
-        default { "1e-9" }
+        default { "1e-5" }
         range { 0.0 1.0 }
+        hidewhen "{ kernel == 1 }"
     }
 }
 )THEDSFILE";
@@ -105,6 +126,8 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Gather parameters
     test::Params test_params;
     test_params.tolerance = sopparms.getTolerance();
+    test_params.radius = sopparms.getRadius();
+    test_params.kernel = static_cast<int>(sopparms.getKernel());
 
     test::CookResult res = test::cook( samplemesh, polymesh, test_params, &interrupt, check_interrupt );
 

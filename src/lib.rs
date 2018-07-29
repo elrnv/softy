@@ -668,6 +668,7 @@ pub unsafe extern "C" fn free_iter(iter: *mut AttribIter) {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub enum AttribLocation {
     Vertex,
     Face,
@@ -786,13 +787,22 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 AttribLocation::Face => {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::FaceIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 AttribLocation::FaceVertex => {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 _ => (),
             };
@@ -803,13 +813,22 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 AttribLocation::Cell=> {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::CellIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::CellIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 AttribLocation::CellVertex => {
-                    (*$mesh).mesh.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec).ok();
+                    match (*$mesh).mesh.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
                 },
                 _ => (),
             };

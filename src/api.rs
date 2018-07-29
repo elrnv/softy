@@ -10,13 +10,22 @@ use mls;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub tolerance: f32,
+    pub radius: f32,
+    pub kernel: i32,
 }
 
 impl Into<mls::Params> for Params {
     fn into(self) -> mls::Params {
-        let Params { tolerance } = self;
+        let Params { tolerance, radius, kernel } = self;
         mls::Params {
-            tolerance,
+            kernel: match kernel {
+                0 => mls::Kernel::Interpolating {
+                    radius: radius as f64,
+                    tolerance: tolerance as f64,
+                },
+                1 => mls::Kernel::Cubic { radius: radius as f64 },
+                _ => mls::Kernel::Global { tolerance: tolerance as f64 },
+            }
         }
     }
 }

@@ -47,6 +47,7 @@ static const char *theDsFile = R"THEDSFILE(
             "interpolating" "Local interpolating"
             "cubic" "Local cubic"
             "global" "Global inverse squared distance"
+            "hrbf" "HRBF potential"
         }
     }
     parm {

@@ -24,7 +24,8 @@ impl Into<mls::Params> for Params {
                     tolerance: tolerance as f64,
                 },
                 1 => mls::Kernel::Cubic { radius: radius as f64 },
-                _ => mls::Kernel::Global { tolerance: tolerance as f64 },
+                2 => mls::Kernel::Global { tolerance: tolerance as f64 },
+                _ => mls::Kernel::Hrbf { radius: radius as f64 },
             }
         }
     }

@@ -1,6 +1,6 @@
 cmake_minimum_required( VERSION 3.6 )
 
-project( Test )
+project( Implicits )
 
 # CMAKE_PREFIX_PATH must contain the path to the toolkit/cmake subdirectory of
 # the Houdini installation. See the "Compiling with CMake" section of the HDK
@@ -17,34 +17,34 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 # Set the directory of the library to be found by find_package
-set( Test_DIR ${CMAKE_SOURCE_DIR} )
+set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
-find_package( Test REQUIRED )
+find_package( Implicits REQUIRED )
 
-set( library_name SOP_Test )
+set( library_name SOP_Implicits )
 
-# Code generation for the embedded DS file in SOP_Test.C.
-houdini_generate_proto_headers( FILES src/SOP_Test.C )
+# Code generation for the embedded DS file in SOP_Implicits.C.
+houdini_generate_proto_headers( FILES src/SOP_Implicits.C )
 
 # Add a library and its source files.
 add_library( ${library_name} SHARED
   src/mesh.C
   src/mesh.h
   src/interrupt.h
-  src/SOP_Test.C
-  src/SOP_Test.h
+  src/SOP_Implicits.C
+  src/SOP_Implicits.h
 )
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
-target_link_libraries( ${library_name} Houdini ${Test_LIBRARIES} )
+target_link_libraries( ${library_name} Houdini ${Implicits_LIBRARIES} )
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR} ${Test_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS}
 )
 
 # Sets several common target properties, such as the library's output directory.

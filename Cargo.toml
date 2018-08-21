@@ -1,10 +1,10 @@
 [package]
-name = "test-hdk"
+name = "implicits-hdk"
 version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 
 [lib]
-name = "testhdk"
+name = "implicitshdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -1,7 +1,7 @@
-#include "SOP_Test.h"
+#include "SOP_Implicits.h"
 
 // Needed for template generation with the ds file.
-#include "SOP_Test.proto.h"
+#include "SOP_Implicits.proto.h"
 
 #include "mesh.h"
 #include "interrupt.h"
@@ -15,19 +15,19 @@
 #include <PRM/PRM_TemplateBuilder.h>
 #include <OP/OP_Operator.h>
 #include <OP/OP_OperatorTable.h>
-#include <testhdk.h>
+#include <implicitshdk.h>
 
-const UT_StringHolder SOP_Test::theSOPTypeName("hdk_test"_sh);
+const UT_StringHolder SOP_Implicits::theSOPTypeName("hdk_implicits"_sh);
 
 // Register sop operator
 void
 newSopOperator(OP_OperatorTable *table)
 {
     table->addOperator(new OP_Operator(
-                SOP_Test::theSOPTypeName,   // Internal name
-                "Test",                     // UI name
-                SOP_Test::myConstructor,    // How to build the SOP
-                SOP_Test::buildTemplates(), // My parameters
+                SOP_Implicits::theSOPTypeName,   // Internal name
+                "Implicits",                     // UI name
+                SOP_Implicits::myConstructor,    // How to build the SOP
+                SOP_Implicits::buildTemplates(), // My parameters
                 2,                              // Min # of sources
                 2,                              // Max # of sources
                 nullptr,                        // Local variables
@@ -36,7 +36,7 @@ newSopOperator(OP_OperatorTable *table)
 
 static const char *theDsFile = R"THEDSFILE(
 {
-    name test
+    name implicits
 
     parm {
         name "kernel"
@@ -73,52 +73,52 @@ static const char *theDsFile = R"THEDSFILE(
 
 
 PRM_Template *
-SOP_Test::buildTemplates()
+SOP_Implicits::buildTemplates()
 {
-    static PRM_TemplateBuilder templ("SOP_Test.C"_sh, theDsFile);
+    static PRM_TemplateBuilder templ("SOP_Implicits.C"_sh, theDsFile);
     return templ.templates();
 }
 
-class SOP_TestVerb : public SOP_NodeVerb
+class SOP_ImplicitsVerb : public SOP_NodeVerb
 {
     public:
-        SOP_TestVerb() {}
-        virtual ~SOP_TestVerb() {}
+        SOP_ImplicitsVerb() {}
+        virtual ~SOP_ImplicitsVerb() {}
 
-        virtual SOP_NodeParms *allocParms() const { return new SOP_TestParms(); }
-        virtual UT_StringHolder name() const { return SOP_Test::theSOPTypeName; }
+        virtual SOP_NodeParms *allocParms() const { return new SOP_ImplicitsParms(); }
+        virtual UT_StringHolder name() const { return SOP_Implicits::theSOPTypeName; }
 
         virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
 
         virtual void cook(const CookParms &cookparms) const;
 
-        static const SOP_NodeVerb::Register<SOP_TestVerb> theVerb;
+        static const SOP_NodeVerb::Register<SOP_ImplicitsVerb> theVerb;
 };
 
-const SOP_NodeVerb::Register<SOP_TestVerb> SOP_TestVerb::theVerb;
+const SOP_NodeVerb::Register<SOP_ImplicitsVerb> SOP_ImplicitsVerb::theVerb;
 
 const SOP_NodeVerb *
-SOP_Test::cookVerb() const
+SOP_Implicits::cookVerb() const
 {
-    return SOP_TestVerb::theVerb.get();
+    return SOP_ImplicitsVerb::theVerb.get();
 }
 
 // Entry point to the SOP
 void
-SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
+SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
     using namespace mesh;
     using namespace interrupt;
 
-    auto &&sopparms = cookparms.parms<SOP_TestParms>();
+    auto &&sopparms = cookparms.parms<SOP_ImplicitsParms>();
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    test::PolyMesh *samplemesh = nullptr;
+    implicits::PolyMesh *samplemesh = nullptr;
     if (input0) {
         samplemesh = build_polymesh(input0);
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
-    test::PolyMesh *polymesh = nullptr;
+    implicits::PolyMesh *polymesh = nullptr;
     if (input1) {
         polymesh = build_polymesh(input1);
     }
@@ -126,20 +126,20 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     InterruptChecker interrupt("Solving MLS");
 
     // Gather parameters
-    test::Params test_params;
-    test_params.tolerance = sopparms.getTolerance();
-    test_params.radius = sopparms.getRadius();
-    test_params.kernel = static_cast<int>(sopparms.getKernel());
+    implicits::Params implicits_params;
+    implicits_params.tolerance = sopparms.getTolerance();
+    implicits_params.radius = sopparms.getRadius();
+    implicits_params.kernel = static_cast<int>(sopparms.getKernel());
 
-    test::CookResult res = test::cook( samplemesh, polymesh, test_params, &interrupt, check_interrupt );
+    implicits::CookResult res = implicits::cook( samplemesh, polymesh, implicits_params, &interrupt, check_interrupt );
 
     switch (res.tag) {
-        case test::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case test::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case test::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+        case implicits::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
+        case implicits::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
+        case implicits::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
     }
 
-    test::free_result(res);
+    implicits::free_result(res);
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
@@ -147,6 +147,6 @@ SOP_TestVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     add_polymesh(detail, samplemesh);
 
     // We must release the memory using the same api that allocated it.
-    test::free_polymesh(polymesh);
-    test::free_polymesh(samplemesh);
+    implicits::free_polymesh(polymesh);
+    implicits::free_polymesh(samplemesh);
 }

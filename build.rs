@@ -8,7 +8,7 @@ fn main() {
     let mut config: cbindgen::Config = Default::default();
 
     config.include_guard = Some(String::from("TEST_CAPI_H"));
-    config.namespace = Some(String::from("test"));
+    config.namespace = Some(String::from("implicits"));
     config.line_length = 80;
     config.tab_width = 4;
     config.language = cbindgen::Language::Cxx;
@@ -17,5 +17,5 @@ fn main() {
 
     cbindgen::generate_with_config(&crate_dir, config)
         .expect("Unable to generate bidnings")
-        .write_to_file("testhdk.h");
+        .write_to_file("implicitshdk.h");
 }

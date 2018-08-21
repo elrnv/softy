@@ -10,140 +10,140 @@
 
 namespace mesh {
 
-std::ostream& operator<<(std::ostream& out, test::AttribLocation where) {
+std::ostream& operator<<(std::ostream& out, implicits::AttribLocation where) {
     switch (where) {
-        case test::AttribLocation::Vertex: out << "Vertex"; break;
-        case test::AttribLocation::Face: out << "Face"; break;
-        case test::AttribLocation::Cell: out << "Cell"; break;
-        case test::AttribLocation::FaceVertex: out << "FaceVertex"; break;
-        case test::AttribLocation::CellVertex: out << "CellVertex"; break;
+        case implicits::AttribLocation::Vertex: out << "Vertex"; break;
+        case implicits::AttribLocation::Face: out << "Face"; break;
+        case implicits::AttribLocation::Cell: out << "Cell"; break;
+        case implicits::AttribLocation::FaceVertex: out << "FaceVertex"; break;
+        case implicits::AttribLocation::CellVertex: out << "CellVertex"; break;
         default: break;
     }
     return out;
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    test::add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    test::add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int64> &data)
 {
-    test::add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    test::add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    test::add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::PolyMesh *polymesh,
-        test::AttribLocation where,
+        implicits::PolyMesh *polymesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64> &indices)
 {
-    test::add_polymesh_attrib_str(
+    implicits::add_polymesh_attrib_str(
             polymesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    test::add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    test::add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int64> &data)
 {
-    test::add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    test::add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    test::add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    implicits::add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        test::TetMesh *tetmesh,
-        test::AttribLocation where,
+        implicits::TetMesh *tetmesh,
+        implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64> &indices)
 {
-    test::add_tetmesh_attrib_str(
+    implicits::add_tetmesh_attrib_str(
             tetmesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
@@ -152,28 +152,28 @@ template<typename T>
 GA_PrimitiveTypeId mesh_prim_type_id();
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<test::PolyMesh>() { return GA_PRIMPOLY; }
+GA_PrimitiveTypeId mesh_prim_type_id<implicits::PolyMesh>() { return GA_PRIMPOLY; }
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<test::TetMesh>() { return GA_PRIMTETRAHEDRON; }
+GA_PrimitiveTypeId mesh_prim_type_id<implicits::TetMesh>() { return GA_PRIMTETRAHEDRON; }
 
 template<typename T>
-test::AttribLocation mesh_prim_attrib_location();
+implicits::AttribLocation mesh_prim_attrib_location();
 
 template<>
-test::AttribLocation mesh_prim_attrib_location<test::PolyMesh>() { return test::AttribLocation::Face; }
+implicits::AttribLocation mesh_prim_attrib_location<implicits::PolyMesh>() { return implicits::AttribLocation::Face; }
 
 template<>
-test::AttribLocation mesh_prim_attrib_location<test::TetMesh>() { return test::AttribLocation::Cell; }
+implicits::AttribLocation mesh_prim_attrib_location<implicits::TetMesh>() { return implicits::AttribLocation::Cell; }
 
 template<typename T>
-test::AttribLocation mesh_vertex_attrib_location();
+implicits::AttribLocation mesh_vertex_attrib_location();
 
 template<>
-test::AttribLocation mesh_vertex_attrib_location<test::PolyMesh>() { return test::AttribLocation::FaceVertex; }
+implicits::AttribLocation mesh_vertex_attrib_location<implicits::PolyMesh>() { return implicits::AttribLocation::FaceVertex; }
 
 template<>
-test::AttribLocation mesh_vertex_attrib_location<test::TetMesh>() { return test::AttribLocation::CellVertex; }
+implicits::AttribLocation mesh_vertex_attrib_location<implicits::TetMesh>() { return implicits::AttribLocation::CellVertex; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
 // All points are marked though even ones disconnected from the primitives or connected to other
@@ -254,7 +254,7 @@ void fill_point_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, test::AttribLocation::Vertex, name, tuple_size, data);
+    add_attrib(mesh, implicits::AttribLocation::Vertex, name, tuple_size, data);
 }
 
 template<typename T, typename M, typename S = T>
@@ -353,7 +353,7 @@ void fill_point_str_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, test::AttribLocation::Vertex, name, tuple_size, strings, indices);
+    add_attrib(mesh, implicits::AttribLocation::Vertex, name, tuple_size, strings, indices);
 }
 
 template<typename M>
@@ -535,63 +535,63 @@ void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
 
 /** Retrieve attributes from the mesh using the given iterator.
  */
-void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, test::AttribIter *it, GA_AttributeOwner owner) {
+void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, implicits::AttribIter *it, GA_AttributeOwner owner) {
     while ( it ) { // it could be null, but it doesn't change
-        auto attrib = test::attrib_iter_next(it);
+        auto attrib = implicits::attrib_iter_next(it);
         if (!attrib) break;
-        auto name = test::attrib_name(attrib);
-        auto type = test::attrib_data_type(attrib);
-        if (type == test::DataType::I8 ) {
-            auto arr = test::attrib_data_i8(attrib);
+        auto name = implicits::attrib_name(attrib);
+        auto type = implicits::attrib_data_type(attrib);
+        if (type == implicits::DataType::I8 ) {
+            auto arr = implicits::attrib_data_i8(attrib);
             auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_i8(arr);
-        } else if (type == test::DataType::I32 ) {
-            auto arr = test::attrib_data_i32(attrib);
+            implicits::free_attrib_data_i8(arr);
+        } else if (type == implicits::DataType::I32 ) {
+            auto arr = implicits::attrib_data_i32(attrib);
             auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_i32(arr);
-        } else if (type == test::DataType::I64 ) {
-            auto arr = test::attrib_data_i64(attrib);
+            implicits::free_attrib_data_i32(arr);
+        } else if (type == implicits::DataType::I64 ) {
+            auto arr = implicits::attrib_data_i64(attrib);
             auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_i64(arr);
-        } else if (type == test::DataType::F32 ) {
-            auto arr = test::attrib_data_f32(attrib);
+            implicits::free_attrib_data_i64(arr);
+        } else if (type == implicits::DataType::F32 ) {
+            auto arr = implicits::attrib_data_f32(attrib);
             auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_f32(arr);
-        } else if (type == test::DataType::F64 ) {
-            auto arr = test::attrib_data_f64(attrib);
+            implicits::free_attrib_data_f32(arr);
+        } else if (type == implicits::DataType::F64 ) {
+            auto arr = implicits::attrib_data_f64(attrib);
             auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_f64(arr);
-        } else if (type == test::DataType::Str ) {
-            auto arr = test::attrib_data_str(attrib);
+            implicits::free_attrib_data_f64(arr);
+        } else if (type == implicits::DataType::Str ) {
+            auto arr = implicits::attrib_data_str(attrib);
             auto h = GA_RWHandleS(detail->addTuple(GA_STORE_STRING, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            test::free_attrib_data_str(arr);
+            implicits::free_attrib_data_str(arr);
         }
-        test::free_attribute(attrib);
+        implicits::free_attribute(attrib);
     }
-    test::free_attrib_iter(it);
+    implicits::free_attrib_iter(it);
 }
 
 /**
  * Add a tetmesh to the current detail
  */
-void add_tetmesh(GU_Detail* detail, test::TetMesh *tetmesh) {
+void add_tetmesh(GU_Detail* detail, implicits::TetMesh *tetmesh) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
     // add tets.
     if (tetmesh) {
-        auto test_points = test::get_tetmesh_points(tetmesh);
+        auto test_points = implicits::get_tetmesh_points(tetmesh);
         std::vector<UT_Vector3> points;
 
         for (std::size_t i = 0; i < test_points.size; ++i) {
             points.push_back(UT_Vector3(test_points.array[i]));
         }
 
-        auto test_indices = test::get_tetmesh_indices(tetmesh);
+        auto test_indices = implicits::get_tetmesh_indices(tetmesh);
         if (test_indices.size > 0) {
             std::vector<int> indices;
             for (std::size_t i = 0; i < test_indices.size; ++i) {
@@ -609,24 +609,24 @@ void add_tetmesh(GU_Detail* detail, test::TetMesh *tetmesh) {
                     indices.size()/4, indices.data());
 
 
-            retrieve_attributes(detail, startptoff, test::tetmesh_attrib_iter(tetmesh, test::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-            retrieve_attributes(detail, startprimoff, test::tetmesh_attrib_iter(tetmesh, test::AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, test::tetmesh_attrib_iter(tetmesh, test::AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, implicits::tetmesh_attrib_iter(tetmesh, implicits::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, implicits::tetmesh_attrib_iter(tetmesh, implicits::AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, implicits::tetmesh_attrib_iter(tetmesh, implicits::AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
         }
-        test::free_point_array(test_points);
-        test::free_index_array(test_indices);
+        implicits::free_point_array(test_points);
+        implicits::free_index_array(test_indices);
     }
 }
 
 /**
  * Add a polymesh to the current detail
  */
-void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh) {
+void add_polymesh(GU_Detail* detail, implicits::PolyMesh *polymesh) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     // add polygons
     if (polymesh) {
-        auto test_points = test::get_polymesh_points(polymesh);
+        auto test_points = implicits::get_polymesh_points(polymesh);
         std::vector<UT_Vector3> points;
 
         for (std::size_t i = 0; i < test_points.size; ++i) {
@@ -639,7 +639,7 @@ void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh) {
             detail->setPos3(ptoff, points[pt_idx]);
         }
 
-        auto test_indices = test::get_polymesh_indices(polymesh);
+        auto test_indices = implicits::get_polymesh_indices(polymesh);
         if (test_indices.size > 0) {
             GEO_PolyCounts polycounts;
             std::vector<int> poly_pt_numbers;
@@ -663,17 +663,17 @@ void add_polymesh(GU_Detail* detail, test::PolyMesh *polymesh) {
                     detail, startptoff, detail->getNumPointOffsets(),
                     polycounts, poly_pt_numbers.data());
 
-            retrieve_attributes(detail, startprimoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startprimoff, implicits::polymesh_attrib_iter(polymesh, implicits::AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, implicits::polymesh_attrib_iter(polymesh, implicits::AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
         }
 
-        retrieve_attributes(detail, startptoff, test::polymesh_attrib_iter(polymesh, test::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-        test::free_point_array(test_points);
-        test::free_index_array(test_indices);
+        retrieve_attributes(detail, startptoff, implicits::polymesh_attrib_iter(polymesh, implicits::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+        implicits::free_point_array(test_points);
+        implicits::free_index_array(test_indices);
     }
 }
 
-test::TetMesh *build_tetmesh(const GU_Detail *detail) {
+implicits::TetMesh *build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
     std::vector<std::size_t> tet_indices;
@@ -701,7 +701,7 @@ test::TetMesh *build_tetmesh(const GU_Detail *detail) {
 
     // Only creating a mesh if there are tets. Otherwise we may be simulating cloth only.
     if (num_tets > 0) {
-        test::TetMesh *tetmesh = test::make_tetmesh(tet_vertices.size(), tet_vertices.data(),
+        implicits::TetMesh *tetmesh = implicits::make_tetmesh(tet_vertices.size(), tet_vertices.data(),
                                                   tet_indices.size(), tet_indices.data());
         assert(tetmesh);
 
@@ -711,7 +711,7 @@ test::TetMesh *build_tetmesh(const GU_Detail *detail) {
     return nullptr;
 }
 
-test::PolyMesh *build_polymesh(const GU_Detail* detail) {
+implicits::PolyMesh *build_polymesh(const GU_Detail* detail) {
     // Get polygons for the body from the second input
     std::vector<double> poly_vertices;
     std::vector<std::size_t> poly_indices;
@@ -741,7 +741,7 @@ test::PolyMesh *build_polymesh(const GU_Detail* detail) {
         }
     }
 
-    test::PolyMesh *polymesh = test::make_polymesh(poly_vertices.size(), poly_vertices.data(),
+    implicits::PolyMesh *polymesh = implicits::make_polymesh(poly_vertices.size(), poly_vertices.data(),
                                                  poly_indices.size(), poly_indices.data());
     assert(polymesh);
 

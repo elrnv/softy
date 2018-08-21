@@ -1,4 +1,4 @@
-extern crate mls;
+extern crate implicits;
 extern crate geometry as geo;
 extern crate libc;
 

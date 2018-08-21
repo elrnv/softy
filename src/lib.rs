@@ -7,7 +7,7 @@ mod api;
 use geo::mesh::attrib;
 use geo::mesh::topology as topo;
 use geo::mesh::Attrib;
-use libc::{c_char, c_double, c_float, c_int, c_longlong, c_schar, c_void, size_t};
+use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
@@ -964,9 +964,9 @@ pub unsafe extern "C" fn add_polymesh_attrib_i64(
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
-    data: *const c_longlong,
+    data: *const i64,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: c_longlong);
+    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1029,9 +1029,9 @@ pub unsafe extern "C" fn add_tetmesh_attrib_i64(
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
-    data: *const c_longlong,
+    data: *const i64,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: c_longlong);
+    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1044,7 +1044,7 @@ pub unsafe extern "C" fn add_polymesh_attrib_str(
     nstrings: size_t,
     strings: *const *const c_char,
     len: size_t,
-    data: *const c_longlong,
+    data: *const i64,
 ) {
     impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
@@ -1059,7 +1059,7 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     nstrings: size_t,
     strings: *const *const c_char,
     len: size_t,
-    data: *const c_longlong,
+    data: *const i64,
 ) {
     impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }

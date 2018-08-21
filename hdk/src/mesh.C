@@ -47,7 +47,7 @@ void add_attrib(
         implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
-        const std::vector<int64> &data)
+        const std::vector<int64_t> &data)
 {
     implicits::add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
@@ -78,7 +78,7 @@ void add_attrib(
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
-        const std::vector<int64> &indices)
+        const std::vector<int64_t> &indices)
 {
     implicits::add_polymesh_attrib_str(
             polymesh, where, name, tuple_size, strings.size(),
@@ -110,7 +110,7 @@ void add_attrib(
         implicits::AttribLocation where,
         const char *name,
         std::size_t tuple_size,
-        const std::vector<int64> &data)
+        const std::vector<int64_t> &data)
 {
     implicits::add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
@@ -141,7 +141,7 @@ void add_attrib(
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
-        const std::vector<int64> &indices)
+        const std::vector<int64_t> &indices)
 {
     implicits::add_tetmesh_attrib_str(
             tetmesh, where, name, tuple_size, strings.size(),
@@ -294,14 +294,14 @@ void fill_prim_str_attrib(
         M *mesh)
 {
     // Try with different types
-    std::vector<int64> ids(aif->getTableEntries(attrib), -1);
+    std::vector<int64_t> ids(aif->getTableEntries(attrib), -1);
     std::vector<const char *> strings;
     for (auto it = aif->begin(attrib); !it.atEnd(); ++it) {
         ids[it.getHandle()] = strings.size();
         strings.push_back( it.getString() );
     }
 
-    std::vector<int64> indices(tuple_size*num_elem, -1);
+    std::vector<int64_t> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset prim_off : detail->getPrimitiveRange() )
@@ -332,14 +332,14 @@ void fill_point_str_attrib(
         M *mesh)
 {
     // Try with different types
-    std::vector<int64> ids(aif->getTableEntries(attrib), -1);
+    std::vector<int64_t> ids(aif->getTableEntries(attrib), -1);
     std::vector<const char *> strings;
     for (auto it = aif->begin(attrib); !it.atEnd(); ++it) {
         ids[it.getHandle()] = strings.size();
         strings.push_back( it.getString() );
     }
 
-    std::vector<int64> indices(tuple_size*num_elem, -1);
+    std::vector<int64_t> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset pt_off : detail->getPointRange() )
@@ -367,14 +367,14 @@ void fill_vertex_str_attrib(
         M *mesh)
 {
     // Try with different types
-    std::vector<int64> ids(aif->getTableEntries(attrib), -1);
+    std::vector<int64_t> ids(aif->getTableEntries(attrib), -1);
     std::vector<const char *> strings;
     for (auto it = aif->begin(attrib); !it.atEnd(); ++it) {
         ids[it.getHandle()] = strings.size();
         strings.push_back( it.getString() );
     }
 
-    std::vector<int64> indices(tuple_size*num_elem, -1);
+    std::vector<int64_t> indices(tuple_size*num_elem, -1);
 
     int i = 0;
     for ( GA_Offset vtx_off : detail->getVertexRange() )
@@ -411,7 +411,7 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
                     case GA_STORE_INT32:
                         fill_prim_attrib<int32>(detail, aif, attrib, tuple_size, num_prims, mesh); break;
                     case GA_STORE_INT64:
-                        fill_prim_attrib<int64>(detail, aif, attrib, tuple_size, num_prims, mesh); break;
+                        fill_prim_attrib<int64_t>(detail, aif, attrib, tuple_size, num_prims, mesh); break;
                     case GA_STORE_REAL32:
                         fill_prim_attrib<fpreal32>(detail, aif, attrib, tuple_size, num_prims, mesh); break;
                     case GA_STORE_REAL64:
@@ -456,7 +456,7 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
                     case GA_STORE_INT32:
                         fill_point_attrib<int32>(detail, aif, attrib, tuple_size, num_points, pt_grp, mesh); break;
                     case GA_STORE_INT64:
-                        fill_point_attrib<int64>(detail, aif, attrib, tuple_size, num_points, pt_grp, mesh); break;
+                        fill_point_attrib<int64_t>(detail, aif, attrib, tuple_size, num_points, pt_grp, mesh); break;
                     case GA_STORE_REAL32:
                         fill_point_attrib<fpreal32>(detail, aif, attrib, tuple_size, num_points, pt_grp, mesh); break;
                     case GA_STORE_REAL64:
@@ -497,7 +497,7 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
                     case GA_STORE_INT32:
                         fill_vertex_attrib<int32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
                     case GA_STORE_INT64:
-                        fill_vertex_attrib<int64>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<int64_t>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
                     case GA_STORE_REAL32:
                         fill_vertex_attrib<fpreal32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
                     case GA_STORE_REAL64:

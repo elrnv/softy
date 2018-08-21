@@ -13,10 +13,11 @@ type BasisMatrix = Matrix<f64, Dynamic, na::U1, MatrixVec<f64, Dynamic, na::U1>>
 
 #[derive(Copy, Clone, Debug)]
 pub enum Kernel {
-    Interpolating { radius: f64, tolerance: f64 },
+    Interpolating { radius: f64 },
+    Approximate { radius: f64, tolerance: f64 },
     Cubic { radius: f64 },
     Global { tolerance: f64 },
-    Hrbf { radius: f64 },
+    Hrbf,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -40,15 +41,17 @@ pub struct Params {
 //}
 
 macro_rules! hrbf {
-    ($samples:ident, $compute_neighbours:ident, $interrupt:ident,
-     $num_neighs_attrib_data:ident, $neighs_attrib_data:ident) => {
+    ($samples:ident, $oriented_points:ident, $offsets:ident, $interrupt:ident) => {
         let sample_pos = $samples.vertices();
 
         let chunk_size = 5000;
 
-        for (((q_chunk, num_neighs_chunk), neighs_chunk), potential_chunk) in sample_pos.chunks(chunk_size)
-            .zip($num_neighs_attrib_data.chunks_mut(chunk_size))
-            .zip($neighs_attrib_data.chunks_mut(chunk_size))
+        let pts: Vec<na::Point3<f64>> = $oriented_points.iter().map(|op| na::Point3::from(op.pos)).collect();
+        let nmls: Vec<na::Vector3<f64>> = $oriented_points.iter().map(|op| na::Vector3::from(op.nml)).collect();
+        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
+        hrbf.fit_offset(&pts, &$offsets, &nmls);
+
+        for (q_chunk, potential_chunk) in sample_pos.chunks(chunk_size)
             .zip($samples
                 .attrib_as_mut_slice::<f32, VertexIndex>("potential")
                 .unwrap()
@@ -59,30 +62,9 @@ macro_rules! hrbf {
             }
 
             q_chunk.par_iter()
-                .zip(num_neighs_chunk.par_iter_mut())
-                .zip(neighs_chunk.par_iter_mut())
                 .zip(potential_chunk.par_iter_mut())
-                .for_each(|(((q, num_neighs), neighs), potential)| {
-
-                let neighbours_vec: Vec<&OrientedPoint> = $compute_neighbours(*q);
-                let neighbours = &neighbours_vec;
-
-                *num_neighs = neighbours.len() as i32;
-
-                for (k, neigh) in neighbours_vec.iter().enumerate() {
-                    if k >= 11 {
-                        break;
-                    }
-                    neighs[k] = neigh.index as i32;
-                }
-
-                if !neighbours.is_empty() {
-                    let pts: Vec<na::Point3<f64>> = neighbours_vec.iter().map(|op| na::Point3::from(op.pos)).collect();
-                    let nmls: Vec<na::Vector3<f64>> = neighbours_vec.iter().map(|op| na::Vector3::from(op.nml)).collect();
-                    let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-                    hrbf.fit(&pts, &nmls);
-                    *potential = hrbf.eval(na::Point3::from(*q)) as f32;
-                }
+                .for_each(|(q, potential)| {
+                *potential = hrbf.eval(na::Point3::from(*q)) as f32;
             });
         }
     }
@@ -134,15 +116,12 @@ macro_rules! mls {
                     }
                     let weights = (0..n).map(|i| {
                         if i == neighbours.len() {
-                            let w = if closest_d < $radius {
-                                (closest_d/$radius).powi(2)*(3.0 - 2.0*(closest_d/$radius))
-                            } else {
-                                1.0
-                            };
+                            let bg = [q[0] - $radius + closest_d, q[1], q[2]];
+                            let w = $kernel(*q, bg, closest_d);
                             weight[11] = w as f32;
                             w
                         } else {
-                            let w = $kernel(*q, neighbours[i].pos, neighbours);
+                            let w = $kernel(*q, neighbours[i].pos, closest_d);
                             if i < 11 {
                                 weight[i] = w as f32;
                             }
@@ -208,8 +187,21 @@ fn local_cubic_kernel(r: f64, radius: f64) -> f64 {
     1.0 - 3.0*r*r/(radius*radius) + 2.0*r*r*r/(radius*radius*radius)
 }
 
-fn local_interpolating_kernel<I>(r: f64, radius: f64, distances: I, tolerance: f64) -> f64
-where I: Iterator<Item=f64>,
+fn local_interpolating_kernel(x: [f64;3], p: [f64;3], radius: f64, closest_d: f64) -> f64
+{
+    let r = dist(x, p);
+    if r > radius {
+        return 0.0;
+    }
+
+    let envelope = local_cubic_kernel(r, radius);
+
+    let s = r/radius;
+    let sc = closest_d/radius;
+    envelope*sc*sc*(1.0/(s*s) - 1.0)
+}
+
+fn local_approximate_kernel(r: f64, radius: f64, tolerance: f64) -> f64
 {
     if r > radius {
         return 0.0;
@@ -223,11 +215,6 @@ where I: Iterator<Item=f64>,
         (ddeps*ddeps - epsp1*epsp1)/(1.0/(eps*eps) - epsp1*epsp1)
     };
 
-    //let mut denom = 0.0;
-    //for d in distances {
-    //    denom += w(d/radius);
-    //}
-
     w(r/radius)// /denom
 }
 
@@ -240,7 +227,7 @@ fn norm(a: [f64;3]) -> f64 {
 }
 
 #[allow(non_snake_case)]
-pub fn compute_mls<F>(
+pub fn compute_potential<F>(
     samples: &mut PolyMesh<f64>,
     surface: &mut PolyMesh<f64>,
     params: Params,
@@ -265,6 +252,9 @@ pub fn compute_mls<F>(
         .enumerate()
         .map(|(i, (nml, &pos))| OrientedPoint { index: i as i32, pos, nml }).collect();
 
+    let offsets = surface.attrib_iter::<f32, VertexIndex>("offset")
+        .map(|iter| iter.map(|&x| x as f64).collect()).unwrap_or(vec![0.0f64; surface.num_vertices()]);
+
     let rtree = {
         let mut rtree = RTree::new();
         for pt in oriented_points.iter() {
@@ -278,13 +268,19 @@ pub fn compute_mls<F>(
     let mut weight_attrib_data = vec![[0f32;12]; samples.num_vertices()];
 
     match params.kernel {
-        Kernel::Interpolating { tolerance, radius } => {
+        Kernel::Interpolating { radius } => {
             let radius2 = radius*radius;
             let neigh = |q| rtree.lookup_in_circle(&q, &radius2);
-            let kern = |x, p, neighbours: &[&OrientedPoint]| {
-                let distances = neighbours.iter().map(|&neigh| dist(neigh.pos, x));
-                let d = dist(x, p);
-                local_interpolating_kernel(d, radius, distances, tolerance)
+            let kern = |x, p, closest_dist| {
+                local_interpolating_kernel(x, p, radius, closest_dist)
+            };
+            mls!(samples, kern, radius, neigh, interrupt, num_neighs_attrib_data, neighs_attrib_data, weight_attrib_data);
+        }
+        Kernel::Approximate { tolerance, radius } => {
+            let radius2 = radius*radius;
+            let neigh = |q| rtree.lookup_in_circle(&q, &radius2);
+            let kern = |x, p, _| {
+                local_approximate_kernel(dist(x, p), radius, tolerance)
             };
             mls!(samples, kern, radius, neigh, interrupt, num_neighs_attrib_data, neighs_attrib_data, weight_attrib_data);
         }
@@ -304,10 +300,8 @@ pub fn compute_mls<F>(
             };
             mls!(samples, kern, radius, neigh, interrupt, num_neighs_attrib_data, neighs_attrib_data, weight_attrib_data);
         }
-        Kernel::Hrbf { radius } => {
-            let radius2 = radius*radius;
-            let neigh = |q| rtree.lookup_in_circle(&q, &radius2);
-            hrbf!(samples, neigh, interrupt, num_neighs_attrib_data, neighs_attrib_data);
+        Kernel::Hrbf => {
+            hrbf!(samples, oriented_points, offsets, interrupt);
         }
     }
 

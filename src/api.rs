@@ -21,11 +21,14 @@ impl Into<mls::Params> for Params {
             kernel: match kernel {
                 0 => mls::Kernel::Interpolating {
                     radius: radius as f64,
+                },
+                1 => mls::Kernel::Approximate {
+                    radius: radius as f64,
                     tolerance: tolerance as f64,
                 },
-                1 => mls::Kernel::Cubic { radius: radius as f64 },
-                2 => mls::Kernel::Global { tolerance: tolerance as f64 },
-                _ => mls::Kernel::Hrbf { radius: radius as f64 },
+                2 => mls::Kernel::Cubic { radius: radius as f64 },
+                3 => mls::Kernel::Global { tolerance: tolerance as f64 },
+                _ => mls::Kernel::Hrbf,
             }
         }
     }

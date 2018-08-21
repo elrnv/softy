@@ -45,6 +45,7 @@ static const char *theDsFile = R"THEDSFILE(
         default { "interpolating" }
         menu {
             "interpolating" "Local interpolating"
+            "approximate" "Local approximately interpolating"
             "cubic" "Local cubic"
             "global" "Global inverse squared distance"
             "hrbf" "HRBF potential"
@@ -56,7 +57,7 @@ static const char *theDsFile = R"THEDSFILE(
         type float
         default { "20" }
         range { 0.0 100.0 }
-        hidewhen "{ kernel == 2 }"
+        hidewhen "{ kernel == global } { kernel == hrbf }"
     }
 
     parm {
@@ -65,7 +66,7 @@ static const char *theDsFile = R"THEDSFILE(
         type float
         default { "1e-5" }
         range { 0.0 1.0 }
-        hidewhen "{ kernel == 1 }"
+        hidewhen "{ kernel == cubic } { kernel == hrbf } { kernel == interpolating }"
     }
 }
 )THEDSFILE";

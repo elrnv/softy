@@ -6,10 +6,11 @@ extern crate hrbf;
 
 use rayon::prelude::*;
 use geo::mesh::{attrib, topology::*, Attrib, PolyMesh};
-use na::{dot, DMatrix, DVector, Dynamic, Matrix, MatrixVec, Vector3};
+use na::{dot, Vector3};
 use spade::{SpatialObject, BoundingRect, rtree::RTree};
 
-type BasisMatrix = Matrix<f64, Dynamic, na::U1, MatrixVec<f64, Dynamic, na::U1>>;
+#[macro_use]
+pub mod zip;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Kernel {
@@ -77,11 +78,12 @@ macro_rules! mls {
 
         let chunk_size = 5000;
 
-        for ((((q_chunk, num_neighs_chunk), neighs_chunk), weight_chunk), potential_chunk) in sample_pos.chunks(chunk_size)
-            .zip($num_neighs_attrib_data.chunks_mut(chunk_size))
-            .zip($neighs_attrib_data.chunks_mut(chunk_size))
-            .zip($weight_attrib_data.chunks_mut(chunk_size))
-            .zip($samples
+        for (q_chunk, num_neighs_chunk, neighs_chunk, weight_chunk, potential_chunk) in zip!(
+            sample_pos.chunks(chunk_size),
+            $num_neighs_attrib_data.chunks_mut(chunk_size),
+            $neighs_attrib_data.chunks_mut(chunk_size),
+            $weight_attrib_data.chunks_mut(chunk_size),
+            $samples
                 .attrib_as_mut_slice::<f32, VertexIndex>("potential")
                 .unwrap()
                 .chunks_mut(chunk_size)) {
@@ -90,12 +92,13 @@ macro_rules! mls {
                 break;
             }
 
-            q_chunk.par_iter()
-                .zip(num_neighs_chunk.par_iter_mut())
-                .zip(neighs_chunk.par_iter_mut())
-                .zip(weight_chunk.par_iter_mut())
-                .zip(potential_chunk.par_iter_mut())
-                .for_each(|((((q, num_neighs), neighs), weight), potential)| {
+            zip!(q_chunk.par_iter(),
+                num_neighs_chunk.par_iter_mut(),
+                neighs_chunk.par_iter_mut(),
+                weight_chunk.par_iter_mut(),
+                potential_chunk.par_iter_mut())
+                .for_each(|(q, num_neighs, neighs, weight, potential)| {
+
                 let neighbours_vec: Vec<&OrientedPoint> = $compute_neighbours(*q);
                 let neighbours = &neighbours_vec;
 
@@ -222,11 +225,6 @@ fn dist(a: [f64;3], b: [f64;3]) -> f64 {
     (Vector3::from(a) - Vector3::from(b)).norm()
 }
 
-fn norm(a: [f64;3]) -> f64 {
-    Vector3::from(a).norm()
-}
-
-#[allow(non_snake_case)]
 pub fn compute_potential<F>(
     samples: &mut PolyMesh<f64>,
     surface: &mut PolyMesh<f64>,

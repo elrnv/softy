@@ -9,25 +9,17 @@ use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
-use api::{self, TetMesh, PolyMesh};
 
-impl From<api::CookResult> for CookResult {
-    fn from(res: api::CookResult) -> CookResult {
-        match res {
-            api::CookResult::Success(msg) => CookResult {
-                message: CString::new(msg.as_str()).unwrap().into_raw(),
-                tag: CookResultTag::Success,
-            },
-            api::CookResult::Warning(msg) => CookResult {
-                message: CString::new(msg.as_str()).unwrap().into_raw(),
-                tag: CookResultTag::Warning,
-            },
-            api::CookResult::Error(msg) => CookResult {
-                message: CString::new(msg.as_str()).unwrap().into_raw(),
-                tag: CookResultTag::Error,
-            },
-        }
-    }
+/// Wrapper around a Rust polygon mesh struct.
+#[derive(Clone, Debug)]
+pub struct PolyMesh {
+    pub mesh: geo::mesh::PolyMesh<f64>,
+}
+
+/// Wrapper around a Rust tetmesh struct.
+#[derive(Clone, Debug)]
+pub struct TetMesh {
+    pub mesh: geo::mesh::TetMesh<f64>,
 }
 
 #[repr(C)]
@@ -40,8 +32,8 @@ pub enum CookResultTag {
 /// Result for C interop.
 #[repr(C)]
 pub struct CookResult {
-    message: *mut c_char,
-    tag: CookResultTag,
+    pub message: *mut c_char,
+    pub tag: CookResultTag,
 }
 
 #[no_mangle]

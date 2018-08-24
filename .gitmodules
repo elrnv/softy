@@ -1,0 +1,6 @@
+[submodule "implicits"]
+	path = implicits
+	url = https://gitlab.com/elrnv/implicits
+[submodule "hdkrs"]
+	path = hdkrs
+	url = https://gitlab.com/elrnv/hdkrs

@@ -7,6 +7,7 @@ project( Implicits )
 # documentation for more details, which describes several options for
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
+list( APPEND CMAKE_PREFIX_PATH "../hdkrs" )
 
 # Setup compile flags
 if(NOT CMAKE_BUILD_TYPE)
@@ -22,7 +23,10 @@ set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
+find_package( hdkrs REQUIRED )
 find_package( Implicits REQUIRED )
+
+find_library( MACOS_SECURITY Security )
 
 set( library_name SOP_Implicits )
 
@@ -31,20 +35,17 @@ houdini_generate_proto_headers( FILES src/SOP_Implicits.C )
 
 # Add a library and its source files.
 add_library( ${library_name} SHARED
-  src/mesh.C
-  src/mesh.h
-  src/interrupt.h
   src/SOP_Implicits.C
   src/SOP_Implicits.h
 )
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
-target_link_libraries( ${library_name} Houdini ${Implicits_LIBRARIES} )
+target_link_libraries( ${library_name} Houdini ${Implicits_LIBRARIES} ${MACOS_SECURITY})
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS} ${HDKRS_INCLUDE_DIRS}
 )
 
 # Sets several common target properties, such as the library's output directory.

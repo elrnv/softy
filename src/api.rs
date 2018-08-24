@@ -1,9 +1,13 @@
 /**
  * Application specific code goes here.
- * C Parameter interface and the Rust cook entry point are defined here.
+ * The Rust cook entry point is defined here.
+ * This file is intended to be completely free from C FFI except for POD types, which must be
+ * designated as `#[repr(C)]`.
  */
+
 use geo;
 use implicits;
+use hdkrs::interop::CookResult;
 
 /// A C interface for passing parameters from SOP parameters to the Rust code.
 #[repr(C)]
@@ -46,7 +50,8 @@ where
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            implicits::compute_potential(samples, surface, params.into(), check_interrupt).into()
+            let res = implicits::compute_potential(samples, surface, params.into(), check_interrupt);
+            convert_to_cookresult(res)
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())
         }
@@ -55,24 +60,16 @@ where
     }
 }
 
-/// The Rust version of the cook result enum.
-pub enum CookResult {
-    Success(String),
-    Warning(String),
-    Error(String),
-}
-
-impl From<Result<(), implicits::Error>> for CookResult {
-    fn from(res: Result<(), implicits::Error>) -> Self {
-        match res {
-            Ok(()) => CookResult::Success("".to_string()),
-            Err(implicits::Error::Interrupted) => {
-                CookResult::Error("Execution was interrupted.".to_string())
-            }
-            Err(implicits::Error::MissingNormals) => {
-                CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
-            }
-            Err(implicits::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
+fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
+    match res {
+        Ok(()) => CookResult::Success("".to_string()),
+        Err(implicits::Error::Interrupted) => {
+            CookResult::Error("Execution was interrupted.".to_string())
         }
+        Err(implicits::Error::MissingNormals) => {
+            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
+        }
+        Err(implicits::Error::Failure) =>
+            CookResult::Error("Internal Error.".to_string()),
     }
 }

@@ -3,8 +3,8 @@
 // Needed for template generation with the ds file.
 #include "SOP_Implicits.proto.h"
 
-#include "mesh.h"
-#include "interrupt.h"
+#include <hdkrs/mesh.h>
+#include <hdkrs/interrupt.h>
 
 // Required for proper loading.
 #include <UT/UT_DSOVersion.h>
@@ -15,7 +15,7 @@
 #include <PRM/PRM_TemplateBuilder.h>
 #include <OP/OP_Operator.h>
 #include <OP/OP_OperatorTable.h>
-#include <implicitshdk.h>
+#include <implicits-hdk.h>
 
 const UT_StringHolder SOP_Implicits::theSOPTypeName("hdk_implicits"_sh);
 
@@ -112,34 +112,34 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     auto &&sopparms = cookparms.parms<SOP_ImplicitsParms>();
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    implicits::PolyMesh *samplemesh = nullptr;
+    hdkrs::PolyMesh *samplemesh = nullptr;
     if (input0) {
         samplemesh = build_polymesh(input0);
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
-    implicits::PolyMesh *polymesh = nullptr;
+    hdkrs::PolyMesh *polymesh = nullptr;
     if (input1) {
         polymesh = build_polymesh(input1);
     }
 
-    InterruptChecker interrupt("Solving MLS");
+    InterruptChecker interrupt_checker("Solving MLS");
 
     // Gather parameters
-    implicits::Params implicits_params;
-    implicits_params.tolerance = sopparms.getTolerance();
-    implicits_params.radius = sopparms.getRadius();
-    implicits_params.kernel = static_cast<int>(sopparms.getKernel());
+    hdkrs::Params params;
+    params.tolerance = sopparms.getTolerance();
+    params.radius = sopparms.getRadius();
+    params.kernel = static_cast<int>(sopparms.getKernel());
 
-    implicits::CookResult res = implicits::cook( samplemesh, polymesh, implicits_params, &interrupt, check_interrupt );
+    hdkrs::CookResult res = hdkrs::cook( samplemesh, polymesh, params, &interrupt_checker, check_interrupt );
 
     switch (res.tag) {
-        case implicits::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case implicits::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case implicits::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+        case hdkrs::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
+        case hdkrs::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
+        case hdkrs::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
     }
 
-    implicits::free_result(res);
+    hdkrs::free_result(res);
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
@@ -147,6 +147,6 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     add_polymesh(detail, samplemesh);
 
     // We must release the memory using the same api that allocated it.
-    implicits::free_polymesh(polymesh);
-    implicits::free_polymesh(samplemesh);
+    hdkrs::free_polymesh(polymesh);
+    hdkrs::free_polymesh(samplemesh);
 }

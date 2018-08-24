@@ -1,0 +1,16 @@
+[package]
+name = "hdkrs"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+#[lib]
+#name = "hdkrs"
+#crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+libc = "*"
+
+[build-dependencies]
+cbindgen = "0.6"
+glob = "0.2"

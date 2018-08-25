@@ -4,11 +4,10 @@ version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 
 [dependencies]
-nalgebra = "0.14"
+nalgebra = "0.16"
 ipopt = "0.1"
 geometry-derive = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
-#geometry = { path = "../rust/geometry", features = ["io", "unstable"] }
 rayon = "1.0"
 
 [profile.release]

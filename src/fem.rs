@@ -506,16 +506,11 @@ mod tests {
 
     #[test]
     fn torus_long_test() {
-        //use std::path::PathBuf;
-        //use geo::io::save_tetmesh_ascii;
         let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
         let mut engine = FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true).unwrap();
         for _i in 0..50 {
             assert!(engine.step().is_ok());
-
-            //save_tetmesh_ascii(
-            //&engine.mesh(), &PathBuf::from(format!("./mesh{:?}.vtk", i))).unwrap();
         }
     }
 }

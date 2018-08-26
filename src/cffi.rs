@@ -1,4 +1,9 @@
 use geo;
+use geo::io::{
+    convert_tetmesh_to_vtk_format,
+    convert_polymesh_to_vtk_format,
+    vtk::writer::WriteVtk,
+};
 use geo::mesh::{
     attrib,
     topology as topo,
@@ -1024,4 +1029,69 @@ unsafe fn ptr_to_vec_of_triples<T: Copy>(num_elem: usize, data_ptr: *const T) ->
         ]);
     }
     data
+}
+
+/*
+ * Buffer stuff
+ */
+#[repr(C)]
+pub struct ByteBuffer {
+    data: *const c_char,
+    size: usize,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_byte_buffer(buf: ByteBuffer) {
+    let slice = slice::from_raw_parts_mut(buf.data as *mut u8, buf.size);
+    let _: Box<[u8]> = Box::from_raw(slice as *mut [u8]);
+}
+
+/// Write the given TetMesh into a binary VTK format returned through an appropriately sized
+/// `ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn make_tetmesh_vtk_buffer(
+    mesh: *const TetMesh,
+) -> ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
+        Ok(vtk) => {
+            let mut vec_data = Vec::<u8>::new();
+            vec_data.write_vtk(vtk);
+            let boxed_data = vec_data.into_boxed_slice();
+            let size = boxed_data.len();
+
+            ByteBuffer {
+                data: Box::into_raw(boxed_data) as *const c_char,
+                size,
+            }
+        }
+        Err(_) => ByteBuffer { data: ::std::ptr::null(), size: 0 },
+    }
+}
+
+/// Write the given PolyMesh into a binary VTK format returned through an appropriately sized
+/// `ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn make_polymesh_vtk_buffer(
+    mesh: *const PolyMesh,
+) -> ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
+        Ok(vtk) => {
+            let mut vec_data = Vec::<u8>::new();
+            vec_data.write_vtk(vtk);
+            let boxed_data = vec_data.into_boxed_slice();
+            let size = boxed_data.len();
+
+            ByteBuffer {
+                data: Box::into_raw(boxed_data) as *const c_char,
+                size,
+            }
+        }
+        Err(_) => ByteBuffer { data: ::std::ptr::null(), size: 0 },
+    }
 }

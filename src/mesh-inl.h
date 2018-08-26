@@ -1,179 +1,193 @@
-#include "mesh.h"
+#pragma once
+
 #include <GU/GU_Detail.h>
 #include <GEO/GEO_PrimTetrahedron.h>
 #include <GEO/GEO_PrimPoly.h>
 #include <GEO/GEO_PolyCounts.h>
 
 #include <vector>
-#include <array>
 #include <cassert>
+
+namespace hdkrs {
+
+// Implement OwnedPtr specializations
+
+template<>
+OwnedPtr<PolyMesh>::~OwnedPtr() {
+    free_polymesh(ptr);
+}
+
+template<>
+OwnedPtr<TetMesh>::~OwnedPtr() {
+    free_tetmesh(ptr);
+}
 
 namespace mesh {
 
-std::ostream& operator<<(std::ostream& out, hdkrs::AttribLocation where) {
+std::ostream& operator<<(std::ostream& out, AttribLocation where) {
     switch (where) {
-        case hdkrs::AttribLocation::Vertex: out << "Vertex"; break;
-        case hdkrs::AttribLocation::Face: out << "Face"; break;
-        case hdkrs::AttribLocation::Cell: out << "Cell"; break;
-        case hdkrs::AttribLocation::FaceVertex: out << "FaceVertex"; break;
-        case hdkrs::AttribLocation::CellVertex: out << "CellVertex"; break;
+        case AttribLocation::Vertex: out << "Vertex"; break;
+        case AttribLocation::Face: out << "Face"; break;
+        case AttribLocation::Cell: out << "Cell"; break;
+        case AttribLocation::FaceVertex: out << "FaceVertex"; break;
+        case AttribLocation::CellVertex: out << "CellVertex"; break;
         default: break;
     }
     return out;
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    hdkrs::add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
+    add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    hdkrs::add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
+    add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int64_t> &data)
 {
-    hdkrs::add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
+    add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    hdkrs::add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
+    add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    hdkrs::add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
+    add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::PolyMesh *polymesh,
-        hdkrs::AttribLocation where,
+        PolyMesh *polymesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64_t> &indices)
 {
-    hdkrs::add_polymesh_attrib_str(
+    add_polymesh_attrib_str(
             polymesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int8> &data)
 {
-    hdkrs::add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int32> &data)
 {
-    hdkrs::add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<int64_t> &data)
 {
-    hdkrs::add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal32> &data)
 {
-    hdkrs::add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<fpreal64> &data)
 {
-    hdkrs::add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
+    add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
 void add_attrib(
-        hdkrs::TetMesh *tetmesh,
-        hdkrs::AttribLocation where,
+        TetMesh *tetmesh,
+        AttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64_t> &indices)
 {
-    hdkrs::add_tetmesh_attrib_str(
+    add_tetmesh_attrib_str(
             tetmesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
 
 template<typename T>
-GA_PrimitiveTypeId mesh_prim_type_id();
+static GA_PrimitiveTypeId mesh_prim_type_id();
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<hdkrs::PolyMesh>() { return GA_PRIMPOLY; }
+GA_PrimitiveTypeId mesh_prim_type_id<PolyMesh>() { return GA_PRIMPOLY; }
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<hdkrs::TetMesh>() { return GA_PRIMTETRAHEDRON; }
+GA_PrimitiveTypeId mesh_prim_type_id<TetMesh>() { return GA_PRIMTETRAHEDRON; }
 
 template<typename T>
-hdkrs::AttribLocation mesh_prim_attrib_location();
+static AttribLocation mesh_prim_attrib_location();
 
 template<>
-hdkrs::AttribLocation mesh_prim_attrib_location<hdkrs::PolyMesh>() { return hdkrs::AttribLocation::Face; }
+AttribLocation mesh_prim_attrib_location<PolyMesh>() { return AttribLocation::Face; }
 
 template<>
-hdkrs::AttribLocation mesh_prim_attrib_location<hdkrs::TetMesh>() { return hdkrs::AttribLocation::Cell; }
+AttribLocation mesh_prim_attrib_location<TetMesh>() { return AttribLocation::Cell; }
 
 template<typename T>
-hdkrs::AttribLocation mesh_vertex_attrib_location();
+static AttribLocation mesh_vertex_attrib_location();
 
 template<>
-hdkrs::AttribLocation mesh_vertex_attrib_location<hdkrs::PolyMesh>() { return hdkrs::AttribLocation::FaceVertex; }
+AttribLocation mesh_vertex_attrib_location<PolyMesh>() { return AttribLocation::FaceVertex; }
 
 template<>
-hdkrs::AttribLocation mesh_vertex_attrib_location<hdkrs::TetMesh>() { return hdkrs::AttribLocation::CellVertex; }
+AttribLocation mesh_vertex_attrib_location<TetMesh>() { return AttribLocation::CellVertex; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
 // All points are marked though even ones disconnected from the primitives or connected to other
@@ -204,7 +218,7 @@ mark_points_and_vertices(
 }
 
 template<typename T, typename M, typename S = T>
-void fill_prim_attrib(
+static void fill_prim_attrib(
         const GU_Detail *detail,
         const GA_AIFTuple *aif,
         const GA_Attribute *attrib,
@@ -231,7 +245,7 @@ void fill_prim_attrib(
 }
 
 template<typename T, typename M, typename S = T>
-void fill_point_attrib(
+static void fill_point_attrib(
         const GU_Detail *detail,
         const GA_AIFTuple *aif,
         const GA_Attribute *attrib,
@@ -254,11 +268,11 @@ void fill_point_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, hdkrs::AttribLocation::Vertex, name, tuple_size, data);
+    add_attrib(mesh, AttribLocation::Vertex, name, tuple_size, data);
 }
 
 template<typename T, typename M, typename S = T>
-void fill_vertex_attrib(
+static void fill_vertex_attrib(
         const GU_Detail *detail,
         const GA_AIFTuple *aif,
         const GA_Attribute *attrib,
@@ -285,7 +299,7 @@ void fill_vertex_attrib(
 }
 
 template<typename M>
-void fill_prim_str_attrib(
+static void fill_prim_str_attrib(
         const GU_Detail *detail,
         const GA_AIFSharedStringTuple *aif,
         const GA_Attribute *attrib,
@@ -322,7 +336,7 @@ void fill_prim_str_attrib(
 }
 
 template<typename M>
-void fill_point_str_attrib(
+static void fill_point_str_attrib(
         const GU_Detail *detail,
         const GA_AIFSharedStringTuple *aif,
         const GA_Attribute *attrib,
@@ -353,11 +367,11 @@ void fill_point_str_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, hdkrs::AttribLocation::Vertex, name, tuple_size, strings, indices);
+    add_attrib(mesh, AttribLocation::Vertex, name, tuple_size, strings, indices);
 }
 
 template<typename M>
-void fill_vertex_str_attrib(
+static void fill_vertex_str_attrib(
         const GU_Detail *detail,
         const GA_AIFSharedStringTuple *aif,
         const GA_Attribute *attrib,
@@ -392,7 +406,7 @@ void fill_vertex_str_attrib(
 }
 
 template<typename M>
-void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims)
+static void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims)
 {
     // Get polygon data attributes
     for (auto it = detail->getAttributeDict(GA_ATTRIB_PRIMITIVE).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
@@ -523,7 +537,7 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
 }
 
 template<typename HandleType, typename ArrayType>
-void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
+static void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
     std::size_t i = 0;
     auto n = startoff + (arr.size/arr.tuple_size);
     for ( GA_Offset off = startoff; off < n; ++off, ++i ) {
@@ -535,63 +549,66 @@ void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
 
 /** Retrieve attributes from the mesh using the given iterator.
  */
-void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, hdkrs::AttribIter *it, GA_AttributeOwner owner) {
+static void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, GA_AttributeOwner owner) {
     while ( it ) { // it could be null, but it doesn't change
-        auto attrib = hdkrs::attrib_iter_next(it);
+        auto attrib = attrib_iter_next(it);
         if (!attrib) break;
-        auto name = hdkrs::attrib_name(attrib);
-        auto type = hdkrs::attrib_data_type(attrib);
-        if (type == hdkrs::DataType::I8 ) {
-            auto arr = hdkrs::attrib_data_i8(attrib);
+        auto name = attrib_name(attrib);
+        auto type = attrib_data_type(attrib);
+        if (type == DataType::I8 ) {
+            auto arr = attrib_data_i8(attrib);
             auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_i8(arr);
-        } else if (type == hdkrs::DataType::I32 ) {
-            auto arr = hdkrs::attrib_data_i32(attrib);
+            free_attrib_data_i8(arr);
+        } else if (type == DataType::I32 ) {
+            auto arr = attrib_data_i32(attrib);
             auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_i32(arr);
-        } else if (type == hdkrs::DataType::I64 ) {
-            auto arr = hdkrs::attrib_data_i64(attrib);
+            free_attrib_data_i32(arr);
+        } else if (type == DataType::I64 ) {
+            auto arr = attrib_data_i64(attrib);
             auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_i64(arr);
-        } else if (type == hdkrs::DataType::F32 ) {
-            auto arr = hdkrs::attrib_data_f32(attrib);
+            free_attrib_data_i64(arr);
+        } else if (type == DataType::F32 ) {
+            auto arr = attrib_data_f32(attrib);
             auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_f32(arr);
-        } else if (type == hdkrs::DataType::F64 ) {
-            auto arr = hdkrs::attrib_data_f64(attrib);
+            free_attrib_data_f32(arr);
+        } else if (type == DataType::F64 ) {
+            auto arr = attrib_data_f64(attrib);
             auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_f64(arr);
-        } else if (type == hdkrs::DataType::Str ) {
-            auto arr = hdkrs::attrib_data_str(attrib);
+            free_attrib_data_f64(arr);
+        } else if (type == DataType::Str ) {
+            auto arr = attrib_data_str(attrib);
             auto h = GA_RWHandleS(detail->addTuple(GA_STORE_STRING, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            hdkrs::free_attrib_data_str(arr);
+            free_attrib_data_str(arr);
         }
-        hdkrs::free_attribute(attrib);
+        free_attribute(attrib);
     }
-    hdkrs::free_attrib_iter(it);
+    free_attrib_iter(it);
 }
 
 /**
  * Add a tetmesh to the current detail
  */
-void add_tetmesh(GU_Detail* detail, hdkrs::TetMesh *tetmesh) {
+void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
+
+    auto tetmesh = tetmesh_ptr.get();
+
     // add tets.
     if (tetmesh) {
-        auto test_points = hdkrs::get_tetmesh_points(tetmesh);
+        auto test_points = get_tetmesh_points(tetmesh);
         std::vector<UT_Vector3> points;
 
         for (std::size_t i = 0; i < test_points.size; ++i) {
             points.push_back(UT_Vector3(test_points.array[i]));
         }
 
-        auto test_indices = hdkrs::get_tetmesh_indices(tetmesh);
+        auto test_indices = get_tetmesh_indices(tetmesh);
         if (test_indices.size > 0) {
             std::vector<int> indices;
             for (std::size_t i = 0; i < test_indices.size; ++i) {
@@ -609,24 +626,26 @@ void add_tetmesh(GU_Detail* detail, hdkrs::TetMesh *tetmesh) {
                     indices.size()/4, indices.data());
 
 
-            retrieve_attributes(detail, startptoff, hdkrs::tetmesh_attrib_iter(tetmesh, hdkrs::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-            retrieve_attributes(detail, startprimoff, hdkrs::tetmesh_attrib_iter(tetmesh, hdkrs::AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, hdkrs::tetmesh_attrib_iter(tetmesh, hdkrs::AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, tetmesh_attrib_iter(tetmesh, AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
         }
-        hdkrs::free_point_array(test_points);
-        hdkrs::free_index_array(test_indices);
+        free_point_array(test_points);
+        free_index_array(test_indices);
     }
 }
 
 /**
  * Add a polymesh to the current detail
  */
-void add_polymesh(GU_Detail* detail, hdkrs::PolyMesh *polymesh) {
+void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
+
+    auto polymesh = polymesh_ptr.get();
 
     // add polygons
     if (polymesh) {
-        auto test_points = hdkrs::get_polymesh_points(polymesh);
+        auto test_points = get_polymesh_points(polymesh);
         std::vector<UT_Vector3> points;
 
         for (std::size_t i = 0; i < test_points.size; ++i) {
@@ -639,7 +658,7 @@ void add_polymesh(GU_Detail* detail, hdkrs::PolyMesh *polymesh) {
             detail->setPos3(ptoff, points[pt_idx]);
         }
 
-        auto test_indices = hdkrs::get_polymesh_indices(polymesh);
+        auto test_indices = get_polymesh_indices(polymesh);
         if (test_indices.size > 0) {
             GEO_PolyCounts polycounts;
             std::vector<int> poly_pt_numbers;
@@ -663,17 +682,17 @@ void add_polymesh(GU_Detail* detail, hdkrs::PolyMesh *polymesh) {
                     detail, startptoff, detail->getNumPointOffsets(),
                     polycounts, poly_pt_numbers.data());
 
-            retrieve_attributes(detail, startprimoff, hdkrs::polymesh_attrib_iter(polymesh, hdkrs::AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, hdkrs::polymesh_attrib_iter(polymesh, hdkrs::AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startprimoff, polymesh_attrib_iter(polymesh, AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, polymesh_attrib_iter(polymesh, AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
         }
 
-        retrieve_attributes(detail, startptoff, hdkrs::polymesh_attrib_iter(polymesh, hdkrs::AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-        hdkrs::free_point_array(test_points);
-        hdkrs::free_index_array(test_indices);
+        retrieve_attributes(detail, startptoff, polymesh_attrib_iter(polymesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+        free_point_array(test_points);
+        free_index_array(test_indices);
     }
 }
 
-hdkrs::TetMesh *build_tetmesh(const GU_Detail *detail) {
+OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
     std::vector<std::size_t> tet_indices;
@@ -701,17 +720,17 @@ hdkrs::TetMesh *build_tetmesh(const GU_Detail *detail) {
 
     // Only creating a mesh if there are tets. Otherwise we may be simulating cloth only.
     if (num_tets > 0) {
-        hdkrs::TetMesh *tetmesh = hdkrs::make_tetmesh(tet_vertices.size(), tet_vertices.data(),
+        TetMesh *tetmesh = make_tetmesh(tet_vertices.size(), tet_vertices.data(),
                                                   tet_indices.size(), tet_indices.data());
         assert(tetmesh);
 
         transfer_attributes(detail, tetmesh, num_tets);
-        return tetmesh;
+        return OwnedPtr<TetMesh>(tetmesh);
     }
-    return nullptr;
+    return OwnedPtr<TetMesh>(nullptr);
 }
 
-hdkrs::PolyMesh *build_polymesh(const GU_Detail* detail) {
+OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     // Get polygons for the body from the second input
     std::vector<double> poly_vertices;
     std::vector<std::size_t> poly_indices;
@@ -741,12 +760,14 @@ hdkrs::PolyMesh *build_polymesh(const GU_Detail* detail) {
         }
     }
 
-    hdkrs::PolyMesh *polymesh = hdkrs::make_polymesh(poly_vertices.size(), poly_vertices.data(),
-                                                 poly_indices.size(), poly_indices.data());
+    PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
+                                       poly_indices.size(), poly_indices.data());
     assert(polymesh);
 
     transfer_attributes(detail, polymesh, num_polys);
-    return polymesh;
+    return OwnedPtr<PolyMesh>(polymesh);
 }
 
 } // namespace mesh
+
+} // namespace hdkrs

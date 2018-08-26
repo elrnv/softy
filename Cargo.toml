@@ -8,7 +8,7 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 #crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
 libc = "*"
 
 [build-dependencies]

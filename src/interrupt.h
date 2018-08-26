@@ -1,3 +1,5 @@
+#pragma once
+
 #include <UT/UT_Interrupt.h>
 
 namespace interrupt {

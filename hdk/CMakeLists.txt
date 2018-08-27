@@ -7,7 +7,6 @@ project( Implicits )
 # documentation for more details, which describes several options for
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
-list( APPEND CMAKE_PREFIX_PATH "../hdkrs" )
 
 # Setup compile flags
 if(NOT CMAKE_BUILD_TYPE)
@@ -23,7 +22,6 @@ set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
-find_package( hdkrs REQUIRED )
 find_package( Implicits REQUIRED )
 
 find_library( MACOS_SECURITY Security )
@@ -37,6 +35,8 @@ houdini_generate_proto_headers( FILES src/SOP_Implicits.C )
 add_library( ${library_name} SHARED
   src/SOP_Implicits.C
   src/SOP_Implicits.h
+  src/GEO_VtkIO.C
+  src/GEO_VtkIO.h
 )
 
 # Link against the Houdini libraries, and add required include directories and

@@ -107,18 +107,19 @@ SOP_Implicits::cookVerb() const
 void
 SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
-    using namespace mesh;
+    using namespace hdkrs;
+    using namespace hdkrs::mesh;
     using namespace interrupt;
 
     auto &&sopparms = cookparms.parms<SOP_ImplicitsParms>();
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    hdkrs::PolyMesh *samplemesh = nullptr;
+    OwnedPtr<PolyMesh> samplemesh(nullptr);
     if (input0) {
         samplemesh = build_polymesh(input0);
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
-    hdkrs::PolyMesh *polymesh = nullptr;
+    OwnedPtr<PolyMesh> polymesh(nullptr);
     if (input1) {
         polymesh = build_polymesh(input1);
     }
@@ -126,27 +127,23 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     InterruptChecker interrupt_checker("Solving MLS");
 
     // Gather parameters
-    hdkrs::Params params;
+    Params params;
     params.tolerance = sopparms.getTolerance();
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());
 
-    hdkrs::CookResult res = hdkrs::cook( samplemesh, polymesh, params, &interrupt_checker, check_interrupt );
+    CookResult res = hdkrs::cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
 
     switch (res.tag) {
-        case hdkrs::CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case hdkrs::CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case hdkrs::CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+        case CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
+        case CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
+        case CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
     }
 
-    hdkrs::free_result(res);
+    free_result(res);
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
     // Add the samples back into the current detail
-    add_polymesh(detail, samplemesh);
-
-    // We must release the memory using the same api that allocated it.
-    hdkrs::free_polymesh(polymesh);
-    hdkrs::free_polymesh(samplemesh);
+    add_polymesh(detail, std::move(samplemesh));
 }

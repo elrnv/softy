@@ -1107,10 +1107,28 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(
 
 #[derive(Debug)]
 #[repr(C)]
-pub enum Mesh {
-    Tet(*mut TetMesh),
-    Poly(*mut PolyMesh),
+pub enum MeshType {
+    TetMesh,
+    PolyMesh,
     None,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct Mesh {
+    tetmesh: *mut TetMesh,
+    polymesh: *mut PolyMesh,
+    tag: MeshType,
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Mesh {
+            tetmesh: ::std::ptr::null_mut(),
+            polymesh: ::std::ptr::null_mut(),
+            tag: MeshType::None,
+        }
+    }
 }
 
 /// Parse a given byte array into a TetMesh or a PolyMesh depending on what is stored in the
@@ -1121,7 +1139,7 @@ pub unsafe extern "C" fn parse_vtk_mesh(
     size: size_t,
 ) -> Mesh {
     if data.is_null() || size == 0 {
-        return Mesh::None;
+        return Mesh::default();
     }
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
@@ -1132,16 +1150,16 @@ pub unsafe extern "C" fn parse_vtk_mesh(
         if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
             if mesh.num_cells() > 0 {
                 let tetmesh = Box::new(TetMesh { mesh });
-                return Mesh::Tet(Box::into_raw(tetmesh));
+                return Mesh { tag: MeshType::TetMesh, tetmesh: Box::into_raw(tetmesh), ..Mesh::default() };
             }
         }
 
         if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
             if mesh.num_faces() > 0 {
                 let polymesh = Box::new(PolyMesh { mesh });
-                return Mesh::Poly(Box::into_raw(polymesh));
+                return Mesh { tag: MeshType::PolyMesh, polymesh: Box::into_raw(polymesh), ..Mesh::default() };
             }
         }
     }
-    Mesh::None
+    Mesh::default()
 }

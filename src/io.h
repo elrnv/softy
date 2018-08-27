@@ -37,7 +37,7 @@ private:
     std::size_t  _size;
 };
 
-using MeshVariant = boost::variant<OwnedPtr<PolyMesh>, OwnedPtr<TetMesh>, boost::blank>;
+using MeshVariant = boost::variant<boost::blank, OwnedPtr<PolyMesh>, OwnedPtr<TetMesh>>;
 
 MeshVariant parse_vtk_mesh(const char * data, std::size_t size);
 

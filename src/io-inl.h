@@ -17,12 +17,13 @@ MeshVariant parse_vtk_mesh(const char * data, std::size_t size) {
     MeshVariant ret((boost::blank()));
     Mesh mesh = hdkrs::parse_vtk_mesh(data, size);
     switch (mesh.tag) {
-        case Mesh::Tag::Tet:
-            ret = OwnedPtr<TetMesh>(mesh.tet._0);
+        case MeshType::TetMesh:
+            ret = OwnedPtr<TetMesh>(mesh.tetmesh);
             break;
-        case Mesh::Tag::Poly:
-            ret = OwnedPtr<PolyMesh>(mesh.poly._0);
+        case MeshType::PolyMesh:
+            ret = OwnedPtr<PolyMesh>(mesh.polymesh);
             break;
+        default: break;
     }
     return ret;
 }

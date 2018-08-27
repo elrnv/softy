@@ -1,8 +1,15 @@
-use geo;
+use geo::{
+    self,
+    NumCells,
+    NumFaces,
+};
 use geo::io::{
     convert_tetmesh_to_vtk_format,
     convert_polymesh_to_vtk_format,
+    convert_vtk_dataset_to_tetmesh,
+    convert_vtk_dataset_to_polymesh,
     vtk::writer::WriteVtk,
+    vtk::parser::parse_be as parse_vtk,
 };
 use geo::mesh::{
     attrib,
@@ -207,7 +214,7 @@ pub unsafe extern "C" fn tetmesh_attrib_iter(
         AttribLocation::CellVertex => {
             AttribIter::CellVertex(mesh.attrib_dict::<topo::CellVertexIndex>().iter())
         }
-        _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
+        _ => return ::std::ptr::null_mut::<AttribIter>(),
     });
 
     Box::into_raw(iter)
@@ -231,7 +238,7 @@ pub unsafe extern "C" fn polymesh_attrib_iter(
         AttribLocation::FaceVertex => {
             AttribIter::FaceVertex(mesh.attrib_dict::<topo::FaceVertexIndex>().iter())
         }
-        _ => return ::std::ptr::null::<AttribIter>() as *mut AttribIter,
+        _ => return ::std::ptr::null_mut::<AttribIter>(),
     });
 
     Box::into_raw(iter)
@@ -1042,8 +1049,10 @@ pub struct ByteBuffer {
 
 #[no_mangle]
 pub unsafe extern "C" fn free_byte_buffer(buf: ByteBuffer) {
-    let slice = slice::from_raw_parts_mut(buf.data as *mut u8, buf.size);
-    let _: Box<[u8]> = Box::from_raw(slice as *mut [u8]);
+    if !buf.data.is_null() && buf.size > 0 {
+        let slice = slice::from_raw_parts_mut(buf.data as *mut u8, buf.size);
+        let _: Box<[u8]> = Box::from_raw(slice as *mut [u8]);
+    }
 }
 
 /// Write the given TetMesh into a binary VTK format returned through an appropriately sized
@@ -1094,4 +1103,45 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(
         }
         Err(_) => ByteBuffer { data: ::std::ptr::null(), size: 0 },
     }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub enum Mesh {
+    Tet(*mut TetMesh),
+    Poly(*mut PolyMesh),
+    None,
+}
+
+/// Parse a given byte array into a TetMesh or a PolyMesh depending on what is stored in the
+/// buffer assuming VTK format.
+#[no_mangle]
+pub unsafe extern "C" fn parse_vtk_mesh(
+    data: *const c_char,
+    size: size_t,
+) -> Mesh {
+    if data.is_null() || size == 0 {
+        return Mesh::None;
+    }
+
+    let slice = slice::from_raw_parts_mut(data as *mut u8, size);
+
+    let vtk_data_result = parse_vtk(slice);
+    if vtk_data_result.is_done() {
+        let vtk_data = vtk_data_result.unwrap().1.data;
+        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
+            if mesh.num_cells() > 0 {
+                let tetmesh = Box::new(TetMesh { mesh });
+                return Mesh::Tet(Box::into_raw(tetmesh));
+            }
+        }
+
+        if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
+            if mesh.num_faces() > 0 {
+                let polymesh = Box::new(PolyMesh { mesh });
+                return Mesh::Poly(Box::into_raw(polymesh));
+            }
+        }
+    }
+    Mesh::None
 }

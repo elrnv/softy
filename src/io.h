@@ -28,7 +28,7 @@ public:
     static ByteBuffer write_vtk_mesh(OwnedPtr<PolyMesh> polymesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<TetMesh> tetmesh);
 
-    ByteBuffer(const char *data, std::size_t size) : _data(data), _size(size) {}
+    ByteBuffer(hdkrs::ByteBuffer buf) : _data(buf.data), _size(buf.size) {}
 private:
     ByteBuffer(const ByteBuffer&) = delete;
     ByteBuffer(ByteBuffer&&) = delete;

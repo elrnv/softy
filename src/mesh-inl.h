@@ -10,21 +10,9 @@
 
 namespace hdkrs {
 
-// Implement OwnedPtr specializations
-
-template<>
-OwnedPtr<PolyMesh>::~OwnedPtr() {
-    free_polymesh(ptr);
-}
-
-template<>
-OwnedPtr<TetMesh>::~OwnedPtr() {
-    free_tetmesh(ptr);
-}
-
 namespace mesh {
 
-std::ostream& operator<<(std::ostream& out, AttribLocation where) {
+static std::ostream& operator<<(std::ostream& out, AttribLocation where) {
     switch (where) {
         case AttribLocation::Vertex: out << "Vertex"; break;
         case AttribLocation::Face: out << "Face"; break;
@@ -36,7 +24,7 @@ std::ostream& operator<<(std::ostream& out, AttribLocation where) {
     return out;
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -46,7 +34,7 @@ void add_attrib(
     add_polymesh_attrib_i8( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -56,7 +44,7 @@ void add_attrib(
     add_polymesh_attrib_i32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -66,7 +54,7 @@ void add_attrib(
     add_polymesh_attrib_i64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -76,7 +64,7 @@ void add_attrib(
     add_polymesh_attrib_f32( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -86,7 +74,7 @@ void add_attrib(
     add_polymesh_attrib_f64( polymesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         PolyMesh *polymesh,
         AttribLocation where,
         const char *name,
@@ -99,7 +87,7 @@ void add_attrib(
             strings.data(), indices.size(), indices.data());
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -109,7 +97,7 @@ void add_attrib(
     add_tetmesh_attrib_i8( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -119,7 +107,7 @@ void add_attrib(
     add_tetmesh_attrib_i32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -129,7 +117,7 @@ void add_attrib(
     add_tetmesh_attrib_i64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -139,7 +127,7 @@ void add_attrib(
     add_tetmesh_attrib_f32( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -149,7 +137,7 @@ void add_attrib(
     add_tetmesh_attrib_f64( tetmesh, where, name, tuple_size, data.size(), data.data() );
 }
 
-void add_attrib(
+static void add_attrib(
         TetMesh *tetmesh,
         AttribLocation where,
         const char *name,
@@ -192,7 +180,7 @@ AttribLocation mesh_vertex_attrib_location<TetMesh>() { return AttribLocation::C
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
 // All points are marked though even ones disconnected from the primitives or connected to other
 // primitives.
-std::pair<std::vector<bool>, std::vector<bool>>
+static std::pair<std::vector<bool>, std::vector<bool>>
 mark_points_and_vertices(
         const GU_Detail *detail,
         GA_PrimitiveTypeId prim_type_id)
@@ -218,7 +206,8 @@ mark_points_and_vertices(
 }
 
 template<typename T, typename M, typename S = T>
-static void fill_prim_attrib(
+static void
+fill_prim_attrib(
         const GU_Detail *detail,
         const GA_AIFTuple *aif,
         const GA_Attribute *attrib,
@@ -594,7 +583,7 @@ static void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIte
 /**
  * Add a tetmesh to the current detail
  */
-void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
+static void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     auto tetmesh = tetmesh_ptr.get();
@@ -638,7 +627,7 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
 /**
  * Add a polymesh to the current detail
  */
-void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
+static void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     auto polymesh = polymesh_ptr.get();
@@ -692,7 +681,7 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
     }
 }
 
-OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
+static OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
     std::vector<std::size_t> tet_indices;
@@ -730,7 +719,7 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     return OwnedPtr<TetMesh>(nullptr);
 }
 
-OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
+static OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     // Get polygons for the body from the second input
     std::vector<double> poly_vertices;
     std::vector<std::size_t> poly_indices;

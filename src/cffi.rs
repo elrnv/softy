@@ -1067,7 +1067,7 @@ pub unsafe extern "C" fn make_tetmesh_vtk_buffer(
     match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk(vtk);
+            vec_data.write_vtk_be(vtk);
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();
 
@@ -1092,7 +1092,7 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(
     match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk(vtk);
+            vec_data.write_vtk_be(vtk);
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();
 

@@ -9,11 +9,28 @@ namespace io {
 
 class ByteBuffer {
 public:
+    ByteBuffer(hdkrs::ByteBuffer buf) : _data(buf.data), _size(buf.size) {}
+    ByteBuffer(ByteBuffer&& buf) : _data(buf._data), _size(buf._size) {
+        buf._data = nullptr;
+        buf._size = 0;
+    }
     ~ByteBuffer() {
         hdkrs::ByteBuffer buf;
         buf.data = _data;
         buf.size = _size;
         free_byte_buffer(buf);
+    }
+
+    ByteBuffer& operator=(ByteBuffer && other) {
+        if (this != &other) {
+            this->~ByteBuffer();
+
+            _data = other._data;
+            _size = other._size;
+            other._data = nullptr;
+            other._size = 0;
+        }
+        return *this;
     }
 
     // Get pointer to the allocated buffer data.
@@ -28,10 +45,8 @@ public:
     static ByteBuffer write_vtk_mesh(OwnedPtr<PolyMesh> polymesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<TetMesh> tetmesh);
 
-    ByteBuffer(hdkrs::ByteBuffer buf) : _data(buf.data), _size(buf.size) {}
 private:
-    ByteBuffer(const ByteBuffer&) = delete;
-    ByteBuffer(ByteBuffer&&) = delete;
+    ByteBuffer(const ByteBuffer&) = delete; // Byte buffer is move only
 
     const char * _data;
     std::size_t  _size;

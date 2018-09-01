@@ -599,6 +599,7 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, 
 /**
  * Add a tetmesh to the current detail
  */
+__attribute__((unused))
 void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
@@ -643,6 +644,7 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
 /**
  * Add a polymesh to the current detail
  */
+__attribute__((unused))
 void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
@@ -697,6 +699,7 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
     }
 }
 
+__attribute__((unused))
 OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
@@ -735,6 +738,7 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     return OwnedPtr<TetMesh>(nullptr);
 }
 
+__attribute__((unused))
 OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     // Get polygons for the body from the second input
     std::vector<double> poly_vertices;

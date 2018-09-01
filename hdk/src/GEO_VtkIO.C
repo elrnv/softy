@@ -7,6 +7,7 @@
 #include <UT/UT_IOTable.h>
 #include <boost/variant.hpp>
 #include <hdkrs/io.h>
+#include <hdkrs/mesh.h>
 #include <iostream>
 
 #include "GEO_VtkIO.h"

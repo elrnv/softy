@@ -53,18 +53,5 @@ private:
     T *_ptr;
 };
 
-
-// Implement OwnedPtr specializations
-
-template<>
-inline OwnedPtr<PolyMesh>::~OwnedPtr() {
-    free_polymesh(_ptr);
-}
-
-template<>
-inline OwnedPtr<TetMesh>::~OwnedPtr() {
-    free_tetmesh(_ptr);
-}
-
 } // namespace hdkrs
 

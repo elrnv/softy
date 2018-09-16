@@ -6,7 +6,7 @@ use geo::math::{Matrix3, Vector3};
 use geo::prim::Tetrahedron;
 use geo::mesh::{self, attrib, Attrib, topology::*, tetmesh::TetCell};
 use geo::ops::{ShapeMatrix, Volume};
-use geo::reinterpret::*;
+use reinterpret::*;
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;

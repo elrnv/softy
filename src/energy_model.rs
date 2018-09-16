@@ -5,8 +5,8 @@ use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::math::{Matrix3, Vector3};
 use TetMesh;
-use geo::reinterpret::*;
 use rayon::prelude::*;
+use reinterpret::*;
 
 /// Non-linear problem.
 pub struct NeohookeanEnergyModel<'a> {

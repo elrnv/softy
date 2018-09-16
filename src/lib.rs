@@ -4,6 +4,7 @@ extern crate geometry as geo;
 extern crate ipopt;
 extern crate nalgebra as na;
 extern crate rayon;
+extern crate reinterpret;
 
 mod bench;
 mod energy;

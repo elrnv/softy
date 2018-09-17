@@ -289,7 +289,7 @@ impl<'a, F: FnMut() -> bool + Sync> NonLinearProblem<'a, F> {
         _ls_trials: Index,
     ) -> bool {
         self.iterations += 1;
-        (self.interrupt_checker)()
+        !(self.interrupt_checker)()
     }
 }
 

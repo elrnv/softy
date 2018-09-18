@@ -24,6 +24,8 @@ set( Sim_DIR ${CMAKE_SOURCE_DIR} )
 find_package( Houdini REQUIRED )
 find_package( Sim REQUIRED )
 
+find_library( MACOS_SECURITY Security )
+
 set( library_name SOP_Sim )
 
 # Code generation for the embedded DS file in SOP_Sim.C.
@@ -37,11 +39,11 @@ add_library( ${library_name} SHARED
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
-target_link_libraries( ${library_name} Houdini ${Sim_LIBRARIES} )
+target_link_libraries( ${library_name} Houdini ${Sim_LIBRARIES} ${MACOS_SECURITY} )
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR} ${Sim_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR} ${Sim_INCLUDE_DIRS} ${HDKRS_INCLUDE_DIRS}
 )
 
 # Sets several common target properties, such as the library's output directory.

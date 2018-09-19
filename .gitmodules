@@ -1,0 +1,3 @@
+[submodule "softy"]
+	path = softy
+	url = https://gitlab.com/elrnv/softy

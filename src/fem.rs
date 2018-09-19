@@ -439,7 +439,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            FemEngine::new(&mut mesh, STATIC_PARAMS, || true)
+            FemEngine::new(&mut mesh, STATIC_PARAMS, || false)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -474,7 +474,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true)
+            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -485,7 +485,7 @@ mod tests {
     fn torus_medium_test() {
         let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true)
+            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -497,7 +497,7 @@ mod tests {
         let mut mesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true)
+            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -508,7 +508,7 @@ mod tests {
     fn torus_long_test() {
         let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
-        let mut engine = FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || true).unwrap();
+        let mut engine = FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false).unwrap();
         for _i in 0..50 {
             assert!(engine.step().is_ok());
         }

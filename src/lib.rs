@@ -10,6 +10,7 @@ mod bench;
 mod energy;
 mod energy_model;
 mod fem;
+mod solver;
 
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;

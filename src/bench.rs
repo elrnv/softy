@@ -5,10 +5,22 @@
 #[cfg(all(feature = "unstable", test))]
 mod bench {
     extern crate test;
-    use fem::run;
-    use geo::mesh::{Attrib, TetMesh};
-    use geo::topology::VertexIndex;
     use self::test::Bencher;
+    use fem::{FemEngine, MaterialProperties, SimParams};
+    use geo::mesh::topology::VertexIndex;
+    use geo::mesh::{Attrib, TetMesh};
+
+    const DYNAMIC_PARAMS: SimParams = SimParams {
+        material: MaterialProperties {
+            bulk_modulus: 1e6,
+            shear_modulus: 1e5,
+            density: 1000.0,
+            damping: 0.0,
+        },
+        gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.01),
+        tolerance: 1e-9,
+    };
 
     #[bench]
     fn three_tets_bench(b: &mut Bencher) {
@@ -35,7 +47,14 @@ mod bench {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .ok();
 
-        b.iter(|| assert!(run(&mut mesh, || true).is_ok()))
+        b.iter(|| {
+            assert!(
+                FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
+                    .unwrap()
+                    .step()
+                    .is_ok()
+            )
+        })
     }
 
 }

@@ -1,12 +1,12 @@
-use std::cell::{Ref, RefCell, RefMut};
 use energy::*;
-use energy_model::NeohookeanEnergyModel;
-use ipopt::{self, Index, Ipopt, Number};
+use energy_model::{ElasticTetMeshEnergy, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};
-use geo::prim::Tetrahedron;
-use geo::mesh::{self, attrib, Attrib, topology::*, tetmesh::TetCell};
+use geo::mesh::{self, attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
+use geo::prim::Tetrahedron;
+use ipopt::{self, Index, Ipopt, Number};
 use reinterpret::*;
+use std::cell::{Ref, RefCell, RefMut};
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
@@ -42,6 +42,7 @@ impl MaterialProperties {
     }
 }
 
+/// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SimParams {
     pub material: MaterialProperties,
@@ -71,8 +72,8 @@ pub struct FemEngine<'a, F: FnMut() -> bool + Sync> {
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 struct NonLinearProblem<'a, F: FnMut() -> bool + Sync> {
-    /// Neohookean energy model.
-    pub energy_model: RefCell<NeohookeanEnergyModel<'a>>,
+    /// Elastic energy model.
+    pub energy_model: RefCell<ElasticTetMeshEnergy<'a>>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: F,
@@ -83,6 +84,13 @@ struct NonLinearProblem<'a, F: FnMut() -> bool + Sync> {
 }
 
 impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
+    const VELOCITY_ATTRIB: &'static str = "vel";
+    const REFERENCE_POSITION_ATTRIB: &'static str = "ref";
+    const REFERENCE_VOLUME_ATTRIB: &'static str = "ref_volume";
+    const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &'static str = "ref_shape_mtx_inv";
+    const STRAIN_ENERGY_ATTRIB: &'static str = "strain_energy";
+    const ELASTIC_FORCE_ATTRIB: &'static str = "elastic_force";
+
     /// Run the optimization solver on one time step.
     pub fn new(
         mesh: &'a mut TetMesh,
@@ -91,34 +99,48 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
     ) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
         let verts = mesh.vertex_positions().to_vec();
-        mesh.attrib_or_add_data::<_, VertexIndex>("ref", verts.as_slice())?;
+        mesh.attrib_or_add_data::<_, VertexIndex>(
+            Self::REFERENCE_POSITION_ATTRIB,
+            verts.as_slice(),
+        )?;
 
-        mesh.attrib_or_add::<_, VertexIndex>("vel", [0.0; 3])?;
+        mesh.attrib_or_add::<_, VertexIndex>(Self::VELOCITY_ATTRIB, [0.0; 3])?;
 
         {
-            // compute reference element signed volumes
-            let ref_volumes: Vec<f64> = mesh.cell_iter()
+            // Compute reference element signed volumes
+            let ref_volumes: Vec<f64> = mesh
+                .cell_iter()
                 .map(|cell| ref_tet(mesh, cell).signed_volume())
                 .collect();
             if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
                 return Err(Error::InvertedReferenceElement);
             }
-            mesh.set_attrib_data::<_, CellIndex>("ref_volume", ref_volumes.as_slice())?;
+            mesh.set_attrib_data::<_, CellIndex>(
+                Self::REFERENCE_VOLUME_ATTRIB,
+                ref_volumes.as_slice(),
+            )?;
         }
 
         {
-            // compute reference shape matrix inverses
-            let ref_shape_mtx_inverses: Vec<Matrix3<f64>> = mesh.cell_iter()
+            // Compute reference shape matrix inverses
+            let ref_shape_mtx_inverses: Vec<Matrix3<f64>> = mesh
+                .cell_iter()
                 .map(|cell| {
                     let ref_shape_matrix = ref_tet(mesh, cell).shape_matrix();
                     // We assume that ref_shape_matrices are non-singular.
                     ref_shape_matrix.inverse().unwrap()
-                })
-                .collect();
+                }).collect();
             mesh.set_attrib_data::<_, CellIndex>(
-                "ref_shape_mtx_inv",
+                Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                 ref_shape_mtx_inverses.as_slice(),
             )?;
+        }
+
+        {
+            // Add elastic strain energy and elastic force attributes.
+            // These will be computed at the end of the time step.
+            mesh.set_attrib::<_, CellIndex>(Self::STRAIN_ENERGY_ATTRIB, 0f64)?;
+            mesh.set_attrib::<_, VertexIndex>(Self::ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
 
         let (lambda, mu) = params.material.lame_parameters();
@@ -130,7 +152,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
             params.gravity[1] as f64,
             params.gravity[2] as f64,
         ];
-        let mut energy_model = NeohookeanEnergyModel::new(mesh)
+        let mut energy_model = ElasticTetMeshEnergy::new(mesh)
             .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
         if let Some(dt) = params.time_step {
@@ -167,104 +189,152 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         self.solver.problem().energy_model.borrow().solid.clone()
     }
 
-    /// Run the optimization solver on one time step.
-    pub fn step(&mut self) -> Result<SolveResult, Error> {
-        let FemEngine { ref mut solver } = *self;
+    /// Given a tetmesh, compute the strain energy per tetrahedron.
+    fn compute_strain_energy_attrib(mesh: &mut TetMesh, lambda: f64, mu: f64) {
+        // Overwrite the "strain_energy" attribute.
+        let mut strain = mesh
+            .remove_attrib::<CellIndex>(Self::STRAIN_ENERGY_ATTRIB)
+            .unwrap();
+        strain
+            .iter_mut::<f64>()
+            .unwrap()
+            .zip(
+                mesh.attrib_iter::<f64, CellIndex>(Self::REFERENCE_VOLUME_ATTRIB)
+                    .unwrap(),
+            ).zip(
+                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
+                    Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                ).unwrap(),
+            ).zip(mesh.tet_iter())
+            .for_each(|(((strain, &vol), &ref_shape_mtx_inv), tet)| {
+                *strain =
+                    NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
+                        .elastic_energy()
+            });
+
+        mesh.insert_attrib::<CellIndex>(Self::STRAIN_ENERGY_ATTRIB, strain)
+            .unwrap();
+    }
+
+    /// Given a tetmesh, compute the elastic forces per vertex.
+    fn compute_elastic_forces(
+        forces: &mut [Vector3<f64>],
+        mesh: &mut TetMesh,
+        lambda: f64,
+        mu: f64,
+    ) {
+        // Reset forces
+        for f in forces.iter_mut() {
+            *f = Vector3::zeros();
+        }
+
+        let grad_iter = mesh
+            .attrib_iter::<f64, CellIndex>(Self::REFERENCE_VOLUME_ATTRIB)
+            .unwrap()
+            .zip(
+                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
+                    Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                ).unwrap(),
+            ).zip(mesh.tet_iter())
+            .map(|((&vol, &ref_shape_mtx_inv), tet)| {
+                NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
+                    .elastic_energy_gradient()
+            });
+
+        for (grad, cell) in grad_iter.zip(mesh.cells().iter()) {
+            for j in 0..4 {
+                forces[cell[j]] -= grad[j];
+            }
+        }
+    }
+
+    /// Given a tetmesh, compute the elastic forces per vertex, and save it at a vertex attribute.
+    fn compute_elastic_forces_attrib(mesh: &mut TetMesh, lambda: f64, mu: f64) {
+        let mut forces_attrib = mesh
+            .remove_attrib::<VertexIndex>(Self::ELASTIC_FORCE_ATTRIB)
+            .unwrap();
+
+        {
+            let forces: &mut [Vector3<f64>] =
+                reinterpret_mut_slice(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+
+            Self::compute_elastic_forces(forces, mesh, lambda, mu);
+        }
+
+        // Reinsert forces back into the attrib map
+        mesh.insert_attrib::<VertexIndex>(Self::ELASTIC_FORCE_ATTRIB, forces_attrib)
+            .unwrap();
+    }
+
+    /// Update the state of the system, which includes new positions and velocities stored on the
+    /// mesh, as well as previous positions stored in `prev_pos`.
+    fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], new_pos: &[Vector3<f64>]) {
+        // Write back the velocity for the next iteration.
+        for ((vel, prev_x), &x) in mesh
+            .attrib_iter_mut::<[f64; 3], VertexIndex>(Self::VELOCITY_ATTRIB)
+            .unwrap()
+            .zip(prev_pos.iter_mut())
+            .zip(new_pos.iter())
+        {
+            *vel = (x - *prev_x).into();
+            *prev_x = x;
+        }
+    }
+
+    /// Solve one step without updating the mesh. This function is useful for testing and
+    /// benchmarking. Otherwise it is intended to be used internally.
+    pub fn solve_step(&mut self) -> Result<SolveResult, Error> {
         // Solve non-linear problem
-        let (status, obj) = solver.solve();
+        let (status, obj) = self.solver.solve();
 
         let result = SolveResult {
-            iterations: solver.problem().iteration_count() as u32,
+            iterations: self.solver.problem().iteration_count() as u32,
             objective_value: obj,
         };
 
-        // Update mesh
-        let NeohookeanEnergyModel {
-            solid: ref mut mesh,
-            ref mut prev_pos,
-            ..
-        } = *solver.problem().energy_model.borrow_mut();
-
         match status {
             ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
-                let prev_pos = prev_pos.as_mut_slice();
-                let new_pos: &[Vector3<f64>] = reinterpret_slice(solver.solution());
-                // Write back the velocity for the next iteration.
-                for ((vel, prev_x), &x) in mesh.attrib_iter_mut::<[f64; 3], VertexIndex>("vel")
-                    .unwrap()
-                    .zip(prev_pos.iter_mut())
-                    .zip(new_pos.iter())
-                {
-                    *vel = (x - *prev_x).into();
-                    *prev_x = x;
-                }
-
-                // Write back elastic strain for visualization.
-                let (lambda, mu) = solver.problem().params.material.lame_parameters();
-                let strain: Vec<f64> = mesh.attrib_iter::<f64, CellIndex>("ref_volume")
-                    .unwrap()
-                    .zip(
-                        mesh.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                            .unwrap(),
-                    )
-                    .zip(mesh.tet_iter())
-                    .map(|((&vol, &ref_shape_mtx_inv), tet)| {
-                        NeohookeanEnergyModel::element_strain_energy(
-                            tet.shape_matrix(),
-                            ref_shape_mtx_inv,
-                            vol,
-                            lambda,
-                            mu,
-                        )
-                    })
-                    .collect();
-
-                mesh.set_attrib_data::<_, CellIndex>("elastic_strain", strain.as_slice())
-                    .unwrap();
-
-                // Write back elastic forces on each node.
-                let mut forces = vec![Vector3::<f64>::zeros(); mesh.num_vertices()];
-
-                for (grad, cell) in mesh.attrib_iter::<f64, CellIndex>("ref_volume")
-                    .unwrap()
-                    .zip(
-                        mesh.attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
-                            .unwrap(),
-                    )
-                    .zip(mesh.tet_iter())
-                    .map(|((&vol, &ref_shape_mtx_inv), tet)| {
-                        NeohookeanEnergyModel::element_energy_gradient(
-                            tet.shape_matrix(),
-                            ref_shape_mtx_inv,
-                            vol,
-                            lambda,
-                            mu,
-                        )
-                    })
-                    .zip(mesh.cells().iter())
-                {
-                    for j in 0..4 {
-                        forces[cell[j]] -= grad[j];
-                    }
-                }
-
-                mesh.set_attrib_data::<[f64; 3], VertexIndex>(
-                    "elastic_force",
-                    reinterpret_vec(forces).as_slice(),
-                ).unwrap();
-
                 Ok(result)
             }
             e => Err(Error::SolveError(e, result)),
         }
     }
+
+    /// Run the optimization solver on one time step.
+    pub fn step(&mut self) -> Result<SolveResult, Error> {
+        let step_result = self.solve_step();
+
+        let FemEngine { ref mut solver } = *self;
+
+        let (lambda, mu) = solver.problem().params.material.lame_parameters();
+
+        let ElasticTetMeshEnergy {
+            solid: ref mut mesh,
+            ref mut prev_pos,
+            ..
+        } = *solver.problem().energy_model.borrow_mut();
+
+        // On success, update the mesh with new positions and useful metrics.
+        if let Ok(_) = step_result {
+            let new_pos: &[Vector3<f64>] = reinterpret_slice(solver.solution());
+            Self::update_state(mesh, prev_pos.as_mut_slice(), new_pos);
+
+            // Write back elastic strain energy for visualization.
+            Self::compute_strain_energy_attrib(mesh, lambda, mu);
+
+            // Write back elastic forces on each node.
+            Self::compute_elastic_forces_attrib(mesh, lambda, mu);
+        }
+
+        step_result
+    }
 }
 
 impl<'a, F: FnMut() -> bool + Sync> NonLinearProblem<'a, F> {
-    pub fn energy_model(&self) -> Ref<NeohookeanEnergyModel<'a>> {
+    pub fn energy_model(&self) -> Ref<ElasticTetMeshEnergy<'a>> {
         self.energy_model.borrow()
     }
-    pub fn energy_model_mut(&self) -> RefMut<NeohookeanEnergyModel<'a>> {
+    pub fn energy_model_mut(&self) -> RefMut<ElasticTetMeshEnergy<'a>> {
         self.energy_model.borrow_mut()
     }
 

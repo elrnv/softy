@@ -21,7 +21,10 @@ impl<T> MatrixElementTriplet<T> {
     }
 }
 
-/// Energy trait. This describes relationship between strain and stress within an elastic material.
+/// Energy trait. Any energy interface that can be implemented by any quantity that has first and
+/// second order derivatives. Implementing this interface allows the quantity to be used in an
+/// optimization solver. Becasue these functions may be called many times in an inner loop it is
+/// advised for implementers to reuse allocated memory as much as possible.
 pub trait Energy<T: Scalar> {
     /// Compute the energy of the current configuration.
     fn energy(&mut self) -> T;

@@ -11,8 +11,15 @@ geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", 
 rayon = "1.0"
 reinterpret = "0.1"
 
+[dev-dependencies]
+criterion = { version = "0.2", features=['real_blackbox'] }
+
 [profile.release]
 debug = true
 
 [features]
 unstable = []
+
+[[bench]]
+name = "step_performance"
+harness = false

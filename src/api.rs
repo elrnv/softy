@@ -47,18 +47,27 @@ impl Into<softy::SimParams> for SimParams {
     }
 }
 
-/// Main entry point to Rust code.
-pub fn cook<F>(
-    tetmesh: Option<&mut geo::mesh::TetMesh<f64>>,
-    polymesh: Option<&mut geo::mesh::PolyMesh<f64>>,
+/// Construct a new simulation solver.
+#[inline]
+pub fn new_solver<'a, F>(
+    tetmesh: Option<&'a mut geo::mesh::TetMesh<f64>>,
+    _polymesh: Option<&'a mut geo::mesh::PolyMesh<f64>>,
     params: SimParams,
     check_interrupt: F,
-    ) -> CookResult
+    ) -> Result<Box<softy::FemEngine<'a, F>>, softy::Error>
 where
     F: Fn() -> bool + Sync + Send,
 {
-    let res = softy::sim(tetmesh, polymesh, params.into(), check_interrupt);
-    convert_to_cookresult(res)
+    softy::FemEngine::new(tetmesh, params.into(), check_interrupt)
+        .map(|solver| Box::new(solver))
+}
+
+/// Compute a step of the simulation with the given solver.
+pub fn step<F>(solver: &mut softy::FemEngine<F>) -> CookResult
+where
+    F: Fn() -> bool + Sync + Send,
+{
+    convert_to_cookresult(solver.step())
 }
 
 fn convert_to_cookresult(res: softy::SimResult) -> CookResult {

@@ -15,7 +15,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{FemEngine, MaterialProperties, SimParams};
+pub use fem::{FemEngine, MaterialProperties, SimParams, Error};
 
 pub enum SimResult {
     Success(String),

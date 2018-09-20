@@ -189,6 +189,10 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         self.solver.problem().energy_model.borrow().solid.clone()
     }
 
+    pub fn params(&self) -> SimParams {
+        self.solver.problem().params
+    }
+
     /// Given a tetmesh, compute the strain energy per tetrahedron.
     fn compute_strain_energy_attrib(mesh: &mut TetMesh, lambda: f64, mu: f64) {
         // Overwrite the "strain_energy" attribute.
@@ -306,7 +310,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
 
         let FemEngine { ref mut solver } = *self;
 
-        let (lambda, mu) = solver.problem().params.material.lame_parameters();
+        let (lambda, mu) = self.params().material.lame_parameters();
 
         let ElasticTetMeshEnergy {
             solid: ref mut mesh,

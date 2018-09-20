@@ -308,9 +308,9 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         let step_result = self.solve_step();
 
-        let FemEngine { ref mut solver } = *self;
-
         let (lambda, mu) = self.params().material.lame_parameters();
+
+        let FemEngine { ref mut solver } = *self;
 
         let ElasticTetMeshEnergy {
             solid: ref mut mesh,

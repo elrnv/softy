@@ -14,7 +14,9 @@ use geo::io::{
 use geo::mesh::{
     attrib,
     topology as topo,
-    Attrib
+    Attrib,
+    PolyMesh as GeoPolyMesh,
+    TetMesh as GeoTetMesh,
 };
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use std::any::TypeId;
@@ -22,17 +24,11 @@ use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
 
-/// Wrapper around a Rust polygon mesh struct.
-#[derive(Clone, Debug)]
-pub struct PolyMesh {
-    pub mesh: geo::mesh::PolyMesh<f64>,
-}
+/// A Rust polygon mesh struct.
+pub type PolyMesh = GeoPolyMesh<f64>;
 
-/// Wrapper around a Rust tetmesh struct.
-#[derive(Clone, Debug)]
-pub struct TetMesh {
-    pub mesh: geo::mesh::TetMesh<f64>,
-}
+/// A Rust tetmesh struct.
+pub type TetMesh = GeoTetMesh<f64>;
 
 #[repr(C)]
 pub enum CookResultTag {
@@ -78,7 +74,7 @@ pub unsafe extern "C" fn get_tetmesh_points(mesh: *const TetMesh) -> PointArray 
     assert!(!mesh.is_null());
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    for &pt in (*mesh).mesh.vertex_positions().iter() {
+    for &pt in (*mesh).vertex_positions().iter() {
         pts.push(pt)
     }
 
@@ -98,7 +94,7 @@ pub unsafe extern "C" fn get_polymesh_points(mesh: *const PolyMesh) -> PointArra
     assert!(!mesh.is_null());
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    for &pt in (*mesh).mesh.vertex_iter() {
+    for &pt in (*mesh).vertex_iter() {
         pts.push(pt)
     }
 
@@ -118,7 +114,7 @@ pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for cell in (*mesh).mesh.cell_iter() {
+    for cell in (*mesh).cell_iter() {
         for &idx in cell.get().iter() {
             indices.push(idx);
         }
@@ -142,7 +138,7 @@ pub unsafe extern "C" fn get_polymesh_indices(mesh: *const PolyMesh) -> IndexArr
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for poly in (*mesh).mesh.face_iter() {
+    for poly in (*mesh).face_iter() {
         indices.push(poly.len());
         for &idx in poly.iter() {
             indices.push(idx);
@@ -177,6 +173,12 @@ mod missing_structs {
 
     #[allow(dead_code)]
     struct CString;
+
+    #[allow(dead_code)]
+    struct GeoPolyMesh<T> { _p: ::std::marker::PhantomData<T> }
+
+    #[allow(dead_code)]
+    struct GeoTetMesh<T> { _p: ::std::marker::PhantomData<T> }
 }
 
 pub enum AttribIter<'a> {
@@ -204,7 +206,7 @@ pub unsafe extern "C" fn tetmesh_attrib_iter(
 ) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr).mesh;
+    let mesh = &mut (*mesh_ptr);
 
     let iter = Box::new(match loc {
         AttribLocation::Vertex => {
@@ -228,7 +230,7 @@ pub unsafe extern "C" fn polymesh_attrib_iter(
 ) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr).mesh;
+    let mesh = &mut (*mesh_ptr);
 
     let iter = Box::new(match loc {
         AttribLocation::Vertex => {
@@ -652,9 +654,9 @@ pub unsafe extern "C" fn make_polymesh(
     let indices = slice::from_raw_parts(indices, nindices);
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let polymesh = Box::new(PolyMesh {
-        mesh: geo::mesh::PolyMesh::new(verts, indices),
-    });
+    let polymesh = Box::new(
+        geo::mesh::PolyMesh::new(verts, indices),
+    );
 
     Box::into_raw(polymesh)
 }
@@ -675,9 +677,9 @@ pub unsafe extern "C" fn make_tetmesh(
     let indices = slice::from_raw_parts(indices, nindices).to_vec();
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
 
-    let tetmesh = Box::new(TetMesh {
-        mesh: geo::mesh::TetMesh::new(verts, indices),
-    });
+    let tetmesh = Box::new(
+        geo::mesh::TetMesh::new(verts, indices),
+    );
 
     Box::into_raw(tetmesh)
 }
@@ -746,19 +748,19 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
                 },
                 AttribLocation::Face => {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
                 },
                 AttribLocation::FaceVertex => {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
@@ -772,19 +774,19 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
                 },
                 AttribLocation::Cell=> {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::CellIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::CellIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
                 },
                 AttribLocation::CellVertex => {
-                    match (*$mesh).mesh.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
+                    match (*$mesh).add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
                         Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
                         Ok(_) => {}
                     }
@@ -1064,7 +1066,7 @@ pub unsafe extern "C" fn make_tetmesh_vtk_buffer(
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
+    match convert_tetmesh_to_vtk_format(&(*mesh)) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
             vec_data.write_vtk_be(vtk);
@@ -1089,7 +1091,7 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
+    match convert_polymesh_to_vtk_format(&(*mesh)) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
             vec_data.write_vtk_be(vtk);
@@ -1149,14 +1151,14 @@ pub unsafe extern "C" fn parse_vtk_mesh(
         let vtk_data = vtk_data_result.unwrap().1.data;
         if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
             if mesh.num_cells() > 0 {
-                let tetmesh = Box::new(TetMesh { mesh });
+                let tetmesh = Box::new(mesh);
                 return Mesh { tag: MeshType::TetMesh, tetmesh: Box::into_raw(tetmesh), ..Mesh::default() };
             }
         }
 
         if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
             if mesh.num_faces() > 0 {
-                let polymesh = Box::new(PolyMesh { mesh });
+                let polymesh = Box::new(mesh);
                 return Mesh { tag: MeshType::PolyMesh, polymesh: Box::into_raw(polymesh), ..Mesh::default() };
             }
         }

@@ -2,9 +2,9 @@
 //! This module defines utility functions for translating C types to rust types.
 //!
 
-use geo;
 pub use libc::c_void;
 use std::ffi::CString;
+use std::ptr::NonNull;
 use cffi;
 
 //
@@ -56,46 +56,51 @@ impl From<CookResult> for cffi::CookResult {
 // Translate mesh data structures
 //
 
-pub trait Mesh {
-    type MeshType;
+//pub trait Mesh {
+//    type MeshType;
+//
+//    fn mesh_mut(&mut self) -> &mut Self::MeshType;
+//    fn mesh_ref(&self) -> &Self::MeshType;
+//    fn mesh(self) -> Self::MeshType;
+//}
+//
+////TODO: the following can be implemented automatically with a procedural derive macro.
+//impl Mesh for cffi::TetMesh {
+//    type MeshType = geo::mesh::TetMesh<f64>;
+//    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
+//    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
+//    fn mesh(self) -> Self::MeshType { self.mesh }
+//}
+//
+//impl Mesh for cffi::PolyMesh {
+//    type MeshType = geo::mesh::PolyMesh<f64>;
+//    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
+//    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
+//    fn mesh(self) -> Self::MeshType { self.mesh }
+//}
+//
+///// Utility to convert a mesh pointer to an `Option<&mut Mesh>` type.
+///// Although this function does a `nullptr` check, it is still unsafe since the pointer can be
+///// invalid.
+//pub unsafe fn mesh_mut<'a, M: Mesh + 'a>(mesh_ptr: *mut M) -> Option<&'a mut <M as Mesh>::MeshType> {
+//    if mesh_ptr.is_null() {
+//        None
+//    } else {
+//        Some((*mesh_ptr).mesh_mut())
+//    }
+//}
+//
+//pub unsafe fn mesh_box<M: Mesh>(mesh_ptr: *mut M) -> Option<Box<<M as Mesh>::MeshType>> {
+//    if mesh_ptr.is_null() {
+//        None
+//    } else {
+//        let mesh_box = Box::from_raw(mesh_ptr);
+//        Some(Box::new((*mesh_box).mesh()))
+//    }
+//}
+//
 
-    fn mesh_mut(&mut self) -> &mut Self::MeshType;
-    fn mesh_ref(&self) -> &Self::MeshType;
-    fn mesh(self) -> Self::MeshType;
+/// A convenience utility to convert a mutable pointer to an optional mutable reference.
+pub unsafe fn as_mut<'a, T: 'a>(ptr: *mut T) -> Option<&'a mut T> {
+    NonNull::new(ptr).map(|x| &mut *x.as_ptr())
 }
-
-//TODO: the following can be implemented automatically with a procedural derive macro.
-impl Mesh for cffi::TetMesh {
-    type MeshType = geo::mesh::TetMesh<f64>;
-    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
-    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
-    fn mesh(self) -> Self::MeshType { self.mesh }
-}
-
-impl Mesh for cffi::PolyMesh {
-    type MeshType = geo::mesh::PolyMesh<f64>;
-    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
-    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
-    fn mesh(self) -> Self::MeshType { self.mesh }
-}
-
-/// Utility to convert a mesh pointer to an `Option<&mut Mesh>` type.
-/// Although this function does a `nullptr` check, it is still unsafe since the pointer can be
-/// invalid.
-pub unsafe fn mesh_mut<'a, M: Mesh + 'a>(mesh_ptr: *mut M) -> Option<&'a mut <M as Mesh>::MeshType> {
-    if mesh_ptr.is_null() {
-        None
-    } else {
-        Some((*mesh_ptr).mesh_mut())
-    }
-}
-
-pub unsafe fn mesh_box<M: Mesh>(mesh_ptr: *mut M) -> Option<Box<<M as Mesh>::MeshType>> {
-    if mesh_ptr.is_null() {
-        None
-    } else {
-        let mesh_box = Box::from_raw(mesh_ptr);
-        Some(Box::new((*mesh_box).mesh()))
-    }
-}
-

@@ -726,10 +726,10 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
         }
     }
 
-    // Only creating a mesh if there are tets. Otherwise we may be simulating cloth only.
+    // Only creating a mesh if there are tets.
     if (num_tets > 0) {
         TetMesh *tetmesh = make_tetmesh(tet_vertices.size(), tet_vertices.data(),
-                                                  tet_indices.size(), tet_indices.data());
+                                        tet_indices.size(), tet_indices.data());
         assert(tetmesh);
 
         transfer_attributes(detail, tetmesh, num_tets);
@@ -740,16 +740,15 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
 
 __attribute__((unused))
 OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
-    // Get polygons for the body from the second input
     std::vector<double> poly_vertices;
     std::vector<std::size_t> poly_indices;
 
     for ( GA_Offset pt_off : detail->getPointRange() )
     {
-        UT_Vector3 pt = detail->getPos3(pt_off);
-        poly_vertices.push_back( static_cast<double>(pt[0]) );
-        poly_vertices.push_back( static_cast<double>(pt[1]) );
-        poly_vertices.push_back( static_cast<double>(pt[2]) );
+        UT_Vector3 pos = detail->getPos3(pt_off);
+        poly_vertices.push_back( static_cast<double>(pos[0]) );
+        poly_vertices.push_back( static_cast<double>(pos[1]) );
+        poly_vertices.push_back( static_cast<double>(pos[2]) );
     }
 
     std::size_t num_polys = 0;
@@ -776,6 +775,26 @@ OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     transfer_attributes(detail, polymesh, num_polys);
     return OwnedPtr<PolyMesh>(polymesh);
 }
+
+//__attribute__((unused))
+//OwnedPtr<PolyMesh> build_point_cloud(const GU_Detail* detail) {
+//    std::vector<double> vertices;
+//
+//    for ( GA_Offset pt_off : detail->getPointRange() )
+//    {
+//        UT_Vector3 pos = detail->getPos3(pt_off);
+//        vertices.push_back( static_cast<double>(pos[0]) );
+//        vertices.push_back( static_cast<double>(pos[1]) );
+//        vertices.push_back( static_cast<double>(pos[2]) );
+//    }
+//
+//    PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
+//                                       poly_indices.size(), poly_indices.data());
+//    assert(polymesh);
+//
+//    transfer_attributes(detail, polymesh, num_polys);
+//    return OwnedPtr<PolyMesh>(polymesh);
+//}
 
 } // namespace mesh
 

@@ -53,54 +53,15 @@ impl From<CookResult> for cffi::CookResult {
 }
 
 //
-// Translate mesh data structures
-//
-
-//pub trait Mesh {
-//    type MeshType;
-//
-//    fn mesh_mut(&mut self) -> &mut Self::MeshType;
-//    fn mesh_ref(&self) -> &Self::MeshType;
-//    fn mesh(self) -> Self::MeshType;
-//}
-//
-////TODO: the following can be implemented automatically with a procedural derive macro.
-//impl Mesh for cffi::TetMesh {
-//    type MeshType = geo::mesh::TetMesh<f64>;
-//    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
-//    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
-//    fn mesh(self) -> Self::MeshType { self.mesh }
-//}
-//
-//impl Mesh for cffi::PolyMesh {
-//    type MeshType = geo::mesh::PolyMesh<f64>;
-//    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
-//    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
-//    fn mesh(self) -> Self::MeshType { self.mesh }
-//}
-//
-///// Utility to convert a mesh pointer to an `Option<&mut Mesh>` type.
-///// Although this function does a `nullptr` check, it is still unsafe since the pointer can be
-///// invalid.
-//pub unsafe fn mesh_mut<'a, M: Mesh + 'a>(mesh_ptr: *mut M) -> Option<&'a mut <M as Mesh>::MeshType> {
-//    if mesh_ptr.is_null() {
-//        None
-//    } else {
-//        Some((*mesh_ptr).mesh_mut())
-//    }
-//}
-//
-//pub unsafe fn mesh_box<M: Mesh>(mesh_ptr: *mut M) -> Option<Box<<M as Mesh>::MeshType>> {
-//    if mesh_ptr.is_null() {
-//        None
-//    } else {
-//        let mesh_box = Box::from_raw(mesh_ptr);
-//        Some(Box::new((*mesh_box).mesh()))
-//    }
-//}
+// Translate pointers
 //
 
 /// A convenience utility to convert a mutable pointer to an optional mutable reference.
 pub unsafe fn as_mut<'a, T: 'a>(ptr: *mut T) -> Option<&'a mut T> {
     NonNull::new(ptr).map(|x| &mut *x.as_ptr())
+}
+
+/// A convenience utility to convert a mutable pointer to an optional owning box.
+pub unsafe fn into_box<'a, T: 'a>(ptr: *mut T) -> Option<Box<T>> {
+    NonNull::new(ptr).map(|x| Box::from_raw(x.as_ptr()))
 }

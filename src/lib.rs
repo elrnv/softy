@@ -5,6 +5,7 @@ extern crate hdkrs;
 mod api;
 
 pub use hdkrs::{cffi, interop};
+pub use std::ptr::NonNull;
 
 /// Main entry point from Houdini SOP.
 /// The purpose of this function is to cleanup the inputs for use in Rust code.
@@ -17,8 +18,8 @@ pub unsafe extern "C" fn cook(
     check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
 ) -> cffi::CookResult {
     api::cook(
-        interop::mesh(samplemesh),
-        interop::mesh(polymesh),
+        interop::as_mut(samplemesh),
+        interop::as_mut(polymesh),
         params.into(),
         interop::interrupt_callback(interrupt_checker, check_interrupt),
     ).into()

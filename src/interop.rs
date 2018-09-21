@@ -15,7 +15,7 @@ use cffi;
 pub unsafe fn interrupt_callback(checker: *mut c_void,
                                  check_interrupt: Option<extern "C" fn(*const c_void) -> bool>
                                  ) -> impl Fn() -> bool {
-    let interrupt_ref = &*checker; // conversion needed sicne *mut c_void is not Send
+    let interrupt_ref = &*checker; // conversion needed since *mut c_void is not Send
     move || match check_interrupt {
         Some(cb) => cb(interrupt_ref as *const c_void),
         None => true,
@@ -59,28 +59,43 @@ impl From<CookResult> for cffi::CookResult {
 pub trait Mesh {
     type MeshType;
 
-    fn mesh(&mut self) -> &mut Self::MeshType; // consuming getter
+    fn mesh_mut(&mut self) -> &mut Self::MeshType;
+    fn mesh_ref(&self) -> &Self::MeshType;
+    fn mesh(self) -> Self::MeshType;
 }
 
 //TODO: the following can be implemented automatically with a procedural derive macro.
 impl Mesh for cffi::TetMesh {
     type MeshType = geo::mesh::TetMesh<f64>;
-    fn mesh(&mut self) -> &mut Self::MeshType  { &mut self.mesh }
+    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
+    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
+    fn mesh(self) -> Self::MeshType { self.mesh }
 }
 
 impl Mesh for cffi::PolyMesh {
     type MeshType = geo::mesh::PolyMesh<f64>;
-    fn mesh(&mut self) -> &mut Self::MeshType { &mut self.mesh }
+    fn mesh_mut(&mut self) -> &mut Self::MeshType { &mut self.mesh }
+    fn mesh_ref(&self) -> &Self::MeshType { &self.mesh }
+    fn mesh(self) -> Self::MeshType { self.mesh }
 }
 
-/// Utility to convert a mesh pointer to an Rust `Option<&mut Mesh>` type.
+/// Utility to convert a mesh pointer to an `Option<&mut Mesh>` type.
 /// Although this function does a `nullptr` check, it is still unsafe since the pointer can be
 /// invalid.
-pub unsafe fn mesh<'a, M: Mesh + 'a>(mesh_ptr: *mut M) -> Option<&'a mut <M as Mesh>::MeshType> {
+pub unsafe fn mesh_mut<'a, M: Mesh + 'a>(mesh_ptr: *mut M) -> Option<&'a mut <M as Mesh>::MeshType> {
     if mesh_ptr.is_null() {
         None
     } else {
-        Some((*mesh_ptr).mesh())
+        Some((*mesh_ptr).mesh_mut())
+    }
+}
+
+pub unsafe fn mesh_box<M: Mesh>(mesh_ptr: *mut M) -> Option<Box<<M as Mesh>::MeshType>> {
+    if mesh_ptr.is_null() {
+        None
+    } else {
+        let mesh_box = Box::from_raw(mesh_ptr);
+        Some(Box::new((*mesh_box).mesh()))
     }
 }
 

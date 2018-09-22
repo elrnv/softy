@@ -1,10 +1,10 @@
-use softy;
 use geo::mesh::{PolyMesh, TetMesh};
 use hdkrs::interop::CookResult;
+use softy;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use std::collections::{HashMap};
-use SimParams;
 use MaterialProperties;
+use SimParams;
 
 mod solver;
 
@@ -47,12 +47,16 @@ fn get_solver(
     tetmesh: Option<Box<TetMesh<f64>>>,
     _polymesh: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
-) -> Result<(u32, Arc<Mutex<dyn Solver + Send>>), Error>
-{
+) -> Result<(u32, Arc<Mutex<dyn Solver + Send>>), Error> {
     //let reg_solver = get_solver_from_registry(solver_id, &registry);
     // Verify that the given id points to a valid solver.
     let reg_solver = solver_id.and_then(|id| {
-        SOLVER_REGISTRY.read().unwrap().solver_table.get(&id).map(|x| (id, Arc::clone(x)))
+        SOLVER_REGISTRY
+            .read()
+            .unwrap()
+            .solver_table
+            .get(&id)
+            .map(|x| (id, Arc::clone(x)))
     });
 
     if let Some((id, solver)) = reg_solver {
@@ -60,13 +64,16 @@ fn get_solver(
     } else {
         // Given solver id is invalid, need to create a new solver.
         if let Some(tetmesh) = tetmesh {
-            let solver = match softy::FemEngine::new({*tetmesh}, params.into()) {
+            let solver = match softy::FemEngine::new({ *tetmesh }, params.into()) {
                 Ok(solver) => solver,
                 Err(err) => return Err(Error::SolverCreate(err)),
             };
 
             {
-                let SolverRegistry { ref mut key_counter, ref mut solver_table } = *SOLVER_REGISTRY.write().unwrap();
+                let SolverRegistry {
+                    ref mut key_counter,
+                    ref mut solver_table,
+                } = *SOLVER_REGISTRY.write().unwrap();
 
                 // Find a place in the registry to insert the new solver
                 let mut counter = 0_u32; // use this to catch the case when registry is full.
@@ -79,9 +86,11 @@ fn get_solver(
                         break None;
                     }
                 };
-                
+
                 if let Some(id) = vacant_id {
-                    let new_solver = solver_table.entry(id).or_insert(Arc::new(Mutex::new(solver)));
+                    let new_solver = solver_table
+                        .entry(id)
+                        .or_insert(Arc::new(Mutex::new(solver)));
                     Ok((id, Arc::clone(new_solver)))
                 } else {
                     Err(Error::RegistryFull)
@@ -96,12 +105,13 @@ fn get_solver(
 impl Into<softy::SimParams> for SimParams {
     fn into(self) -> softy::SimParams {
         let SimParams {
-            material: MaterialProperties {
-                bulk_modulus,
-                shear_modulus,
-                density,
-                damping,
-            },
+            material:
+                MaterialProperties {
+                    bulk_modulus,
+                    shear_modulus,
+                    density,
+                    damping,
+                },
             time_step,
             gravity,
             tolerance,
@@ -113,7 +123,11 @@ impl Into<softy::SimParams> for SimParams {
                 density,
                 damping,
             },
-            time_step: if time_step > 0.0 { Some(time_step) } else { None },
+            time_step: if time_step > 0.0 {
+                Some(time_step)
+            } else {
+                None
+            },
             gravity: [0.0, -gravity, 0.0],
             tolerance,
         }
@@ -128,7 +142,7 @@ pub(crate) fn cook<F>(
     polymesh: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
     check_interrupt: F,
-    ) -> (Option<(u32, TetMesh<f64>)>, CookResult)
+) -> (Option<(u32, TetMesh<f64>)>, CookResult)
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {
@@ -140,7 +154,10 @@ where
             let solver_tetmesh = solver.mesh_ref().clone();
             (Some((solver_id, solver_tetmesh)), cook_result)
         }
-        Err(err)=> (None, CookResult::Error(format!("Couldn't find or create a valid solver: {:?}", err))),
+        Err(err) => (
+            None,
+            CookResult::Error(format!("Couldn't find or create a valid solver: {:?}", err)),
+        ),
     }
 }
 
@@ -151,4 +168,3 @@ fn convert_to_cookresult(res: softy::SimResult) -> CookResult {
         softy::SimResult::Error(msg) => CookResult::Error(msg),
     }
 }
-

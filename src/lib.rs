@@ -46,7 +46,11 @@ pub unsafe extern "C" fn cook(
     check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
 ) -> SolveResult {
     let (data, cook_result) = api::cook(
-        if solver_id < 0 { None } else { Some(solver_id as u32) },
+        if solver_id < 0 {
+            None
+        } else {
+            Some(solver_id as u32)
+        },
         interop::into_box(tetmesh),
         interop::into_box(polymesh),
         sim_params.into(),
@@ -68,4 +72,3 @@ pub unsafe extern "C" fn cook(
         }
     }
 }
-

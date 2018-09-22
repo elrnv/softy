@@ -1,4 +1,4 @@
-use softy::{TetMesh, FemEngine, SolveResult, Error};
+use softy::{Error, FemEngine, SolveResult, TetMesh};
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856

@@ -10,6 +10,7 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 [dependencies]
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
 libc = "*"
+reinterpret = "0.1"
 
 [build-dependencies]
 cbindgen = "0.6"

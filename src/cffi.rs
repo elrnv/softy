@@ -24,6 +24,7 @@ use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
+use reinterpret::reinterpret_slice;
 
 /// A Rust polygon mesh struct.
 pub type PolyMesh = GeoPolyMesh<f64>;
@@ -75,11 +76,10 @@ pub struct IndexArray {
 
 
 macro_rules! get_points_impl {
-    ($name:ident($mesh_ty:ty)) => {
-        #[no_mangle]
-        pub unsafe extern "C" fn $name(mesh: *const $mesh_ty) -> PointArray {
-            assert!(!mesh.is_null());
-            let mut pts: Vec<[f64; 3]> = (*mesh).vertex_positions().to_vec();
+    ($mesh:ident) => {
+        {
+            assert!(!$mesh.is_null());
+            let mut pts: Vec<[f64; 3]> = (*$mesh).vertex_positions().to_vec();
 
             let arr = PointArray {
                 capacity: pts.capacity(),
@@ -94,9 +94,20 @@ macro_rules! get_points_impl {
     }
 }
 
-get_points_impl!(get_pointcloud_points(PointCloud));
-get_points_impl!(get_tetmesh_points(TetMesh));
-get_points_impl!(get_polymesh_points(PolyMesh));
+#[no_mangle]
+pub unsafe extern "C" fn get_pointcloud_points(ptcloud: *const PointCloud) -> PointArray {
+    get_points_impl!(ptcloud)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_tetmesh_points(mesh: *const TetMesh) -> PointArray {
+    get_points_impl!(mesh)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_polymesh_points(mesh: *const PolyMesh) -> PointArray {
+    get_points_impl!(mesh)
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray {
@@ -651,26 +662,49 @@ pub enum AttribLocation {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn make_pointcloud(
+    ncoords: size_t,
+    coords: *const c_double,
+) -> *mut PointCloud {
+    // check invariants
+    assert!(
+        ncoords % 3 == 0,
+        "Given coordinate array size is not a multiple of 3."
+    );
+    let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
+    let ptcloud = Box::new( geo::mesh::PointCloud::new(verts) );
+    Box::into_raw(ptcloud)
+}
+
+macro_rules! make_mesh_impl {
+    ($mesh_ty:ident, $ncoords:ident, $coords:ident, $convert:expr) => {
+        {
+            // check invariants
+            assert!(
+                $ncoords % 3 == 0,
+                "Given coordinate array size is not a multiple of 3."
+                );
+
+            let indices = $convert;
+            let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
+
+            let mesh = Box::new(
+                geo::mesh::$mesh_ty::new(verts, indices),
+                );
+
+            Box::into_raw(mesh)
+        }
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn make_polymesh(
     ncoords: size_t,
     coords: *const c_double,
     nindices: size_t,
     indices: *const size_t,
 ) -> *mut PolyMesh {
-    // check invariants
-    assert!(
-        ncoords % 3 == 0,
-        "Given coordinate array size is not a multiple of 3."
-    );
-
-    let indices = slice::from_raw_parts(indices, nindices);
-    let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
-
-    let polymesh = Box::new(
-        geo::mesh::PolyMesh::new(verts, indices),
-    );
-
-    Box::into_raw(polymesh)
+    make_mesh_impl!(PolyMesh, ncoords, coords, slice::from_raw_parts(indices, nindices))
 }
 
 #[no_mangle]
@@ -680,20 +714,7 @@ pub unsafe extern "C" fn make_tetmesh(
     nindices: size_t,
     indices: *const size_t,
 ) -> *mut TetMesh {
-    // check invariants
-    assert!(
-        ncoords % 3 == 0,
-        "Given coordinate array size is not a multiple of 3."
-    );
-
-    let indices = slice::from_raw_parts(indices, nindices).to_vec();
-    let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
-
-    let tetmesh = Box::new(
-        geo::mesh::TetMesh::new(verts, indices),
-    );
-
-    Box::into_raw(tetmesh)
+    make_mesh_impl!(TetMesh, ncoords, coords, slice::from_raw_parts(indices, nindices).to_vec())
 }
 
 #[no_mangle]
@@ -715,25 +736,32 @@ pub unsafe extern "C" fn free_polymesh(mesh: *mut PolyMesh) {
 /// `size` is the number of elements returned in the vector.
 macro_rules! ptr_to_vec_of_arrays {
     ($size:ident, $data:ident, $ty:ty) => {{
+        //slice::from_raw_parts($data, $size).to_vec()
         slice::from_raw_parts($data, $size).to_vec()
     }};
     ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {{
-        assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
-        let nelem = $size / $tuple_size;
-        let mut data = Vec::with_capacity(nelem);
-        for i in 0..nelem as isize {
-            let mut s: [$ty; $tuple_size] = ::std::mem::uninitialized();
-            for k in 0..$tuple_size {
-                s[k] = (*$data.offset($tuple_size * i + k as isize)).clone();
-            }
+        reinterpret_slice::<_, [$ty;$tuple_size]>(slice::from_raw_parts($data, $size)).to_vec()
+        //assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
+        //let nelem = $size / $tuple_size;
+        //let mut data = Vec::with_capacity(nelem);
+        //for i in 0..nelem as isize {
+        //    let mut s: [$ty; $tuple_size] = ::std::mem::uninitialized();
+        //    for k in 0..$tuple_size {
+        //        s[k] = (*$data.offset($tuple_size * i + k as isize)).clone();
+        //    }
 
-            data.push(s);
-        }
-        data
+        //    data.push(s);
+        //}
+        //data
     }};
 }
 
 macro_rules! impl_add_attrib {
+    (_impl PointCloud, $data_type:ty, $mesh:ident,
+     $len:ident, $data:ident, $name:ident, $loc:ident) => {
+        let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
+        impl_add_attrib!(_impl_points $mesh, $loc, $name, vec);
+    };
     (_impl PolyMesh, $data_type:ty, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
@@ -744,6 +772,11 @@ macro_rules! impl_add_attrib {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
         impl_add_attrib!(_impl_volume $mesh, $loc, $name, vec);
     };
+    (_impl PointCloud, $data_type:ty, $tuple_size:expr, $mesh:ident,
+     $len:ident, $data:ident, $name:ident, $loc:ident) => {
+        let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
+        impl_add_attrib!(_impl_points $mesh, $loc, $name, vec);
+    };
     (_impl PolyMesh, $data_type:ty, $tuple_size:expr, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
@@ -753,6 +786,20 @@ macro_rules! impl_add_attrib {
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
         impl_add_attrib!(_impl_volume $mesh, $loc, $name, vec);
+    };
+    // Points only attributes
+    (_impl_points $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
+        {
+            match $loc {
+                AttribLocation::Vertex => {
+                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
+                        Ok(_) => {}
+                    }
+                },
+                _ => (),
+            };
+        }
     };
     // Surface type meshes like tri- or quad-meshes typically have face attributes but no
     // cell attributes.
@@ -836,6 +883,9 @@ macro_rules! impl_add_attrib {
         }
     };
     // Helpers for the implementation for string attributes below.
+    (_impl_str PointCloud, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
+        impl_add_attrib!(_impl_points $mesh, $loc, $name, $vec);
+    };
     (_impl_str PolyMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         impl_add_attrib!(_impl_surface $mesh, $loc, $name, $vec);
     };
@@ -876,6 +926,74 @@ macro_rules! impl_add_attrib {
         }
     }
 }
+
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_f32(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    len: size_t,
+    data: *const c_float,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_float);
+}
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_f64(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    len: size_t,
+    data: *const c_double,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_double);
+}
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_i8(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    len: size_t,
+    data: *const c_schar,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_schar);
+}
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_i32(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    len: size_t,
+    data: *const c_int,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_int);
+}
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_i64(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    len: size_t,
+    data: *const i64,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: i64);
+}
+
+
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
@@ -942,6 +1060,8 @@ pub unsafe extern "C" fn add_polymesh_attrib_i64(
     impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
+
+
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
 pub unsafe extern "C" fn add_tetmesh_attrib_f32(
@@ -1007,6 +1127,23 @@ pub unsafe extern "C" fn add_tetmesh_attrib_i64(
     impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
+
+
+/// If the given mesh is null, this function will panic.
+#[no_mangle]
+pub unsafe extern "C" fn add_pointcloud_attrib_str(
+    mesh: *mut PointCloud,
+    loc: AttribLocation,
+    name: *const c_char,
+    tuple_size: size_t,
+    nstrings: size_t,
+    strings: *const *const c_char,
+    len: size_t,
+    data: *const i64,
+) {
+    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+}
+
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
 pub unsafe extern "C" fn add_polymesh_attrib_str(
@@ -1036,6 +1173,7 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
 ) {
     impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
+
 
 /// Helper routine for converting C-style data to `[T;3]`s.
 /// `num` is the number of arrays to output, which means that `data_ptr` must point to an array of

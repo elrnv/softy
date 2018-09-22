@@ -4,7 +4,7 @@ use geo::math::{Matrix3, Vector3};
 use geo::mesh::{self, attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
-use ipopt::{self, Index, Number, Ipopt, SolveDataRef};
+use ipopt::{self, Index, Ipopt, Number, SolveDataRef};
 use reinterpret::*;
 
 pub type TetMesh = mesh::TetMesh<f64>;
@@ -91,10 +91,7 @@ impl FemEngine {
     const ELASTIC_FORCE_ATTRIB: &'static str = "elastic_force";
 
     /// Run the optimization solver on one time step.
-    pub fn new(
-        mut mesh: TetMesh,
-        params: SimParams,
-    ) -> Result<Self, Error> {
+    pub fn new(mut mesh: TetMesh, params: SimParams) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
         let verts = mesh.vertex_positions().to_vec();
         mesh.attrib_or_add_data::<_, VertexIndex>(
@@ -316,9 +313,7 @@ impl FemEngine {
         let FemEngine { ref mut solver } = *self;
 
         let SolveDataRef {
-            problem,
-            solution,
-            ..
+            problem, solution, ..
         } = solver.data();
 
         let new_pos: &[Vector3<f64>] = reinterpret_slice(solution);
@@ -512,12 +507,7 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(
-            FemEngine::new(mesh, STATIC_PARAMS)
-                .unwrap()
-                .step()
-                .is_ok()
-        );
+        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
@@ -547,35 +537,19 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(
-            FemEngine::new(mesh, DYNAMIC_PARAMS)
-                .unwrap()
-                .step()
-                .is_ok()
-        );
+        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
     fn torus_medium_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        assert!(
-            FemEngine::new(mesh, DYNAMIC_PARAMS)
-                .unwrap()
-                .step()
-                .is_ok()
-        );
+        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
     fn torus_large_test() {
-        let mesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
-        assert!(
-            FemEngine::new(mesh, DYNAMIC_PARAMS)
-                .unwrap()
-                .step()
-                .is_ok()
-        );
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
+        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]

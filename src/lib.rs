@@ -15,7 +15,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{FemEngine, MaterialProperties, SimParams, SolveResult, Error};
+pub use fem::{Error, FemEngine, MaterialProperties, SimParams, SolveResult};
 
 pub enum SimResult {
     Success(String),
@@ -48,8 +48,9 @@ impl Into<SimResult> for Result<fem::SolveResult, fem::Error> {
             Ok(fem::SolveResult {
                 iterations,
                 objective_value,
-            }) =>
-                SimResult::Success(format!("Iterations: {}\nObjective: {}", iterations, objective_value).into()),
+            }) => SimResult::Success(
+                format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
+            ),
             Err(err) => err.into(),
         }
     }
@@ -60,8 +61,7 @@ pub fn sim(
     _polymesh: Option<PolyMesh>,
     sim_params: SimParams,
     interrupter: Option<Box<FnMut() -> bool>>,
-) -> SimResult
-{
+) -> SimResult {
     if let Some(mesh) = tetmesh {
         match FemEngine::new(mesh, sim_params) {
             Ok(mut engine) => {
@@ -74,10 +74,11 @@ pub fn sim(
                         iterations,
                         objective_value,
                     }) => SimResult::Success(
-                        format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
-                        ),
+                        format!("Iterations: {}\nObjective: {}", iterations, objective_value)
+                            .into(),
+                    ),
                 }
-            },
+            }
             Err(e) => e.into(),
         }
     } else {
@@ -88,7 +89,7 @@ pub fn sim(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::mesh::{Attrib, TetMesh, topology::*};
+    use geo::mesh::{topology::*, Attrib, TetMesh};
 
     const STATIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
@@ -129,11 +130,9 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(
-            match sim(Some(mesh), None, STATIC_PARAMS, None) {
-                SimResult::Success(_) => true,
-                _ => false,
-            }
-        );
+        assert!(match sim(Some(mesh), None, STATIC_PARAMS, None) {
+            SimResult::Success(_) => true,
+            _ => false,
+        });
     }
 }

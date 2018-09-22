@@ -2,19 +2,20 @@
 //! This module defines utility functions for translating C types to rust types.
 //!
 
+use cffi;
 pub use libc::c_void;
 use std::ffi::CString;
 use std::ptr::NonNull;
-use cffi;
 
 //
 // Translate interrupt callback
 //
 
 /// Utility to cast the void pointer to the interrupt checker function a valid Rust type.
-pub unsafe fn interrupt_callback(checker: *mut c_void,
-                                 check_interrupt: Option<extern "C" fn(*const c_void) -> bool>
-                                 ) -> impl Fn() -> bool {
+pub unsafe fn interrupt_callback(
+    checker: *mut c_void,
+    check_interrupt: Option<extern "C" fn(*const c_void) -> bool>,
+) -> impl Fn() -> bool {
     let interrupt_ref = &*checker; // conversion needed since *mut c_void is not Send
     move || match check_interrupt {
         Some(cb) => cb(interrupt_ref as *const c_void),

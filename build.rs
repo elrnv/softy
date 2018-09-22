@@ -1,10 +1,10 @@
 extern crate cbindgen;
 extern crate glob;
 
-use std::env;
-use std::path::{Path, PathBuf};
-use std::fs;
 use glob::glob;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -36,10 +36,9 @@ fn main() {
                 let header = src.file_name().unwrap();
                 let dst = target_dir.join(Path::new(&header));
                 println!("copying {:?} to {:?}", src, dst);
-                fs::copy(&src, &dst)
-                    .expect(&format!("Failed to copy header {:?}", header));
+                fs::copy(&src, &dst).expect(&format!("Failed to copy header {:?}", header));
             }
-            Err(e) => println!("{:?}", e)
+            Err(e) => println!("{:?}", e),
         }
     }
 }
@@ -53,8 +52,10 @@ fn target_dir(package_name: &str) -> PathBuf {
     }
     let target_dir = target_dir.join(package_name.to_string());
     if !target_dir.is_dir() {
-        fs::create_dir(&target_dir)
-            .expect(&format!("Failed to create target directory: {:?}", target_dir));
+        fs::create_dir(&target_dir).expect(&format!(
+            "Failed to create target directory: {:?}",
+            target_dir
+        ));
     }
 
     target_dir

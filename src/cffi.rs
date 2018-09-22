@@ -1,30 +1,18 @@
-use geo::{
-    self,
-    NumCells,
-    NumFaces,
-};
 use geo::io::{
-    convert_tetmesh_to_vtk_format,
-    convert_polymesh_to_vtk_format,
-    convert_vtk_dataset_to_tetmesh,
-    convert_vtk_dataset_to_polymesh,
-    vtk::writer::WriteVtk,
-    vtk::parser::parse_be as parse_vtk,
+    convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
+    convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
 use geo::mesh::{
-    attrib,
-    topology as topo,
-    Attrib,
-    PolyMesh as GeoPolyMesh,
+    attrib, topology as topo, Attrib, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
     TetMesh as GeoTetMesh,
-    PointCloud as GeoPointCloud,
 };
+use geo::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
+use reinterpret::reinterpret_slice;
 use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
-use reinterpret::reinterpret_slice;
 
 /// A Rust polygon mesh struct.
 pub type PolyMesh = GeoPolyMesh<f64>;
@@ -74,24 +62,21 @@ pub struct IndexArray {
     array: *mut size_t,
 }
 
-
 macro_rules! get_points_impl {
-    ($mesh:ident) => {
-        {
-            assert!(!$mesh.is_null());
-            let mut pts: Vec<[f64; 3]> = (*$mesh).vertex_positions().to_vec();
+    ($mesh:ident) => {{
+        assert!(!$mesh.is_null());
+        let mut pts: Vec<[f64; 3]> = (*$mesh).vertex_positions().to_vec();
 
-            let arr = PointArray {
-                capacity: pts.capacity(),
-                size: pts.len(),
-                array: pts.as_mut_slice().as_mut_ptr(),
-            };
+        let arr = PointArray {
+            capacity: pts.capacity(),
+            size: pts.len(),
+            array: pts.as_mut_slice().as_mut_ptr(),
+        };
 
-            ::std::mem::forget(pts);
+        ::std::mem::forget(pts);
 
-            arr
-        }
-    }
+        arr
+    }};
 }
 
 #[no_mangle]
@@ -175,13 +160,19 @@ mod missing_structs {
     struct CString;
 
     #[allow(dead_code)]
-    struct GeoPolyMesh<T> { _p: ::std::marker::PhantomData<T> }
+    struct GeoPolyMesh<T> {
+        _p: ::std::marker::PhantomData<T>,
+    }
 
     #[allow(dead_code)]
-    struct GeoTetMesh<T> { _p: ::std::marker::PhantomData<T> }
+    struct GeoTetMesh<T> {
+        _p: ::std::marker::PhantomData<T>,
+    }
 
     #[allow(dead_code)]
-    struct GeoPointCloud<T> { _p: ::std::marker::PhantomData<T> }
+    struct GeoPointCloud<T> {
+        _p: ::std::marker::PhantomData<T>,
+    }
 }
 
 pub enum AttribIter<'a> {
@@ -672,29 +663,25 @@ pub unsafe extern "C" fn make_pointcloud(
         "Given coordinate array size is not a multiple of 3."
     );
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
-    let ptcloud = Box::new( geo::mesh::PointCloud::new(verts) );
+    let ptcloud = Box::new(geo::mesh::PointCloud::new(verts));
     Box::into_raw(ptcloud)
 }
 
 macro_rules! make_mesh_impl {
-    ($mesh_ty:ident, $ncoords:ident, $coords:ident, $convert:expr) => {
-        {
-            // check invariants
-            assert!(
-                $ncoords % 3 == 0,
-                "Given coordinate array size is not a multiple of 3."
-                );
+    ($mesh_ty:ident, $ncoords:ident, $coords:ident, $convert:expr) => {{
+        // check invariants
+        assert!(
+            $ncoords % 3 == 0,
+            "Given coordinate array size is not a multiple of 3."
+        );
 
-            let indices = $convert;
-            let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
+        let indices = $convert;
+        let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
 
-            let mesh = Box::new(
-                geo::mesh::$mesh_ty::new(verts, indices),
-                );
+        let mesh = Box::new(geo::mesh::$mesh_ty::new(verts, indices));
 
-            Box::into_raw(mesh)
-        }
-    }
+        Box::into_raw(mesh)
+    }};
 }
 
 #[no_mangle]
@@ -704,7 +691,12 @@ pub unsafe extern "C" fn make_polymesh(
     nindices: size_t,
     indices: *const size_t,
 ) -> *mut PolyMesh {
-    make_mesh_impl!(PolyMesh, ncoords, coords, slice::from_raw_parts(indices, nindices))
+    make_mesh_impl!(
+        PolyMesh,
+        ncoords,
+        coords,
+        slice::from_raw_parts(indices, nindices)
+    )
 }
 
 #[no_mangle]
@@ -714,7 +706,12 @@ pub unsafe extern "C" fn make_tetmesh(
     nindices: size_t,
     indices: *const size_t,
 ) -> *mut TetMesh {
-    make_mesh_impl!(TetMesh, ncoords, coords, slice::from_raw_parts(indices, nindices).to_vec())
+    make_mesh_impl!(
+        TetMesh,
+        ncoords,
+        coords,
+        slice::from_raw_parts(indices, nindices).to_vec()
+    )
 }
 
 #[no_mangle]
@@ -740,7 +737,7 @@ macro_rules! ptr_to_vec_of_arrays {
         slice::from_raw_parts($data, $size).to_vec()
     }};
     ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {{
-        reinterpret_slice::<_, [$ty;$tuple_size]>(slice::from_raw_parts($data, $size)).to_vec()
+        reinterpret_slice::<_, [$ty; $tuple_size]>(slice::from_raw_parts($data, $size)).to_vec()
         //assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
         //let nelem = $size / $tuple_size;
         //let mut data = Vec::with_capacity(nelem);
@@ -927,7 +924,6 @@ macro_rules! impl_add_attrib {
     }
 }
 
-
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
 pub unsafe extern "C" fn add_pointcloud_attrib_f32(
@@ -992,8 +988,6 @@ pub unsafe extern "C" fn add_pointcloud_attrib_i64(
 ) {
     impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: i64);
 }
-
-
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
@@ -1060,8 +1054,6 @@ pub unsafe extern "C" fn add_polymesh_attrib_i64(
     impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
-
-
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
 pub unsafe extern "C" fn add_tetmesh_attrib_f32(
@@ -1127,8 +1119,6 @@ pub unsafe extern "C" fn add_tetmesh_attrib_i64(
     impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
-
-
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
 pub unsafe extern "C" fn add_pointcloud_attrib_str(
@@ -1174,7 +1164,6 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
-
 /// Helper routine for converting C-style data to `[T;3]`s.
 /// `num` is the number of arrays to output, which means that `data_ptr` must point to an array of
 /// `n*3` elements.
@@ -1210,9 +1199,7 @@ pub unsafe extern "C" fn free_byte_buffer(buf: ByteBuffer) {
 /// Write the given TetMesh into a binary VTK format returned through an appropriately sized
 /// `ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn make_tetmesh_vtk_buffer(
-    mesh: *const TetMesh,
-) -> ByteBuffer {
+pub unsafe extern "C" fn make_tetmesh_vtk_buffer(mesh: *const TetMesh) -> ByteBuffer {
     // check invariants
     assert!(!mesh.is_null());
 
@@ -1228,16 +1215,17 @@ pub unsafe extern "C" fn make_tetmesh_vtk_buffer(
                 size,
             }
         }
-        Err(_) => ByteBuffer { data: ::std::ptr::null(), size: 0 },
+        Err(_) => ByteBuffer {
+            data: ::std::ptr::null(),
+            size: 0,
+        },
     }
 }
 
 /// Write the given PolyMesh into a binary VTK format returned through an appropriately sized
 /// `ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn make_polymesh_vtk_buffer(
-    mesh: *const PolyMesh,
-) -> ByteBuffer {
+pub unsafe extern "C" fn make_polymesh_vtk_buffer(mesh: *const PolyMesh) -> ByteBuffer {
     // check invariants
     assert!(!mesh.is_null());
 
@@ -1253,7 +1241,10 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(
                 size,
             }
         }
-        Err(_) => ByteBuffer { data: ::std::ptr::null(), size: 0 },
+        Err(_) => ByteBuffer {
+            data: ::std::ptr::null(),
+            size: 0,
+        },
     }
 }
 
@@ -1286,10 +1277,7 @@ impl Default for Mesh {
 /// Parse a given byte array into a TetMesh or a PolyMesh depending on what is stored in the
 /// buffer assuming VTK format.
 #[no_mangle]
-pub unsafe extern "C" fn parse_vtk_mesh(
-    data: *const c_char,
-    size: size_t,
-) -> Mesh {
+pub unsafe extern "C" fn parse_vtk_mesh(data: *const c_char, size: size_t) -> Mesh {
     if data.is_null() || size == 0 {
         return Mesh::default();
     }
@@ -1302,14 +1290,22 @@ pub unsafe extern "C" fn parse_vtk_mesh(
         if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
             if mesh.num_cells() > 0 {
                 let tetmesh = Box::new(mesh);
-                return Mesh { tag: MeshType::TetMesh, tetmesh: Box::into_raw(tetmesh), ..Mesh::default() };
+                return Mesh {
+                    tag: MeshType::TetMesh,
+                    tetmesh: Box::into_raw(tetmesh),
+                    ..Mesh::default()
+                };
             }
         }
 
         if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
             if mesh.num_faces() > 0 {
                 let polymesh = Box::new(mesh);
-                return Mesh { tag: MeshType::PolyMesh, polymesh: Box::into_raw(polymesh), ..Mesh::default() };
+                return Mesh {
+                    tag: MeshType::PolyMesh,
+                    polymesh: Box::into_raw(polymesh),
+                    ..Mesh::default()
+                };
             }
         }
     }

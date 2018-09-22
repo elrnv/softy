@@ -6,6 +6,7 @@ extern crate nalgebra as na;
 extern crate rayon;
 extern crate reinterpret;
 
+mod attrib_names;
 mod bench;
 mod energy;
 mod energy_model;

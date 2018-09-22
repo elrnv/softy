@@ -7,6 +7,7 @@ use geo::ops::*;
 use rayon::prelude::*;
 use reinterpret::*;
 use TetMesh;
+use attrib_names::*;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -262,16 +263,16 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
         let prev_vel: &[Vector3<f64>] = reinterpret_slice(
             solid
-                .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
+                .attrib_as_slice::<[f64; 3], VertexIndex>(VELOCITY_ATTRIB)
                 .unwrap(),
         );
 
         solid
-            .attrib_iter::<f64, CellIndex>("ref_volume")
+            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 solid
-                    .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                    .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             ).zip(solid.cell_iter())
             .zip(solid.tet_iter())
@@ -329,18 +330,18 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
         let prev_vel: &[Vector3<f64>] = reinterpret_slice(
             solid
-                .attrib_as_slice::<[f64; 3], VertexIndex>("vel")
+                .attrib_as_slice::<[f64; 3], VertexIndex>(VELOCITY_ATTRIB)
                 .unwrap(),
         );
 
         gradient.resize(solid.num_vertices(), Vector3::zeros());
 
         let force_iter = solid
-            .attrib_iter::<f64, CellIndex>("ref_volume")
+            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 solid
-                    .attrib_iter::<Matrix3<f64>, CellIndex>("ref_shape_mtx_inv")
+                    .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             ).zip(solid.tet_iter())
             .map(|((&vol, &DX_inv), tet)| {
@@ -356,7 +357,7 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
         // Transfer forces from cell-vertices to vertices themeselves
         for ((((&vol, &DX_inv), tet), cell), grad) in solid
-            .attrib_iter::<f64, CellIndex>("ref_volume")
+            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 solid

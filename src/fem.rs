@@ -6,7 +6,9 @@ use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Index, Ipopt, Number, SolveDataRef};
 use reinterpret::*;
+use attrib_names::*;
 
+pub type PointCloud = mesh::PointCloud<f64>;
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
 
@@ -53,7 +55,7 @@ pub struct SimParams {
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
 pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
-    let attrib = tetmesh.attrib::<VertexIndex>("ref").unwrap();
+    let attrib = tetmesh.attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB).unwrap();
     Tetrahedron(
         (attrib.get::<[f64; 3], _>(indices[0]).unwrap()).into(),
         (attrib.get::<[f64; 3], _>(indices[1]).unwrap()).into(),
@@ -83,23 +85,16 @@ struct NonLinearProblem {
 }
 
 impl FemEngine {
-    const VELOCITY_ATTRIB: &'static str = "vel";
-    const REFERENCE_POSITION_ATTRIB: &'static str = "ref";
-    const REFERENCE_VOLUME_ATTRIB: &'static str = "ref_volume";
-    const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &'static str = "ref_shape_mtx_inv";
-    const STRAIN_ENERGY_ATTRIB: &'static str = "strain_energy";
-    const ELASTIC_FORCE_ATTRIB: &'static str = "elastic_force";
-
     /// Run the optimization solver on one time step.
     pub fn new(mut mesh: TetMesh, params: SimParams) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
         let verts = mesh.vertex_positions().to_vec();
         mesh.attrib_or_add_data::<_, VertexIndex>(
-            Self::REFERENCE_POSITION_ATTRIB,
+            REFERENCE_POSITION_ATTRIB,
             verts.as_slice(),
         )?;
 
-        mesh.attrib_or_add::<_, VertexIndex>(Self::VELOCITY_ATTRIB, [0.0; 3])?;
+        mesh.attrib_or_add::<_, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
 
         {
             // Compute reference element signed volumes
@@ -111,7 +106,7 @@ impl FemEngine {
                 return Err(Error::InvertedReferenceElement);
             }
             mesh.set_attrib_data::<_, CellIndex>(
-                Self::REFERENCE_VOLUME_ATTRIB,
+                REFERENCE_VOLUME_ATTRIB,
                 ref_volumes.as_slice(),
             )?;
         }
@@ -126,7 +121,7 @@ impl FemEngine {
                     ref_shape_matrix.inverse().unwrap()
                 }).collect();
             mesh.set_attrib_data::<_, CellIndex>(
-                Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                 ref_shape_mtx_inverses.as_slice(),
             )?;
         }
@@ -134,8 +129,8 @@ impl FemEngine {
         {
             // Add elastic strain energy and elastic force attributes.
             // These will be computed at the end of the time step.
-            mesh.set_attrib::<_, CellIndex>(Self::STRAIN_ENERGY_ATTRIB, 0f64)?;
-            mesh.set_attrib::<_, VertexIndex>(Self::ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+            mesh.set_attrib::<_, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+            mesh.set_attrib::<_, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
 
         let (lambda, mu) = params.material.lame_parameters();
@@ -185,29 +180,55 @@ impl FemEngine {
         self.solver.problem_mut().interrupt_checker = checker;
     }
 
+    /// Get an immutable reference to the solver `TetMesh`.
     pub fn mesh_ref(&self) -> &TetMesh {
         &self.solver.problem().energy_model.solid
     }
 
+    /// Get solver parameters.
     pub fn params(&self) -> SimParams {
         self.solver.problem().params
+    }
+
+    /// Update the solver mesh with the given points.
+    pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool {
+        let TetMesh {
+            ref mut vertex_positions,
+            ref vertex_attributes,
+            ..
+        } = &mut self.solver.problem_mut().energy_model.solid;
+
+        if pts.num_vertices() != vertex_positions.len() {
+            return false;
+        }
+
+        // Only update fixed vertices.
+        vertex_positions.iter_mut()
+            .zip(pts.vertex_iter())
+            .zip(
+                vertex_attributes.get(FIXED_ATTRIB).unwrap().iter::<i8>()
+                .unwrap()
+                )
+            .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None } )
+            .for_each(|(pos, new_pos)| *pos = *new_pos);
+        true
     }
 
     /// Given a tetmesh, compute the strain energy per tetrahedron.
     fn compute_strain_energy_attrib(mesh: &mut TetMesh, lambda: f64, mu: f64) {
         // Overwrite the "strain_energy" attribute.
         let mut strain = mesh
-            .remove_attrib::<CellIndex>(Self::STRAIN_ENERGY_ATTRIB)
+            .remove_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB)
             .unwrap();
         strain
             .iter_mut::<f64>()
             .unwrap()
             .zip(
-                mesh.attrib_iter::<f64, CellIndex>(Self::REFERENCE_VOLUME_ATTRIB)
+                mesh.attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                     .unwrap(),
             ).zip(
                 mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
-                    Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                 ).unwrap(),
             ).zip(mesh.tet_iter())
             .for_each(|(((strain, &vol), &ref_shape_mtx_inv), tet)| {
@@ -216,7 +237,7 @@ impl FemEngine {
                         .elastic_energy()
             });
 
-        mesh.insert_attrib::<CellIndex>(Self::STRAIN_ENERGY_ATTRIB, strain)
+        mesh.insert_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB, strain)
             .unwrap();
     }
 
@@ -233,11 +254,11 @@ impl FemEngine {
         }
 
         let grad_iter = mesh
-            .attrib_iter::<f64, CellIndex>(Self::REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
-                    Self::REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                 ).unwrap(),
             ).zip(mesh.tet_iter())
             .map(|((&vol, &ref_shape_mtx_inv), tet)| {
@@ -255,7 +276,7 @@ impl FemEngine {
     /// Given a tetmesh, compute the elastic forces per vertex, and save it at a vertex attribute.
     fn compute_elastic_forces_attrib(mesh: &mut TetMesh, lambda: f64, mu: f64) {
         let mut forces_attrib = mesh
-            .remove_attrib::<VertexIndex>(Self::ELASTIC_FORCE_ATTRIB)
+            .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
             .unwrap();
 
         {
@@ -266,7 +287,7 @@ impl FemEngine {
         }
 
         // Reinsert forces back into the attrib map
-        mesh.insert_attrib::<VertexIndex>(Self::ELASTIC_FORCE_ATTRIB, forces_attrib)
+        mesh.insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)
             .unwrap();
     }
 
@@ -275,7 +296,7 @@ impl FemEngine {
     fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], new_pos: &[Vector3<f64>]) {
         // Write back the velocity for the next iteration.
         for ((vel, prev_x), &x) in mesh
-            .attrib_iter_mut::<[f64; 3], VertexIndex>(Self::VELOCITY_ATTRIB)
+            .attrib_iter_mut::<[f64; 3], VertexIndex>(VELOCITY_ATTRIB)
             .unwrap()
             .zip(prev_pos.iter_mut())
             .zip(new_pos.iter())
@@ -380,7 +401,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         lo.resize(n, [-2e19; 3]);
         hi.resize(n, [2e19; 3]);
 
-        if let Ok(fixed_verts) = solid.attrib_as_slice::<i8, VertexIndex>("fixed") {
+        if let Ok(fixed_verts) = solid.attrib_as_slice::<i8, VertexIndex>(FIXED_ATTRIB) {
             // Find and set fixed vertices.
             lo.iter_mut()
                 .zip(hi.iter_mut())
@@ -481,7 +502,7 @@ mod tests {
     };
 
     #[test]
-    fn simple_tet_static_test() {
+    fn simple_static_test() {
         let verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -492,7 +513,7 @@ mod tests {
         ];
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
+        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
             .unwrap();
 
         let ref_verts = vec![
@@ -511,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_tet_dynamic_test() {
+    fn simple_dynamic_test() {
         let verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -522,7 +543,7 @@ mod tests {
         ];
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
+        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
             .unwrap();
 
         let ref_verts = vec![
@@ -534,10 +555,50 @@ mod tests {
             [1.0, 0.0, 1.0],
         ];
 
-        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
             .unwrap();
 
         assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+    }
+
+    #[test]
+    fn animation_test() {
+        let mut verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+        let mut mesh = TetMesh::new(verts.clone(), indices);
+
+        let fixed = vec![0, 0, 1, 1, 0, 0];
+        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, fixed)
+            .unwrap();
+
+        let ref_verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+
+        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+            .unwrap();
+
+        let mut solver = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
+
+        for frame in 1u32..100 {
+            let offset = 0.1*(if frame < 50 { frame } else { 0 } as f64);
+            verts.iter_mut().for_each(|x| (*x)[1] += offset);
+            let pts = PointCloud::new(verts.clone());
+            assert!(solver.update_mesh_vertices(&pts));
+            assert!(solver.step().is_ok());
+        }
     }
 
     #[test]

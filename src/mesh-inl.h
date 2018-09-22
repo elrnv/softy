@@ -192,14 +192,12 @@ template<>
 AttribLocation mesh_vertex_attrib_location<TetMesh>() { return AttribLocation::CellVertex; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
-// All points are marked though even ones disconnected from the primitives or connected to other
-// primitives.
 std::pair<std::vector<bool>, std::vector<bool>>
 mark_points_and_vertices(
         const GU_Detail *detail,
         GA_PrimitiveTypeId prim_type_id)
 {
-    std::vector<bool> points(detail->getNumPointOffsets(), true);
+    std::vector<bool> points(detail->getNumPointOffsets(), false);
     std::vector<bool> vertices(detail->getNumVertexOffsets(), false);
     for ( GA_Offset prim_off : detail->getPrimitiveRange() )
     {
@@ -210,8 +208,8 @@ mark_points_and_vertices(
             for ( GA_Size idx = 0; idx < num_verts; ++idx ) {
                 auto vtx_off = detail->getPrimitiveVertexOffset(prim_off, idx);
                 vertices[vtx_off] = true;
-                //auto pt_off = detail->vertexPoint(vtx_off);
-                //points[pt_off] = true;
+                auto pt_off = detail->vertexPoint(vtx_off);
+                points[pt_off] = true;
             }
         }
     }
@@ -411,7 +409,18 @@ void fill_vertex_str_attrib(
 template<typename M>
 void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims)
 {
-    // Get polygon data attributes
+    transfer_primitive_attributes(detail, mesh, num_prims);
+
+    std::vector<bool> pt_grp, vtx_grp;
+    std::tie(pt_grp, vtx_grp) = mark_points_and_vertices(detail, mesh_prim_type_id<M>());
+
+    transfer_point_attributes(detail, mesh, pt_grp);
+    transfer_vertex_attributes(detail, mesh, num_prims, vtx_grp);
+}
+
+template<typename M>
+void transfer_primitive_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims) {
+    // Get prim data attributes
     for (auto it = detail->getAttributeDict(GA_ATTRIB_PRIMITIVE).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
     {
         GA_Attribute *attrib = it.attrib();
@@ -450,10 +459,12 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
         //aif = attrib->getAIFNumericArray(); // variable sized array
         //aif = attrib->getAIFSharedStringArray(); // variable sized array of strings
     }
+}
 
-    std::vector<bool> pt_grp, vtx_grp;
-    std::tie(pt_grp, vtx_grp) = mark_points_and_vertices(detail, mesh_prim_type_id<M>());
-
+// Transfer attributes from points marked in the given pt_grp
+template<typename M>
+void transfer_point_attributes(const GU_Detail* detail, M* mesh, const std::vector<bool>& pt_grp)
+{
     std::size_t num_points = std::count(pt_grp.begin(), pt_grp.end(), true);
     for (auto it = detail->getAttributeDict(GA_ATTRIB_POINT).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
     {
@@ -496,7 +507,12 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
         //aif = attrib->getAIFNumericArray(); // variable sized array
         //aif = attrib->getAIFSharedStringArray(); // variable sized array of strings
     }
+}
 
+// Transfer attributes from vertices marked in the given vtx_grp
+template<typename M>
+void transfer_vertex_attributes(const GU_Detail* detail, M* mesh, const std::vector<bool>& vtx_grp)
+{
     std::size_t num_vertices = std::count(vtx_grp.begin(), vtx_grp.end(), true);
     for (auto it = detail->getAttributeDict(GA_ATTRIB_VERTEX).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
     {
@@ -594,6 +610,59 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, 
     free_attrib_iter(it);
 }
 
+
+template<typename HandleType, typename ArrayType>
+void update_attrib(HandleType h, ArrayType arr) {
+    int n = (arr.size/arr.tuple_size);
+    for ( int j = 0; j < arr.tuple_size; ++j ) {
+        h.setBlockFromIndices(GA_Index(0), GA_Size(n), arr.array, arr.tuple_size, j);
+    }
+}
+
+/** Update attributes of the mesh using the given iterator.
+ */
+void update_attributes(GU_Detail *detail, AttribIter *it, GA_AttributeOwner owner) {
+    while ( it ) { // it could be null, but it doesn't change
+        auto attrib = attrib_iter_next(it);
+        if (!attrib) break;
+        auto name = attrib_name(attrib);
+        auto type = attrib_data_type(attrib);
+        if (type == DataType::I8 ) {
+            auto arr = attrib_data_i8(attrib);
+            auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_i8(arr);
+        } else if (type == DataType::I32 ) {
+            auto arr = attrib_data_i32(attrib);
+            auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT32, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_i32(arr);
+        } else if (type == DataType::I64 ) {
+            auto arr = attrib_data_i64(attrib);
+            auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_i64(arr);
+        } else if (type == DataType::F32 ) {
+            auto arr = attrib_data_f32(attrib);
+            auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL32, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_f32(arr);
+        } else if (type == DataType::F64 ) {
+            auto arr = attrib_data_f64(attrib);
+            auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_f64(arr);
+        } else if (type == DataType::Str ) {
+            auto arr = attrib_data_str(attrib);
+            auto h = GA_RWHandleS(detail->addTuple(GA_STORE_STRING, owner, name, arr.tuple_size));
+            update_attrib(h, arr, startoff);
+            free_attrib_data_str(arr);
+        }
+        free_attribute(attrib);
+    }
+    free_attrib_iter(it);
+}
+
 } // namespace (static)
 
 /**
@@ -607,12 +676,7 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
 
     // add tets.
     if (tetmesh) {
-        auto test_points = get_tetmesh_points(tetmesh);
-        std::vector<UT_Vector3> points;
-
-        for (std::size_t i = 0; i < test_points.size; ++i) {
-            points.push_back(UT_Vector3(test_points.array[i]));
-        }
+        auto points = get_tetmesh_points(tetmesh);
 
         auto test_indices = get_tetmesh_indices(tetmesh);
         if (test_indices.size > 0) {
@@ -621,22 +685,21 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
                 indices.push_back(static_cast<int>(test_indices.array[i]));
             }
 
-            GA_Offset startptoff = detail->appendPointBlock(points.size());
-            for (exint pt_idx = 0; pt_idx < points.size(); ++pt_idx) {
+            GA_Offset startptoff = detail->appendPointBlock(points.size);
+            for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
                 GA_Offset ptoff = startptoff + pt_idx;
-                detail->setPos3(ptoff, points[pt_idx]);
+                detail->setPos3(ptoff, UT_Vector3(points[pt_idx]));
             }
 
             GA_Offset startprimoff = GEO_PrimTetrahedron::buildBlock(
                     detail, startptoff, detail->getNumPointOffsets(),
                     indices.size()/4, indices.data());
 
-
             retrieve_attributes(detail, startptoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
             retrieve_attributes(detail, startprimoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
             retrieve_attributes(detail, startvtxoff, tetmesh_attrib_iter(tetmesh, AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
         }
-        free_point_array(test_points);
+        free_point_array(points);
         free_index_array(test_indices);
     }
 }
@@ -652,21 +715,16 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
 
     // add polygons
     if (polymesh) {
-        auto test_points = get_polymesh_points(polymesh);
-        std::vector<UT_Vector3> points;
-
-        for (std::size_t i = 0; i < test_points.size; ++i) {
-            points.push_back(UT_Vector3(test_points.array[i]));
-        }
-
-        GA_Offset startptoff = detail->appendPointBlock(points.size());
-        for (exint pt_idx = 0; pt_idx < points.size(); ++pt_idx) {
-            GA_Offset ptoff = startptoff + pt_idx;
-            detail->setPos3(ptoff, points[pt_idx]);
-        }
+        auto points = get_polymesh_points(polymesh);
 
         auto test_indices = get_polymesh_indices(polymesh);
         if (test_indices.size > 0) {
+            GA_Offset startptoff = detail->appendPointBlock(points.size);
+            for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
+                GA_Offset ptoff = startptoff + pt_idx;
+                detail->setPos3(ptoff, UT_Vector3(points[pt_idx]));
+            }
+
             GEO_PolyCounts polycounts;
             std::vector<int> poly_pt_numbers;
             int prev_n = test_indices.array[0];
@@ -691,11 +749,53 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
 
             retrieve_attributes(detail, startprimoff, polymesh_attrib_iter(polymesh, AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
             retrieve_attributes(detail, startvtxoff, polymesh_attrib_iter(polymesh, AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, polymesh_attrib_iter(polymesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
         }
 
-        retrieve_attributes(detail, startptoff, polymesh_attrib_iter(polymesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-        free_point_array(test_points);
+        free_point_array(points);
         free_index_array(test_indices);
+    }
+}
+
+/**
+ * Add a ptcloud to the current detail
+ */
+__attribute__((unused))
+void add_pointcloud(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
+    auto ptcloud = ptcloud_ptr.get();
+
+    if (ptcloud) {
+        auto points = get_pointcloud_points(ptcloud);
+
+        GA_Offset startptoff = detail->appendPointBlock(points.size);
+
+        for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
+            GA_Offset ptoff = startptoff + pt_idx;
+            detail->setPos3(ptoff, UT_Vector3(points[pt_idx]));
+        }
+
+        retrieve_attributes(detail, startptoff, pointcloud_attrib_iter(ptcloud, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+        free_point_array(points);
+    }
+}
+
+/**
+ * Update points in the detail according to what's in the ptcloud
+ */
+__attribute__((unused))
+void update_points(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
+    auto ptcloud = ptcloud_ptr.get();
+
+    if (ptcloud) {
+        auto points = get_pointcloud_points(ptcloud);
+
+        for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
+            GA_Offset ptoff = detail->pointOffset(pt_idx);
+            detail->setPos3(ptoff, UT_Vector3(points[pt_idx]));
+        }
+
+        update_attributes(detail, pointcloud_attrib_iter(ptcloud, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+        free_point_array(points);
     }
 }
 
@@ -703,7 +803,10 @@ __attribute__((unused))
 OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
+    tet_vertices.reserve(detail->getNumPointOffsets());
     std::vector<std::size_t> tet_indices;
+    tet_indices.reserve(detail->getNumVertexOffsets());
+
     for ( GA_Offset pt_off : detail->getPointRange() )
     {
         UT_Vector3 pt = detail->getPos3(pt_off);
@@ -741,7 +844,9 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
 __attribute__((unused))
 OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     std::vector<double> poly_vertices;
+    poly_vertices.reserve(detail->getNumPointOffsets());
     std::vector<std::size_t> poly_indices;
+    poly_indices.reserve(detail->getNumVertexOffsets());
 
     for ( GA_Offset pt_off : detail->getPointRange() )
     {
@@ -768,33 +873,46 @@ OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
         }
     }
 
-    PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
-                                       poly_indices.size(), poly_indices.data());
-    assert(polymesh);
+    // Only creating a mesh if there are polys.
+    if (num_polys > 0) {
+        PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
+                                           poly_indices.size(), poly_indices.data());
+        assert(polymesh);
 
-    transfer_attributes(detail, polymesh, num_polys);
-    return OwnedPtr<PolyMesh>(polymesh);
+        transfer_attributes(detail, polymesh, num_polys);
+        return OwnedPtr<PolyMesh>(polymesh);
+    }
+    return OwnedPtr<PolyMesh>(nullptr);
 }
 
-//__attribute__((unused))
-//OwnedPtr<PolyMesh> build_point_cloud(const GU_Detail* detail) {
-//    std::vector<double> vertices;
-//
-//    for ( GA_Offset pt_off : detail->getPointRange() )
-//    {
-//        UT_Vector3 pos = detail->getPos3(pt_off);
-//        vertices.push_back( static_cast<double>(pos[0]) );
-//        vertices.push_back( static_cast<double>(pos[1]) );
-//        vertices.push_back( static_cast<double>(pos[2]) );
-//    }
-//
-//    PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
-//                                       poly_indices.size(), poly_indices.data());
-//    assert(polymesh);
-//
-//    transfer_attributes(detail, polymesh, num_polys);
-//    return OwnedPtr<PolyMesh>(polymesh);
-//}
+__attribute__((unused))
+OwnedPtr<PointCloud> build_pointcloud(const GU_Detail* detail) {
+    std::vector<double> vertices(detail->getNumPoints());
+    std::vector<bool> pt_grp(detail->getNumPointOffsets(), false);
+
+    // We are gonna be smarter here and use block access to point data.
+    GA_ROPageHandleV3 P_ph(detail->getP());
+
+    if (P_ph.isValid() {
+        GA_Offset start, end;
+        for (GA_Iterator it(detail->getPointRange()); it.blockAdvance(start, end); ) {
+            P_ph.setPage(start);
+            for (GA_Offset offset = start; offset < end; ++offset) {
+                pt_grp[offset] = true;
+                auto pos = P_ph.get(offset);
+                vertices[detail->pointIndex(offset)] = static_cast<double>( pos[0]);
+                vertices[detail->pointIndex(offset)+1] = static_cast<double>( pos[1]);
+                vertices[detail->pointIndex(offset)+2] = static_cast<double>( pos[2]);
+            }
+        }
+    }
+
+    PointCloud *ptcloud = make_pointcloud(vertices.size(), vertices.data());
+    assert(ptcloud);
+
+    transfer_point_attributes(detail, ptcloud, pt_grp);
+    return OwnedPtr<PointCloud>(ptcloud);
+}
 
 } // namespace mesh
 

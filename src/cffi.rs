@@ -17,6 +17,7 @@ use geo::mesh::{
     Attrib,
     PolyMesh as GeoPolyMesh,
     TetMesh as GeoTetMesh,
+    PointCloud as GeoPointCloud,
 };
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use std::any::TypeId;
@@ -29,6 +30,9 @@ pub type PolyMesh = GeoPolyMesh<f64>;
 
 /// A Rust tetmesh struct.
 pub type TetMesh = GeoTetMesh<f64>;
+
+/// A Rust pointcloud struct.
+pub type PointCloud = GeoPointCloud<f64>;
 
 #[repr(C)]
 pub enum CookResultTag {
@@ -69,45 +73,30 @@ pub struct IndexArray {
     array: *mut size_t,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn get_tetmesh_points(mesh: *const TetMesh) -> PointArray {
-    assert!(!mesh.is_null());
-    let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    for &pt in (*mesh).vertex_positions().iter() {
-        pts.push(pt)
+macro_rules! get_points_impl {
+    ($name:ident($mesh_ty:ty)) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(mesh: *const $mesh_ty) -> PointArray {
+            assert!(!mesh.is_null());
+            let mut pts: Vec<[f64; 3]> = (*mesh).vertex_positions().to_vec();
+
+            let arr = PointArray {
+                capacity: pts.capacity(),
+                size: pts.len(),
+                array: pts.as_mut_slice().as_mut_ptr(),
+            };
+
+            ::std::mem::forget(pts);
+
+            arr
+        }
     }
-
-    let arr = PointArray {
-        capacity: pts.capacity(),
-        size: pts.len(),
-        array: pts.as_mut_slice().as_mut_ptr(),
-    };
-
-    ::std::mem::forget(pts);
-
-    arr
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn get_polymesh_points(mesh: *const PolyMesh) -> PointArray {
-    assert!(!mesh.is_null());
-    let mut pts: Vec<[f64; 3]> = Vec::new();
-
-    for &pt in (*mesh).vertex_iter() {
-        pts.push(pt)
-    }
-
-    let arr = PointArray {
-        capacity: pts.capacity(),
-        size: pts.len(),
-        array: pts.as_mut_slice().as_mut_ptr(),
-    };
-
-    ::std::mem::forget(pts);
-
-    arr
-}
+get_points_impl!(get_pointcloud_points(PointCloud));
+get_points_impl!(get_tetmesh_points(TetMesh));
+get_points_impl!(get_polymesh_points(PolyMesh));
 
 #[no_mangle]
 pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray {
@@ -179,6 +168,9 @@ mod missing_structs {
 
     #[allow(dead_code)]
     struct GeoTetMesh<T> { _p: ::std::marker::PhantomData<T> }
+
+    #[allow(dead_code)]
+    struct GeoPointCloud<T> { _p: ::std::marker::PhantomData<T> }
 }
 
 pub enum AttribIter<'a> {
@@ -196,6 +188,26 @@ pub enum AttribIter<'a> {
 // reason.
 pub struct Dummy<'a> {
     p: ::std::marker::PhantomData<&'a u32>,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pointcloud_attrib_iter(
+    mesh_ptr: *const PointCloud,
+    loc: AttribLocation,
+    _d: *const Dummy,
+) -> *mut AttribIter {
+    assert!(!mesh_ptr.is_null());
+
+    let mesh = &(*mesh_ptr);
+
+    let iter = Box::new(match loc {
+        AttribLocation::Vertex => {
+            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        }
+        _ => return ::std::ptr::null_mut::<AttribIter>(),
+    });
+
+    Box::into_raw(iter)
 }
 
 #[no_mangle]

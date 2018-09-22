@@ -2,66 +2,70 @@ extern crate geometry as geo;
 extern crate hdkrs;
 extern crate softy;
 
+#[macro_use]
+extern crate lazy_static;
+
 mod api;
 
 pub use hdkrs::{cffi, interop};
 
-/// Opaque struct that represents the FEM Solver.
-pub struct FemEngine;
-
-/// Custom cook result that encapsulates the solver struct.
 #[repr(C)]
-pub struct SolverResult {
-    solver: *mut FemEngine,
-    result: cffi::CookResult,
+#[derive(Copy, Clone, Debug)]
+pub struct MaterialProperties {
+    pub bulk_modulus: f32,
+    pub shear_modulus: f32,
+    pub density: f32,
+    pub damping: f32,
 }
 
-/// Create a new solver.
-#[no_mangle]
-pub unsafe extern "C" fn new_solver(
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct SimParams {
+    pub material: MaterialProperties,
+    pub time_step: f32,
+    pub gravity: f32,
+    pub tolerance: f32,
+}
+
+#[repr(C)]
+pub struct SolveResult {
+    solver_id: i64,
     tetmesh: *mut cffi::TetMesh,
     polymesh: *mut cffi::PolyMesh,
-    sim_params: api::SimParams,
+    cook_result: cffi::CookResult,
+}
+
+// Main entry point from the HDK.
+#[no_mangle]
+pub unsafe extern "C" fn cook(
+    solver_id: i64,
+    tetmesh: *mut cffi::TetMesh,
+    polymesh: *mut cffi::PolyMesh,
+    sim_params: SimParams,
     interrupt_checker: *mut cffi::c_void,
     check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
-) -> SolverResult {
-    match api::new_solver(
-        interop::mesh(tetmesh),
-        interop::mesh(polymesh),
+) -> SolveResult {
+    let (data, cook_result) = api::cook(
+        if solver_id < 0 { None } else { Some(solver_id as u32) },
+        interop::into_box(tetmesh),
+        interop::into_box(polymesh),
         sim_params.into(),
         interop::interrupt_callback(interrupt_checker, check_interrupt),
-    ) {
-        Ok(solver) => SolverResult {
-            solver: Box::into_raw(solver) as *mut FemEngine,
-            result: interop::CookResult::Success(String::new()).into()
-        },
-        Err(error) => SolverResult {
-            solver: ::std::ptr::null_mut(),
-            result: interop::CookResult::Error(format!("Error creating a new solver: {:?}", error)).into()
-        },
+    );
+    if let Some((new_solver_id, solver_tetmesh)) = data {
+        SolveResult {
+            solver_id: new_solver_id as i64,
+            tetmesh: Box::into_raw(Box::new(solver_tetmesh)),
+            polymesh: ::std::ptr::null_mut(),
+            cook_result: cook_result.into(),
+        }
+    } else {
+        SolveResult {
+            solver_id: -1,
+            tetmesh: ::std::ptr::null_mut(),
+            polymesh: ::std::ptr::null_mut(),
+            cook_result: cook_result.into(),
+        }
     }
 }
 
-/// This is a helper function used to hide generics from C FFI.
-fn free_solver_impl<F: FnMut() -> bool + Sync>(solver: *mut FemEngine) {
-    if !solver.is_null() {
-        let _ = Box::from_raw(solver as *mut softy::FemEngine<F>);
-    }
-}
-
-/// What we create, we must destroy. Free memory allocated by the solver created by `new_solver`.
-pub unsafe extern "C" fn free_solver(solver: *mut FemEngine) {
-    free_solver_impl(solver);
-}
-
-/// Run a step of the simulation with the given solver.
-#[no_mangle]
-pub unsafe extern "C" fn step(
-    solver: *mut FemEngine,
-) -> cffi::CookResult {
-    if solver.is_null() {
-        return interop::CookResult::Error("No solver provided".to_string());
-    }
-
-    api::step(&mut *(solver as *mut softy::FemEngine)).into()
-}

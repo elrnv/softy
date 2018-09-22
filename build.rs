@@ -21,7 +21,7 @@ fn main() {
     config.language = cbindgen::Language::Cxx;
 
     cbindgen::generate_with_config(&crate_dir, config)
-        .expect("Unable to generate bidnings")
+        .expect("Unable to generate bindings")
         .write_to_file(&output_file);
 }
 

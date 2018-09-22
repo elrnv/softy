@@ -25,6 +25,7 @@
 #include <cassert>
 #include <mutex>
 
+/*
 using Solver = hdkrs::FemEngine;
 
 namespace hdkrs {
@@ -43,6 +44,7 @@ std::size_t ourGlobalSolverKey = 0;
 
 // Global solver registry. We use a map instead of a vector to avoid dealing with fragmentation.
 std::unordered_map<std::size_t, hdkrs::OwnedPtr<Solver>> ourSolvers;
+*/
 
 const UT_StringHolder SOP_Sim::theSOPTypeName("hdk_softy"_sh);
 
@@ -55,8 +57,8 @@ newSopOperator(OP_OperatorTable *table)
                 "Softy",                     // UI name
                 SOP_Sim::myConstructor,    // How to build the SOP
                 SOP_Sim::buildTemplates(), // My parameters
-                0,                              // Min # of sources
-                4,                              // Max # of sources
+                1,                              // Min # of sources
+                2,                              // Max # of sources
                 nullptr,                        // Local variables
                 OP_FLAG_GENERATOR));            // Flag it as generator
 }
@@ -167,6 +169,8 @@ SOP_Sim::cookVerb() const
     return SOP_SimVerb::theVerb.get();
 }
 
+#if 0
+
 // Retrieve a solver from the registry by looking at the corresponding registry id attribute in the
 // detail.
 // PRE: We assume that ourRegistryLock has already been acquired by this thread.
@@ -244,6 +248,27 @@ SOP_SimVerb::getSolver(
 
     return solver;
 }
+#endif
+
+
+void
+write_solver_data(GU_Detail *detail, hdkrs::SolveResult res) {
+    using namespace hdkrs;
+    using namespace hdkrs::mesh;
+
+    // Create the registry id attribute on the output detail so we don't lose the solver for the
+    // next time step.
+    GA_RWHandleID attrib( detail->addIntTuple(GA_ATTRIB_GLOBAL, "softy", 1, GA_Defaults(-1), 0, 0,
+                GA_STORE_INT64) );
+    attrib.set(GA_Offset(0), res.solver_id);
+
+    // Add the simulation meshes into the current detail
+    OwnedPtr<TetMesh> tetmesh = res.tetmesh;
+    OwnedPtr<PolyMesh> polymesh = res.polymesh;
+
+    add_polymesh(detail, std::move(polymesh));
+    add_tetmesh(detail, std::move(tetmesh));
+}
 
 // Entry point to the SOP
 void
@@ -253,17 +278,9 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     using namespace hdkrs::mesh;
 
     auto &&sopparms = cookparms.parms<SOP_SimParms>();
-    const GU_Detail *input0 = cookparms.inputGeo(0);
-    OwnedPtr<TetMesh> tetmesh = nullptr;
-    if (input0) {
-        tetmesh = build_tetmesh(input0);
-    }
 
-    const GU_Detail *input1 = cookparms.inputGeo(1);
+    OwnedPtr<TetMesh> tetmesh = nullptr;
     OwnedPtr<PolyMesh> polymesh = nullptr;
-    if (input1) {
-        polymesh = build_polymesh(input1);
-    }
 
     // Gather simulation parameters
     SimParams sim_params;
@@ -275,23 +292,52 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.gravity = sopparms.getGravity();
     sim_params.tolerance = sopparms.getTolerance();
 
-    Solver *solver = getSolver(cookparms, tetmesh.get(), polymesh.get(), sim_params);
-    if (!solver)
-        return; // There's nothing else to do here.
+    interrupt::InterruptChecker interrupt_checker("Solving Softy");
 
-    CookResult res = step(solver);
+    const GU_Detail *input0 = cookparms.inputGeo(0);
+    UT_ASSERT(input0);
 
-    switch (res.tag) {
-        case CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+    int64 solver_id = -1;
+
+    // Retrieve a unique ID for the solver being used by softy.
+    // This will allow us to reuse existing memory in the solver.
+    GA_ROHandleID attrib(input0->findIntTuple(GA_ATTRIB_GLOBAL, "softy", 1));
+    if (!attrib.isInvalid()) {
+        solver_id = attrib.get(GA_Offset(0));
     }
 
-    free_result(res);
+    if (solver_id < 0) {
+        // If there is no previously allocated solver we can use, we need to extract the geometry
+        // from the detail. Otherwise, the geometry stored in the solver itself will be used.
+
+        tetmesh = build_tetmesh(input0);
+
+        const GU_Detail *input1 = cookparms.inputGeo(1);
+        if (input1) {
+            polymesh = build_polymesh(input1);
+        }
+    }
+
+    SolveResult res = hdkrs::cook(
+            solver_id,
+            tetmesh.release(),
+            polymesh.release(),
+            sim_params,
+            &interrupt_checker,
+            interrupt::check_interrupt);
+
+    switch (res.cook_result.tag) {
+        case CookResultTag::Success:
+            cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
+        case CookResultTag::Warning:
+            cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
+        case CookResultTag::Error:
+            cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
+    }
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 
-    // Add the simulation meshes into the current detail
-    add_polymesh(detail, std::move(polymesh));
-    add_tetmesh(detail, std::move(tetmesh));
+    write_solver_data(detail, res);
+
+    free_result(res.cook_result);
 }

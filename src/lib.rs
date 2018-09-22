@@ -10,13 +10,12 @@ mod bench;
 mod energy;
 mod energy_model;
 mod fem;
-mod solver;
 
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{FemEngine, MaterialProperties, SimParams, Error};
+pub use fem::{FemEngine, MaterialProperties, SimParams, SolveResult, Error};
 
 pub enum SimResult {
     Success(String),
@@ -43,29 +42,98 @@ impl From<fem::Error> for SimResult {
     }
 }
 
-pub fn sim<F>(
-    tetmesh: Option<&mut TetMesh>,
-    _polymesh: Option<&mut PolyMesh>,
+impl Into<SimResult> for Result<fem::SolveResult, fem::Error> {
+    fn into(self) -> SimResult {
+        match self {
+            Ok(fem::SolveResult {
+                iterations,
+                objective_value,
+            }) =>
+                SimResult::Success(format!("Iterations: {}\nObjective: {}", iterations, objective_value).into()),
+            Err(err) => err.into(),
+        }
+    }
+}
+
+pub fn sim(
+    tetmesh: Option<TetMesh>,
+    _polymesh: Option<PolyMesh>,
     sim_params: SimParams,
-    check_interrupt: F,
+    interrupter: Option<Box<FnMut() -> bool>>,
 ) -> SimResult
-where
-    F: FnMut() -> bool + Sync,
 {
     if let Some(mesh) = tetmesh {
-        match FemEngine::new(mesh, sim_params, check_interrupt) {
-            Ok(mut engine) => match engine.step() {
-                Err(e) => e.into(),
-                Ok(fem::SolveResult {
-                    iterations,
-                    objective_value,
-                }) => SimResult::Success(
-                    format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
-                ),
+        match FemEngine::new(mesh, sim_params) {
+            Ok(mut engine) => {
+                if let Some(interrupter) = interrupter {
+                    engine.set_interrupter(interrupter);
+                }
+                match engine.step() {
+                    Err(e) => e.into(),
+                    Ok(fem::SolveResult {
+                        iterations,
+                        objective_value,
+                    }) => SimResult::Success(
+                        format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
+                        ),
+                }
             },
             Err(e) => e.into(),
         }
     } else {
         SimResult::Error("Tetmesh not found".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geo::mesh::{Attrib, TetMesh, topology::*};
+
+    const STATIC_PARAMS: SimParams = SimParams {
+        material: MaterialProperties {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+            density: 1000.0,
+            damping: 0.0,
+        },
+        gravity: [0.0f32, -9.81, 0.0],
+        time_step: None,
+        tolerance: 1e-9,
+    };
+
+    #[test]
+    fn sim_test() {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 2.0],
+        ];
+        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+        let mut mesh = TetMesh::new(verts, indices);
+        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
+            .unwrap();
+
+        let ref_verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+
+        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+            .unwrap();
+
+        assert!(
+            match sim(Some(mesh), None, STATIC_PARAMS, None) {
+                SimResult::Success(_) => true,
+                _ => false,
+            }
+        );
     }
 }

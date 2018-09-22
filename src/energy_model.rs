@@ -132,9 +132,9 @@ impl NeoHookeanTetEnergy {
 }
 
 /// A possibly non-linear elastic energy for tetrahedral meshes.
-pub struct ElasticTetMeshEnergy<'a> {
+pub struct ElasticTetMeshEnergy {
     /// The discretization of the solid domain using a tetrahedral mesh.
-    pub solid: &'a mut TetMesh,
+    pub solid: TetMesh,
     /// Position from the previous time step.
     pub prev_pos: Vec<Vector3<f64>>,
     /// Material parameters.
@@ -181,12 +181,12 @@ impl Default for MaterialModel {
     }
 }
 
-impl<'a> ElasticTetMeshEnergy<'a> {
+impl ElasticTetMeshEnergy {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.
     /// This function takes a tetrahedron mesh specifying a discretization of the solid domain and
     /// a closure that interrupts the solver if it returns `false`.
-    pub fn new(tetmesh: &'a mut TetMesh) -> Self {
+    pub fn new(tetmesh: TetMesh) -> Self {
         let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
 
         ElasticTetMeshEnergy {
@@ -242,7 +242,7 @@ impl<'a> ElasticTetMeshEnergy<'a> {
 }
 
 /// Define energy for ElasticTetMeshEnergy materials.
-impl<'a> Energy<f64> for ElasticTetMeshEnergy<'a> {
+impl Energy<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
     fn energy(&mut self) -> f64 {
         let ElasticTetMeshEnergy {

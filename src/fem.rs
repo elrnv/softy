@@ -4,9 +4,8 @@ use geo::math::{Matrix3, Vector3};
 use geo::mesh::{self, attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
-use ipopt::{self, Index, Ipopt, Number};
+use ipopt::{self, Index, Number, Ipopt, SolveDataRef};
 use reinterpret::*;
-use std::cell::{Ref, RefCell, RefMut};
 
 pub type TetMesh = mesh::TetMesh<f64>;
 pub type Tet = Tetrahedron<f64>;
@@ -64,26 +63,26 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
 }
 
 /// Finite element engine.
-pub struct FemEngine<'a, F: FnMut() -> bool + Sync> {
+pub struct FemEngine {
     /// Non-linear solver.
-    solver: Ipopt<NonLinearProblem<'a, F>>,
+    solver: Ipopt<NonLinearProblem>,
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
-struct NonLinearProblem<'a, F: FnMut() -> bool + Sync> {
+struct NonLinearProblem {
     /// Elastic energy model.
-    pub energy_model: RefCell<ElasticTetMeshEnergy<'a>>,
+    pub energy_model: ElasticTetMeshEnergy,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
-    pub interrupt_checker: F,
+    pub interrupt_checker: Box<FnMut() -> bool>,
     /// Count the number of iterations.
     pub iterations: usize,
     /// Simulation parameters.
     pub params: SimParams,
 }
 
-impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
+impl FemEngine {
     const VELOCITY_ATTRIB: &'static str = "vel";
     const REFERENCE_POSITION_ATTRIB: &'static str = "ref";
     const REFERENCE_VOLUME_ATTRIB: &'static str = "ref_volume";
@@ -93,9 +92,8 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
 
     /// Run the optimization solver on one time step.
     pub fn new(
-        mesh: &'a mut TetMesh,
+        mut mesh: TetMesh,
         params: SimParams,
-        interrupt_checker: F,
     ) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
         let verts = mesh.vertex_positions().to_vec();
@@ -110,7 +108,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
             // Compute reference element signed volumes
             let ref_volumes: Vec<f64> = mesh
                 .cell_iter()
-                .map(|cell| ref_tet(mesh, cell).signed_volume())
+                .map(|cell| ref_tet(&mesh, cell).signed_volume())
                 .collect();
             if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
                 return Err(Error::InvertedReferenceElement);
@@ -126,7 +124,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
             let ref_shape_mtx_inverses: Vec<Matrix3<f64>> = mesh
                 .cell_iter()
                 .map(|cell| {
-                    let ref_shape_matrix = ref_tet(mesh, cell).shape_matrix();
+                    let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
                     // We assume that ref_shape_matrices are non-singular.
                     ref_shape_matrix.inverse().unwrap()
                 }).collect();
@@ -160,8 +158,8 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         }
 
         let problem = NonLinearProblem {
-            energy_model: RefCell::new(energy_model),
-            interrupt_checker,
+            energy_model,
+            interrupt_checker: Box::new(|| false),
             iterations: 0,
             params,
         };
@@ -185,8 +183,13 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
         Ok(FemEngine { solver: ipopt })
     }
 
-    pub fn mesh(&self) -> TetMesh {
-        self.solver.problem().energy_model.borrow().solid.clone()
+    /// Set the interrupt checker to the given function.
+    pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
+        self.solver.problem_mut().interrupt_checker = checker;
+    }
+
+    pub fn mesh_ref(&self) -> &TetMesh {
+        &self.solver.problem().energy_model.solid
     }
 
     pub fn params(&self) -> SimParams {
@@ -312,15 +315,22 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
 
         let FemEngine { ref mut solver } = *self;
 
+        let SolveDataRef {
+            problem,
+            solution,
+            ..
+        } = solver.data();
+
+        let new_pos: &[Vector3<f64>] = reinterpret_slice(solution);
+
         let ElasticTetMeshEnergy {
             solid: ref mut mesh,
             ref mut prev_pos,
             ..
-        } = *solver.problem().energy_model.borrow_mut();
+        } = problem.energy_model;
 
         // On success, update the mesh with new positions and useful metrics.
         if let Ok(_) = step_result {
-            let new_pos: &[Vector3<f64>] = reinterpret_slice(solver.solution());
             Self::update_state(mesh, prev_pos.as_mut_slice(), new_pos);
 
             // Write back elastic strain energy for visualization.
@@ -334,14 +344,7 @@ impl<'a, F: FnMut() -> bool + Sync> FemEngine<'a, F> {
     }
 }
 
-impl<'a, F: FnMut() -> bool + Sync> NonLinearProblem<'a, F> {
-    pub fn energy_model(&self) -> Ref<ElasticTetMeshEnergy<'a>> {
-        self.energy_model.borrow()
-    }
-    pub fn energy_model_mut(&self) -> RefMut<ElasticTetMeshEnergy<'a>> {
-        self.energy_model.borrow_mut()
-    }
-
+impl NonLinearProblem {
     /// Get information about the current simulation
     pub fn iteration_count(&self) -> usize {
         self.iterations
@@ -368,13 +371,13 @@ impl<'a, F: FnMut() -> bool + Sync> NonLinearProblem<'a, F> {
 }
 
 /// Prepare the problem for Newton iterations.
-impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NonLinearProblem<'a, F> {
+impl ipopt::BasicProblem for NonLinearProblem {
     fn num_variables(&self) -> usize {
-        self.energy_model().solid.num_vertices() * 3
+        self.energy_model.solid.num_vertices() * 3
     }
 
     fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let solid = &self.energy_model().solid;
+        let solid = &self.energy_model.solid;
         let n = solid.num_vertices();
         let mut lo = Vec::with_capacity(n);
         let mut hi = Vec::with_capacity(n);
@@ -397,33 +400,31 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::BasicProblem for NonLinearProblem<'a,
     }
 
     fn initial_point(&self) -> Vec<Number> {
-        let solid = &self.energy_model().solid;
+        let solid = &self.energy_model.solid;
         reinterpret_slice(solid.vertex_positions()).to_vec()
     }
 
     fn objective(&mut self, x: &[Number], obj: &mut Number) -> bool {
-        let mut model = self.energy_model_mut();
-        model.update(x);
-        *obj = model.energy();
+        self.energy_model.update(x);
+        *obj = self.energy_model.energy();
         true
     }
 
     fn objective_grad(&mut self, x: &[Number], grad_f: &mut [Number]) -> bool {
-        let mut model = self.energy_model_mut();
-        model.update(x);
-        grad_f.copy_from_slice(reinterpret_slice(model.energy_gradient()));
+        self.energy_model.update(x);
+        grad_f.copy_from_slice(reinterpret_slice(self.energy_model.energy_gradient()));
 
         true
     }
 }
 
-impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NonLinearProblem<'a, F> {
+impl ipopt::NewtonProblem for NonLinearProblem {
     fn num_hessian_non_zeros(&self) -> usize {
-        self.energy_model().energy_hessian_size()
+        self.energy_model.energy_hessian_size()
     }
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        let mut model = self.energy_model_mut();
-        for (i, &MatrixElementTriplet { ref idx, .. }) in model.energy_hessian().iter().enumerate()
+        for (i, &MatrixElementTriplet { ref idx, .. }) in
+            self.energy_model.energy_hessian().iter().enumerate()
         {
             rows[i] = idx.row as Index;
             cols[i] = idx.col as Index;
@@ -432,10 +433,9 @@ impl<'a, F: FnMut() -> bool + Sync> ipopt::NewtonProblem for NonLinearProblem<'a
         true
     }
     fn hessian_values(&mut self, x: &[Number], vals: &mut [Number]) -> bool {
-        let mut model = self.energy_model_mut();
-        model.update(x);
+        self.energy_model.update(x);
 
-        for (i, elem) in model.energy_hessian().iter().enumerate() {
+        for (i, elem) in self.energy_model.energy_hessian().iter().enumerate() {
             vals[i] = elem.val as Number;
         }
 
@@ -513,7 +513,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            FemEngine::new(&mut mesh, STATIC_PARAMS, || false)
+            FemEngine::new(mesh, STATIC_PARAMS)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -548,7 +548,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
+            FemEngine::new(mesh, DYNAMIC_PARAMS)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -557,9 +557,9 @@ mod tests {
 
     #[test]
     fn torus_medium_test() {
-        let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
+            FemEngine::new(mesh, DYNAMIC_PARAMS)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -568,10 +568,10 @@ mod tests {
 
     #[test]
     fn torus_large_test() {
-        let mut mesh =
+        let mesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
         assert!(
-            FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
+            FemEngine::new(mesh, DYNAMIC_PARAMS)
                 .unwrap()
                 .step()
                 .is_ok()
@@ -580,9 +580,9 @@ mod tests {
 
     #[test]
     fn torus_long_test() {
-        let mut mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
-        let mut engine = FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false).unwrap();
+        let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
         for _i in 0..50 {
             assert!(engine.step().is_ok());
         }

@@ -49,7 +49,7 @@ mod bench {
 
         b.iter(|| {
             assert!(
-                FemEngine::new(&mut mesh, DYNAMIC_PARAMS, || false)
+                FemEngine::new(mesh.clone(), DYNAMIC_PARAMS)
                     .unwrap()
                     .step()
                     .is_ok()

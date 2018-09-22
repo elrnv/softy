@@ -200,13 +200,13 @@ pub struct Dummy<'a> {
 
 #[no_mangle]
 pub unsafe extern "C" fn tetmesh_attrib_iter(
-    mesh_ptr: *mut TetMesh,
+    mesh_ptr: *const TetMesh,
     loc: AttribLocation,
     _d: *const Dummy,
 ) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr);
+    let mesh = &(*mesh_ptr);
 
     let iter = Box::new(match loc {
         AttribLocation::Vertex => {
@@ -224,13 +224,13 @@ pub unsafe extern "C" fn tetmesh_attrib_iter(
 
 #[no_mangle]
 pub unsafe extern "C" fn polymesh_attrib_iter(
-    mesh_ptr: *mut PolyMesh,
+    mesh_ptr: *const PolyMesh,
     loc: AttribLocation,
     _d: *const Dummy,
 ) -> *mut AttribIter {
     assert!(!mesh_ptr.is_null());
 
-    let mesh = &mut (*mesh_ptr);
+    let mesh = &(*mesh_ptr);
 
     let iter = Box::new(match loc {
         AttribLocation::Vertex => {

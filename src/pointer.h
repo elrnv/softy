@@ -14,7 +14,7 @@ public:
     {
         other._ptr = nullptr;
     }
-    OwnedPtr(T *ptr) : _ptr(ptr) { }
+    OwnedPtr(T* ptr) : _ptr(ptr) { }
     ~OwnedPtr(); // must be specialized for each T 
 
     OwnedPtr& operator=(OwnedPtr && other) {
@@ -48,9 +48,16 @@ public:
     T* get() {
         return _ptr;
     }
-    
+
+    // Release the ownership of the stored pointer.
+    T* release() {
+        T* ptr = _ptr;
+        _ptr = nullptr;
+        return ptr;
+    }
+
 private:
-    T *_ptr;
+    T* _ptr;
 };
 
 } // namespace hdkrs

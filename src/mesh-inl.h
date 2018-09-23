@@ -23,6 +23,11 @@ inline OwnedPtr<TetMesh>::~OwnedPtr() {
     free_tetmesh(_ptr);
 }
 
+template<>
+inline OwnedPtr<PointCloud>::~OwnedPtr() {
+    free_tetmesh(_ptr);
+}
+
 namespace mesh {
 
 inline std::ostream& operator<<(std::ostream& out, AttribLocation where) {

@@ -25,7 +25,7 @@ inline OwnedPtr<TetMesh>::~OwnedPtr() {
 
 template<>
 inline OwnedPtr<PointCloud>::~OwnedPtr() {
-    free_tetmesh(_ptr);
+    free_pointcloud(_ptr);
 }
 
 namespace mesh {

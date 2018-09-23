@@ -715,6 +715,13 @@ pub unsafe extern "C" fn make_tetmesh(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn free_pointcloud(mesh: *mut PointCloud) {
+    if !mesh.is_null() {
+        let _ = Box::from_raw(mesh);
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn free_tetmesh(mesh: *mut TetMesh) {
     if !mesh.is_null() {
         let _ = Box::from_raw(mesh);

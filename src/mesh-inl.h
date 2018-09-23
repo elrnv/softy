@@ -73,6 +73,8 @@ ADD_NUM_ATTRIB_IMPL(TetMesh, int64_t, add_tetmesh_attrib_i64)
 ADD_NUM_ATTRIB_IMPL(TetMesh, fpreal32, add_tetmesh_attrib_f32)
 ADD_NUM_ATTRIB_IMPL(TetMesh, fpreal64, add_tetmesh_attrib_f64)
 
+#undef ADD_NUM_ATTRIB_IMPL
+
 void add_attrib(
         PointCloud *ptcloud,
         AttribLocation where,
@@ -747,9 +749,9 @@ __attribute__((unused))
 OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
-    tet_vertices.reserve(detail->getNumPointOffsets());
+    tet_vertices.reserve(3*detail->getNumPointOffsets());
     std::vector<std::size_t> tet_indices;
-    tet_indices.reserve(detail->getNumVertexOffsets());
+    tet_indices.reserve(3*detail->getNumVertexOffsets());
 
     for ( GA_Offset pt_off : detail->getPointRange() )
     {
@@ -788,9 +790,9 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
 __attribute__((unused))
 OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
     std::vector<double> poly_vertices;
-    poly_vertices.reserve(detail->getNumPointOffsets());
+    poly_vertices.reserve(3*detail->getNumPointOffsets());
     std::vector<std::size_t> poly_indices;
-    poly_indices.reserve(detail->getNumVertexOffsets());
+    poly_indices.reserve(3*detail->getNumVertexOffsets());
 
     for ( GA_Offset pt_off : detail->getPointRange() )
     {
@@ -831,7 +833,7 @@ OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
 
 __attribute__((unused))
 OwnedPtr<PointCloud> build_pointcloud(const GU_Detail* detail) {
-    std::vector<double> vertices(detail->getNumPoints());
+    std::vector<double> vertex_coords(3*detail->getNumPoints());
     std::vector<bool> pt_grp(detail->getNumPointOffsets(), false);
 
     // We are gonna be smarter here and use block access to point data.
@@ -844,14 +846,14 @@ OwnedPtr<PointCloud> build_pointcloud(const GU_Detail* detail) {
             for (GA_Offset offset = start; offset < end; ++offset) {
                 pt_grp[offset] = true;
                 auto pos = P_ph.get(offset);
-                vertices[detail->pointIndex(offset)] = static_cast<double>( pos[0]);
-                vertices[detail->pointIndex(offset)+1] = static_cast<double>( pos[1]);
-                vertices[detail->pointIndex(offset)+2] = static_cast<double>( pos[2]);
+                vertex_coords[3*detail->pointIndex(offset)] = static_cast<double>( pos[0]);
+                vertex_coords[3*detail->pointIndex(offset)+1] = static_cast<double>( pos[1]);
+                vertex_coords[3*detail->pointIndex(offset)+2] = static_cast<double>( pos[2]);
             }
         }
     }
 
-    PointCloud *ptcloud = make_pointcloud(vertices.size(), vertices.data());
+    PointCloud *ptcloud = make_pointcloud(vertex_coords.size(), vertex_coords.data());
     assert(ptcloud);
 
     transfer_point_attributes(detail, ptcloud, pt_grp);

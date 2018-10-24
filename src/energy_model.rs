@@ -133,6 +133,7 @@ impl NeoHookeanTetEnergy {
 }
 
 /// A possibly non-linear elastic energy for tetrahedral meshes.
+#[derive(Debug, PartialEq)]
 pub struct ElasticTetMeshEnergy {
     /// The discretization of the solid domain using a tetrahedral mesh.
     pub solid: TetMesh,
@@ -235,10 +236,14 @@ impl ElasticTetMeshEnergy {
     // Solver specific functions
 
     /// Update the tetmesh vertex positions.
-    pub fn update(&mut self, x: &[f64]) {
-        let x_slice: &[[f64; 3]] = reinterpret_slice(x);
+    pub fn update(&mut self, dx: &[f64]) {
+        let dx_vec: &[Vector3<f64>] = reinterpret_slice(dx);
         let verts = self.solid.vertex_positions_mut();
-        verts.copy_from_slice(x_slice);
+        let prev_pos: &[Vector3<f64>] = self.prev_pos.as_slice();
+        verts.iter_mut()
+            .zip(prev_pos.iter())
+            .zip(dx_vec.iter())
+            .for_each(|((p, prev_p), disp)| *p = (*prev_p + *disp).into());
     }
 }
 

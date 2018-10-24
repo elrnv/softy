@@ -1,20 +1,24 @@
 use energy::*;
 use energy_model::{ElasticTetMeshEnergy, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};
-use geo::mesh::{self, attrib, tetmesh::TetCell, topology::*, Attrib};
+use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
-use ipopt::{self, Index, Ipopt, Number, SolveDataRef};
+use ipopt::{self, Index, Ipopt, Number, SolverData};
 use reinterpret::*;
 use attrib_names::*;
+use std::fmt;
 
-pub type PointCloud = mesh::PointCloud<f64>;
-pub type TetMesh = mesh::TetMesh<f64>;
+use PointCloud;
+use TetMesh;
 pub type Tet = Tetrahedron<f64>;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// Result from one simulation step.
+#[derive(Debug)]
 pub struct SolveResult {
+    /// Number of inner iterations of the step result.
     pub iterations: u32,
+    /// The value of the objective at the end of the time step.
     pub objective_value: f64,
 }
 
@@ -68,11 +72,14 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
 pub struct FemEngine {
     /// Non-linear solver.
     solver: Ipopt<NonLinearProblem>,
+    /// Step count (outer iterations). These count the number of times the function `step` was
+    /// called.
+    step_count: usize,
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
-struct NonLinearProblem {
+pub(crate) struct NonLinearProblem {
     /// Elastic energy model.
     pub energy_model: ElasticTetMeshEnergy,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
@@ -82,6 +89,13 @@ struct NonLinearProblem {
     pub iterations: usize,
     /// Simulation parameters.
     pub params: SimParams,
+}
+
+impl fmt::Debug for NonLinearProblem{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "NonLinearProblem {{ energy_model: {:?}, iterations: {:?}, params: {:?} }}",
+               self.energy_model, self.iterations, self.params)
+    }
 }
 
 impl FemEngine {
@@ -172,45 +186,54 @@ impl FemEngine {
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
-        Ok(FemEngine { solver: ipopt })
+        Ok(FemEngine { solver: ipopt, step_count: 0 })
     }
 
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
-        self.solver.problem_mut().interrupt_checker = checker;
+        self.solver.get_solver_data().problem.interrupt_checker = checker;
     }
 
     /// Get an immutable reference to the solver `TetMesh`.
-    pub fn mesh_ref(&self) -> &TetMesh {
-        &self.solver.problem().energy_model.solid
+    pub fn mesh_ref(&mut self) -> &TetMesh {
+        &self.solver.get_solver_data().problem.energy_model.solid
     }
 
     /// Get solver parameters.
-    pub fn params(&self) -> SimParams {
-        self.solver.problem().params
+    pub fn params(&mut self) -> SimParams {
+        self.solver.get_solver_data().problem.params
     }
 
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool {
-        let TetMesh {
-            ref mut vertex_positions,
-            ref vertex_attributes,
+        // Get solver data. We want to update the primal variables with new positions from `pts`.
+        let SolverData {
+            problem,
             ..
-        } = &mut self.solver.problem_mut().energy_model.solid;
+        } = self.solver.get_solver_data();
 
-        if pts.num_vertices() != vertex_positions.len() {
+        // Get the tetmesh so we can update fixed vertices only.
+        let ElasticTetMeshEnergy {
+            solid: ref tetmesh,
+            ref mut prev_pos,
+            ..
+        } = problem.energy_model;
+
+        if pts.num_vertices() != prev_pos.len()
+            || pts.num_vertices() != tetmesh.num_vertices() {
+            // We got an invalid point cloud
             return false;
         }
 
         // Only update fixed vertices.
-        vertex_positions.iter_mut()
+        prev_pos.iter_mut()
             .zip(pts.vertex_iter())
             .zip(
-                vertex_attributes.get(FIXED_ATTRIB).unwrap().iter::<i8>()
+                tetmesh.attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)
                 .unwrap()
                 )
-            .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None } )
-            .for_each(|(pos, new_pos)| *pos = *new_pos);
+            .filter_map( |(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None } )
+            .for_each( |(pos, new_pos)| *pos = Vector3::from(*new_pos));
         true
     }
 
@@ -293,32 +316,44 @@ impl FemEngine {
 
     /// Update the state of the system, which includes new positions and velocities stored on the
     /// mesh, as well as previous positions stored in `prev_pos`.
-    fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], new_pos: &[Vector3<f64>]) {
+    fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
         // Write back the velocity for the next iteration.
-        for ((vel, prev_x), &x) in mesh
+        for ((vel, prev_x), &dx) in mesh
             .attrib_iter_mut::<[f64; 3], VertexIndex>(VELOCITY_ATTRIB)
             .unwrap()
             .zip(prev_pos.iter_mut())
-            .zip(new_pos.iter())
+            .zip(disp.iter())
         {
-            *vel = (x - *prev_x).into();
-            *prev_x = x;
+            *vel = dx.into();
+            *prev_x += dx;
         }
+
+        mesh.vertex_iter_mut()
+            .zip(prev_pos.iter())
+            .for_each(|(pos, prev_pos)| *pos = (*prev_pos).into());
     }
 
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
     pub fn solve_step(&mut self) -> Result<SolveResult, Error> {
         // Solve non-linear problem
-        let (status, obj) = self.solver.solve();
+        let ipopt::SolveResult {
+            // unpack ipopt result
+            solver_data,
+            objective_value,
+            status,
+            ..
+        } = self.solver.solve();
+
+        let iterations = solver_data.problem.iteration_count() as u32;
 
         let result = SolveResult {
-            iterations: self.solver.problem().iteration_count() as u32,
-            objective_value: obj,
+            iterations,
+            objective_value,
         };
 
         match status {
-            ipopt::ReturnStatus::SolveSucceeded | ipopt::ReturnStatus::SolvedToAcceptableLevel => {
+            ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
             e => Err(Error::SolveError(e, result)),
@@ -327,27 +362,34 @@ impl FemEngine {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        if self.step_count == 1 {
+            // After the first step lets set ipopt into warm start mode
+            self.solver.set_option("warm_start_init_point", "yes");
+        }
+
         let step_result = self.solve_step();
 
-        let (lambda, mu) = self.params().material.lame_parameters();
-
-        let FemEngine { ref mut solver } = *self;
-
-        let SolveDataRef {
-            problem, solution, ..
-        } = solver.data();
-
-        let new_pos: &[Vector3<f64>] = reinterpret_slice(solution);
-
-        let ElasticTetMeshEnergy {
-            solid: ref mut mesh,
-            ref mut prev_pos,
-            ..
-        } = problem.energy_model;
+        self.step_count += 1;
 
         // On success, update the mesh with new positions and useful metrics.
         if let Ok(_) = step_result {
-            Self::update_state(mesh, prev_pos.as_mut_slice(), new_pos);
+            let (lambda, mu) = self.params().material.lame_parameters();
+
+            let SolverData {
+                ref mut problem,
+                ref primal_variables,
+                ..
+            } = self.solver.get_solver_data();
+
+            let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
+
+            let ElasticTetMeshEnergy {
+                solid: ref mut mesh,
+                ref mut prev_pos,
+                ..
+            } = problem.energy_model;
+
+            Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
 
             // Write back elastic strain energy for visualization.
             Self::compute_strain_energy_attrib(mesh, lambda, mu);
@@ -405,29 +447,28 @@ impl ipopt::BasicProblem for NonLinearProblem {
             // Find and set fixed vertices.
             lo.iter_mut()
                 .zip(hi.iter_mut())
-                .zip(fixed_verts.iter().zip(solid.vertex_positions().iter()))
-                .filter(|&(_, (&fixed, _))| fixed != 0)
-                .for_each(|((l, u), (_, p))| {
-                    *l = *p;
-                    *u = *p;
+                .zip(fixed_verts.iter())
+                .filter(|&(_, &fixed)| fixed != 0)
+                .for_each(|((l, u), _)| {
+                    *l = [0.0;3];
+                    *u = [0.0;3];
                 });
         }
         (reinterpret_vec(lo), reinterpret_vec(hi))
     }
 
     fn initial_point(&self) -> Vec<Number> {
-        let solid = &self.energy_model.solid;
-        reinterpret_slice(solid.vertex_positions()).to_vec()
+        vec![0.0; self.num_variables()]
     }
 
-    fn objective(&mut self, x: &[Number], obj: &mut Number) -> bool {
-        self.energy_model.update(x);
+    fn objective(&mut self, dx: &[Number], obj: &mut Number) -> bool {
+        self.energy_model.update(dx);
         *obj = self.energy_model.energy();
         true
     }
 
-    fn objective_grad(&mut self, x: &[Number], grad_f: &mut [Number]) -> bool {
-        self.energy_model.update(x);
+    fn objective_grad(&mut self, dx: &[Number], grad_f: &mut [Number]) -> bool {
+        self.energy_model.update(dx);
         grad_f.copy_from_slice(reinterpret_slice(self.energy_model.energy_gradient()));
 
         true
@@ -448,8 +489,8 @@ impl ipopt::NewtonProblem for NonLinearProblem {
 
         true
     }
-    fn hessian_values(&mut self, x: &[Number], vals: &mut [Number]) -> bool {
-        self.energy_model.update(x);
+    fn hessian_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
+        self.energy_model.update(dx);
 
         for (i, elem) in self.energy_model.energy_hessian().iter().enumerate() {
             vals[i] = elem.val as Number;
@@ -463,7 +504,7 @@ impl ipopt::NewtonProblem for NonLinearProblem {
 pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
-    SolveError(ipopt::ReturnStatus, SolveResult),
+    SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
 }
 
 impl From<attrib::Error> for Error {
@@ -593,11 +634,12 @@ mod tests {
         let mut solver = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
 
         for frame in 1u32..100 {
-            let offset = 0.1*(if frame < 50 { frame } else { 0 } as f64);
+            let offset = 0.01*(if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
             assert!(solver.update_mesh_vertices(&pts));
-            assert!(solver.step().is_ok());
+            let step_res = solver.step();
+            assert!(step_res.is_ok());
         }
     }
 

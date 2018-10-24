@@ -6,7 +6,6 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 [dependencies]
 nalgebra = "0.16"
 ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
-geometry-derive = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
 rayon = "1.0"
 reinterpret = "0.1"
@@ -15,7 +14,7 @@ reinterpret = "0.1"
 criterion = { version = "0.2", features=['real_blackbox'] }
 
 [profile.release]
-debug = true
+debug = false # Change this to true to enable debug symbols in release mode
 
 [features]
 unstable = []

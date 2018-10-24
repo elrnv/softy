@@ -12,6 +12,7 @@ mod energy;
 mod energy_model;
 mod fem;
 
+pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
@@ -33,10 +34,10 @@ impl From<fem::Error> for SimResult {
             fem::Error::InvertedReferenceElement => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
             }
-            fem::Error::SolveError(e, result) => SimResult::Error(
+            fem::Error::SolveError(e, SolveResult { iterations, objective_value }) => SimResult::Error(
                 format!(
                     "Solve failed: {:?}\nIterations: {}\nObjective: {}",
-                    e, result.iterations, result.objective_value
+                    e, iterations, objective_value
                 ).into(),
             ),
         }
@@ -49,6 +50,7 @@ impl Into<SimResult> for Result<fem::SolveResult, fem::Error> {
             Ok(fem::SolveResult {
                 iterations,
                 objective_value,
+                ..
             }) => SimResult::Success(
                 format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
             ),

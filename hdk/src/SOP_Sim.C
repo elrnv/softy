@@ -23,7 +23,6 @@
 #include <vector>
 #include <array>
 #include <cassert>
-#include <mutex>
 
 const UT_StringHolder SOP_Sim::theSOPTypeName("hdk_softy"_sh);
 
@@ -42,7 +41,6 @@ newSopOperator(OP_OperatorTable *table)
                 OP_FLAG_GENERATOR));            // Flag it as generator
 }
 
-//TODO: Add a clear cache button
 static const char *theDsFile = R"THEDSFILE(
 {
     name softy
@@ -114,14 +112,28 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0.0 1.0 }
         }
     }
+
+    parm {
+        name "clearcache"
+        label "Clear Cache"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
 }
 )THEDSFILE";
+
+int SOP_Sim::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
+    hdkrs::clear_solver_registry();
+    return 0;
+}
 
 
 PRM_Template *
 SOP_Sim::buildTemplates()
 {
     static PRM_TemplateBuilder templ("SOP_Sim.C"_sh, theDsFile);
+    templ.setCallback("clearcache", SOP_Sim::clearSolverCache);
     return templ.templates();
 }
 

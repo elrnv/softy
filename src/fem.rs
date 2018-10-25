@@ -1,5 +1,5 @@
 use energy::*;
-use energy_model::{ElasticTetMeshEnergy, NeoHookeanTetEnergy};
+use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
@@ -108,7 +108,7 @@ impl FemEngine {
             verts.as_slice(),
         )?;
 
-        mesh.attrib_or_add::<_, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
+        mesh.attrib_or_add::<_, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
 
         {
             // Compute reference element signed volumes
@@ -156,15 +156,16 @@ impl FemEngine {
             params.gravity[1] as f64,
             params.gravity[2] as f64,
         ];
-        let mut energy_model = ElasticTetMeshEnergy::new(mesh)
+        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(mesh)
             .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
+
         if let Some(dt) = params.time_step {
-            energy_model = energy_model.time_step(dt as f64);
+            energy_model_builder = energy_model_builder.time_step(dt as f64);
         }
 
         let problem = NonLinearProblem {
-            energy_model,
+            energy_model: energy_model_builder.build(),
             interrupt_checker: Box::new(|| false),
             iterations: 0,
             params,
@@ -318,13 +319,13 @@ impl FemEngine {
     /// mesh, as well as previous positions stored in `prev_pos`.
     fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
         // Write back the velocity for the next iteration.
-        for ((vel, prev_x), &dx) in mesh
-            .attrib_iter_mut::<[f64; 3], VertexIndex>(VELOCITY_ATTRIB)
+        for ((prev_dx, prev_x), &dx) in mesh
+            .attrib_iter_mut::<[f64; 3], VertexIndex>(DISPLACEMENT_ATTRIB)
             .unwrap()
             .zip(prev_pos.iter_mut())
             .zip(disp.iter())
         {
-            *vel = dx.into();
+            *prev_dx = dx.into();
             *prev_x += dx;
         }
 

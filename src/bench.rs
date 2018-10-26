@@ -48,12 +48,10 @@ mod bench {
             .ok();
 
         b.iter(|| {
-            assert!(
-                FemEngine::new(mesh.clone(), DYNAMIC_PARAMS)
-                    .unwrap()
-                    .step()
-                    .is_ok()
-            )
+            assert!(FemEngine::new(mesh.clone(), DYNAMIC_PARAMS)
+                .unwrap()
+                .step()
+                .is_ok())
         })
     }
 

@@ -1,3 +1,4 @@
+use attrib_names::*;
 use energy::*;
 use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};
@@ -6,7 +7,6 @@ use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Index, Ipopt, Number, SolverData};
 use reinterpret::*;
-use attrib_names::*;
 use std::fmt;
 
 use PointCloud;
@@ -59,7 +59,9 @@ pub struct SimParams {
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
 pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
-    let attrib = tetmesh.attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB).unwrap();
+    let attrib = tetmesh
+        .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
+        .unwrap();
     Tetrahedron(
         (attrib.get::<[f64; 3], _>(indices[0]).unwrap()).into(),
         (attrib.get::<[f64; 3], _>(indices[1]).unwrap()).into(),
@@ -91,10 +93,13 @@ pub(crate) struct NonLinearProblem {
     pub params: SimParams,
 }
 
-impl fmt::Debug for NonLinearProblem{
+impl fmt::Debug for NonLinearProblem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "NonLinearProblem {{ energy_model: {:?}, iterations: {:?}, params: {:?} }}",
-               self.energy_model, self.iterations, self.params)
+        write!(
+            f,
+            "NonLinearProblem {{ energy_model: {:?}, iterations: {:?}, params: {:?} }}",
+            self.energy_model, self.iterations, self.params
+        )
     }
 }
 
@@ -103,10 +108,7 @@ impl FemEngine {
     pub fn new(mut mesh: TetMesh, params: SimParams) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
         let verts = mesh.vertex_positions().to_vec();
-        mesh.attrib_or_add_data::<_, VertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
-            verts.as_slice(),
-        )?;
+        mesh.attrib_or_add_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
 
         mesh.attrib_or_add::<_, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
 
@@ -119,10 +121,7 @@ impl FemEngine {
             if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
                 return Err(Error::InvertedReferenceElement);
             }
-            mesh.set_attrib_data::<_, CellIndex>(
-                REFERENCE_VOLUME_ATTRIB,
-                ref_volumes.as_slice(),
-            )?;
+            mesh.set_attrib_data::<_, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
         }
 
         {
@@ -133,7 +132,8 @@ impl FemEngine {
                     let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
                     // We assume that ref_shape_matrices are non-singular.
                     ref_shape_matrix.inverse().unwrap()
-                }).collect();
+                })
+                .collect();
             mesh.set_attrib_data::<_, CellIndex>(
                 REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                 ref_shape_mtx_inverses.as_slice(),
@@ -187,7 +187,10 @@ impl FemEngine {
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
-        Ok(FemEngine { solver: ipopt, step_count: 0 })
+        Ok(FemEngine {
+            solver: ipopt,
+            step_count: 0,
+        })
     }
 
     /// Set the interrupt checker to the given function.
@@ -208,10 +211,7 @@ impl FemEngine {
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool {
         // Get solver data. We want to update the primal variables with new positions from `pts`.
-        let SolverData {
-            problem,
-            ..
-        } = self.solver.get_solver_data();
+        let SolverData { problem, .. } = self.solver.get_solver_data();
 
         // Get the tetmesh so we can update fixed vertices only.
         let ElasticTetMeshEnergy {
@@ -220,21 +220,22 @@ impl FemEngine {
             ..
         } = problem.energy_model;
 
-        if pts.num_vertices() != prev_pos.len()
-            || pts.num_vertices() != tetmesh.num_vertices() {
+        if pts.num_vertices() != prev_pos.len() || pts.num_vertices() != tetmesh.num_vertices() {
             // We got an invalid point cloud
             return false;
         }
 
         // Only update fixed vertices.
-        prev_pos.iter_mut()
+        prev_pos
+            .iter_mut()
             .zip(pts.vertex_iter())
             .zip(
-                tetmesh.attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)
-                .unwrap()
-                )
-            .filter_map( |(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None } )
-            .for_each( |(pos, new_pos)| *pos = Vector3::from(*new_pos));
+                tetmesh
+                    .attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)
+                    .unwrap(),
+            )
+            .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
+            .for_each(|(pos, new_pos)| *pos = Vector3::from(*new_pos));
         true
     }
 
@@ -250,11 +251,12 @@ impl FemEngine {
             .zip(
                 mesh.attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                     .unwrap(),
-            ).zip(
-                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
-                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                ).unwrap(),
-            ).zip(mesh.tet_iter())
+            )
+            .zip(
+                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                    .unwrap(),
+            )
+            .zip(mesh.tet_iter())
             .for_each(|(((strain, &vol), &ref_shape_mtx_inv), tet)| {
                 *strain =
                     NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
@@ -281,10 +283,10 @@ impl FemEngine {
             .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
-                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(
-                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                ).unwrap(),
-            ).zip(mesh.tet_iter())
+                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                    .unwrap(),
+            )
+            .zip(mesh.tet_iter())
             .map(|((&vol, &ref_shape_mtx_inv), tet)| {
                 NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
                     .elastic_energy_gradient()
@@ -451,8 +453,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 .zip(fixed_verts.iter())
                 .filter(|&(_, &fixed)| fixed != 0)
                 .for_each(|((l, u), _)| {
-                    *l = [0.0;3];
-                    *u = [0.0;3];
+                    *l = [0.0; 3];
+                    *u = [0.0; 3];
                 });
         }
         (reinterpret_vec(lo), reinterpret_vec(hi))
@@ -481,8 +483,11 @@ impl ipopt::NewtonProblem for NonLinearProblem {
         self.energy_model.energy_hessian_size()
     }
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for (i, &MatrixElementIndex { ref row, ref col }) in
-            self.energy_model.energy_hessian_indices().iter().enumerate()
+        for (i, &MatrixElementIndex { ref row, ref col }) in self
+            .energy_model
+            .energy_hessian_indices()
+            .iter()
+            .enumerate()
         {
             rows[i] = *row as Index;
             cols[i] = *col as Index;
@@ -635,7 +640,7 @@ mod tests {
         let mut solver = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
 
         for frame in 1u32..100 {
-            let offset = 0.01*(if frame < 50 { frame } else { 0 } as f64);
+            let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
             assert!(solver.update_mesh_vertices(&pts));

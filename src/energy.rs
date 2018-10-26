@@ -55,7 +55,7 @@ pub trait EnergyHessianSize {
 /// Newton-Raphson. This trait provides the energy Hessian in terms of non-zero values provided by
 /// `energy_hessian_values` and indexed by a slice of `MatrixElementIndex`es, which is provided by
 /// `energy_hessian_indices`.
-pub trait EnergyHessianIndicesValues<T: Scalar> : EnergyHessianSize {
+pub trait EnergyHessianIndicesValues<T: Scalar>: EnergyHessianSize {
     /// Compute the Hessian row and column indices of the Hessian matrix values.
     fn energy_hessian_indices(&mut self) -> &[MatrixElementIndex];
     /// Compute the Hessian matrix values corresponding to their positions in the matrix returned
@@ -67,7 +67,7 @@ pub trait EnergyHessianIndicesValues<T: Scalar> : EnergyHessianSize {
 /// This trait provides an interface for retrieving the energy Hessian just like
 /// `EnergyHessianIndicesValues`, however the indices and values are combined together into
 /// the `MatrixElementTriplet` type.
-pub trait EnergyHessian<T: Scalar> : EnergyHessianSize {
+pub trait EnergyHessian<T: Scalar>: EnergyHessianSize {
     /// Compute the Hessian matrix in triplet form. This effectively computes the matrix row and
     /// column indices as returned by `energy_hessian_indices` as well as the corresponding values
     /// returned by `energy_hessian_values`.
@@ -77,6 +77,6 @@ pub trait EnergyHessian<T: Scalar> : EnergyHessianSize {
 /// Some optimizers require only the energy Hessian product with another vector. This trait
 /// provides an interface for such applications.
 pub trait EnergyHessianProduct<T: Scalar> {
-    /// Compute the product of Hessian and a given vector. 
+    /// Compute the product of Hessian and a given vector.
     fn energy_hessian_product(&mut self, dx: &[T]) -> &[T];
 }

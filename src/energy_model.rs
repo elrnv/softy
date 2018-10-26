@@ -1,5 +1,6 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
+use attrib_names::*;
 use energy::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
@@ -7,7 +8,6 @@ use geo::ops::*;
 use rayon::prelude::*;
 use reinterpret::*;
 use TetMesh;
-use attrib_names::*;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -237,7 +237,7 @@ pub struct ElasticTetMeshEnergy {
 pub struct ElasticTetMeshEnergyBuilder {
     tetmesh: TetMesh,
     material: Option<MaterialModel>,
-    gravity: Option<[f64;3]>,
+    gravity: Option<[f64; 3]>,
     time_step: Option<f64>,
 }
 
@@ -319,7 +319,7 @@ impl ElasticTetMeshEnergyBuilder {
             solid: tetmesh.clone(),
             prev_pos,
             material: material.unwrap_or(MaterialModel::default()),
-            time_step_inv: time_step.map_or(0.0, |x| 1.0/x),
+            time_step_inv: time_step.map_or(0.0, |x| 1.0 / x),
             gravity: gravity.map_or(Vector3::zeros(), |x| x.into()),
             energy_gradient: Vec::new(),
             energy_hessian_indices: Vec::new(),
@@ -335,7 +335,8 @@ impl ElasticTetMeshEnergy {
         let dx_vec: &[Vector3<f64>] = reinterpret_slice(dx);
         let verts = self.solid.vertex_positions_mut();
         let prev_pos: &[Vector3<f64>] = self.prev_pos.as_slice();
-        verts.iter_mut()
+        verts
+            .iter_mut()
             .zip(prev_pos.iter())
             .zip(dx_vec.iter())
             .for_each(|((p, prev_p), disp)| *p = (*prev_p + *disp).into());
@@ -354,8 +355,9 @@ impl ElasticTetMeshEnergy {
     /// as well as the local hessian matrix computed by `local_hess`.
     #[inline]
     fn hessian_for_each<H, L, F>(mut local_hess: L, mut value: F)
-            where L: FnMut(usize, usize) -> H,
-                  F: FnMut(usize, (usize, usize), (usize, usize), &mut H)
+    where
+        L: FnMut(usize, usize) -> H,
+        F: FnMut(usize, (usize, usize), (usize, usize), &mut H),
     {
         let mut i = 0; // triplet index for the tet. there should be 78 in total
         for k in 0..4 {
@@ -407,7 +409,8 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                 solid
                     .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
-            ).zip(solid.cell_iter())
+            )
+            .zip(solid.cell_iter())
             .zip(solid.tet_iter())
             .map(|(((&vol, &DX_inv), cell), tet)| {
                 let Dx = tet.shape_matrix();
@@ -440,7 +443,8 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                             * (dH[0].dot(dx[0]) + dH[1].dot(dx[1]) + dH[2].dot(dx[2]) -
                                (dx[3].transpose()*dH).sum())
                     }
-            }).sum()
+            })
+            .sum()
     }
 }
 
@@ -478,7 +482,8 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
                 solid
                     .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
-            ).zip(solid.tet_iter())
+            )
+            .zip(solid.tet_iter())
             .map(|((&vol, &DX_inv), tet)| {
                 let tet_energy =
                     NeoHookeanTetEnergy::new(tet.shape_matrix(), DX_inv, vol, lambda, mu);
@@ -498,7 +503,8 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
                 solid
                     .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
-            ).zip(solid.tet_iter())
+            )
+            .zip(solid.tet_iter())
             .zip(solid.cell_iter())
             .zip(force_iter)
         {
@@ -563,20 +569,24 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
                                        NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
                 reinterpret_mut_slice(hess);
 
-            let hess_iter = hess_chunks
-                .par_iter_mut()
-                .zip(solid.cells().par_iter());
+            let hess_iter = hess_chunks.par_iter_mut().zip(solid.cells().par_iter());
 
             hess_iter.for_each(|(tet_hess, cell)| {
-                Self::hessian_for_each(|_,_| (), |i, (n,k), (row,col), _| {
-                    let mut global_row = 3 * cell[n] + row;
-                    let mut global_col = 3 * cell[k] + col;
-                    if cell[n] < cell[k] {
-                        // In the upper triangular part of the global matrix, transpose
-                        ::std::mem::swap(&mut global_row, &mut global_col);
-                    }
-                    tet_hess[i] = MatrixElementIndex { row: global_row, col: global_col };
-                });
+                Self::hessian_for_each(
+                    |_, _| (),
+                    |i, (n, k), (row, col), _| {
+                        let mut global_row = 3 * cell[n] + row;
+                        let mut global_col = 3 * cell[k] + col;
+                        if cell[n] < cell[k] {
+                            // In the upper triangular part of the global matrix, transpose
+                            ::std::mem::swap(&mut global_row, &mut global_col);
+                        }
+                        tet_hess[i] = MatrixElementIndex {
+                            row: global_row,
+                            col: global_col,
+                        };
+                    },
+                );
             });
         }
         hess
@@ -614,12 +624,16 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
                         .attrib_as_slice::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                         .unwrap()
                         .par_iter(),
-                ).zip(
+                )
+                .zip(
                     solid
-                        .attrib_as_slice::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                        .attrib_as_slice::<Matrix3<f64>, CellIndex>(
+                            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                        )
                         .unwrap()
                         .par_iter(),
-                ).zip(solid.cells().par_iter());
+                )
+                .zip(solid.cells().par_iter());
 
             hess_iter.for_each(|(((tet_hess, &vol), &DX_inv), cell)| {
                 let tet = solid.tet_from_indices(cell);
@@ -640,7 +654,8 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
                         }
 
                         tet_hess[i] = h_val;
-                    });
+                    },
+                );
             });
         }
         hess
@@ -681,12 +696,16 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
                         .attrib_as_slice::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                         .unwrap()
                         .par_iter(),
-                ).zip(
+                )
+                .zip(
                     solid
-                        .attrib_as_slice::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                        .attrib_as_slice::<Matrix3<f64>, CellIndex>(
+                            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                        )
                         .unwrap()
                         .par_iter(),
-                ).zip(solid.cells().par_iter());
+                )
+                .zip(solid.cells().par_iter());
 
             hess_iter.for_each(|(((tet_hess, &vol), &DX_inv), cell)| {
                 let tet = solid.tet_from_indices(cell);
@@ -698,8 +717,8 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
                 let local_hessians = tet_energy.elastic_energy_hessian();
 
                 Self::hessian_for_each(
-                    |n,k| factor * local_hessians[k][n],
-                    |i,(n,k),(row,col),h| {
+                    |n, k| factor * local_hessians[k][n],
+                    |i, (n, k), (row, col), h| {
                         let mut global_row = 3 * cell[n] + row;
                         let mut global_col = 3 * cell[k] + col;
                         if cell[n] < cell[k] {
@@ -714,7 +733,8 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
                         }
 
                         tet_hess[i] = MatrixElementTriplet::new(global_row, global_col, h_val);
-                    });
+                    },
+                );
             });
         }
         hess

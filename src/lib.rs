@@ -34,11 +34,18 @@ impl From<fem::Error> for SimResult {
             fem::Error::InvertedReferenceElement => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
             }
-            fem::Error::SolveError(e, SolveResult { iterations, objective_value }) => SimResult::Error(
+            fem::Error::SolveError(
+                e,
+                SolveResult {
+                    iterations,
+                    objective_value,
+                },
+            ) => SimResult::Error(
                 format!(
                     "Solve failed: {:?}\nIterations: {}\nObjective: {}",
                     e, iterations, objective_value
-                ).into(),
+                )
+                .into(),
             ),
         }
     }

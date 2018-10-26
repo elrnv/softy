@@ -1,4 +1,5 @@
 use attrib_names::*;
+use matrix::*;
 use energy::*;
 use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};

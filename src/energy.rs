@@ -8,26 +8,7 @@
 
 use geo::math::{Scalar, Vector3};
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct MatrixElementIndex {
-    pub row: usize,
-    pub col: usize,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct MatrixElementTriplet<T> {
-    pub idx: MatrixElementIndex,
-    pub val: T,
-}
-
-impl<T> MatrixElementTriplet<T> {
-    pub fn new(row: usize, col: usize, val: T) -> Self {
-        MatrixElementTriplet {
-            idx: MatrixElementIndex { row, col },
-            val,
-        }
-    }
-}
+use matrix::{MatrixElementIndex, MatrixElementTriplet};
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
@@ -47,7 +28,7 @@ pub trait EnergyGradient<T: Scalar> {
 /// be confused with the Hessian matrix size, which is typically smaller than the number of
 /// non-zeros in the Hessian.
 pub trait EnergyHessianSize {
-    /// The number of non-zeros in the Hessian matrix of the energy wrt. configuration change.
+    /// The number of non-zeros in the Hessian matrix of the energy.
     fn energy_hessian_size(&self) -> usize;
 }
 

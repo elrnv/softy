@@ -7,6 +7,7 @@ extern crate rayon;
 extern crate reinterpret;
 
 mod attrib_names;
+mod matrix;
 mod bench;
 mod energy;
 mod energy_model;

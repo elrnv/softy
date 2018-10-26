@@ -660,7 +660,7 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
         let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
-        for _i in 0..50 {
+        for _i in 0..25 {
             assert!(engine.step().is_ok());
         }
     }

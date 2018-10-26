@@ -481,11 +481,11 @@ impl ipopt::NewtonProblem for NonLinearProblem {
         self.energy_model.energy_hessian_size()
     }
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for (i, &MatrixElementTriplet { ref idx, .. }) in
-            self.energy_model.energy_hessian().iter().enumerate()
+        for (i, &MatrixElementIndex { ref row, ref col }) in
+            self.energy_model.energy_hessian_indices().iter().enumerate()
         {
-            rows[i] = idx.row as Index;
-            cols[i] = idx.col as Index;
+            rows[i] = *row as Index;
+            cols[i] = *col as Index;
         }
 
         true
@@ -493,8 +493,8 @@ impl ipopt::NewtonProblem for NonLinearProblem {
     fn hessian_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
         self.energy_model.update(dx);
 
-        for (i, elem) in self.energy_model.energy_hessian().iter().enumerate() {
-            vals[i] = elem.val as Number;
+        for (i, val) in self.energy_model.energy_hessian_values().iter().enumerate() {
+            vals[i] = *val as Number;
         }
 
         true
@@ -567,7 +567,7 @@ mod tests {
             [1.0, 0.0, 1.0],
         ];
 
-        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
             .unwrap();
 
         assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
@@ -639,8 +639,7 @@ mod tests {
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
             assert!(solver.update_mesh_vertices(&pts));
-            let step_res = solver.step();
-            assert!(step_res.is_ok());
+            assert!(solver.step().is_ok());
         }
     }
 

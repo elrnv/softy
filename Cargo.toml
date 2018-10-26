@@ -9,6 +9,7 @@ ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
 rayon = "1.0"
 reinterpret = "0.1"
+#unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
 
 [dev-dependencies]
 criterion = { version = "0.2", features=['real_blackbox'] }

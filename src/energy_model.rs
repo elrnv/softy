@@ -381,7 +381,9 @@ impl ElasticTetMeshEnergy {
 /// Define energy for ElasticTetMeshEnergy materials.
 impl Energy<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy(&mut self) -> f64 {
+    fn energy(&mut self, dx: &[f64]) -> f64 {
+        self.update(dx);
+
         let ElasticTetMeshEnergy {
             ref solid,
             ref prev_pos,
@@ -451,7 +453,9 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
 impl EnergyGradient<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy_gradient(&mut self) -> &[Vector3<f64>] {
+    fn energy_gradient(&mut self, dx: &[f64]) -> &[f64] {
+        self.update(dx);
+
         let ElasticTetMeshEnergy {
             ref solid,
             ref prev_pos,
@@ -542,7 +546,7 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
                 gradient[cell[3]] -= dt_inv * damping * dH[i];
             }
         }
-        gradient
+        reinterpret_slice(gradient)
     }
 }
 
@@ -594,7 +598,9 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&mut self) -> &[f64] {
+    fn energy_hessian_values(&mut self, dx: &[f64]) -> &[f64] {
+        self.update(dx);
+
         let num_hess_triplets = self.energy_hessian_size();
         let ElasticTetMeshEnergy {
             ref solid,
@@ -665,7 +671,9 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
 
 impl EnergyHessian<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy_hessian(&mut self) -> &[MatrixElementTriplet<f64>] {
+    fn energy_hessian(&mut self, dx: &[f64]) -> &[MatrixElementTriplet<f64>] {
+        self.update(dx);
+
         let num_hess_triplets = self.energy_hessian_size();
         let ElasticTetMeshEnergy {
             ref solid,

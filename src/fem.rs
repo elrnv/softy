@@ -466,14 +466,12 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn objective(&mut self, dx: &[Number], obj: &mut Number) -> bool {
-        self.energy_model.update(dx);
-        *obj = self.energy_model.energy();
+        *obj = self.energy_model.energy(dx);
         true
     }
 
     fn objective_grad(&mut self, dx: &[Number], grad_f: &mut [Number]) -> bool {
-        self.energy_model.update(dx);
-        grad_f.copy_from_slice(reinterpret_slice(self.energy_model.energy_gradient()));
+        grad_f.copy_from_slice(self.energy_model.energy_gradient(dx));
 
         true
     }
@@ -497,9 +495,7 @@ impl ipopt::NewtonProblem for NonLinearProblem {
         true
     }
     fn hessian_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
-        self.energy_model.update(dx);
-
-        for (i, val) in self.energy_model.energy_hessian_values().iter().enumerate() {
+        for (i, val) in self.energy_model.energy_hessian_values(dx).iter().enumerate() {
             vals[i] = *val as Number;
         }
 
@@ -655,18 +651,20 @@ mod tests {
         assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
+    #[cfg(not(debug_assertions))]
     #[test]
     fn torus_large_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
         assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
+    #[cfg(not(debug_assertions))]
     #[test]
     fn torus_long_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
         let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
-        for _i in 0..25 {
+        for _i in 0..10 {
             assert!(engine.step().is_ok());
         }
     }

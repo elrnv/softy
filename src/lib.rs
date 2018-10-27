@@ -11,6 +11,8 @@ mod matrix;
 mod bench;
 mod energy;
 mod energy_model;
+mod constraint;
+mod volume_constraint;
 mod fem;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;

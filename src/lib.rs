@@ -31,6 +31,9 @@ pub enum SimResult {
 impl From<fem::Error> for SimResult {
     fn from(err: fem::Error) -> SimResult {
         match err {
+            fem::Error::SizeMismatch => {
+                SimResult::Error(format!("Size mismatch error.").into())
+            }
             fem::Error::AttribError(e) => {
                 SimResult::Error(format!("Attribute error: {:?}", e).into())
             }

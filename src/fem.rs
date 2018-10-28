@@ -1,11 +1,14 @@
 use attrib_names::*;
 use matrix::*;
 use energy::*;
+use constraint::*;
+use volume_constraint::{VolumeConstraint};
 use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
+use geo::io::save_tetmesh_ascii;
 use ipopt::{self, Index, Ipopt, Number, SolverData};
 use reinterpret::*;
 use std::fmt;
@@ -55,6 +58,7 @@ pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
     pub tolerance: f32,
+    pub volume_constraint: bool,
 }
 
 /// Get reference tetrahedron.
@@ -85,6 +89,8 @@ pub struct FemEngine {
 pub(crate) struct NonLinearProblem {
     /// Elastic energy model.
     pub energy_model: ElasticTetMeshEnergy,
+    /// Constraint on the total volume.
+    pub volume_constraint: Option<VolumeConstraint>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: Box<FnMut() -> bool>,
@@ -98,8 +104,9 @@ impl fmt::Debug for NonLinearProblem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "NonLinearProblem {{ energy_model: {:?}, iterations: {:?}, params: {:?} }}",
-            self.energy_model, self.iterations, self.params
+            "NonLinearProblem {{ energy_model: {:?}, volume_constraint: {:?}, \
+                                 iterations: {:?}, params: {:?} }}",
+            self.energy_model, self.volume_constraint, self.iterations, self.params
         )
     }
 }
@@ -157,6 +164,14 @@ impl FemEngine {
             params.gravity[1] as f64,
             params.gravity[2] as f64,
         ];
+
+        // Initialize volume constraint
+        let volume_constraint = if params.volume_constraint {
+            Some(VolumeConstraint::new(&mesh))
+        } else {
+            None
+        };
+
         let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(mesh)
             .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
@@ -167,19 +182,20 @@ impl FemEngine {
 
         let problem = NonLinearProblem {
             energy_model: energy_model_builder.build(),
+            volume_constraint,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
             params,
         };
 
-        let mut ipopt = Ipopt::new_newton(problem);
+        let mut ipopt = Ipopt::new(problem);
 
         ipopt.set_option("tol", params.tolerance as f64);
         ipopt.set_option("acceptable_tol", 10.0 * params.tolerance as f64);
         ipopt.set_option("max_iter", 800);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 0);
+        ipopt.set_option("print_level", 5);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
@@ -210,7 +226,7 @@ impl FemEngine {
     }
 
     /// Update the solver mesh with the given points.
-    pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool {
+    pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
         // Get solver data. We want to update the primal variables with new positions from `pts`.
         let SolverData { problem, .. } = self.solver.get_solver_data();
 
@@ -223,21 +239,18 @@ impl FemEngine {
 
         if pts.num_vertices() != prev_pos.len() || pts.num_vertices() != tetmesh.num_vertices() {
             // We got an invalid point cloud
-            return false;
+            return Err(Error::SizeMismatch);
         }
 
-        // Only update fixed vertices.
+        // Only update fixed vertices, if no such attribute exists, return an error.
+        let fixed_iter = tetmesh.attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)?;
         prev_pos
             .iter_mut()
             .zip(pts.vertex_iter())
-            .zip(
-                tetmesh
-                    .attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)
-                    .unwrap(),
-            )
+            .zip(fixed_iter)
             .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
             .for_each(|(pos, new_pos)| *pos = Vector3::from(*new_pos));
-        true
+        Ok(())
     }
 
     /// Given a tetmesh, compute the strain energy per tetrahedron.
@@ -477,26 +490,122 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 }
 
-impl ipopt::NewtonProblem for NonLinearProblem {
-    fn num_hessian_non_zeros(&self) -> usize {
-        self.energy_model.energy_hessian_size()
+impl ipopt::ConstrainedProblem for NonLinearProblem {
+    fn num_constraints(&self) -> usize {
+        let mut num = 0;
+        if let Some(ref vc) = self.volume_constraint {
+            num += vc.constraint_size();
+        }
+        num
     }
-    fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for (i, &MatrixElementIndex { ref row, ref col }) in self
-            .energy_model
-            .energy_hessian_indices()
-            .iter()
-            .enumerate()
-        {
-            rows[i] = *row as Index;
-            cols[i] = *col as Index;
+
+    fn num_constraint_jac_non_zeros(&self) -> usize {
+        let mut num = 0;
+        if let Some(ref vc) = self.volume_constraint {
+            num += vc.constraint_jacobian_size();
+        }
+        num
+    }
+
+    fn constraint(&mut self, dx: &[Number], grad: &mut [Number]) -> bool {
+        if let Some(ref mut vc) = self.volume_constraint {
+            for (i, g) in vc.constraint(dx).iter().enumerate() {
+                grad[i] = *g;
+            }
         }
 
         true
     }
-    fn hessian_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
-        for (i, val) in self.energy_model.energy_hessian_values(dx).iter().enumerate() {
-            vals[i] = *val as Number;
+
+    fn constraint_bounds(&self) -> (Vec<Number>, Vec<Number>) {
+        let mut lower = Vec::new();
+        let mut upper = Vec::new();
+        if let Some(ref vc) = self.volume_constraint {
+            lower.extend_from_slice(&mut vc.constraint_lower_bound());
+            upper.extend_from_slice(&mut vc.constraint_upper_bound());
+        }
+        (lower, upper)
+    }
+
+    fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+        use ipopt::BasicProblem;
+        let x = self.initial_point();
+
+        let mut i = 0; // counter
+
+        if let Some(ref mut vc) = self.volume_constraint {
+            for MatrixElementTriplet { idx: MatrixElementIndex { ref row, ref col }, .. } in
+                vc.constraint_jacobian(&x).iter()
+            {
+                rows[i] = *row as Index;
+                cols[i] = *col as Index;
+                i += 1;
+            }
+        }
+
+        true
+    }
+
+    fn constraint_jac_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
+        let mut i = 0;
+
+        if let Some(ref mut vc) = self.volume_constraint {
+            for val in vc.constraint_jacobian(dx).iter() {
+                vals[i] = (val.val) as Number;
+                i += 1;
+            }
+        }
+
+        true
+    }
+
+    fn num_hessian_non_zeros(&self) -> usize {
+        let mut num = self.energy_model.energy_hessian_size();
+        if let Some(ref vc) = self.volume_constraint {
+            num += vc.constraint_hessian_size();
+        }
+        num
+    }
+
+    fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+        let mut i = 0;
+        // Add energy indices
+        for MatrixElementIndex { ref row, ref col } in self
+            .energy_model
+            .energy_hessian_indices()
+            .iter()
+        {
+            rows[i] = *row as Index;
+            cols[i] = *col as Index;
+            i += 1;
+        }
+
+        // Add volume constraint indices
+        if let Some(ref mut vc) = self.volume_constraint {
+            for MatrixElementIndex { ref row, ref col } in vc
+                .constraint_hessian_indices()
+                .iter()
+            {
+                rows[i] = *row as Index;
+                cols[i] = *col as Index;
+                i += 1;
+            }
+        }
+
+        true
+    }
+    fn hessian_values(&mut self, dx: &[Number], obj_factor: Number, lambda: &[Number], vals: &mut [Number]) -> bool {
+        let mut i = 0;
+        for val in self.energy_model.energy_hessian_values(dx).iter() {
+            vals[i] = obj_factor * (*val as Number);
+            i += 1;
+        }
+
+        if let Some(ref mut vc) = self.volume_constraint {
+            for val in vc.constraint_hessian_values(dx, lambda).iter() {
+                vals[i] = *val as Number;
+                i += 1;
+            }
         }
 
         true
@@ -505,6 +614,7 @@ impl ipopt::NewtonProblem for NonLinearProblem {
 
 #[derive(Debug)]
 pub enum Error {
+    SizeMismatch,
     AttribError(attrib::Error),
     InvertedReferenceElement,
     SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
@@ -544,6 +654,33 @@ mod tests {
         time_step: None,
         tolerance: 1e-9,
     };
+
+    #[test]
+    fn one_tet_test() {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+        ];
+        let indices = vec![0, 2, 1, 3];
+        let mut mesh = TetMesh::new(verts, indices);
+        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![1, 0, 0, 0])
+            .unwrap();
+
+        let ref_verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+
+        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+            .unwrap();
+
+        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+    }
+
 
     #[test]
     fn simple_static_test() {
@@ -640,7 +777,7 @@ mod tests {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
-            assert!(solver.update_mesh_vertices(&pts));
+            assert!(solver.update_mesh_vertices(&pts).is_ok());
             assert!(solver.step().is_ok());
         }
     }
@@ -664,8 +801,10 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
         let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
-        for _i in 0..10 {
-            assert!(engine.step().is_ok());
+        for i in 0..10 {
+            save_tetmesh_ascii(engine.mesh_ref(), &PathBuf::from(format!("./out/mesh_{}.vtk", i)));
+            let res = engine.step();
+            assert!(res.is_ok());
         }
     }
 }

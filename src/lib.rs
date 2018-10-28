@@ -7,13 +7,13 @@ extern crate rayon;
 extern crate reinterpret;
 
 mod attrib_names;
-mod matrix;
 mod bench;
+mod constraint;
 mod energy;
 mod energy_model;
-mod constraint;
-mod volume_constraint;
 mod fem;
+mod matrix;
+mod volume_constraint;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
@@ -31,9 +31,7 @@ pub enum SimResult {
 impl From<fem::Error> for SimResult {
     fn from(err: fem::Error) -> SimResult {
         match err {
-            fem::Error::SizeMismatch => {
-                SimResult::Error(format!("Size mismatch error.").into())
-            }
+            fem::Error::SizeMismatch => SimResult::Error(format!("Size mismatch error.").into()),
             fem::Error::AttribError(e) => {
                 SimResult::Error(format!("Attribute error: {:?}", e).into())
             }

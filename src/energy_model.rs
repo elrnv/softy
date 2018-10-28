@@ -1,11 +1,11 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
 use attrib_names::*;
-use matrix::*;
 use energy::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
+use matrix::*;
 use rayon::prelude::*;
 use reinterpret::*;
 use TetMesh;

@@ -1,17 +1,17 @@
 use attrib_names::*;
-use matrix::*;
-use energy::*;
 use constraint::*;
-use volume_constraint::{VolumeConstraint};
+use energy::*;
 use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
+use geo::io::save_tetmesh_ascii;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
-use geo::io::save_tetmesh_ascii;
 use ipopt::{self, Index, Ipopt, Number, SolverData};
+use matrix::*;
 use reinterpret::*;
 use std::fmt;
+use volume_constraint::VolumeConstraint;
 
 use PointCloud;
 use TetMesh;
@@ -105,7 +105,7 @@ impl fmt::Debug for NonLinearProblem {
         write!(
             f,
             "NonLinearProblem {{ energy_model: {:?}, volume_constraint: {:?}, \
-                                 iterations: {:?}, params: {:?} }}",
+             iterations: {:?}, params: {:?} }}",
             self.energy_model, self.volume_constraint, self.iterations, self.params
         )
     }
@@ -534,8 +534,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0; // counter
 
         if let Some(ref mut vc) = self.volume_constraint {
-            for MatrixElementTriplet { idx: MatrixElementIndex { ref row, ref col }, .. } in
-                vc.constraint_jacobian(&x).iter()
+            for MatrixElementTriplet {
+                idx: MatrixElementIndex { ref row, ref col },
+                ..
+            } in vc.constraint_jacobian(&x).iter()
             {
                 rows[i] = *row as Index;
                 cols[i] = *col as Index;
@@ -570,10 +572,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0;
         // Add energy indices
-        for MatrixElementIndex { ref row, ref col } in self
-            .energy_model
-            .energy_hessian_indices()
-            .iter()
+        for MatrixElementIndex { ref row, ref col } in
+            self.energy_model.energy_hessian_indices().iter()
         {
             rows[i] = *row as Index;
             cols[i] = *col as Index;
@@ -582,10 +582,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         // Add volume constraint indices
         if let Some(ref mut vc) = self.volume_constraint {
-            for MatrixElementIndex { ref row, ref col } in vc
-                .constraint_hessian_indices()
-                .iter()
-            {
+            for MatrixElementIndex { ref row, ref col } in vc.constraint_hessian_indices().iter() {
                 rows[i] = *row as Index;
                 cols[i] = *col as Index;
                 i += 1;
@@ -594,7 +591,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         true
     }
-    fn hessian_values(&mut self, dx: &[Number], obj_factor: Number, lambda: &[Number], vals: &mut [Number]) -> bool {
+    fn hessian_values(
+        &mut self,
+        dx: &[Number],
+        obj_factor: Number,
+        lambda: &[Number],
+        vals: &mut [Number],
+    ) -> bool {
         let mut i = 0;
         for val in self.energy_model.energy_hessian_values(dx).iter() {
             vals[i] = obj_factor * (*val as Number);
@@ -680,7 +683,6 @@ mod tests {
 
         assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
     }
-
 
     #[test]
     fn simple_static_test() {
@@ -802,7 +804,10 @@ mod tests {
 
         let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
         for i in 0..10 {
-            save_tetmesh_ascii(engine.mesh_ref(), &PathBuf::from(format!("./out/mesh_{}.vtk", i)));
+            save_tetmesh_ascii(
+                engine.mesh_ref(),
+                &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
+            );
             let res = engine.step();
             assert!(res.is_ok());
         }

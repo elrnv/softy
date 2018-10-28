@@ -6,7 +6,7 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use geo::math::{Scalar};
+use geo::math::Scalar;
 
 use matrix::{MatrixElementIndex, MatrixElementTriplet};
 

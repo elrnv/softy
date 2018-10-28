@@ -78,6 +78,7 @@ impl Into<softy::SimParams> for SimParams {
             time_step,
             gravity,
             tolerance,
+            volume_constraint,
         } = self;
         softy::SimParams {
             material: softy::MaterialProperties {
@@ -93,6 +94,7 @@ impl Into<softy::SimParams> for SimParams {
             },
             gravity: [0.0, -gravity, 0.0],
             tolerance,
+            volume_constraint,
         }
     }
 }
@@ -151,9 +153,15 @@ where
 
     // Update mesh points
     if let Some(pts) = tetmesh_points {
-        if !solver.update_mesh_vertices(&pts) {
-            return (None, CookResult::Error(
-                    format!("Input points ({}) don't coincide with solver mesh ({}).", (*pts).num_vertices(), solver.mesh_ref().num_vertices())))
+        match solver.update_mesh_vertices(&pts) {
+            Err(softy::Error::SizeMismatch) =>
+                return (None, CookResult::Error(
+                        format!("Input points ({}) don't coincide with solver mesh ({}).",
+                        (*pts).num_vertices(), solver.mesh_ref().num_vertices()))),
+            Err(softy::Error::AttribError(err)) =>
+                return (None, CookResult::Warning(
+                        format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
+            _ => {}
         }
     }
 

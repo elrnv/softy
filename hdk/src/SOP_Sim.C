@@ -68,22 +68,6 @@ static const char *theDsFile = R"THEDSFILE(
         grouptag { "group_type" "simple" }
 
         parm {
-            name "shapestiffness"
-            cppname "ShapeStiffness"
-            label "Shape Stiffness"
-            type float
-            default { "10" }
-            range { 0 100 }
-        }
-        parm {
-            name "volumestiffness"
-            cppname "VolumeStiffness"
-            label "Volume Stiffness"
-            type float
-            default { "1750" }
-            range { 0 10000 }
-        }
-        parm {
             name "density"
             label "Density"
             type float
@@ -96,6 +80,54 @@ static const char *theDsFile = R"THEDSFILE(
             type float
             default { "1.0" }
             range { 0 1000 }
+        }
+
+        groupradio {
+            name "stiffness_type"
+            label "Shear Bulk"
+            grouptag { "group_type" "radio" }
+
+            parm {
+                name "shapestiffness"
+                cppname "ShapeStiffness"
+                label "Shape Stiffness"
+                type float
+                default { "10" }
+                range { 0 100 }
+            }
+
+            parm {
+                name "volumestiffness"
+                cppname "VolumeStiffness"
+                label "Volume Stiffness"
+                type float
+                default { "1750" }
+                range { 0 10000 }
+            }
+        }
+
+        groupradio {
+            name "stiffness_type_1"
+            label "Young Poisson"
+            grouptag { "group_type" "radio" }
+
+            parm {
+                name "youngmodulus"
+                cppname "YoungModulus"
+                label "Young Modulus"
+                type float
+                default { "1000" }
+                range { 0 10000 }
+            }
+
+            parm {
+                name "poissonratio"
+                cppname "PoissonRatio"
+                label "Poisson Ratio"
+                type float
+                default { "0.45" }
+                range { 0 0.5 }
+            }
         }
     }
 
@@ -111,6 +143,14 @@ static const char *theDsFile = R"THEDSFILE(
             default { "1e-9" }
             range { 0.0 1.0 }
         }
+    }
+
+    parm {
+        name "volumeconstraint"
+        cppname "VolumeConstraint"
+        label "Enable Volume Constraint"
+        type toggle
+        default { "off" }
     }
 
     parm {
@@ -192,12 +232,24 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Gather simulation parameters
     SimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
+
+    if (sopparms.getStiffness_type()) { 
+        sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e6;
+        sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e6;
+    } else {
+        // K = E / 3(1-2v)
+        // G = E / 2(1+v)
+        auto nu = sopparms.getPoissonRatio();
+        auto E = sopparms.getYoungModulus()*1e6;
+        sim_params.material.bulk_modulus = E / (3*(1.0 - 2*nu));
+        sim_params.material.shear_modulus = E / (2*(1+nu));
+    }
+
     sim_params.material.damping = sopparms.getDamping();
     sim_params.material.density = sopparms.getDensity();
-    sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e6;
-    sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e6;
     sim_params.gravity = sopparms.getGravity();
     sim_params.tolerance = sopparms.getTolerance();
+    sim_params.volume_constraint = sopparms.getVolumeConstraint();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

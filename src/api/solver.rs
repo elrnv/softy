@@ -7,7 +7,7 @@ use softy::{Error, FemEngine, SolveResult, TetMesh, PointCloud};
 pub trait Solver: Send {
     fn solve(&mut self) -> Result<SolveResult, Error>;
     fn mesh_ref(&mut self) -> &TetMesh;
-    fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool;
+    fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error>;
     fn set_interrupter(&mut self, interrupter: Box<FnMut() -> bool>);
 }
 
@@ -21,7 +21,7 @@ impl Solver for FemEngine {
         self.mesh_ref()
     }
     #[inline]
-    fn update_mesh_vertices(&mut self, pts: &PointCloud) -> bool {
+    fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
         self.update_mesh_vertices(pts)
     }
     #[inline]

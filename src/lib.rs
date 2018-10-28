@@ -26,6 +26,7 @@ pub struct SimParams {
     pub time_step: f32,
     pub gravity: f32,
     pub tolerance: f32,
+    pub volume_constraint: bool,
 }
 
 /// Result reported from `register_new_solver` function.

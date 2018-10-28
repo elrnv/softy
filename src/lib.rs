@@ -115,6 +115,7 @@ mod tests {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
+        volume_constraint: false,
     };
 
     #[test]

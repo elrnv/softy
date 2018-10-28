@@ -1,9 +1,12 @@
 use constraint::*;
 use geo::math::{Matrix3, Vector3};
+use geo::ops::Volume;
+use geo::prim::Tetrahedron;
 use matrix::*;
-use rayon::prelude::*;
 use reinterpret::*;
 use std::collections::BTreeSet;
+use std::ops::Add;
+use std::{cell::RefCell, rc::Rc};
 use TetMesh;
 
 // TODO: move to geo::mesh
@@ -27,6 +30,18 @@ impl TriFace {
 /// corresponding entries of the slice.
 fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
     [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
+}
+
+fn tri_at_new_pos<T: Copy + Add>(
+    pos: &[T],
+    disp: &[T],
+    tri: &[usize; 3],
+) -> [<T as Add>::Output; 3] {
+    [
+        pos[tri[0]] + disp[tri[0]],
+        pos[tri[1]] + disp[tri[1]],
+        pos[tri[2]] + disp[tri[2]],
+    ]
 }
 
 /// Consider any permutation of the triangle to be equivalent to the original.
@@ -119,7 +134,19 @@ pub struct VolumeConstraint {
     /// of tetmesh vertices. Each triplet corresponds to a triangle on the surface of the tetmesh.
     pub surface_topo: Vec<[usize; 3]>,
 
+    /// A reference to positions from the previous time step.
+    pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
+
+    /// The volume of the solid at rest. The contraint is equated to this value.
+    pub rest_volume: f64,
+
+    /// Mapping from the (virtual) contiguous array of surface vertices to their original vertex
+    /// indices in the tetmesh.
     surf_to_tet_vtx_map: Vec<usize>,
+
+    /// Mapping from the tetmesh vertices to their place in the virtual array of surface vertices.
+    /// Negative indices indicate that the vertex is in the interior and thus has no representative
+    /// on the surface.
     tet_to_surf_vtx_map: Vec<isize>,
 
     /// Storage for the constraint value.
@@ -139,11 +166,13 @@ pub struct VolumeConstraint {
 }
 
 impl VolumeConstraint {
-    pub fn new(tetmesh: &TetMesh) -> Self {
+    pub fn new(tetmesh: &TetMesh, prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>) -> Self {
         let surface_topo = extract_surface_topo(tetmesh);
         let (tet_to_surf_vtx_map, surf_to_tet_vtx_map) = surface_vertex_maps(&surface_topo);
         VolumeConstraint {
             surface_topo,
+            prev_pos,
+            rest_volume: Self::compute_volume(tetmesh),
             surf_to_tet_vtx_map,
             tet_to_surf_vtx_map,
             constraint_value: [0.0],
@@ -153,6 +182,21 @@ impl VolumeConstraint {
             constraint_hess_values: Vec::new(),
         }
     }
+
+    pub fn compute_volume(tetmesh: &TetMesh) -> f64 {
+        let mut total_volume = 0.0;
+        let pos = tetmesh.vertex_positions();
+        for cell in tetmesh.cell_iter() {
+            total_volume += Tetrahedron(
+                pos[cell[0]].into(),
+                pos[cell[1]].into(),
+                pos[cell[2]].into(),
+                pos[cell[3]].into(),
+            )
+            .volume();
+        }
+        total_volume
+    }
 }
 
 impl Constraint<f64> for VolumeConstraint {
@@ -161,18 +205,23 @@ impl Constraint<f64> for VolumeConstraint {
     }
 
     fn constraint_lower_bound(&self) -> Vec<f64> {
-        vec![0.0]
+        // We don't actually need the true volume, the triple scalar product does the trick. Here
+        // we scale back by 6 to equate to the real volume.
+        vec![6.0 * self.rest_volume]
     }
 
     fn constraint_upper_bound(&self) -> Vec<f64> {
-        vec![0.0]
+        // We don't actually need the true volume, the triple scalar product does the trick. Here
+        // we scale back by 6 to equate to the real volume.
+        vec![6.0 * self.rest_volume]
     }
 
     fn constraint(&mut self, x: &[f64]) -> &[f64] {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
+        let prev_pos = self.prev_pos.borrow();
+        let disp: &[Vector3<f64>] = reinterpret_slice(x);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
-            let p = tri_at(pos, tri);
+            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
@@ -189,7 +238,8 @@ impl ConstraintJacobianSize for VolumeConstraint {
 
 impl ConstraintJacobian<f64> for VolumeConstraint {
     fn constraint_jacobian(&mut self, x: &[f64]) -> &[MatrixElementTriplet<f64>] {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
+        let prev_pos = self.prev_pos.borrow();
+        let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
         // Reserve memory for all the triplets
         self.constraint_jac_triplets.clear();
@@ -205,7 +255,7 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
         }
 
         for tri in self.surface_topo.iter() {
-            let p = tri_at(pos, tri);
+            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
             let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
 
             for vi in 0..3 {
@@ -273,7 +323,8 @@ impl ConstraintHessianIndicesValues<f64> for VolumeConstraint {
         &self.constraint_hess_indices
     }
     fn constraint_hessian_values(&mut self, x: &[f64], lambda: &[f64]) -> &[f64] {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
+        let prev_pos = self.prev_pos.borrow();
+        let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
         // Reserve memory for all the values
         self.constraint_hess_values.clear();
@@ -281,7 +332,7 @@ impl ConstraintHessianIndicesValues<f64> for VolumeConstraint {
         self.constraint_hess_values.reserve(num_values);
 
         for tri in self.surface_topo.iter() {
-            let p = tri_at(pos, tri);
+            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
 
             for vi in 0..3 {
@@ -317,7 +368,8 @@ impl ConstraintHessianIndicesValues<f64> for VolumeConstraint {
 
 impl ConstraintHessian<f64> for VolumeConstraint {
     fn constraint_hessian(&mut self, x: &[f64], lambda: &[f64]) -> &[MatrixElementTriplet<f64>] {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
+        let prev_pos = self.prev_pos.borrow();
+        let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
         // Reserve memory for all the triplets
         self.constraint_hess_triplets.clear();
@@ -325,7 +377,7 @@ impl ConstraintHessian<f64> for VolumeConstraint {
         self.constraint_hess_triplets.reserve(num_triplets);
 
         for tri in self.surface_topo.iter() {
-            let p = tri_at(pos, tri);
+            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
 
             for vi in 0..3 {

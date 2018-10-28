@@ -8,6 +8,7 @@ use geo::ops::*;
 use matrix::*;
 use rayon::prelude::*;
 use reinterpret::*;
+use std::{cell::RefCell, rc::Rc};
 use TetMesh;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
@@ -210,7 +211,7 @@ pub struct ElasticTetMeshEnergy {
     /// The discretization of the solid domain using a tetrahedral mesh.
     pub solid: TetMesh,
     /// Position from the previous time step.
-    pub prev_pos: Vec<Vector3<f64>>,
+    pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
     /// Material parameters.
     material: MaterialModel,
     /// Step size in seconds for dynamics time integration scheme. If the time step is zero (meaning
@@ -233,10 +234,11 @@ pub struct ElasticTetMeshEnergy {
     energy_hessian_triplets: Vec<MatrixElementTriplet<f64>>,
 }
 
-/// A builder for the `ElasticTetMeshEnergy` struct. The only required field is the `tetmesh` is
-/// specified in the `new` method.
+/// A builder for the `ElasticTetMeshEnergy` struct. The only required fields are the `tetmesh` and
+/// `prev_pos` and these are specified in the `new` method.
 pub struct ElasticTetMeshEnergyBuilder {
     tetmesh: TetMesh,
+    prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
     material: Option<MaterialModel>,
     gravity: Option<[f64; 3]>,
     time_step: Option<f64>,
@@ -272,9 +274,10 @@ impl ElasticTetMeshEnergyBuilder {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.
     /// This function takes a tetrahedron mesh specifying a discretization of the solid domain
-    pub fn new(tetmesh: TetMesh) -> Self {
+    pub fn new(tetmesh: TetMesh, prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>) -> Self {
         ElasticTetMeshEnergyBuilder {
             tetmesh,
+            prev_pos,
             material: None,
             gravity: None,
             time_step: None,
@@ -309,16 +312,15 @@ impl ElasticTetMeshEnergyBuilder {
     pub fn build(&self) -> ElasticTetMeshEnergy {
         let ElasticTetMeshEnergyBuilder {
             tetmesh,
+            prev_pos,
             material,
             gravity,
             time_step,
         } = self.clone();
 
-        let prev_pos = reinterpret_slice(tetmesh.vertex_positions()).to_vec();
-
         ElasticTetMeshEnergy {
             solid: tetmesh.clone(),
-            prev_pos,
+            prev_pos: prev_pos.clone(),
             material: material.unwrap_or(MaterialModel::default()),
             time_step_inv: time_step.map_or(0.0, |x| 1.0 / x),
             gravity: gravity.map_or(Vector3::zeros(), |x| x.into()),
@@ -335,7 +337,7 @@ impl ElasticTetMeshEnergy {
     pub fn update(&mut self, dx: &[f64]) {
         let dx_vec: &[Vector3<f64>] = reinterpret_slice(dx);
         let verts = self.solid.vertex_positions_mut();
-        let prev_pos: &[Vector3<f64>] = self.prev_pos.as_slice();
+        let prev_pos = self.prev_pos.borrow();
         verts
             .iter_mut()
             .zip(prev_pos.iter())
@@ -398,6 +400,8 @@ impl Energy<f64> for ElasticTetMeshEnergy {
             gravity,
             ..
         } = *self;
+
+        let prev_pos = prev_pos.borrow();
 
         let prev_disp: &[Vector3<f64>] = reinterpret_slice(
             solid
@@ -471,6 +475,8 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
             energy_gradient: ref mut gradient,
             ..
         } = *self;
+
+        let prev_pos = prev_pos.borrow();
 
         let prev_disp: &[Vector3<f64>] = reinterpret_slice(
             solid

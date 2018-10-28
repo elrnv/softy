@@ -2,7 +2,7 @@ use attrib_names::*;
 use constraint::*;
 use energy::*;
 use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
-use geo::io::save_tetmesh_ascii;
+//use geo::io::save_tetmesh_ascii;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
 use geo::ops::{ShapeMatrix, Volume};
@@ -11,11 +11,11 @@ use ipopt::{self, Index, Ipopt, Number, SolverData};
 use matrix::*;
 use reinterpret::*;
 use std::fmt;
+use std::{cell::RefCell, rc::Rc};
 use volume_constraint::VolumeConstraint;
 
 use PointCloud;
 use TetMesh;
-pub type Tet = Tetrahedron<f64>;
 
 /// Result from one simulation step.
 #[derive(Debug)]
@@ -63,7 +63,7 @@ pub struct SimParams {
 
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
-pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tet {
+pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
     let attrib = tetmesh
         .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
         .unwrap();
@@ -87,6 +87,10 @@ pub struct FemEngine {
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 pub(crate) struct NonLinearProblem {
+    /// Position from the previous time step. We need to keep track of previous positions
+    /// explicitly since we are doing a displacement solve. This vector is updated between steps
+    /// and shared with other solver components like energies and constraints.
+    pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
     /// Elastic energy model.
     pub energy_model: ElasticTetMeshEnergy,
     /// Constraint on the total volume.
@@ -165,14 +169,19 @@ impl FemEngine {
             params.gravity[2] as f64,
         ];
 
+        // Get previous position vector from the tetmesh.
+        let prev_pos = Rc::new(RefCell::new(
+            reinterpret_slice(mesh.vertex_positions()).to_vec(),
+        ));
+
         // Initialize volume constraint
         let volume_constraint = if params.volume_constraint {
-            Some(VolumeConstraint::new(&mesh))
+            Some(VolumeConstraint::new(&mesh, Rc::clone(&prev_pos)))
         } else {
             None
         };
 
-        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(mesh)
+        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(mesh, Rc::clone(&prev_pos))
             .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
 
@@ -181,6 +190,7 @@ impl FemEngine {
         }
 
         let problem = NonLinearProblem {
+            prev_pos,
             energy_model: energy_model_builder.build(),
             volume_constraint,
             interrupt_checker: Box::new(|| false),
@@ -195,7 +205,7 @@ impl FemEngine {
         ipopt.set_option("max_iter", 800);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 5);
+        ipopt.set_option("print_level", 0);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
@@ -220,6 +230,11 @@ impl FemEngine {
         &self.solver.get_solver_data().problem.energy_model.solid
     }
 
+    /// Get a mutable reference to the solver `TetMesh`.
+    pub fn mesh_mut(&mut self) -> &mut TetMesh {
+        &mut self.solver.get_solver_data().problem.energy_model.solid
+    }
+
     /// Get solver parameters.
     pub fn params(&mut self) -> SimParams {
         self.solver.get_solver_data().problem.params
@@ -230,12 +245,9 @@ impl FemEngine {
         // Get solver data. We want to update the primal variables with new positions from `pts`.
         let SolverData { problem, .. } = self.solver.get_solver_data();
 
-        // Get the tetmesh so we can update fixed vertices only.
-        let ElasticTetMeshEnergy {
-            solid: ref tetmesh,
-            ref mut prev_pos,
-            ..
-        } = problem.energy_model;
+        // Get the tetmesh and prev_pos so we can update fixed vertices only.
+        let tetmesh = &problem.energy_model.solid;
+        let mut prev_pos = problem.prev_pos.borrow_mut();
 
         if pts.num_vertices() != prev_pos.len() || pts.num_vertices() != tetmesh.num_vertices() {
             // We got an invalid point cloud
@@ -400,11 +412,9 @@ impl FemEngine {
 
             let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
-            let ElasticTetMeshEnergy {
-                solid: ref mut mesh,
-                ref mut prev_pos,
-                ..
-            } = problem.energy_model;
+            // Get the tetmesh and prev_pos so we can update fixed vertices only.
+            let mut mesh = &mut problem.energy_model.solid;
+            let mut prev_pos = problem.prev_pos.borrow_mut();
 
             Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
 
@@ -634,6 +644,11 @@ mod tests {
     use super::*;
     use geo;
     use std::path::PathBuf;
+
+    /*
+     * Setup code
+     */
+
     const DYNAMIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
             bulk_modulus: 1e6,
@@ -644,6 +659,7 @@ mod tests {
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(0.01),
         tolerance: 1e-9,
+        volume_constraint: false,
     };
 
     const STATIC_PARAMS: SimParams = SimParams {
@@ -656,10 +672,10 @@ mod tests {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
+        volume_constraint: false,
     };
 
-    #[test]
-    fn one_tet_test() {
+    fn make_one_tet_mesh() -> TetMesh {
         let verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -680,20 +696,10 @@ mod tests {
 
         mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
             .unwrap();
-
-        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+        mesh
     }
 
-    #[test]
-    fn simple_static_test() {
-        let verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 0.0, 2.0],
-        ];
+    fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
         mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
@@ -710,38 +716,78 @@ mod tests {
 
         mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
             .unwrap();
+        mesh
+    }
 
+    fn make_three_tet_mesh() -> TetMesh {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 2.0],
+        ];
+        make_three_tet_mesh_with_verts(verts)
+    }
+
+    /*
+     * One tet tests
+     */
+
+    #[test]
+    fn one_tet_test() {
+        let mesh = make_one_tet_mesh();
+
+        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+    }
+
+    #[test]
+    fn one_tet_volume_constraint_test() {
+        let mesh = make_one_tet_mesh();
+
+        let params = SimParams {
+            volume_constraint: true,
+            ..STATIC_PARAMS
+        };
+
+        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
+    }
+
+    /*
+     * Three tet tests
+     */
+
+    #[test]
+    fn simple_static_test() {
+        let mesh = make_three_tet_mesh();
         assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
     fn simple_dynamic_test() {
-        let verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 0.0, 2.0],
-        ];
-        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
-        let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
-            .unwrap();
-
-        let ref_verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-        ];
-
-        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
-            .unwrap();
-
+        let mesh = make_three_tet_mesh();
         assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+    }
+
+    #[test]
+    fn simple_static_volume_constraint_test() {
+        let mesh = make_three_tet_mesh();
+        let params = SimParams {
+            volume_constraint: true,
+            ..STATIC_PARAMS
+        };
+        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
+    }
+
+    #[test]
+    fn simple_dynamic_volume_constraint_test() {
+        let mesh = make_three_tet_mesh();
+        let params = SimParams {
+            volume_constraint: true,
+            ..DYNAMIC_PARAMS
+        };
+        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
     }
 
     #[test]
@@ -754,24 +800,7 @@ mod tests {
             [0.0, 0.0, 1.0],
             [1.0, 0.0, 1.0],
         ];
-        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
-        let mut mesh = TetMesh::new(verts.clone(), indices);
-
-        let fixed = vec![0, 0, 1, 1, 0, 0];
-        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, fixed)
-            .unwrap();
-
-        let ref_verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-        ];
-
-        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
-            .unwrap();
+        let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
         let mut solver = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
 
@@ -783,6 +812,42 @@ mod tests {
             assert!(solver.step().is_ok());
         }
     }
+
+    #[test]
+    fn animation_volume_constraint_test() {
+        let mut verts = vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ];
+        let mesh = make_three_tet_mesh_with_verts(verts.clone());
+
+        let params = SimParams {
+            volume_constraint: true,
+            ..DYNAMIC_PARAMS
+        };
+
+        let mut solver = FemEngine::new(mesh, params).unwrap();
+
+        for frame in 1u32..100 {
+            let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
+            verts.iter_mut().for_each(|x| (*x)[1] += offset);
+            let pts = PointCloud::new(verts.clone());
+            //save_tetmesh_ascii(
+            //    solver.mesh_ref(),
+            //    &PathBuf::from(format!("./out/mesh_{}.vtk", frame)),
+            //);
+            assert!(solver.update_mesh_vertices(&pts).is_ok());
+            assert!(solver.step().is_ok());
+        }
+    }
+
+    /*
+     * More complex tests
+     */
 
     #[test]
     fn torus_medium_test() {
@@ -803,11 +868,11 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
         let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
-        for i in 0..10 {
-            save_tetmesh_ascii(
-                engine.mesh_ref(),
-                &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
-            );
+        for _i in 0..10 {
+            //save_tetmesh_ascii(
+            //    engine.mesh_ref(),
+            //    &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
+            //);
             let res = engine.step();
             assert!(res.is_ok());
         }

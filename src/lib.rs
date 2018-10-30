@@ -13,7 +13,7 @@ mod energy;
 mod energy_models;
 mod fem;
 mod matrix;
-mod volume_constraint;
+mod constraints;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;

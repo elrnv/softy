@@ -14,7 +14,7 @@ use matrix::*;
 use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
-use volume_constraint::VolumeConstraint;
+use constraints::volume_constraint::VolumeConstraint;
 
 use PointCloud;
 use TetMesh;

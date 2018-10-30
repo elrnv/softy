@@ -4,7 +4,7 @@ extern crate geometry as geo;
 extern crate softy;
 
 use criterion::{Criterion, Fun};
-use geo::mesh::{topology::*, Attrib, TetMesh};
+use crate::geo::mesh::{topology::*, Attrib, TetMesh};
 use softy::{FemEngine, MaterialProperties, SimParams};
 use std::path::PathBuf;
 

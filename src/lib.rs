@@ -10,7 +10,7 @@ mod attrib_names;
 mod bench;
 mod constraint;
 mod energy;
-mod energy_model;
+mod energy_models;
 mod fem;
 mod matrix;
 mod volume_constraint;
@@ -115,6 +115,7 @@ mod tests {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
+        max_iterations: 800,
         volume_constraint: false,
     };
 

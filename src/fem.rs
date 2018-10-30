@@ -1,7 +1,9 @@
 use attrib_names::*;
 use constraint::*;
 use energy::*;
-use energy_model::{ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy};
+use energy_models::volumetric_neohookean::{
+    ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
+};
 //use geo::io::save_tetmesh_ascii;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
@@ -58,6 +60,7 @@ pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
     pub tolerance: f32,
+    pub max_iterations: u32,
     pub volume_constraint: bool,
 }
 
@@ -202,7 +205,7 @@ impl FemEngine {
 
         ipopt.set_option("tol", params.tolerance as f64);
         ipopt.set_option("acceptable_tol", 10.0 * params.tolerance as f64);
-        ipopt.set_option("max_iter", 800);
+        ipopt.set_option("max_iter", params.max_iterations as i32);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", 0);
@@ -517,11 +520,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         num
     }
 
-    fn constraint(&mut self, dx: &[Number], grad: &mut [Number]) -> bool {
+    fn constraint(&mut self, dx: &[Number], g: &mut [Number]) -> bool {
         if let Some(ref mut vc) = self.volume_constraint {
-            for (i, g) in vc.constraint(dx).iter().enumerate() {
-                grad[i] = *g;
-            }
+            vc.constraint(dx, g);
         }
 
         true
@@ -531,26 +532,20 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut lower = Vec::new();
         let mut upper = Vec::new();
         if let Some(ref vc) = self.volume_constraint {
-            lower.extend_from_slice(&mut vc.constraint_lower_bound());
-            upper.extend_from_slice(&mut vc.constraint_upper_bound());
+            let mut bounds = vc.constraint_bounds();
+            lower.extend_from_slice(&mut bounds.0);
+            upper.extend_from_slice(&mut bounds.1);
         }
         (lower, upper)
     }
 
     fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        use ipopt::BasicProblem;
-        let x = self.initial_point();
-
         let mut i = 0; // counter
 
-        if let Some(ref mut vc) = self.volume_constraint {
-            for MatrixElementTriplet {
-                idx: MatrixElementIndex { ref row, ref col },
-                ..
-            } in vc.constraint_jacobian(&x).iter()
-            {
-                rows[i] = *row as Index;
-                cols[i] = *col as Index;
+        if let Some(ref vc) = self.volume_constraint {
+            for MatrixElementIndex { row, col } in vc.constraint_jacobian_indices_iter() {
+                rows[i] = row as Index;
+                cols[i] = col as Index;
                 i += 1;
             }
         }
@@ -561,9 +556,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint_jac_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
         let mut i = 0;
 
-        if let Some(ref mut vc) = self.volume_constraint {
-            for val in vc.constraint_jacobian(dx).iter() {
-                vals[i] = (val.val) as Number;
+        if let Some(ref vc) = self.volume_constraint {
+            for val in vc.constraint_jacobian_values_iter(dx) {
+                vals[i] = val as Number;
                 i += 1;
             }
         }
@@ -591,10 +586,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         // Add volume constraint indices
-        if let Some(ref mut vc) = self.volume_constraint {
-            for MatrixElementIndex { ref row, ref col } in vc.constraint_hessian_indices().iter() {
-                rows[i] = *row as Index;
-                cols[i] = *col as Index;
+        if let Some(ref vc) = self.volume_constraint {
+            for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
+                rows[i] = row as Index;
+                cols[i] = col as Index;
                 i += 1;
             }
         }
@@ -614,9 +609,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             i += 1;
         }
 
-        if let Some(ref mut vc) = self.volume_constraint {
-            for val in vc.constraint_hessian_values(dx, lambda).iter() {
-                vals[i] = *val as Number;
+        if let Some(ref vc) = self.volume_constraint {
+            for val in vc.constraint_hessian_values_iter(dx, lambda) {
+                vals[i] = val as Number;
                 i += 1;
             }
         }
@@ -659,6 +654,7 @@ mod tests {
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(0.01),
         tolerance: 1e-9,
+        max_iterations: 800,
         volume_constraint: false,
     };
 
@@ -672,6 +668,7 @@ mod tests {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
+        max_iterations: 800,
         volume_constraint: false,
     };
 

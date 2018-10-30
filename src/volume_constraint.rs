@@ -105,29 +105,6 @@ fn extract_surface_topo(tetmesh: &TetMesh) -> Vec<[usize; 3]> {
     surface_topo
 }
 
-/// Produce a mapping from a virtual surface vertex to its index in the tetmesh.
-/// Also count the number of vertices adjacent to the given topology of triangles.
-/// Identically the count is the number of valid entries in the returned vector.
-fn surface_vertex_maps(topo: &[[usize; 3]]) -> (Vec<isize>, Vec<usize>) {
-    if topo.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    let indices: &[usize] = reinterpret_slice(topo);
-    let max_vert_idx = indices.iter().max().unwrap();
-
-    let mut surf_vtx_map = vec![-1isize; max_vert_idx + 1];
-    let mut tet_vtx_map = Vec::new();
-    for &i in indices.iter() {
-        if surf_vtx_map[i] == -1 {
-            surf_vtx_map[i] = tet_vtx_map.len() as isize;
-            tet_vtx_map.push(i);
-        }
-    }
-
-    (surf_vtx_map, tet_vtx_map)
-}
-
 #[derive(Debug, PartialEq)]
 pub struct VolumeConstraint {
     /// The topology of the surface of a tetrahedral mesh. This is a vector of triplets of indices
@@ -139,47 +116,15 @@ pub struct VolumeConstraint {
 
     /// The volume of the solid at rest. The contraint is equated to this value.
     pub rest_volume: f64,
-
-    /// Mapping from the (virtual) contiguous array of surface vertices to their original vertex
-    /// indices in the tetmesh.
-    surf_to_tet_vtx_map: Vec<usize>,
-
-    /// Mapping from the tetmesh vertices to their place in the virtual array of surface vertices.
-    /// Negative indices indicate that the vertex is in the interior and thus has no representative
-    /// on the surface.
-    tet_to_surf_vtx_map: Vec<isize>,
-
-    /// Storage for the constraint value.
-    constraint_value: [f64; 1],
-
-    /// Constraint jacobian triplet storage.
-    constraint_jac_triplets: Vec<MatrixElementTriplet<f64>>,
-
-    /// Constraint hessian triplet storage.
-    constraint_hess_triplets: Vec<MatrixElementTriplet<f64>>,
-
-    /// Constraint hessian indices storage.
-    constraint_hess_indices: Vec<MatrixElementIndex>,
-
-    /// Constraint hessian values storage.
-    constraint_hess_values: Vec<f64>,
 }
 
 impl VolumeConstraint {
     pub fn new(tetmesh: &TetMesh, prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>) -> Self {
         let surface_topo = extract_surface_topo(tetmesh);
-        let (tet_to_surf_vtx_map, surf_to_tet_vtx_map) = surface_vertex_maps(&surface_topo);
         VolumeConstraint {
             surface_topo,
             prev_pos,
             rest_volume: Self::compute_volume(tetmesh),
-            surf_to_tet_vtx_map,
-            tet_to_surf_vtx_map,
-            constraint_value: [0.0],
-            constraint_jac_triplets: Vec::new(),
-            constraint_hess_triplets: Vec::new(),
-            constraint_hess_indices: Vec::new(),
-            constraint_hess_values: Vec::new(),
         }
     }
 
@@ -200,23 +145,20 @@ impl VolumeConstraint {
 }
 
 impl Constraint<f64> for VolumeConstraint {
+    #[inline]
     fn constraint_size(&self) -> usize {
         1
     }
 
-    fn constraint_lower_bound(&self) -> Vec<f64> {
+    fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
         // We don't actually need the true volume, the triple scalar product does the trick. Here
         // we scale back by 6 to equate to the real volume.
-        vec![6.0 * self.rest_volume]
+        (vec![6.0 * self.rest_volume],
+         vec![6.0 * self.rest_volume])
     }
 
-    fn constraint_upper_bound(&self) -> Vec<f64> {
-        // We don't actually need the true volume, the triple scalar product does the trick. Here
-        // we scale back by 6 to equate to the real volume.
-        vec![6.0 * self.rest_volume]
-    }
-
-    fn constraint(&mut self, x: &[f64]) -> &[f64] {
+    fn constraint(&mut self, x: &[f64], value: &mut [f64]) {
+        debug_assert_eq!(value.len(), self.constraint_size());
         let prev_pos = self.prev_pos.borrow();
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
         let mut total_volume = 0.0;
@@ -225,48 +167,53 @@ impl Constraint<f64> for VolumeConstraint {
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
-        self.constraint_value[0] = total_volume;
-        &self.constraint_value
+        value[0] = total_volume;
     }
 }
 
-impl ConstraintJacobianSize for VolumeConstraint {
-    fn constraint_jacobian_size(&self) -> usize {
-        self.surf_to_tet_vtx_map.len() * 3
+impl VolumeConstraint {
+    /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
+    pub fn constraint_jacobian_indices_iter<'a>(&'a self) -> impl Iterator<Item=MatrixElementIndex> + 'a {
+        self.surface_topo.iter().flat_map(|tri| {
+            (0..3).flat_map(move |vi| {
+                (0..3).map(move |j| MatrixElementIndex { row: 0, col: 3 * tri[vi] + j })
+            })
+        })
+    }
+
+    /// Compute the values of the constraint Jacobian.
+    pub fn constraint_jacobian_values_iter<'a>(&'a self, x: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
+        let prev_pos = self.prev_pos.borrow();
+        let disp: &[Vector3<f64>] = reinterpret_slice(x);
+
+        self.surface_topo.iter().flat_map(move |tri| {
+            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
+            let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
+
+            (0..3).flat_map(move |vi| {
+                (0..3).map(move |j| c[vi][j])
+            })
+        })
     }
 }
 
 impl ConstraintJacobian<f64> for VolumeConstraint {
-    fn constraint_jacobian(&mut self, x: &[f64]) -> &[MatrixElementTriplet<f64>] {
-        let prev_pos = self.prev_pos.borrow();
-        let disp: &[Vector3<f64>] = reinterpret_slice(x);
-
-        // Reserve memory for all the triplets
-        self.constraint_jac_triplets.clear();
-        let num_triplets = self.constraint_jacobian_size();
-        self.constraint_jac_triplets.reserve(num_triplets);
-
-        // Initialize the triplets with zeros.
-        for idx in self.surf_to_tet_vtx_map.iter() {
-            for j in 0..3 {
-                self.constraint_jac_triplets
-                    .push(MatrixElementTriplet::new(0, 3 * idx + j, 0.0));
-            }
+    #[inline]
+    fn constraint_jacobian_size(&self) -> usize {
+         3 * 3 * self.surface_topo.len()
+    }
+    fn constraint_jacobian_indices_offset(&self, offset: MatrixElementIndex,
+                                          indices: &mut [MatrixElementIndex]) {
+        debug_assert_eq!(indices.len(), self.constraint_jacobian_size());
+        for (out, idx) in indices.iter_mut().zip(self.constraint_jacobian_indices_iter()) {
+            *out = idx + offset;
         }
-
-        for tri in self.surface_topo.iter() {
-            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
-            let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
-
-            for vi in 0..3 {
-                let v = self.tet_to_surf_vtx_map[tri[vi]];
-                assert!(v >= 0);
-                for j in 0..3 {
-                    self.constraint_jac_triplets[3 * v as usize + j].val += c[vi][j];
-                }
-            }
+    }
+    fn constraint_jacobian_values(&self, x: &[f64], values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+        for (out, val) in values.iter_mut().zip(self.constraint_jacobian_values_iter(x)) {
+            *out = val;
         }
-        &self.constraint_jac_triplets
     }
 }
 
@@ -277,139 +224,78 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
 /// ⎢ z  0 -x⎥
 /// ⎣-y  x  0⎦
 /// ```
+#[inline]
 fn skew(x: Vector3<f64>) -> Matrix3<f64> {
     Matrix3([[0.0, x[2], -x[1]], [-x[2], 0.0, x[0]], [x[1], -x[0], 0.0]])
 }
 
-impl ConstraintHessianSize for VolumeConstraint {
-    fn constraint_hessian_size(&self) -> usize {
-        6 * 3 * self.surface_topo.len()
+impl VolumeConstraint {
+    /// A generic Hessian element iterator. This is used to implement iterators over indices and
+    /// values of the sparse Hessian matrix enetries.
+    /// Note: it is an attempt to code reuse. Ideally we should use generators here.
+    fn constraint_hessian_iter<'a>(tri: &'a [usize;3]) 
+        -> impl Iterator<Item=((usize,usize),(usize,usize),usize,usize)> + 'a
+    {
+        (0..3).flat_map(move |vi| {
+            let col_v = tri[vi];
+            let row_v = move |off| tri[(vi + off) % 3];
+            (1..=2).filter(move |&off| row_v(off) > col_v)
+                .flat_map(move |off| {
+                    (0..3).flat_map(move |c| {
+                        (0..3).filter(move |&r| r != c)
+                            .map(move |r| {
+                                ((row_v(off),col_v),(r,c),vi,off)
+                            })
+                    })
+                })
+        })
     }
-}
 
-impl ConstraintHessianIndicesValues<f64> for VolumeConstraint {
-    fn constraint_hessian_indices(&mut self) -> &[MatrixElementIndex] {
-        // Reserve memory for all the indices
-        self.constraint_hess_indices.clear();
-        let num_indices = self.constraint_hessian_size();
-        self.constraint_hess_indices.reserve(num_indices);
-
-        for tri in self.surface_topo.iter() {
-            for vi in 0..3 {
-                let col_v = tri[vi];
-                for off in 1..=2 {
-                    let vj = (vi + off) % 3;
-                    let row_v = tri[vj];
-                    if row_v > col_v {
-                        for c in 0..3 {
-                            for r in 0..3 {
-                                if r == c {
-                                    continue;
-                                }
-                                self.constraint_hess_indices.push(MatrixElementIndex {
-                                    row: 3 * row_v + r,
-                                    col: 3 * col_v + c,
-                                });
-                            }
-                        }
-                    }
+    pub fn constraint_hessian_indices_iter<'a>(&'a self) -> impl Iterator<Item=MatrixElementIndex> + 'a {
+        self.surface_topo.iter().flat_map(move |tri| {
+                Self::constraint_hessian_iter(tri)
+                    .map( |((row_v,col_v),(r,c),_,_)| {
+                MatrixElementIndex {
+                    row: 3 * row_v + r,
+                    col: 3 * col_v + c,
                 }
-            }
-        }
-        assert_eq!(
-            self.constraint_hess_indices.len(),
-            self.constraint_hessian_size()
-        );
-        &self.constraint_hess_indices
+            })
+        })
     }
-    fn constraint_hessian_values(&mut self, x: &[f64], lambda: &[f64]) -> &[f64] {
+
+    pub fn constraint_hessian_values_iter<'a>(&'a self, x: &'a [f64], lambda: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
         let prev_pos = self.prev_pos.borrow();
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
-        // Reserve memory for all the values
-        self.constraint_hess_values.clear();
-        let num_values = self.constraint_hessian_size();
-        self.constraint_hess_values.reserve(num_values);
-
-        for tri in self.surface_topo.iter() {
+        self.surface_topo.iter().flat_map(move |tri| {
             let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
-
-            for vi in 0..3 {
-                let col_v = tri[vi];
-                for off in 1..=2 {
-                    let vj = (vi + off) % 3;
-                    let vjn = (vi + off + if off == 1 { 1 } else { 2 }) % 3;
-                    let row_v = tri[vj];
-                    if row_v > col_v {
-                        for c in 0..3 {
-                            for r in 0..3 {
-                                if r == c {
-                                    continue;
-                                }
-                                self.constraint_hess_values.push(
-                                    if off == 1 { 1.0 } else { -1.0 }
-                                        * lambda[0]
-                                        * local_hess[vjn][c][r],
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        assert_eq!(
-            self.constraint_hess_values.len(),
-            self.constraint_hessian_size()
-        );
-        &self.constraint_hess_values
+            Self::constraint_hessian_iter(tri)
+                .map(move |(_,(r,c),vi,off)| {
+                    let vjn = (vi + off + off) % 3;
+                    let factor = if off == 1 { 1.0 } else { -1.0 };
+                    factor * lambda[0] * local_hess[vjn][c][r]
+                })
+        })
     }
 }
 
 impl ConstraintHessian<f64> for VolumeConstraint {
-    fn constraint_hessian(&mut self, x: &[f64], lambda: &[f64]) -> &[MatrixElementTriplet<f64>] {
-        let prev_pos = self.prev_pos.borrow();
-        let disp: &[Vector3<f64>] = reinterpret_slice(x);
-
-        // Reserve memory for all the triplets
-        self.constraint_hess_triplets.clear();
-        let num_triplets = self.constraint_hessian_size();
-        self.constraint_hess_triplets.reserve(num_triplets);
-
-        for tri in self.surface_topo.iter() {
-            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
-            let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
-
-            for vi in 0..3 {
-                let col_v = tri[vi];
-                for off in 1..=2 {
-                    let vj = (vi + off) % 3;
-                    let vjn = (vi + off + if off == 1 { 1 } else { 2 }) % 3;
-                    let row_v = tri[vj];
-                    if row_v > col_v {
-                        for c in 0..3 {
-                            for r in 0..3 {
-                                if r == c {
-                                    continue;
-                                }
-                                self.constraint_hess_triplets
-                                    .push(MatrixElementTriplet::new(
-                                        3 * row_v + r,
-                                        3 * col_v + c,
-                                        if off == 1 { 1.0 } else { -1.0 }
-                                            * lambda[0]
-                                            * local_hess[vjn][c][r],
-                                    ));
-                            }
-                        }
-                    }
-                }
-            }
+    #[inline]
+    fn constraint_hessian_size(&self) -> usize {
+        6 * 3 * self.surface_topo.len()
+    }
+    fn constraint_hessian_indices_offset(&self, offset: MatrixElementIndex, indices: &mut [MatrixElementIndex]) {
+        debug_assert_eq!(indices.len(), self.constraint_hessian_size());
+        for (out, idx) in indices.iter_mut().zip(self.constraint_hessian_indices_iter()) {
+            *out = idx + offset;
         }
-        assert_eq!(
-            self.constraint_hess_triplets.len(),
-            self.constraint_hessian_size()
-        );
-        &self.constraint_hess_triplets
+    }
+    fn constraint_hessian_values(&self, x: &[f64], lambda: &[f64], values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.constraint_hessian_size());
+        for (out, val) in values.iter_mut().zip(self.constraint_hessian_values_iter(x, lambda)) {
+            *out = val;
+        }
     }
 }
+

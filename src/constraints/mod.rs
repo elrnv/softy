@@ -1,2 +1,2 @@
-pub mod volume_constraint;
+pub mod total_volume;
 

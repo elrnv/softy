@@ -14,7 +14,7 @@ use crate::matrix::*;
 use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
-use crate::constraints::volume_constraint::VolumeConstraint;
+use crate::constraints::total_volume::VolumeConstraint;
 
 use crate::PointCloud;
 use crate::TetMesh;

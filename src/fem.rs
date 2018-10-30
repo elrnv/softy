@@ -416,7 +416,7 @@ impl FemEngine {
             let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
             // Get the tetmesh and prev_pos so we can update fixed vertices only.
-            let mut mesh = &mut problem.energy_model.solid;
+            let mesh = &mut problem.energy_model.solid;
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
             Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);

@@ -1,8 +1,8 @@
 //! This module provides an interface for specifying constraints to an optimization solver.
 
-use geo::math::Scalar;
+use crate::geo::math::Scalar;
 
-use matrix::{MatrixElementIndex, MatrixElementTriplet};
+use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
 /// Constraint trait specifies the constraint function.
 pub trait Constraint<T: Scalar> {

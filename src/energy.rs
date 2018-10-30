@@ -6,9 +6,9 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use geo::math::Scalar;
+use crate::geo::math::Scalar;
 
-use matrix::{MatrixElementIndex, MatrixElementTriplet};
+use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.

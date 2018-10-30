@@ -1,15 +1,15 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
-use attrib_names::*;
-use energy::*;
-use geo::math::{Matrix3, Vector3};
-use geo::mesh::{topology::*, Attrib};
-use geo::ops::*;
-use matrix::*;
+use crate::attrib_names::*;
+use crate::energy::*;
+use crate::geo::math::{Matrix3, Vector3};
+use crate::geo::mesh::{topology::*, Attrib};
+use crate::geo::ops::*;
+use crate::matrix::*;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use TetMesh;
+use crate::TetMesh;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.

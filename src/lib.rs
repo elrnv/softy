@@ -20,7 +20,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
 // reexport params structs for interfacing.
-pub use fem::{Error, FemEngine, MaterialProperties, SimParams, SolveResult};
+pub use crate::fem::{Error, FemEngine, MaterialProperties, SimParams, SolveResult};
 
 pub enum SimResult {
     Success(String),
@@ -103,7 +103,7 @@ pub fn sim(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::mesh::{topology::*, Attrib, TetMesh};
+    use crate::geo::mesh::{topology::*, Attrib, TetMesh};
 
     const STATIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {

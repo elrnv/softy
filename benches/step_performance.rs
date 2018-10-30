@@ -18,6 +18,8 @@ const DYNAMIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.01),
     tolerance: 1e-9,
+    max_iterations: 800,
+    volume_constraint: false,
 };
 
 fn step_performance(c: &mut Criterion) {

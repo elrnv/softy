@@ -1,23 +1,23 @@
-use attrib_names::*;
-use constraint::*;
-use energy::*;
-use energy_models::volumetric_neohookean::{
+use crate::attrib_names::*;
+use crate::constraint::*;
+use crate::energy::*;
+use crate::energy_models::volumetric_neohookean::{
     ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
-use geo::math::{Matrix3, Vector3};
-use geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
-use geo::ops::{ShapeMatrix, Volume};
-use geo::prim::Tetrahedron;
+use crate::geo::math::{Matrix3, Vector3};
+use crate::geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
+use crate::geo::ops::{ShapeMatrix, Volume};
+use crate::geo::prim::Tetrahedron;
 use ipopt::{self, Index, Ipopt, Number, SolverData};
-use matrix::*;
+use crate::matrix::*;
 use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
-use constraints::volume_constraint::VolumeConstraint;
+use crate::constraints::volume_constraint::VolumeConstraint;
 
-use PointCloud;
-use TetMesh;
+use crate::PointCloud;
+use crate::TetMesh;
 
 /// Result from one simulation step.
 #[derive(Debug)]
@@ -637,7 +637,7 @@ impl From<attrib::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo;
+    use crate::geo;
     use std::path::PathBuf;
 
     /*

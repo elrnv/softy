@@ -143,6 +143,14 @@ static const char *theDsFile = R"THEDSFILE(
             default { "1e-9" }
             range { 0.0 1.0 }
         }
+        parm {
+            name "maxiterations"
+            cppname "MaxIterations"
+            label "Max Iterations"
+            type integer
+            default { "800" }
+            range { 0 1000 }
+        }
     }
 
     parm {
@@ -233,7 +241,7 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     SimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
 
-    if (sopparms.getStiffness_type()) { 
+    if (sopparms.getStiffness_type() == 0) { 
         sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e6;
         sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e6;
     } else {
@@ -249,6 +257,7 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.material.density = sopparms.getDensity();
     sim_params.gravity = sopparms.getGravity();
     sim_params.tolerance = sopparms.getTolerance();
+    sim_params.max_iterations = sopparms.getMaxIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");

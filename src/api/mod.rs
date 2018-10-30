@@ -78,6 +78,7 @@ impl Into<softy::SimParams> for SimParams {
             time_step,
             gravity,
             tolerance,
+            max_iterations,
             volume_constraint,
         } = self;
         softy::SimParams {
@@ -94,6 +95,7 @@ impl Into<softy::SimParams> for SimParams {
             },
             gravity: [0.0, -gravity, 0.0],
             tolerance,
+            max_iterations,
             volume_constraint,
         }
     }

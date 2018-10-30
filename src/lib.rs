@@ -26,6 +26,7 @@ pub struct SimParams {
     pub time_step: f32,
     pub gravity: f32,
     pub tolerance: f32,
+    pub max_iterations: u32,
     pub volume_constraint: bool,
 }
 

@@ -1,17 +1,19 @@
 use crate::attrib_names::*;
-use crate::energy_models::volumetric_neohookean::{
-    ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
+use crate::energy_models::{
+    volumetric_neohookean::{
+        ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
+    },
+    gravity::Gravity,
 };
-//use geo::io::save_tetmesh_ascii;
 use crate::constraints::total_volume::VolumeConstraint;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
-use ipopt::{self, Ipopt, SolverData};
+use ipopt::{self, Ipopt, SolverDataMut};
 use reinterpret::*;
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{RefCell, Ref, RefMut},
     rc::Rc,
 };
 
@@ -71,15 +73,10 @@ impl ElasticityProperties {
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
 pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
-    let attrib = tetmesh
+    let ref_pos = tetmesh
         .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
-        .unwrap();
-    Tetrahedron(
-        (attrib.get::<[f64; 3], _>(indices[0]).unwrap()).into(),
-        (attrib.get::<[f64; 3], _>(indices[1]).unwrap()).into(),
-        (attrib.get::<[f64; 3], _>(indices[2]).unwrap()).into(),
-        (attrib.get::<[f64; 3], _>(indices[3]).unwrap()).into(),
-    )
+        .unwrap().as_slice::<[f64;3]>().unwrap();
+    Tetrahedron::from_indexed_slice(indices, ref_pos)
 }
 
 /// Finite element engine.
@@ -137,8 +134,10 @@ impl Solver {
 
         let (lambda, mu) = params.material.elasticity.lame_parameters();
 
-        let density = params.material.density as f64;
-        let damping = params.material.damping as f64;
+        // Normalize material parameters with mu.
+        let lambda = lambda / mu;
+        let density = params.material.density as f64 / mu;
+        let damping = params.material.damping as f64 / mu;
         let gravity = [
             params.gravity[0] as f64,
             params.gravity[1] as f64,
@@ -160,8 +159,7 @@ impl Solver {
         let mesh = Rc::new(RefCell::new(mesh));
 
         let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh))
-            .material(lambda / mu, 1.0, density / mu, damping / mu)
-            .gravity(gravity);
+            .material(lambda, 1.0, density, damping);
 
         if let Some(dt) = params.time_step {
             energy_model_builder = energy_model_builder.time_step(dt as f64);
@@ -171,6 +169,7 @@ impl Solver {
             tetmesh: Rc::clone(&mesh),
             prev_pos,
             energy_model: energy_model_builder.build(),
+            gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
             volume_constraint,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
@@ -201,28 +200,28 @@ impl Solver {
 
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
-        self.solver.get_solver_data().problem.interrupt_checker = checker;
+        self.solver.solver_data_mut().problem.interrupt_checker = checker;
     }
 
-    /// Get an immutable reference to the solver `TetMesh`.
-    pub fn borrow_mesh(&mut self) -> Ref<'_, TetMesh> {
-        self.solver.get_solver_data().problem.tetmesh.borrow()
+    /// Get an immutable borrow for the underlying `TetMesh`.
+    pub fn borrow_mesh(&self) -> Ref<'_, TetMesh> {
+        self.solver.solver_data_ref().problem.tetmesh.borrow()
     }
 
-    /// Get a mutable reference to the solver `TetMesh`.
+    /// Get a mutable borrow for the underlying `TetMesh`.
     pub fn borrow_mut_mesh(&mut self) -> RefMut<'_, TetMesh> {
-        self.solver.get_solver_data().problem.tetmesh.borrow_mut()
+        self.solver.solver_data_ref().problem.tetmesh.borrow_mut()
     }
 
     /// Get solver parameters.
     pub fn params(&mut self) -> SimParams {
-        self.solver.get_solver_data().problem.params
+        self.solver.solver_data_mut().problem.params
     }
 
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
         // Get solver data. We want to update the primal variables with new positions from `pts`.
-        let SolverData { problem, .. } = self.solver.get_solver_data();
+        let SolverDataMut { problem, .. } = self.solver.solver_data_mut();
 
         // Get the tetmesh and prev_pos so we can update fixed vertices only.
         let tetmesh = &problem.tetmesh.borrow();
@@ -383,11 +382,11 @@ impl Solver {
         if let Ok(_) = step_result {
             let (lambda, mu) = self.params().material.elasticity.lame_parameters();
 
-            let SolverData {
+            let SolverDataMut {
                 ref mut problem,
                 ref primal_variables,
                 ..
-            } = self.solver.get_solver_data();
+            } = self.solver.solver_data_mut();
 
             let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
@@ -503,6 +502,18 @@ mod tests {
         make_three_tet_mesh_with_verts(verts)
     }
 
+    /// Utility function to compare positions of two meshes.
+    fn compare_meshes(solution: &TetMesh, expected: &TetMesh) {
+        for (pos, expected_pos) in solution.vertex_positions()
+            .iter()
+            .zip(expected.vertex_positions().iter())
+        {
+            for j in 0..3 {
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
+            }
+        }
+    }
+
     /*
      * One tet tests
      */
@@ -531,35 +542,55 @@ mod tests {
      */
 
     #[test]
-    fn simple_static_test() {
+    fn three_tets_static_test() {
         let mesh = make_three_tet_mesh();
-        assert!(Solver::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+        let mut solver = Solver::new(mesh, STATIC_PARAMS).unwrap();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk")).unwrap();
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
-    fn simple_dynamic_test() {
+    fn three_tets_dynamic_test() {
         let mesh = make_three_tet_mesh();
-        assert!(Solver::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+        let mut solver = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk")).unwrap();
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
-    fn simple_static_volume_constraint_test() {
+    fn three_tets_static_volume_constraint_test() {
         let mesh = make_three_tet_mesh();
         let params = SimParams {
             volume_constraint: true,
             ..STATIC_PARAMS
         };
-        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
+        let mut solver = Solver::new(mesh, params).unwrap();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        let exptected =
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_volume_constraint_expected.vtk")).unwrap();
+        compare_meshes(&solution, &exptected);
     }
 
     #[test]
-    fn simple_dynamic_volume_constraint_test() {
+    fn three_tets_dynamic_volume_constraint_test() {
         let mesh = make_three_tet_mesh();
         let params = SimParams {
             volume_constraint: true,
             ..DYNAMIC_PARAMS
         };
-        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
+        let mut solver = Solver::new(mesh, params).unwrap();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        let expected =
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_volume_constraint_expected.vtk")).unwrap();
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
@@ -637,15 +668,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution
-            .vertex_positions()
-            .iter()
-            .zip(expected.vertex_positions().iter())
-        {
-            for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
-            }
-        }
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
@@ -660,15 +683,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution
-            .vertex_positions()
-            .iter()
-            .zip(expected.vertex_positions().iter())
-        {
-            for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
-            }
-        }
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
@@ -686,15 +701,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution
-            .vertex_positions()
-            .iter()
-            .zip(expected.vertex_positions().iter())
-        {
-            for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
-            }
-        }
+        compare_meshes(&solution, &expected);
     }
 
     #[test]
@@ -713,15 +720,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution
-            .vertex_positions()
-            .iter()
-            .zip(expected.vertex_positions().iter())
-        {
-            for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
-            }
-        }
+        compare_meshes(&solution, &expected);
     }
 
     /*

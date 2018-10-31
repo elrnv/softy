@@ -5,8 +5,6 @@ use crate::matrix::*;
 use crate::TetMesh;
 use reinterpret::*;
 use std::collections::BTreeSet;
-use std::ops::Add;
-use std::{cell::RefCell, rc::Rc};
 
 // TODO: move to geo::mesh
 #[derive(Copy, Clone, Eq)]
@@ -29,18 +27,6 @@ impl TriFace {
 /// corresponding entries of the slice.
 fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
     [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
-}
-
-fn tri_at_new_pos<T: Copy + Add>(
-    pos: &[T],
-    disp: &[T],
-    tri: &[usize; 3],
-) -> [<T as Add>::Output; 3] {
-    [
-        pos[tri[0]] + disp[tri[0]],
-        pos[tri[1]] + disp[tri[1]],
-        pos[tri[2]] + disp[tri[2]],
-    ]
 }
 
 /// Consider any permutation of the triangle to be equivalent to the original.

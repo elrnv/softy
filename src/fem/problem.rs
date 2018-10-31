@@ -1,7 +1,10 @@
 use crate::attrib_names::*;
 use crate::constraint::*;
 use crate::energy::*;
-use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
+use crate::energy_models::{
+    volumetric_neohookean::ElasticTetMeshEnergy,
+    gravity::Gravity,
+};
 //use geo::io::save_tetmesh_ascii;
 use crate::constraints::total_volume::VolumeConstraint;
 use crate::geo::math::Vector3;
@@ -26,6 +29,8 @@ pub(crate) struct NonLinearProblem {
     pub tetmesh: Rc<RefCell<TetMesh>>,
     /// Elastic energy model.
     pub energy_model: ElasticTetMeshEnergy,
+    /// Gravitational potential energy.
+    pub gravity: Gravity,
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
@@ -78,7 +83,7 @@ impl NonLinearProblem {
     pub fn update(&mut self, dx: &[f64]) {
         let displacement: &[Vector3<f64>] = reinterpret_slice(dx);
         let mut tetmesh = self.tetmesh.borrow_mut();
-        let mut verts = tetmesh.vertex_positions_mut();
+        let verts = tetmesh.vertex_positions_mut();
         let prev_pos = self.prev_pos.borrow();
         verts
             .iter_mut()
@@ -123,15 +128,19 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
     fn objective(&mut self, dx: &[Number], obj: &mut Number) -> bool {
         self.update(dx);
-        //let pos: &[Number] = reinterpret_slice(self.tetmesh.borrow().vertex_positions());
+        let tetmesh = self.tetmesh.borrow();
+        let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
         *obj = self.energy_model.energy(dx);
+        *obj += self.gravity.energy(pos);
         true
     }
 
     fn objective_grad(&mut self, dx: &[Number], grad_f: &mut [Number]) -> bool {
         self.update(dx);
-        //let pos: &[Number] = reinterpret_slice(self.tetmesh.borrow().vertex_positions());
+        let tetmesh = self.tetmesh.borrow();
+        let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
         grad_f.copy_from_slice(self.energy_model.energy_gradient(dx));
+        self.gravity.add_energy_gradient(pos, grad_f);
 
         true
     }

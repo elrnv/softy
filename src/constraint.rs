@@ -23,8 +23,8 @@ pub trait ConstraintJacobian<T: Scalar> {
     /// `constraint_jacobian_indices` and `constraint_jacobian_values` functions.
     fn constraint_jacobian_size(&self) -> usize;
     /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
-    /// The `row_offset` and `col_offset` parameters position this constraint Jacobian within a
-    /// global Jacobian matrix specified by the user.
+    /// The `offset` parameter positions this constraint Jacobian
+    /// within a global Jacobian matrix specified by the user.
     fn constraint_jacobian_indices_offset(
         &self,
         offset: MatrixElementIndex,
@@ -74,11 +74,11 @@ pub trait ConstraintJacobian<T: Scalar> {
 /// The "Hessian" matrix is provided by a series of sparse indices and values via two separate
 /// functions.
 pub trait ConstraintHessian<T: Scalar> {
-    /// The number of non-zeros in the Hessian matrix of the energy.
+    /// The number of non-zeros in the Hessian matrix of the constraint.
     fn constraint_hessian_size(&self) -> usize;
     /// Compute the Hessian row and column indices of the matrix resulting from the constraint
     /// Hessian multiplied by the Lagrange multiplier vector.
-    /// The `row_offset` and `col_offset` parameters position this constraint Hessian product
+    /// The `offset` parameter positions this constraint Hessian product
     /// within a global Hessian matrix specified by the user.
     fn constraint_hessian_indices_offset(
         &self,

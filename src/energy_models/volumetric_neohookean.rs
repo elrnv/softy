@@ -218,8 +218,6 @@ pub struct ElasticTetMeshEnergy {
     /// This field stores the reciprocal of the time step since this is what we compute with and it
     /// naturally determines if the simulation is dynamic.
     time_step_inv: f64,
-    /// Gravitational acceleration in m/s².
-    gravity: Vector3<f64>,
 
     // Workspace fields for storing intermediate results
     /// Energy gradient.
@@ -237,7 +235,6 @@ pub struct ElasticTetMeshEnergy {
 pub struct ElasticTetMeshEnergyBuilder {
     tetmesh: Rc<RefCell<TetMesh>>,
     material: Option<MaterialModel>,
-    gravity: Option<[f64; 3]>,
     time_step: Option<f64>,
 }
 
@@ -275,7 +272,6 @@ impl ElasticTetMeshEnergyBuilder {
         ElasticTetMeshEnergyBuilder {
             tetmesh,
             material: None,
-            gravity: None,
             time_step: None,
         }
     }
@@ -291,12 +287,6 @@ impl ElasticTetMeshEnergyBuilder {
         self
     }
 
-    /// Set the gravity for the simulation.
-    pub fn gravity(mut self, gravity: [f64; 3]) -> Self {
-        self.gravity = Some(gravity.into());
-        self
-    }
-
     /// Set the time step making this simulation dynamic.
     /// Without the time step the simulation will assume an infinite time-step making it a
     /// quasi-static simulator.
@@ -309,7 +299,6 @@ impl ElasticTetMeshEnergyBuilder {
         let ElasticTetMeshEnergyBuilder {
             tetmesh,
             material,
-            gravity,
             time_step,
         } = self.clone();
 
@@ -317,7 +306,6 @@ impl ElasticTetMeshEnergyBuilder {
             tetmesh: tetmesh.clone(),
             material: material.unwrap_or(MaterialModel::default()),
             time_step_inv: time_step.map_or(0.0, |x| 1.0 / x),
-            gravity: gravity.map_or(Vector3::zeros(), |x| x.into()),
             energy_gradient: Vec::new(),
             energy_hessian_indices: Vec::new(),
             energy_hessian_values: Vec::new(),
@@ -376,7 +364,6 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                     damping,
                 },
             time_step_inv: dt_inv,
-            gravity,
             ..
         } = *self;
 
@@ -405,8 +392,6 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
                 // elasticity
                 tet_energy.elastic_energy()
-                // gravity (external forces)
-                - vol * density * gravity.dot(tet.centroid())
                     // dynamics (including damping)
                     + 0.5 * dt_inv * {
                         let dx = [
@@ -449,7 +434,6 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
                     damping,
                 },
             time_step_inv: dt_inv,
-            gravity,
             energy_gradient: ref mut gradient,
             ..
         } = *self;
@@ -516,9 +500,6 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
 
             for i in 0..4 {
                 gradient[cell[i]] += dt_inv * dt_inv * 0.25 * vol * density * dv[i];
-
-                // Energy gradient is in opposite direction to the force hence minus here.
-                gradient[cell[i]] -= 0.25 * vol * density * gravity;
                 gradient[cell[i]] += grad[i];
             }
 
@@ -585,7 +566,7 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&mut self, dx: &[f64]) -> &[f64] {
+    fn energy_hessian_values(&mut self, _dx: &[f64]) -> &[f64] {
         let num_hess_triplets = self.energy_hessian_size();
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -658,7 +639,7 @@ impl EnergyHessianIndicesValues<f64> for ElasticTetMeshEnergy {
 
 impl EnergyHessian<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy_hessian(&mut self, dx: &[f64]) -> &[MatrixElementTriplet<f64>] {
+    fn energy_hessian(&mut self, _dx: &[f64]) -> &[MatrixElementTriplet<f64>] {
         let num_hess_triplets = self.energy_hessian_size();
         let ElasticTetMeshEnergy {
             ref tetmesh,

@@ -1,7 +1,6 @@
 use crate::constraint::*;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::ops::Volume;
-use crate::geo::prim::Tetrahedron;
 use crate::matrix::*;
 use reinterpret::*;
 use std::collections::BTreeSet;
@@ -111,36 +110,21 @@ pub struct VolumeConstraint {
     /// of tetmesh vertices. Each triplet corresponds to a triangle on the surface of the tetmesh.
     pub surface_topo: Vec<[usize; 3]>,
 
-    /// A reference to positions from the previous time step.
-    pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
-
     /// The volume of the solid at rest. The contraint is equated to this value.
     pub rest_volume: f64,
 }
 
 impl VolumeConstraint {
-    pub fn new(tetmesh: &TetMesh, prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>) -> Self {
+    pub fn new(tetmesh: &TetMesh) -> Self {
         let surface_topo = extract_surface_topo(tetmesh);
         VolumeConstraint {
             surface_topo,
-            prev_pos,
             rest_volume: Self::compute_volume(tetmesh),
         }
     }
 
     pub fn compute_volume(tetmesh: &TetMesh) -> f64 {
-        let mut total_volume = 0.0;
-        let pos = tetmesh.vertex_positions();
-        for cell in tetmesh.cell_iter() {
-            total_volume += Tetrahedron(
-                pos[cell[0]].into(),
-                pos[cell[1]].into(),
-                pos[cell[2]].into(),
-                pos[cell[3]].into(),
-            )
-            .volume();
-        }
-        total_volume
+        tetmesh.cell_iter().map(|cell| crate::fem::ref_tet(tetmesh, cell).volume()).sum()
     }
 }
 
@@ -159,11 +143,10 @@ impl Constraint<f64> for VolumeConstraint {
 
     fn constraint(&mut self, x: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        let prev_pos = self.prev_pos.borrow();
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
-            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
+            let p = tri_at(disp, tri);
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
@@ -183,11 +166,10 @@ impl VolumeConstraint {
 
     /// Compute the values of the constraint Jacobian.
     pub fn constraint_jacobian_values_iter<'a>(&'a self, x: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
-        let prev_pos = self.prev_pos.borrow();
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
+            let p = tri_at(disp, tri);
             let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
 
             (0..3).flat_map(move |vi| {
@@ -264,11 +246,10 @@ impl VolumeConstraint {
     }
 
     pub fn constraint_hessian_values_iter<'a>(&'a self, x: &'a [f64], lambda: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
-        let prev_pos = self.prev_pos.borrow();
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = tri_at_new_pos(prev_pos.as_slice(), disp, tri);
+            let p = tri_at(disp, tri);
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
             Self::constraint_hessian_iter(tri)
                 .map(move |(_,(r,c),vi,off)| {

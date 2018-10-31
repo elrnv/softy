@@ -1,23 +1,22 @@
 use crate::attrib_names::*;
-use crate::constraint::*;
-use crate::energy::*;
 use crate::energy_models::volumetric_neohookean::{
-    ElasticTetMeshEnergy, ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
+    ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
 use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{attrib, tetmesh::TetCell, topology::*, Attrib};
+use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
-use ipopt::{self, Index, Ipopt, Number, SolverData};
-use crate::matrix::*;
+use ipopt::{self, Ipopt, SolverData};
 use reinterpret::*;
-use std::fmt;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::{RefCell, Ref, RefMut}, rc::Rc};
 use crate::constraints::total_volume::VolumeConstraint;
 
 use crate::PointCloud;
 use crate::TetMesh;
+use crate::Error;
+use super::NonLinearProblem;
+use super::SimParams;
 
 /// Result from one simulation step.
 #[derive(Debug)]
@@ -29,7 +28,7 @@ pub struct SolveResult {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct MaterialProperties {
+pub struct ElasticityProperties {
     /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
     /// incompressibility. The larger the value, the more incompressible the material is.
     /// Think of this as "Volume Stiffness"
@@ -37,6 +36,12 @@ pub struct MaterialProperties {
     /// Shear modulus measures the material's resistance to shear deformation. The larger the
     /// value, the more it resists changes in shape. Think of this as "Shape Stiffness"
     pub shear_modulus: f32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MaterialProperties {
+    /// Properties determining the elastic behaviour of a simulated solid.
+    pub elasticity: ElasticityProperties,
     /// The density of the material.
     pub density: f32,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
@@ -44,24 +49,20 @@ pub struct MaterialProperties {
     pub damping: f32,
 }
 
-impl MaterialProperties {
+impl ElasticityProperties {
+    pub fn from_young_poisson(young: f32, poisson: f32) -> Self {
+        ElasticityProperties {
+            bulk_modulus: young / (3.0*(1.0 - 2.0*poisson)),
+            shear_modulus: young / (2.0*(1.0 + poisson))
+        }
+    }
+
     /// Convert internal elasticity parameters to Lame parameters for Neo-Hookean energy.
     pub fn lame_parameters(&self) -> (f64, f64) {
         let lambda = self.bulk_modulus as f64 - 2.0 * self.shear_modulus as f64 / 3.0;
         let mu = self.shear_modulus as f64;
         (lambda, mu)
     }
-}
-
-/// Simulation parameters.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SimParams {
-    pub material: MaterialProperties,
-    pub gravity: [f32; 3],
-    pub time_step: Option<f32>,
-    pub tolerance: f32,
-    pub max_iterations: u32,
-    pub volume_constraint: bool,
 }
 
 /// Get reference tetrahedron.
@@ -79,7 +80,7 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
 }
 
 /// Finite element engine.
-pub struct FemEngine {
+pub struct Solver {
     /// Non-linear solver.
     solver: Ipopt<NonLinearProblem>,
     /// Step count (outer iterations). These count the number of times the function `step` was
@@ -87,38 +88,7 @@ pub struct FemEngine {
     step_count: usize,
 }
 
-/// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
-/// It is meant to be owned by the solver.
-pub(crate) struct NonLinearProblem {
-    /// Position from the previous time step. We need to keep track of previous positions
-    /// explicitly since we are doing a displacement solve. This vector is updated between steps
-    /// and shared with other solver components like energies and constraints.
-    pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
-    /// Elastic energy model.
-    pub energy_model: ElasticTetMeshEnergy,
-    /// Constraint on the total volume.
-    pub volume_constraint: Option<VolumeConstraint>,
-    /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
-    /// returns `false`.
-    pub interrupt_checker: Box<FnMut() -> bool>,
-    /// Count the number of iterations.
-    pub iterations: usize,
-    /// Simulation parameters.
-    pub params: SimParams,
-}
-
-impl fmt::Debug for NonLinearProblem {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "NonLinearProblem {{ energy_model: {:?}, volume_constraint: {:?}, \
-             iterations: {:?}, params: {:?} }}",
-            self.energy_model, self.volume_constraint, self.iterations, self.params
-        )
-    }
-}
-
-impl FemEngine {
+impl Solver {
     /// Run the optimization solver on one time step.
     pub fn new(mut mesh: TetMesh, params: SimParams) -> Result<Self, Error> {
         // Prepare tet mesh for simulation.
@@ -162,7 +132,7 @@ impl FemEngine {
             mesh.set_attrib::<_, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
 
-        let (lambda, mu) = params.material.lame_parameters();
+        let (lambda, mu) = params.material.elasticity.lame_parameters();
 
         let density = params.material.density as f64;
         let damping = params.material.damping as f64;
@@ -179,12 +149,14 @@ impl FemEngine {
 
         // Initialize volume constraint
         let volume_constraint = if params.volume_constraint {
-            Some(VolumeConstraint::new(&mesh, Rc::clone(&prev_pos)))
+            Some(VolumeConstraint::new(&mesh))//, Rc::clone(&prev_pos)))
         } else {
             None
         };
 
-        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(mesh, Rc::clone(&prev_pos))
+        let mesh = Rc::new(RefCell::new(mesh));
+
+        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh))
             .material(lambda / mu, 1.0, density / mu, damping / mu)
             .gravity(gravity);
 
@@ -193,6 +165,7 @@ impl FemEngine {
         }
 
         let problem = NonLinearProblem {
+            tetmesh: Rc::clone(&mesh),
             prev_pos,
             energy_model: energy_model_builder.build(),
             volume_constraint,
@@ -217,7 +190,7 @@ impl FemEngine {
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
-        Ok(FemEngine {
+        Ok(Solver {
             solver: ipopt,
             step_count: 0,
         })
@@ -229,13 +202,13 @@ impl FemEngine {
     }
 
     /// Get an immutable reference to the solver `TetMesh`.
-    pub fn mesh_ref(&mut self) -> &TetMesh {
-        &self.solver.get_solver_data().problem.energy_model.solid
+    pub fn borrow_mesh(&mut self) -> Ref<'_, TetMesh> {
+        self.solver.get_solver_data().problem.tetmesh.borrow()
     }
 
     /// Get a mutable reference to the solver `TetMesh`.
-    pub fn mesh_mut(&mut self) -> &mut TetMesh {
-        &mut self.solver.get_solver_data().problem.energy_model.solid
+    pub fn borrow_mut_mesh(&mut self) -> RefMut<'_, TetMesh> {
+        self.solver.get_solver_data().problem.tetmesh.borrow_mut()
     }
 
     /// Get solver parameters.
@@ -249,7 +222,7 @@ impl FemEngine {
         let SolverData { problem, .. } = self.solver.get_solver_data();
 
         // Get the tetmesh and prev_pos so we can update fixed vertices only.
-        let tetmesh = &problem.energy_model.solid;
+        let tetmesh = &problem.tetmesh.borrow();
         let mut prev_pos = problem.prev_pos.borrow_mut();
 
         if pts.num_vertices() != prev_pos.len() || pts.num_vertices() != tetmesh.num_vertices() {
@@ -405,7 +378,7 @@ impl FemEngine {
 
         // On success, update the mesh with new positions and useful metrics.
         if let Ok(_) = step_result {
-            let (lambda, mu) = self.params().material.lame_parameters();
+            let (lambda, mu) = self.params().material.elasticity.lame_parameters();
 
             let SolverData {
                 ref mut problem,
@@ -416,7 +389,7 @@ impl FemEngine {
             let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
             // Get the tetmesh and prev_pos so we can update fixed vertices only.
-            let mesh = &mut problem.energy_model.solid;
+            let mesh = &mut problem.tetmesh.borrow_mut();
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
             Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
@@ -432,208 +405,6 @@ impl FemEngine {
     }
 }
 
-impl NonLinearProblem {
-    /// Get information about the current simulation
-    pub fn iteration_count(&self) -> usize {
-        self.iterations
-    }
-
-    /// Intermediate callback for `Ipopt`.
-    pub fn intermediate_cb(
-        &mut self,
-        _alg_mod: Index,
-        _iter_count: Index,
-        _obj_value: Number,
-        _inf_pr: Number,
-        _inf_du: Number,
-        _mu: Number,
-        _d_norm: Number,
-        _regularization_size: Number,
-        _alpha_du: Number,
-        _alpha_pr: Number,
-        _ls_trials: Index,
-    ) -> bool {
-        self.iterations += 1;
-        !(self.interrupt_checker)()
-    }
-}
-
-/// Prepare the problem for Newton iterations.
-impl ipopt::BasicProblem for NonLinearProblem {
-    fn num_variables(&self) -> usize {
-        self.energy_model.solid.num_vertices() * 3
-    }
-
-    fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let solid = &self.energy_model.solid;
-        let n = solid.num_vertices();
-        let mut lo = Vec::with_capacity(n);
-        let mut hi = Vec::with_capacity(n);
-        // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        lo.resize(n, [-2e19; 3]);
-        hi.resize(n, [2e19; 3]);
-
-        if let Ok(fixed_verts) = solid.attrib_as_slice::<i8, VertexIndex>(FIXED_ATTRIB) {
-            // Find and set fixed vertices.
-            lo.iter_mut()
-                .zip(hi.iter_mut())
-                .zip(fixed_verts.iter())
-                .filter(|&(_, &fixed)| fixed != 0)
-                .for_each(|((l, u), _)| {
-                    *l = [0.0; 3];
-                    *u = [0.0; 3];
-                });
-        }
-        (reinterpret_vec(lo), reinterpret_vec(hi))
-    }
-
-    fn initial_point(&self) -> Vec<Number> {
-        vec![0.0; self.num_variables()]
-    }
-
-    fn objective(&mut self, dx: &[Number], obj: &mut Number) -> bool {
-        *obj = self.energy_model.energy(dx);
-        true
-    }
-
-    fn objective_grad(&mut self, dx: &[Number], grad_f: &mut [Number]) -> bool {
-        grad_f.copy_from_slice(self.energy_model.energy_gradient(dx));
-
-        true
-    }
-}
-
-impl ipopt::ConstrainedProblem for NonLinearProblem {
-    fn num_constraints(&self) -> usize {
-        let mut num = 0;
-        if let Some(ref vc) = self.volume_constraint {
-            num += vc.constraint_size();
-        }
-        num
-    }
-
-    fn num_constraint_jac_non_zeros(&self) -> usize {
-        let mut num = 0;
-        if let Some(ref vc) = self.volume_constraint {
-            num += vc.constraint_jacobian_size();
-        }
-        num
-    }
-
-    fn constraint(&mut self, dx: &[Number], g: &mut [Number]) -> bool {
-        if let Some(ref mut vc) = self.volume_constraint {
-            vc.constraint(dx, g);
-        }
-
-        true
-    }
-
-    fn constraint_bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let mut lower = Vec::new();
-        let mut upper = Vec::new();
-        if let Some(ref vc) = self.volume_constraint {
-            let mut bounds = vc.constraint_bounds();
-            lower.extend_from_slice(&mut bounds.0);
-            upper.extend_from_slice(&mut bounds.1);
-        }
-        (lower, upper)
-    }
-
-    fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        let mut i = 0; // counter
-
-        if let Some(ref vc) = self.volume_constraint {
-            for MatrixElementIndex { row, col } in vc.constraint_jacobian_indices_iter() {
-                rows[i] = row as Index;
-                cols[i] = col as Index;
-                i += 1;
-            }
-        }
-
-        true
-    }
-
-    fn constraint_jac_values(&mut self, dx: &[Number], vals: &mut [Number]) -> bool {
-        let mut i = 0;
-
-        if let Some(ref vc) = self.volume_constraint {
-            for val in vc.constraint_jacobian_values_iter(dx) {
-                vals[i] = val as Number;
-                i += 1;
-            }
-        }
-
-        true
-    }
-
-    fn num_hessian_non_zeros(&self) -> usize {
-        let mut num = self.energy_model.energy_hessian_size();
-        if let Some(ref vc) = self.volume_constraint {
-            num += vc.constraint_hessian_size();
-        }
-        num
-    }
-
-    fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        let mut i = 0;
-        // Add energy indices
-        for MatrixElementIndex { ref row, ref col } in
-            self.energy_model.energy_hessian_indices().iter()
-        {
-            rows[i] = *row as Index;
-            cols[i] = *col as Index;
-            i += 1;
-        }
-
-        // Add volume constraint indices
-        if let Some(ref vc) = self.volume_constraint {
-            for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
-                rows[i] = row as Index;
-                cols[i] = col as Index;
-                i += 1;
-            }
-        }
-
-        true
-    }
-    fn hessian_values(
-        &mut self,
-        dx: &[Number],
-        obj_factor: Number,
-        lambda: &[Number],
-        vals: &mut [Number],
-    ) -> bool {
-        let mut i = 0;
-        for val in self.energy_model.energy_hessian_values(dx).iter() {
-            vals[i] = obj_factor * (*val as Number);
-            i += 1;
-        }
-
-        if let Some(ref vc) = self.volume_constraint {
-            for val in vc.constraint_hessian_values_iter(dx, lambda) {
-                vals[i] = val as Number;
-                i += 1;
-            }
-        }
-
-        true
-    }
-}
-
-#[derive(Debug)]
-pub enum Error {
-    SizeMismatch,
-    AttribError(attrib::Error),
-    InvertedReferenceElement,
-    SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
-}
-
-impl From<attrib::Error> for Error {
-    fn from(err: attrib::Error) -> Error {
-        Error::AttribError(err)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -644,24 +415,12 @@ mod tests {
      * Setup code
      */
 
-    const DYNAMIC_PARAMS: SimParams = SimParams {
-        material: MaterialProperties {
-            bulk_modulus: 1e6,
-            shear_modulus: 1e5,
-            density: 1000.0,
-            damping: 0.0,
-        },
-        gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.01),
-        tolerance: 1e-9,
-        max_iterations: 800,
-        volume_constraint: false,
-    };
-
     const STATIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
+            elasticity: ElasticityProperties {
+                bulk_modulus: 1750e6,
+                shear_modulus: 10e6,
+            },
             density: 1000.0,
             damping: 0.0,
         },
@@ -670,6 +429,19 @@ mod tests {
         tolerance: 1e-9,
         max_iterations: 800,
         volume_constraint: false,
+    };
+
+    const DYNAMIC_PARAMS: SimParams = SimParams {
+        material: MaterialProperties {
+            elasticity: ElasticityProperties {
+                bulk_modulus: 1e6,
+                shear_modulus: 1e5,
+            },
+            ..STATIC_PARAMS.material
+        },
+        gravity: [0.0f32, 0.0, 0.0],
+        time_step: Some(0.01),
+        ..STATIC_PARAMS
     };
 
     fn make_one_tet_mesh() -> TetMesh {
@@ -736,7 +508,7 @@ mod tests {
     fn one_tet_test() {
         let mesh = make_one_tet_mesh();
 
-        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
@@ -748,7 +520,7 @@ mod tests {
             ..STATIC_PARAMS
         };
 
-        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
     }
 
     /*
@@ -758,13 +530,13 @@ mod tests {
     #[test]
     fn simple_static_test() {
         let mesh = make_three_tet_mesh();
-        assert!(FemEngine::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
     fn simple_dynamic_test() {
         let mesh = make_three_tet_mesh();
-        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[test]
@@ -774,7 +546,7 @@ mod tests {
             volume_constraint: true,
             ..STATIC_PARAMS
         };
-        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
     }
 
     #[test]
@@ -784,7 +556,7 @@ mod tests {
             volume_constraint: true,
             ..DYNAMIC_PARAMS
         };
-        assert!(FemEngine::new(mesh, params).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
     }
 
     #[test]
@@ -799,7 +571,7 @@ mod tests {
         ];
         let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-        let mut solver = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
+        let mut solver = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
@@ -827,18 +599,105 @@ mod tests {
             ..DYNAMIC_PARAMS
         };
 
-        let mut solver = FemEngine::new(mesh, params).unwrap();
+        let mut solver = Solver::new(mesh, params).unwrap();
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
             //save_tetmesh_ascii(
-            //    solver.mesh_ref(),
+            //    solver.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", frame)),
             //);
             assert!(solver.update_mesh_vertices(&pts).is_ok());
             assert!(solver.step().is_ok());
+        }
+    }
+
+    const STRETCH_PARAMS: SimParams = SimParams {
+        material: MaterialProperties {
+            elasticity: ElasticityProperties {
+                bulk_modulus: 300e6,
+                shear_modulus: 100e6,
+            },
+            ..STATIC_PARAMS.material
+        },
+        gravity: [0.0f32, 0.0, 0.0],
+        ..STATIC_PARAMS
+    };
+
+    #[test]
+    fn box_stretch_test() {
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
+        let mut solver = Solver::new(mesh, STRETCH_PARAMS).unwrap();
+        assert!(solver.step().is_ok());
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+            for j in 0..3 {
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn box_stretch_volume_constraint_test() {
+        let params = SimParams {
+            volume_constraint: true,
+            ..STRETCH_PARAMS
+        };
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
+        let mut solver = Solver::new(mesh, params).unwrap();
+        assert!(solver.step().is_ok());
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+            for j in 0..3 {
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn box_twist_test() {
+        let params = SimParams {
+            material: MaterialProperties {
+                elasticity: ElasticityProperties::from_young_poisson(1000.0, 0.0),
+                ..STRETCH_PARAMS.material
+            },
+            ..STRETCH_PARAMS
+        };
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mut solver = Solver::new(mesh, params).unwrap();
+        assert!(solver.step().is_ok());
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+            for j in 0..3 {
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn box_twist_volume_constraint_test() {
+        let params = SimParams {
+            material: MaterialProperties {
+                elasticity: ElasticityProperties::from_young_poisson(1000.0, 0.0),
+                ..STRETCH_PARAMS.material
+            },
+            volume_constraint: true,
+            ..STRETCH_PARAMS
+        };
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mut solver = Solver::new(mesh, params).unwrap();
+        assert!(solver.step().is_ok());
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+            for j in 0..3 {
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+            }
         }
     }
 
@@ -849,14 +708,7 @@ mod tests {
     #[test]
     fn torus_medium_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
-    }
-
-    #[cfg(not(debug_assertions))]
-    #[test]
-    fn torus_large_test() {
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets_large.vtk")).unwrap();
-        assert!(FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+        assert!(Solver::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
     }
 
     #[cfg(not(debug_assertions))]
@@ -864,10 +716,10 @@ mod tests {
     fn torus_long_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
 
-        let mut engine = FemEngine::new(mesh, DYNAMIC_PARAMS).unwrap();
+        let mut engine = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
         for _i in 0..10 {
             //save_tetmesh_ascii(
-            //    engine.mesh_ref(),
+            //    engine.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
             //);
             let res = engine.step();

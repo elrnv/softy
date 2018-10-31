@@ -6,21 +6,44 @@ extern crate nalgebra as na;
 extern crate rayon;
 extern crate reinterpret;
 
+#[cfg(test)]
+#[macro_use]
+extern crate approx;
+
 mod attrib_names;
 mod bench;
 mod constraint;
 mod energy;
 mod energy_models;
-mod fem;
 mod matrix;
 mod constraints;
+pub mod fem;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
-// reexport params structs for interfacing.
-pub use crate::fem::{Error, FemEngine, MaterialProperties, SimParams, SolveResult};
+use crate::geo::mesh::attrib;
+pub use self::fem::{
+    SimParams,
+    SolveResult,
+    MaterialProperties,
+    ElasticityProperties
+};
+
+#[derive(Debug)]
+pub enum Error {
+    SizeMismatch,
+    AttribError(attrib::Error),
+    InvertedReferenceElement,
+    SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
+}
+
+impl From<attrib::Error> for Error {
+    fn from(err: attrib::Error) -> Error {
+        Error::AttribError(err)
+    }
+}
 
 pub enum SimResult {
     Success(String),
@@ -28,17 +51,17 @@ pub enum SimResult {
     Error(String),
 }
 
-impl From<fem::Error> for SimResult {
-    fn from(err: fem::Error) -> SimResult {
+impl From<Error> for SimResult {
+    fn from(err: Error) -> SimResult {
         match err {
-            fem::Error::SizeMismatch => SimResult::Error(format!("Size mismatch error.").into()),
-            fem::Error::AttribError(e) => {
+            Error::SizeMismatch => SimResult::Error(format!("Size mismatch error.").into()),
+            Error::AttribError(e) => {
                 SimResult::Error(format!("Attribute error: {:?}", e).into())
             }
-            fem::Error::InvertedReferenceElement => {
+            Error::InvertedReferenceElement => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
             }
-            fem::Error::SolveError(
+            Error::SolveError(
                 e,
                 SolveResult {
                     iterations,
@@ -55,10 +78,10 @@ impl From<fem::Error> for SimResult {
     }
 }
 
-impl Into<SimResult> for Result<fem::SolveResult, fem::Error> {
+impl Into<SimResult> for Result<SolveResult, Error> {
     fn into(self) -> SimResult {
         match self {
-            Ok(fem::SolveResult {
+            Ok(SolveResult {
                 iterations,
                 objective_value,
                 ..
@@ -77,14 +100,14 @@ pub fn sim(
     interrupter: Option<Box<FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
-        match FemEngine::new(mesh, sim_params) {
+        match fem::Solver::new(mesh, sim_params) {
             Ok(mut engine) => {
                 if let Some(interrupter) = interrupter {
                     engine.set_interrupter(interrupter);
                 }
                 match engine.step() {
                     Err(e) => e.into(),
-                    Ok(fem::SolveResult {
+                    Ok(SolveResult {
                         iterations,
                         objective_value,
                     }) => SimResult::Success(
@@ -107,8 +130,10 @@ mod tests {
 
     const STATIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
+            elasticity: ElasticityProperties {
+                bulk_modulus: 1750e6,
+                shear_modulus: 10e6,
+            },
             density: 1000.0,
             damping: 0.0,
         },

@@ -14,6 +14,7 @@ reinterpret = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.2", features=['real_blackbox'] }
+approx = "0.3"
 
 [profile.release]
 debug = false # Change this to true to enable debug symbols in release mode

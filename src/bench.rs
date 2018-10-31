@@ -6,14 +6,16 @@
 mod bench {
     extern crate test;
     use self::test::Bencher;
-    use fem::{FemEngine, MaterialProperties, SimParams};
-    use geo::mesh::topology::VertexIndex;
-    use geo::mesh::{Attrib, TetMesh};
+    use crate::fem::{self, MaterialProperties, ElasticityProperties, SimParams};
+    use crate::geo::mesh::topology::VertexIndex;
+    use crate::geo::mesh::{Attrib, TetMesh};
 
     const DYNAMIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {
-            bulk_modulus: 1e6,
-            shear_modulus: 1e5,
+            elasticity: ElasticityProperties {
+                bulk_modulus: 1e6,
+                shear_modulus: 1e5,
+            },
             density: 1000.0,
             damping: 0.0,
         },
@@ -50,7 +52,7 @@ mod bench {
             .ok();
 
         b.iter(|| {
-            assert!(FemEngine::new(mesh.clone(), DYNAMIC_PARAMS)
+            assert!(fem::Solver::new(mesh.clone(), DYNAMIC_PARAMS)
                 .unwrap()
                 .step()
                 .is_ok())

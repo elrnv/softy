@@ -137,9 +137,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
     fn objective_grad(&mut self, dx: &[Number], grad_f: &mut [Number]) -> bool {
         self.update(dx);
+        grad_f.iter_mut().for_each(|x| *x = 0.0); // clear gradient vector
         let tetmesh = self.tetmesh.borrow();
         let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
-        grad_f.copy_from_slice(self.energy_model.energy_gradient(dx));
+        self.energy_model.add_energy_gradient(dx, grad_f);
         self.gravity.add_energy_gradient(pos, grad_f);
 
         true

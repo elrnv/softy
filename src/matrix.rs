@@ -31,6 +31,7 @@ pub struct MatrixElementTriplet<T> {
     pub val: T,
 }
 
+#[allow(dead_code)]
 impl<T> MatrixElementTriplet<T> {
     pub fn new(row: usize, col: usize, val: T) -> Self {
         MatrixElementTriplet {

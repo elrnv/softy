@@ -3,20 +3,23 @@ use crate::energy_models::volumetric_neohookean::{
     ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
+use crate::constraints::total_volume::VolumeConstraint;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData};
 use reinterpret::*;
-use std::{cell::{RefCell, Ref, RefMut}, rc::Rc};
-use crate::constraints::total_volume::VolumeConstraint;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
 
-use crate::PointCloud;
-use crate::TetMesh;
-use crate::Error;
 use super::NonLinearProblem;
 use super::SimParams;
+use crate::Error;
+use crate::PointCloud;
+use crate::TetMesh;
 
 /// Result from one simulation step.
 #[derive(Debug)]
@@ -52,8 +55,8 @@ pub struct MaterialProperties {
 impl ElasticityProperties {
     pub fn from_young_poisson(young: f32, poisson: f32) -> Self {
         ElasticityProperties {
-            bulk_modulus: young / (3.0*(1.0 - 2.0*poisson)),
-            shear_modulus: young / (2.0*(1.0 + poisson))
+            bulk_modulus: young / (3.0 * (1.0 - 2.0 * poisson)),
+            shear_modulus: young / (2.0 * (1.0 + poisson)),
         }
     }
 
@@ -149,7 +152,7 @@ impl Solver {
 
         // Initialize volume constraint
         let volume_constraint = if params.volume_constraint {
-            Some(VolumeConstraint::new(&mesh))//, Rc::clone(&prev_pos)))
+            Some(VolumeConstraint::new(&mesh)) //, Rc::clone(&prev_pos)))
         } else {
             None
         };
@@ -631,11 +634,16 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
         let mut solver = Solver::new(mesh, STRETCH_PARAMS).unwrap();
         assert!(solver.step().is_ok());
-        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+        for (pos, expected_pos) in solution
+            .vertex_positions()
+            .iter()
+            .zip(expected.vertex_positions().iter())
+        {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
             }
         }
     }
@@ -649,11 +657,16 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
         let mut solver = Solver::new(mesh, params).unwrap();
         assert!(solver.step().is_ok());
-        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+        for (pos, expected_pos) in solution
+            .vertex_positions()
+            .iter()
+            .zip(expected.vertex_positions().iter())
+        {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
             }
         }
     }
@@ -670,11 +683,16 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
         let mut solver = Solver::new(mesh, params).unwrap();
         assert!(solver.step().is_ok());
-        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+        for (pos, expected_pos) in solution
+            .vertex_positions()
+            .iter()
+            .zip(expected.vertex_positions().iter())
+        {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
             }
         }
     }
@@ -692,11 +710,16 @@ mod tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
         let mut solver = Solver::new(mesh, params).unwrap();
         assert!(solver.step().is_ok());
-        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        for (pos, expected_pos) in solution.vertex_positions().iter().zip(expected.vertex_positions().iter()) {
+        for (pos, expected_pos) in solution
+            .vertex_positions()
+            .iter()
+            .zip(expected.vertex_positions().iter())
+        {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative=1.0e-6);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
             }
         }
     }

@@ -1,18 +1,16 @@
 use crate::attrib_names::*;
 use crate::constraint::*;
 use crate::energy::*;
-use crate::energy_models::volumetric_neohookean::{
-    ElasticTetMeshEnergy,
-};
+use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
 //use geo::io::save_tetmesh_ascii;
-use crate::geo::math::{Vector3};
+use crate::constraints::total_volume::VolumeConstraint;
+use crate::geo::math::Vector3;
 use crate::geo::mesh::{topology::*, Attrib};
-use ipopt::{self, Index, Number};
 use crate::matrix::*;
+use ipopt::{self, Index, Number};
 use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
-use crate::constraints::total_volume::VolumeConstraint;
 
 use super::SimParams;
 use crate::TetMesh;

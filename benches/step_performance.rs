@@ -3,9 +3,9 @@ extern crate criterion;
 extern crate geometry as geo;
 extern crate softy;
 
-use criterion::{Criterion, Fun};
 use crate::geo::mesh::{topology::*, Attrib, TetMesh};
-use softy::fem::{self, MaterialProperties, ElasticityProperties, SimParams};
+use criterion::{Criterion, Fun};
+use softy::fem::{self, ElasticityProperties, MaterialProperties, SimParams};
 use std::path::PathBuf;
 
 const DYNAMIC_PARAMS: SimParams = SimParams {

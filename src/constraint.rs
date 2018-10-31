@@ -25,7 +25,11 @@ pub trait ConstraintJacobian<T: Scalar> {
     /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
     /// The `row_offset` and `col_offset` parameters position this constraint Jacobian within a
     /// global Jacobian matrix specified by the user.
-    fn constraint_jacobian_indices_offset(&self, offset: MatrixElementIndex, indices: &mut [MatrixElementIndex]);
+    fn constraint_jacobian_indices_offset(
+        &self,
+        offset: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    );
 
     /// Compute the values of the constraint Jacobian.
     fn constraint_jacobian_values(&self, x: &[T], values: &mut [T]);
@@ -41,8 +45,12 @@ pub trait ConstraintJacobian<T: Scalar> {
      */
 
     /// Compute the change in the constraint function with respect to change in configuration.
-    fn constraint_jacobian_offset(&self, x: &[T], offset: MatrixElementIndex,
-                                  triplets: &mut [MatrixElementTriplet<T>]) {
+    fn constraint_jacobian_offset(
+        &self,
+        x: &[T],
+        offset: MatrixElementIndex,
+        triplets: &mut [MatrixElementTriplet<T>],
+    ) {
         let n = self.constraint_jacobian_size();
         let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
         self.constraint_jacobian_indices_offset(offset, indices.as_mut_slice());
@@ -72,9 +80,11 @@ pub trait ConstraintHessian<T: Scalar> {
     /// Hessian multiplied by the Lagrange multiplier vector.
     /// The `row_offset` and `col_offset` parameters position this constraint Hessian product
     /// within a global Hessian matrix specified by the user.
-    fn constraint_hessian_indices_offset(&self,
-                                         offset: MatrixElementIndex,
-                                         indices: &mut [MatrixElementIndex]);
+    fn constraint_hessian_indices_offset(
+        &self,
+        offset: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    );
     /// Compute the Hessian matrix values (multiplied by `lambda`) corresponding to their positions
     /// in the matrix returned by `constraint_hessian_indices`. This means that the vector returned
     /// from this function must have the same length as the vector returned by
@@ -96,9 +106,13 @@ pub trait ConstraintHessian<T: Scalar> {
     /// triplet form. This effectively computes the matrix row and
     /// column indices as returned by `constraint_hessian_indices` as well as the corresponding values
     /// returned by `constraint_hessian_values`.
-    fn constraint_hessian_offset(&self, x: &[T], lambda: &[T],
-                                 offset: MatrixElementIndex,
-                                 triplets: &mut [MatrixElementTriplet<T>]) {
+    fn constraint_hessian_offset(
+        &self,
+        x: &[T],
+        lambda: &[T],
+        offset: MatrixElementIndex,
+        triplets: &mut [MatrixElementTriplet<T>],
+    ) {
         let n = self.constraint_hessian_size();
         let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
         self.constraint_hessian_indices_offset(offset, indices.as_mut_slice());

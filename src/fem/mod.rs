@@ -1,9 +1,9 @@
-pub mod solver;
 pub mod problem;
+pub mod solver;
 
 // Re-export FEM solver and problem types and traits.
-pub use self::solver::*;
 pub(crate) use self::problem::*;
+pub use self::solver::*;
 
 /// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -15,4 +15,3 @@ pub struct SimParams {
     pub max_iterations: u32,
     pub volume_constraint: bool,
 }
-

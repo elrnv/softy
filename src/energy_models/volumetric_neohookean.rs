@@ -6,10 +6,10 @@ use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{topology::*, Attrib};
 use crate::geo::ops::*;
 use crate::matrix::*;
+use crate::TetMesh;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use crate::TetMesh;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -327,7 +327,6 @@ impl ElasticTetMeshEnergyBuilder {
 }
 
 impl ElasticTetMeshEnergy {
-
     /// Helper for distributing local Hessian entries into the global Hessian matrix.
     /// This function provides the order of Hessian matrix non-zeros.
     /// `indices` is a map from the local tet vertex indices to their position in the global
@@ -383,7 +382,7 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
         let tetmesh = tetmesh.borrow();
 
-        let disp : &[Vector3<f64>] = reinterpret_slice(dx);
+        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
 
         let prev_disp: &[Vector3<f64>] = reinterpret_slice(
             tetmesh

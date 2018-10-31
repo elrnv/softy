@@ -13,23 +13,18 @@ extern crate approx;
 mod attrib_names;
 mod bench;
 mod constraint;
+mod constraints;
 mod energy;
 mod energy_models;
-mod matrix;
-mod constraints;
 pub mod fem;
+mod matrix;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 
+pub use self::fem::{ElasticityProperties, MaterialProperties, SimParams, SolveResult};
 use crate::geo::mesh::attrib;
-pub use self::fem::{
-    SimParams,
-    SolveResult,
-    MaterialProperties,
-    ElasticityProperties
-};
 
 #[derive(Debug)]
 pub enum Error {
@@ -55,9 +50,7 @@ impl From<Error> for SimResult {
     fn from(err: Error) -> SimResult {
         match err {
             Error::SizeMismatch => SimResult::Error(format!("Size mismatch error.").into()),
-            Error::AttribError(e) => {
-                SimResult::Error(format!("Attribute error: {:?}", e).into())
-            }
+            Error::AttribError(e) => SimResult::Error(format!("Attribute error: {:?}", e).into()),
             Error::InvertedReferenceElement => {
                 SimResult::Error(format!("Inverted reference element detected.").into())
             }

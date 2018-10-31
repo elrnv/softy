@@ -6,7 +6,7 @@
 mod bench {
     extern crate test;
     use self::test::Bencher;
-    use crate::fem::{self, MaterialProperties, ElasticityProperties, SimParams};
+    use crate::fem::{self, ElasticityProperties, MaterialProperties, SimParams};
     use crate::geo::mesh::topology::VertexIndex;
     use crate::geo::mesh::{Attrib, TetMesh};
 

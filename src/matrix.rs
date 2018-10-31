@@ -9,8 +9,8 @@ pub struct MatrixElementIndex {
     pub col: usize,
 }
 
-impl From<(usize,usize)> for MatrixElementIndex {
-    fn from((row, col): (usize,usize)) -> MatrixElementIndex {
+impl From<(usize, usize)> for MatrixElementIndex {
+    fn from((row, col): (usize, usize)) -> MatrixElementIndex {
         MatrixElementIndex { row, col }
     }
 }

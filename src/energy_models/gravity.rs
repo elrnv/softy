@@ -48,7 +48,7 @@ impl Energy<f64> for Gravity {
     }
 }
 
-impl EnergyGradient2<f64> for Gravity {
+impl EnergyGradient<f64> for Gravity {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(grad.len(), _x.len());

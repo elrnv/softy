@@ -6,9 +6,25 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use crate::geo::math::Scalar;
+use crate::geo::math::{Scalar, Vector3, Matrix3};
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
+
+/// Tetrahedron energy interface. Abstracting over tet energies is useful for damping
+/// implementations like Rayleigh damping which depend on the elasticity model used.
+pub trait TetEnergy<T: Scalar> {
+    /// Constructor accepts:
+    /// `Dx`: the deformed shape matrix
+    /// `DX_inv`: the undeformed shape matrix
+    /// `volume`: volume of the tetrahedron
+    /// `lambda` and `mu`: Lamé parameters
+    #[allow(non_snake_case)]
+    fn new(Dx: Matrix3<f64>, DX_inv: Matrix3<f64>, volume: f64, lambda: f64, mu: f64) -> Self;
+    /// Elasticity Hessian*displacement product per element. Represented by a 3x3 matrix where
+    /// column `i` produces the hessian product contribution for the vertex `i` within the current
+    /// element.
+    fn elastic_energy_hessian_product(&self, dx: &[Vector3<T>;4]) -> Matrix3<T>;
+}
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
@@ -19,7 +35,7 @@ pub trait Energy<T: Scalar> {
 
 /// The energy gradient is required for optimization methods that require first order derivative
 /// information, like Gradient Descent for instance.
-pub trait EnergyGradient2<T: Scalar> {
+pub trait EnergyGradient<T: Scalar> {
     /// Compute the change in energy with respect to change in configuration and add it to the
     /// given slice of global gradient values.
     fn add_energy_gradient(&self, x: &[T], grad: &mut [T]);

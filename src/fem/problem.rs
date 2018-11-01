@@ -4,6 +4,7 @@ use crate::energy::*;
 use crate::energy_models::{
     volumetric_neohookean::ElasticTetMeshEnergy,
     gravity::Gravity,
+    momentum::MomentumPotential,
 };
 //use geo::io::save_tetmesh_ascii;
 use crate::constraints::total_volume::VolumeConstraint;
@@ -31,6 +32,8 @@ pub(crate) struct NonLinearProblem {
     pub energy_model: ElasticTetMeshEnergy,
     /// Gravitational potential energy.
     pub gravity: Gravity,
+    /// Momentum potential. The energy responsible for inertia.
+    pub momentum_potential: Option<MomentumPotential>,
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
@@ -132,6 +135,9 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
         *obj = self.energy_model.energy(dx);
         *obj += self.gravity.energy(pos);
+        if let Some(ref mut mp) = self.momentum_potential {
+            *obj += mp.energy(dx);
+        }
         true
     }
 
@@ -142,6 +148,9 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
         self.energy_model.add_energy_gradient(dx, grad_f);
         self.gravity.add_energy_gradient(pos, grad_f);
+        if let Some(ref mut mp) = self.momentum_potential {
+            mp.add_energy_gradient(dx, grad_f);
+        }
 
         true
     }
@@ -219,6 +228,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn num_hessian_non_zeros(&self) -> usize {
         let mut num = self.energy_model.energy_hessian_size();
+        if let Some(ref mp) = self.momentum_potential {
+            num += mp.energy_hessian_size();
+        }
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_hessian_size();
         }
@@ -227,13 +239,23 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0;
+
+
         // Add energy indices
-        for MatrixElementIndex { ref row, ref col } in
-            self.energy_model.energy_hessian_indices().iter()
+        for MatrixElementIndex { ref row, ref col } in self.energy_model.energy_hessian_indices().iter()
         {
             rows[i] = *row as Index;
             cols[i] = *col as Index;
             i += 1;
+        }
+
+        if let Some(ref mut mp) = self.momentum_potential {
+            for MatrixElementIndex { ref row, ref col } in mp.energy_hessian_indices().iter()
+            {
+                rows[i] = *row as Index;
+                cols[i] = *col as Index;
+                i += 1;
+            }
         }
 
         // Add volume constraint indices
@@ -263,6 +285,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for val in self.energy_model.energy_hessian_values(dx).iter() {
             vals[i] = obj_factor * (*val as Number);
             i += 1;
+        }
+
+        if let Some(ref mut mp) = self.momentum_potential {
+            for val in mp.energy_hessian_values(dx).iter() {
+                vals[i] = obj_factor * (*val as Number);
+                i += 1;
+            }
         }
 
         if let Some(ref vc) = self.volume_constraint {

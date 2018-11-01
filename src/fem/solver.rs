@@ -1,9 +1,11 @@
 use crate::attrib_names::*;
+use crate::energy::*;
 use crate::energy_models::{
     volumetric_neohookean::{
         ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
     },
     gravity::Gravity,
+    momentum::MomentumPotential,
 };
 use crate::constraints::total_volume::VolumeConstraint;
 use crate::geo::math::{Matrix3, Vector3};
@@ -137,7 +139,17 @@ impl Solver {
         // Normalize material parameters with mu.
         let lambda = lambda / mu;
         let density = params.material.density as f64 / mu;
-        let damping = params.material.damping as f64 / mu;
+        let damping = 
+            // premultiply by timestep inverse.
+            if let Some(dt) = params.time_step {
+                if dt != 0.0 {
+                    1.0 / dt as f64
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            } * params.material.damping as f64 / mu;
         let gravity = [
             params.gravity[0] as f64,
             params.gravity[1] as f64,
@@ -158,18 +170,18 @@ impl Solver {
 
         let mesh = Rc::new(RefCell::new(mesh));
 
-        let mut energy_model_builder = ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh))
-            .material(lambda, 1.0, density, damping);
+        let energy_model_builder = ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh))
+            .material(lambda, 1.0, damping);
 
-        if let Some(dt) = params.time_step {
-            energy_model_builder = energy_model_builder.time_step(dt as f64);
-        }
+        let momentum_potential = params.time_step
+            .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
 
         let problem = NonLinearProblem {
             tetmesh: Rc::clone(&mesh),
             prev_pos,
             energy_model: energy_model_builder.build(),
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
+            momentum_potential,
             volume_constraint,
             interrupt_checker: Box::new(|| false),
             iterations: 0,

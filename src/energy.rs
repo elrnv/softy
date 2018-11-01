@@ -6,7 +6,7 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use crate::geo::math::{Scalar, Vector3, Matrix3};
+use crate::geo::math::{Matrix3, Scalar, Vector3};
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
@@ -23,7 +23,7 @@ pub trait TetEnergy<T: Scalar> {
     /// Elasticity Hessian*displacement product per element. Represented by a 3x3 matrix where
     /// column `i` produces the hessian product contribution for the vertex `i` within the current
     /// element.
-    fn elastic_energy_hessian_product(&self, dx: &[Vector3<T>;4]) -> Matrix3<T>;
+    fn elastic_energy_hessian_product(&self, dx: &[Vector3<T>; 4]) -> Matrix3<T>;
 }
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the

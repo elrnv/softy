@@ -1,13 +1,11 @@
 use crate::attrib_names::*;
+use crate::constraints::total_volume::VolumeConstraint;
 use crate::energy::*;
 use crate::energy_models::{
-    volumetric_neohookean::{
-        ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy,
-    },
     gravity::Gravity,
     momentum::MomentumPotential,
+    volumetric_neohookean::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
-use crate::constraints::total_volume::VolumeConstraint;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
@@ -15,7 +13,7 @@ use crate::geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverDataMut};
 use reinterpret::*;
 use std::{
-    cell::{RefCell, Ref, RefMut},
+    cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
 
@@ -77,7 +75,9 @@ impl ElasticityProperties {
 pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
     let ref_pos = tetmesh
         .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
-        .unwrap().as_slice::<[f64;3]>().unwrap();
+        .unwrap()
+        .as_slice::<[f64; 3]>()
+        .unwrap();
     Tetrahedron::from_indexed_slice(indices, ref_pos)
 }
 
@@ -139,17 +139,17 @@ impl Solver {
         // Normalize material parameters with mu.
         let lambda = lambda / mu;
         let density = params.material.density as f64 / mu;
-        let damping = 
-            // premultiply by timestep inverse.
-            if let Some(dt) = params.time_step {
-                if dt != 0.0 {
-                    1.0 / dt as f64
-                } else {
-                    0.0
-                }
+        // premultiply damping by timestep reciprocal.
+        let damping = if let Some(dt) = params.time_step {
+            if dt != 0.0 {
+                1.0 / dt as f64
             } else {
                 0.0
-            } * params.material.damping as f64 / mu;
+            }
+        } else {
+            0.0
+        } * params.material.damping as f64
+            / mu;
         let gravity = [
             params.gravity[0] as f64,
             params.gravity[1] as f64,
@@ -170,10 +170,11 @@ impl Solver {
 
         let mesh = Rc::new(RefCell::new(mesh));
 
-        let energy_model_builder = ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh))
-            .material(lambda, 1.0, damping);
+        let energy_model_builder =
+            ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh)).material(lambda, 1.0, damping);
 
-        let momentum_potential = params.time_step
+        let momentum_potential = params
+            .time_step
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
 
         let problem = NonLinearProblem {
@@ -516,7 +517,8 @@ mod tests {
 
     /// Utility function to compare positions of two meshes.
     fn compare_meshes(solution: &TetMesh, expected: &TetMesh) {
-        for (pos, expected_pos) in solution.vertex_positions()
+        for (pos, expected_pos) in solution
+            .vertex_positions()
             .iter()
             .zip(expected.vertex_positions().iter())
         {
@@ -571,7 +573,8 @@ mod tests {
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk"))
+                .unwrap();
         compare_meshes(&solution, &expected);
     }
 
@@ -585,8 +588,10 @@ mod tests {
         let mut solver = Solver::new(mesh, params).unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
-        let exptected =
-            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_volume_constraint_expected.vtk")).unwrap();
+        let exptected = geo::io::load_tetmesh(&PathBuf::from(
+            "assets/three_tets_static_volume_constraint_expected.vtk",
+        ))
+        .unwrap();
         compare_meshes(&solution, &exptected);
     }
 
@@ -600,8 +605,10 @@ mod tests {
         let mut solver = Solver::new(mesh, params).unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
-        let expected =
-            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_volume_constraint_expected.vtk")).unwrap();
+        let expected = geo::io::load_tetmesh(&PathBuf::from(
+            "assets/three_tets_dynamic_volume_constraint_expected.vtk",
+        ))
+        .unwrap();
         compare_meshes(&solution, &expected);
     }
 

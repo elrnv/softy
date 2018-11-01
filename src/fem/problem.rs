@@ -2,9 +2,7 @@ use crate::attrib_names::*;
 use crate::constraint::*;
 use crate::energy::*;
 use crate::energy_models::{
-    volumetric_neohookean::ElasticTetMeshEnergy,
-    gravity::Gravity,
-    momentum::MomentumPotential,
+    gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
 use crate::constraints::total_volume::VolumeConstraint;
@@ -240,9 +238,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn hessian_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0;
 
-
         // Add energy indices
-        for MatrixElementIndex { ref row, ref col } in self.energy_model.energy_hessian_indices().iter()
+        for MatrixElementIndex { ref row, ref col } in
+            self.energy_model.energy_hessian_indices().iter()
         {
             rows[i] = *row as Index;
             cols[i] = *col as Index;
@@ -250,8 +248,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         if let Some(ref mut mp) = self.momentum_potential {
-            for MatrixElementIndex { ref row, ref col } in mp.energy_hessian_indices().iter()
-            {
+            for MatrixElementIndex { ref row, ref col } in mp.energy_hessian_indices().iter() {
                 rows[i] = *row as Index;
                 cols[i] = *col as Index;
                 i += 1;

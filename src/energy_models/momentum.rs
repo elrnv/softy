@@ -43,7 +43,7 @@ impl MomentumPotential {
         MomentumPotential {
             tetmesh,
             density,
-            time_step_inv: 1.0/time_step,
+            time_step_inv: 1.0 / time_step,
             energy_hessian_indices: Vec::new(),
             energy_hessian_values: Vec::new(),
         }
@@ -81,9 +81,10 @@ impl Energy<f64> for MomentumPotential {
                         disp[cell[1]] - prev_disp[cell[1]],
                         disp[cell[2]] - prev_disp[cell[2]],
                         disp[cell[3]] - prev_disp[cell[3]],
-                    ].into_iter()
-                        .map(|&dv| dv.dot(dv))
-                        .sum();
+                    ]
+                    .into_iter()
+                    .map(|&dv| dv.dot(dv))
+                    .sum();
                     // momentum
                     0.25 * vol * density * dvTdv * dt_inv
                 }
@@ -139,7 +140,7 @@ impl EnergyGradient<f64> for MomentumPotential {
 
 impl EnergyHessian<f64> for MomentumPotential {
     fn energy_hessian_size(&self) -> usize {
-        self.tetmesh.borrow().num_cells()*Self::NUM_HESSIAN_TRIPLETS_PER_TET
+        self.tetmesh.borrow().num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
 
     fn energy_hessian_indices(&mut self) -> &[MatrixElementIndex] {
@@ -157,16 +158,22 @@ impl EnergyHessian<f64> for MomentumPotential {
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(hess);
+            let hess_chunks: &mut [[MatrixElementIndex;
+                                       Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+                reinterpret_mut_slice(hess);
 
             // The momentum hessian is a diagonal matrix.
-            hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter())
+            hess_chunks
+                .par_iter_mut()
+                .zip(tetmesh.cells().par_iter())
                 .for_each(|(tet_hess, cell)| {
-                    for vi in 0..4 { // vertex index
-                        for j in 0..3 { // vector component
-                            tet_hess[3*vi + j] = MatrixElementIndex {
-                                row: 3*cell[vi] + j,
-                                col: 3*cell[vi] + j,
+                    for vi in 0..4 {
+                        // vertex index
+                        for j in 0..3 {
+                            // vector component
+                            tet_hess[3 * vi + j] = MatrixElementIndex {
+                                row: 3 * cell[vi] + j,
+                                col: 3 * cell[vi] + j,
                             };
                         }
                     }
@@ -193,7 +200,8 @@ impl EnergyHessian<f64> for MomentumPotential {
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[f64; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(hess);
+            let hess_chunks: &mut [[f64; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+                reinterpret_mut_slice(hess);
 
             let vol_iter = tetmesh
                 .attrib_as_slice::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -201,13 +209,18 @@ impl EnergyHessian<f64> for MomentumPotential {
                 .par_iter();
 
             // The momentum hessian is a diagonal matrix.
-            hess_chunks.par_iter_mut().zip(vol_iter).for_each(|(tet_hess, &vol)| {
-                for vi in 0..4 { // vertex index
-                    for j in 0..3 { // vector component
-                        tet_hess[3*vi + j] = 0.25 * vol * density * dt_inv * dt_inv;
+            hess_chunks
+                .par_iter_mut()
+                .zip(vol_iter)
+                .for_each(|(tet_hess, &vol)| {
+                    for vi in 0..4 {
+                        // vertex index
+                        for j in 0..3 {
+                            // vector component
+                            tet_hess[3 * vi + j] = 0.25 * vol * density * dt_inv * dt_inv;
+                        }
                     }
-                }
-            });
+                });
         }
         hess
     }

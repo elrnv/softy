@@ -274,10 +274,7 @@ impl ElasticTetMeshEnergyBuilder {
     }
 
     pub fn build(&self) -> ElasticTetMeshEnergy {
-        let ElasticTetMeshEnergyBuilder {
-            tetmesh,
-            material,
-        } = self.clone();
+        let ElasticTetMeshEnergyBuilder { tetmesh, material } = self.clone();
 
         ElasticTetMeshEnergy {
             tetmesh: tetmesh.clone(),
@@ -357,19 +354,13 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                 let Dx = tet.shape_matrix();
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
                 // elasticity
-                tet_energy.elastic_energy()
-                    + 0.5 * damping * {
-                        let dx = [
-                            disp[cell[0]],
-                            disp[cell[1]],
-                            disp[cell[2]],
-                            disp[cell[3]],
-                        ];
-                        let dH = tet_energy.elastic_energy_hessian_product(&dx);
-                        // damping (viscosity)
-                        (dH[0].dot(dx[0]) + dH[1].dot(dx[1]) + dH[2].dot(dx[2]) -
-                               (dx[3].transpose()*dH).sum())
-                    }
+                tet_energy.elastic_energy() + 0.5 * damping * {
+                    let dx = [disp[cell[0]], disp[cell[1]], disp[cell[2]], disp[cell[3]]];
+                    let dH = tet_energy.elastic_energy_hessian_product(&dx);
+                    // damping (viscosity)
+                    (dH[0].dot(dx[0]) + dH[1].dot(dx[1]) + dH[2].dot(dx[2])
+                        - (dx[3].transpose() * dH).sum())
+                }
             })
             .sum()
     }
@@ -548,10 +539,7 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
 
                 Self::hessian_for_each(
                     |n, k| factor * local_hessians[k][n],
-                    |i, _, (row, col), h| {
-                        let h_val = h[col][row];
-                        tet_hess[i] = h_val;
-                    },
+                    |i, _, (row, col), h| tet_hess[i] = h[col][row],
                 );
             });
         }

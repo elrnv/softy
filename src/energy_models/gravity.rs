@@ -1,8 +1,8 @@
 use crate::attrib_names::*;
 use crate::energy::*;
-use crate::geo::math::{Vector3};
+use crate::geo::math::Vector3;
 use crate::geo::mesh::{topology::*, Attrib};
-use crate::geo::prim::{Tetrahedron};
+use crate::geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
 use reinterpret::*;
@@ -17,7 +17,7 @@ pub struct Gravity {
 }
 
 impl Gravity {
-    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64, gravity: &[f64;3]) -> Gravity {
+    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64, gravity: &[f64; 3]) -> Gravity {
         Gravity {
             tetmesh,
             density,
@@ -33,7 +33,9 @@ impl Energy<f64> for Gravity {
     fn energy(&mut self, x: &[f64]) -> f64 {
         let pos: &[Vector3<f64>] = reinterpret_slice(x);
         let tetmesh = self.tetmesh.borrow();
-        let tet_iter = tetmesh.cell_iter().map(|cell| Tetrahedron::from_indexed_slice(cell, pos));
+        let tet_iter = tetmesh
+            .cell_iter()
+            .map(|cell| Tetrahedron::from_indexed_slice(cell, pos));
 
         tetmesh
             .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -74,8 +76,6 @@ impl EnergyHessian2<f64> for Gravity {
     fn energy_hessian_size(&self) -> usize {
         0
     }
-    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {
-    }
-    fn energy_hessian_values(&self, _x: &[f64], _: &mut [f64]) {
-    }
+    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
+    fn energy_hessian_values(&self, _x: &[f64], _: &mut [f64]) {}
 }

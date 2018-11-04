@@ -8,7 +8,7 @@ extern crate spade;
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, PolyMesh, PointCloud};
+use geo::mesh::{attrib, PointCloud, PolyMesh};
 
 #[macro_use]
 pub mod zip;
@@ -139,10 +139,16 @@ mod tests {
 
         {
             let grid_points = grid.vertex_positions().to_vec();
-            let potential_iter_mut = grid.attrib_iter_mut::<f32, VertexIndex>("potential").unwrap();
+            let potential_iter_mut = grid
+                .attrib_iter_mut::<f32, VertexIndex>("potential")
+                .unwrap();
             for (q, pot) in zip!(grid_points.iter().map(|&x| Vector3(x)), potential_iter_mut) {
-                let (p, nml) = points.iter().zip(normals.iter()).map(|(&p,&n)| (Vector3(p), Vector3(n)))
-                    .min_by(|&(a,_), &(b,_)| (a-q).norm().partial_cmp(&(b-q).norm()).unwrap()).unwrap();
+                let (p, nml) = points
+                    .iter()
+                    .zip(normals.iter())
+                    .map(|(&p, &n)| (Vector3(p), Vector3(n)))
+                    .min_by(|&(a, _), &(b, _)| (a - q).norm().partial_cmp(&(b - q).norm()).unwrap())
+                    .unwrap();
                 *pot = Vector3([nml[0] as f64, nml[1] as f64, nml[2] as f64]).dot(q - p) as f32;
             }
         }

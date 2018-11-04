@@ -3,12 +3,12 @@
 //! potential and its derivatives.
 //!
 
-use rayon::prelude::*;
-use spade::{rtree::RTree, BoundingRect, SpatialObject};
-use geo::mesh::{topology::*, Attrib, PolyMesh, PointCloud};
 use geo::math::{ToPrimitive, Vector3};
+use geo::mesh::{topology::*, Attrib, PointCloud, PolyMesh};
 use geo::Real;
 use kernels::*;
+use rayon::prelude::*;
+use spade::{rtree::RTree, BoundingRect, SpatialObject};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct OrientedPoint {
@@ -29,10 +29,13 @@ impl SpatialObject for OrientedPoint {
     }
 }
 
-pub fn oriented_points_iter<'a>(points: &'a [[f64;3]], normals: &'a [[f64;3]])
-    -> impl Iterator<Item=OrientedPoint> + Clone + 'a
-{
-    normals.iter().zip(points.iter())
+pub fn oriented_points_iter<'a>(
+    points: &'a [[f64; 3]],
+    normals: &'a [[f64; 3]],
+) -> impl Iterator<Item = OrientedPoint> + Clone + 'a {
+    normals
+        .iter()
+        .zip(points.iter())
         .enumerate()
         .map(|(i, (&nml, &pos))| OrientedPoint {
             index: i as i32,
@@ -57,15 +60,18 @@ fn dist(a: Vector3<f64>, b: Vector3<f64>) -> f64 {
 pub struct ImplicitSurfaceBuilder {
     kernel: Kernel,
     background_potential: bool,
-    points: Vec<[f64;3]>,
-    normals: Vec<[f64;3]>,
+    points: Vec<[f64; 3]>,
+    normals: Vec<[f64; 3]>,
     offsets: Vec<f64>,
 }
 
 impl ImplicitSurfaceBuilder {
     pub fn new() -> Self {
         ImplicitSurfaceBuilder {
-            kernel: Kernel::Approximate { radius: 1.0, tolerance: 1e-5 },
+            kernel: Kernel::Approximate {
+                radius: 1.0,
+                tolerance: 1e-5,
+            },
             background_potential: false,
             points: Vec::new(),
             normals: Vec::new(),
@@ -73,12 +79,12 @@ impl ImplicitSurfaceBuilder {
         }
     }
 
-    pub fn with_points(&mut self, points: &[[f64;3]]) -> &mut Self {
+    pub fn with_points(&mut self, points: &[[f64; 3]]) -> &mut Self {
         self.points = points.to_vec();
         self
     }
 
-    pub fn with_normals(&mut self, normals: &[[f64;3]]) -> &mut Self {
+    pub fn with_normals(&mut self, normals: &[[f64; 3]]) -> &mut Self {
         self.normals = normals.to_vec();
         self
     }
@@ -98,11 +104,23 @@ impl ImplicitSurfaceBuilder {
     /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
     /// The offsets attribute is expected to be named "offsets" and have type `f32`.
     pub fn with_pointcloud<T: Real + ToPrimitive>(&mut self, ptcloud: &PointCloud<T>) -> &mut Self {
-        self.points = ptcloud.vertex_positions()
-            .iter().map(|&x| Vector3(x).cast::<f64>().expect("Failed to convert positions to f64").into()).collect();
-        self.normals = ptcloud.attrib_iter::<[f32; 3], VertexIndex>("N")
-            .map(|iter| iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap().into()).collect())
-            .unwrap_or(vec![[0.0f64;3]; ptcloud.num_vertices()]);
+        self.points = ptcloud
+            .vertex_positions()
+            .iter()
+            .map(|&x| {
+                Vector3(x)
+                    .cast::<f64>()
+                    .expect("Failed to convert positions to f64")
+                    .into()
+            })
+            .collect();
+        self.normals = ptcloud
+            .attrib_iter::<[f32; 3], VertexIndex>("N")
+            .map(|iter| {
+                iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap().into())
+                    .collect()
+            })
+            .unwrap_or(vec![[0.0f64; 3]; ptcloud.num_vertices()]);
         self.offsets = ptcloud
             .attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| x as f64).collect())
@@ -159,8 +177,13 @@ pub struct ImplicitSurface {
 
 impl ImplicitSurface {
     /// Compute the implicit surface potential on the given polygon mesh.
-    pub fn compute_potential_on_mesh<F>(&self, mesh: &mut PolyMesh<f64>, interrupt: F) -> Result<(), super::Error>
-        where F: Fn() -> bool + Sync + Send
+    pub fn compute_potential_on_mesh<F>(
+        &self,
+        mesh: &mut PolyMesh<f64>,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
     {
         let ImplicitSurface {
             ref kernel,
@@ -179,7 +202,9 @@ impl ImplicitSurface {
             Kernel::Interpolating { radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, closest_dist| local_interpolating_kernel(dist(x, p), radius, closest_dist);
+                let kern = |x, p, closest_dist| {
+                    local_interpolating_kernel(dist(x, p), radius, closest_dist)
+                };
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             Kernel::Approximate { tolerance, radius } => {
@@ -200,29 +225,37 @@ impl ImplicitSurface {
                 let kern = |x, p, _| global_inv_dist2_kernel(dist(x, p), tolerance);
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            Kernel::Hrbf => {
-                Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt)
-            }
+            Kernel::Hrbf => Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt),
         }
     }
 
     /// Given a slice of query points, compute the potential at each point.
-    pub fn compute_potential(&self, _query_points: &[[f64;3]], _out_potential: &mut [f64]) {
-    }
+    pub fn compute_potential(&self, _query_points: &[[f64; 3]], _out_potential: &mut [f64]) {}
 
     /// Compute the implicit surface potential. The `interrupt` callback will be called
     /// intermittently and it returns true, the computation will halt.
-    pub fn compute_potential_interruptable<F>(&self, _query_points: &[[f64;3]], _interrupt: F, _out_potential: &mut [f64])
-        where F: Fn() -> bool + Sync + Send
+    pub fn compute_potential_interruptable<F>(
+        &self,
+        _query_points: &[[f64; 3]],
+        _interrupt: F,
+        _out_potential: &mut [f64],
+    ) where
+        F: Fn() -> bool + Sync + Send,
     {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, K, N, F>(mesh: &mut PolyMesh<f64>, radius: f64, kernel: K, neigh: N, interrupt: F)
-    -> Result<(), super::Error>
-        where K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
-              N: Fn([f64;3]) -> Vec<&'a OrientedPoint> + Sync + Send,
-              F: Fn() -> bool + Sync + Send,
+    fn compute_mls_on_mesh<'a, K, N, F>(
+        mesh: &mut PolyMesh<f64>,
+        radius: f64,
+        kernel: K,
+        neigh: N,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
+        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+        F: Fn() -> bool + Sync + Send,
     {
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
         let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
@@ -324,26 +357,32 @@ impl ImplicitSurface {
         Ok(())
     }
 
-    fn compute_hrbf_on_mesh<F>(mesh: &mut PolyMesh<f64>, oriented_points: &[OrientedPoint], offsets: &[f64], interrupt: F)
-        -> Result<(), super::Error>
-    where F: Fn() -> bool + Sync + Send
+    fn compute_hrbf_on_mesh<F>(
+        mesh: &mut PolyMesh<f64>,
+        oriented_points: &[OrientedPoint],
+        offsets: &[f64],
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
     {
         let sample_pos = mesh.vertex_positions().to_vec();
 
         let chunk_size = 5000;
 
-        let pts: Vec<crate::na::Point3<f64>> = oriented_points.iter()
+        let pts: Vec<crate::na::Point3<f64>> = oriented_points
+            .iter()
             .map(|op| crate::na::Point3::from(op.pos.into_inner()))
             .collect();
-        let nmls: Vec<crate::na::Vector3<f64>> = oriented_points.iter()
+        let nmls: Vec<crate::na::Vector3<f64>> = oriented_points
+            .iter()
             .map(|op| crate::na::Vector3::from(op.nml.into_inner()))
             .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
         hrbf.fit_offset(&pts, offsets, &nmls);
 
         for (q_chunk, potential_chunk) in sample_pos.chunks(chunk_size).zip(
-            mesh
-                .attrib_as_mut_slice::<f32, VertexIndex>("potential")
+            mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
                 .unwrap()
                 .chunks_mut(chunk_size),
         ) {

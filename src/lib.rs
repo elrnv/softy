@@ -14,14 +14,14 @@ use geo::mesh::{attrib, PointCloud, PolyMesh};
 pub mod zip;
 
 pub mod implicit_surface;
-mod kernels;
+mod kernel;
 
 pub use implicit_surface::*;
-pub use kernels::Kernel;
+pub use kernel::KernelType;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
-    pub kernel: Kernel,
+    pub kernel: KernelType,
     pub background_potential: bool,
 }
 
@@ -110,12 +110,7 @@ mod tests {
         mesh
     }
 
-    #[test]
-    fn approximate_kernel_test() -> Result<(), Error> {
-        use geo::math::Vector3;
-
-        let mut grid = make_grid(22, 22);
-
+    fn make_query_octahedron() -> (Vec<[f64;3]>, Vec<[f32;3]>) {
         let points = vec![
             [-0.5, 0.0, 0.0],
             [0.5, 0.0, 0.0],
@@ -134,34 +129,27 @@ mod tests {
             [0.0, 0.0, 1.0],
         ];
 
+        (points, normals)
+    }
+
+    #[test]
+    fn approximate_kernel_test() -> Result<(), Error> {
+        let mut grid = make_grid(22, 22);
+
+        let (points, normals) = make_query_octahedron();
+
         let mut sphere = PolyMesh::new(points.clone(), &vec![]);
         sphere.add_attrib_data::<_, VertexIndex>("N", normals.clone())?;
-
-        {
-            let grid_points = grid.vertex_positions().to_vec();
-            let potential_iter_mut = grid
-                .attrib_iter_mut::<f32, VertexIndex>("potential")
-                .unwrap();
-            for (q, pot) in zip!(grid_points.iter().map(|&x| Vector3(x)), potential_iter_mut) {
-                let (p, nml) = points
-                    .iter()
-                    .zip(normals.iter())
-                    .map(|(&p, &n)| (Vector3(p), Vector3(n)))
-                    .min_by(|&(a, _), &(b, _)| (a - q).norm().partial_cmp(&(b - q).norm()).unwrap())
-                    .unwrap();
-                *pot = Vector3([nml[0] as f64, nml[1] as f64, nml[2] as f64]).dot(q - p) as f32;
-            }
-        }
 
         compute_potential(
             &mut grid,
             &mut sphere,
             Params {
-                kernel: Kernel::Approximate {
+                kernel: KernelType::Approximate {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_potential: false,
+                background_potential: true,
             },
             || false,
         )?;

@@ -6,7 +6,7 @@
 use geo::math::{ToPrimitive, Vector3};
 use geo::mesh::{topology::*, Attrib, PointCloud, PolyMesh};
 use geo::Real;
-use kernels::*;
+use kernel::{self, Kernel, KernelType};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
 
@@ -58,7 +58,7 @@ fn dist(a: Vector3<f64>, b: Vector3<f64>) -> f64 {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplicitSurfaceBuilder {
-    kernel: Kernel,
+    kernel: KernelType,
     background_potential: bool,
     points: Vec<[f64; 3]>,
     normals: Vec<[f64; 3]>,
@@ -68,7 +68,7 @@ pub struct ImplicitSurfaceBuilder {
 impl ImplicitSurfaceBuilder {
     pub fn new() -> Self {
         ImplicitSurfaceBuilder {
-            kernel: Kernel::Approximate {
+            kernel: KernelType::Approximate {
                 radius: 1.0,
                 tolerance: 1e-5,
             },
@@ -94,7 +94,7 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    pub fn with_kernel(&mut self, kernel: Kernel) -> &mut Self {
+    pub fn with_kernel(&mut self, kernel: KernelType) -> &mut Self {
         self.kernel = kernel;
         self
     }
@@ -165,7 +165,7 @@ impl ImplicitSurfaceBuilder {
 }
 
 pub struct ImplicitSurface {
-    kernel: Kernel,
+    kernel: KernelType,
     background_potential: bool,
     spatial_tree: RTree<OrientedPoint>,
     oriented_points: Vec<OrientedPoint>,
@@ -190,42 +190,60 @@ impl ImplicitSurface {
             ref spatial_tree,
             ref oriented_points,
             ref offsets,
-            background_potential: _,
+            background_potential: generate_bg_potential,
         } = *self;
 
         // Initialize potential with zeros.
         {
-            mesh.attrib_or_add::<_, VertexIndex>("potential", 0.0f32)?;
+            let mut bg_potential = vec![0.0f32; mesh.num_vertices()];
+            if generate_bg_potential {
+                // Generate a background potential field for every sample point. This will be mixed
+                // in with the computed potentials for local methods. Global methods like HRBF
+                // ignore this field.
+                for (pos, potential) in zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut()) {
+                    if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
+                        let q = Vector3(*pos);
+                        let p = nearest_neigh.pos;
+                        let nml = nearest_neigh.nml;
+                        *potential = (q-p).dot(nml) as f32;
+                    } else {
+                        return Err(super::Error::Failure);
+                    }
+                }
+                mesh.set_attrib_data::<_, VertexIndex>("potential", &bg_potential)?;
+            } else {
+                mesh.attrib_or_add_data::<_, VertexIndex>("potential", &bg_potential)?;
+            }
         }
 
         match *kernel {
-            Kernel::Interpolating { radius } => {
+            KernelType::Interpolating { radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
                 let kern = |x, p, closest_dist| {
-                    local_interpolating_kernel(dist(x, p), radius, closest_dist)
+                    kernel::LocalInterpolating::new(radius).update_closest(closest_dist).f(dist(x, p))
                 };
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            Kernel::Approximate { tolerance, radius } => {
+            KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| local_approximate_kernel(dist(x, p), radius, tolerance);
+                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            Kernel::Cubic { radius } => {
+            KernelType::Cubic { radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| local_cubic_kernel(dist(x, p), radius);
+                let kern = |x, p, _| kernel::LocalCubic::new(radius).f(dist(x, p));
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            Kernel::Global { tolerance } => {
+            KernelType::Global { tolerance } => {
                 let neigh = |_| oriented_points.iter().collect();
                 let radius = 1.0;
-                let kern = |x, p, _| global_inv_dist2_kernel(dist(x, p), tolerance);
+                let kern = |x, p, _| kernel::GlobalInvDistance2::new(tolerance).f(dist(x, p));
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            Kernel::Hrbf => Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt),
+            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt),
         }
     }
 

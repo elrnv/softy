@@ -48,137 +48,8 @@ pub fn build_rtree(oriented_points: &[OrientedPoint]) -> RTree<OrientedPoint> {
     rtree
 }
 
-macro_rules! hrbf {
-    ($samples:ident, $oriented_points_iter:ident, $offsets:ident, $interrupt:ident) => {
-        let sample_pos = $samples.vertex_positions().to_vec();
-
-        let chunk_size = 5000;
-
-        let pts: Vec<crate::na::Point3<f64>> = $oriented_points_iter.clone()
-            .map(|op| crate::na::Point3::from(op.pos.into_inner()))
-            .collect();
-        let nmls: Vec<crate::na::Vector3<f64>> = $oriented_points_iter
-            .map(|op| crate::na::Vector3::from(op.nml.into_inner()))
-            .collect();
-        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-        hrbf.fit_offset(&pts, &$offsets, &nmls);
-
-        for (q_chunk, potential_chunk) in sample_pos.chunks(chunk_size).zip(
-            $samples
-                .attrib_as_mut_slice::<f32, VertexIndex>("potential")
-                .unwrap()
-                .chunks_mut(chunk_size),
-        ) {
-            if $interrupt() {
-                break;
-            }
-
-            q_chunk
-                .par_iter()
-                .zip(potential_chunk.par_iter_mut())
-                .for_each(|(q, potential)| {
-                    *potential = hrbf.eval(crate::na::Point3::from(*q)) as f32;
-                });
-        }
-    };
-}
-
 fn dist(a: Vector3<f64>, b: Vector3<f64>) -> f64 {
     (a - b).norm()
-}
-
-macro_rules! mls {
-    ($samples:ident, $kernel:ident, $radius:ident, $compute_neighbours:ident, $interrupt:ident,
-     $num_neighs_attrib_data:ident, $neighs_attrib_data:ident, $weight_attrib_data:ident) => {
-        let sample_pos = $samples.vertex_positions().to_vec();
-
-        let chunk_size = 5000;
-
-        for (q_chunk, num_neighs_chunk, neighs_chunk, weight_chunk, potential_chunk) in zip!(
-            sample_pos.chunks(chunk_size),
-            $num_neighs_attrib_data.chunks_mut(chunk_size),
-            $neighs_attrib_data.chunks_mut(chunk_size),
-            $weight_attrib_data.chunks_mut(chunk_size),
-            $samples
-                .attrib_as_mut_slice::<f32, VertexIndex>("potential")
-                .unwrap()
-                .chunks_mut(chunk_size)
-        ) {
-            if $interrupt() {
-                break;
-            }
-
-            zip!(
-                q_chunk.par_iter(),
-                num_neighs_chunk.par_iter_mut(),
-                neighs_chunk.par_iter_mut(),
-                weight_chunk.par_iter_mut(),
-                potential_chunk.par_iter_mut()
-            )
-            .for_each(|(q, num_neighs, neighs, weight, potential)| {
-                let neighbours_vec: Vec<&OrientedPoint> = $compute_neighbours(*q);
-                let neighbours = &neighbours_vec;
-
-                // Record number of neighbours in total.
-                *num_neighs = neighbours.len() as i32;
-
-                // Record up to 11 neighbours
-                for (k, neigh) in neighbours_vec.iter().enumerate() {
-                    if k >= 11 {
-                        break;
-                    }
-                    neighs[k] = neigh.index as i32;
-                }
-
-                if !neighbours.is_empty() {
-                    let n = neighbours.len() + 1;
-                    let mut closest_d = $radius as f64;
-                    for nbr in neighbours.iter() {
-                        closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
-                    }
-                    let weights = (0..n)
-                        .map(|i| {
-                            if i == neighbours.len() {
-                                let bg = [q[0] - $radius + closest_d, q[1], q[2]];
-                                let w = $kernel(Vector3(*q), bg.into(), closest_d);
-                                // Record the last weight for the background potential
-                                weight[11] = w as f32;
-                                w
-                            } else {
-                                let w = $kernel(Vector3(*q), neighbours[i].pos, closest_d);
-                                if i < 11 {
-                                    // Record the current weight
-                                    weight[i] = w as f32;
-                                }
-                                w
-                            }
-                        })
-                        .collect::<Vec<f64>>();
-
-                    let potentials = (0..n)
-                        .map(|i| {
-                            if i == neighbours.len() {
-                                *potential as f64
-                            } else {
-                                neighbours[i].nml.dot(Vector3(*q) - neighbours[i].pos)
-                            }
-                        })
-                        .collect::<Vec<f64>>();
-
-                    let denominator: f64 = weights.iter().sum();
-                    let numerator: f64 = weights
-                        .iter()
-                        .zip(potentials.iter())
-                        .map(|(w, p)| w * p)
-                        .sum();
-
-                    if denominator != 0.0 {
-                        *potential = (numerator / denominator) as f32;
-                    }
-                }
-            });
-        }
-    };
 }
 
 pub struct ImplicitSurface {
@@ -227,89 +98,35 @@ impl ImplicitSurface {
             mesh.attrib_or_add::<_, VertexIndex>("potential", 0.0f32)?;
         }
 
-        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
-        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
-        let mut weight_attrib_data = vec![[0f32; 12]; mesh.num_vertices()];
-
         match *kernel {
             Kernel::Interpolating { radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
                 let kern = |x, p, closest_dist| local_interpolating_kernel(dist(x, p), radius, closest_dist);
-                mls!(
-                    mesh,
-                    kern,
-                    radius,
-                    neigh,
-                    interrupt,
-                    num_neighs_attrib_data,
-                    neighs_attrib_data,
-                    weight_attrib_data
-                );
+                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             Kernel::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
                 let kern = |x, p, _| local_approximate_kernel(dist(x, p), radius, tolerance);
-                mls!(
-                    mesh,
-                    kern,
-                    radius,
-                    neigh,
-                    interrupt,
-                    num_neighs_attrib_data,
-                    neighs_attrib_data,
-                    weight_attrib_data
-                );
+                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             Kernel::Cubic { radius } => {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
                 let kern = |x, p, _| local_cubic_kernel(dist(x, p), radius);
-                mls!(
-                    mesh,
-                    kern,
-                    radius,
-                    neigh,
-                    interrupt,
-                    num_neighs_attrib_data,
-                    neighs_attrib_data,
-                    weight_attrib_data
-                );
+                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             Kernel::Global { tolerance } => {
                 let neigh = |_| oriented_points.iter().collect();
                 let radius = 1.0;
                 let kern = |x, p, _| global_inv_dist2_kernel(dist(x, p), tolerance);
-                mls!(
-                    mesh,
-                    kern,
-                    radius,
-                    neigh,
-                    interrupt,
-                    num_neighs_attrib_data,
-                    neighs_attrib_data,
-                    weight_attrib_data
-                );
+                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             Kernel::Hrbf => {
-                let oriented_points_iter = oriented_points.iter();
-                hrbf!(mesh, oriented_points_iter, offsets, interrupt);
+                Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt)
             }
         }
-
-        {
-            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("weights", &weight_attrib_data)?;
-        }
-
-        if interrupt() {
-            Err(super::Error::Interrupted)
-        } else {
-            Ok(())
-        }
-
     }
 
     /// Given a slice of query points, compute the potential at each point.
@@ -321,5 +138,150 @@ impl ImplicitSurface {
     pub fn compute_potential_interruptable<F>(&self, _query_points: &[[f64;3]], _interrupt: F, _out_potential: &mut [f64])
         where F: Fn() -> bool + Sync + Send
     {
+    }
+
+    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
+    fn compute_mls_on_mesh<'a, K, N, F>(mesh: &mut PolyMesh<f64>, radius: f64, kernel: K, neigh: N, interrupt: F)
+    -> Result<(), super::Error>
+        where K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
+              N: Fn([f64;3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+              F: Fn() -> bool + Sync + Send,
+    {
+        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
+        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
+        let mut weight_attrib_data = vec![[0f32; 12]; mesh.num_vertices()];
+        let sample_pos = mesh.vertex_positions().to_vec();
+
+        let chunk_size = 5000;
+
+        for (q_chunk, num_neighs_chunk, neighs_chunk, weight_chunk, potential_chunk) in zip!(
+            sample_pos.chunks(chunk_size),
+            num_neighs_attrib_data.chunks_mut(chunk_size),
+            neighs_attrib_data.chunks_mut(chunk_size),
+            weight_attrib_data.chunks_mut(chunk_size),
+            mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
+                .unwrap()
+                .chunks_mut(chunk_size)
+        ) {
+            if interrupt() {
+                return Err(super::Error::Interrupted);
+            }
+
+            zip!(
+                q_chunk.par_iter(),
+                num_neighs_chunk.par_iter_mut(),
+                neighs_chunk.par_iter_mut(),
+                weight_chunk.par_iter_mut(),
+                potential_chunk.par_iter_mut()
+            )
+            .for_each(|(q, num_neighs, neighs, weight, potential)| {
+                let neighbours_vec: Vec<&OrientedPoint> = neigh(*q);
+                let neighbours = &neighbours_vec;
+
+                // Record number of neighbours in total.
+                *num_neighs = neighbours.len() as i32;
+
+                // Record up to 11 neighbours
+                for (k, neigh) in neighbours_vec.iter().enumerate() {
+                    if k >= 11 {
+                        break;
+                    }
+                    neighs[k] = neigh.index as i32;
+                }
+
+                if !neighbours.is_empty() {
+                    let n = neighbours.len() + 1;
+                    let mut closest_d = radius;
+                    for nbr in neighbours.iter() {
+                        closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
+                    }
+                    let weights = (0..n)
+                        .map(|i| {
+                            if i == neighbours.len() {
+                                let bg = [q[0] - radius + closest_d, q[1], q[2]];
+                                let w = kernel(Vector3(*q), bg.into(), closest_d);
+                                // Record the last weight for the background potential
+                                weight[11] = w as f32;
+                                w
+                            } else {
+                                let w = kernel(Vector3(*q), neighbours[i].pos, closest_d);
+                                if i < 11 {
+                                    // Record the current weight
+                                    weight[i] = w as f32;
+                                }
+                                w
+                            }
+                        })
+                        .collect::<Vec<f64>>();
+
+                    let potentials = (0..n)
+                        .map(|i| {
+                            if i == neighbours.len() {
+                                *potential as f64
+                            } else {
+                                neighbours[i].nml.dot(Vector3(*q) - neighbours[i].pos)
+                            }
+                        })
+                        .collect::<Vec<f64>>();
+
+                    let denominator: f64 = weights.iter().sum();
+                    let numerator: f64 = weights
+                        .iter()
+                        .zip(potentials.iter())
+                        .map(|(w, p)| w * p)
+                        .sum();
+
+                    if denominator != 0.0 {
+                        *potential = (numerator / denominator) as f32;
+                    }
+                }
+            });
+        }
+
+        {
+            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("weights", &weight_attrib_data)?;
+        }
+
+        Ok(())
+    }
+
+    fn compute_hrbf_on_mesh<F>(mesh: &mut PolyMesh<f64>, oriented_points: &[OrientedPoint], offsets: &[f64], interrupt: F)
+        -> Result<(), super::Error>
+    where F: Fn() -> bool + Sync + Send
+    {
+        let sample_pos = mesh.vertex_positions().to_vec();
+
+        let chunk_size = 5000;
+
+        let pts: Vec<crate::na::Point3<f64>> = oriented_points.iter()
+            .map(|op| crate::na::Point3::from(op.pos.into_inner()))
+            .collect();
+        let nmls: Vec<crate::na::Vector3<f64>> = oriented_points.iter()
+            .map(|op| crate::na::Vector3::from(op.nml.into_inner()))
+            .collect();
+        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
+        hrbf.fit_offset(&pts, offsets, &nmls);
+
+        for (q_chunk, potential_chunk) in sample_pos.chunks(chunk_size).zip(
+            mesh
+                .attrib_as_mut_slice::<f32, VertexIndex>("potential")
+                .unwrap()
+                .chunks_mut(chunk_size),
+        ) {
+            if interrupt() {
+                return Err(super::Error::Interrupted);
+            }
+
+            q_chunk
+                .par_iter()
+                .zip(potential_chunk.par_iter_mut())
+                .for_each(|(q, potential)| {
+                    *potential = hrbf.eval(crate::na::Point3::from(*q)) as f32;
+                });
+        }
+
+        Ok(())
     }
 }

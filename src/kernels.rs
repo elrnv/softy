@@ -1,5 +1,5 @@
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Kernel {
     Interpolating { radius: f64 },
     Approximate { radius: f64, tolerance: f64 },

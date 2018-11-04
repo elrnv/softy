@@ -5,8 +5,9 @@
 
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
-use geo::mesh::{topology::*, Attrib, PolyMesh};
-use geo::math::{Vector3};
+use geo::mesh::{topology::*, Attrib, PolyMesh, PointCloud};
+use geo::math::{ToPrimitive, Vector3};
+use geo::Real;
 use kernels::*;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -52,8 +53,102 @@ fn dist(a: Vector3<f64>, b: Vector3<f64>) -> f64 {
     (a - b).norm()
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImplicitSurfaceBuilder {
+    kernel: Kernel,
+    background_potential: bool,
+    points: Vec<[f64;3]>,
+    normals: Vec<[f64;3]>,
+    offsets: Vec<f64>,
+}
+
+impl ImplicitSurfaceBuilder {
+    pub fn new() -> Self {
+        ImplicitSurfaceBuilder {
+            kernel: Kernel::Approximate { radius: 1.0, tolerance: 1e-5 },
+            background_potential: false,
+            points: Vec::new(),
+            normals: Vec::new(),
+            offsets: Vec::new(),
+        }
+    }
+
+    pub fn with_points(&mut self, points: &[[f64;3]]) -> &mut Self {
+        self.points = points.to_vec();
+        self
+    }
+
+    pub fn with_normals(&mut self, normals: &[[f64;3]]) -> &mut Self {
+        self.normals = normals.to_vec();
+        self
+    }
+
+    pub fn with_offsets(&mut self, offsets: &[f64]) -> &mut Self {
+        self.offsets = offsets.to_vec();
+        self
+    }
+
+    pub fn with_kernel(&mut self, kernel: Kernel) -> &mut Self {
+        self.kernel = kernel;
+        self
+    }
+
+    /// Initialize fit data using a point cloud which can include positions, normals and offsets as
+    /// attributes on the `PointCloud` struct.
+    /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
+    /// The offsets attribute is expected to be named "offsets" and have type `f32`.
+    pub fn with_pointcloud<T: Real + ToPrimitive>(&mut self, ptcloud: &PointCloud<T>) -> &mut Self {
+        self.points = ptcloud.vertex_positions()
+            .iter().map(|&x| Vector3(x).cast::<f64>().expect("Failed to convert positions to f64").into()).collect();
+        self.normals = ptcloud.attrib_iter::<[f32; 3], VertexIndex>("N")
+            .map(|iter| iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap().into()).collect())
+            .unwrap_or(vec![[0.0f64;3]; ptcloud.num_vertices()]);
+        self.offsets = ptcloud
+            .attrib_iter::<f32, VertexIndex>("offset")
+            .map(|iter| iter.map(|&x| x as f64).collect())
+            .unwrap_or(vec![0.0f64; ptcloud.num_vertices()]);
+        self
+    }
+
+    pub fn with_background_potential(&mut self, background_potential: bool) -> &mut Self {
+        self.background_potential = background_potential;
+        self
+    }
+
+    pub fn build(&self) -> ImplicitSurface {
+        let ImplicitSurfaceBuilder {
+            kernel,
+            background_potential,
+            points,
+            mut normals,
+            mut offsets,
+        } = self.clone();
+
+        if normals.is_empty() {
+            normals = vec![[0.0; 3]; points.len()];
+        }
+
+        if offsets.is_empty() {
+            offsets = vec![0.0; points.len()];
+        }
+
+        assert_eq!(points.len(), normals.len());
+        assert_eq!(points.len(), offsets.len());
+
+        let oriented_points: Vec<OrientedPoint> = oriented_points_iter(&points, &normals).collect();
+        ImplicitSurface {
+            kernel,
+            background_potential,
+            spatial_tree: build_rtree(&oriented_points),
+            oriented_points,
+            offsets,
+        }
+    }
+}
+
 pub struct ImplicitSurface {
     kernel: Kernel,
+    background_potential: bool,
     spatial_tree: RTree<OrientedPoint>,
     oriented_points: Vec<OrientedPoint>,
     /// Potential values at the interpolating points. These offsets indicate the values to
@@ -63,25 +158,6 @@ pub struct ImplicitSurface {
 }
 
 impl ImplicitSurface {
-    /// Create a new implicit surface struct.
-    pub fn new(kernel: Kernel, points: &[[f64;3]], normals: &[[f64;3]]) -> ImplicitSurface {
-        assert_eq!(points.len(), normals.len());
-        let oriented_points: Vec<OrientedPoint> = oriented_points_iter(points, normals).collect();
-        ImplicitSurface {
-            kernel,
-            spatial_tree: build_rtree(&oriented_points),
-            oriented_points,
-            offsets: vec![0.0f64; points.len()]
-        }
-    }
-
-    pub fn with_offsets(kernel: Kernel, points: &[[f64;3]], normals: &[[f64;3]], offsets: &[f64]) -> ImplicitSurface {
-        ImplicitSurface {
-            offsets: offsets.to_vec(),
-            ..ImplicitSurface::new(kernel, points, normals)
-        }
-    }
-
     /// Compute the implicit surface potential on the given polygon mesh.
     pub fn compute_potential_on_mesh<F>(&self, mesh: &mut PolyMesh<f64>, interrupt: F) -> Result<(), super::Error>
         where F: Fn() -> bool + Sync + Send
@@ -91,6 +167,7 @@ impl ImplicitSurface {
             ref spatial_tree,
             ref oriented_points,
             ref offsets,
+            background_potential: _,
         } = *self;
 
         // Initialize potential with zeros.

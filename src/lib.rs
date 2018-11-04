@@ -8,8 +8,7 @@ extern crate spade;
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, topology::*, Attrib, PolyMesh};
-use geo::math::{Vector3};
+use geo::mesh::{attrib, PolyMesh, PointCloud};
 
 #[macro_use]
 pub mod zip;
@@ -23,6 +22,7 @@ pub use kernels::Kernel;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub kernel: Kernel,
+    pub background_potential: bool,
 }
 
 pub fn compute_potential<F>(
@@ -34,16 +34,13 @@ pub fn compute_potential<F>(
 where
     F: Fn() -> bool + Sync + Send,
 {
-    // Check that we have normals
-    let points = surface.vertex_positions();
-    let normals: Vec<[f64;3]> = surface.attrib_iter::<[f32; 3], VertexIndex>("N")?
-        .map(|nml| Vector3(*nml).cast::<f64>().unwrap().into()).collect();
-    let offsets = surface
-        .attrib_iter::<f32, VertexIndex>("offset")
-        .map(|iter| iter.map(|&x| x as f64).collect())
-        .unwrap_or(vec![0.0f64; samples.num_vertices()]);
+    let ptcloud = PointCloud::from(surface.clone());
 
-    let implicit_surface = ImplicitSurface::with_offsets(params.kernel, points, &normals, &offsets);
+    let implicit_surface = ImplicitSurfaceBuilder::new()
+        .with_kernel(params.kernel)
+        .with_background_potential(params.background_potential)
+        .with_pointcloud(&ptcloud)
+        .build();
 
     implicit_surface.compute_potential_on_mesh(samples, interrupt)?;
     Ok(())
@@ -76,6 +73,7 @@ impl From<geo::io::Error> for Error {
 mod tests {
     use super::*;
     use geo::io::load_polymesh;
+    use geo::mesh::{topology::*, Attrib};
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.
@@ -157,6 +155,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
+                background_potential: false,
             },
             || false,
         )?;

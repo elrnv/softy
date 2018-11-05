@@ -10,7 +10,7 @@ nalgebra = "0.16"
 hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
 spade = "1.5"
-autodiff = "0.1"
+autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
 
 [dev-dependencies]
 approx = "0.3"

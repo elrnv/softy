@@ -129,10 +129,7 @@ pub struct LocalApproximate {
 
 impl LocalApproximate {
     pub fn new(radius: f64, tolerance: f64) -> Self {
-        LocalApproximate {
-            radius,
-            tolerance,
-        }
+        LocalApproximate { radius, tolerance }
     }
 }
 
@@ -185,7 +182,7 @@ mod tests {
     fn test_locality<K: Kernel<f64>>(kern: K, radius: f64) {
         for i in 0..10 {
             let off = 0.5 * i as f64;
-            assert_eq!(kern.f(radius + off*off), 0.0);
+            assert_eq!(kern.f(radius + off * off), 0.0);
         }
     }
 

@@ -110,7 +110,7 @@ mod tests {
         mesh
     }
 
-    fn make_query_octahedron() -> (Vec<[f64;3]>, Vec<[f32;3]>) {
+    fn make_query_octahedron() -> (Vec<[f64; 3]>, Vec<[f32; 3]>) {
         let points = vec![
             [-0.5, 0.0, 0.0],
             [0.5, 0.0, 0.0],

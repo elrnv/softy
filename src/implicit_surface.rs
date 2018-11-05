@@ -200,12 +200,14 @@ impl ImplicitSurface {
                 // Generate a background potential field for every sample point. This will be mixed
                 // in with the computed potentials for local methods. Global methods like HRBF
                 // ignore this field.
-                for (pos, potential) in zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut()) {
+                for (pos, potential) in
+                    zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut())
+                {
                     if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
                         let q = Vector3(*pos);
                         let p = nearest_neigh.pos;
                         let nml = nearest_neigh.nml;
-                        *potential = (q-p).dot(nml) as f32;
+                        *potential = (q - p).dot(nml) as f32;
                     } else {
                         return Err(super::Error::Failure);
                     }
@@ -221,7 +223,9 @@ impl ImplicitSurface {
                 let radius2 = radius * radius;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
                 let kern = |x, p, closest_dist| {
-                    kernel::LocalInterpolating::new(radius).update_closest(closest_dist).f(dist(x, p))
+                    kernel::LocalInterpolating::new(radius)
+                        .update_closest(closest_dist)
+                        .f(dist(x, p))
                 };
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
@@ -243,7 +247,9 @@ impl ImplicitSurface {
                 let kern = |x, p, _| kernel::GlobalInvDistance2::new(tolerance).f(dist(x, p));
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt),
+            KernelType::Hrbf => {
+                Self::compute_hrbf_on_mesh(mesh, oriented_points, offsets, interrupt)
+            }
         }
     }
 

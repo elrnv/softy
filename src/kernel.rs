@@ -136,29 +136,69 @@ impl LocalApproximate {
     }
 }
 
-impl Kernel<f64> for LocalApproximate {
-    fn f(&self, x: f64) -> f64 {
-        let r = self.radius;
+impl<T: Real> Kernel<T> for LocalApproximate {
+    fn f(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
 
         if x > r {
-            return 0.0;
+            return T::zero();
         }
 
-        let eps = self.tolerance;
+        let eps = T::from(self.tolerance).unwrap();
 
         let w = |d| {
-            let ddeps = 1.0 / (d * d + eps);
-            let epsp1 = 1.0 / (1.0 + eps);
-            (ddeps * ddeps - epsp1 * epsp1) / (1.0 / (eps * eps) - epsp1 * epsp1)
+            let ddeps = T::one() / (d * d + eps);
+            let epsp1 = T::one() / (T::one() + eps);
+            (ddeps * ddeps - epsp1 * epsp1) / (T::one() / (eps * eps) - epsp1 * epsp1)
         };
 
         w(x / r)
     }
-    fn df(&self, _x: f64) -> f64 {
-        0.0
+    fn df(&self, _x: T) -> T {
+        T::zero()
     }
 
-    fn ddf(&self, _x: f64) -> f64 {
-        0.0
+    fn ddf(&self, _x: T) -> T {
+        T::zero()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    ///// Test first derivative
+    //fn test_first_derivative<K: Kernel<f64>>(kern: K) {
+    //    use autodiff::Num;
+    //    for i in 0..50 {
+    //        // Autodiff test
+    //        let x = Num::var(0.1 * i as f64);
+    //        let f = kern.f(x);
+    //        let df = kern.df(x);
+    //        let ddf = kern.ddf(x);
+    //        assert_eq!(df, f.deriv());
+    //        assert_eq!(ddf, df.deriv());
+    //    }
+    //}
+
+    /// Tests kernel locality.
+    fn test_locality<K: Kernel<f64>>(kern: K, radius: f64) {
+        for i in 0..10 {
+            let off = 0.5 * i as f64;
+            assert_eq!(kern.f(radius + off*off), 0.0);
+        }
+    }
+
+    #[test]
+    fn local_approximate_kernel_test() {
+        // Test the properties of the local approximate kernel and check its derivatives.
+        let radius = 1.0;
+        let tolerance = 0.01;
+        let kern = LocalApproximate::new(radius, tolerance);
+
+        // Check that the kernel has compact support: it's zero outside the radius
+        test_locality(kern, radius);
+
+        //test_first_derivative(kern);
     }
 }

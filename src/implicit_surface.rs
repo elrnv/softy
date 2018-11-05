@@ -3,10 +3,10 @@
 //! potential and its derivatives.
 //!
 
-use geo::math::{ToPrimitive, Vector3};
-use geo::mesh::{topology::*, Attrib, PointCloud, PolyMesh};
-use geo::Real;
-use kernel::{self, Kernel, KernelType};
+use crate::geo::math::{ToPrimitive, Vector3};
+use crate::geo::mesh::{topology::*, Attrib, PointCloud, PolyMesh};
+use crate::geo::Real;
+use crate::kernel::{self, Kernel, KernelType};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
 

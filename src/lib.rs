@@ -8,7 +8,7 @@ extern crate spade;
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, PointCloud, PolyMesh};
+use crate::geo::mesh::{attrib, PointCloud, PolyMesh};
 
 #[macro_use]
 pub mod zip;
@@ -16,8 +16,8 @@ pub mod zip;
 pub mod implicit_surface;
 mod kernel;
 
-pub use implicit_surface::*;
-pub use kernel::KernelType;
+pub use crate::implicit_surface::*;
+pub use crate::kernel::KernelType;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -72,8 +72,8 @@ impl From<geo::io::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::io::load_polymesh;
-    use geo::mesh::{topology::*, Attrib};
+    use crate::geo::io::load_polymesh;
+    use crate::geo::mesh::{topology::*, Attrib};
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.

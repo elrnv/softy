@@ -1,3 +1,7 @@
+#![cfg_attr(
+    feature = "unstable",
+    feature(test)
+)]
 extern crate geometry as geo;
 extern crate hrbf;
 extern crate nalgebra as na;

@@ -143,20 +143,55 @@ impl<T: Real> Kernel<T> for LocalApproximate {
 
         let eps = T::from(self.tolerance).unwrap();
 
-        let w = |d| {
-            let ddeps = T::one() / (d * d + eps);
-            let epsp1 = T::one() / (T::one() + eps);
-            (ddeps * ddeps - epsp1 * epsp1) / (T::one() / (eps * eps) - epsp1 * epsp1)
-        };
+        let _2 = T::from(2.0).unwrap();
 
-        w(x / r)
+        let d = x / r;
+        let ddeps = T::one() / (d * d + eps);
+        let eps1 = T::one() + eps;
+        let eps1_2 = eps1*eps1;
+        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        factor * (ddeps * ddeps - T::one() / eps1_2)
     }
-    fn df(&self, _x: T) -> T {
-        T::zero()
+    fn df(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let eps = T::from(self.tolerance).unwrap();
+
+        let _2 = T::from(2.0).unwrap();
+        let _4 = T::from(4.0).unwrap();
+
+        let d = x/r;
+        let eps1 = T::one() + eps;
+        let eps1_2 = eps1*eps1;
+        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        let d2_eps = d * d + eps;
+        - factor * _4 * d / ( d2_eps * d2_eps * d2_eps )
     }
 
-    fn ddf(&self, _x: T) -> T {
-        T::zero()
+    fn ddf(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let eps = T::from(self.tolerance).unwrap();
+
+        let _2 = T::from(2.0).unwrap();
+        let _4 = T::from(4.0).unwrap();
+        let _6 = T::from(6.0).unwrap();
+
+        let d = x/r;
+        let eps1 = T::one() + eps;
+        let eps1_2 = eps1*eps1;
+        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        let d2_eps = d * d + eps;
+        let d2_eps4 = d2_eps * d2_eps * d2_eps * d2_eps;
+        factor * _4 * ( _6 * d * d - d2_eps ) / d2_eps4
     }
 }
 
@@ -166,15 +201,15 @@ mod tests {
     use autodiff::F;
 
     /// Test first derivative
-    fn test_first_derivative<K: Kernel<F>>(kern: &K) {
+    fn test_derivatives<K: Kernel<F>>(kern: &K) {
         for i in 0..50 {
             // Autodiff test
             let x = F::var(0.1 * i as f64);
             let f = kern.f(x);
             let df = kern.df(x);
             let ddf = kern.ddf(x);
-            assert_eq!(df.value(), f.deriv());
-            assert_eq!(ddf.value(), df.deriv());
+            assert_relative_eq!(df.value(), f.deriv(), max_relative=1e-8);
+            assert_relative_eq!(ddf.value(), df.deriv(), max_relative=1e-8);
         }
     }
 
@@ -196,6 +231,45 @@ mod tests {
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);
 
-        test_first_derivative(&kern);
+        test_derivatives(&kern);
     }
+}
+
+#[cfg(all(feature = "unstable", test))]
+mod bench {
+    extern crate test;
+    use super::*;
+    use autodiff::F;
+    use self::test::Bencher;
+
+    #[bench]
+    fn autodiff_kernel_derivative(b: &mut Bencher) {
+        let radius = 1.0;
+        let tolerance = 0.01;
+        let kern = LocalApproximate::new(radius, tolerance);
+        b.iter(|| {
+            let mut total = 0.0;
+            for i in 0..9 {
+                let f = kern.f(F::var(0.1 * i as f64));
+                total += f.deriv()
+            }
+            total
+        });
+    }
+
+    #[bench]
+    fn manual_kernel_derivative(b: &mut Bencher) {
+        let radius = 1.0;
+        let tolerance = 0.01;
+        let kern = LocalApproximate::new(radius, tolerance);
+        b.iter(|| {
+            let mut total = 0.0;
+            for i in 0..9 {
+                total += kern.df(0.1 * i as f64);
+            }
+            total
+        });
+    }
+
+
 }

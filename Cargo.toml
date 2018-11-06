@@ -14,3 +14,6 @@ autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
 
 [dev-dependencies]
 approx = "0.3"
+
+[features]
+unstable = []

@@ -31,17 +31,18 @@ impl GlobalInvDistance2 {
     }
 }
 
-impl Kernel<f64> for GlobalInvDistance2 {
-    fn f(&self, x: f64) -> f64 {
-        let w = 1.0 / (x * x + self.epsilon * self.epsilon);
+impl<T: Real + Into<f64>> Kernel<T> for GlobalInvDistance2 {
+    fn f(&self, x: T) -> T {
+        let eps = T::from(self.epsilon).unwrap();
+        let w = T::one() / (x * x + eps * eps);
         w * w
     }
-    fn df(&self, _x: f64) -> f64 {
-        0.0
+    fn df(&self, x: T) -> T {
+        T::from(self.f(autodiff::F::var(x)).deriv()).unwrap()
     }
 
-    fn ddf(&self, _x: f64) -> f64 {
-        0.0
+    fn ddf(&self, x: T) -> T {
+        T::from(self.df(autodiff::F::var(x)).deriv()).unwrap()
     }
 }
 
@@ -57,21 +58,41 @@ impl LocalCubic {
     }
 }
 
-impl Kernel<f64> for LocalCubic {
-    fn f(&self, x: f64) -> f64 {
-        let r = self.radius;
+impl<T: Real> Kernel<T> for LocalCubic {
+    fn f(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
         if x > r {
-            return 0.0;
+            return T::zero();
         }
 
-        1.0 - 3.0 * x * x / (r * r) + 2.0 * x * x * x / (r * r * r)
+        let _2 = T::from(2.0).unwrap();
+        let _3 = T::from(3.0).unwrap();
+
+        T::one() - _3 * x * x / (r * r) + _2 * x * x * x / (r * r * r)
     }
-    fn df(&self, _x: f64) -> f64 {
-        0.0
+    fn df(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let _6 = T::from(6.0).unwrap();
+
+         _6*(x*x / ( r * r * r ) - x / ( r * r ))
     }
 
-    fn ddf(&self, _x: f64) -> f64 {
-        0.0
+    fn ddf(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+
+        if x > r {
+            return T::zero();
+        }
+
+        let _12 = T::from(12.0).unwrap();
+        let _6 = T::from(6.0).unwrap();
+
+         _12 * x / ( r * r * r ) - _6 / ( r * r )
     }
 }
 
@@ -96,26 +117,26 @@ impl LocalInterpolating {
     }
 }
 
-impl Kernel<f64> for LocalInterpolating {
-    fn f(&self, x: f64) -> f64 {
-        let r = self.radius;
-        let xc = self.closest_d;
+impl<T: Real + Into<f64>> Kernel<T> for LocalInterpolating {
+    fn f(&self, x: T) -> T {
+        let r = T::from(self.radius).unwrap();
+        let xc = T::from(self.closest_d).unwrap();
         if x > r {
-            return 0.0;
+            return T::zero();
         }
 
-        let envelope = LocalCubic::new(r).f(x);
+        let envelope = LocalCubic::new(self.radius).f(x);
 
         let s = x / r;
         let sc = xc / r;
-        envelope * sc * sc * (1.0 / (s * s) - 1.0)
+        envelope * sc * sc * (T::one() / (s * s) - T::one())
     }
-    fn df(&self, _x: f64) -> f64 {
-        0.0
+    fn df(&self, x: T) -> T {
+        T::from(self.f(autodiff::F::var(x)).deriv()).unwrap()
     }
 
-    fn ddf(&self, _x: f64) -> f64 {
-        0.0
+    fn ddf(&self, x: T) -> T {
+        T::from(self.df(autodiff::F::var(x)).deriv()).unwrap()
     }
 }
 
@@ -201,8 +222,8 @@ mod tests {
     use autodiff::F;
 
     /// Test first derivative
-    fn test_derivatives<K: Kernel<F>>(kern: &K) {
-        for i in 0..50 {
+    fn test_derivatives<K: Kernel<F>>(kern: &K, start: usize) {
+        for i in start..50 {
             // Autodiff test
             let x = F::var(0.1 * i as f64);
             let f = kern.f(x);
@@ -222,6 +243,27 @@ mod tests {
     }
 
     #[test]
+    fn global_inv_dist2_kernel_test() {
+        // Test the properties of the local approximate kernel and check its derivatives.
+        let tol = 0.01;
+        let kern = GlobalInvDistance2::new(tol);
+
+        test_derivatives(&kern, 0);
+    }
+
+    #[test]
+    fn local_cubic_kernel_test() {
+        // Test the properties of the local approximate kernel and check its derivatives.
+        let radius = 1.0;
+        let kern = LocalCubic::new(radius);
+
+        // Check that the kernel has compact support: it's zero outside the radius
+        test_locality(&kern, radius);
+
+        test_derivatives(&kern, 0);
+    }
+
+    #[test]
     fn local_approximate_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
         let radius = 1.0;
@@ -231,8 +273,23 @@ mod tests {
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);
 
-        test_derivatives(&kern);
+        test_derivatives(&kern, 0);
     }
+
+    #[test]
+    fn local_interpolating_kernel_test() {
+        // Test the properties of the local approximate kernel and check its derivatives.
+        let radius = 1.0;
+        let mut kern = LocalInterpolating::new(radius);
+        kern.update_closest(0.1);
+
+        // Check that the kernel has compact support: it's zero outside the radius
+        test_locality(&kern, radius);
+
+        // Note: interpolating kernel is degenerate at 0, so start with 1.
+        test_derivatives(&kern, 1);
+    }
+    
 }
 
 #[cfg(all(feature = "unstable", test))]

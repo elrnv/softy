@@ -44,6 +44,40 @@ pub fn oriented_points_iter<'a>(
         })
 }
 
+pub fn oriented_points_from_pointcloud<'a, T: Real + ToPrimitive>(
+    ptcloud: &PointCloud<T>
+) -> Vec<OrientedPoint> {
+    let points_iter = ptcloud
+        .vertex_positions()
+        .iter()
+        .map(|&x| -> [f64;3] {
+            Vector3(x)
+                .cast::<f64>()
+                .expect("Failed to convert positions to f64")
+                .into()
+        });
+
+    if let Ok(iter) = ptcloud.attrib_iter::<[f32; 3], VertexIndex>("N") {
+        let normals_iter = iter.map(|&nml| Vector3(nml).cast::<f64>().unwrap().into());
+        points_iter
+            .zip(normals_iter)
+            .enumerate()
+            .map(|(i, (pos, nml)) : (usize, ([f64;3], [f64;3]))| OrientedPoint {
+                index: i as i32,
+                pos: pos.into(),
+                nml: nml.into(),
+            }).collect()
+    } else {
+        points_iter
+            .enumerate()
+            .map(|(i, pos)| OrientedPoint {
+                index: i as i32,
+                pos: pos.into(),
+                nml: Vector3::zeros(),
+            }).collect()
+    }
+}
+
 pub fn build_rtree(oriented_points: &[OrientedPoint]) -> RTree<OrientedPoint> {
     let mut rtree = RTree::new();
     for pt in oriented_points.iter() {
@@ -176,6 +210,42 @@ pub struct ImplicitSurface {
 }
 
 impl ImplicitSurface {
+    /// Update points and normals.
+    pub fn update_oriented_points_with_pointcloud<T: Real + ToPrimitive>(&mut self, ptcloud: &PointCloud<T>) {
+        let ImplicitSurface {
+            ref mut spatial_tree,
+            ref mut oriented_points,
+            ref mut offsets,
+            ..
+        } = self;
+
+        *oriented_points = oriented_points_from_pointcloud(ptcloud);
+
+        *spatial_tree = build_rtree(oriented_points);
+
+        if ptcloud.num_vertices() == offsets.len() {
+            // Update offsets if any.
+            if let Ok(offset_iter) = ptcloud.attrib_iter::<f32, VertexIndex>("offset") {
+                for (off, new_off) in offsets.iter_mut().zip(offset_iter.map(|&x| x as f64)) {
+                    *off = new_off;
+                }
+            }
+        } else {
+            // Given point cloud has a different size than our internal represnetation. We need to
+            // overwrite all internal data vectors.
+
+            // Overwrite offsets or remove them.
+            if let Ok(offset_iter) = ptcloud.attrib_iter::<f32, VertexIndex>("offset") {
+                *offsets = offset_iter.map(|&x| x as f64).collect();
+            } else {
+                *offsets = vec![0.0; ptcloud.num_vertices()];
+            }
+        }
+
+        // Check invariant.
+        assert_eq!(oriented_points.len(), offsets.len());
+    }
+
     /// Compute the implicit surface potential on the given polygon mesh.
     pub fn compute_potential_on_mesh<F>(
         &self,

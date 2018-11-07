@@ -22,8 +22,9 @@ mod matrix;
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
+pub type TriMesh = geo::mesh::TriMesh<f64>;
 
-pub use self::fem::{ElasticityProperties, MaterialProperties, SimParams, SolveResult};
+pub use self::fem::{ElasticityParameters, Material, SimParams, SolveResult};
 use crate::geo::mesh::attrib;
 
 #[derive(Debug)]
@@ -88,26 +89,18 @@ impl Into<SimResult> for Result<SolveResult, Error> {
 
 pub fn sim(
     tetmesh: Option<TetMesh>,
+    material: Material,
     _polymesh: Option<PolyMesh>,
     sim_params: SimParams,
     interrupter: Option<Box<FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
-        match fem::Solver::new(mesh, sim_params) {
+        match fem::SolverBuilder::new(sim_params).add_solid(mesh).solid_material(material).build() {
             Ok(mut engine) => {
                 if let Some(interrupter) = interrupter {
                     engine.set_interrupter(interrupter);
                 }
-                match engine.step() {
-                    Err(e) => e.into(),
-                    Ok(SolveResult {
-                        iterations,
-                        objective_value,
-                    }) => SimResult::Success(
-                        format!("Iterations: {}\nObjective: {}", iterations, objective_value)
-                            .into(),
-                    ),
-                }
+                engine.step().into()
             }
             Err(e) => e.into(),
         }
@@ -122,19 +115,20 @@ mod tests {
     use crate::geo::mesh::{topology::*, Attrib, TetMesh};
 
     const STATIC_PARAMS: SimParams = SimParams {
-        material: MaterialProperties {
-            elasticity: ElasticityProperties {
-                bulk_modulus: 1750e6,
-                shear_modulus: 10e6,
-            },
-            density: 1000.0,
-            damping: 0.0,
-        },
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 800,
-        volume_constraint: false,
+    };
+
+    const MATERIAL: Material = Material {
+        elasticity: ElasticityParameters {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+        },
+        incompressibility: false,
+        density: 1000.0,
+        damping: 0.0,
     };
 
     #[test]
@@ -164,7 +158,7 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(match sim(Some(mesh), None, STATIC_PARAMS, None) {
+        assert!(match sim(Some(mesh), MATERIAL, None, STATIC_PARAMS, None) {
             SimResult::Success(_) => true,
             _ => false,
         });

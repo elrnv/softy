@@ -22,6 +22,8 @@ use super::SimParams;
 use crate::Error;
 use crate::PointCloud;
 use crate::TetMesh;
+use crate::PolyMesh;
+use crate::TriMesh;
 
 /// Result from one simulation step.
 #[derive(Debug)]
@@ -33,20 +35,24 @@ pub struct SolveResult {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ElasticityProperties {
+pub struct ElasticityParameters {
     /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
     /// incompressibility. The larger the value, the more incompressible the material is.
-    /// Think of this as "Volume Stiffness"
+    /// Think of this as "Volume Stiffness".
     pub bulk_modulus: f32,
     /// Shear modulus measures the material's resistance to shear deformation. The larger the
-    /// value, the more it resists changes in shape. Think of this as "Shape Stiffness"
+    /// value, the more it resists changes in shape. Think of this as "Shape Stiffness".
     pub shear_modulus: f32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct MaterialProperties {
-    /// Properties determining the elastic behaviour of a simulated solid.
-    pub elasticity: ElasticityProperties,
+pub struct Material {
+    /// Parameters determining the elastic behaviour of a simulated solid.
+    pub elasticity: ElasticityParameters,
+    /// Incompressibility sets the material to be globally incompressible, if set to `true`. In
+    /// contrast to `elasticity.bulk_modulus`, this parameter affects global incompressibility,
+    /// while `bulk_modulus` affects *local* incompressibility (on a per element level).
+    pub incompressibility: bool,
     /// The density of the material.
     pub density: f32,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
@@ -54,9 +60,9 @@ pub struct MaterialProperties {
     pub damping: f32,
 }
 
-impl ElasticityProperties {
+impl ElasticityParameters {
     pub fn from_young_poisson(young: f32, poisson: f32) -> Self {
-        ElasticityProperties {
+        ElasticityParameters {
             bulk_modulus: young / (3.0 * (1.0 - 2.0 * poisson)),
             shear_modulus: young / (2.0 * (1.0 + poisson)),
         }
@@ -81,64 +87,78 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
     Tetrahedron::from_indexed_slice(indices, ref_pos)
 }
 
-/// Finite element engine.
-pub struct Solver {
-    /// Non-linear solver.
-    solver: Ipopt<NonLinearProblem>,
-    /// Step count (outer iterations). These count the number of times the function `step` was
-    /// called.
-    step_count: usize,
+#[derive(Clone, Debug)]
+pub struct SolverBuilder {
+    sim_params: SimParams,
+    solid_material: Option<Material>,
+    solids: Vec<TetMesh>,
+    shells: Vec<PolyMesh>,
 }
 
-impl Solver {
-    /// Run the optimization solver on one time step.
-    pub fn new(mut mesh: TetMesh, params: SimParams) -> Result<Self, Error> {
-        // Prepare tet mesh for simulation.
-        let verts = mesh.vertex_positions().to_vec();
-        mesh.attrib_or_add_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
-
-        mesh.attrib_or_add::<_, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
-
-        {
-            // Compute reference element signed volumes
-            let ref_volumes: Vec<f64> = mesh
-                .cell_iter()
-                .map(|cell| ref_tet(&mesh, cell).signed_volume())
-                .collect();
-            if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
-                return Err(Error::InvertedReferenceElement);
-            }
-            mesh.set_attrib_data::<_, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
+impl SolverBuilder {
+    /// Create a `SolverBuilder` with the minimum required parameters, which are the simulation
+    /// parameters, `SimParams`.
+    pub fn new(sim_params: SimParams) -> Self {
+        SolverBuilder {
+            sim_params,
+            solid_material: None,
+            solids: Vec::new(),
+            shells: Vec::new(),
         }
+    }
 
-        {
-            // Compute reference shape matrix inverses
-            let ref_shape_mtx_inverses: Vec<Matrix3<f64>> = mesh
-                .cell_iter()
-                .map(|cell| {
-                    let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
-                    // We assume that ref_shape_matrices are non-singular.
-                    ref_shape_matrix.inverse().unwrap()
-                })
-                .collect();
-            mesh.set_attrib_data::<_, CellIndex>(
-                REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                ref_shape_mtx_inverses.as_slice(),
-            )?;
-        }
+    /// Set the solid material properties. This will override any variable material properties set
+    /// on the mesh itself.
+    pub fn solid_material(&mut self, mat_props: Material) -> &mut Self {
+        self.solid_material = Some(mat_props);
+        self
+    }
 
-        {
-            // Add elastic strain energy and elastic force attributes.
-            // These will be computed at the end of the time step.
-            mesh.set_attrib::<_, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
-            mesh.set_attrib::<_, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
-        }
+    /// Add a tetmesh representing a soft solid (e.g. soft tissue).
+    pub fn add_solid(&mut self, solid: TetMesh) -> &mut Self {
+        self.solids.push(solid);
+        self
+    }
 
-        let (lambda, mu) = params.material.elasticity.lame_parameters();
+    /// Add a polygon mesh representing a shell (e.g. cloth).
+    pub fn add_shell(&mut self, shell: PolyMesh) -> &mut Self {
+        self.shells.push(shell);
+        self
+    }
+
+    /// Build the simulation solver.
+    pub fn build(&self) -> Result<Solver, Error> {
+        let SolverBuilder {
+            sim_params: params,
+            solid_material,
+            solids,
+            shells,
+        } = self;
+
+        // Get kinematic shell
+        let kinematic_object = if shells.len() > 0 {
+            Some(Rc::new(RefCell::new(TriMesh::from(shells[0].clone()))))
+        } else {
+            None
+        };
+
+        // TODO: add support for more solids.
+        assert!(solids.len() > 0);
+
+        // Get deformable solid.
+        let mut mesh = solids[0].clone();
+
+        // Prepare deformable solid for simulation.
+        Self::prepare_mesh_attributes(&mut mesh)?;
+
+        let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
+
+        // Retrieve lame parameters.
+        let (lambda, mu) = solid_material.elasticity.lame_parameters();
 
         // Normalize material parameters with mu.
         let lambda = lambda / mu;
-        let density = params.material.density as f64 / mu;
+        let density = solid_material.density as f64 / mu;
         // premultiply damping by timestep reciprocal.
         let damping = if let Some(dt) = params.time_step {
             if dt != 0.0 {
@@ -148,7 +168,7 @@ impl Solver {
             }
         } else {
             0.0
-        } * params.material.damping as f64
+        } * solid_material.damping as f64
             / mu;
         let gravity = [
             params.gravity[0] as f64,
@@ -162,12 +182,13 @@ impl Solver {
         ));
 
         // Initialize volume constraint
-        let volume_constraint = if params.volume_constraint {
-            Some(VolumeConstraint::new(&mesh)) //, Rc::clone(&prev_pos)))
+        let volume_constraint = if solid_material.incompressibility {
+            Some(VolumeConstraint::new(&mesh))
         } else {
             None
         };
 
+        // Lift mesh into the heap to be shared among energies and constraints.
         let mesh = Rc::new(RefCell::new(mesh));
 
         let energy_model_builder =
@@ -179,6 +200,7 @@ impl Solver {
 
         let problem = NonLinearProblem {
             tetmesh: Rc::clone(&mesh),
+            kinematic_object,
             prev_pos,
             energy_model: energy_model_builder.build(),
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
@@ -186,7 +208,6 @@ impl Solver {
             volume_constraint,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
-            params,
         };
 
         let mut ipopt = Ipopt::new(problem);
@@ -208,8 +229,78 @@ impl Solver {
         Ok(Solver {
             solver: ipopt,
             step_count: 0,
+            sim_params: params.clone(),
+            solid_material: Some(solid_material),
         })
     }
+
+    /// Compute signed volume for reference elements in the given `TetMesh`.
+    fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
+        let ref_volumes: Vec<f64> = mesh
+            .cell_iter()
+            .map(|cell| ref_tet(&mesh, cell).signed_volume())
+            .collect();
+        if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
+            return Err(Error::InvertedReferenceElement);
+        }
+        Ok(ref_volumes)
+    }
+
+    /// Compute shape matrix inverses for reference elements in the given `TetMesh`.
+    fn compute_ref_tet_shape_matrix_inverses(mesh: &mut TetMesh) -> Vec<Matrix3<f64>> {
+        // Compute reference shape matrix inverses
+        mesh
+            .cell_iter()
+            .map(|cell| {
+                let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
+                // We assume that ref_shape_matrices are non-singular.
+                ref_shape_matrix.inverse().unwrap()
+            })
+            .collect()
+    }
+
+    /// Precompute attributes necessary for FEM simulation on the given mesh.
+    fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
+        let verts = mesh.vertex_positions().to_vec();
+
+        mesh.attrib_or_add_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
+
+        mesh.attrib_or_add::<_, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
+
+        let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
+        mesh.set_attrib_data::<_, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
+
+        let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
+        mesh.set_attrib_data::<_, CellIndex>(
+            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+            ref_shape_mtx_inverses.as_slice(),
+        )?;
+
+        {
+            // Add elastic strain energy and elastic force attributes.
+            // These will be computed at the end of the time step.
+            mesh.set_attrib::<_, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+            mesh.set_attrib::<_, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+        }
+
+        Ok(mesh)
+    }
+}
+
+/// Finite element engine.
+pub struct Solver {
+    /// Non-linear solver.
+    solver: Ipopt<NonLinearProblem>,
+    /// Step count (outer iterations). These count the number of times the function `step` was
+    /// called.
+    step_count: usize,
+    /// Simulation paramters. This is kept around for convenience.
+    sim_params: SimParams,
+    /// Solid material properties.
+    solid_material: Option<Material>,
+}
+
+impl Solver {
 
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
@@ -226,9 +317,14 @@ impl Solver {
         self.solver.solver_data_ref().problem.tetmesh.borrow_mut()
     }
 
-    /// Get solver parameters.
+    /// Get simulation parameters.
     pub fn params(&mut self) -> SimParams {
-        self.solver.solver_data_mut().problem.params
+        self.sim_params
+    }
+
+    /// Get the solid material model (if any).
+    pub fn solid_material(&mut self) -> Option<Material> {
+        self.solid_material
     }
 
     /// Update the solver mesh with the given points.
@@ -393,7 +489,7 @@ impl Solver {
 
         // On success, update the mesh with new positions and useful metrics.
         if let Ok(_) = step_result {
-            let (lambda, mu) = self.params().material.elasticity.lame_parameters();
+            let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
             let SolverDataMut {
                 ref mut problem,
@@ -431,32 +527,34 @@ mod tests {
      */
 
     const STATIC_PARAMS: SimParams = SimParams {
-        material: MaterialProperties {
-            elasticity: ElasticityProperties {
-                bulk_modulus: 1750e6,
-                shear_modulus: 10e6,
-            },
-            density: 1000.0,
-            damping: 0.0,
-        },
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 800,
-        volume_constraint: false,
     };
 
     const DYNAMIC_PARAMS: SimParams = SimParams {
-        material: MaterialProperties {
-            elasticity: ElasticityProperties {
-                bulk_modulus: 1e6,
-                shear_modulus: 1e5,
-            },
-            ..STATIC_PARAMS.material
-        },
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(0.01),
         ..STATIC_PARAMS
+    };
+
+    const HARD_SOLID_MATERIAL: Material = Material {
+        elasticity: ElasticityParameters {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+        },
+        incompressibility: false,
+        density: 1000.0,
+        damping: 0.0,
+    };
+
+    const SOFT_SOLID_MATERIAL: Material = Material {
+        elasticity: ElasticityParameters {
+            bulk_modulus: 1e6,
+            shear_modulus: 1e5,
+        },
+        ..HARD_SOLID_MATERIAL
     };
 
     fn make_one_tet_mesh() -> TetMesh {
@@ -536,19 +634,29 @@ mod tests {
     fn one_tet_test() {
         let mesh = make_one_tet_mesh();
 
-        assert!(Solver::new(mesh, STATIC_PARAMS).unwrap().step().is_ok());
+        let mut solver = SolverBuilder::new(STATIC_PARAMS)
+            .solid_material(HARD_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
     }
 
     #[test]
     fn one_tet_volume_constraint_test() {
         let mesh = make_one_tet_mesh();
 
-        let params = SimParams {
-            volume_constraint: true,
-            ..STATIC_PARAMS
+        let material = Material {
+            incompressibility: true,
+            ..HARD_SOLID_MATERIAL
         };
 
-        assert!(Solver::new(mesh, params).unwrap().step().is_ok());
+        let mut solver = SolverBuilder::new(STATIC_PARAMS)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
     }
 
     /*
@@ -558,7 +666,11 @@ mod tests {
     #[test]
     fn three_tets_static_test() {
         let mesh = make_three_tet_mesh();
-        let mut solver = Solver::new(mesh, STATIC_PARAMS).unwrap();
+        let mut solver = SolverBuilder::new(STATIC_PARAMS)
+            .solid_material(HARD_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
@@ -569,7 +681,11 @@ mod tests {
     #[test]
     fn three_tets_dynamic_test() {
         let mesh = make_three_tet_mesh();
-        let mut solver = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(SOFT_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
@@ -581,11 +697,15 @@ mod tests {
     #[test]
     fn three_tets_static_volume_constraint_test() {
         let mesh = make_three_tet_mesh();
-        let params = SimParams {
-            volume_constraint: true,
-            ..STATIC_PARAMS
+        let material = Material {
+            incompressibility: true,
+            ..HARD_SOLID_MATERIAL
         };
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(STATIC_PARAMS)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
         let exptected = geo::io::load_tetmesh(&PathBuf::from(
@@ -598,11 +718,15 @@ mod tests {
     #[test]
     fn three_tets_dynamic_volume_constraint_test() {
         let mesh = make_three_tet_mesh();
-        let params = SimParams {
-            volume_constraint: true,
-            ..DYNAMIC_PARAMS
+        let material = Material {
+            incompressibility: true,
+            ..SOFT_SOLID_MATERIAL
         };
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
         let expected = geo::io::load_tetmesh(&PathBuf::from(
@@ -624,7 +748,11 @@ mod tests {
         ];
         let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-        let mut solver = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(SOFT_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
@@ -647,12 +775,16 @@ mod tests {
         ];
         let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-        let params = SimParams {
-            volume_constraint: true,
-            ..DYNAMIC_PARAMS
+        let incompressible_material = Material {
+            incompressibility: true,
+            ..SOFT_SOLID_MATERIAL
         };
 
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(incompressible_material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
@@ -668,21 +800,26 @@ mod tests {
     }
 
     const STRETCH_PARAMS: SimParams = SimParams {
-        material: MaterialProperties {
-            elasticity: ElasticityProperties {
-                bulk_modulus: 300e6,
-                shear_modulus: 100e6,
-            },
-            ..STATIC_PARAMS.material
-        },
         gravity: [0.0f32, 0.0, 0.0],
         ..STATIC_PARAMS
+    };
+
+    const MEDIUM_SOLID_MATERIAL: Material = Material {
+        elasticity: ElasticityParameters {
+            bulk_modulus: 300e6,
+            shear_modulus: 100e6,
+        },
+        ..HARD_SOLID_MATERIAL
     };
 
     #[test]
     fn box_stretch_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
-        let mut solver = Solver::new(mesh, STRETCH_PARAMS).unwrap();
+        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+            .solid_material(MEDIUM_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
@@ -692,12 +829,16 @@ mod tests {
 
     #[test]
     fn box_stretch_volume_constraint_test() {
-        let params = SimParams {
-            volume_constraint: true,
-            ..STRETCH_PARAMS
+        let incompressible_material = Material {
+            incompressibility: true,
+            ..MEDIUM_SOLID_MATERIAL
         };
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+            .solid_material(incompressible_material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
@@ -707,15 +848,16 @@ mod tests {
 
     #[test]
     fn box_twist_test() {
-        let params = SimParams {
-            material: MaterialProperties {
-                elasticity: ElasticityProperties::from_young_poisson(1000.0, 0.0),
-                ..STRETCH_PARAMS.material
-            },
-            ..STRETCH_PARAMS
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
+            ..MEDIUM_SOLID_MATERIAL
         };
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
@@ -725,16 +867,17 @@ mod tests {
 
     #[test]
     fn box_twist_volume_constraint_test() {
-        let params = SimParams {
-            material: MaterialProperties {
-                elasticity: ElasticityProperties::from_young_poisson(1000.0, 0.0),
-                ..STRETCH_PARAMS.material
-            },
-            volume_constraint: true,
-            ..STRETCH_PARAMS
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
+            incompressibility: true,
+            ..MEDIUM_SOLID_MATERIAL
         };
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
-        let mut solver = Solver::new(mesh, params).unwrap();
+        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
         assert!(solver.step().is_ok());
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
@@ -749,21 +892,30 @@ mod tests {
     #[test]
     fn torus_medium_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        assert!(Solver::new(mesh, DYNAMIC_PARAMS).unwrap().step().is_ok());
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(SOFT_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
     }
 
     #[cfg(not(debug_assertions))]
     #[test]
     fn torus_long_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(SOFT_SOLID_MATERIAL)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
 
-        let mut engine = Solver::new(mesh, DYNAMIC_PARAMS).unwrap();
         for _i in 0..10 {
             //save_tetmesh_ascii(
             //    engine.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
             //);
-            let res = engine.step();
+            let res = solver.step();
             assert!(res.is_ok());
         }
     }

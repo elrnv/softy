@@ -14,8 +14,8 @@ use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
 
-use super::SimParams;
 use crate::TetMesh;
+use crate::TriMesh;
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
@@ -26,6 +26,8 @@ pub(crate) struct NonLinearProblem {
     pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub tetmesh: Rc<RefCell<TetMesh>>,
+    /// Static or animated collision object represented by a triangle mesh.
+    pub kinematic_object: Option<Rc<RefCell<TriMesh>>>,
     /// Elastic energy model.
     pub energy_model: ElasticTetMeshEnergy,
     /// Gravitational potential energy.
@@ -39,8 +41,6 @@ pub(crate) struct NonLinearProblem {
     pub interrupt_checker: Box<FnMut() -> bool>,
     /// Count the number of iterations.
     pub iterations: usize,
-    /// Simulation parameters.
-    pub params: SimParams,
 }
 
 impl fmt::Debug for NonLinearProblem {
@@ -48,8 +48,8 @@ impl fmt::Debug for NonLinearProblem {
         write!(
             f,
             "NonLinearProblem {{ energy_model: {:?}, volume_constraint: {:?}, \
-             iterations: {:?}, params: {:?} }}",
-            self.energy_model, self.volume_constraint, self.iterations, self.params
+             iterations: {:?} }}",
+            self.energy_model, self.volume_constraint, self.iterations
         )
     }
 }
@@ -79,7 +79,7 @@ impl NonLinearProblem {
         !(self.interrupt_checker)()
     }
 
-    /// Update teh tetmesh vertex positions with the given displacment field.
+    /// Update the tetmesh vertex positions with the given displacment field.
     /// `dx` is expected to contain contiguous triplets of coordinates (x,y,z) for each vertex.
     pub fn update(&mut self, dx: &[f64]) {
         let displacement: &[Vector3<f64>] = reinterpret_slice(dx);

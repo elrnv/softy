@@ -4,7 +4,7 @@
 //!
 
 use crate::geo::math::Vector3;
-use crate::geo::mesh::{VertexMesh, topology::*, Attrib, VertexPositions, PolyMesh};
+use crate::geo::mesh::{VertexMesh, topology::VertexIndex};
 use crate::kernel::{self, Kernel, KernelType};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
@@ -208,6 +208,11 @@ pub struct ImplicitSurface {
 }
 
 impl ImplicitSurface {
+
+    pub fn num_points(&self) -> usize {
+        return self.oriented_points.len()
+    }
+
     /// Update points and normals.
     pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
         let ImplicitSurface {
@@ -245,13 +250,14 @@ impl ImplicitSurface {
     }
 
     /// Compute the implicit surface potential on the given polygon mesh.
-    pub fn compute_potential_on_mesh<F>(
+    pub fn compute_potential_on_mesh<F, M>(
         &self,
-        mesh: &mut PolyMesh<f64>,
+        mesh: &mut M,
         interrupt: F,
     ) -> Result<(), super::Error>
     where
         F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
     {
         let ImplicitSurface {
             ref kernel,
@@ -337,8 +343,8 @@ impl ImplicitSurface {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, K, N, F>(
-        mesh: &mut PolyMesh<f64>,
+    fn compute_mls_on_mesh<'a, K, N, F, M>(
+        mesh: &mut M,
         radius: f64,
         kernel: K,
         neigh: N,
@@ -348,6 +354,7 @@ impl ImplicitSurface {
         K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
         N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
         F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
     {
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
         let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
@@ -449,14 +456,15 @@ impl ImplicitSurface {
         Ok(())
     }
 
-    fn compute_hrbf_on_mesh<F>(
-        mesh: &mut PolyMesh<f64>,
+    fn compute_hrbf_on_mesh<F, M>(
+        mesh: &mut M,
         oriented_points: &[OrientedPoint],
         offsets: &[f64],
         interrupt: F,
     ) -> Result<(), super::Error>
     where
         F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
     {
         let sample_pos = mesh.vertex_positions().to_vec();
 

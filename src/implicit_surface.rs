@@ -3,9 +3,8 @@
 //! potential and its derivatives.
 //!
 
-use crate::geo::math::{ToPrimitive, Vector3};
-use crate::geo::mesh::{topology::*, Attrib, PointCloud, PolyMesh};
-use crate::geo::Real;
+use crate::geo::math::Vector3;
+use crate::geo::mesh::{VertexMesh, topology::*, Attrib, VertexPositions, PolyMesh};
 use crate::kernel::{self, Kernel, KernelType};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
@@ -44,12 +43,11 @@ pub fn oriented_points_iter<'a>(
         })
 }
 
-pub fn oriented_points_from_pointcloud<'a, T: Real + ToPrimitive>(
-    ptcloud: &PointCloud<T>
+pub fn oriented_points_from_mesh<'a, M: VertexMesh<f64>>(
+    mesh: &M
 ) -> Vec<OrientedPoint> {
-    let points_iter = ptcloud
-        .vertex_positions()
-        .iter()
+    let points_iter = mesh
+        .vertex_position_iter()
         .map(|&x| -> [f64;3] {
             Vector3(x)
                 .cast::<f64>()
@@ -57,7 +55,7 @@ pub fn oriented_points_from_pointcloud<'a, T: Real + ToPrimitive>(
                 .into()
         });
 
-    if let Ok(iter) = ptcloud.attrib_iter::<[f32; 3], VertexIndex>("N") {
+    if let Ok(iter) = mesh.attrib_iter::<[f32; 3], VertexIndex>("N") {
         let normals_iter = iter.map(|&nml| Vector3(nml).cast::<f64>().unwrap().into());
         points_iter
             .zip(normals_iter)
@@ -133,12 +131,12 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    /// Initialize fit data using a point cloud which can include positions, normals and offsets as
-    /// attributes on the `PointCloud` struct.
+    /// Initialize fit data using a mesh type which can include positions, normals and offsets as
+    /// attributes on the mesh struct.
     /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
     /// The offsets attribute is expected to be named "offsets" and have type `f32`.
-    pub fn with_pointcloud<T: Real + ToPrimitive>(&mut self, ptcloud: &PointCloud<T>) -> &mut Self {
-        self.points = ptcloud
+    pub fn with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
+        self.points = mesh 
             .vertex_positions()
             .iter()
             .map(|&x| {
@@ -148,17 +146,17 @@ impl ImplicitSurfaceBuilder {
                     .into()
             })
             .collect();
-        self.normals = ptcloud
+        self.normals = mesh
             .attrib_iter::<[f32; 3], VertexIndex>("N")
             .map(|iter| {
                 iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap().into())
                     .collect()
             })
-            .unwrap_or(vec![[0.0f64; 3]; ptcloud.num_vertices()]);
-        self.offsets = ptcloud
+            .unwrap_or(vec![[0.0f64; 3]; mesh.num_vertices()]);
+        self.offsets = mesh
             .attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| x as f64).collect())
-            .unwrap_or(vec![0.0f64; ptcloud.num_vertices()]);
+            .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
         self
     }
 
@@ -211,7 +209,7 @@ pub struct ImplicitSurface {
 
 impl ImplicitSurface {
     /// Update points and normals.
-    pub fn update_oriented_points_with_pointcloud<T: Real + ToPrimitive>(&mut self, ptcloud: &PointCloud<T>) {
+    pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
         let ImplicitSurface {
             ref mut spatial_tree,
             ref mut oriented_points,
@@ -219,13 +217,13 @@ impl ImplicitSurface {
             ..
         } = self;
 
-        *oriented_points = oriented_points_from_pointcloud(ptcloud);
+        *oriented_points = oriented_points_from_mesh(mesh);
 
         *spatial_tree = build_rtree(oriented_points);
 
-        if ptcloud.num_vertices() == offsets.len() {
+        if mesh.num_vertices() == offsets.len() {
             // Update offsets if any.
-            if let Ok(offset_iter) = ptcloud.attrib_iter::<f32, VertexIndex>("offset") {
+            if let Ok(offset_iter) = mesh.attrib_iter::<f32, VertexIndex>("offset") {
                 for (off, new_off) in offsets.iter_mut().zip(offset_iter.map(|&x| x as f64)) {
                     *off = new_off;
                 }
@@ -235,10 +233,10 @@ impl ImplicitSurface {
             // overwrite all internal data vectors.
 
             // Overwrite offsets or remove them.
-            if let Ok(offset_iter) = ptcloud.attrib_iter::<f32, VertexIndex>("offset") {
+            if let Ok(offset_iter) = mesh.attrib_iter::<f32, VertexIndex>("offset") {
                 *offsets = offset_iter.map(|&x| x as f64).collect();
             } else {
-                *offsets = vec![0.0; ptcloud.num_vertices()];
+                *offsets = vec![0.0; mesh.num_vertices()];
             }
         }
 

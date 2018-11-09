@@ -8,6 +8,7 @@ use crate::geo::mesh::{VertexMesh, topology::VertexIndex};
 use crate::kernel::{self, Kernel, KernelType};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
+use std::cell::RefCell;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct OrientedPoint {
@@ -95,6 +96,7 @@ pub struct ImplicitSurfaceBuilder {
     points: Vec<[f64; 3]>,
     normals: Vec<[f64; 3]>,
     offsets: Vec<f64>,
+    max_step: f64,
 }
 
 impl ImplicitSurfaceBuilder {
@@ -108,21 +110,22 @@ impl ImplicitSurfaceBuilder {
             points: Vec::new(),
             normals: Vec::new(),
             offsets: Vec::new(),
+            max_step: 0.0, // This is a sane default for static implicit surfaces.
         }
     }
 
-    pub fn with_points(&mut self, points: &[[f64; 3]]) -> &mut Self {
-        self.points = points.to_vec();
+    pub fn with_points(&mut self, points: Vec<[f64; 3]>) -> &mut Self {
+        self.points = points;
         self
     }
 
-    pub fn with_normals(&mut self, normals: &[[f64; 3]]) -> &mut Self {
-        self.normals = normals.to_vec();
+    pub fn with_normals(&mut self, normals: Vec<[f64; 3]>) -> &mut Self {
+        self.normals = normals;
         self
     }
 
-    pub fn with_offsets(&mut self, offsets: &[f64]) -> &mut Self {
-        self.offsets = offsets.to_vec();
+    pub fn with_offsets(&mut self, offsets: Vec<f64>) -> &mut Self {
+        self.offsets = offsets;
         self
     }
 
@@ -165,6 +168,10 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
+    pub fn with_max_step(&mut self, max_step: f64) -> &mut Self {
+        self.max_step = max_step;
+    }
+
     pub fn build(&self) -> ImplicitSurface {
         let ImplicitSurfaceBuilder {
             kernel,
@@ -192,10 +199,13 @@ impl ImplicitSurfaceBuilder {
             spatial_tree: build_rtree(&oriented_points),
             oriented_points,
             offsets,
+            max_step: self.max_step,
+            neighbour_cache: RefCell::new(None),
         }
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ImplicitSurface {
     kernel: KernelType,
     background_potential: bool,
@@ -205,15 +215,400 @@ pub struct ImplicitSurface {
     /// match by interpolating implicit surfaces. This means that the zero iso-surface will ot
     /// necessarily pass through the given points.
     offsets: Vec<f64>,
+
+    /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
+    /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
+    /// than then needed, which typically results in slower performance.  If it is set too low,
+    /// there may be errors in the derivative. It is the callers responsibility to set this step
+    /// accurately using `update_max_step`. If the implicit surface is not changing, leave this at
+    /// 0.0.
+    max_step: f64,
+
+    /// Cache the neighbouring indices of the sample points (from oriented_points vector) for each
+    /// query point we see. This cache can be invalidated explicitly when the sparsity pattern is
+    /// expected to change. This is wrapped in a `RefCell` because it may be updated in non mutable
+    /// functions since it's a cache.
+    neighbour_cache: RefCell<Option<Vec<Vec<usize>>>>,
 }
 
 impl ImplicitSurface {
+    const PARALLEL_CHUNK_SIZE: usize = 5000;
 
+    /// Number of sample points used to represent the implicit surface.
     pub fn num_points(&self) -> usize {
         return self.oriented_points.len()
     }
 
-    /// Update points and normals.
+    /// Update points and normals (oriented points) using an iterator.
+    pub fn update_points_and_normals<I,J>(&mut self, points_iter: I, mb_normals_iter: Option<J>) 
+        where I: Iterator<Item = [f64;3]>,
+              J: Iterator<Item = [f64;3]>,
+    {
+        let ImplicitSurface {
+            ref mut spatial_tree,
+            ref mut oriented_points,
+            ..
+        } = self;
+
+        match mb_normals_iter {
+            Some(normals_iter) => {
+                for (op, (pos, nml)) in oriented_points.iter_mut()
+                    .zip(points_iter.zip(normals_iter)) {
+                    op.pos = pos.into();
+                    op.nml = nml.into();
+                }
+            }
+            None => {
+                for (op, pos) in oriented_points.iter_mut().zip(points_iter) {
+                    op.pos = pos.into();
+                    op.nml = Vector3::zeros();
+                }
+            }
+        }
+
+        *spatial_tree = build_rtree(oriented_points);
+    }
+
+    /// Compute neighbour cache if it hasn't been computed yet. Return the neighbours of the given
+    /// query points. Note that the cache must be invalidated explicitly, there is no real way to
+    /// automatically cache results because both: query points and sample points may change
+    /// slightly, but we expect the neighbourhood information to remain the same.
+    pub fn cached_neighbours<N>(&self, query_points: &[[f64; 3]], neigh: N) -> &[Vec<usize>]
+    where
+        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+    {
+        if self.neighbour_cache.borrow().is_none() {
+            let mut cache = self.neighbour_cache.borrow_mut();
+            *cache = Some(vec![Vec::new(); query_points.len()]);
+
+            zip!(
+                cache.par_iter_mut(),
+                query_points.par_iter()
+            ).for_each(|(c, q)| {
+                let neighbours: Vec<&OrientedPoint> = neigh(*q);
+                *c = neighbours.map(|&&op| op.index).collect();
+            });
+        }
+        self.neighbour_cache.borrow().unwrap().as_slice()
+    }
+
+    /// Set `neighbour_cache` to None. This triggers recomputation of the neighbour cache next time
+    /// the potential or its derivatives are requested.
+    pub fn invalidate_neighbour_cache(&self) {
+        let cache = self.neighbour_cache.borrow_mut();
+        *cache = None;
+    }
+
+    /// The `max_step` parameter sets the maximum position change allowed between calls to
+    /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
+    /// derivative will be denser than then needed, which typically results in slower performance.
+    /// If it is set too low, there will be errors in the derivative. It is the callers
+    /// responsibility to set this step accurately.
+    pub fn update_max_step(&mut self, max_step: f64) {
+        self.max_step = max_step;
+    }
+
+    /// Compute the implicit surface potential.
+    pub fn potential(&self,
+                     query_points: &[[f64; 3]],
+                     out_potential: &mut [f64]) -> Result<(), super::Error>
+    {
+        let ImplicitSurface {
+            ref kernel,
+            background_potential: generate_bg_potential,
+            ref spatial_tree,
+            ref oriented_points,
+            ref offsets,
+            max_step,
+        } = *self;
+
+        assert_eq!(out_potential.len(), query_points.len());
+
+        if generate_bg_potential {
+            // Initialize potential with zeros.
+            for p in out_potential.iter_mut() {
+                *p = 0.0;
+            }
+            // Generate a background potential field for every sample point. This will be mixed
+            // in with the computed potentials for local methods. Global methods like HRBF
+            // ignore this field.
+            for (pos, potential) in
+                zip!(query_points.iter(), out_potential.iter_mut())
+            {
+                if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
+                    let q = Vector3(*pos);
+                    let p = nearest_neigh.pos;
+                    let nml = nearest_neigh.nml;
+                    *potential = (q - p).dot(nml);
+                } else {
+                    return Err(super::Error::Failure);
+                }
+            }
+        }
+
+        match *kernel {
+            KernelType::Interpolating { radius } => {
+                let radius2 = radius * radius + max_step;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let kern = |x, p, closest_dist| {
+                    kernel::LocalInterpolating::new(radius)
+                        .update_closest(closest_dist)
+                        .f(dist(x, p))
+                };
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+            }
+            KernelType::Approximate { tolerance, radius } => {
+                let radius2 = radius * radius + max_step;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+            }
+            KernelType::Cubic { radius } => {
+                let radius2 = radius * radius + max_step;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let kern = |x, p, _| kernel::LocalCubic::new(radius).f(dist(x, p));
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+            }
+            KernelType::Global { tolerance } => {
+                let neigh = |_| oriented_points.iter().collect(); // Global kernel, all points are neighbours
+                let radius = 1.0;
+                let kern = |x, p, _| kernel::GlobalInvDistance2::new(tolerance).f(dist(x, p));
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+            }
+            KernelType::Hrbf => {
+                // Global kernel, all points are neighbours.
+                Self::compute_hrbf(query_points, oriented_points, offsets, out_potential)
+            }
+        }
+    }
+
+    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
+    fn compute_mls<'a, K, N, F>(
+        &self,
+        query_points: &[[f64; 3]],
+        radius: f64,
+        kernel: K,
+        neigh: N,
+        out_potential: &mut [f64],
+    ) -> Result<(), super::Error>
+    where
+        K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
+        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+    {
+        let neigh = self.cached_neighbours(query_points, neigh);
+
+        let ImplicitSurface {
+            oriented_points,
+            ..
+        } = *self;
+
+        zip!(
+            query_points.par_iter(),
+            neigh.par_iter(),
+            out_potential.par_iter_mut()
+        ).for_each(|(q, neighbours, potential)| {
+            if !neighbours.is_empty() {
+                let mut closest_d = radius;
+                for nbr in neighbours.iter() {
+                    closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
+                }
+
+                let mut denominator = 0.0;
+                let mut numerator = 0.0;
+                for npt in neighbours.iter().map(|i| oriented_points[i]) {
+                    let w = kernel(Vector3(*q), npt.pos, closest_d);
+                    let p = npt.nml.dot(Vector3(*q) - npt.pos);
+
+                    denominator += w;
+                    numerator += w * p;
+                }
+
+                // Background potential
+                let bg = [q[0] - radius + closest_d, q[1], q[2]];
+                let w = kernel(Vector3(*q), bg.into(), closest_d);
+                denominator += w;
+                numerator += w * (*potential as f64);
+
+                if denominator != 0.0 {
+                    *potential = numerator / denominator;
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Compute the indices for the implicit surface potential jacobian with respect to surface
+    /// points.
+    pub fn surface_jacobian_indices_iter<'a>(&'a self) -> Result<impl Iterator<Item = (usize, usize)> + 'a, super::Error>
+    {
+        match self.kernel {
+            KernelType::Approximate { .. } => {
+                Ok(self.mls_surface_jacobian_indices_iter())
+            }
+            _ => Err(super::Error::UnsupportedKernel)
+        }
+    }
+
+    pub fn surface_jacobian_values(&self,
+                                   query_points: &[[f64; 3]],
+                                   values: &mut [f64])
+    -> Result<(), super::Error>
+    {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            ref oriented_points,
+            ref offsets,
+            background_potential: generate_bg_potential,
+            max_step,
+        } = *self;
+
+        match *kernel {
+            KernelType::Approximate { tolerance, radius } => {
+                let radius2 = radius * radius + max_step;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
+                let dkern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).df(dist(x, p));
+                self.mls_surface_jacobian_values(query_points, radius, kern, neigh, values);
+                Ok(())
+            }
+            _ => Err(super::Error::UnsupportedKernel)
+        }
+    }
+
+    /// Return row and column indices for each non-zero entry in the jacobian. This is determined
+    /// by the precomputed `neighbour_cache` map.
+    fn mls_surface_jacobian_indices_iter<'a>(&self) -> impl Iterator<Item = (usize, usize)> + 'a {
+        // For each row
+        self.neighbour_cache.borrow()
+            .expect("Neighbour computation missing, can't initialize jacobian indices.")
+            .iter().enumerate().flat_map(move |(row, neighbours)|
+                // For each column
+                neighbours.iter().map(move |col| (row, col))
+            )
+    }
+
+    fn mls_surface_jacobian_values<'a, K, N>(
+        &self,
+        query_points: &[[f64; 3]],
+        radius: f64,
+        kernel: K,
+        neigh: N,
+        values: &mut [f64],
+    )
+    where
+        K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
+        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+    {
+        let ImplicitSurface {
+            oriented_points,
+            ..
+        } = *self;
+
+        let neigh = self.cached_neighbours(query_points, neigh);
+        // For each row
+        zip!(
+            query_points.par_iter(),
+            neigh.par_iter()
+        ).flat_map(|(q, neighbours)| {
+            if !neighbours.is_empty() {
+                let mut denominator = 0.0;
+                let mut numerator = 0.0;
+                for npt in neighbours.iter().map(|i| oriented_points[i]) {
+                    let w = kernel(Vector3(*q), npt.pos, 0.0);
+                    let p = npt.nml.dot(Vector3(*q) - npt.pos);
+
+                    denominator += w;
+                    numerator += w * p;
+                }
+
+                // Background potential
+                let mut closest_d = radius;
+                for nbr in neighbours.iter() {
+                    closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
+                }
+                let bg = [q[0] - radius + closest_d, q[1], q[2]];
+                let w = kernel(Vector3(*q), bg.into(), 0.0);
+                denominator += w;
+                numerator += w * (*potential as f64);
+
+                if denominator != 0.0 {
+                    *potential = numerator / denominator;
+                }
+            }
+        });
+    }
+
+    fn compute_hrbf<F>(
+        query_points: &[[f64; 3]],
+        oriented_points: &[OrientedPoint],
+        offsets: &[f64],
+        interrupt: F,
+        out_potential: &mut [f64],
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
+    {
+        let pts: Vec<crate::na::Point3<f64>> = oriented_points
+            .iter()
+            .map(|op| crate::na::Point3::from(op.pos.into_inner()))
+            .collect();
+        let nmls: Vec<crate::na::Vector3<f64>> = oriented_points
+            .iter()
+            .map(|op| crate::na::Vector3::from(op.nml.into_inner()))
+            .collect();
+
+        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
+
+        hrbf.fit_offset(&pts, offsets, &nmls);
+
+        for (q_chunk, potential_chunk) in query_points.chunks(Self::PARALLEL_CHUNK_SIZE).zip(
+            out_potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+        ) {
+            if interrupt() {
+                return Err(super::Error::Interrupted);
+            }
+
+            q_chunk
+                .par_iter()
+                .zip(potential_chunk.par_iter_mut())
+                .for_each(|(q, potential)| {
+                    *potential = hrbf.eval(crate::na::Point3::from(*q));
+                });
+        }
+
+        Ok(())
+    }
+
+    /// Jacobian with respect to sample points that define the implicit surface.
+    pub fn surface_jacobian_indices<F>(&self,
+                                       max_step: f64,
+                                       indices: &mut [f64]) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
+    {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            ref oriented_points,
+            ref offsets,
+            background_potential: generate_bg_potential,
+        } = *self;
+
+        match *kernel {
+            KernelType::Approximate { tolerance, radius } => {
+                let radius2 = radius * radius;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
+                Self::compute_mls(query_points, radius, kern, neigh, interrupt, out_potential)
+            }
+            _ => { unimplemented!() }
+        }
+    }
+
+
+    /// Update points, normals and offsets from a given vertex mesh.
     pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
         let ImplicitSurface {
             ref mut spatial_tree,
@@ -248,6 +643,10 @@ impl ImplicitSurface {
         // Check invariant.
         assert_eq!(oriented_points.len(), offsets.len());
     }
+
+    /*
+     * The methods below are designed for debugging and visualization.
+     */
 
     /// Compute the implicit surface potential on the given polygon mesh.
     pub fn compute_potential_on_mesh<F, M>(
@@ -326,22 +725,6 @@ impl ImplicitSurface {
             }
         }
     }
-
-    /// Given a slice of query points, compute the potential at each point.
-    pub fn compute_potential(&self, _query_points: &[[f64; 3]], _out_potential: &mut [f64]) {}
-
-    /// Compute the implicit surface potential. The `interrupt` callback will be called
-    /// intermittently and it returns true, the computation will halt.
-    pub fn compute_potential_interruptable<F>(
-        &self,
-        _query_points: &[[f64; 3]],
-        _interrupt: F,
-        _out_potential: &mut [f64],
-    ) where
-        F: Fn() -> bool + Sync + Send,
-    {
-    }
-
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
     fn compute_mls_on_mesh<'a, K, N, F, M>(
         mesh: &mut M,
@@ -361,16 +744,14 @@ impl ImplicitSurface {
         let mut weight_attrib_data = vec![[0f32; 12]; mesh.num_vertices()];
         let sample_pos = mesh.vertex_positions().to_vec();
 
-        let chunk_size = 5000;
-
         for (q_chunk, num_neighs_chunk, neighs_chunk, weight_chunk, potential_chunk) in zip!(
-            sample_pos.chunks(chunk_size),
-            num_neighs_attrib_data.chunks_mut(chunk_size),
-            neighs_attrib_data.chunks_mut(chunk_size),
-            weight_attrib_data.chunks_mut(chunk_size),
+            sample_pos.chunks(Self::PARALLEL_CHUNK_SIZE),
+            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
                 .unwrap()
-                .chunks_mut(chunk_size)
+                .chunks_mut(Self::PARALLEL_CHUNK_SIZE)
         ) {
             if interrupt() {
                 return Err(super::Error::Interrupted);
@@ -468,8 +849,6 @@ impl ImplicitSurface {
     {
         let sample_pos = mesh.vertex_positions().to_vec();
 
-        let chunk_size = 5000;
-
         let pts: Vec<crate::na::Point3<f64>> = oriented_points
             .iter()
             .map(|op| crate::na::Point3::from(op.pos.into_inner()))
@@ -481,10 +860,10 @@ impl ImplicitSurface {
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
         hrbf.fit_offset(&pts, offsets, &nmls);
 
-        for (q_chunk, potential_chunk) in sample_pos.chunks(chunk_size).zip(
+        for (q_chunk, potential_chunk) in sample_pos.chunks(Self::PARALLEL_CHUNK_SIZE).zip(
             mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
                 .unwrap()
-                .chunks_mut(chunk_size),
+                .chunks_mut(Self::PARALLEL_CHUNK_SIZE),
         ) {
             if interrupt() {
                 return Err(super::Error::Interrupted);

@@ -1,4 +1,5 @@
 use crate::geo::Real;
+use crate::geo::math::{Vector3, Matrix3};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -10,7 +11,7 @@ pub enum KernelType {
     Hrbf,
 }
 
-/// This kernel trait defines a radial basis kernel interface.
+/// This kernel trait defines a 1D basis kernel interface.
 pub trait Kernel<T: Real> {
     /// Main kernel function evaluated at `x`.
     fn f(&self, x: T) -> T;
@@ -215,6 +216,38 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         factor * _4 * ( _6 * d * d - d2_eps ) / d2_eps4
     }
 }
+
+/// This kernel trait defines a radial basis kernel interface.
+pub trait SphericalKernel<T: Real>: Kernel<T> {
+    /// Main kernel function evaluated at `x` with center at `p`.
+    fn f(&self, x: Vector3<T>, p: Vector3<T>) -> T {
+        Kernel::f(self, (x-p).norm())
+    }
+    /// First derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
+    /// To compute the derivatives wrt `p`, simply negate this derivative.
+    fn df(&self, x: Vector3<T>, p: Vector3<T>) -> Vector3<T> {
+        let diff = x - p;
+        let norm = diff.norm();
+        if norm > 0.0 {
+            ( Kernel::df(self, norm) / norm ) * ( x - p )
+        } else {
+            Vector3::zeros()
+        }
+    }
+    /// Second derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
+    /// To compute the derivatives wrt `p`, simply negate this derivative.
+    fn ddf(&self, x: Vector3<T>, p: Vector3<T>) -> Matrix3<T> {
+        let diff = x - p;
+        let dot = diff.dot(diff);
+        let norm = dot.sqrt();
+        let norm_inv = T::one() / norm;
+        let norm_inv3 = norm_inv*norm_inv*norm_inv;
+        let identity = Matrix3::identity();
+        Kernel::ddf(self, norm) * (norm_inv * identity - norm_inv3 * diff * diff.transpose())
+    }
+}
+
+impl<K, T: Real> SphericalKernel<T> for K where K: Kernel<T> {}
 
 #[cfg(test)]
 mod tests {

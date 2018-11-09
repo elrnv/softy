@@ -54,6 +54,7 @@ where
 pub enum Error {
     Interrupted,
     MissingNormals,
+    UnsupportedKernel,
     Failure,
     IO(geo::io::Error),
 }

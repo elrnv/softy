@@ -1,0 +1,20 @@
+[package]
+name = "implicits"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+rayon = "1.0"
+nalgebra = "0.16"
+hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
+spade = "1.5"
+autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
+reinterpret = "0.1"
+
+[dev-dependencies]
+approx = "0.3"
+
+[features]
+unstable = []

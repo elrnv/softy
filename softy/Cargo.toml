@@ -1,0 +1,28 @@
+[package]
+name = "softy"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+nalgebra = "0.16"
+ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
+rayon = "1.0"
+reinterpret = "0.1"
+implicits = { path = "../../implicits-hdk/implicits" } #git = "ssh://git@gitlab.com/elrnv/implicits.git" }
+#unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
+
+[dev-dependencies]
+criterion = { version = "0.2", features=['real_blackbox'] }
+approx = "0.3"
+
+[profile.release]
+debug = false # Change this to true to enable debug symbols in release mode
+
+[features]
+unstable = []
+
+[[bench]]
+name = "step_performance"
+harness = false

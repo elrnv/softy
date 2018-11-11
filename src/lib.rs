@@ -5,6 +5,7 @@ extern crate ipopt;
 extern crate nalgebra as na;
 extern crate rayon;
 extern crate reinterpret;
+extern crate implicits;
 
 #[cfg(test)]
 #[macro_use]

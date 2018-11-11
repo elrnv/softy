@@ -10,6 +10,7 @@ ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io", "unstable"] }
 rayon = "1.0"
 reinterpret = "0.1"
+implicits = { path = "../../implicits-hdk/implicits" } #git = "ssh://git@gitlab.com/elrnv/implicits.git" }
 #unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
 
 [dev-dependencies]

@@ -4,93 +4,8 @@ use crate::geo::ops::Volume;
 use crate::matrix::*;
 use crate::TetMesh;
 use reinterpret::*;
-use std::collections::BTreeSet;
 
-// TODO: move to geo::mesh
-#[derive(Copy, Clone, Eq)]
-struct TriFace {
-    pub tri: [usize; 3],
-}
-
-impl TriFace {
-    const PERMUTATIONS: [[usize; 3]; 6] = [
-        [0, 1, 2],
-        [1, 2, 0],
-        [2, 0, 1],
-        [0, 2, 1],
-        [2, 1, 0],
-        [1, 0, 2],
-    ];
-}
-
-/// A utility function to index a slice using three indices, creating a new array of 3
-/// corresponding entries of the slice.
-fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
-    [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
-}
-
-/// Consider any permutation of the triangle to be equivalent to the original.
-impl PartialEq for TriFace {
-    fn eq(&self, other: &TriFace) -> bool {
-        for p in Self::PERMUTATIONS.iter() {
-            if tri_at(&other.tri, p) == self.tri {
-                return true;
-            }
-        }
-
-        false
-    }
-}
-
-impl PartialOrd for TriFace {
-    fn partial_cmp(&self, other: &TriFace) -> Option<::std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Lexicographic ordering of the sorted indices.
-impl Ord for TriFace {
-    fn cmp(&self, other: &TriFace) -> ::std::cmp::Ordering {
-        let mut tri = self.tri;
-        tri.sort();
-        let mut other_tri = other.tri;
-        other_tri.sort();
-        tri.cmp(&other_tri)
-    }
-}
-
-/// Extract the surface of the temesh.
-/// The algorithm is to iterate over every tet face and upon seeing a duplicate, remove it
-/// from the list. this will leave only unique faces, which corresponds to the surface of
-/// the tetmesh.
-/// This function assumes that the given tetmesh is a manifold.
-fn extract_surface_topo(tetmesh: &TetMesh) -> Vec<[usize; 3]> {
-    let mut triangles: BTreeSet<TriFace> = BTreeSet::new();
-
-    let tet_faces = [[0, 3, 1], [3, 2, 1], [1, 2, 0], [2, 3, 0]];
-
-    for cell in tetmesh.cell_iter() {
-        for tet_face in tet_faces.iter() {
-            let indices: [usize; 4] = (*cell).clone().into();
-            let face = TriFace {
-                tri: tri_at(&indices, tet_face),
-            };
-
-            if !triangles.remove(&face) {
-                triangles.insert(face);
-            }
-        }
-    }
-
-    let mut surface_topo = Vec::with_capacity(triangles.len());
-    for elem in triangles.into_iter() {
-        surface_topo.push(elem.tri);
-    }
-
-    surface_topo
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {
     /// The topology of the surface of a tetrahedral mesh. This is a vector of triplets of indices
     /// of tetmesh vertices. Each triplet corresponds to a triangle on the surface of the tetmesh.
@@ -102,7 +17,7 @@ pub struct VolumeConstraint {
 
 impl VolumeConstraint {
     pub fn new(tetmesh: &TetMesh) -> Self {
-        let surface_topo = extract_surface_topo(tetmesh);
+        let surface_topo = tetmesh.surface_topo();
         VolumeConstraint {
             surface_topo,
             rest_volume: Self::compute_volume(tetmesh),
@@ -115,6 +30,12 @@ impl VolumeConstraint {
             .map(|cell| crate::fem::ref_tet(tetmesh, cell).volume())
             .sum()
     }
+}
+
+/// A utility function to index a slice using three indices, creating a new array of 3
+/// corresponding entries of the slice.
+fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
+    [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
 }
 
 impl Constraint<f64> for VolumeConstraint {
@@ -144,7 +65,7 @@ impl Constraint<f64> for VolumeConstraint {
 
 impl VolumeConstraint {
     /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
-    pub fn constraint_jacobian_indices_iter<'a>(
+    fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
         self.surface_topo.iter().flat_map(|tri| {
@@ -158,7 +79,7 @@ impl VolumeConstraint {
     }
 
     /// Compute the values of the constraint Jacobian.
-    pub fn constraint_jacobian_values_iter<'a>(
+    fn constraint_jacobian_values_iter<'a>(
         &'a self,
         x: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
@@ -178,18 +99,9 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
     fn constraint_jacobian_size(&self) -> usize {
         3 * 3 * self.surface_topo.len()
     }
-    fn constraint_jacobian_indices_offset(
-        &self,
-        offset: MatrixElementIndex,
-        indices: &mut [MatrixElementIndex],
-    ) {
+    fn constraint_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         debug_assert_eq!(indices.len(), self.constraint_jacobian_size());
-        for (out, idx) in indices
-            .iter_mut()
-            .zip(self.constraint_jacobian_indices_iter())
-        {
-            *out = idx + offset;
-        }
+        Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self))
     }
     fn constraint_jacobian_values(&self, x: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
@@ -273,18 +185,9 @@ impl ConstraintHessian<f64> for VolumeConstraint {
     fn constraint_hessian_size(&self) -> usize {
         6 * 3 * self.surface_topo.len()
     }
-    fn constraint_hessian_indices_offset(
-        &self,
-        offset: MatrixElementIndex,
-        indices: &mut [MatrixElementIndex],
-    ) {
+    fn constraint_hessian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         debug_assert_eq!(indices.len(), self.constraint_hessian_size());
-        for (out, idx) in indices
-            .iter_mut()
-            .zip(self.constraint_hessian_indices_iter())
-        {
-            *out = idx + offset;
-        }
+        Box::new(VolumeConstraint::constraint_hessian_indices_iter(self))
     }
     fn constraint_hessian_values(&self, x: &[f64], lambda: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_hessian_size());

@@ -1,5 +1,5 @@
 use crate::attrib_names::*;
-use crate::constraints::total_volume::VolumeConstraint;
+use crate::constraints::*;
 use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity,
@@ -7,7 +7,7 @@ use crate::energy_models::{
     volumetric_neohookean::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
 use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib};
+use crate::geo::mesh::{VertexPositions, tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverDataMut};
@@ -198,6 +198,9 @@ impl SolverBuilder {
             .time_step
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
 
+        let smooth_contact_constraint = kinematic_object.as_ref()
+            .map(|trimesh| SmoothContactConstraint::new(&mesh, &trimesh));
+
         let problem = NonLinearProblem {
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
@@ -206,6 +209,7 @@ impl SolverBuilder {
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
             momentum_potential,
             volume_constraint,
+            smooth_contact_constraint,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
         };
@@ -345,7 +349,7 @@ impl Solver {
         let fixed_iter = tetmesh.attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)?;
         prev_pos
             .iter_mut()
-            .zip(pts.vertex_iter())
+            .zip(pts.vertex_position_iter())
             .zip(fixed_iter)
             .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
             .for_each(|(pos, new_pos)| *pos = Vector3::from(*new_pos));
@@ -444,7 +448,7 @@ impl Solver {
             *prev_x += dx;
         }
 
-        mesh.vertex_iter_mut()
+        mesh.vertex_position_iter_mut()
             .zip(prev_pos.iter())
             .for_each(|(pos, prev_pos)| *pos = (*prev_pos).into());
     }

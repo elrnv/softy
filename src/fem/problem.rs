@@ -5,9 +5,9 @@ use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
-use crate::constraints::total_volume::VolumeConstraint;
+use crate::constraints::{smooth_contact::SmoothContactConstraint, volume::VolumeConstraint};
 use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::*, Attrib};
+use crate::geo::mesh::{topology::*, VertexPositions, Attrib};
 use crate::matrix::*;
 use ipopt::{self, Index, Number};
 use reinterpret::*;
@@ -36,6 +36,8 @@ pub(crate) struct NonLinearProblem {
     pub momentum_potential: Option<MomentumPotential>,
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
+    /// Contact constraint on the smooth solid representation against the kinematic object.
+    pub smooth_contact_constraint: Option<SmoothContactConstraint>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: Box<FnMut() -> bool>,
@@ -160,6 +162,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_size();
         }
+        if let Some(ref scc) = self.smooth_contact_constraint{
+            num += scc.constraint_size();
+        }
         num
     }
 
@@ -168,6 +173,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_jacobian_size();
         }
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            num += scc.constraint_jacobian_size();
+        }
         num
     }
 
@@ -175,8 +183,17 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         self.update(dx);
         let tetmesh = self.tetmesh.borrow();
         let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
+
+        let mut i = 0; // Counter.
+
         if let Some(ref mut vc) = self.volume_constraint {
-            vc.constraint(x, g);
+            let n = vc.constraint_size();
+            vc.constraint(x, g[i..i+n]);
+        }
+
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            let n = scc.constraint_size();
+            scc.constraint(x, g[i..i+n]);
         }
 
         true
@@ -187,6 +204,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut upper = Vec::new();
         if let Some(ref vc) = self.volume_constraint {
             let mut bounds = vc.constraint_bounds();
+            lower.extend_from_slice(&mut bounds.0);
+            upper.extend_from_slice(&mut bounds.1);
+        }
+
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let mut bounds = scc.constraint_bounds();
             lower.extend_from_slice(&mut bounds.0);
             upper.extend_from_slice(&mut bounds.1);
         }
@@ -204,6 +227,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            for MatrixElementIndex { row, col } in scc.constraint_jacobian_indices_iter() {
+                rows[i] = (row + 1) as Index;
+                cols[i] = col as Index;
+                i += 1;
+            }
+        }
+
         true
     }
 
@@ -215,10 +246,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0;
 
         if let Some(ref vc) = self.volume_constraint {
-            for val in vc.constraint_jacobian_values_iter(x) {
-                vals[i] = val as Number;
-                i += 1;
-            }
+            vc.constraint_jacobian_values(x, vals[i..i+vc.constraint_jacobian_size()]);
+        }
+
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            scc.constraint_jacobian_values(x, vals[i..i+scc.constraint_jacobian_size()]);
         }
 
         true
@@ -231,6 +263,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_hessian_size();
+        }
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            num += scc.constraint_hessian_size();
         }
         num
     }
@@ -258,6 +293,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Add volume constraint indices
         if let Some(ref vc) = self.volume_constraint {
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
+                rows[i] = row as Index;
+                cols[i] = col as Index;
+                i += 1;
+            }
+        }
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            for MatrixElementIndex { row, col } in scc.constraint_hessian_indices_iter() {
                 rows[i] = row as Index;
                 cols[i] = col as Index;
                 i += 1;
@@ -292,10 +334,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         if let Some(ref vc) = self.volume_constraint {
-            for val in vc.constraint_hessian_values_iter(x, lambda) {
-                vals[i] = val as Number;
-                i += 1;
-            }
+            let n = vc.constraint_hessian_size();
+            vc.constraint_hessian_values(x, lambda, vals[i..i+n]);
+            i += n;
+        }
+
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let n = scc.constraint_hessian_size();
+            scc.constraint_hessian_values(x, lambda, vals[i..i+n]);
+            i += n;
         }
 
         true

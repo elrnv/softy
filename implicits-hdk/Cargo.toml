@@ -1,0 +1,18 @@
+cargo-features = ["rename-dependency"]
+
+[package]
+name = "implicits-hdk"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+[lib]
+name = "implicitshdk"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+implicits = { path = "../implicits" }
+hdkrs = { path = "../hdkrs" }
+
+[build-dependencies]
+cbindgen = "0.6"

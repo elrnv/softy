@@ -23,6 +23,7 @@ set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
 find_package( Implicits REQUIRED )
+find_package( Boost REQUIRED )
 
 find_library( MACOS_SECURITY Security )
 
@@ -41,11 +42,13 @@ add_library( ${library_name} SHARED
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
-target_link_libraries( ${library_name} Houdini ${Implicits_LIBRARIES} ${MACOS_SECURITY})
+target_link_libraries( ${library_name} Houdini ${Implicits_LIBRARIES} ${MACOS_SECURITY}
+    ${Boost_LIBRARIES})
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS} ${HDKRS_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}
 )
 
 # Sets several common target properties, such as the library's output directory.

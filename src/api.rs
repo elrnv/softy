@@ -16,11 +16,12 @@ pub struct Params {
     pub tolerance: f32,
     pub radius: f32,
     pub kernel: i32,
+    pub background_potential: bool,
 }
 
 impl Into<implicits::Params> for Params {
     fn into(self) -> implicits::Params {
-        let Params { tolerance, radius, kernel } = self;
+        let Params { tolerance, radius, kernel, background_potential } = self;
         implicits::Params {
             kernel: match kernel {
                 0 => implicits::Kernel::Interpolating {
@@ -33,7 +34,8 @@ impl Into<implicits::Params> for Params {
                 2 => implicits::Kernel::Cubic { radius: radius as f64 },
                 3 => implicits::Kernel::Global { tolerance: tolerance as f64 },
                 _ => implicits::Kernel::Hrbf,
-            }
+            },
+            background_potential,
         }
     }
 }

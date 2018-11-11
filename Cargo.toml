@@ -11,8 +11,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
-implicits = { path = "implicits" }
-hdkrs = { path = "hdkrs" }
+implicits = { path = "../implicits" }
+hdkrs = { path = "../hdkrs" }
 
 [build-dependencies]
 cbindgen = "0.6"

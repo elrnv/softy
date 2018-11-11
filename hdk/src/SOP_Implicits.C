@@ -68,6 +68,14 @@ static const char *theDsFile = R"THEDSFILE(
         range { 0.0 1.0 }
         hidewhen "{ kernel == cubic } { kernel == hrbf } { kernel == interpolating }"
     }
+
+    parm {
+        name "bgpotential"
+        cppname "BgPotential"
+        label "Background Potential"
+        type toggle
+        default { "off" }
+    }
 }
 )THEDSFILE";
 
@@ -131,6 +139,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     params.tolerance = sopparms.getTolerance();
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());
+    params.background_potential = sopparms.getBgPotential();
 
     CookResult res = hdkrs::cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
 

@@ -11,6 +11,7 @@ hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
 geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
 spade = "1.5"
 autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
+reinterpret = "0.1"
 
 [dev-dependencies]
 approx = "0.3"

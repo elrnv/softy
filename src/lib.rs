@@ -7,6 +7,7 @@ extern crate hrbf;
 extern crate nalgebra as na;
 extern crate rayon;
 extern crate spade;
+extern crate reinterpret;
 
 #[cfg(test)]
 #[macro_use]

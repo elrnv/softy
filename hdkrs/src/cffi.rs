@@ -3,7 +3,7 @@ use geo::io::{
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
 use geo::mesh::{
-    attrib, topology as topo, Attrib, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
+    attrib, topology as topo, Attrib, VertexPositions, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
     TetMesh as GeoTetMesh,
 };
 use geo::{self, NumCells, NumFaces};

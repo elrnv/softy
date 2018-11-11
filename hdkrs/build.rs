@@ -41,12 +41,28 @@ fn main() {
             Err(e) => println!("{:?}", e),
         }
     }
+
+    // Copy CMake config file so it can be used by other plugins
+
+    let cmake_target = target_dir.parent().unwrap().join("cmake");
+    if !cmake_target.is_dir() {
+        fs::create_dir(&cmake_target).expect(&format!(
+            "Failed to create target directory for cmake config files: {:?}",
+            cmake_target
+        ));
+    }
+
+    let cmake_config_file = PathBuf::from("hdkrsConfig.cmake");
+    let dst = cmake_target.join(&cmake_config_file);
+    let src = PathBuf::from(crate_dir).join(&cmake_config_file);
+    println!("copying {:?} to {:?}", src, dst);
+    fs::copy(&src, &dst).expect(&format!("Failed to copy cmake config {:?}", cmake_config_file));
 }
 
 fn target_dir(package_name: &str) -> PathBuf {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let mut target_dir = out_dir.as_path();
-    for _ in 0..4 {
+    for _ in 0..3 {
         assert!(target_dir.is_dir());
         target_dir = target_dir.parent().unwrap();
     }

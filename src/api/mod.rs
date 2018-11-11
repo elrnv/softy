@@ -1,7 +1,7 @@
 use geo::mesh::{PolyMesh, TetMesh, PointCloud};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy;
+use softy::{self, fem};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use MaterialProperties;
@@ -83,8 +83,10 @@ impl Into<softy::SimParams> for SimParams {
         } = self;
         softy::SimParams {
             material: softy::MaterialProperties {
-                bulk_modulus,
-                shear_modulus,
+                elasticity: softy::ElasticityProperties {
+                    bulk_modulus,
+                    shear_modulus,
+                },
                 density,
                 damping,
             },
@@ -107,7 +109,7 @@ pub(crate) fn register_new_solver(
     tetmesh: Box<TetMesh<f64>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
-    let solver = match softy::FemEngine::new({ *tetmesh }, params.into()) {
+    let solver = match fem::Solver::new({ *tetmesh }, params.into()) {
         Ok(solver) => solver,
         Err(err) => return Err(Error::SolverCreate(err)),
     };
@@ -159,7 +161,7 @@ where
             Err(softy::Error::SizeMismatch) =>
                 return (None, CookResult::Error(
                         format!("Input points ({}) don't coincide with solver mesh ({}).",
-                        (*pts).num_vertices(), solver.mesh_ref().num_vertices()))),
+                        (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
             Err(softy::Error::AttribError(err)) =>
                 return (None, CookResult::Warning(
                         format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
@@ -168,7 +170,7 @@ where
     }
 
     let cook_result = convert_to_cookresult(solver.solve().into());
-    let solver_tetmesh = solver.mesh_ref().clone();
+    let solver_tetmesh = solver.borrow_mesh().clone();
     (Some(solver_tetmesh), cook_result)
 }
 
@@ -200,7 +202,7 @@ where
             let mut solver = solver.lock().unwrap();
             solver.set_interrupter(Box::new(check_interrupt));
             let cook_result = convert_to_cookresult(solver.solve().into());
-            let solver_tetmesh = solver.mesh_ref().clone();
+            let solver_tetmesh = solver.borrow_mesh().clone();
             (Some((solver_id, solver_tetmesh)), cook_result)
         }
         Err(err) => (

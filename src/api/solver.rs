@@ -1,4 +1,5 @@
-use softy::{Error, FemEngine, SolveResult, TetMesh, PointCloud};
+use softy::{fem, SolveResult, Error, TetMesh, PointCloud};
+use std::cell::Ref;
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856
@@ -6,19 +7,19 @@ use softy::{Error, FemEngine, SolveResult, TetMesh, PointCloud};
 
 pub trait Solver: Send {
     fn solve(&mut self) -> Result<SolveResult, Error>;
-    fn mesh_ref(&mut self) -> &TetMesh;
+    fn borrow_mesh(&self) -> Ref<'_, TetMesh>;
     fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error>;
     fn set_interrupter(&mut self, interrupter: Box<FnMut() -> bool>);
 }
 
-impl Solver for FemEngine {
+impl Solver for fem::Solver {
     #[inline]
     fn solve(&mut self) -> Result<SolveResult, Error> {
         self.step()
     }
     #[inline]
-    fn mesh_ref(&mut self) -> &TetMesh {
-        self.mesh_ref()
+    fn borrow_mesh(&self) -> Ref<'_, TetMesh> {
+        self.borrow_mesh()
     }
     #[inline]
     fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {

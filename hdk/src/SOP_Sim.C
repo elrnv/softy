@@ -23,6 +23,7 @@
 #include <vector>
 #include <array>
 #include <cassert>
+#include <sstream>
 
 const UT_StringHolder SOP_Sim::theSOPTypeName("hdk_softy"_sh);
 
@@ -292,7 +293,11 @@ SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     SolverResult solver_res = hdkrs::get_solver(solver_id, tetmesh.release(), polymesh.release(), sim_params);
 
     if (solver_res.id < 0) {
-        cookparms.sopAddError(UT_ERROR_OUTSTREAM, "Failed to create or retrieve a solver");
+        assert(solver_res.cook_result.tag == CookResultTag::Error);
+        std::stringstream ss;
+        ss << "Failed to create or retrieve a solver. ";
+        ss << solver_res.cook_result.message;
+        cookparms.sopAddError(UT_ERROR_OUTSTREAM, ss.str().c_str());
         return;
     }
 

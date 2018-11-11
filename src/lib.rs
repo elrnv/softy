@@ -35,6 +35,7 @@ pub struct SimParams {
 #[repr(C)]
 pub struct RegistryResult {
     solver_id: i64,
+    cook_result: cffi::CookResult,
 }
 
 /// Register a new solver in the registry. (C side)
@@ -50,12 +51,19 @@ pub unsafe extern "C" fn register_new_solver(
             tetmesh,
             sim_params.into(),
         ) {
-            Ok((id, _)) => RegistryResult { solver_id: id as i64 },
-            Err(_) => RegistryResult { solver_id: -1 },
+            Ok((id, _)) => RegistryResult { 
+                solver_id: id as i64,
+                cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
+            },
+            Err(err) => RegistryResult {
+                solver_id: -1,
+                cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
+            },
         }
     } else {
         RegistryResult {
             solver_id: -1,
+            cook_result: hdkrs::interop::CookResult::Error("Given TetMesh is null.".to_owned()).into(),
         }
     }
 }
@@ -90,6 +98,10 @@ pub struct SolverResult {
 
     /// A non-owning pointer to a Solver struct from the registry.
     solver: *mut SolverPtr,
+
+    /// A Cook result indicating the overall status of the result (success/failure) along with a
+    /// descriptive message reported back to the caller on the C side.
+    cook_result: cffi::CookResult,
 }
 
 /// Register a new solver in the registry. (C side)
@@ -112,11 +124,13 @@ pub unsafe extern "C" fn get_solver(
             SolverResult {
                 id: id as i64,
                 solver: solver_ptr(solver),
+                cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             }
         },
-        Err(_) => SolverResult {
+        Err(err) => SolverResult {
             id: -1,
             solver: ::std::ptr::null_mut(),
+            cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
         },
     }
 }

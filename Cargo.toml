@@ -1,0 +1,10 @@
+[workspace]
+
+members = [
+    "hdkrs",
+    "softy",
+    "implicits",
+    "softy-hdk",
+    "implicits-hdk",
+    "vtkio-hdk",
+]

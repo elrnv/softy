@@ -28,6 +28,8 @@ pub struct SimParams {
     pub tolerance: f32,
     pub max_iterations: u32,
     pub volume_constraint: bool,
+    pub contact_radius: f32,
+    pub smoothness_tolerance: f32,
 }
 
 /// Result reported from `register_new_solver` function.
@@ -43,12 +45,17 @@ pub struct RegistryResult {
 #[no_mangle]
 pub unsafe extern "C" fn register_new_solver(
     tetmesh: *mut cffi::TetMesh,
-    _polymesh: *mut cffi::PolyMesh,
+    polymesh: *mut cffi::PolyMesh,
     sim_params: SimParams,
 ) -> RegistryResult {
     if let Some(tetmesh) = interop::into_box(tetmesh) {
+
+        // Get an optional shell object (cloth or animated static object).
+        let shell = interop::into_box(polymesh);
+
         match api::register_new_solver(
             tetmesh,
+            shell,
             sim_params,
         ) {
             Ok((id, _)) => RegistryResult { 
@@ -145,6 +152,7 @@ pub unsafe extern "C" fn clear_solver_registry(
 #[repr(C)]
 pub struct StepResult {
     tetmesh: *mut cffi::TetMesh,
+    polymesh: *mut cffi::PolyMesh,
     cook_result: cffi::CookResult,
 }
 
@@ -153,29 +161,43 @@ pub struct StepResult {
 pub unsafe extern "C" fn step(
     solver: *mut SolverPtr,
     tetmesh_points: *mut cffi::PointCloud,
+    polymesh_points: *mut cffi::PointCloud,
     interrupt_checker: *mut cffi::c_void,
     check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
 ) -> StepResult {
     if let Some(solver) = validate_solver_ptr(solver) {
-        let (tetmesh_mb, cook_result) = api::step(
+        let (tetmesh_mb, polymesh_mb, cook_result) = api::step(
             solver,
             interop::into_box(tetmesh_points),
+            interop::into_box(polymesh_points),
             interop::interrupt_callback(interrupt_checker, check_interrupt),
         );
         if let Some(solver_tetmesh) = tetmesh_mb {
-            StepResult {
-                tetmesh: Box::into_raw(Box::new(solver_tetmesh)),
-                cook_result: cook_result.into(),
+            let tetmesh = Box::into_raw(Box::new(solver_tetmesh));
+            if let Some(solver_polymesh) = polymesh_mb {
+                StepResult {
+                    tetmesh,
+                    polymesh: Box::into_raw(Box::new(solver_polymesh)),
+                    cook_result: cook_result.into(),
+                }
+            } else {
+                StepResult {
+                    tetmesh,
+                    polymesh: ::std::ptr::null_mut(),
+                    cook_result: cook_result.into(),
+                }
             }
         } else {
             StepResult {
                 tetmesh: ::std::ptr::null_mut(),
+                polymesh: ::std::ptr::null_mut(),
                 cook_result: cook_result.into(),
             }
         }
     } else {
         StepResult {
             tetmesh: ::std::ptr::null_mut(),
+            polymesh: ::std::ptr::null_mut(),
             cook_result: hdkrs::interop::CookResult::Error("Invalid solver".to_string()).into(),
         }
     }

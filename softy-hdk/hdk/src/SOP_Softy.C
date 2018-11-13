@@ -162,6 +162,31 @@ static const char *theDsFile = R"THEDSFILE(
         default { "off" }
     }
 
+    groupsimple {
+        name "smoothcontact"
+        label "Smooth Contact"
+        grouptag { "group_type" "simple" }
+        disablewhen "{ hasinput(1) == 0 }"
+
+        parm {
+            name "contactradius"
+            cppname "ContactRadius"
+            label "Contact Radius"
+            type float
+            default { "1" }
+            range { 0.0 10.0 }
+        }
+
+        parm {
+            name "smoothtol"
+            cppname "SmoothTol"
+            label "Smoothness Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+        }
+    }
+
     parm {
         name "clearcache"
         label "Clear Cache"
@@ -260,6 +285,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.tolerance = sopparms.getTolerance();
     sim_params.max_iterations = sopparms.getMaxIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
+    sim_params.contact_radius = sopparms.getContactRadius();
+    sim_params.smoothness_tolerance = sopparms.getSmoothTol();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 
@@ -303,15 +330,21 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     UT_ASSERT(solver_id < 0 || solver_id == solver_res.id);
 
-    OwnedPtr<PointCloud> ptcloud = nullptr;
+    OwnedPtr<PointCloud> tetmesh_ptcloud = nullptr;
+    OwnedPtr<PointCloud> polymesh_ptcloud = nullptr;
 
     if (solver_id >= 0) {
-        ptcloud = build_pointcloud(input0);
+        tetmesh_ptcloud = build_pointcloud(input0);
+        const GU_Detail *input1 = cookparms.inputGeo(1);
+        if (input1) {
+            polymesh_ptcloud = build_pointcloud(input1);
+        }
     }
 
     StepResult res = hdkrs::step(
             solver_res.solver,
-            ptcloud.release(),
+            tetmesh_ptcloud.release(),
+            polymesh_ptcloud.release(),
             &interrupt_checker,
             interrupt::check_interrupt);
 

@@ -41,7 +41,7 @@ pub(crate) enum Error {
 pub(crate) fn get_solver(
     solver_id: Option<u32>,
     tetmesh: Option<Box<TetMesh<f64>>>,
-    _polymesh: Option<Box<PolyMesh<f64>>>,
+    polymesh: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     // Verify that the given id points to a valid solver.
@@ -59,7 +59,7 @@ pub(crate) fn get_solver(
     } else {
         // Given solver id is invalid, need to create a new solver.
         match tetmesh {
-            Some(tetmesh) => register_new_solver(tetmesh, params),
+            Some(tetmesh) => register_new_solver(tetmesh, polymesh, params),
             None => Err(Error::MissingSolverAndMesh),
         }
     }
@@ -112,19 +112,49 @@ impl Into<softy::Material> for SimParams {
     }
 }
 
+
+impl Into<softy::SmoothContactParams> for SimParams {
+    fn into(self) -> softy::SmoothContactParams {
+        let SimParams {
+            contact_radius,
+            smoothness_tolerance,
+            ..
+        } = self;
+        softy::SmoothContactParams {
+            radius: contact_radius as f64,
+            tolerance: smoothness_tolerance as f64,
+        }
+    }
+}
+
 /// Register a new solver in the registry. (Rust side)
 #[inline]
 pub(crate) fn register_new_solver(
     tetmesh: Box<TetMesh<f64>>,
+    shell: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
+
+    // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
-    solver_builder.add_solid(*tetmesh).solid_material(params.into());
+
+    solver_builder
+        .add_solid(*tetmesh)
+        .solid_material(params.into());
+
+    // Add a shell if one was given.
+    if let Some(polymesh) = shell {
+        solver_builder
+            .add_shell(*polymesh)
+            .smooth_contact_params(params.into());
+    }
+
     let solver = match solver_builder.build() {
         Ok(solver) => solver,
         Err(err) => return Err(Error::SolverCreate(err)),
     };
 
+    // Get a mutable reference to the solver registry.
     let SolverRegistry {
         ref mut key_counter,
         ref mut solver_table,
@@ -158,8 +188,9 @@ pub(crate) fn register_new_solver(
 pub(crate) fn step<F>(
     solver: Arc<Mutex<dyn Solver>>,
     tetmesh_points: Option<Box<PointCloud<f64>>>,
+    polymesh_points: Option<Box<PointCloud<f64>>>,
     check_interrupt: F,
-) -> (Option<TetMesh<f64>>, CookResult)
+) -> (Option<TetMesh<f64>>, Option<PolyMesh<f64>>, CookResult)
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {
@@ -168,21 +199,40 @@ where
 
     // Update mesh points
     if let Some(pts) = tetmesh_points {
-        match solver.update_mesh_vertices(&pts) {
+        match solver.update_solid_vertices(&pts) {
             Err(softy::Error::SizeMismatch) =>
-                return (None, CookResult::Error(
+                return (None, None, CookResult::Error(
                         format!("Input points ({}) don't coincide with solver mesh ({}).",
                         (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
             Err(softy::Error::AttribError(err)) =>
-                return (None, CookResult::Warning(
+                return (None, None, CookResult::Warning(
                         format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
+            Err(err) => 
+                return (None, None, CookResult::Error(
+                        format!("Error updating tetmesh vertices. ({:?})", err))),
+            _ => {}
+        }
+    }
+
+    if let Some(pts) = polymesh_points {
+        match solver.update_shell_vertices(&pts) {
+            Err(softy::Error::SizeMismatch) =>
+                return (None, None, CookResult::Error(
+                        format!("Input points ({}) don't coincide with solver mesh ({}).",
+                        (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
+            Err(softy::Error::NoKinematicMesh) =>
+                return (None, None, CookResult::Warning("Missing kinematic mesh.".to_string())),
+            Err(err) => 
+                return (None, None, CookResult::Error(
+                        format!("Error updating polymesh vertices. ({:?})", err))),
             _ => {}
         }
     }
 
     let cook_result = convert_to_cookresult(solver.solve().into());
+    let solver_trimesh = solver.try_borrow_kinematic_mesh().map(|x| PolyMesh::from(x.clone()));
     let solver_tetmesh = solver.borrow_mesh().clone();
-    (Some(solver_tetmesh), cook_result)
+    (Some(solver_tetmesh), solver_trimesh, cook_result)
 }
 
 /// Clear all solvers from the registry and reset the counter.

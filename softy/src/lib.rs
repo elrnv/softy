@@ -26,6 +26,7 @@ pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::fem::{ElasticityParameters, Material, SimParams, SolveResult};
+pub use self::constraints::SmoothContactParams;
 use crate::geo::mesh::attrib;
 
 #[derive(Debug)]
@@ -34,6 +35,9 @@ pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
     SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
+    MissingContactParams,
+    NoSimulationMesh,
+    NoKinematicMesh,
 }
 
 impl From<attrib::Error> for Error {
@@ -69,6 +73,12 @@ impl From<Error> for SimResult {
                 )
                 .into(),
             ),
+            Error::MissingContactParams =>
+                SimResult::Error(format!("Missing smooth contact parameters.").into()),
+            Error::NoSimulationMesh =>
+                SimResult::Error(format!("Missing simulation mesh.").into()),
+            Error::NoKinematicMesh =>
+                SimResult::Error(format!("Missing kinematic mesh.").into()),
         }
     }
 }

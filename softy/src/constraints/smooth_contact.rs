@@ -19,8 +19,14 @@ pub struct SmoothContactConstraint {
     pub collision_object: Rc<RefCell<TriMesh>>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SmoothContactParams {
+    pub radius: f64,
+    pub tolerance: f64,
+}
+
 impl SmoothContactConstraint {
-    pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>, trimesh_rc: &Rc<RefCell<TriMesh>>) -> Self {
+    pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>, trimesh_rc: &Rc<RefCell<TriMesh>>, params: SmoothContactParams) -> Self {
         let tetmesh = tetmesh_rc.borrow();
         let triangles: Vec<[usize; 3]> = tetmesh.surface_topo();
         let surf_verts = tetmesh.surface_vertices();
@@ -31,7 +37,7 @@ impl SmoothContactConstraint {
         surface_builder
             .with_triangles(triangles)
             .with_points(points)
-            .with_kernel(KernelType::Approximate { radius: 1.0, tolerance: 0.001 })
+            .with_kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
             .with_background_potential(true);
 
         if let Ok(all_offsets) = tetmesh.attrib_as_slice::<f32, VertexIndex>("offset") {

@@ -93,6 +93,7 @@ pub struct SolverBuilder {
     solid_material: Option<Material>,
     solids: Vec<TetMesh>,
     shells: Vec<PolyMesh>,
+    smooth_contact_params: Option<SmoothContactParams>,
 }
 
 impl SolverBuilder {
@@ -104,6 +105,7 @@ impl SolverBuilder {
             solid_material: None,
             solids: Vec::new(),
             shells: Vec::new(),
+            smooth_contact_params: None,
         }
     }
 
@@ -126,6 +128,11 @@ impl SolverBuilder {
         self
     }
 
+    pub fn smooth_contact_params(&mut self, params: SmoothContactParams) -> &mut Self {
+        self.smooth_contact_params = Some(params);
+        self
+    }
+
     /// Build the simulation solver.
     pub fn build(&self) -> Result<Solver, Error> {
         let SolverBuilder {
@@ -133,17 +140,24 @@ impl SolverBuilder {
             solid_material,
             solids,
             shells,
+            smooth_contact_params,
         } = self;
 
         // Get kinematic shell
         let kinematic_object = if shells.len() > 0 {
+            if smooth_contact_params.is_none() {
+                return Err(Error::MissingContactParams);
+            }
+
             Some(Rc::new(RefCell::new(TriMesh::from(shells[0].clone()))))
         } else {
             None
         };
 
         // TODO: add support for more solids.
-        assert!(solids.len() > 0);
+        if solids.len() == 0 {
+            return Err(Error::NoSimulationMesh);
+        }
 
         // Get deformable solid.
         let mut mesh = solids[0].clone();
@@ -199,7 +213,7 @@ impl SolverBuilder {
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
 
         let smooth_contact_constraint = kinematic_object.as_ref()
-            .map(|trimesh| SmoothContactConstraint::new(&mesh, &trimesh));
+            .map(|trimesh| SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap()));
 
         let problem = NonLinearProblem {
             tetmesh: Rc::clone(&mesh),
@@ -221,12 +235,12 @@ impl SolverBuilder {
         ipopt.set_option("max_iter", params.max_iterations as i32);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 0);
+        ipopt.set_option("print_level", 5);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
-        //ipopt.set_option("derivative_test", "second-order");
-        //ipopt.set_option("derivative_test_tol", 1e-4);
+        ipopt.set_option("derivative_test", "second-order");
+        ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
@@ -311,6 +325,14 @@ impl Solver {
         self.solver.solver_data_mut().problem.interrupt_checker = checker;
     }
 
+    /// Get an immutable borrow for the underlying `TriMesh` of the kinematic object.
+    pub fn try_borrow_kinematic_mesh(&self) -> Option<Ref<'_, TriMesh>> {
+        match &self.solver.solver_data_ref().problem.kinematic_object {
+            Some(x) => Some(x.borrow()),
+            None => None,
+        }
+    }
+
     /// Get an immutable borrow for the underlying `TetMesh`.
     pub fn borrow_mesh(&self) -> Ref<'_, TetMesh> {
         self.solver.solver_data_ref().problem.tetmesh.borrow()
@@ -353,6 +375,29 @@ impl Solver {
             .zip(fixed_iter)
             .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
             .for_each(|(pos, new_pos)| *pos = Vector3::from(*new_pos));
+        Ok(())
+    }
+
+    /// Update the kinematic object mesh with the given points.
+    pub fn update_kinematic_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
+        // Get solver data. We want to update the primal variables with new positions from `pts`.
+        let SolverDataMut { problem, .. } = self.solver.solver_data_mut();
+
+        // Get the kinematic object so we can update the vertices.
+        let mut trimesh = match &problem.kinematic_object {
+            Some(ref mesh) => mesh.borrow_mut(),
+            None => return Err(Error::NoKinematicMesh),
+        };
+
+        if pts.num_vertices() != trimesh.num_vertices() {
+            // We got an invalid point cloud
+            return Err(Error::SizeMismatch);
+        }
+
+        // Update all the vertices.
+        trimesh.vertex_position_iter_mut()
+            .zip(pts.vertex_position_iter())
+            .for_each(|(pos, new_pos)| *pos = *new_pos);
         Ok(())
     }
 
@@ -887,6 +932,49 @@ mod tests {
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected);
+    }
+
+    #[test]
+    fn tet_push_test() {
+        // A triangle is being pushed on top of a tet.
+        let height = 1.18032;
+        let tri_verts = vec![
+            [0.5, height, 0.0],
+            [-0.25, height, 0.433013],
+            [-0.25, height, -0.433013],
+        ];
+
+        let tri = vec![0, 2, 1];
+
+        let tet_verts = vec![
+            [0.0, 1.0, 0.0],
+            [-0.94281, -0.33333, 0.0],
+            [0.471405, -0.33333, 0.816498],
+            [0.471405, -0.33333, -0.816498],
+        ];
+
+        let tet = vec![3, 1, 0, 2];
+
+        let fixed = vec![0u8, 1, 1, 1];
+            
+        let mut tetmesh = TetMesh::new(tet_verts, tet);
+        tetmesh.add_attrib_data::<u8, VertexIndex>("fixed", fixed).unwrap();
+
+        let trimesh = PolyMesh::new(tri_verts, &tri);
+
+        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+            .solid_material(MEDIUM_SOLID_MATERIAL)
+            .add_solid(tetmesh)
+            .add_shell(trimesh)
+            .smooth_contact_params(SmoothContactParams { radius: 1.0, tolerance: 1e-5 })
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        geo::io::save_tetmesh_ascii(
+            &solution,
+            &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+        ).unwrap();
     }
 
     /*

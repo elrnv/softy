@@ -2,12 +2,6 @@ cmake_minimum_required( VERSION 3.6 )
 
 project( Implicits )
 
-# CMAKE_PREFIX_PATH must contain the path to the toolkit/cmake subdirectory of
-# the Houdini installation. See the "Compiling with CMake" section of the HDK
-# documentation for more details, which describes several options for
-# specifying this path.
-list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
-
 # Setup compile flags
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -16,6 +10,19 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
+# CMAKE_PREFIX_PATH must contain the path to the toolkit/cmake subdirectory of
+# the Houdini installation. See the "Compiling with CMake" section of the HDK
+# documentation for more details, which describes several options for
+# specifying this path.
+list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
+
+# Add path for shared cmake modules like hdkrs
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/debug/cmake/")
+else()
+    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/release/cmake/")
+endif()
+
 # Set the directory of the library to be found by find_package
 set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 
@@ -23,11 +30,12 @@ set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
 find_package( Implicits REQUIRED )
+find_package( hdkrs REQUIRED )
 find_package( Boost REQUIRED )
 
 find_library( MACOS_SECURITY Security )
 
-set( library_name SOP_Implicits )
+set( library_name sop_implicits )
 
 # Code generation for the embedded DS file in SOP_Implicits.C.
 houdini_generate_proto_headers( FILES src/SOP_Implicits.C )
@@ -36,8 +44,6 @@ houdini_generate_proto_headers( FILES src/SOP_Implicits.C )
 add_library( ${library_name} SHARED
   src/SOP_Implicits.C
   src/SOP_Implicits.h
-  src/GEO_VtkIO.C
-  src/GEO_VtkIO.h
 )
 
 # Link against the Houdini libraries, and add required include directories and

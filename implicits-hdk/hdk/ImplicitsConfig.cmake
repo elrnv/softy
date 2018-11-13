@@ -1,10 +1,10 @@
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    set( Implicits_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/debug" )
+    set( Implicits_LIB_DIR "${CMAKE_SOURCE_DIR}/../../target/debug" )
 else()
-    set( Implicits_LIB_DIR "${CMAKE_SOURCE_DIR}/../target/release" )
+    set( Implicits_LIB_DIR "${CMAKE_SOURCE_DIR}/../../target/release" )
 endif()
 
-find_path( Implicits_INCLUDE_DIR implicits-hdk.h PATHS ../target DOC "Implicits include directory")
+find_path( Implicits_INCLUDE_DIR implicits-hdk.h PATHS ${Implicits_LIB_DIR} DOC "Implicits include directory")
 find_library( Implicits_LIBRARY implicitshdk PATHS ${Implicits_LIB_DIR} DOC "Implicits library directory")
 
 include(FindPackageHandleStandardArgs)

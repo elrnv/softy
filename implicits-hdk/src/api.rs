@@ -24,16 +24,16 @@ impl Into<implicits::Params> for Params {
         let Params { tolerance, radius, kernel, background_potential } = self;
         implicits::Params {
             kernel: match kernel {
-                0 => implicits::Kernel::Interpolating {
+                0 => implicits::KernelType::Interpolating {
                     radius: radius as f64,
                 },
-                1 => implicits::Kernel::Approximate {
+                1 => implicits::KernelType::Approximate {
                     radius: radius as f64,
                     tolerance: tolerance as f64,
                 },
-                2 => implicits::Kernel::Cubic { radius: radius as f64 },
-                3 => implicits::Kernel::Global { tolerance: tolerance as f64 },
-                _ => implicits::Kernel::Hrbf,
+                2 => implicits::KernelType::Cubic { radius: radius as f64 },
+                3 => implicits::KernelType::Global { tolerance: tolerance as f64 },
+                _ => implicits::KernelType::Hrbf,
             },
             background_potential,
         }
@@ -65,13 +65,15 @@ where
 fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
     match res {
         Ok(()) => CookResult::Success("".to_string()),
-        Err(implicits::Error::Interrupted) => {
-            CookResult::Error("Execution was interrupted.".to_string())
-        }
-        Err(implicits::Error::MissingNormals) => {
-            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
-        }
+        Err(implicits::Error::Interrupted) =>
+            CookResult::Error("Execution was interrupted.".to_string()),
+        Err(implicits::Error::MissingNormals) =>
+            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string()),
         Err(implicits::Error::Failure) =>
             CookResult::Error("Internal Error.".to_string()),
+        Err(implicits::Error::UnsupportedKernel) =>
+            CookResult::Error("Given kernel is not supported yet.".to_string()),
+        Err(implicits::Error::IO(err)) =>
+            CookResult::Error(format!("IO Error: {:?}", err)),
     }
 }

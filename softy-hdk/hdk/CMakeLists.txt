@@ -34,7 +34,7 @@ find_package( hdkrs REQUIRED )
 
 find_library( MACOS_SECURITY Security )
 
-set( library_name SOP_Softy )
+set( library_name sop_softy )
 
 # Code generation for the embedded DS file in SOP_Softy.C.
 houdini_generate_proto_headers( FILES src/SOP_Softy.C )

@@ -68,28 +68,13 @@ pub(crate) fn get_solver(
 impl Into<softy::SimParams> for SimParams {
     fn into(self) -> softy::SimParams {
         let SimParams {
-            material:
-                MaterialProperties {
-                    bulk_modulus,
-                    shear_modulus,
-                    density,
-                    damping,
-                },
             time_step,
             gravity,
             tolerance,
             max_iterations,
-            volume_constraint,
+            ..
         } = self;
         softy::SimParams {
-            material: softy::MaterialProperties {
-                elasticity: softy::ElasticityProperties {
-                    bulk_modulus,
-                    shear_modulus,
-                },
-                density,
-                damping,
-            },
             time_step: if time_step > 0.0 {
                 Some(time_step)
             } else {
@@ -98,7 +83,31 @@ impl Into<softy::SimParams> for SimParams {
             gravity: [0.0, -gravity, 0.0],
             tolerance,
             max_iterations,
+        }
+    }
+}
+
+impl Into<softy::Material> for SimParams {
+    fn into(self) -> softy::Material {
+        let SimParams {
+            material:
+                MaterialProperties {
+                    bulk_modulus,
+                    shear_modulus,
+                    density,
+                    damping,
+                },
             volume_constraint,
+            ..
+        } = self;
+        softy::Material {
+            elasticity: softy::ElasticityParameters {
+                bulk_modulus,
+                shear_modulus,
+            },
+            incompressibility: volume_constraint,
+            density,
+            damping,
         }
     }
 }
@@ -109,7 +118,9 @@ pub(crate) fn register_new_solver(
     tetmesh: Box<TetMesh<f64>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
-    let solver = match fem::Solver::new({ *tetmesh }, params.into()) {
+    let mut solver_builder = fem::SolverBuilder::new(params.into());
+    solver_builder.add_solid(*tetmesh).solid_material(params.into());
+    let solver = match solver_builder.build() {
         Ok(solver) => solver,
         Err(err) => return Err(Error::SolverCreate(err)),
     };
@@ -197,7 +208,7 @@ pub(crate) fn cook<F>(
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {
-    match get_solver(solver_id, tetmesh, polymesh, params.into()) {
+    match get_solver(solver_id, tetmesh, polymesh, params) {
         Ok((solver_id, solver)) => {
             let mut solver = solver.lock().unwrap();
             solver.set_interrupter(Box::new(check_interrupt));

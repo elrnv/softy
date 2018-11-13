@@ -1,7 +1,7 @@
-#include "SOP_Sim.h"
+#include "SOP_Softy.h"
 
 // Needed for template generation with the ds file.
-#include "SOP_Sim.proto.h"
+#include "SOP_Softy.proto.h"
 
 #include <hdkrs/mesh.h>
 #include <hdkrs/interrupt.h>
@@ -18,24 +18,24 @@
 #include <GEO/GEO_PrimTetrahedron.h>
 #include <GEO/GEO_PrimPoly.h>
 #include <GEO/GEO_PolyCounts.h>
-#include <sim-hdk.h>
+#include <softy-hdk.h>
 
 #include <vector>
 #include <array>
 #include <cassert>
 #include <sstream>
 
-const UT_StringHolder SOP_Sim::theSOPTypeName("hdk_softy"_sh);
+const UT_StringHolder SOP_Softy::theSOPTypeName("hdk_softy"_sh);
 
 // Register sop operator
 void
 newSopOperator(OP_OperatorTable *table)
 {
     table->addOperator(new OP_Operator(
-                SOP_Sim::theSOPTypeName,   // Internal name
+                SOP_Softy::theSOPTypeName,   // Internal name
                 "Softy",                     // UI name
-                SOP_Sim::myConstructor,    // How to build the SOP
-                SOP_Sim::buildTemplates(), // My parameters
+                SOP_Softy::myConstructor,    // How to build the SOP
+                SOP_Softy::buildTemplates(), // My parameters
                 1,                              // Min # of sources
                 2,                              // Max # of sources
                 nullptr,                        // Local variables
@@ -172,42 +172,42 @@ static const char *theDsFile = R"THEDSFILE(
 }
 )THEDSFILE";
 
-int SOP_Sim::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
+int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
     hdkrs::clear_solver_registry();
     return 0;
 }
 
 
 PRM_Template *
-SOP_Sim::buildTemplates()
+SOP_Softy::buildTemplates()
 {
-    static PRM_TemplateBuilder templ("SOP_Sim.C"_sh, theDsFile);
-    templ.setCallback("clearcache", SOP_Sim::clearSolverCache);
+    static PRM_TemplateBuilder templ("SOP_Softy.C"_sh, theDsFile);
+    templ.setCallback("clearcache", SOP_Softy::clearSolverCache);
     return templ.templates();
 }
 
-class SOP_SimVerb : public SOP_NodeVerb
+class SOP_SoftyVerb : public SOP_NodeVerb
 {
     public:
-        SOP_SimVerb() {}
-        virtual ~SOP_SimVerb() {}
+        SOP_SoftyVerb() {}
+        virtual ~SOP_SoftyVerb() {}
 
-        virtual SOP_NodeParms *allocParms() const { return new SOP_SimParms(); }
-        virtual UT_StringHolder name() const { return SOP_Sim::theSOPTypeName; }
+        virtual SOP_NodeParms *allocParms() const { return new SOP_SoftyParms(); }
+        virtual UT_StringHolder name() const { return SOP_Softy::theSOPTypeName; }
 
         virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
 
         virtual void cook(const CookParms &cookparms) const;
 
-        static const SOP_NodeVerb::Register<SOP_SimVerb> theVerb;
+        static const SOP_NodeVerb::Register<SOP_SoftyVerb> theVerb;
 };
 
-const SOP_NodeVerb::Register<SOP_SimVerb> SOP_SimVerb::theVerb;
+const SOP_NodeVerb::Register<SOP_SoftyVerb> SOP_SoftyVerb::theVerb;
 
 const SOP_NodeVerb *
-SOP_Sim::cookVerb() const
+SOP_Softy::cookVerb() const
 {
-    return SOP_SimVerb::theVerb.get();
+    return SOP_SoftyVerb::theVerb.get();
 }
 
 void
@@ -231,12 +231,12 @@ write_solver_data(GU_Detail *detail, hdkrs::StepResult res, int64 solver_id) {
 
 // Entry point to the SOP
 void
-SOP_SimVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
+SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
     using namespace hdkrs;
     using namespace hdkrs::mesh;
 
-    auto &&sopparms = cookparms.parms<SOP_SimParms>();
+    auto &&sopparms = cookparms.parms<SOP_SoftyParms>();
 
     // Gather simulation parameters
     SimParams sim_params;

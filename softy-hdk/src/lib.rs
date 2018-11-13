@@ -49,7 +49,7 @@ pub unsafe extern "C" fn register_new_solver(
     if let Some(tetmesh) = interop::into_box(tetmesh) {
         match api::register_new_solver(
             tetmesh,
-            sim_params.into(),
+            sim_params,
         ) {
             Ok((id, _)) => RegistryResult { 
                 solver_id: id as i64,
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn get_solver(
         validate_id(solver_id),
         interop::into_box(tetmesh),
         interop::into_box(polymesh),
-        sim_params.into(),
+        sim_params,
     ) {
         Ok((id, solver)) => {
             assert!(Arc::strong_count(&solver) != 1);

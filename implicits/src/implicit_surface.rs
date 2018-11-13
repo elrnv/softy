@@ -6,9 +6,9 @@
 use crate::geo::math::{Vector3, Matrix3};
 use crate::geo::mesh::{VertexMesh, topology::VertexIndex};
 use crate::geo::prim::{Triangle};
-use crate::kernel::{self, Kernel, KernelType};
+use crate::kernel::{self, KernelType, SphericalKernel};
 use rayon::prelude::*;
-use spade::{rtree::RTree, BoundingRect, SpatialObject, SimpleTriangle};
+use spade::{rtree::RTree, BoundingRect, SpatialObject};
 use std::cell::{Ref, RefCell};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -30,11 +30,11 @@ impl SpatialObject for OrientedPoint {
     }
 }
 
-pub fn oriented_points_iter<'a>(
+pub fn oriented_points_iter<'a, V3>(
     points: &'a [V3],
     normals: &'a [V3],
 ) -> impl Iterator<Item = OrientedPoint> + Clone + 'a
-where V3: Into<Vector3<f64>>
+where V3: Into<Vector3<f64>> + Copy
 {
     normals
         .iter()
@@ -51,7 +51,7 @@ where V3: Into<Vector3<f64>>
 pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
     mesh: &M
 ) -> (Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
-    let points = mesh
+    let points: Vec<Vector3<f64>> = mesh
         .vertex_position_iter()
         .map(|&x| -> Vector3<f64> {
             Vector3(x)
@@ -59,7 +59,7 @@ pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
                 .expect("Failed to convert positions to f64")
         }).collect();
 
-    let normals = mesh.attrib_iter::<[f32; 3], VertexIndex>("N")
+    let normals = mesh.attrib_iter::<[f32; 3], VertexIndex>("N").ok()
         .map_or( vec![Vector3::zeros(); points.len()], |iter| {
             iter.map(|&nml| Vector3(nml).cast::<f64>().unwrap()).collect()
         });
@@ -67,16 +67,12 @@ pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
     (points, normals)
 }
 
-pub fn build_point_rtree(oriented_points_iter: impl Iterator<Item=OrientedPoint>) -> RTree<OrientedPoint> {
+pub fn build_rtree(oriented_points_iter: impl Iterator<Item=OrientedPoint>) -> RTree<OrientedPoint> {
     let mut rtree = RTree::new();
     for pt in oriented_points_iter {
-        rtree.insert(*pt);
+        rtree.insert(pt);
     }
     rtree
-}
-
-fn dist(a: Vector3<f64>, b: Vector3<f64>) -> f64 {
-    (a - b).norm()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -146,7 +142,7 @@ impl ImplicitSurfaceBuilder {
                 iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap())
                     .collect()
             })
-            .unwrap_or(vec![[0.0f64; 3]; mesh.num_vertices()]);
+            .unwrap_or(vec![Vector3::zeros(); mesh.num_vertices()]);
         self.offsets = mesh
             .attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| x as f64).collect())
@@ -161,6 +157,7 @@ impl ImplicitSurfaceBuilder {
 
     pub fn with_max_step(&mut self, max_step: f64) -> &mut Self {
         self.max_step = max_step;
+        self
     }
 
     pub fn build(&self) -> ImplicitSurface {
@@ -171,6 +168,7 @@ impl ImplicitSurfaceBuilder {
             points,
             mut normals,
             mut offsets,
+            ..
         } = self.clone();
 
         if normals.is_empty() {
@@ -205,7 +203,7 @@ impl ImplicitSurfaceBuilder {
             normals,
             offsets,
             max_step: self.max_step,
-            neighbour_cache: RefCell::new(Vec::new()),
+            neighbour_cache: RefCell::new(NeighbourCache::new()),
             nml_grad: Vec::new(),
             dual_topo,
         }
@@ -213,6 +211,7 @@ impl ImplicitSurfaceBuilder {
 }
 
 /// Cache neighbouring sample points for each query point.
+#[derive(Clone, Debug, PartialEq)]
 struct NeighbourCache {
     /// Sample point indices.
     pub points: Vec<Vec<usize>>,
@@ -220,6 +219,15 @@ struct NeighbourCache {
     /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
     /// we can reuse the already allocated memory.
     pub valid: bool,
+}
+
+impl NeighbourCache {
+    fn new() -> Self {
+        NeighbourCache {
+            points: Vec::new(),
+            valid: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -261,29 +269,6 @@ pub struct ImplicitSurface {
 impl ImplicitSurface {
     const PARALLEL_CHUNK_SIZE: usize = 5000;
 
-    /// Compute unnormalized gradient at point `i` with respect to neighbouring point `j`.
-    fn unnormalized_nml_grad(&self, i: usize, j: usize) -> Matrix3<f64> {
-
-        let mut nml_grad = Matrix3::zeros();
-
-        for p in self.nml_grad[j].iter() {
-            if p.1 == i {
-                nml_grad += p.0;
-            }
-        }
-
-        nml_grad
-    }
-
-    fn compute_nml_grad(&mut self) {
-        self.nml_grad.clear();
-    }
-
-    /// Get the gradient of the normal at vertex `i` with respect to vertex `j`
-    fn normal_grad(&self, i: usize, j: usize) -> Matrix3<f64> {
-
-    }
-
     /// Number of sample triangles.
     pub fn num_triangles(&self) -> usize {
         return self.surface_topo.len()
@@ -300,6 +285,7 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref mut points,
             ref mut normals,
+            ref surface_topo,
             ..
         } = self;
 
@@ -308,7 +294,7 @@ impl ImplicitSurface {
             *nml = Vector3::zeros();
         }
 
-        for tri_indices in surf_topo.iter() {
+        for tri_indices in surface_topo.iter() {
             let tri = Triangle::from_indexed_slice(tri_indices, &points);
             let area_nml = tri.area_normal();
             normals[tri_indices[0]] += area_nml;
@@ -342,9 +328,10 @@ impl ImplicitSurface {
     /// query points. Note that the cache must be invalidated explicitly, there is no real way to
     /// automatically cache results because both: query points and sample points may change
     /// slightly, but we expect the neighbourhood information to remain the same.
-    pub fn cached_neighbours_borrow<N>(&self, query_points: &[[f64; 3]], neigh: N) -> Ref<'a, NeighbourCache>
+    fn cached_neighbours_borrow<'a, I, N>(&'a self, query_points: &[[f64; 3]], neigh: N) -> Ref<'a, NeighbourCache>
     where
-        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+        I: Iterator<Item=OrientedPoint> + 'a,
+        N: Fn([f64; 3]) -> I + Sync + Send,
     {
         if !self.neighbour_cache.borrow().valid {
             let mut cache = self.neighbour_cache.borrow_mut();
@@ -352,22 +339,21 @@ impl ImplicitSurface {
 
             zip!(
                 cache.points.par_iter_mut(),
-                cache.triangles.par_iter_mut(),
                 query_points.par_iter()
-            ).for_each(|(cp, ct, q)| {
-                let neighbours: Vec<&OrientedPoint> = neigh(*q);
+            ).for_each(|(cp, q)| {
+                let neighbours_iter = neigh(*q);
                 // Below we try to reuse the allocated memory by previously cached members for
                 // points as well as triangles.
 
                 // Cache points
                 cp.clear();
-                for i in neighbours.map(|&&op| op.index) {
-                    cp.push(i);
+                for i in neighbours_iter.map(|op| op.index) {
+                    cp.push(i as usize);
                 }
 
                 // Cache triangles
                 //ct.clear();
-                //for i in neighbours.flat_map(|&&op| self.dual_topo[op.index].iter()) {
+                //for i in neighbours.iter().flat_map(|&&op| self.dual_topo[op.index].iter()) {
                 //    ct.push(i);
                 //}
                 //(*ct).sort();
@@ -382,7 +368,7 @@ impl ImplicitSurface {
     /// Set `neighbour_cache` to None. This triggers recomputation of the neighbour cache next time
     /// the potential or its derivatives are requested.
     pub fn invalidate_neighbour_cache(&self) {
-        let cache = self.neighbour_cache.borrow_mut();
+        let mut cache = self.neighbour_cache.borrow_mut();
         cache.valid = false;
     }
 
@@ -408,6 +394,7 @@ impl ImplicitSurface {
             ref normals,
             ref offsets,
             max_step,
+            ..
         } = *self;
 
         assert_eq!(out_potential.len(), query_points.len());
@@ -437,31 +424,27 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let radius2 = radius * radius + max_step;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, closest_dist| {
-                    kernel::LocalInterpolating::new(radius)
-                        .update_closest(closest_dist)
-                        .f(dist(x, p))
-                };
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalInterpolating::new(radius);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius + max_step;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalApproximate::new(radius, tolerance);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Cubic { radius } => {
                 let radius2 = radius * radius + max_step;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| kernel::LocalCubic::new(radius).f(dist(x, p));
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalCubic::new(radius);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
-                let neigh = |_| oriented_points_iter(points, normals).collect();
+                let neigh = |_| oriented_points_iter(points, normals);
                 let radius = 1.0;
-                let kern = |x, p, _| kernel::GlobalInvDistance2::new(tolerance).f(dist(x, p));
+                let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Hrbf => {
@@ -472,7 +455,7 @@ impl ImplicitSurface {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls<'a, K, N, F>(
+    fn compute_mls<'a, I, K, N>(
         &self,
         query_points: &[[f64; 3]],
         radius: f64,
@@ -481,16 +464,17 @@ impl ImplicitSurface {
         out_potential: &mut [f64],
     ) -> Result<(), super::Error>
     where
-        K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
-        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+        I: Iterator<Item=OrientedPoint> + 'a,
+        K: SphericalKernel<f64> + Copy + Sync + Send,
+        N: Fn([f64; 3]) -> I + Sync + Send,
     {
 
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
 
         let ImplicitSurface {
-            points,
-            normals,
-            offsets,
+            ref points,
+            ref normals,
+            ref offsets,
             ..
         } = *self;
 
@@ -501,15 +485,16 @@ impl ImplicitSurface {
         ).for_each(|(q, neighbours, potential)| {
             if !neighbours.is_empty() {
                 let mut closest_d = radius;
-                for nbr in neighbours.iter() {
-                    closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
+                for &i in neighbours.iter() {
+                    let pos = points[i];
+                    closest_d = closest_d.min((Vector3(*q) - pos).norm());
                 }
 
                 let mut denominator = 0.0;
                 let mut numerator = 0.0;
-                for i in neighbours.iter() {
+                for &i in neighbours.iter() {
                     let (pos, nml) = (points[i], normals[i]);
-                    let w = kernel(Vector3(*q), pos, closest_d);
+                    let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), pos);
                     let p = offsets[i] + nml.dot(Vector3(*q) - pos) / nml.norm();
 
                     denominator += w;
@@ -518,7 +503,7 @@ impl ImplicitSurface {
 
                 // Background potential
                 let bg = [q[0] - radius + closest_d, q[1], q[2]];
-                let w = kernel(Vector3(*q), bg.into(), closest_d);
+                let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), bg.into());
                 denominator += w;
                 numerator += w * (*potential as f64);
 
@@ -533,11 +518,19 @@ impl ImplicitSurface {
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
     /// points.
-    pub fn surface_jacobian_indices_iter<'a>(&'a self) -> Result<impl Iterator<Item = (usize, usize)> + 'a, super::Error>
+    pub fn num_surface_jacobian_entries(&self) -> usize {
+        let cache = self.neighbour_cache.borrow();
+
+        cache.points.iter().map(|pts| pts.len()).sum()
+    }
+
+    /// Compute the indices for the implicit surface potential jacobian with respect to surface
+    /// points.
+    pub fn surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) -> Result<(), super::Error>
     {
         match self.kernel {
             KernelType::Approximate { .. } => {
-                Ok(self.mls_surface_jacobian_indices_iter())
+                Ok(self.mls_surface_jacobian_indices(rows, cols))
             }
             _ => Err(super::Error::UnsupportedKernel)
         }
@@ -558,7 +551,7 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius + max_step;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
                 self.mls_surface_jacobian_values(query_points, radius, kernel, neigh, values);
                 Ok(())
@@ -569,17 +562,23 @@ impl ImplicitSurface {
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
     /// by the precomputed `neighbour_cache` map.
-    fn mls_surface_jacobian_indices_iter<'a>(&self) -> impl Iterator<Item = (usize, usize)> + 'a {
+    fn mls_surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) {
         // For each row
-        self.neighbour_cache.borrow()
-            .expect("Neighbour computation missing, can't initialize jacobian indices.")
-            points.iter().enumerate().flat_map(move |(row, nbr_points)|
-                // For each column
-                nbr_points.iter().map(move |col| (row, col))
-            )
+        let cache = self.neighbour_cache.borrow();
+        let row_col_iter = cache.points
+            .iter()
+            .enumerate()
+            .flat_map(move |(row, nbr_points)|
+                nbr_points.iter().map(move |&col| (row, col))
+            );
+
+        for ((row, col), out_row, out_col) in zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())  {
+            *out_row = row;
+            *out_col = col;
+        }
     }
 
-    fn mls_surface_jacobian_values<'a, K, N>(
+    fn mls_surface_jacobian_values<'a, I, K, N>(
         &self,
         query_points: &[[f64; 3]],
         radius: f64,
@@ -588,34 +587,31 @@ impl ImplicitSurface {
         values: &mut [f64],
     )
     where
-        K: SphericalKernel<f64>,
-        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+        I: Iterator<Item=OrientedPoint> + 'a,
+        K: SphericalKernel<f64> + Copy + Sync + Send,
+        N: Fn([f64; 3]) -> I + Sync + Send,
     {
         let ImplicitSurface {
-            points,
-            normals,
-            dual_topo,
-            surface_topo,
+            ref points,
+            ref normals,
+            ref offsets,
+            ref dual_topo,
+            ref surface_topo,
             ..
         } = *self;
 
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
 
         // For each row
-        let val_iter = zip!(
-            query_points.par_iter(),
-            neigh.points.par_iter()
-        ).flat_map(|(q, nbr_points)| {
+        let jac_iter = 
+            query_points.iter().zip(
+            neigh.points.iter())
+        .flat_map(move |(q, nbr_points)| {
             let mut weight_sum = 0.0;
-            let mut weighted_sum = 0.0;
-            for i in nbr_points.iter() {
-                let (pos, nml) = (points[i], normals[i]);
-                let w = kernel.f(Vector3(*q), pos);
-
-                let p = offsets[i] + nml.dot(Vector3(*q) - pos) / nml.norm();
-
+            for &i in nbr_points.iter() {
+                let pos = points[i];
+                let w = kernel.eval(Vector3(*q), pos);
                 weight_sum += w;
-                weighted_sum += w * p;
             }
 
             let weight_sum2 = weight_sum * weight_sum;
@@ -624,26 +620,26 @@ impl ImplicitSurface {
             // Compute derivative if the closest point in the neighbourhood. Otherwise we
             // assume the background potential is constant.
             let mut closest_d = radius;
-            let mut closest_i = -1;
-            for j in nbr_points.iter() {
+            let mut closest_i = -1isize;
+            for &j in nbr_points.iter() {
                 let dist = (Vector3(*q) - points[j]).norm();
                 if dist < closest_d {
                     closest_d = dist;
-                    closest_i = j;
+                    closest_i = j as isize;
                 }
             }
 
             // For each column
-            nbr_points.iter().map(|i| {
-                if weight_sum = 0.0 {
-                    return 0.0;
+            nbr_points.iter().map(move |&i| {
+                if weight_sum == 0.0 {
+                    return Vector3::zeros();
                 }
 
                 let (off, pos, nml) = (offsets[i], points[i], normals[i]);
-                let w = kernel.f(Vector3(*q), pos);
-                let dw = kernel.df(Vector3(*q), pos);
-                if dw == 0.0 && w == 0.0 {
-                    return 0.0;
+                let w = kernel.eval(Vector3(*q), pos);
+                let dw = kernel.grad(Vector3(*q), pos);
+                if dw == Vector3::zeros() && w == 0.0 {
+                    return Vector3::zeros();
                 }
 
                 let dwds = dw * (weight_sum - w) / weight_sum2;
@@ -653,12 +649,12 @@ impl ImplicitSurface {
 
                 // Compute the normal component of the derivative
                 let nml_proj = Matrix3::identity() - nml*nml.transpose();
-                let mut nml_deriv = Vector3::zero();
-                for tri_idx in dual_topo[i] {
-                    let tri_indices = surface_topo[tri_idx];
-                    let tri = Triangle::from_indexed_slice(&tri_indices, &points);
+                let mut nml_deriv = Vector3::zeros();
+                for &tri_idx in dual_topo[i].iter() {
+                    let tri_indices = &surface_topo[tri_idx];
+                    let tri = Triangle::from_indexed_slice(tri_indices, &points);
                     let nml_grad = tri.area_normal_gradient(i);
-                    for k in tri_indices.iter() {
+                    for &k in tri_indices.iter() {
                         if k == i {
                             let proj_diff = nml_proj * diff;
                             nml_deriv += ((w/weight_sum) * nml_grad * proj_diff - nml) / nml.norm();
@@ -666,7 +662,7 @@ impl ImplicitSurface {
                             let nmlk = normals[k];
                             let nmlk_proj = Matrix3::identity() - nmlk*nmlk.transpose();
                             let posk = points[k];
-                            let wk = kernel.f(Vector3(*q), posk) / weight_sum;
+                            let wk = kernel.eval(Vector3(*q), posk) / weight_sum;
                             let proj_diff = nmlk_proj  * (Vector3(*q) - posk);
                             nml_deriv += (wk * nml_grad * proj_diff) / nmlk.norm();
                         }
@@ -674,89 +670,57 @@ impl ImplicitSurface {
                 }
 
                 // Compute background potential derivative contribution
-                let bg = if i == closest_i {
+                let bg = if i as isize == closest_i {
                     -diff/closest_d
                 } else {
-                    0.0
-                }
+                    Vector3::zeros()
+                };
 
                 dwds * p + nml_deriv + bg
             })
         });
+        let value_vecs: &mut [[f64;3]] = reinterpret::reinterpret_mut_slice(values);
 
-        for (&new_val, val) in val_iter.zip(values.iter_mut()) {
-            *val = new_val;
-        }
+        jac_iter.zip(value_vecs.iter_mut()).for_each(|(new_vec, vec)| {
+            *vec = new_vec.into();
+        });
     }
 
-    fn compute_hrbf<F>(
+    fn compute_hrbf<V3>(
         query_points: &[[f64; 3]],
         points: &[V3],
         normals: &[V3],
         offsets: &[f64],
-        interrupt: F,
         out_potential: &mut [f64],
     ) -> Result<(), super::Error>
     where
-        F: Fn() -> bool + Sync + Send,
-        V3: Into<[f64;3]>
+        V3: Into<[f64;3]> + Copy
     {
         let pts: Vec<crate::na::Point3<f64>> = points
             .iter()
-            .map(|p| crate::na::Point3::from(p.into()))
+            .map(|&p| {
+                let pos: [f64;3] = p.into();
+                crate::na::Point3::from(pos)
+            })
             .collect();
         let nmls: Vec<crate::na::Vector3<f64>> = normals
             .iter()
-            .map(|n| crate::na::Vector3::from(n.into()))
+            .map(|&n| crate::na::Vector3::from(n.into()))
             .collect();
 
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
 
         hrbf.fit_offset(&pts, offsets, &nmls);
 
-        for (q_chunk, potential_chunk) in query_points.chunks(Self::PARALLEL_CHUNK_SIZE).zip(
-            out_potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-        ) {
-            if interrupt() {
-                return Err(super::Error::Interrupted);
-            }
-
-            q_chunk
-                .par_iter()
-                .zip(potential_chunk.par_iter_mut())
-                .for_each(|(q, potential)| {
-                    *potential = hrbf.eval(crate::na::Point3::from(*q));
-                });
-        }
+        query_points
+            .par_iter()
+            .zip(out_potential.par_iter_mut())
+            .for_each(|(q, potential)| {
+                *potential = hrbf.eval(crate::na::Point3::from(*q));
+            });
 
         Ok(())
     }
-
-    /// Jacobian with respect to sample points that define the implicit surface.
-    pub fn surface_jacobian_indices<F>(&self,
-                                       max_step: f64,
-                                       indices: &mut [f64]) -> Result<(), super::Error>
-    where
-        F: Fn() -> bool + Sync + Send,
-    {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            ref offsets,
-            ..
-        } = *self;
-
-        match *kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let radius2 = radius * radius;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
-                self.compute_mls(query_points, radius, kern, neigh, interrupt, out_potential)
-            }
-            _ => { unimplemented!() }
-        }
-    }
-
 
     /// Update points, normals and offsets from a given vertex mesh.
     pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
@@ -850,30 +814,26 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let radius2 = radius * radius;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, closest_dist| {
-                    kernel::LocalInterpolating::new(radius)
-                        .update_closest(closest_dist)
-                        .f(dist(x, p))
-                };
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalInterpolating::new(radius);
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| kernel::LocalApproximate::new(radius, tolerance).f(dist(x, p));
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalApproximate::new(radius, tolerance);
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Cubic { radius } => {
                 let radius2 = radius * radius;
-                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2);
-                let kern = |x, p, _| kernel::LocalCubic::new(radius).f(dist(x, p));
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                let kern = kernel::LocalCubic::new(radius);
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Global { tolerance } => {
-                let neigh = |_| oriented_points_iter(points, normals).collect();
+                let neigh = |_| oriented_points_iter(points, normals);
                 let radius = 1.0;
-                let kern = |x, p, _| kernel::GlobalInvDistance2::new(tolerance).f(dist(x, p));
+                let kern = kernel::GlobalInvDistance2::new(tolerance);
                 Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Hrbf => {
@@ -882,7 +842,7 @@ impl ImplicitSurface {
         }
     }
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, K, N, F, M>(
+    fn compute_mls_on_mesh<'a, I, K, N, F, M>(
         mesh: &mut M,
         radius: f64,
         kernel: K,
@@ -890,8 +850,9 @@ impl ImplicitSurface {
         interrupt: F,
     ) -> Result<(), super::Error>
     where
-        K: Fn(Vector3<f64>, Vector3<f64>, f64) -> f64 + Sync + Send,
-        N: Fn([f64; 3]) -> Vec<&'a OrientedPoint> + Sync + Send,
+        I: Iterator<Item=OrientedPoint> + Clone + 'a,
+        K: SphericalKernel<f64> + Copy + Sync + Send,
+        N: Fn([f64; 3]) -> I + Sync + Send,
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<f64>,
     {
@@ -921,54 +882,53 @@ impl ImplicitSurface {
                 potential_chunk.par_iter_mut()
             )
             .for_each(|(q, num_neighs, neighs, weight, potential)| {
-                let neighbours_vec: Vec<&OrientedPoint> = neigh(*q);
-                let neighbours = &neighbours_vec;
+                let neighbours_iter = neigh(*q);
 
                 // Record number of neighbours in total.
-                *num_neighs = neighbours.len() as i32;
+                *num_neighs = -1 as i32;
+                if let (lower, Some(upper)) = neighbours_iter.size_hint() {
+                    if lower == upper {
+                        *num_neighs = lower as i32;
+                    }
+                }
 
                 // Record up to 11 neighbours
-                for (k, neigh) in neighbours_vec.iter().enumerate() {
+                for (k, neigh) in neighbours_iter.clone().enumerate() {
                     if k >= 11 {
                         break;
                     }
                     neighs[k] = neigh.index as i32;
                 }
 
-                if !neighbours.is_empty() {
-                    let n = neighbours.len() + 1;
+                if *num_neighs != 0 {
                     let mut closest_d = radius;
-                    for nbr in neighbours.iter() {
-                        closest_d = closest_d.min(dist(Vector3(*q), nbr.pos));
+                    for nbr in neighbours_iter.clone() {
+                        closest_d = closest_d.min((Vector3(*q) - nbr.pos).norm());
                     }
-                    let weights = (0..n)
-                        .map(|i| {
-                            if i == neighbours.len() {
-                                let bg = [q[0] - radius + closest_d, q[1], q[2]];
-                                let w = kernel(Vector3(*q), bg.into(), closest_d);
-                                // Record the last weight for the background potential
-                                weight[11] = w as f32;
-                                w
-                            } else {
-                                let w = kernel(Vector3(*q), neighbours[i].pos, closest_d);
-                                if i < 11 {
-                                    // Record the current weight
-                                    weight[i] = w as f32;
-                                }
-                                w
+                    let mut weights = neighbours_iter.clone().enumerate()
+                        .map(|(i, nbr)| {
+                            let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), nbr.pos);
+                            if i < 11 {
+                                // Record the current weight
+                                weight[i] = w as f32;
                             }
+                            w
                         })
                         .collect::<Vec<f64>>();
 
-                    let potentials = (0..n)
-                        .map(|i| {
-                            if i == neighbours.len() {
-                                *potential as f64
-                            } else {
-                                neighbours[i].nml.dot(Vector3(*q) - neighbours[i].pos)
-                            }
-                        })
+                    // Add a background potential
+                    let bg = [q[0] - radius + closest_d, q[1], q[2]];
+                    let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), bg.into());
+                    // Record the last weight for the background potential
+                    weight[11] = w as f32;
+                    weights.push(w);
+
+                    let mut potentials = neighbours_iter.clone()
+                        .map(|nbr| nbr.nml.dot(Vector3(*q) - nbr.pos))
                         .collect::<Vec<f64>>();
+
+                    // Add background potential
+                    potentials.push(*potential as f64);
 
                     let denominator: f64 = weights.iter().sum();
                     let numerator: f64 = weights
@@ -993,7 +953,7 @@ impl ImplicitSurface {
         Ok(())
     }
 
-    fn compute_hrbf_on_mesh<F, M>(
+    fn compute_hrbf_on_mesh<F, M, V3>(
         mesh: &mut M,
         points: &[V3],
         normals: &[V3],
@@ -1003,17 +963,23 @@ impl ImplicitSurface {
     where
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<f64>,
-        V3: Into<[f64;3]>
+        V3: Into<[f64;3]> + Copy
     {
         let sample_pos = mesh.vertex_positions().to_vec();
 
         let pts: Vec<crate::na::Point3<f64>> = points
             .iter()
-            .map(|pos| crate::na::Point3::from(pos.into()))
+            .map(|&p| {
+                let pos: [f64;3] = p.into();
+                crate::na::Point3::from(pos)
+            })
             .collect();
         let nmls: Vec<crate::na::Vector3<f64>> = normals
             .iter()
-            .map(|nml| crate::na::Vector3::from(nml.into()))
+            .map(|&n| {
+                let nml: [f64;3] = n.into();
+                crate::na::Vector3::from(nml)
+            })
             .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
         hrbf.fit_offset(&pts, offsets, &nmls);

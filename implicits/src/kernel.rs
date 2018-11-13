@@ -22,6 +22,7 @@ pub trait Kernel<T: Real> {
 }
 
 /// Global kernel with falloff proportional to inverse distance squared.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct GlobalInvDistance2 {
     epsilon: f64,
 }
@@ -32,7 +33,7 @@ impl GlobalInvDistance2 {
     }
 }
 
-impl<T: Real + Into<f64>> Kernel<T> for GlobalInvDistance2 {
+impl<T: Real> Kernel<T> for GlobalInvDistance2 {
     fn f(&self, x: T) -> T {
         let eps = T::from(self.epsilon).unwrap();
         let w = T::one() / (x * x + eps * eps);
@@ -49,6 +50,7 @@ impl<T: Real + Into<f64>> Kernel<T> for GlobalInvDistance2 {
 
 /// Local cubic kernel with compact support. This kernel is non-interpolating but is very simple
 /// and fast to compute.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LocalCubic {
     radius: f64,
 }
@@ -100,6 +102,7 @@ impl<T: Real> Kernel<T> for LocalCubic {
 /// Local interpolating kernel. This kernel is exactly interpolating but it suffers from smoothness
 /// artifacts. Note that `closest_d` represents the distance to the closest neighbour, which means
 /// it must be manually updated before evaluating the kernel.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LocalInterpolating {
     radius: f64,
     closest_d: f64,
@@ -112,13 +115,9 @@ impl LocalInterpolating {
             closest_d: radius,
         }
     }
-    pub fn update_closest(&mut self, closest: f64) -> &mut Self {
-        self.closest_d = closest;
-        self
-    }
 }
 
-impl<T: Real + Into<f64>> Kernel<T> for LocalInterpolating {
+impl<T: Real> Kernel<T> for LocalInterpolating {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
         let xc = T::from(self.closest_d).unwrap();
@@ -144,6 +143,7 @@ impl<T: Real + Into<f64>> Kernel<T> for LocalInterpolating {
 /// This kernel is a compromise between the cubic and interpolating kernels. This kernel is fairly
 /// cheap to compute and has flexible smoothness properties, which are controllable using the
 /// `tolerance` parameter.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LocalApproximate {
     radius: f64,
     tolerance: f64,
@@ -220,34 +220,68 @@ impl<T: Real> Kernel<T> for LocalApproximate {
 /// This kernel trait defines a radial basis kernel interface.
 pub trait SphericalKernel<T: Real>: Kernel<T> {
     /// Main kernel function evaluated at `x` with center at `p`.
-    fn f(&self, x: Vector3<T>, p: Vector3<T>) -> T {
+    #[inline]
+    fn eval(&self, x: Vector3<T>, p: Vector3<T>) -> T {
         Kernel::f(self, (x-p).norm())
     }
     /// First derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
     /// To compute the derivatives wrt `p`, simply negate this derivative.
-    fn df(&self, x: Vector3<T>, p: Vector3<T>) -> Vector3<T> {
-        let diff = x - p;
+    #[inline]
+    fn grad(&self, x: Vector3<T>, p: Vector3<T>) -> Vector3<T> {
+        let diff: Vector3<T> = x - p;
         let norm = diff.norm();
-        if norm > 0.0 {
-            ( Kernel::df(self, norm) / norm ) * ( x - p )
+        if norm > T::zero() {
+            diff * (Kernel::df(self, norm) / norm)
         } else {
             Vector3::zeros()
         }
     }
     /// Second derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
     /// To compute the derivatives wrt `p`, simply negate this derivative.
-    fn ddf(&self, x: Vector3<T>, p: Vector3<T>) -> Matrix3<T> {
+    #[inline]
+    fn hess(&self, x: Vector3<T>, p: Vector3<T>) -> Matrix3<T> {
         let diff = x - p;
         let dot = diff.dot(diff);
         let norm = dot.sqrt();
         let norm_inv = T::one() / norm;
         let norm_inv3 = norm_inv*norm_inv*norm_inv;
         let identity = Matrix3::identity();
-        Kernel::ddf(self, norm) * (norm_inv * identity - norm_inv3 * diff * diff.transpose())
+        (identity * norm_inv -  diff * (diff.transpose() * norm_inv3)) * Kernel::ddf(self, norm)
+    }
+
+    /// Set the distance to the closest point. Some kernels with background weights can use this
+    /// information. Because kernels are lightweight, this function makes a new kernel instead of
+    /// modifying the existing one. This decision makes parallel code using kernels easier to manage.
+    fn with_closest_dist(self, dist: f64) -> Self;
+}
+
+//
+// Implement Spherical kernel for all kernels defined above
+//
+
+impl<T: Real> SphericalKernel<T> for GlobalInvDistance2 {
+    #[inline]
+    fn with_closest_dist( self, _: f64) -> Self { self }
+}
+
+impl<T: Real> SphericalKernel<T> for LocalCubic {
+    #[inline]
+    fn with_closest_dist(self, _: f64) -> Self { self }
+}
+
+impl<T: Real> SphericalKernel<T> for LocalInterpolating {
+    #[inline]
+    fn with_closest_dist(mut self, dist: f64) -> Self {
+        self.closest_d = dist;
+        self
     }
 }
 
-impl<K, T: Real> SphericalKernel<T> for K where K: Kernel<T> {}
+impl<T: Real> SphericalKernel<T> for LocalApproximate {
+    #[inline]
+    fn with_closest_dist(self, _: f64) -> Self { self }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -313,8 +347,7 @@ mod tests {
     fn local_interpolating_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
         let radius = 1.0;
-        let mut kern = LocalInterpolating::new(radius);
-        kern.update_closest(0.1);
+        let kern = LocalInterpolating::new(radius).with_closest_dist(0.1);
 
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);
@@ -360,6 +393,4 @@ mod bench {
             total
         });
     }
-
-
 }

@@ -304,9 +304,8 @@ impl ImplicitSurface {
     }
 
     /// Update points and normals (oriented points) using an iterator.
-    pub fn update_points<I,J>(&mut self, points_iter: I) 
+    pub fn update_points<I>(&mut self, points_iter: I) 
         where I: Iterator<Item = [f64;3]>,
-              J: Iterator<Item = [f64;3]>,
     {
         for (p, new_p) in self.points.iter_mut().zip(points_iter) {
             *p = new_p.into();
@@ -426,26 +425,26 @@ impl ImplicitSurface {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
             }
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
             }
             KernelType::Cubic { radius } => {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| oriented_points_iter(points, normals);
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
@@ -462,7 +461,7 @@ impl ImplicitSurface {
         kernel: K,
         neigh: N,
         out_potential: &mut [f64],
-    ) -> Result<(), super::Error>
+    )
     where
         I: Iterator<Item=OrientedPoint> + 'a,
         K: SphericalKernel<f64> + Copy + Sync + Send,
@@ -512,8 +511,6 @@ impl ImplicitSurface {
                 }
             }
         });
-
-        Ok(())
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -522,6 +519,18 @@ impl ImplicitSurface {
         let cache = self.neighbour_cache.borrow();
 
         cache.points.iter().map(|pts| pts.len()).sum()
+    }
+
+    /// Compute the indices for the implicit surface potential jacobian with respect to surface
+    /// points.
+    pub fn surface_jacobian_indices_iter(&self) -> Result<impl Iterator<Item = (usize, usize)>, super::Error>
+    {
+        match self.kernel {
+            KernelType::Approximate { .. } => {
+                Ok(self.mls_surface_jacobian_indices_iter())
+            }
+            _ => Err(super::Error::UnsupportedKernel)
+        }
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -558,6 +567,22 @@ impl ImplicitSurface {
             }
             _ => Err(super::Error::UnsupportedKernel)
         }
+    }
+
+    /// Return row and column indices for each non-zero entry in the jacobian. This is determined
+    /// by the precomputed `neighbour_cache` map.
+    fn mls_surface_jacobian_indices_iter(&self) -> impl Iterator<Item = (usize, usize)> {
+        let ImplicitSurface {
+            ref neighbour_cache,
+            ..
+        } = *self;
+        let cache = neighbour_cache.borrow();
+        cache.points.clone()
+            .into_iter()
+            .enumerate()
+            .flat_map(move |(row, nbr_points)|
+                nbr_points.into_iter().map(move |col| (row, col))
+            )
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined

@@ -347,7 +347,8 @@ mod tests {
     fn local_interpolating_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
         let radius = 1.0;
-        let kern = LocalInterpolating::new(radius).with_closest_dist(0.1);
+        let kern = LocalInterpolating::new(radius);
+        let kern = SphericalKernel::<f64>::with_closest_dist(kern, 0.1);
 
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);

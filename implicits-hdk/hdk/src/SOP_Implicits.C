@@ -63,7 +63,7 @@ static const char *theDsFile = R"THEDSFILE(
     parm {
         name "tolerance"
         label "Tolerance"
-        type float
+        type log
         default { "1e-5" }
         range { 0.0 1.0 }
         hidewhen "{ kernel == cubic } { kernel == hrbf } { kernel == interpolating }"

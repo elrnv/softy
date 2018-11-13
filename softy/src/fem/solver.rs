@@ -84,7 +84,7 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
         .unwrap()
         .as_slice::<[f64; 3]>()
         .unwrap();
-    Tetrahedron::from_indexed_slice(indices, ref_pos)
+    Tetrahedron::from_indexed_slice(indices.get(), ref_pos)
 }
 
 #[derive(Clone, Debug)]

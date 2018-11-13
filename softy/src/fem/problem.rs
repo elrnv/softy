@@ -188,12 +188,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref mut vc) = self.volume_constraint {
             let n = vc.constraint_size();
-            vc.constraint(x, g[i..i+n]);
+            vc.constraint(x, &mut g[i..i+n]);
+            i += n;
         }
 
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let n = scc.constraint_size();
-            scc.constraint(x, g[i..i+n]);
+            scc.constraint(x, &mut g[i..i+n]);
+            //i += n;
         }
 
         true
@@ -246,11 +248,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0;
 
         if let Some(ref vc) = self.volume_constraint {
-            vc.constraint_jacobian_values(x, vals[i..i+vc.constraint_jacobian_size()]);
+            let n = vc.constraint_jacobian_size();
+            vc.constraint_jacobian_values(x, &mut vals[i..i+n]);
+            i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.constraint_jacobian_values(x, vals[i..i+scc.constraint_jacobian_size()]);
+            let n = scc.constraint_jacobian_size();
+            scc.constraint_jacobian_values(x, &mut vals[i..i+n]);
+            //i += n;
         }
 
         true
@@ -335,14 +341,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_hessian_size();
-            vc.constraint_hessian_values(x, lambda, vals[i..i+n]);
+            vc.constraint_hessian_values(x, lambda, &mut vals[i..i+n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_hessian_size();
-            scc.constraint_hessian_values(x, lambda, vals[i..i+n]);
-            i += n;
+            scc.constraint_hessian_values(x, lambda, &mut vals[i..i+n]);
+            //i += n;
         }
 
         true

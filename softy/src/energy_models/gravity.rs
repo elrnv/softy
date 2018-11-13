@@ -3,6 +3,7 @@ use crate::energy::*;
 use crate::geo::math::Vector3;
 use crate::geo::mesh::{topology::*, Attrib};
 use crate::geo::prim::Tetrahedron;
+use crate::geo::ops::*;
 use crate::matrix::*;
 use crate::TetMesh;
 use reinterpret::*;
@@ -35,7 +36,7 @@ impl Energy<f64> for Gravity {
         let tetmesh = self.tetmesh.borrow();
         let tet_iter = tetmesh
             .cell_iter()
-            .map(|cell| Tetrahedron::from_indexed_slice(cell, pos));
+            .map(|cell| Tetrahedron::from_indexed_slice(cell.get(), pos));
 
         tetmesh
             .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)

@@ -100,7 +100,6 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
         3 * 3 * self.surface_topo.len()
     }
     fn constraint_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        debug_assert_eq!(indices.len(), self.constraint_jacobian_size());
         Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self))
     }
     fn constraint_jacobian_values(&self, x: &[f64], values: &mut [f64]) {
@@ -186,7 +185,6 @@ impl ConstraintHessian<f64> for VolumeConstraint {
         6 * 3 * self.surface_topo.len()
     }
     fn constraint_hessian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        debug_assert_eq!(indices.len(), self.constraint_hessian_size());
         Box::new(VolumeConstraint::constraint_hessian_indices_iter(self))
     }
     fn constraint_hessian_values(&self, x: &[f64], lambda: &[f64], values: &mut [f64]) {

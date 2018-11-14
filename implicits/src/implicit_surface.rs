@@ -204,17 +204,19 @@ impl ImplicitSurfaceBuilder {
             offsets,
             max_step: self.max_step,
             neighbour_cache: RefCell::new(NeighbourCache::new()),
-            nml_grad: Vec::new(),
             dual_topo,
         }
     }
 }
 
 /// Cache neighbouring sample points for each query point.
+/// Note that this determines the entire sparsity structure of the query point neighbourhoods.
 #[derive(Clone, Debug, PartialEq)]
 struct NeighbourCache {
-    /// Sample point indices.
-    pub points: Vec<Vec<usize>>,
+    /// For each query point with a non-trivial neighbourhood of sample points, record the
+    /// neighbours indices in this vector. Along with the vector of neighbours, store the index of
+    /// the original query point, because this vector is a sparse subset of all the query points.
+    pub points: Vec<(usize, Vec<usize>)>,
 
     /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
     /// we can reuse the already allocated memory.
@@ -232,14 +234,25 @@ impl NeighbourCache {
 
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
+    /// The type of kernel to use for fitting the data.
     kernel: KernelType,
+
+    /// Toggle for computing a simple background potential that will be mixed in with the local
+    /// potentials. If `true`, this background potential will be automatically computed, if
+    /// `false`, the values in the input will be used as the background potential to be mixed in.
     background_potential: bool,
+
+    /// Local search tree for fast proximity queries.
     spatial_tree: RTree<OrientedPoint>,
+
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
     surface_topo: Vec<[usize;3]>,
+    /// Sample points defining the implicit surface.
     points: Vec<Vector3<f64>>,
+    /// Normals that define the potential field gradient at every sample point.
     normals: Vec<Vector3<f64>>,
+
     /// Potential values at the interpolating points. These offsets indicate the values to
     /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
     /// necessarily pass through the given points.
@@ -257,9 +270,6 @@ pub struct ImplicitSurface {
     /// invalidated explicitly when the sparsity pattern is expected to change. This is wrapped in
     /// a `RefCell` because it may be updated in non mutable functions since it's a cache.
     neighbour_cache: RefCell<NeighbourCache>,
-
-    /// The lookup table for the unnormalized normals of each triangle.
-    nml_grad: Vec<Vec<(Matrix3<f64>, usize)>>,
 
     /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
@@ -323,6 +333,33 @@ impl ImplicitSurface {
         *spatial_tree = build_rtree(oriented_points_iter(points, normals));
     }
 
+    /// Compute neighbour cache if it has been invalidated
+    pub fn cache_neighbours(&self, query_points: &[[f64; 3]]) {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            ref points,
+            ref normals,
+            max_step,
+            ..
+        } = self;
+        match *kernel {
+            KernelType::Interpolating { radius } |
+            KernelType::Approximate { radius, .. } |
+            KernelType::Cubic { radius } => {
+                let radius2 = radius * radius + max_step;
+                let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
+                self.cached_neighbours_borrow(query_points, neigh);
+            }
+            KernelType::Global { .. } |
+            KernelType::Hrbf => {
+                // Global kernel, all points are neighbours
+                let neigh = |_| oriented_points_iter(points, normals);
+                self.cached_neighbours_borrow(query_points, neigh);
+            }
+        }
+    }
+
     /// Compute neighbour cache if it hasn't been computed yet. Return the neighbours of the given
     /// query points. Note that the cache must be invalidated explicitly, there is no real way to
     /// automatically cache results because both: query points and sample points may change
@@ -334,33 +371,31 @@ impl ImplicitSurface {
     {
         if !self.neighbour_cache.borrow().valid {
             let mut cache = self.neighbour_cache.borrow_mut();
-            cache.points.resize(query_points.len(), Vec::new());
+            cache.points.clear();
+            cache.points.reserve(query_points.len());
 
-            zip!(
-                cache.points.par_iter_mut(),
-                query_points.par_iter()
-            ).for_each(|(cp, q)| {
+            for (qi, q) in query_points.iter().enumerate() {
                 let neighbours_iter = neigh(*q);
                 // Below we try to reuse the allocated memory by previously cached members for
-                // points as well as triangles.
+                // points.
 
                 // Cache points
-                cp.clear();
-                for i in neighbours_iter.map(|op| op.index) {
-                    cp.push(i as usize);
-                }
+                for (iter_count, ni) in neighbours_iter.map(|op| op.index).enumerate() {
+                    if iter_count == 0 {
+                        // Initialize entry if there are any neighbours.
+                        cache.points.push((qi, Vec::new()));
+                    }
 
-                // Cache triangles
-                //ct.clear();
-                //for i in neighbours.iter().flat_map(|&&op| self.dual_topo[op.index].iter()) {
-                //    ct.push(i);
-                //}
-                //(*ct).sort();
-                //(*ct).dedup();
-            });
+                    debug_assert!(!cache.points.is_empty());
+                    let last_mut = cache.points.last_mut().unwrap();
+
+                    last_mut.1.push(ni as usize);
+                }
+            }
 
             cache.valid = true;
         }
+
         self.neighbour_cache.borrow()
     }
 
@@ -369,6 +404,12 @@ impl ImplicitSurface {
     pub fn invalidate_neighbour_cache(&self) {
         let mut cache = self.neighbour_cache.borrow_mut();
         cache.valid = false;
+    }
+
+    /// The number of query points currently in the cache.
+    pub fn num_cached_query_points(&self) -> usize {
+        let cache = self.neighbour_cache.borrow();
+        cache.points.len()
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -387,7 +428,6 @@ impl ImplicitSurface {
     {
         let ImplicitSurface {
             ref kernel,
-            background_potential: generate_bg_potential,
             ref spatial_tree,
             ref points,
             ref normals,
@@ -396,55 +436,31 @@ impl ImplicitSurface {
             ..
         } = *self;
 
-        assert_eq!(out_potential.len(), query_points.len());
-
-        if generate_bg_potential {
-            // Initialize potential with zeros.
-            for p in out_potential.iter_mut() {
-                *p = 0.0;
-            }
-            // Generate a background potential field for every query point. This will be mixed
-            // in with the computed potentials for local methods. Global methods like HRBF
-            // ignore this field.
-            for (pos, potential) in
-                zip!(query_points.iter(), out_potential.iter_mut())
-            {
-                if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
-                    let q = Vector3(*pos);
-                    let p = nearest_neigh.pos;
-                    let nml = nearest_neigh.nml;
-                    *potential = (q - p).dot(nml) / nml.norm();
-                } else {
-                    return Err(super::Error::Failure);
-                }
-            }
-        }
-
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalInterpolating::new(radius);
-                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Cubic { radius } => {
                 let radius2 = radius * radius + max_step;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalCubic::new(radius);
-                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| oriented_points_iter(points, normals);
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                Ok(self.compute_mls(query_points, radius, kern, neigh, out_potential))
+                self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
@@ -461,14 +477,38 @@ impl ImplicitSurface {
         kernel: K,
         neigh: N,
         out_potential: &mut [f64],
-    )
+    ) -> Result<(), super::Error>
     where
         I: Iterator<Item=OrientedPoint> + 'a,
         K: SphericalKernel<f64> + Copy + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
-
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
+
+        if self.background_potential {
+            let cached_points = &neigh.points;
+            assert_eq!(out_potential.len(), cached_points.len());
+
+            // Initialize potential with zeros.
+            for p in out_potential.iter_mut() {
+                *p = 0.0;
+            }
+            // Generate a background potential field for every query point. This will be mixed
+            // in with the computed potentials for local methods. Global methods like HRBF
+            // ignore this field.
+            for (pos, potential) in
+                zip!(cached_points.iter().map(|&(qi, _)| query_points[qi]), out_potential.iter_mut())
+            {
+                if let Some(nearest_neigh) = self.spatial_tree.nearest_neighbor(&pos) {
+                    let q = Vector3(pos);
+                    let p = nearest_neigh.pos;
+                    let nml = nearest_neigh.nml;
+                    *potential = (q - p).dot(nml) / nml.norm();
+                } else {
+                    return Err(super::Error::Failure);
+                }
+            }
+        }
 
         let ImplicitSurface {
             ref points,
@@ -478,23 +518,22 @@ impl ImplicitSurface {
         } = *self;
 
         zip!(
-            query_points.par_iter(),
-            neigh.points.par_iter(),
+            neigh.points.par_iter().map(|(qi, neigh)| (query_points[*qi], neigh)),
             out_potential.par_iter_mut()
-        ).for_each(|(q, neighbours, potential)| {
+        ).for_each(|((q, neighbours), potential)| {
             if !neighbours.is_empty() {
                 let mut closest_d = radius;
                 for &i in neighbours.iter() {
                     let pos = points[i];
-                    closest_d = closest_d.min((Vector3(*q) - pos).norm());
+                    closest_d = closest_d.min((Vector3(q) - pos).norm());
                 }
 
                 let mut denominator = 0.0;
                 let mut numerator = 0.0;
                 for &i in neighbours.iter() {
                     let (pos, nml) = (points[i], normals[i]);
-                    let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), pos);
-                    let p = offsets[i] + nml.dot(Vector3(*q) - pos) / nml.norm();
+                    let w = kernel.with_closest_dist(closest_d).eval(Vector3(q), pos);
+                    let p = offsets[i] + nml.dot(Vector3(q) - pos) / nml.norm();
 
                     denominator += w;
                     numerator += w * p;
@@ -502,7 +541,7 @@ impl ImplicitSurface {
 
                 // Background potential
                 let bg = [q[0] - radius + closest_d, q[1], q[2]];
-                let w = kernel.with_closest_dist(closest_d).eval(Vector3(*q), bg.into());
+                let w = kernel.with_closest_dist(closest_d).eval(Vector3(q), bg.into());
                 denominator += w;
                 numerator += w * (*potential as f64);
 
@@ -511,14 +550,15 @@ impl ImplicitSurface {
                 }
             }
         });
+
+        Ok(())
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
     /// points.
     pub fn num_surface_jacobian_entries(&self) -> usize {
         let cache = self.neighbour_cache.borrow();
-
-        cache.points.iter().map(|pts| pts.len()).sum()
+        cache.points.iter().map(|(_, pts)| pts.len()*3).sum()
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -580,9 +620,9 @@ impl ImplicitSurface {
         cache.points.clone()
             .into_iter()
             .enumerate()
-            .flat_map(move |(row, nbr_points)|
-                nbr_points.into_iter().map(move |col| (row, col))
-            )
+            .flat_map(move |(row, (_, nbr_points))|
+                nbr_points.into_iter().flat_map(move |col| (0..3).map(move |i| (row, 3*col+i))
+            ))
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
@@ -593,9 +633,9 @@ impl ImplicitSurface {
         let row_col_iter = cache.points
             .iter()
             .enumerate()
-            .flat_map(move |(row, nbr_points)|
-                nbr_points.iter().map(move |&col| (row, col))
-            );
+            .flat_map(move |(row, (_, nbr_points))|
+                nbr_points.iter().cloned().flat_map(move |col| (0..3).map(move |i| (row, 3*col+i))
+            ));
 
         for ((row, col), out_row, out_col) in zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())  {
             *out_row = row;
@@ -629,13 +669,12 @@ impl ImplicitSurface {
 
         // For each row
         let jac_iter = 
-            query_points.iter().zip(
-            neigh.points.iter())
+            neigh.points.iter().map(|(qi, neigh)| (query_points[*qi], neigh))
         .flat_map(move |(q, nbr_points)| {
             let mut weight_sum = 0.0;
             for &i in nbr_points.iter() {
                 let pos = points[i];
-                let w = kernel.eval(Vector3(*q), pos);
+                let w = kernel.eval(Vector3(q), pos);
                 weight_sum += w;
             }
 
@@ -647,7 +686,7 @@ impl ImplicitSurface {
             let mut closest_d = radius;
             let mut closest_i = -1isize;
             for &j in nbr_points.iter() {
-                let dist = (Vector3(*q) - points[j]).norm();
+                let dist = (Vector3(q) - points[j]).norm();
                 if dist < closest_d {
                     closest_d = dist;
                     closest_i = j as isize;
@@ -661,15 +700,15 @@ impl ImplicitSurface {
                 }
 
                 let (off, pos, nml) = (offsets[i], points[i], normals[i]);
-                let w = kernel.eval(Vector3(*q), pos);
-                let dw = kernel.grad(Vector3(*q), pos);
+                let w = kernel.eval(Vector3(q), pos);
+                let dw = kernel.grad(Vector3(q), pos);
                 if dw == Vector3::zeros() && w == 0.0 {
                     return Vector3::zeros();
                 }
 
                 let dwds = dw * (weight_sum - w) / weight_sum2;
 
-                let diff = Vector3(*q) - pos;
+                let diff = Vector3(q) - pos;
                 let p = off + nml.dot(diff) / nml.norm();
 
                 // Compute the normal component of the derivative
@@ -687,8 +726,8 @@ impl ImplicitSurface {
                             let nmlk = normals[k];
                             let nmlk_proj = Matrix3::identity() - nmlk*nmlk.transpose();
                             let posk = points[k];
-                            let wk = kernel.eval(Vector3(*q), posk) / weight_sum;
-                            let proj_diff = nmlk_proj  * (Vector3(*q) - posk);
+                            let wk = kernel.eval(Vector3(q), posk) / weight_sum;
+                            let proj_diff = nmlk_proj  * (Vector3(q) - posk);
                             nml_deriv += (wk * nml_grad * proj_diff) / nmlk.norm();
                         }
                     }

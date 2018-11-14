@@ -222,7 +222,7 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
     /// Main kernel function evaluated at `x` with center at `p`.
     #[inline]
     fn eval(&self, x: Vector3<T>, p: Vector3<T>) -> T {
-        Kernel::f(self, (x-p).norm())
+        self.f((x - p).norm())
     }
     /// First derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
     /// To compute the derivatives wrt `p`, simply negate this derivative.
@@ -231,7 +231,7 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
         let diff: Vector3<T> = x - p;
         let norm = diff.norm();
         if norm > T::zero() {
-            diff * (Kernel::df(self, norm) / norm)
+            diff * (self.df(norm) / norm)
         } else {
             Vector3::zeros()
         }
@@ -241,12 +241,16 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
     #[inline]
     fn hess(&self, x: Vector3<T>, p: Vector3<T>) -> Matrix3<T> {
         let diff = x - p;
-        let dot = diff.dot(diff);
-        let norm = dot.sqrt();
-        let norm_inv = T::one() / norm;
-        let norm_inv3 = norm_inv*norm_inv*norm_inv;
-        let identity = Matrix3::identity();
-        (identity * norm_inv -  diff * (diff.transpose() * norm_inv3)) * Kernel::ddf(self, norm)
+        let norm = diff.norm();
+        if norm > T::zero() {
+            let norm_inv = T::one() / norm;
+            let norm_inv2 = norm_inv*norm_inv;
+            let identity = Matrix3::identity();
+            let proj_diff = diff * diff.transpose() * norm_inv2;
+            (identity - proj_diff) * (self.df(norm) * norm_inv) + proj_diff * self.ddf(norm)
+        } else {
+            Matrix3::zeros()
+        }
     }
 
     /// Set the distance to the closest point. Some kernels with background weights can use this
@@ -288,7 +292,7 @@ mod tests {
     use super::*;
     use autodiff::F;
 
-    /// Test first derivative
+    /// Test derivatives.
     fn test_derivatives<K: Kernel<F>>(kern: &K, start: usize) {
         for i in start..50 {
             // Autodiff test
@@ -298,6 +302,25 @@ mod tests {
             let ddf = kern.ddf(x);
             assert_relative_eq!(df.value(), f.deriv(), max_relative=1e-8);
             assert_relative_eq!(ddf.value(), df.deriv(), max_relative=1e-8);
+        }
+    }
+
+    /// Test spherical derivative.
+    fn test_spherical_derivatives<K: SphericalKernel<F>>(kern: &K, start: usize) {
+        for j in 0..3 { // for each component
+            for i in start..50 {
+                // Autodiff test
+                let x = F::cst(0.1 * i as f64);
+                let mut q = Vector3([x,x,x]);
+                q[j] = F::var(x);
+                let f = kern.eval(q, Vector3::zeros());
+                let df = kern.grad(q, Vector3::zeros());
+                let ddf = kern.hess(q, Vector3::zeros());
+                assert_relative_eq!(df[j].value(), f.deriv(), max_relative=1e-8);
+                for k in 0..3 {
+                    assert_relative_eq!(ddf[k][j].value(), df[k].deriv(), max_relative=1e-8);
+                }
+            }
         }
     }
 
@@ -316,6 +339,7 @@ mod tests {
         let kern = GlobalInvDistance2::new(tol);
 
         test_derivatives(&kern, 0);
+        test_spherical_derivatives(&kern, 1);
     }
 
     #[test]
@@ -328,6 +352,7 @@ mod tests {
         test_locality(&kern, radius);
 
         test_derivatives(&kern, 0);
+        test_spherical_derivatives(&kern, 1);
     }
 
     #[test]
@@ -341,6 +366,7 @@ mod tests {
         test_locality(&kern, radius);
 
         test_derivatives(&kern, 0);
+        test_spherical_derivatives(&kern, 1);
     }
 
     #[test]
@@ -355,6 +381,7 @@ mod tests {
 
         // Note: interpolating kernel is degenerate at 0, so start with 1.
         test_derivatives(&kern, 1);
+        test_spherical_derivatives(&kern, 1);
     }
     
 }

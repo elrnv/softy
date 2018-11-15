@@ -1,5 +1,5 @@
+use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::Real;
-use crate::geo::math::{Vector3, Matrix3};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -82,7 +82,7 @@ impl<T: Real> Kernel<T> for LocalCubic {
 
         let _6 = T::from(6.0).unwrap();
 
-         _6*(x*x / ( r * r * r ) - x / ( r * r ))
+        _6 * (x * x / (r * r * r) - x / (r * r))
     }
 
     fn ddf(&self, x: T) -> T {
@@ -95,7 +95,7 @@ impl<T: Real> Kernel<T> for LocalCubic {
         let _12 = T::from(12.0).unwrap();
         let _6 = T::from(6.0).unwrap();
 
-         _12 * x / ( r * r * r ) - _6 / ( r * r )
+        _12 * x / (r * r * r) - _6 / (r * r)
     }
 }
 
@@ -170,8 +170,8 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         let d = x / r;
         let ddeps = T::one() / (d * d + eps);
         let eps1 = T::one() + eps;
-        let eps1_2 = eps1*eps1;
-        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        let eps1_2 = eps1 * eps1;
+        let factor = eps * eps * eps1_2 / (T::one() + _2 * eps);
         factor * (ddeps * ddeps - T::one() / eps1_2)
     }
     fn df(&self, x: T) -> T {
@@ -186,12 +186,12 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         let _2 = T::from(2.0).unwrap();
         let _4 = T::from(4.0).unwrap();
 
-        let d = x/r;
+        let d = x / r;
         let eps1 = T::one() + eps;
-        let eps1_2 = eps1*eps1;
-        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        let eps1_2 = eps1 * eps1;
+        let factor = eps * eps * eps1_2 / (T::one() + _2 * eps);
         let d2_eps = d * d + eps;
-        - factor * _4 * d / ( r * d2_eps * d2_eps * d2_eps )
+        -factor * _4 * d / (r * d2_eps * d2_eps * d2_eps)
     }
 
     fn ddf(&self, x: T) -> T {
@@ -207,13 +207,13 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         let _4 = T::from(4.0).unwrap();
         let _6 = T::from(6.0).unwrap();
 
-        let d = x/r;
+        let d = x / r;
         let eps1 = T::one() + eps;
-        let eps1_2 = eps1*eps1;
-        let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
+        let eps1_2 = eps1 * eps1;
+        let factor = eps * eps * eps1_2 / (T::one() + _2 * eps);
         let d2_eps = d * d + eps;
         let d2_eps4 = d2_eps * d2_eps * d2_eps * d2_eps;
-        factor * _4 * ( _6 * d * d - d2_eps) / (d2_eps4 * r * r)
+        factor * _4 * (_6 * d * d - d2_eps) / (d2_eps4 * r * r)
     }
 }
 
@@ -244,7 +244,7 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
         let norm = diff.norm();
         if norm > T::zero() {
             let norm_inv = T::one() / norm;
-            let norm_inv2 = norm_inv*norm_inv;
+            let norm_inv2 = norm_inv * norm_inv;
             let identity = Matrix3::identity();
             let proj_diff = diff * diff.transpose() * norm_inv2;
             (identity - proj_diff) * (self.df(norm) * norm_inv) + proj_diff * self.ddf(norm)
@@ -256,7 +256,7 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
     /// Set the distance to the closest point. Some kernels with background weights can use this
     /// information. Because kernels are lightweight, this function makes a new kernel instead of
     /// modifying the existing one. This decision makes parallel code using kernels easier to manage.
-    fn with_closest_dist(self, dist: f64) -> Self;
+    fn with_closest_dist(self, dist: T) -> Self;
 }
 
 //
@@ -265,27 +265,32 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
 
 impl<T: Real> SphericalKernel<T> for GlobalInvDistance2 {
     #[inline]
-    fn with_closest_dist( self, _: f64) -> Self { self }
+    fn with_closest_dist(self, _: T) -> Self {
+        self
+    }
 }
 
 impl<T: Real> SphericalKernel<T> for LocalCubic {
     #[inline]
-    fn with_closest_dist(self, _: f64) -> Self { self }
+    fn with_closest_dist(self, _: T) -> Self {
+        self
+    }
 }
 
 impl<T: Real> SphericalKernel<T> for LocalInterpolating {
     #[inline]
-    fn with_closest_dist(mut self, dist: f64) -> Self {
-        self.closest_d = dist;
+    fn with_closest_dist(mut self, dist: T) -> Self {
+        self.closest_d = dist.to_f64().unwrap();
         self
     }
 }
 
 impl<T: Real> SphericalKernel<T> for LocalApproximate {
     #[inline]
-    fn with_closest_dist(self, _: f64) -> Self { self }
+    fn with_closest_dist(self, _: T) -> Self {
+        self
+    }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -300,25 +305,26 @@ mod tests {
             let f = kern.f(x);
             let df = kern.df(x);
             let ddf = kern.ddf(x);
-            assert_relative_eq!(df.value(), f.deriv(), max_relative=1e-8);
-            assert_relative_eq!(ddf.value(), df.deriv(), max_relative=1e-8);
+            assert_relative_eq!(df.value(), f.deriv(), max_relative = 1e-8);
+            assert_relative_eq!(ddf.value(), df.deriv(), max_relative = 1e-8);
         }
     }
 
     /// Test spherical derivative.
     fn test_spherical_derivatives<K: SphericalKernel<F>>(kern: &K, start: usize) {
-        for j in 0..3 { // for each component
+        for j in 0..3 {
+            // for each component
             for i in start..55 {
                 // Autodiff test
                 let x = F::cst(0.1 * i as f64);
-                let mut q = Vector3([x,x,x]);
+                let mut q = Vector3([x, x, x]);
                 q[j] = F::var(x);
                 let f = kern.eval(q, Vector3::zeros());
                 let df = kern.grad(q, Vector3::zeros());
                 let ddf = kern.hess(q, Vector3::zeros());
-                assert_relative_eq!(df[j].value(), f.deriv(), max_relative=1e-8);
+                assert_relative_eq!(df[j].value(), f.deriv(), max_relative = 1e-8);
                 for k in 0..3 {
-                    assert_relative_eq!(ddf[k][j].value(), df[k].deriv(), max_relative=1e-8);
+                    assert_relative_eq!(ddf[k][j].value(), df[k].deriv(), max_relative = 1e-8);
                 }
             }
         }
@@ -383,15 +389,15 @@ mod tests {
         test_derivatives(&kern, 1);
         test_spherical_derivatives(&kern, 1);
     }
-    
+
 }
 
 #[cfg(all(feature = "unstable", test))]
 mod bench {
     extern crate test;
+    use self::test::Bencher;
     use super::*;
     use autodiff::F;
-    use self::test::Bencher;
 
     #[bench]
     fn autodiff_kernel_derivative(b: &mut Bencher) {

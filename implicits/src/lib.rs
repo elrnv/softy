@@ -1,13 +1,10 @@
-#![cfg_attr(
-    feature = "unstable",
-    feature(test)
-)]
+#![cfg_attr(feature = "unstable", feature(test))]
 extern crate geometry as geo;
 extern crate hrbf;
 extern crate nalgebra as na;
 extern crate rayon;
-extern crate spade;
 extern crate reinterpret;
+extern crate spade;
 
 #[cfg(test)]
 #[macro_use]
@@ -78,9 +75,9 @@ impl From<geo::io::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo::mesh::{VertexPositions, TriMesh};
     use crate::geo::io::load_polymesh;
     use crate::geo::mesh::{topology::*, Attrib};
+    use crate::geo::mesh::{TriMesh, VertexPositions};
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.
@@ -128,14 +125,7 @@ mod tests {
         ];
 
         let indices = vec![
-            0, 5, 3,
-            4, 0, 3,
-            1, 4, 3,
-            5, 1, 3,
-            5, 0, 2,
-            0, 4, 2,
-            4, 1, 2,
-            1, 5, 2,
+            0, 5, 3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 5, 0, 2, 0, 4, 2, 4, 1, 2, 1, 5, 2,
         ];
 
         let mut oct = TriMesh::new(points, indices);
@@ -196,14 +186,14 @@ mod tests {
     #[test]
     fn meshless_approximate_kernel_derivatives_test() -> Result<(), Error> {
         use autodiff::F;
-
+    
         let mut grid = make_grid(22, 22);
-
+    
         let trimesh = make_sample_octahedron();
         let triangles: Vec<[usize;3]> = trimesh.face_iter().cloned().map(|x| x.into_inner()).collect();
         for cur_pt_idx in 0..trimesh.num_vertices() { // for each vertex
             for i in 0..3 { // for each component
-
+    
                 // Initialize autodiff variable to differentiate with respect to.
                 let points = trimesh.vertex_position_iter().enumerate().map(|(vtx_idx, pos)| {
                     let mut pos = [F::cst(pos[0]), F::cst(pos[1]), F::cst(pos[2])];
@@ -212,7 +202,7 @@ mod tests {
                     }
                     pos
                 }).collect();
-
+    
                 let implicit_surface = ImplicitSurfaceBuilder::new()
                     .with_kernel(
                         KernelType::Approximate {
@@ -224,25 +214,25 @@ mod tests {
                     .with_triangles(triangles)
                     .with_points(points)
                     .build();
-
+    
                 let potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
-
+    
                 implicit_surface.potential(grid, potential)?;
-
+    
                 println!("{:?}", potential);
-
+    
                 //let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
                 //let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
                 //    "assets/approximate_sphere_test_grid_expected.vtk",
                 //))?;
                 //let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
-
+    
                 //for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
                 //    assert_relative_eq!(sol_pot, exp_pot, max_relative = 1e-6);
                 //}
             }
         }
-
+    
         Ok(())
     }
     */

@@ -645,21 +645,19 @@ impl ImplicitSurface {
             neigh.points.par_iter().map(|(qi, neigh)| (query_points[*qi], neigh)),
             out_potential.par_iter_mut()
         ).for_each(|((q, neighbours), potential)| {
-            if let Some(p) = Self::compute_potential_at(Vector3(q), SamplesView::new(neighbours, samples), radius, kernel) {
-                *potential = p;
-            }
+             Self::compute_potential_at(Vector3(q), SamplesView::new(neighbours, samples), radius, kernel, potential);
         });
 
         Ok(())
     }
 
     /// Compute the potential at a given query point. If the potential is invalid or nieghbourhood
-    /// is empty, return None.
-    pub(crate) fn compute_potential_at<T: Real, K>(q: Vector3<T>, samples: SamplesView<T>, radius: f64, kernel: K) -> Option<T>
+    /// is empty, `potential` is not modified, otherwise it's updated.
+    pub(crate) fn compute_potential_at<T: Real, K>(q: Vector3<T>, samples: SamplesView<T>, radius: f64, kernel: K, potential: &mut T)
         where K: SphericalKernel<T> + Copy + Sync + Send,
     {
         if samples.is_empty() {
-            return None;
+            return;
         }
 
         let mut closest_d = radius;
@@ -678,15 +676,13 @@ impl ImplicitSurface {
         }
 
         // Background potential
-        //let bg = [q[0] - radius + closest_d, q[1], q[2]];
-        //let w = kernel.with_closest_dist(closest_d).eval(q, bg.into());
-        //denominator += w;
-        //numerator += w * (*potential as f64);
+        let bg = Vector3([q[0] - T::from(radius - closest_d).unwrap(), q[1], q[2]]);
+        let w = kernel.with_closest_dist(closest_d).eval(q, bg);
+        denominator += w;
+        numerator += w * (*potential);
 
         if denominator != T::zero() {
-            Some(numerator / denominator)
-        } else {
-            None
+            *potential = numerator / denominator;
         }
     }
 
@@ -843,6 +839,8 @@ impl ImplicitSurface {
             weight_sum += w;
         }
 
+        println!("weight_sum = {:?}", weight_sum);
+
         // Background potential weight
         //let bg_pos = Vector3([q[0] - radius + closest_d, q[1], q[2]]);
         //let bg_w = kernel.with_closest_dist(closest_d).eval(Vector3(q), bg_pos);
@@ -853,7 +851,11 @@ impl ImplicitSurface {
         // For each column
         samples.clone().into_iter().map(move |Sample { pos, nml, off, .. }| {
             let diff = q - pos;
+
             let norm_inv = T::one() / nml.norm();
+            println!("diff = {:?}", diff);
+            println!("diff norm = {:?}", diff.norm());
+            println!("norm_inv = {:?}", norm_inv);
 
             // Compute background potential derivative contribution.
             // Compute derivative if the closest point in the neighbourhood. Otherwise we
@@ -871,21 +873,32 @@ impl ImplicitSurface {
             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
             let dw = -kernel.with_closest_dist(closest_d).grad(q, pos);
 
+            println!("w = {:?}", w);
+            println!("dw = {:?}", dw);
+
             let mut dw_neigh = T::zero();
 
-            for Sample { pos: posk, nml: nmlk, off: offk, .. } in samples.iter() {
+            for Sample { index, pos: posk, nml: nmlk, off: offk } in samples.iter() {
                 let wk = kernel.with_closest_dist(closest_d).eval(q, posk);
-                let pk = T::from(offk).unwrap() + (nmlk.dot(q - posk) / nmlk.norm());
-                dw_neigh += wk * pk;
+                let diffk = q - posk;
+                let pk = T::from(offk).unwrap() + (nmlk.dot(diffk) / nmlk.norm());
+                println!("i: {:?}; wk = {:?}; pk = {:?}", index, wk, pk);
+                dw_neigh -= wk * pk;
             }
+            println!("dw_neigh = {:?}", dw_neigh);
 
             let mut dw_p = dw * (dw_neigh/weight_sum2);
 
+            println!("dw_p = {:?}", dw_p);
+
             dw_p += (dw / weight_sum) * (T::from(off).unwrap() + nml.dot(diff) * norm_inv);
+
+            println!("dw_p_full = {:?}", dw_p);
 
             // Compute the normal component of the derivative
             //let nml_proj = Matrix3::identity() - nml*nml.transpose()/(norm*norm);
             let mut nml_deriv = nml * (-(w/weight_sum)*norm_inv);
+            println!("nml_deriv = {:?}", nml_deriv);
             // Look at the ring of triangles around the vertex with respect to which we are
             // taking the derivative.
             /*
@@ -911,7 +924,10 @@ impl ImplicitSurface {
                 }
             }*/
 
-            dw_p + bg_deriv + nml_deriv
+            let d = dw_p + bg_deriv + nml_deriv;
+
+            println!("d = {:?}\n", d);
+            d
         })
     }
 
@@ -1236,10 +1252,10 @@ mod tests {
     use autodiff::F;
 
     #[test]
-    fn test_potential_derivative() {
+    fn easy_potential_derivative_test() {
         let mut samples = Samples {
-            points: vec![Vector3([0.0, 0.0, 0.0]).map(|x| F::cst(x))],
-            normals: vec![Vector3([0.0, 1.0, 0.0]).map(|x| F::cst(x))],
+            points: vec![Vector3([0.2, 0.1, 0.3]).map(|x| F::cst(x))],
+            normals: vec![Vector3([1.0, 1.0, 0.0]).map(|x| F::cst(x))],
             offsets: vec![0.0],
         };
 
@@ -1248,20 +1264,85 @@ mod tests {
         let radius = 2.0;
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
-        let q = Vector3([0.0, 0.1, 0.0]).map(|x| F::cst(x));
+        let q = Vector3([0.5, 0.1, 0.0]).map(|x| F::cst(x));
+
+        let view = SamplesView::new(neighbours.as_ref(), &samples);
+        let jac: Vec<Vector3<F>> = ImplicitSurface::compute_jacobian_at(q, view, radius, kernel).collect();
 
         for i in 0..3 {
             samples.points[0][i] = F::var(samples.points[0][i]);
 
             let view = SamplesView::new(neighbours.as_ref(), &samples);
-
-            if let Some(p) = ImplicitSurface::compute_potential_at(q, view.clone(), radius, kernel) {
-                let jac: Vec<Vector3<F>> = ImplicitSurface::compute_jacobian_at(q, view, radius, kernel).collect();
-                assert_relative_eq!(jac[0][i].value(), p.deriv(), max_relative=1e-8);
-            }
+            let mut p = F::cst(0.0);
+            ImplicitSurface::compute_potential_at(q, view, radius, kernel, &mut p);
+            assert_relative_eq!(jac[0][i].value(), p.deriv(), max_relative=1e-6, epsilon=1e-12);
 
             samples.points[0][i] = F::cst(samples.points[0][i]);
         }
+    }
 
+    #[test]
+    fn hard_potential_derivative_test() {
+        let h = 1.18032;
+        let mut tri_verts = vec![
+            [0.5, h, 0.0],
+            [-0.25, h, 0.433013],
+            [-0.25, h, -0.433013],
+        ];
+
+        let tet_verts = vec![
+            [0.0, 1.0, 0.0],
+            [-0.94281, -0.33333, 0.0],
+            [0.471405, -0.33333, 0.816498],
+            [0.471405, -0.33333, -0.816498],
+        ];
+
+        let normals = vec![
+            [0.0, 1.0, 0.0],
+            [-0.942809, -0.333335, 0.0],
+            [0.471404, -0.333334, 0.816496],
+            [0.471404, -0.333334, -0.816496],
+        ];
+
+        let mut samples = Samples {
+            points: tet_verts.iter().map(|&vec| Vector3(vec)).collect(),
+            normals: normals.iter().map(|&vec| Vector3(vec)).collect(),
+            offsets: vec![0.0; 4],
+        };
+
+        let neighbours = vec![0,1,2,3];
+
+        let radius = 10.0;
+        let kernel = kernel::LocalApproximate::new(radius, 1e-5);
+
+        let mut ad_samples = Samples {
+            points: samples.points.iter().cloned().map(|vec| vec.map(|x| F::cst(x))).collect(),
+            normals: samples.normals.iter().cloned().map(|vec| vec.map(|x| F::cst(x))).collect(),
+            offsets: samples.offsets.clone(),
+        };
+
+        for &tri_vtx in tri_verts.iter() {
+            let q = Vector3(tri_vtx);
+
+            let view = SamplesView::new(neighbours.as_ref(), &samples);
+            let jac: Vec<Vector3<f64>> = ImplicitSurface::compute_jacobian_at(q, view, radius, kernel).collect();
+
+            assert_eq!(jac.len(), neighbours.len());
+
+            let q = q.map(|x| F::cst(x));
+
+            for &vtx in neighbours.iter() {
+                for i in 0..3 {
+                    ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
+
+                    let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
+                    let mut p = F::cst(0.0);
+                    ImplicitSurface::compute_potential_at(q, view, radius, kernel, &mut p);
+                    assert_relative_eq!(jac[vtx][i], p.deriv(), max_relative=1e-6, epsilon=1e-12);
+
+                    ad_samples.points[vtx][i] = F::cst(ad_samples.points[vtx][i]);
+                }
+            }
+        }
     }
 }

@@ -191,7 +191,7 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         let eps1_2 = eps1*eps1;
         let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
         let d2_eps = d * d + eps;
-        - factor * _4 * d / ( d2_eps * d2_eps * d2_eps )
+        - factor * _4 * d / ( r * d2_eps * d2_eps * d2_eps )
     }
 
     fn ddf(&self, x: T) -> T {
@@ -213,7 +213,7 @@ impl<T: Real> Kernel<T> for LocalApproximate {
         let factor = eps*eps*eps1_2 / ( T::one() + _2 * eps );
         let d2_eps = d * d + eps;
         let d2_eps4 = d2_eps * d2_eps * d2_eps * d2_eps;
-        factor * _4 * ( _6 * d * d - d2_eps ) / d2_eps4
+        factor * _4 * ( _6 * d * d - d2_eps) / (d2_eps4 * r * r)
     }
 }
 
@@ -294,7 +294,7 @@ mod tests {
 
     /// Test derivatives.
     fn test_derivatives<K: Kernel<F>>(kern: &K, start: usize) {
-        for i in start..50 {
+        for i in start..55 {
             // Autodiff test
             let x = F::var(0.1 * i as f64);
             let f = kern.f(x);
@@ -308,7 +308,7 @@ mod tests {
     /// Test spherical derivative.
     fn test_spherical_derivatives<K: SphericalKernel<F>>(kern: &K, start: usize) {
         for j in 0..3 { // for each component
-            for i in start..50 {
+            for i in start..55 {
                 // Autodiff test
                 let x = F::cst(0.1 * i as f64);
                 let mut q = Vector3([x,x,x]);
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn local_cubic_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
-        let radius = 1.0;
+        let radius = 5.0;
         let kern = LocalCubic::new(radius);
 
         // Check that the kernel has compact support: it's zero outside the radius
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn local_approximate_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
-        let radius = 1.0;
+        let radius = 5.0;
         let tolerance = 0.01;
         let kern = LocalApproximate::new(radius, tolerance);
 
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn local_interpolating_kernel_test() {
         // Test the properties of the local approximate kernel and check its derivatives.
-        let radius = 1.0;
+        let radius = 5.0;
         let kern = LocalInterpolating::new(radius);
         let kern = SphericalKernel::<f64>::with_closest_dist(kern, 0.1);
 

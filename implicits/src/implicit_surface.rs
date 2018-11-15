@@ -3,6 +3,7 @@
 //! potential and its derivatives.
 //!
 
+use crate::geo::Real;
 use crate::geo::math::{Vector3, Matrix3};
 use crate::geo::mesh::{VertexMesh, topology::VertexIndex};
 use crate::geo::prim::{Triangle};
@@ -194,18 +195,18 @@ impl ImplicitSurfaceBuilder {
         }
 
         let oriented_points_iter = oriented_points_iter(&points, &normals);
-        ImplicitSurface {
+        let mut surf = ImplicitSurface {
             kernel,
             background_potential,
             spatial_tree: build_rtree(oriented_points_iter),
             surface_topo: triangles,
-            points,
-            normals,
-            offsets,
+            samples: Samples { points, normals, offsets },
             max_step: self.max_step,
             neighbour_cache: RefCell::new(NeighbourCache::new()),
             dual_topo,
-        }
+        };
+        surf.recompute_normals();
+        surf
     }
 }
 
@@ -232,6 +233,135 @@ impl NeighbourCache {
     }
 }
 
+/// A set of data stored on each sample for the implicit surface.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Sample<T: Real> {
+    /// Index of the sample in the original vector or array.
+    pub index: usize,
+    /// Position of the sample in 3D space.
+    pub pos: Vector3<T>,
+    /// Normal of the sample.
+    pub nml: Vector3<T>,
+    /// Offset stored at the sample point.
+    pub off: f64,
+}
+
+/// Sample points that define the implicit surface including the point positions, normals and
+/// offsets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Samples<T: Real> {
+    /// Sample point positions defining the implicit surface.
+    pub points: Vec<Vector3<T>>,
+    /// Normals that define the potential field gradient at every sample point.
+    pub normals: Vec<Vector3<T>>,
+
+    /// Potential values at the interpolating points. These offsets indicate the values to
+    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
+    /// necessarily pass through the given points.
+    pub offsets: Vec<f64>,
+}
+
+/// A view into to the positions, normals and offsets of the sample points. This view need not be
+/// contiguous as it often isnt.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SamplesView<'i, 'd: 'i, T: Real> {
+    /// Indices into the sample points.
+    indices: &'i [usize],
+    /// Sample point positions defining the implicit surface.
+    points: &'d [Vector3<T>],
+    /// Normals that define the potential field gradient at every sample point.
+    normals: &'d [Vector3<T>],
+    /// Potential values at the interpolating points. These offsets indicate the values to
+    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
+    /// necessarily pass through the given points.
+    offsets: &'d [f64],
+}
+
+impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
+    /// Create a view of samples with a given indices slice into the provided samples.
+    #[inline]
+    pub fn new(indices: &'i [usize], samples: &'d Samples<T>) -> Self{
+        SamplesView {
+            indices,
+            points: samples.points.as_slice(),
+            normals: samples.normals.as_slice(),
+            offsets: samples.offsets.as_slice(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    #[inline]
+    pub fn iter(&'i self) -> impl Iterator<Item = Sample<T>> + 'i {
+        let SamplesView {
+            ref indices,
+            ref points,
+            ref normals,
+            ref offsets,
+        } = self;
+        indices.iter().map(move |&i| Sample { index: i, pos: points[i], nml: normals[i], off: offsets[i] })
+    }
+
+    /// Consuming iterator.
+    #[inline]
+    pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + 'i {
+        let SamplesView {
+            indices,
+            points,
+            normals,
+            offsets,
+        } = self;
+        indices.into_iter().map(move |&i| Sample { index: i, pos: points[i], nml: normals[i], off: offsets[i] })
+    }
+
+    #[inline]
+    pub fn index(&self, i: usize) -> usize {
+        self.indices[i]
+    }
+
+    #[inline]
+    pub fn point(&self, i: usize) -> Vector3<T> {
+        self.points[self.indices[i]]
+    }
+
+    #[inline]
+    pub fn point_iter(&'d self, i: usize) -> impl Iterator<Item = Vector3<T>> + 'd {
+        let points = &self.points;
+        self.indices.iter().map(move |&i| points[i])
+    }
+
+    #[inline]
+    pub fn normal(&self, i: usize) -> Vector3<T> {
+        self.normals[self.indices[i]]
+    }
+
+    #[inline]
+    pub fn normal_iter(&'d self, i: usize) -> impl Iterator<Item = Vector3<T>> + 'd {
+        let normals = &self.normals;
+        self.indices.iter().map(move |&i| normals[i])
+    }
+
+    #[inline]
+    pub fn offset(&self, i: usize) -> f64 {
+        self.offsets[self.indices[i]]
+    }
+
+    #[inline]
+    pub fn offset_iter(&'d self, i: usize) -> impl Iterator<Item = f64> + 'd {
+        let offsets = &self.offsets;
+        self.indices.iter().map(move |&i| offsets[i])
+    }
+
+    /// Get all sample data at the given index
+    #[inline]
+    pub fn at(&self, i: usize) -> (Vector3<T>, Vector3<T>, f64) {
+        (self.point(i), self.normal(i), self.offset(i))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
     /// The type of kernel to use for fitting the data.
@@ -248,15 +378,9 @@ pub struct ImplicitSurface {
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
     surface_topo: Vec<[usize;3]>,
-    /// Sample points defining the implicit surface.
-    points: Vec<Vector3<f64>>,
-    /// Normals that define the potential field gradient at every sample point.
-    normals: Vec<Vector3<f64>>,
 
-    /// Potential values at the interpolating points. These offsets indicate the values to
-    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
-    /// necessarily pass through the given points.
-    offsets: Vec<f64>,
+    /// Sample points defining the entire implicit surface.
+    samples: Samples<f64>,
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
@@ -286,15 +410,14 @@ impl ImplicitSurface {
 
     /// Number of sample points used to represent the implicit surface.
     pub fn num_points(&self) -> usize {
-        return self.points.len()
+        return self.samples.points.len()
     }
 
     /// Update the normals stored on the `ImplicitSurface`. This is usually called when the points
     /// have changed. Note that these are unnormalized to make it eaiser to compute derivatives.
     pub fn recompute_normals(&mut self) {
         let ImplicitSurface {
-            ref mut points,
-            ref mut normals,
+            samples: Samples { ref mut points, ref mut normals, .. },
             ref surface_topo,
             ..
         } = self;
@@ -317,18 +440,18 @@ impl ImplicitSurface {
     pub fn update_points<I>(&mut self, points_iter: I) 
         where I: Iterator<Item = [f64;3]>,
     {
-        for (p, new_p) in self.points.iter_mut().zip(points_iter) {
+        for (p, new_p) in self.samples.points.iter_mut().zip(points_iter) {
             *p = new_p.into();
         }
 
-        self.recompute_normals();
+        //self.recompute_normals();
 
         let ImplicitSurface {
+            samples: Samples { ref mut points, ref mut normals, .. },
             ref mut spatial_tree,
-            ref mut points,
-            ref mut normals,
             ..
         } = self;
+
 
         *spatial_tree = build_rtree(oriented_points_iter(points, normals));
     }
@@ -338,8 +461,7 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            ref points,
-            ref normals,
+            samples: Samples { ref points, ref normals, .. },
             max_step,
             ..
         } = self;
@@ -347,7 +469,8 @@ impl ImplicitSurface {
             KernelType::Interpolating { radius } |
             KernelType::Approximate { radius, .. } |
             KernelType::Cubic { radius } => {
-                let radius2 = radius * radius + max_step;
+                let radius_ext = radius + max_step;
+                let radius2 = radius_ext * radius_ext;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 self.cached_neighbours_borrow(query_points, neigh);
             }
@@ -429,28 +552,29 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            ref points,
-            ref normals,
-            ref offsets,
+            samples: Samples { ref points, ref normals, ref offsets },
             max_step,
             ..
         } = *self;
 
         match *kernel {
             KernelType::Interpolating { radius } => {
-                let radius2 = radius * radius + max_step;
+                let radius_ext = radius + max_step;
+                let radius2 = radius_ext * radius_ext;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalInterpolating::new(radius);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Approximate { tolerance, radius } => {
-                let radius2 = radius * radius + max_step;
+                let radius_ext = radius + max_step;
+                let radius2 = radius_ext * radius_ext;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Cubic { radius } => {
-                let radius2 = radius * radius + max_step;
+                let radius_ext = radius + max_step;
+                let radius2 = radius_ext * radius_ext;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kern = kernel::LocalCubic::new(radius);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
@@ -485,7 +609,14 @@ impl ImplicitSurface {
     {
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
 
-        if self.background_potential {
+        let ImplicitSurface {
+            ref samples,
+            ref spatial_tree,
+            background_potential,
+            ..
+        } = *self;
+
+        if background_potential {
             let cached_points = &neigh.points;
             assert_eq!(out_potential.len(), cached_points.len());
 
@@ -499,7 +630,7 @@ impl ImplicitSurface {
             for (pos, potential) in
                 zip!(cached_points.iter().map(|&(qi, _)| query_points[qi]), out_potential.iter_mut())
             {
-                if let Some(nearest_neigh) = self.spatial_tree.nearest_neighbor(&pos) {
+                if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(&pos) {
                     let q = Vector3(pos);
                     let p = nearest_neigh.pos;
                     let nml = nearest_neigh.nml;
@@ -510,48 +641,53 @@ impl ImplicitSurface {
             }
         }
 
-        let ImplicitSurface {
-            ref points,
-            ref normals,
-            ref offsets,
-            ..
-        } = *self;
-
         zip!(
             neigh.points.par_iter().map(|(qi, neigh)| (query_points[*qi], neigh)),
             out_potential.par_iter_mut()
         ).for_each(|((q, neighbours), potential)| {
-            if !neighbours.is_empty() {
-                let mut closest_d = radius;
-                for &i in neighbours.iter() {
-                    let pos = points[i];
-                    closest_d = closest_d.min((Vector3(q) - pos).norm());
-                }
-
-                let mut denominator = 0.0;
-                let mut numerator = 0.0;
-                for &i in neighbours.iter() {
-                    let (pos, nml) = (points[i], normals[i]);
-                    let w = kernel.with_closest_dist(closest_d).eval(Vector3(q), pos);
-                    let p = offsets[i] + nml.dot(Vector3(q) - pos) / nml.norm();
-
-                    denominator += w;
-                    numerator += w * p;
-                }
-
-                // Background potential
-                let bg = [q[0] - radius + closest_d, q[1], q[2]];
-                let w = kernel.with_closest_dist(closest_d).eval(Vector3(q), bg.into());
-                denominator += w;
-                numerator += w * (*potential as f64);
-
-                if denominator != 0.0 {
-                    *potential = numerator / denominator;
-                }
+            if let Some(p) = Self::compute_potential_at(Vector3(q), SamplesView::new(neighbours, samples), radius, kernel) {
+                *potential = p;
             }
         });
 
         Ok(())
+    }
+
+    /// Compute the potential at a given query point. If the potential is invalid or nieghbourhood
+    /// is empty, return None.
+    pub(crate) fn compute_potential_at<T: Real, K>(q: Vector3<T>, samples: SamplesView<T>, radius: f64, kernel: K) -> Option<T>
+        where K: SphericalKernel<T> + Copy + Sync + Send,
+    {
+        if samples.is_empty() {
+            return None;
+        }
+
+        let mut closest_d = radius;
+        for sample in samples.iter() {
+            closest_d = closest_d.min((q - sample.pos).norm().to_f64().unwrap());
+        }
+
+        let mut denominator = T::zero();
+        let mut numerator = T::zero();
+        for Sample { pos, nml, off, .. } in samples.iter() {
+            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+            let p = T::from(off).unwrap() + nml.dot(q - pos) / nml.norm();
+
+            denominator += w;
+            numerator += w * p;
+        }
+
+        // Background potential
+        //let bg = [q[0] - radius + closest_d, q[1], q[2]];
+        //let w = kernel.with_closest_dist(closest_d).eval(q, bg.into());
+        //denominator += w;
+        //numerator += w * (*potential as f64);
+
+        if denominator != T::zero() {
+            Some(numerator / denominator)
+        } else {
+            None
+        }
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -599,7 +735,8 @@ impl ImplicitSurface {
 
         match *kernel {
             KernelType::Approximate { tolerance, radius } => {
-                let radius2 = radius * radius + max_step;
+                let radius_ext = radius + max_step;
+                let radius2 = radius_ext * radius_ext;
                 let neigh = |q| spatial_tree.lookup_in_circle(&q, &radius2).into_iter().cloned();
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
                 self.mls_surface_jacobian_values(query_points, radius, kernel, neigh, values);
@@ -657,97 +794,125 @@ impl ImplicitSurface {
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
         let ImplicitSurface {
-            ref points,
-            ref normals,
-            ref offsets,
+            ref samples,
             ref dual_topo,
             ref surface_topo,
+            background_potential,
             ..
         } = *self;
 
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
 
-        // For each row
         let jac_iter = 
+            // For each row
             neigh.points.iter().map(|(qi, neigh)| (query_points[*qi], neigh))
         .flat_map(move |(q, nbr_points)| {
-            let mut weight_sum = 0.0;
-            for &i in nbr_points.iter() {
-                let pos = points[i];
-                let w = kernel.eval(Vector3(q), pos);
-                weight_sum += w;
-            }
-
-            let weight_sum2 = weight_sum * weight_sum;
-
-            // Background potential
-            // Compute derivative if the closest point in the neighbourhood. Otherwise we
-            // assume the background potential is constant.
-            let mut closest_d = radius;
-            let mut closest_i = -1isize;
-            for &j in nbr_points.iter() {
-                let dist = (Vector3(q) - points[j]).norm();
-                if dist < closest_d {
-                    closest_d = dist;
-                    closest_i = j as isize;
-                }
-            }
-
-            // For each column
-            nbr_points.iter().map(move |&i| {
-                if weight_sum == 0.0 {
-                    return Vector3::zeros();
-                }
-
-                let (off, pos, nml) = (offsets[i], points[i], normals[i]);
-                let w = kernel.eval(Vector3(q), pos);
-                let dw = kernel.grad(Vector3(q), pos);
-                if dw == Vector3::zeros() && w == 0.0 {
-                    return Vector3::zeros();
-                }
-
-                let dwds = dw * (weight_sum - w) / weight_sum2;
-
-                let diff = Vector3(q) - pos;
-                let p = off + nml.dot(diff) / nml.norm();
-
-                // Compute the normal component of the derivative
-                let nml_proj = Matrix3::identity() - nml*nml.transpose();
-                let mut nml_deriv = Vector3::zeros();
-                for &tri_idx in dual_topo[i].iter() {
-                    let tri_indices = &surface_topo[tri_idx];
-                    let tri = Triangle::from_indexed_slice(tri_indices, &points);
-                    let nml_grad = tri.area_normal_gradient(i);
-                    for &k in tri_indices.iter() {
-                        if k == i {
-                            let proj_diff = nml_proj * diff;
-                            nml_deriv += ((w/weight_sum) * nml_grad * proj_diff - nml) / nml.norm();
-                        } else {
-                            let nmlk = normals[k];
-                            let nmlk_proj = Matrix3::identity() - nmlk*nmlk.transpose();
-                            let posk = points[k];
-                            let wk = kernel.eval(Vector3(q), posk) / weight_sum;
-                            let proj_diff = nmlk_proj  * (Vector3(q) - posk);
-                            nml_deriv += (wk * nml_grad * proj_diff) / nmlk.norm();
-                        }
-                    }
-                }
-
-                // Compute background potential derivative contribution
-                let bg = if i as isize == closest_i {
-                    -diff/closest_d
-                } else {
-                    Vector3::zeros()
-                };
-
-                dwds * p + nml_deriv + bg
-            })
+            Self::compute_jacobian_at(Vector3(q), SamplesView::new(nbr_points, samples), radius, kernel)
         });
         let value_vecs: &mut [[f64;3]] = reinterpret::reinterpret_mut_slice(values);
 
         jac_iter.zip(value_vecs.iter_mut()).for_each(|(new_vec, vec)| {
             *vec = new_vec.into();
         });
+    }
+
+    /// Compute the jacobian for the implicit surface potential given by the samples with the
+    /// specified kernel.
+    pub(crate) fn compute_jacobian_at<'a, T: Real, K: 'a>(
+        q: Vector3<T>,
+        samples: SamplesView<'a, 'a, T>,
+        radius: f64,
+        kernel: K
+    ) -> impl Iterator<Item=Vector3<T>> + 'a
+        where K: SphericalKernel<T> + Copy + Sync + Send,
+    {
+        // Find the closest vertex for background potential derivative.
+        let mut closest_d = radius;
+        let mut closest_i = -1isize;
+        for Sample { index, pos, .. } in samples.iter() {
+            let dist = (q - pos).norm().to_f64().unwrap();
+            if dist < closest_d {
+                closest_d = dist;
+                closest_i = index as isize;
+            }
+        }
+
+        let mut weight_sum = T::zero();
+        for Sample { pos, off, .. } in samples.iter() {
+            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+            weight_sum += w;
+        }
+
+        // Background potential weight
+        //let bg_pos = Vector3([q[0] - radius + closest_d, q[1], q[2]]);
+        //let bg_w = kernel.with_closest_dist(closest_d).eval(Vector3(q), bg_pos);
+        //weight_sum += bg_w;
+
+        let weight_sum2 = weight_sum * weight_sum;
+
+        // For each column
+        samples.clone().into_iter().map(move |Sample { pos, nml, off, .. }| {
+            let diff = q - pos;
+            let norm_inv = T::one() / nml.norm();
+
+            // Compute background potential derivative contribution.
+            // Compute derivative if the closest point in the neighbourhood. Otherwise we
+            // assume the background potential is constant.
+            let bg_deriv = //if background_potential && i as isize == closest_i {
+                //-diff / closest_d
+            //} else {
+                Vector3::zeros();
+            //};
+
+            if weight_sum == T::zero() { // bg_w
+                return bg_deriv;
+            }
+
+            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+            let dw = -kernel.with_closest_dist(closest_d).grad(q, pos);
+
+            let mut dw_neigh = T::zero();
+
+            for Sample { pos: posk, nml: nmlk, off: offk, .. } in samples.iter() {
+                let wk = kernel.with_closest_dist(closest_d).eval(q, posk);
+                let pk = T::from(offk).unwrap() + (nmlk.dot(q - posk) / nmlk.norm());
+                dw_neigh += wk * pk;
+            }
+
+            let mut dw_p = dw * (dw_neigh/weight_sum2);
+
+            dw_p += (dw / weight_sum) * (T::from(off).unwrap() + nml.dot(diff) * norm_inv);
+
+            // Compute the normal component of the derivative
+            //let nml_proj = Matrix3::identity() - nml*nml.transpose()/(norm*norm);
+            let mut nml_deriv = nml * (-(w/weight_sum)*norm_inv);
+            // Look at the ring of triangles around the vertex with respect to which we are
+            // taking the derivative.
+            /*
+            for &tri_idx in dual_topo[i].iter() {
+                let tri_indices = &surface_topo[tri_idx];
+                let tri = Triangle::from_indexed_slice(tri_indices, &points);
+                let nml_grad = tri.area_normal_gradient(
+                    tri_indices.iter().position(|&x| x == i).expect("Triangle mesh topology corruption."));
+                for &k in tri_indices.iter() {
+                    if k == i {
+                        let proj_diff = nml_proj * diff;
+                        let normalized_w = w/weight_sum;
+                        nml_deriv +=  (nml_grad * proj_diff) * (normalized_w/norm) //- nml * (normalized_w/norm)
+                    } else {
+                        let nmlk = normals[k];
+                        let normk = nmlk.norm();
+                        let nmlk_proj = Matrix3::identity() - nmlk*nmlk.transpose()/(normk*normk);
+                        let posk = points[k];
+                        let wk = kernel.eval(Vector3(q), posk) / weight_sum;
+                        let proj_diff = nmlk_proj  * (Vector3(q) - posk);
+                        nml_deriv += (wk * nml_grad * proj_diff) / normk;
+                    }
+                }
+            }*/
+
+            dw_p + bg_deriv + nml_deriv
+        })
     }
 
     fn compute_hrbf<V3>(
@@ -790,9 +955,7 @@ impl ImplicitSurface {
     pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
         let ImplicitSurface {
             ref mut spatial_tree,
-            ref mut points,
-            ref mut normals,
-            ref mut offsets,
+            samples: Samples { ref mut points, ref mut normals, ref mut offsets },
             ..
         } = self;
 
@@ -843,9 +1006,7 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            ref points,
-            ref normals,
-            ref offsets,
+            samples: Samples { ref points, ref normals, ref offsets },
             background_potential: generate_bg_potential,
             ..
         } = *self;
@@ -1066,5 +1227,41 @@ impl ImplicitSurface {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use autodiff::F;
+
+    #[test]
+    fn test_potential_derivative() {
+        let mut samples = Samples {
+            points: vec![Vector3([0.0, 0.0, 0.0]).map(|x| F::cst(x))],
+            normals: vec![Vector3([0.0, 1.0, 0.0]).map(|x| F::cst(x))],
+            offsets: vec![0.0],
+        };
+
+        let neighbours = vec![0];
+
+        let radius = 2.0;
+        let kernel = kernel::LocalApproximate::new(radius, 0.00001);
+
+        let q = Vector3([0.0, 0.1, 0.0]).map(|x| F::cst(x));
+
+        for i in 0..3 {
+            samples.points[0][i] = F::var(samples.points[0][i]);
+
+            let view = SamplesView::new(neighbours.as_ref(), &samples);
+
+            if let Some(p) = ImplicitSurface::compute_potential_at(q, view.clone(), radius, kernel) {
+                let jac: Vec<Vector3<F>> = ImplicitSurface::compute_jacobian_at(q, view, radius, kernel).collect();
+                assert_relative_eq!(jac[0][i].value(), p.deriv(), max_relative=1e-8);
+            }
+
+            samples.points[0][i] = F::cst(samples.points[0][i]);
+        }
+
     }
 }

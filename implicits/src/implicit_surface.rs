@@ -167,7 +167,9 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    /// Builds the implicit surface. If the points vector is empty, this function returns `None`.
+    /// Builds the implicit surface. This function returns `None` when theres is not enough data to
+    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
+    /// function will return `None`.
     pub fn build(&self) -> Option<ImplicitSurface> {
         let ImplicitSurfaceBuilder {
             kernel,
@@ -178,8 +180,19 @@ impl ImplicitSurfaceBuilder {
             mut offsets,
             ..
         } = self.clone();
+        // Cannot build an implicit surface when the radius is 0.0.
+        match kernel {
+            KernelType::Interpolating { radius }
+            | KernelType::Approximate { radius, .. }
+            | KernelType::Cubic { radius } => {
+                if radius == 0.0 {
+                    return None;
+                }
+            }
+            _ => { } // Nothing to be done for global support kernels.
+        }
 
-        // Cannot build an implicict surface without sample points. This is an error.
+        // Cannot build an implicit surface without sample points. This is an error.
         if points.is_empty() {
             return None;
         }

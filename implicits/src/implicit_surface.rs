@@ -7,7 +7,7 @@ use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{topology::VertexIndex, VertexMesh};
 use crate::geo::prim::Triangle;
 use crate::geo::Real;
-use crate::kernel::{self, KernelType, Kernel, SphericalKernel};
+use crate::kernel::{self, KernelType, SphericalKernel};
 use rayon::prelude::*;
 use spade::{rtree::RTree, BoundingRect, SpatialObject};
 use std::cell::{Ref, RefCell};
@@ -367,31 +367,180 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct BackgroundData<T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug> {
-    /// Data needed to compute the background potential value and its derivative.
-    bg_potential_value: BackgroundPotentialValue<T>,
-    /// The reciprocal of the sum of all the weights in the neighbourhood of the query point.
-    weight_sum_inv: T,
-    /// The spherical kernel used to compute the weights.
-    kernel: K,
-    /// The distance to the closest sample.
-    closest_sample_dist: T,
-    /// Radius of the neighbourhood of the query point.
-    radius: T,
-}
 
 /// Precomputed data used for background potential computation.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub(crate) enum BackgroundPotentialValue<T: Real> {
     /// The value of the background potential at the query point.
     Constant(T),
     /// A Dynamic potential is computed based on the distance to the closest sample point.
-    ClosestSampleDistance {
-        /// Displacement vector to the query point from the closest sample point.
-        closest_sample_disp: Vector3<T>,
-        /// The index of the closest sample point.
-        closest_sample_index: usize,
+    ClosestSampleDistance,
+}
+
+/// This struct represents the data needed to compute a background potential at a local query
+/// point. This struct also conviently computes useful information about the neighbourhood (like
+/// closest distance to a sample point) that can be reused elsewhere.
+#[derive(Clone, Debug)]
+pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug> {
+    /// Position of the point at which we should evaluate the potential field.
+    pub query_pos: Vector3<T>,
+    /// Samples that influence the potential field.
+    pub samples: SamplesView<'a, 'a, T>,
+    /// Data needed to compute the background potential value and its derivative.
+    pub bg_potential_value: BackgroundPotentialValue<T>,
+    /// The reciprocal of the sum of all the weights in the neighbourhood of the query point.
+    pub weight_sum_inv: T,
+    /// The spherical kernel used to compute the weights.
+    pub kernel: K,
+    /// The distance to the closest sample.
+    pub closest_sample_dist: T,
+    /// Displacement vector to the query point from the closest sample point.
+    pub closest_sample_disp: Vector3<T>,
+    /// The index of the closest sample point.
+    pub closest_sample_index: usize,
+    /// Radius of the neighbourhood of the query point.
+    pub radius: T,
+}
+
+impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a> BackgroundPotential<'a, T, K> {
+    /// Pass in the unnormalized weight sum excluding the weight for the background potential.
+    fn new(q: Vector3<T>, samples: SamplesView<'a, 'a, T>, radius: T, kernel: K, dynamic_bg: bool) -> Self {
+
+        // Precompute data about the closest sample point (displacement, index and distance).
+        let min_sample = samples.iter()
+            .map(|Sample { index, pos, .. }| {
+                let disp = q - pos;
+                (index, disp, disp.norm_squared())
+            })
+            .min_by(|(_, _, d0), (_, _, d1)| {
+                d0.partial_cmp(d1).expect("Detected NaN. Please report this bug.")
+            });
+
+        if min_sample.is_none() {
+            panic!("No surface samples found. Please report this bug.");
+        }
+
+        let (closest_sample_index, closest_sample_disp, mut closest_sample_dist) = min_sample.unwrap();
+        closest_sample_dist = closest_sample_dist.sqrt();
+
+        // Compute the weight sum here. This will be available to the usesr of bg data.
+        let mut weight_sum = T::zero();
+        for Sample { pos, .. } in samples.iter() {
+            let w = kernel.with_closest_dist(closest_sample_dist).eval(q, pos);
+            weight_sum += w;
+        }
+
+        // Initialize the background potential struct.
+        let mut bg = BackgroundPotential {
+            query_pos: q,
+            samples,
+            bg_potential_value: if dynamic_bg {
+                BackgroundPotentialValue::ClosestSampleDistance
+            } else {
+                BackgroundPotentialValue::Constant(T::zero()) // TODO: Support non-zero constant potentials
+            },
+            weight_sum_inv: T::zero(), // temporarily set the weight_sum_inv
+            kernel,
+            closest_sample_dist,
+            closest_sample_disp,
+            closest_sample_index,
+            radius,
+        };
+
+        // Finalize the weight sum reciprocal.
+        bg.weight_sum_inv = T::one() / (weight_sum + bg.background_weight());
+
+        bg
+    }
+    
+    fn closest_sample_dist(&self) -> T {
+        self.closest_sample_dist
+    }
+
+    fn weight_sum_inv(&self) -> T {
+        self.weight_sum_inv
+    }
+
+    fn background_weight(&self) -> T {
+        self.kernel.f(self.radius - self.closest_sample_dist)
+    }
+
+    fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
+        if index == self.closest_sample_index {
+            self.closest_sample_disp * (self.kernel.df(self.radius - self.closest_sample_dist) / self.closest_sample_dist)
+        } else {
+            Vector3::zeros()
+        }
+    }
+
+    /// Compute the unnormalized weighted background potential value. This is typically very
+    /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
+    /// background potential contribution.
+    fn compute_unnormalized_weighted_potential(&self) -> T {
+        // Unpack background data.
+        let BackgroundPotential { 
+            bg_potential_value,
+            closest_sample_dist: dist,
+            ..
+        } = *self;
+
+        self.background_weight() * match bg_potential_value {
+            BackgroundPotentialValue::Constant(potential) => potential,
+            BackgroundPotentialValue::ClosestSampleDistance => dist,
+        }
+    }
+
+    /// Compute background potential derivative contribution.
+    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// assume the background potential is constant.
+    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item=Vector3<T>> + 'a {
+        // Unpack background data.
+        let BackgroundPotential { 
+            query_pos: q,
+            samples,
+            bg_potential_value,
+            weight_sum_inv,
+            kernel,
+            closest_sample_dist: dist,
+            closest_sample_disp: disp,
+            closest_sample_index,
+            radius,
+        } = *self;
+
+        // The unnormalized weight evaluated at the distance to the boundary of the
+        // neighbourhood.
+        let wb = kernel.f(radius - dist);
+
+        // Gradient of the unnormalized weight evaluated at the distance to the
+        // boundary of the neighbourhood.
+        let dwbdp = self.background_weight_gradient(closest_sample_index);
+
+        samples.into_iter().map(move |Sample { index, pos, .. }| {
+            // Gradient of the unnormalized weight for the current sample point.
+            let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
+
+            // This term is valid for constant or dynamic background potentials.
+            let constant_term = |potential: T| {
+                dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv)
+            };
+
+            match bg_potential_value {
+                BackgroundPotentialValue::Constant(potential) => constant_term(potential),
+                BackgroundPotentialValue::ClosestSampleDistance => {
+
+                    let mut grad = constant_term(dist);
+
+                    if index == closest_sample_index {
+
+                        //grad += dwbdp * dist + disp * (wb / dist)
+                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - weight_sum_inv * wb))
+                            - disp * (wb * weight_sum_inv / dist)
+                    }
+
+                    grad
+                }
+            }
+        })
     }
 }
 
@@ -490,6 +639,8 @@ impl ImplicitSurface {
             // taking the derivative.
             for &tri_idx in dual_topo[index].iter() {
                 let tri_indices = &surface_topo[tri_idx];
+                // Pull contributions from all neighbours on the surface, not just ones part of the
+                // neighbourhood,
                 let tri = Triangle::from_indexed_slice(tri_indices, samples.points());
                 let nml_grad = tri.area_normal_gradient(
                     tri_indices.iter().position(|&j| j == index).expect("Triangle mesh topology corruption."));
@@ -731,7 +882,7 @@ impl ImplicitSurface {
     ) -> Result<(), super::Error>
     where
         I: Iterator<Item = OrientedPoint> + 'a,
-        K: SphericalKernel<f64> + Copy + Sync + Send,
+        K: SphericalKernel<f64> + Copy + std::fmt::Debug + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
         let neigh = self.cached_neighbours_borrow(query_points, neigh);
@@ -775,43 +926,29 @@ impl ImplicitSurface {
         dynamic_bg: bool,
         potential: &mut T,
     ) where
-        K: SphericalKernel<T> + Copy + Sync + Send,
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
         if samples.is_empty() {
             return;
         }
 
         let radius = T::from(radius).unwrap();
-        let mut closest_d = radius;
-        for sample in samples.iter() {
-            closest_d = closest_d.min((q - sample.pos).norm());
-        }
+        let bg = BackgroundPotential::new(q, samples, radius, kernel, dynamic_bg);
+        let closest_d = bg.closest_sample_dist();
 
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
-        if dynamic_bg {
-            *potential = closest_d;
-        }
+        *potential = bg.compute_unnormalized_weighted_potential();
 
-        let mut denominator = T::zero();
         let mut numerator = T::zero();
         for Sample { pos, nml, off, .. } in samples.iter() {
             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
             let p = T::from(off).unwrap() + nml.dot(q - pos) / nml.norm();
 
-            denominator += w;
             numerator += w * p;
         }
 
-        // Background potential
-        let bg = Vector3([q[0] - (radius - closest_d), q[1], q[2]]);
-        let w = kernel.with_closest_dist(closest_d).eval(q, bg);
-        denominator += w;
-        numerator += w * (*potential);
-
-        if denominator != T::zero() {
-            *potential = numerator / denominator;
-        }
+        *potential = (*potential + numerator) * bg.weight_sum_inv();
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -965,65 +1102,6 @@ impl ImplicitSurface {
             });
     }
 
-    /// Compute background potential derivative contribution.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
-    /// assume the background potential is constant.
-    pub(crate) fn compute_background_jacobian_at<'a, T, K>(
-        q: Vector3<T>,
-        samples: SamplesView<'a, 'a, T>,
-        bg_data: BackgroundData<T, K>,
-    ) -> impl Iterator<Item=Vector3<T>> + 'a 
-        where T: Real,
-              K: SphericalKernel<T> + Copy + std::fmt::Debug + 'a
-    {
-        // Unpack background data.
-        let BackgroundData { 
-            bg_potential_value,
-            weight_sum_inv,
-            kernel,
-            closest_sample_dist: dist,
-            radius,
-        } = bg_data;
-
-        // The unnormalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
-        let wb = kernel.f(radius - dist);
-
-        samples.into_iter().map(move |Sample { index, pos, .. }| {
-            // Gradient of the unnormalized weight for the current sample point.
-            let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
-
-            // This term is valid for constant or dynamic background potentials.
-            let constant_term = |potential: T| {
-                //dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv)
-                Vector3::zeros()
-            };
-
-            match bg_potential_value {
-                BackgroundPotentialValue::Constant(potential) => constant_term(potential),
-                BackgroundPotentialValue::ClosestSampleDistance {
-                    closest_sample_disp: disp,
-                    closest_sample_index,
-                } => {
-
-                    let mut grad = constant_term(dist);
-
-                    if index == closest_sample_index {
-                        // Gradient of the unnormalized weight evaluated at the distance to the
-                        // boundary of the neighbourhood.
-                        let dwbdp = disp * kernel.df(radius - dist) / dist;
-
-                        grad += dwbdp * dist + disp * (wb / dist)
-                        //grad += dwbdp * (dist * weight_sum_inv * (T::one() - weight_sum_inv * wb))
-                        //    - disp * (wb * weight_sum_inv / dist)
-                    }
-
-                    grad
-                }
-            }
-        })
-    }
-
     /// Compute the jacobian for the implicit surface potential given by the samples with the
     /// specified kernel.
     pub(crate) fn compute_jacobian_at<'a, T: Real, K: 'a>(
@@ -1040,57 +1118,21 @@ impl ImplicitSurface {
     {
         // Find the closest vertex for background potential derivative.
         let radius = T::from(radius).unwrap();
-        let mut closest_d = radius;
-        let mut closest_i = -1isize;
-        let mut closest_diff = Vector3::zeros();
-        for Sample { index, pos, .. } in samples.iter() {
-            let diff = q - pos;
-            let dist = diff.norm();
-            if dist < closest_d {
-                closest_diff = diff;
-                closest_d = dist;
-                closest_i = index as isize;
-            }
-        }
-
-        assert!(closest_i >= 0, "No surface samples found. Please report this bug.");
-        let closest_i = closest_i as usize;
-
-        let mut weight_sum = T::zero();
-        for Sample { pos, .. } in samples.iter() {
-            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-            weight_sum += w;
-        }
-
-        println!("weight_sum = {:?}", weight_sum);
-
-        // Background potential weight
-        let bg_w = kernel.f(radius - closest_d);
-        weight_sum += bg_w;
-
-        let weight_sum_inv = T::one() / weight_sum;
-        let weight_sum_inv2 = weight_sum_inv * weight_sum_inv;
 
         // Compute background potential derivative contribution.
         // Compute derivative if the closest point in the neighbourhood. Otherwise we
         // assume the background potential is constant.
-        let bg_data = BackgroundData {
-            bg_potential_value: if dynamic_bg {
-                BackgroundPotentialValue::ClosestSampleDistance {
-                    closest_sample_disp: closest_diff,
-                    closest_sample_index: closest_i,
-                }
-            } else {
-                BackgroundPotentialValue::Constant(T::zero()) // TODO: Support non-zero constant potentials
-            },
-            weight_sum_inv,
-            kernel,
-            closest_sample_dist: closest_d,
-            radius,
-        };
+        let bg = BackgroundPotential::new(q, samples, radius, kernel, dynamic_bg);
+
+        let closest_d = bg.closest_sample_dist();
+
+        // Background potential adds to the total weight sum, so we should get the updated weight
+        // sum from there.
+        let weight_sum_inv = bg.weight_sum_inv();
+        let weight_sum_inv2 = weight_sum_inv * weight_sum_inv;
 
         // Background potential Jacobian.
-        let bg_deriv_iter = Self::compute_background_jacobian_at(q, samples.clone(), bg_data);
+        let bg_deriv_iter = bg.compute_jacobian();
 
         // Main function Jacobian.
         let main_deriv_iter = samples.clone().into_iter().map(
@@ -1105,39 +1147,34 @@ impl ImplicitSurface {
                 let norm_inv = T::one() / nml.norm();
                 let unit_nml = nml * norm_inv;
 
-                let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-                let dw = -kernel.with_closest_dist(closest_d).grad(q, pos);
                 let mut dw_neigh = T::zero();
 
                 for Sample {
-                    index,
                     pos: posk,
                     nml: nmlk,
                     off: offk,
+                    ..
                 } in samples.iter()
                 {
                     let wk = kernel.with_closest_dist(closest_d).eval(q, posk);
                     let diffk = q - posk;
                     let pk = T::from(offk).unwrap() + (nmlk.dot(diffk) / nmlk.norm());
-                    println!("i: {:?}; wk = {:?}; pk = {:?}", index, wk, pk);
                     dw_neigh -= wk * pk;
                 }
-                println!("dw_neigh = {:?}", dw_neigh);
 
+                let dw = -kernel.with_closest_dist(closest_d).grad(q, pos);
                 let mut dw_p = dw * (dw_neigh * weight_sum_inv2);
 
-                println!("dw_p = {:?}", dw_p);
-
+                // Contribution from the background potential
+                let dwb = bg.background_weight_gradient(index);
+                dw_p += dwb * (dw_neigh * weight_sum_inv2);
+                
                 dw_p += dw * (weight_sum_inv * (T::from(off).unwrap() + unit_nml.dot(diff)));
 
-                println!("dw_p_full = {:?}", dw_p);
-
                 // Compute the normal component of the derivative
+                let w = kernel.with_closest_dist(closest_d).eval(q, pos);
                 let nml_deriv = unit_nml * (w * weight_sum_inv);
-                let d = dw_p - nml_deriv;
-
-                println!("d = {:?}\n", d);
-                d
+                dw_p - nml_deriv
             },
         );
 
@@ -1150,7 +1187,7 @@ impl ImplicitSurface {
             });
 
         zip!(main_deriv_iter, nml_deriv_iter, bg_deriv_iter).map(|(m,n,b)| {
-            m + b
+            m + n + b
         })
     }
 
@@ -1506,13 +1543,12 @@ mod tests {
     use super::*;
     use autodiff::F;
 
-    #[test]
-    fn easy_potential_derivative_test() {
+    fn easy_potential_derivative(radius: f64, dynamic_bg_potential: bool) {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
-            points: vec![Vector3([0.2, 0.1, 0.3]).map(|x| F::cst(x))],
-            normals: vec![Vector3([1.0, 1.0, 0.0]).map(|x| F::cst(x))],
+            points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
+            normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
             offsets: vec![0.0],
         };
 
@@ -1520,14 +1556,10 @@ mod tests {
         let neighbours = vec![0];
 
         // Radius is such that samples are captured by the query point.
-        let radius = 2.0;
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
         // Initialize the query point.
-        let q = Vector3([0.5, 0.1, 0.0]).map(|x| F::cst(x));
-
-        // This test assumes no background potential.
-        let dynamic_bg_potential = false;
+        let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
 
         // There is no surface for the set of samples. As a result, the normal derivative should be
         // skipped in this test.
@@ -1580,29 +1612,32 @@ mod tests {
     }
 
     #[test]
-    fn hard_potential_derivative_test() {
+    fn easy_potential_derivative_test() {
+        for i in 1..50 {
+            let radius = 0.1*(i as f64);
+            easy_potential_derivative(radius, true); // dynamic potential
+            easy_potential_derivative(radius, false); // constant potential
+        }
+    }
+
+    /// A more complex test parametrized by the background potential choice, radius and a perturbation
+    /// function that is expected to generate a random perturbation at every consequent call.
+    fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(dynamic_bg_potential: bool, radius: f64, perturb: &mut P) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
 
         let h = 1.18032;
         let tri_verts = vec![
-            Vector3([0.5, h, 0.0]),
-            Vector3([-0.25, h, 0.433013]),
-            Vector3([-0.25, h, -0.433013])
+            Vector3([0.5, h, 0.0]) + perturb(),
+            Vector3([-0.25, h, 0.433013]) + perturb(),
+            Vector3([-0.25, h, -0.433013]) + perturb(),
         ];
 
         let tet_verts = vec![
-            Vector3([0.0, 1.0, 0.0]),
-            Vector3([-0.94281, -0.33333, 0.0]),
-            Vector3([0.471405, -0.33333, 0.816498]),
-            Vector3([0.471405, -0.33333, -0.816498]),
-        ];
-
-        let normals = vec![
-            Vector3([0.0, 1.0, 0.0]),
-            Vector3([-0.942809, -0.333335, 0.0]),
-            Vector3([0.471404, -0.333334, 0.816496]),
-            Vector3([0.471404, -0.333334, -0.816496]),
+            Vector3([0.0, 1.0, 0.0]) + perturb(),
+            Vector3([-0.94281, -0.33333, 0.0]) + perturb(),
+            Vector3([0.471405, -0.33333, 0.816498]) + perturb(),
+            Vector3([0.471405, -0.33333, -0.816498]) + perturb(),
         ];
 
         let tet_faces = vec![
@@ -1611,6 +1646,10 @@ mod tests {
             [0, 1, 2],
             [1, 3, 2],
         ];
+
+        // Compute normals. Make sure this is done the same way as everywhere else.
+        let mut normals = vec![Vector3::zeros(); tet_verts.len()];
+        ImplicitSurface::compute_vertex_area_normals(&tet_faces, &tet_verts, &mut normals);
 
         let dual_topo = vec![
             vec![0, 1, 2],
@@ -1628,10 +1667,7 @@ mod tests {
 
         let neighbours = vec![0, 1, 2, 3];
 
-        let radius = 2.5;
         let kernel = kernel::LocalApproximate::new(radius, 1e-5);
-
-        let dynamic_bg_potential = true;
 
         // Convert the samples to use autodiff constants.
         let mut ad_samples = Samples {
@@ -1661,7 +1697,7 @@ mod tests {
                     ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
 
                     // Compute normals. This is necessary to capture the normal derivatives.
-                    //ImplicitSurface::compute_vertex_area_normals(&tet_faces, &ad_samples.points, &mut ad_samples.normals);
+                    ImplicitSurface::compute_vertex_area_normals(&tet_faces, &ad_samples.points, &mut ad_samples.normals);
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
@@ -1673,7 +1709,7 @@ mod tests {
                         dynamic_bg_potential,
                         &mut p,
                     );
-                    println!("deriv = {:?} vs {:?}", jac[vtx][i], p.deriv());
+
                     assert_relative_eq!(
                         jac[vtx][i],
                         p.deriv(),
@@ -1684,6 +1720,23 @@ mod tests {
                     ad_samples.points[vtx][i] = F::cst(ad_samples.points[vtx][i]);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn hard_potential_derivative_test() {
+        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+
+        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
+        let range = Uniform::new(-0.1, 0.1);
+
+        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+
+        // Run for some number of perturbations
+        for i in 1..50 {
+            let radius = 0.1*(i as f64);
+            hard_potential_derivative(true, radius, &mut perturb);
+            hard_potential_derivative(false, radius, &mut perturb);
         }
     }
 
@@ -1781,41 +1834,23 @@ mod tests {
         }
     }
 
-    fn weighted_background_potential<T: Real, K>(q: Vector3<T>, samples: SamplesView<T>, kernel: K, radius: T) -> T
-        where K: SphericalKernel<T> + Copy + Sync + Send,
-    {
-        let mut closest_d = radius;
-        for Sample { index, pos, .. } in samples.iter() {
-            closest_d = closest_d.min((q - pos).norm());
-        }
-
-        let mut weight_sum = T::zero();
-        for Sample { index, pos, .. } in samples.iter() {
-            weight_sum += kernel.with_closest_dist(closest_d).eval(q, pos);
-        }
-
-        let wb = kernel.f(radius - closest_d);
-        weight_sum += wb;
-
-        closest_d * (wb)// / weight_sum)
-    }
-
     #[test]
     fn dynamic_background_potential_derivative_test() {
         // Prepare data
         let q = Vector3([0.1, 0.3, 0.2]);
         let points = vec![
             Vector3([0.3, 0.2, 0.1]),
+            Vector3([0.4, 0.2, 0.1]),
             Vector3([0.2, 0.1, 0.3]),
         ];
 
         let samples = Samples {
             points: points.clone(),
-            normals: vec![Vector3::zeros(); 2], // Not used
-            offsets: vec![0.0; 4], // Not used
+            normals: vec![Vector3::zeros(); points.len()], // Not used
+            offsets: vec![0.0; points.len()], // Not used
         };
 
-        let indices = vec![0, 1];
+        let indices: Vec<usize> = (0..points.len()).collect();
 
         let radius = 2.0;
 
@@ -1825,44 +1860,17 @@ mod tests {
         // Create a view to the data to be iterated.
         let view = SamplesView::new(indices.as_slice(), &samples);
 
-        // Find the closest point to the query point.
-        let mut closest_d = radius;
-        let mut closest_i = indices.len(); // an invalid usize number works
-        let mut closest_diff = Vector3::zeros();
-        for Sample { index, pos, .. } in view.iter() {
-            let diff = q - pos;
-            let dist = diff.norm();
-            if dist < closest_d {
-                closest_diff = diff;
-                closest_d = dist;
-                closest_i = index;
-            }
-        }
-
-        // Compute the sum of all the weights in the neighbourhood.
-        let weights: f64 = view.iter().map(|s| kernel.with_closest_dist(closest_d).eval(q, s.pos)).sum();
-        let wb = kernel.f(radius - closest_d);
-
-        let bg_data = BackgroundData {
-            bg_potential_value:
-                BackgroundPotentialValue::ClosestSampleDistance {
-                    closest_sample_disp: closest_diff,
-                    closest_sample_index: closest_i,
-                },
-            weight_sum_inv: 1.0 / (weights + wb),
-            kernel,
-            closest_sample_dist: closest_d,
-            radius,
-        };
+        // Initialize a background potential. This function takes care of a lot of the setup.
+        let bg = BackgroundPotential::new(q, view, radius, kernel, true);
 
         // Compute manual Jacobian. This is the function being tested for correctness.
-        let jac: Vec<_> = ImplicitSurface::compute_background_jacobian_at(q, view, bg_data).collect();
+        let jac: Vec<_> = bg.compute_jacobian().collect();
 
         // Prepare autodiff variables.
         let mut ad_samples = Samples {
             points: points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect(),
-            normals: vec![Vector3::zeros(); 2], // Not used
-            offsets: vec![0.0; 4], // Not used
+            normals: vec![Vector3::zeros(); points.len()], // Not used
+            offsets: vec![0.0; points.len()], // Not used
         };
 
         let q = q.map(|x| F::cst(x));
@@ -1872,11 +1880,15 @@ mod tests {
             for j in 0..3 {
                 ad_samples.points[i][j] = F::var(ad_samples.points[i][j]);
 
+                // Initialize an autodiff version of the potential.
+                // This should be done outside the inner loop over samples, but here we make an
+                // exception for simplicity.
                 let view = SamplesView::new(indices.as_slice(), &ad_samples);
-                let p = weighted_background_potential(q, view, kernel, F::cst(radius));
+                let ad_bg = BackgroundPotential::new(q, view, F::cst(radius), kernel, true);
 
-                println!("deriv = {:?} vs {:?}", p.deriv(), jac[i][j]);
-                //assert_relative_eq!(p.deriv(), jac[i][j]);
+                let p = ad_bg.compute_unnormalized_weighted_potential() * ad_bg.weight_sum_inv();
+
+                assert_relative_eq!(jac[i][j], p.deriv());
                 ad_samples.points[i][j] = F::cst(ad_samples.points[i][j]);
             }
         }

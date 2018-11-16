@@ -76,8 +76,8 @@ impl From<geo::io::Error> for Error {
 mod tests {
     use super::*;
     use crate::geo::io::load_polymesh;
-    use crate::geo::mesh::{topology::*, Attrib};
-    use crate::geo::mesh::{TriMesh, VertexPositions};
+    use crate::geo::mesh::topology::*;
+    use crate::geo::mesh::*;
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.

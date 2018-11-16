@@ -1,4 +1,4 @@
-use crate::attrib_names::*;
+use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::energy::*;
 use crate::energy_models::{
@@ -128,6 +128,7 @@ impl SolverBuilder {
         self
     }
 
+    /// Set parameters for smooth contact problems. This is necessary when a shell is provided.
     pub fn smooth_contact_params(&mut self, params: SmoothContactParams) -> &mut Self {
         self.smooth_contact_params = Some(params);
         self
@@ -228,19 +229,19 @@ impl SolverBuilder {
             iterations: 0,
         };
 
-        let mut ipopt = Ipopt::new(problem);
+        let mut ipopt = Ipopt::new(problem)?;
 
         ipopt.set_option("tol", params.tolerance as f64);
         ipopt.set_option("acceptable_tol", 10.0 * params.tolerance as f64);
         ipopt.set_option("max_iter", params.max_iterations as i32);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 5);
+        ipopt.set_option("print_level", 0);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
-        ipopt.set_option("derivative_test", "second-order");
-        ipopt.set_option("derivative_test_tol", 1e-4);
+        //ipopt.set_option("derivative_test", "first-order");
+        //ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
@@ -249,6 +250,7 @@ impl SolverBuilder {
             step_count: 0,
             sim_params: params.clone(),
             solid_material: Some(solid_material),
+            max_step: smooth_contact_params.map_or(0.0, |x| x.max_step),
         })
     }
 
@@ -281,12 +283,12 @@ impl SolverBuilder {
     fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
         let verts = mesh.vertex_positions().to_vec();
 
-        mesh.attrib_or_add_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
+        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
 
-        mesh.attrib_or_add::<_, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
+        mesh.attrib_or_add::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
 
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
-        mesh.set_attrib_data::<_, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
+        mesh.set_attrib_data::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
 
         let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
         mesh.set_attrib_data::<_, CellIndex>(
@@ -297,8 +299,8 @@ impl SolverBuilder {
         {
             // Add elastic strain energy and elastic force attributes.
             // These will be computed at the end of the time step.
-            mesh.set_attrib::<_, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
-            mesh.set_attrib::<_, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+            mesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+            mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
 
         Ok(mesh)
@@ -316,6 +318,11 @@ pub struct Solver {
     sim_params: SimParams,
     /// Solid material properties.
     solid_material: Option<Material>,
+    /// Maximal displaement length. Used to limit displacement which is necessary in contact
+    /// scenarios because it defines how far a step we can take before the constraint Jacobian
+    /// sparsity pattern changes. If zero, then no limit is applied but constraint Jacobian is kept
+    /// sparse.
+    max_step: f64,
 }
 
 impl Solver {
@@ -353,6 +360,14 @@ impl Solver {
         self.solid_material
     }
 
+    /// Update the maximal displacement allowed. If zero, no limit is applied.
+    pub fn update_max_step(&mut self, step: f64) {
+        self.max_step = step;
+        if let Some(ref mut scc) = self.solver.solver_data_mut().problem.smooth_contact_constraint {
+            scc.update_max_step(step);
+        }
+    }
+
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
         // Get solver data. We want to update the primal variables with new positions from `pts`.
@@ -368,7 +383,7 @@ impl Solver {
         }
 
         // Only update fixed vertices, if no such attribute exists, return an error.
-        let fixed_iter = tetmesh.attrib_iter::<i8, VertexIndex>(FIXED_ATTRIB)?;
+        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
         prev_pos
             .iter_mut()
             .zip(pts.vertex_position_iter())
@@ -411,11 +426,11 @@ impl Solver {
             .iter_mut::<f64>()
             .unwrap()
             .zip(
-                mesh.attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                mesh.attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                     .unwrap(),
             )
             .zip(
-                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             )
             .zip(mesh.tet_iter())
@@ -442,10 +457,10 @@ impl Solver {
         }
 
         let grad_iter = mesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
-                mesh.attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             )
             .zip(mesh.tet_iter())
@@ -484,7 +499,7 @@ impl Solver {
     fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
         // Write back the velocity for the next iteration.
         for ((prev_dx, prev_x), &dx) in mesh
-            .attrib_iter_mut::<[f64; 3], VertexIndex>(DISPLACEMENT_ATTRIB)
+            .attrib_iter_mut::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
             .unwrap()
             .zip(prev_pos.iter_mut())
             .zip(disp.iter())
@@ -579,7 +594,7 @@ mod tests {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
         tolerance: 1e-9,
-        max_iterations: 800,
+        max_iterations: 100,
     };
 
     const DYNAMIC_PARAMS: SimParams = SimParams {
@@ -615,7 +630,7 @@ mod tests {
         ];
         let indices = vec![0, 2, 1, 3];
         let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![1, 0, 0, 0])
+        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 0, 0, 0])
             .unwrap();
 
         let ref_verts = vec![
@@ -633,7 +648,7 @@ mod tests {
     fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
         let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
         let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
+        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
             .unwrap();
 
         let ref_verts = vec![
@@ -938,13 +953,13 @@ mod tests {
     fn tet_push_test() {
         // A triangle is being pushed on top of a tet.
         let height = 1.18032;
-        let tri_verts = vec![
+        let mut tri_verts = vec![
             [0.5, height, 0.0],
             [-0.25, height, 0.433013],
             [-0.25, height, -0.433013],
         ];
 
-        let tri = vec![0, 2, 1];
+        let tri = vec![3, 0, 2, 1];
 
         let tet_verts = vec![
             [0.0, 1.0, 0.0],
@@ -955,26 +970,48 @@ mod tests {
 
         let tet = vec![3, 1, 0, 2];
 
-        let fixed = vec![0u8, 1, 1, 1];
+        let fixed = vec![0, 1, 1, 1];
             
-        let mut tetmesh = TetMesh::new(tet_verts, tet);
-        tetmesh.add_attrib_data::<u8, VertexIndex>("fixed", fixed).unwrap();
+        let mut tetmesh = TetMesh::new(tet_verts.clone(), tet);
+        tetmesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed).unwrap();
 
-        let trimesh = PolyMesh::new(tri_verts, &tri);
+        let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh)
             .add_shell(trimesh)
-            .smooth_contact_params(SmoothContactParams { radius: 1.0, tolerance: 1e-5 })
+            .smooth_contact_params(SmoothContactParams { radius: 10.0, tolerance: 1e-5, max_step: 1.0 })
             .build()
             .unwrap();
         assert!(solver.step().is_ok());
-        let solution = solver.borrow_mesh();
-        geo::io::save_tetmesh_ascii(
-            &solution,
-            &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
-        ).unwrap();
+
+        // Expect no push since the triangle is outside the surface.
+        for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(tet_verts.iter()) {
+            for i in 0..3 {
+                assert_relative_eq!(pos[i], exp_pos[i], max_relative=1e-5, epsilon = 1e-10);
+            }
+        }
+
+        let offset = 0.5;
+        tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
+        let pts = PointCloud::new(tri_verts.clone());
+        assert!(solver.update_kinematic_vertices(&pts).is_ok());
+        assert!(solver.step().is_ok());
+
+        // Expect only the top vertex to be pushed down.
+        let offset_verts = vec![
+            [0.0, 0.6204366194577637, 0.0],
+            tet_verts[1],
+            tet_verts[2],
+            tet_verts[3],
+        ];
+
+        for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(offset_verts.iter()) {
+            for i in 0..3 {
+                assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-6);
+            }
+        }
     }
 
     /*

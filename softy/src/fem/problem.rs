@@ -1,4 +1,4 @@
-use crate::attrib_names::*;
+use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::energy::*;
 use crate::energy_models::{
@@ -111,7 +111,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         lo.resize(n, [-2e19; 3]);
         hi.resize(n, [2e19; 3]);
 
-        if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<i8, VertexIndex>(FIXED_ATTRIB) {
+        if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB) {
             // Find and set fixed vertices.
             lo.iter_mut()
                 .zip(hi.iter_mut())
@@ -165,6 +165,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint{
             num += scc.constraint_size();
         }
+        println!("num total constraints = {:?}", num);
         num
     }
 
@@ -175,7 +176,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         if let Some(ref scc) = self.smooth_contact_constraint {
             num += scc.constraint_jacobian_size();
+            println!("num scc jac nnz = {:?}", scc.constraint_jacobian_size());
         }
+        println!("num total jac nnz = {:?}", num);
         num
     }
 
@@ -196,12 +199,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = scc.constraint_size();
             scc.constraint(x, &mut g[i..i+n]);
             //i += n;
+            println!("num scc constraints = {:?}", n);
         }
+            println!("constraint = {:?}", g);
 
         true
     }
 
     fn constraint_bounds(&self) -> (Vec<Number>, Vec<Number>) {
+        println!("computing bounds");
         let mut lower = Vec::new();
         let mut upper = Vec::new();
         if let Some(ref vc) = self.volume_constraint {
@@ -215,27 +221,35 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             lower.extend_from_slice(&mut bounds.0);
             upper.extend_from_slice(&mut bounds.1);
         }
+        println!("lower = {:?}", lower);
+        println!("upper = {:?}", upper);
         (lower, upper)
     }
 
     fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0; // counter
+        println!("computing indices");
 
+        let mut row_offset = 0;
         if let Some(ref vc) = self.volume_constraint {
             for MatrixElementIndex { row, col } in vc.constraint_jacobian_indices_iter() {
                 rows[i] = row as Index;
                 cols[i] = col as Index;
                 i += 1;
             }
+            row_offset += vc.constraint_jacobian_size();
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             for MatrixElementIndex { row, col } in scc.constraint_jacobian_indices_iter() {
-                rows[i] = (row + 1) as Index;
+                rows[i] = (row + row_offset) as Index;
                 cols[i] = col as Index;
                 i += 1;
             }
+            //row_offset += scc.constraint_jacobian_size();
         }
+        println!("const rows = {:?}", rows);
+        println!("const cols = {:?}", cols);
 
         true
     }
@@ -244,6 +258,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         self.update(dx);
         let tetmesh = self.tetmesh.borrow();
         let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
+        println!("computing values");
 
         let mut i = 0;
 
@@ -258,6 +273,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             scc.constraint_jacobian_values(x, &mut vals[i..i+n]);
             //i += n;
         }
+        println!("const vals = {:?}", vals);
 
         true
     }
@@ -339,16 +355,22 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
+        let mut coff = 0;
+
         if let Some(ref vc) = self.volume_constraint {
-            let n = vc.constraint_hessian_size();
-            vc.constraint_hessian_values(x, lambda, &mut vals[i..i+n]);
-            i += n;
+            let nc = vc.constraint_size();
+            let nh = vc.constraint_hessian_size();
+            vc.constraint_hessian_values(x, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
+            i += nh;
+            coff += nc
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
-            let n = scc.constraint_hessian_size();
-            scc.constraint_hessian_values(x, lambda, &mut vals[i..i+n]);
-            //i += n;
+            let nc = scc.constraint_size();
+            let nh = scc.constraint_hessian_size();
+            scc.constraint_hessian_values(x, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
+            //i += nh;
+            //coff += nc;
         }
 
         true

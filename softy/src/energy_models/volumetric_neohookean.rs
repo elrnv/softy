@@ -1,6 +1,6 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
-use crate::attrib_names::*;
+use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{topology::*, Attrib};
@@ -341,11 +341,11 @@ impl Energy<f64> for ElasticTetMeshEnergy {
         let disp: &[Vector3<f64>] = reinterpret_slice(dx);
 
         tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 tetmesh
-                    .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                    .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             )
             .zip(tetmesh.cell_iter())
@@ -388,11 +388,11 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
         let gradient: &mut [Vector3<f64>] = reinterpret_mut_slice(grad_f);
 
         let force_iter = tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 tetmesh
-                    .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                    .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             )
             .zip(tetmesh.tet_iter())
@@ -404,11 +404,11 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
 
         // Transfer forces from cell-vertices to vertices themeselves
         for ((((&vol, &DX_inv), tet), cell), grad) in tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
                 tetmesh
-                    .attrib_iter::<Matrix3<f64>, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                    .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                     .unwrap(),
             )
             .zip(tetmesh.tet_iter())
@@ -514,13 +514,13 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
                 .par_iter_mut()
                 .zip(
                     tetmesh
-                        .attrib_as_slice::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                        .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                         .unwrap()
                         .par_iter(),
                 )
                 .zip(
                     tetmesh
-                        .attrib_as_slice::<Matrix3<f64>, CellIndex>(
+                        .attrib_as_slice::<RefShapeMtxInvType, CellIndex>(
                             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                         )
                         .unwrap()

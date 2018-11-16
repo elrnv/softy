@@ -11,7 +11,7 @@ extern crate implicits;
 #[macro_use]
 extern crate approx;
 
-mod attrib_names;
+mod attrib_defines;
 mod bench;
 mod constraint;
 mod constraints;
@@ -35,9 +35,16 @@ pub enum Error {
     AttribError(attrib::Error),
     InvertedReferenceElement,
     SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
+    SolverCreateError(ipopt::CreateError),
     MissingContactParams,
     NoSimulationMesh,
     NoKinematicMesh,
+}
+
+impl From<ipopt::CreateError> for Error {
+    fn from(err: ipopt::CreateError) -> Error {
+        Error::SolverCreateError(err)
+    }
 }
 
 impl From<attrib::Error> for Error {
@@ -79,6 +86,8 @@ impl From<Error> for SimResult {
                 SimResult::Error(format!("Missing simulation mesh.").into()),
             Error::NoKinematicMesh =>
                 SimResult::Error(format!("Missing kinematic mesh.").into()),
+            Error::SolverCreateError(err) =>
+                SimResult::Error(format!("Failed to create a solver: {:?}", err).into()),
         }
     }
 }

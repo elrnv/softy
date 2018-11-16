@@ -23,6 +23,11 @@ pub struct SmoothContactConstraint {
 pub struct SmoothContactParams {
     pub radius: f64,
     pub tolerance: f64,
+
+    /// Maximal displacement length. This prevents the displacement
+    /// from being too large as to change the sparsity pattern of the smooth contact constraint
+    /// Jacobian. If this is zero, then no limit is assumed (not recommended in contact scenarios).
+    pub max_step: f64,
 }
 
 impl SmoothContactConstraint {
@@ -38,7 +43,8 @@ impl SmoothContactConstraint {
             .with_triangles(triangles)
             .with_points(points)
             .with_kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
-            .with_background_potential(true);
+            .with_max_step(params.max_step*2.0) // double it because the step can be by samples or query points
+            .with_background_potential(false);
 
         if let Ok(all_offsets) = tetmesh.attrib_as_slice::<f32, VertexIndex>("offset") {
             let offsets = surf_verts.iter()
@@ -46,12 +52,23 @@ impl SmoothContactConstraint {
             surface_builder.with_offsets(offsets);
         }
 
-        SmoothContactConstraint {
+        let surface = surface_builder.build().expect("No surface points detected");
+
+        let constraint = SmoothContactConstraint {
             simulation_object: Rc::clone(tetmesh_rc),
             sample_verts: surf_verts,
-            implicit_surface: RefCell::new(surface_builder.build()),
+            implicit_surface: RefCell::new(surface),
             collision_object: Rc::clone(trimesh_rc),
-        }
+        };
+
+        let trimesh = trimesh_rc.borrow();
+        let query_points = trimesh.vertex_positions();
+        constraint.implicit_surface.borrow().cache_neighbours(query_points);
+        constraint
+    }
+
+    pub fn update_max_step(&mut self, step: f64) {
+        self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
     /// Update implicit surface using the given position vector.
@@ -67,7 +84,7 @@ impl SmoothContactConstraint {
 impl Constraint<f64> for SmoothContactConstraint {
     #[inline]
     fn constraint_size(&self) -> usize {
-        self.collision_object.borrow().num_vertices()
+        self.implicit_surface.borrow().num_cached_query_points()
     }
 
     #[inline]
@@ -82,6 +99,9 @@ impl Constraint<f64> for SmoothContactConstraint {
         self.update_surface_with(x);
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
+        for val in value.iter_mut() {
+            *val = 0.0; // Clear potential value.
+        }
         self.implicit_surface.borrow().potential(query_points, value).unwrap();
     }
 }

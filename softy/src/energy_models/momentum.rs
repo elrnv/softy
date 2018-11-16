@@ -1,6 +1,4 @@
-//use std::path::Path;
-//use geo::io::save_tetmesh;
-use crate::attrib_names::*;
+use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::geo::math::Vector3;
 use crate::geo::mesh::{topology::*, Attrib};
@@ -66,12 +64,12 @@ impl Energy<f64> for MomentumPotential {
 
         let prev_disp: &[Vector3<f64>] = reinterpret_slice(
             tetmesh
-                .attrib_as_slice::<[f64; 3], VertexIndex>(DISPLACEMENT_ATTRIB)
+                .attrib_as_slice::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
                 .unwrap(),
         );
 
         tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(tetmesh.cell_iter())
             .map(|(&vol, cell)| {
@@ -109,7 +107,7 @@ impl EnergyGradient<f64> for MomentumPotential {
 
         let prev_disp: &[Vector3<f64>] = reinterpret_slice(
             tetmesh
-                .attrib_as_slice::<[f64; 3], VertexIndex>(DISPLACEMENT_ATTRIB)
+                .attrib_as_slice::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
                 .unwrap(),
         );
 
@@ -119,7 +117,7 @@ impl EnergyGradient<f64> for MomentumPotential {
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (&vol, cell) in tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(tetmesh.cell_iter())
         {
@@ -204,7 +202,7 @@ impl EnergyHessian<f64> for MomentumPotential {
                 reinterpret_mut_slice(hess);
 
             let vol_iter = tetmesh
-                .attrib_as_slice::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap()
                 .par_iter();
 

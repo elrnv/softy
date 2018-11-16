@@ -1,4 +1,4 @@
-use crate::attrib_names::*;
+use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::geo::math::Vector3;
 use crate::geo::mesh::{topology::*, Attrib};
@@ -39,7 +39,7 @@ impl Energy<f64> for Gravity {
             .map(|cell| Tetrahedron::from_indexed_slice(cell.get(), pos));
 
         tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(tet_iter)
             .map(|(&vol, tet)| {
@@ -61,7 +61,7 @@ impl EnergyGradient<f64> for Gravity {
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (&vol, cell) in tetmesh
-            .attrib_iter::<f64, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(tetmesh.cell_iter())
         {

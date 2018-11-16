@@ -367,7 +367,6 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 }
 
-
 /// Precomputed data used for background potential computation.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum BackgroundPotentialValue<T: Real> {
@@ -381,7 +380,8 @@ pub(crate) enum BackgroundPotentialValue<T: Real> {
 /// point. This struct also conviently computes useful information about the neighbourhood (like
 /// closest distance to a sample point) that can be reused elsewhere.
 #[derive(Clone, Debug)]
-pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug> {
+pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug>
+{
     /// Position of the point at which we should evaluate the potential field.
     pub query_pos: Vector3<T>,
     /// Samples that influence the potential field.
@@ -402,25 +402,35 @@ pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone
     pub radius: T,
 }
 
-impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a> BackgroundPotential<'a, T, K> {
+impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a>
+    BackgroundPotential<'a, T, K>
+{
     /// Pass in the unnormalized weight sum excluding the weight for the background potential.
-    fn new(q: Vector3<T>, samples: SamplesView<'a, 'a, T>, radius: T, kernel: K, dynamic_bg: bool) -> Self {
-
+    fn new(
+        q: Vector3<T>,
+        samples: SamplesView<'a, 'a, T>,
+        radius: T,
+        kernel: K,
+        dynamic_bg: bool,
+    ) -> Self {
         // Precompute data about the closest sample point (displacement, index and distance).
-        let min_sample = samples.iter()
+        let min_sample = samples
+            .iter()
             .map(|Sample { index, pos, .. }| {
                 let disp = q - pos;
                 (index, disp, disp.norm_squared())
             })
             .min_by(|(_, _, d0), (_, _, d1)| {
-                d0.partial_cmp(d1).expect("Detected NaN. Please report this bug.")
+                d0.partial_cmp(d1)
+                    .expect("Detected NaN. Please report this bug.")
             });
 
         if min_sample.is_none() {
             panic!("No surface samples found. Please report this bug.");
         }
 
-        let (closest_sample_index, closest_sample_disp, mut closest_sample_dist) = min_sample.unwrap();
+        let (closest_sample_index, closest_sample_disp, mut closest_sample_dist) =
+            min_sample.unwrap();
         closest_sample_dist = closest_sample_dist.sqrt();
 
         // Compute the weight sum here. This will be available to the usesr of bg data.
@@ -452,7 +462,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
 
         bg
     }
-    
+
     fn closest_sample_dist(&self) -> T {
         self.closest_sample_dist
     }
@@ -467,7 +477,9 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
 
     fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
         if index == self.closest_sample_index {
-            self.closest_sample_disp * (self.kernel.df(self.radius - self.closest_sample_dist) / self.closest_sample_dist)
+            self.closest_sample_disp
+                * (self.kernel.df(self.radius - self.closest_sample_dist)
+                    / self.closest_sample_dist)
         } else {
             Vector3::zeros()
         }
@@ -478,24 +490,25 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
     /// background potential contribution.
     fn compute_unnormalized_weighted_potential(&self) -> T {
         // Unpack background data.
-        let BackgroundPotential { 
+        let BackgroundPotential {
             bg_potential_value,
             closest_sample_dist: dist,
             ..
         } = *self;
 
-        self.background_weight() * match bg_potential_value {
-            BackgroundPotentialValue::Constant(potential) => potential,
-            BackgroundPotentialValue::ClosestSampleDistance => dist,
-        }
+        self.background_weight()
+            * match bg_potential_value {
+                BackgroundPotentialValue::Constant(potential) => potential,
+                BackgroundPotentialValue::ClosestSampleDistance => dist,
+            }
     }
 
     /// Compute background potential derivative contribution.
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
     /// assume the background potential is constant.
-    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item=Vector3<T>> + 'a {
+    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         // Unpack background data.
-        let BackgroundPotential { 
+        let BackgroundPotential {
             query_pos: q,
             samples,
             bg_potential_value,
@@ -520,18 +533,15 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
 
             // This term is valid for constant or dynamic background potentials.
-            let constant_term = |potential: T| {
-                dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv)
-            };
+            let constant_term =
+                |potential: T| dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv);
 
             match bg_potential_value {
                 BackgroundPotentialValue::Constant(potential) => constant_term(potential),
                 BackgroundPotentialValue::ClosestSampleDistance => {
-
                     let mut grad = constant_term(dist);
 
                     if index == closest_sample_index {
-
                         //grad += dwbdp * dist + disp * (wb / dist)
                         grad += dwbdp * (dist * weight_sum_inv * (T::one() - weight_sum_inv * wb))
                             - disp * (wb * weight_sum_inv / dist)
@@ -543,7 +553,6 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
         })
     }
 }
-
 
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
@@ -598,7 +607,11 @@ impl ImplicitSurface {
 
     /// Compute unnormalized area weighted vertex normals given a triangle topology.
     /// Having this function be static and generic helps us test the normal derivatives.
-    pub(crate) fn compute_vertex_area_normals<T: Real>(surf_topo: &[[usize;3]], points: &[Vector3<T>], normals: &mut [Vector3<T>]) {
+    pub(crate) fn compute_vertex_area_normals<T: Real>(
+        surf_topo: &[[usize; 3]],
+        points: &[Vector3<T>],
+        normals: &mut [Vector3<T>],
+    ) {
         // Clear the normals.
         for nml in normals.iter_mut() {
             *nml = Vector3::zeros();
@@ -622,18 +635,19 @@ impl ImplicitSurface {
     /// value for any vertex index, however not all indices will be used since only the
     /// neighbourhood of vertex at `index` will have non-zero gradients.
     pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T: Real, F>(
-        samples: SamplesView<'a, 'a, T>, 
+        samples: SamplesView<'a, 'a, T>,
         surface_topo: &'a [[usize; 3]],
         dual_topo: &'a [Vec<usize>],
         mut dx: F,
-    ) -> impl Iterator<Item=Vector3<T>> + 'a
-        where F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
         samples.clone().into_iter().map(move |sample| {
             let Sample { index, nml, .. } = sample;
             let norm_inv = T::one() / nml.norm();
             // Compute the normal component of the derivative
-            let nml_proj = Matrix3::identity() - nml*(nml.transpose() * (norm_inv * norm_inv));
+            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
             let mut nml_deriv = Vector3::zeros();
             // Look at the ring of triangles around the vertex with respect to which we are
             // taking the derivative.
@@ -643,12 +657,17 @@ impl ImplicitSurface {
                 // neighbourhood,
                 let tri = Triangle::from_indexed_slice(tri_indices, samples.points());
                 let nml_grad = tri.area_normal_gradient(
-                    tri_indices.iter().position(|&j| j == index).expect("Triangle mesh topology corruption."));
+                    tri_indices
+                        .iter()
+                        .position(|&j| j == index)
+                        .expect("Triangle mesh topology corruption."),
+                );
                 let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
                 for sample in SamplesView::from_view(tri_indices, samples.clone()).into_iter() {
                     if sample.index != index {
                         let normk_inv = T::one() / sample.nml.norm();
-                        let nmlk_proj = Matrix3::identity() - sample.nml*(sample.nml.transpose() * (normk_inv*normk_inv));
+                        let nmlk_proj = Matrix3::identity()
+                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
                         tri_grad += nmlk_proj * (dx(sample) * normk_inv);
                     }
                 }
@@ -1168,7 +1187,7 @@ impl ImplicitSurface {
                 // Contribution from the background potential
                 let dwb = bg.background_weight_gradient(index);
                 dw_p += dwb * (dw_neigh * weight_sum_inv2);
-                
+
                 dw_p += dw * (weight_sum_inv * (T::from(off).unwrap() + unit_nml.dot(diff)));
 
                 // Compute the normal component of the derivative
@@ -1180,15 +1199,16 @@ impl ImplicitSurface {
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_deriv_iter = ImplicitSurface::compute_vertex_unit_normals_gradient_products(
-            samples.clone(), &surface_topo, &dual_topo,
+            samples.clone(),
+            &surface_topo,
+            &dual_topo,
             move |Sample { pos, .. }| {
                 let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
                 (q - pos) * (wk * weight_sum_inv)
-            });
+            },
+        );
 
-        zip!(main_deriv_iter, nml_deriv_iter, bg_deriv_iter).map(|(m,n,b)| {
-            m + n + b
-        })
+        zip!(main_deriv_iter, nml_deriv_iter, bg_deriv_iter).map(|(m, n, b)| m + n + b)
     }
 
     fn compute_hrbf<V3>(
@@ -1570,9 +1590,16 @@ mod tests {
         let view = SamplesView::new(neighbours.as_ref(), &samples);
 
         // Compute the complete jacobian.
-        let jac: Vec<Vector3<F>> =
-            ImplicitSurface::compute_jacobian_at(q, view, radius, kernel, dynamic_bg_potential, &surf_topo, &dual_topo)
-                .collect();
+        let jac: Vec<Vector3<F>> = ImplicitSurface::compute_jacobian_at(
+            q,
+            view,
+            radius,
+            kernel,
+            dynamic_bg_potential,
+            &surf_topo,
+            &dual_topo,
+        )
+        .collect();
 
         // Test the accuracy of each component of the jacobian against an autodiff version of the
         // derivative.
@@ -1614,7 +1641,7 @@ mod tests {
     #[test]
     fn easy_potential_derivative_test() {
         for i in 1..50 {
-            let radius = 0.1*(i as f64);
+            let radius = 0.1 * (i as f64);
             easy_potential_derivative(radius, true); // dynamic potential
             easy_potential_derivative(radius, false); // constant potential
         }
@@ -1622,7 +1649,11 @@ mod tests {
 
     /// A more complex test parametrized by the background potential choice, radius and a perturbation
     /// function that is expected to generate a random perturbation at every consequent call.
-    fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(dynamic_bg_potential: bool, radius: f64, perturb: &mut P) {
+    fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(
+        dynamic_bg_potential: bool,
+        radius: f64,
+        perturb: &mut P,
+    ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
 
@@ -1640,23 +1671,13 @@ mod tests {
             Vector3([0.471405, -0.33333, -0.816498]) + perturb(),
         ];
 
-        let tet_faces = vec![
-            [0, 2, 3],
-            [0, 3, 1],
-            [0, 1, 2],
-            [1, 3, 2],
-        ];
+        let tet_faces = vec![[0, 2, 3], [0, 3, 1], [0, 1, 2], [1, 3, 2]];
 
         // Compute normals. Make sure this is done the same way as everywhere else.
         let mut normals = vec![Vector3::zeros(); tet_verts.len()];
         ImplicitSurface::compute_vertex_area_normals(&tet_faces, &tet_verts, &mut normals);
 
-        let dual_topo = vec![
-            vec![0, 1, 2],
-            vec![1, 2, 3],
-            vec![0, 2, 3],
-            vec![0, 1, 3],
-        ];
+        let dual_topo = vec![vec![0, 1, 2], vec![1, 2, 3], vec![0, 2, 3], vec![0, 1, 3]];
 
         // Initialize the samples with regular f64 for now to keep debug output clean.
         let samples = Samples {
@@ -1677,16 +1698,27 @@ mod tests {
                 .cloned()
                 .map(|vec| vec.map(|x| F::cst(x)))
                 .collect(),
-            normals: normals.iter().cloned().map(|vec| vec.map(|x| F::cst(x))).collect(),
+            normals: normals
+                .iter()
+                .cloned()
+                .map(|vec| vec.map(|x| F::cst(x)))
+                .collect(),
             offsets: samples.offsets.clone(),
         };
 
         for &q in tri_verts.iter() {
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
-            let jac: Vec<Vector3<f64>> =
-                ImplicitSurface::compute_jacobian_at(q, view, radius, kernel, dynamic_bg_potential, &tet_faces, &dual_topo)
-                    .collect();
+            let jac: Vec<Vector3<f64>> = ImplicitSurface::compute_jacobian_at(
+                q,
+                view,
+                radius,
+                kernel,
+                dynamic_bg_potential,
+                &tet_faces,
+                &dual_topo,
+            )
+            .collect();
 
             assert_eq!(jac.len(), neighbours.len());
 
@@ -1697,7 +1729,11 @@ mod tests {
                     ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
 
                     // Compute normals. This is necessary to capture the normal derivatives.
-                    ImplicitSurface::compute_vertex_area_normals(&tet_faces, &ad_samples.points, &mut ad_samples.normals);
+                    ImplicitSurface::compute_vertex_area_normals(
+                        &tet_faces,
+                        &ad_samples.points,
+                        &mut ad_samples.normals,
+                    );
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
@@ -1734,7 +1770,7 @@ mod tests {
 
         // Run for some number of perturbations
         for i in 1..50 {
-            let radius = 0.1*(i as f64);
+            let radius = 0.1 * (i as f64);
             hard_potential_derivative(true, radius, &mut perturb);
             hard_potential_derivative(false, radius, &mut perturb);
         }
@@ -1744,7 +1780,11 @@ mod tests {
     /// This is a helper function for the `normal_derivative_test`.
     /// Note that it is strictly more useful to precompute unnormalized vertex normals because they
     /// cary more information like area.
-    pub(crate) fn compute_vertex_unit_normals<T: Real>(surf_topo: &[[usize;3]], points: &[Vector3<T>], normals: &mut [Vector3<T>]) {
+    pub(crate) fn compute_vertex_unit_normals<T: Real>(
+        surf_topo: &[[usize; 3]],
+        points: &[Vector3<T>],
+        normals: &mut [Vector3<T>],
+    ) {
         // Compute area normals.
         ImplicitSurface::compute_vertex_area_normals(surf_topo, points, normals);
 
@@ -1765,23 +1805,17 @@ mod tests {
             Vector3([0.471405, -0.33333, -0.816498]),
         ];
 
-        let tet_faces = vec![
-            [0, 2, 3],
-            [0, 3, 1],
-            [0, 1, 2],
-            [1, 3, 2],
-        ];
+        let tet_faces = vec![[0, 2, 3], [0, 3, 1], [0, 1, 2], [1, 3, 2]];
 
         let mut normals = vec![Vector3::zeros(); tet_verts.len()];
-        ImplicitSurface::compute_vertex_area_normals(tet_faces.as_slice(), tet_verts.as_slice(), &mut normals);
+        ImplicitSurface::compute_vertex_area_normals(
+            tet_faces.as_slice(),
+            tet_verts.as_slice(),
+            &mut normals,
+        );
 
         // Vertex to triangle map
-        let dual_topo = vec![
-            vec![0, 1, 2],
-            vec![1, 2, 3],
-            vec![0, 2, 3],
-            vec![0, 1, 3],
-        ];
+        let dual_topo = vec![vec![0, 1, 2], vec![1, 2, 3], vec![0, 2, 3], vec![0, 1, 3]];
 
         // Initialize the samples with regular f64 for now to keep debug output clean.
         let samples = Samples {
@@ -1801,33 +1835,43 @@ mod tests {
                 .map(|vec| vec.map(|x| F::cst(x)))
                 .collect(),
             normals: vec![Vector3::<F>::zeros(); normals.len()],
-            offsets: samples.offsets.clone()
+            offsets: samples.offsets.clone(),
         };
 
         // Set a random product vector.
         let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
         let range = Uniform::new(-1.0, 1.0);
-        let dxs: Vec<_> = (0..tet_verts.len()).map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)])).collect();
-        let dx = move |Sample { index, .. }| { dxs[index] };
+        let dxs: Vec<_> = (0..tet_verts.len())
+            .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
+            .collect();
+        let dx = move |Sample { index, .. }| dxs[index];
 
         // Compute the normal gradient product.
         let view = SamplesView::new(indices.as_ref(), &samples);
-        let grad_iter = ImplicitSurface::compute_vertex_unit_normals_gradient_products(view, &tet_faces, &dual_topo, dx.clone());
+        let grad_iter = ImplicitSurface::compute_vertex_unit_normals_gradient_products(
+            view,
+            &tet_faces,
+            &dual_topo,
+            dx.clone(),
+        );
 
         for (&vtx, g) in indices.iter().zip(grad_iter) {
-
             for i in 0..3 {
                 ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
 
                 // Compute normalized normals. This is necessary to capture the normal derivatives.
-                compute_vertex_unit_normals(&tet_faces, &ad_samples.points, &mut ad_samples.normals);
+                compute_vertex_unit_normals(
+                    &tet_faces,
+                    &ad_samples.points,
+                    &mut ad_samples.normals,
+                );
 
                 let mut exp = F::cst(0.0);
                 for sample in view.clone().iter() {
                     exp += ad_samples.normals[sample.index].dot(dx(sample).map(|x| F::cst(x)));
                 }
 
-                assert_relative_eq!( g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
                 ad_samples.points[vtx][i] = F::cst(ad_samples.points[vtx][i]);
             }
@@ -1847,7 +1891,7 @@ mod tests {
         let samples = Samples {
             points: points.clone(),
             normals: vec![Vector3::zeros(); points.len()], // Not used
-            offsets: vec![0.0; points.len()], // Not used
+            offsets: vec![0.0; points.len()],              // Not used
         };
 
         let indices: Vec<usize> = (0..points.len()).collect();
@@ -1870,7 +1914,7 @@ mod tests {
         let mut ad_samples = Samples {
             points: points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect(),
             normals: vec![Vector3::zeros(); points.len()], // Not used
-            offsets: vec![0.0; points.len()], // Not used
+            offsets: vec![0.0; points.len()],              // Not used
         };
 
         let q = q.map(|x| F::cst(x));

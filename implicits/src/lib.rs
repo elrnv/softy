@@ -38,14 +38,17 @@ where
 {
     let ptcloud = PointCloud::from(surface.clone());
 
-    let implicit_surface = ImplicitSurfaceBuilder::new()
+    if let Some(implicit_surface) = ImplicitSurfaceBuilder::new()
         .with_kernel(params.kernel)
         .with_background_potential(params.background_potential)
         .with_mesh(&ptcloud)
-        .build();
-
-    implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
-    Ok(())
+        .build()
+    {
+        implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
+        Ok(())
+    } else {
+        Err(Error::Failure)
+    }
 }
 
 #[derive(Debug)]

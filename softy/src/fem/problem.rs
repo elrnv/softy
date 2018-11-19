@@ -165,7 +165,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint{
             num += scc.constraint_size();
         }
-        println!("num total constraints = {:?}", num);
         num
     }
 
@@ -176,9 +175,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         if let Some(ref scc) = self.smooth_contact_constraint {
             num += scc.constraint_jacobian_size();
-            println!("num scc jac nnz = {:?}", scc.constraint_jacobian_size());
         }
-        println!("num total jac nnz = {:?}", num);
         num
     }
 
@@ -199,15 +196,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = scc.constraint_size();
             scc.constraint(x, &mut g[i..i+n]);
             //i += n;
-            println!("num scc constraints = {:?}", n);
         }
-            println!("constraint = {:?}", g);
 
         true
     }
 
     fn constraint_bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        println!("computing bounds");
         let mut lower = Vec::new();
         let mut upper = Vec::new();
         if let Some(ref vc) = self.volume_constraint {
@@ -221,14 +215,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             lower.extend_from_slice(&mut bounds.0);
             upper.extend_from_slice(&mut bounds.1);
         }
-        println!("lower = {:?}", lower);
-        println!("upper = {:?}", upper);
         (lower, upper)
     }
 
     fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0; // counter
-        println!("computing indices");
 
         let mut row_offset = 0;
         if let Some(ref vc) = self.volume_constraint {
@@ -248,8 +239,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
             //row_offset += scc.constraint_jacobian_size();
         }
-        println!("const rows = {:?}", rows);
-        println!("const cols = {:?}", cols);
 
         true
     }
@@ -258,7 +247,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         self.update(dx);
         let tetmesh = self.tetmesh.borrow();
         let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
-        println!("computing values");
 
         let mut i = 0;
 
@@ -273,7 +261,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             scc.constraint_jacobian_values(x, &mut vals[i..i+n]);
             //i += n;
         }
-        println!("const vals = {:?}", vals);
 
         true
     }

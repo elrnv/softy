@@ -123,6 +123,7 @@ impl Into<softy::SmoothContactParams> for SimParams {
         softy::SmoothContactParams {
             radius: contact_radius as f64,
             tolerance: smoothness_tolerance as f64,
+            max_step: contact_radius as f64 *1.5,
         }
     }
 }

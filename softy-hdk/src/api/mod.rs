@@ -118,12 +118,13 @@ impl Into<softy::SmoothContactParams> for SimParams {
         let SimParams {
             contact_radius,
             smoothness_tolerance,
+            max_step,
             ..
         } = self;
         softy::SmoothContactParams {
             radius: contact_radius as f64,
             tolerance: smoothness_tolerance as f64,
-            max_step: contact_radius as f64 *1.5,
+            max_step: max_step as f64,
         }
     }
 }

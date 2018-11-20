@@ -79,7 +79,7 @@ static const char *theDsFile = R"THEDSFILE(
             name "damping"
             label "Damping"
             type float
-            default { "1.0" }
+            default { "0.0" }
             range { 0 1000 }
         }
 
@@ -185,6 +185,15 @@ static const char *theDsFile = R"THEDSFILE(
             default { "1e-5" }
             range { 0.0 1.0 }
         }
+
+        parm {
+            name "maxstep"
+            cppname "MaxStep"
+            label "Max Step Size"
+            type float
+            default { "1.0" }
+            range { 0.0 10.0 }
+        }
     }
 
     parm {
@@ -287,6 +296,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
     sim_params.contact_radius = sopparms.getContactRadius();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
+    sim_params.max_step = sopparms.getMaxStep();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

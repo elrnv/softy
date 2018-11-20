@@ -30,6 +30,7 @@ pub struct SimParams {
     pub volume_constraint: bool,
     pub contact_radius: f32,
     pub smoothness_tolerance: f32,
+    pub max_step: f32,
 }
 
 /// Result reported from `register_new_solver` function.

@@ -8,6 +8,122 @@ use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 use implicits::*;
 
+/// A linearized version of the smooth contact constraint.
+#[derive(Clone, Debug)]
+pub struct LinearSmoothContactConstraint(SmoothContactConstraint);
+
+impl LinearSmoothContactConstraint {
+    pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>,
+               trimesh_rc: &Rc<RefCell<TriMesh>>,
+               params: SmoothContactParams) -> Self {
+        let mut scc = LinearSmoothContactConstraint(SmoothContactConstraint::new(tetmesh_rc, trimesh_rc, params));
+        scc.update_surface();
+        scc
+    }
+
+    pub fn update_max_step(&mut self, step: f64) {
+        self.0.update_max_step(step);
+    }
+
+    /// Compute the constraint jacobian at the current configuration.
+    pub fn current_constraint_jacobian_values(&self, values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+        let collider = self.0.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+        self.0.implicit_surface.borrow().surface_jacobian_values(query_points, values).unwrap();
+    }
+
+    /// Update implicit surface using the stored reference to the simulation object. This is to be
+    /// called after the simulation mesh is updated by the simulator.
+    pub fn update_surface(&mut self) {
+        let tetmesh = self.0.simulation_object.borrow();
+        let x: &[f64] = reinterpret_slice(tetmesh.vertex_positions());
+        self.0.update_surface_with(x);
+    }
+
+
+    pub fn invalidate_neighbour_data(&mut self) {
+        self.0.invalidate_neighbour_data();
+    }
+}
+
+impl Constraint<f64> for LinearSmoothContactConstraint {
+    #[inline]
+    fn constraint_size(&self) -> usize {
+        // Forward to full implementation
+        self.0.constraint_size()
+    }
+
+    #[inline]
+    fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
+        // Forward to full implementation
+        self.0.constraint_bounds()
+    }
+
+    #[inline]
+    fn constraint(&mut self, dx: &[f64], value: &mut [f64]) {
+        debug_assert_eq!(value.len(), self.constraint_size());
+
+        let collider = self.0.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+
+        for val in value.iter_mut() {
+            *val = 0.0; // Clear potential value.
+        }
+
+        self.0.implicit_surface.borrow().potential(query_points, value).unwrap();
+        println!("vals before jac = {:?}", value);
+
+        // Get Jacobian index iterator.
+        let jac_idx_iter = {
+            let surf = self.0.implicit_surface.borrow();
+            surf.surface_jacobian_indices_iter().unwrap()
+        };
+
+        // Compute Jacobian . dx (dot product).
+        let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
+        self.current_constraint_jacobian_values(jac_values.as_mut_slice());
+        for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
+            value[row] += jac_val*dx[col];
+        }
+        println!("vals after jac = {:?}", value);
+    }
+}
+
+impl ConstraintJacobian<f64> for LinearSmoothContactConstraint {
+    #[inline]
+    fn constraint_jacobian_size(&self) -> usize {
+        self.0.constraint_jacobian_size()
+    }
+    fn constraint_jacobian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
+    {
+        self.0.constraint_jacobian_indices_iter()
+    }
+    fn constraint_jacobian_values(&self, _x: &[f64], values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+        self.current_constraint_jacobian_values(values); // Jacobian is constant.
+    }
+}
+
+// No hessian for linearized constraints
+impl ConstraintHessian<f64> for LinearSmoothContactConstraint {
+    #[inline]
+    fn constraint_hessian_size(&self) -> usize {
+        0
+    }
+    fn constraint_hessian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
+    {
+        Box::new(std::iter::empty())
+    }
+    fn constraint_hessian_values(&self, _dx: &[f64], _lambda: &[f64], _values: &mut [f64]) {
+        debug_assert_eq!(_values.len(), self.constraint_hessian_size());
+    }
+}
+
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
 #[derive(Clone, Debug)]
@@ -79,6 +195,10 @@ impl SmoothContactConstraint {
         self.implicit_surface.borrow_mut()
             .update_points(points_iter);
     }
+
+    pub fn invalidate_neighbour_data(&mut self) {
+        self.implicit_surface.borrow_mut().invalidate_neighbour_cache();
+    }
 }
 
 impl Constraint<f64> for SmoothContactConstraint {
@@ -106,18 +226,6 @@ impl Constraint<f64> for SmoothContactConstraint {
     }
 }
 
-//impl SmoothContactConstraint {
-//    /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
-//    pub fn constraint_jacobian_indices_iter<'a>(&'a self) -> impl Iterator<Item=MatrixElementIndex> + 'a {
-//
-//    }
-//
-//    /// Compute the values of the constraint Jacobian.
-//    pub fn constraint_jacobian_values_iter<'a>(&'a self, x: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
-//
-//    }
-//}
-
 impl ConstraintJacobian<f64> for SmoothContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
@@ -142,26 +250,18 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
     }
 }
 
-//impl SmoothContactConstraint {
-//    pub fn constraint_hessian_indices_iter<'a>(&'a self) -> impl Iterator<Item=MatrixElementIndex> + 'a {
+//impl ConstraintHessian<f64> for SmoothContactConstraint {
+//    #[inline]
+//    fn constraint_hessian_size(&self) -> usize {
+//        0
 //    }
-//
-//    pub fn constraint_hessian_values_iter<'a>(&'a self, x: &'a [f64], lambda: &'a [f64]) -> impl Iterator<Item=f64> + 'a {
+//    fn constraint_hessian_indices_iter<'a>(
+//        &'a self,
+//    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
+//    {
+//        Box::new(std::iter::empty())
+//    }
+//    fn constraint_hessian_values(&self, _x: &[f64], _lambda: &[f64], _values: &mut [f64]) {
+//        debug_assert_eq!(_values.len(), self.constraint_hessian_size());
 //    }
 //}
-
-impl ConstraintHessian<f64> for SmoothContactConstraint {
-    #[inline]
-    fn constraint_hessian_size(&self) -> usize {
-        0
-    }
-    fn constraint_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-    {
-        Box::new(std::iter::empty())
-    }
-    fn constraint_hessian_values(&self, _x: &[f64], _lambda: &[f64], _values: &mut [f64]) {
-        debug_assert_eq!(_values.len(), self.constraint_hessian_size());
-    }
-}

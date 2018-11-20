@@ -214,7 +214,13 @@ impl SolverBuilder {
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
 
         let smooth_contact_constraint = kinematic_object.as_ref()
-            .map(|trimesh| SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap()));
+            .map(|trimesh| LinearSmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap()));
+
+        let displacement_bound = smooth_contact_params.map(|scp| {
+            // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
+            // bound).
+            scp.max_step/(2.0f64.sqrt())
+        });
 
         let problem = NonLinearProblem {
             tetmesh: Rc::clone(&mesh),
@@ -225,6 +231,7 @@ impl SolverBuilder {
             momentum_potential,
             volume_constraint,
             smooth_contact_constraint,
+            displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
         };
@@ -240,7 +247,7 @@ impl SolverBuilder {
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
-        //ipopt.set_option("derivative_test", "first-order");
+        //ipopt.set_option("derivative_test", "second-order");
         //ipopt.set_option("derivative_test_tol", 1e-4);
         //ipopt.set_option("point_perturbation_radius", 0.01);
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
@@ -564,16 +571,25 @@ impl Solver {
             let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
             // Get the tetmesh and prev_pos so we can update fixed vertices only.
-            let mesh = &mut problem.tetmesh.borrow_mut();
-            let mut prev_pos = problem.prev_pos.borrow_mut();
+            {
+                let mesh = &mut problem.tetmesh.borrow_mut();
+                let mut prev_pos = problem.prev_pos.borrow_mut();
 
-            Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+                Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
 
-            // Write back elastic strain energy for visualization.
-            Self::compute_strain_energy_attrib(mesh, lambda, mu);
+                // Write back elastic strain energy for visualization.
+                Self::compute_strain_energy_attrib(mesh, lambda, mu);
 
-            // Write back elastic forces on each node.
-            Self::compute_elastic_forces_attrib(mesh, lambda, mu);
+                // Write back elastic forces on each node.
+                Self::compute_elastic_forces_attrib(mesh, lambda, mu);
+            }
+
+            // Since we advected the mesh, we need to invalidate its neighbour data so it's
+            // recomputed at the next time step (if applicable).
+            if let Some(ref mut scc) = problem.smooth_contact_constraint {
+                scc.invalidate_neighbour_data();
+                scc.update_surface();
+            }
         }
 
         step_result
@@ -981,7 +997,7 @@ mod tests {
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh)
             .add_shell(trimesh)
-            .smooth_contact_params(SmoothContactParams { radius: 10.0, tolerance: 1e-5, max_step: 1.0 })
+            .smooth_contact_params(SmoothContactParams { radius: 10.0, tolerance: 1e-5, max_step: 2.0 })
             .build()
             .unwrap();
         assert!(solver.step().is_ok());
@@ -989,7 +1005,7 @@ mod tests {
         // Expect no push since the triangle is outside the surface.
         for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(tet_verts.iter()) {
             for i in 0..3 {
-                assert_relative_eq!(pos[i], exp_pos[i], max_relative=1e-5, epsilon = 1e-10);
+                assert_relative_eq!(pos[i], exp_pos[i], max_relative=1e-5, epsilon = 1e-6);
             }
         }
 
@@ -1001,7 +1017,7 @@ mod tests {
 
         // Expect only the top vertex to be pushed down.
         let offset_verts = vec![
-            [0.0, 0.6204366194577637, 0.0],
+            [0.0, 0.6535391887937654, 0.0],
             tet_verts[1],
             tet_verts[2],
             tet_verts[3],
@@ -1012,6 +1028,27 @@ mod tests {
                 assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-6);
             }
         }
+    }
+
+    #[test]
+    fn ball_tri_push_test() {
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.4),
+            ..HARD_SOLID_MATERIAL
+        };
+
+        let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk")).unwrap();
+        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+            .solid_material(material)
+            .add_solid(tetmesh)
+            .add_shell(polymesh)
+            .smooth_contact_params(SmoothContactParams { radius: 1.0, tolerance: 1e-5, max_step: 1.5 })
+            .build()
+            .unwrap();
+
+        let res = solver.step();
+        assert!(res.is_ok());
     }
 
     /*
@@ -1040,10 +1077,10 @@ mod tests {
             .unwrap();
 
         for _i in 0..10 {
-            //save_tetmesh_ascii(
-            //    engine.borrow_mesh(),
-            //    &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
-            //);
+        //geo::io::save_tetmesh_ascii(
+        //    &solver.borrow_mesh(),
+        //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+        //    ).unwrap();
             let res = solver.step();
             assert!(res.is_ok());
         }

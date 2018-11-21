@@ -15,10 +15,10 @@ use crate::geo::mesh::{attrib, PointCloud, PolyMesh};
 #[macro_use]
 pub mod zip;
 
-pub mod implicit_surface;
+pub mod field;
 mod kernel;
 
-pub use crate::implicit_surface::*;
+pub use crate::field::*;
 pub use crate::kernel::KernelType;
 
 #[derive(Copy, Clone, Debug)]

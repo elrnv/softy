@@ -154,54 +154,84 @@ static const char *theDsFile = R"THEDSFILE(
         }
     }
 
-    parm {
-        name "volumeconstraint"
-        cppname "VolumeConstraint"
-        label "Enable Volume Constraint"
-        type toggle
-        default { "off" }
-    }
-
     groupsimple {
-        name "smoothcontact"
-        label "Smooth Contact"
+        name "constraints"
+        label "Constraints"
         grouptag { "group_type" "simple" }
-        disablewhen "{ hasinput(1) == 0 }"
 
         parm {
-            name "contactradius"
-            cppname "ContactRadius"
-            label "Contact Radius"
-            type float
-            default { "1" }
-            range { 0.0 10.0 }
+            name "volumeconstraint"
+            cppname "VolumeConstraint"
+            label "Enable Volume Constraint"
+            type toggle
+            default { "off" }
         }
 
-        parm {
-            name "smoothtol"
-            cppname "SmoothTol"
-            label "Smoothness Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-        }
+        groupsimple {
+            name "smoothcontact"
+            label "Smooth Contact"
+            grouptag { "group_type" "simple" }
+            disablewhen "{ hasinput(1) == 0 }"
 
-        parm {
-            name "maxstep"
-            cppname "MaxStep"
-            label "Max Step Size"
-            type float
-            default { "1.0" }
-            range { 0.0 10.0 }
+            parm {
+                name "contactradius"
+                cppname "ContactRadius"
+                label "Contact Radius"
+                type float
+                default { "1" }
+                range { 0.0 10.0 }
+            }
+
+            parm {
+                name "smoothtol"
+                cppname "SmoothTol"
+                label "Smoothness Tolerance"
+                type log
+                default { "1e-5" }
+                range { 0.0 1.0 }
+            }
+
+            parm {
+                name "maxstep"
+                cppname "MaxStep"
+                label "Max Step Size"
+                type float
+                default { "1.0" }
+                range { 0.0 10.0 }
+            }
         }
     }
 
-    parm {
-        name "clearcache"
-        label "Clear Cache"
-        type button
-        default { "0" }
-        range { 0 1 }
+    groupcollapsible {
+        name    "troubleshooting"
+        label   "Troubleshooting"
+        grouptag { "group_type" "collapsible" }
+
+        parm {
+            name "clearcache"
+            label "Clear Cache"
+            type button
+            default { "0" }
+            range { 0 1 }
+        }
+
+        parm {
+            name "printlevel"
+            cppname "PrintLevel"
+            label "Print Level"
+            type integer
+            default { "0" }
+            range { 0! 12! }
+        }
+
+        parm {
+            name "derivativetest"
+            cppname "DerivativeTest"
+            label "Derivative Test"
+            type integer
+            default { "0" }
+            range { 0! 2! }
+        }
     }
 }
 )THEDSFILE";
@@ -297,6 +327,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.contact_radius = sopparms.getContactRadius();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
     sim_params.max_step = sopparms.getMaxStep();
+    sim_params.print_level = sopparms.getPrintLevel();
+    sim_params.derivative_test = sopparms.getDerivativeTest();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 
@@ -319,6 +351,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         // If there is no previously allocated solver we can use, we need to extract the geometry
         // from the detail. Otherwise, the geometry stored in the solver itself will be used.
 
+        std::cerr << "No Previously Allocated Solver, getting full geometry." << std::endl;
         tetmesh = build_tetmesh(input0);
 
         const GU_Detail *input1 = cookparms.inputGeo(1);
@@ -335,15 +368,19 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         ss << "Failed to create or retrieve a solver. ";
         ss << solver_res.cook_result.message;
         cookparms.sopAddError(UT_ERROR_OUTSTREAM, ss.str().c_str());
+        std::cerr << ss.str() << std::endl;
         return;
     }
 
+    // Check that we either have a new solver or we found a valid old one.
     UT_ASSERT(solver_id < 0 || solver_id == solver_res.id);
 
     OwnedPtr<PointCloud> tetmesh_ptcloud = nullptr;
     OwnedPtr<PointCloud> polymesh_ptcloud = nullptr;
 
     if (solver_id >= 0) {
+        std::cerr << "Updating meshes of old solver" << std::endl;
+        // If it's an old one, update tits meshes.
         tetmesh_ptcloud = build_pointcloud(input0);
         const GU_Detail *input1 = cookparms.inputGeo(1);
         if (input1) {
@@ -351,6 +388,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         }
     }
 
+    std::cerr << "Stepping for solver " << solver_res.id << std::endl;
     StepResult res = hdkrs::step(
             solver_res.solver,
             tetmesh_ptcloud.release(),
@@ -364,7 +402,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         case CookResultTag::Warning:
             cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
         case CookResultTag::Error:
-            cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
+            cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message);
+            std::cerr << res.cook_result.message << std::endl;
+            break;
     }
 
     GU_Detail *detail = cookparms.gdh().gdpNC();

@@ -31,6 +31,8 @@ pub struct SimParams {
     pub contact_radius: f32,
     pub smoothness_tolerance: f32,
     pub max_step: f32,
+    pub print_level: u32,
+    pub derivative_test: u32,
 }
 
 /// Result reported from `register_new_solver` function.

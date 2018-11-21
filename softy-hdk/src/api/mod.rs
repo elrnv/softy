@@ -72,6 +72,8 @@ impl Into<softy::SimParams> for SimParams {
             gravity,
             tolerance,
             max_iterations,
+            print_level,
+            derivative_test,
             ..
         } = self;
         softy::SimParams {
@@ -83,6 +85,8 @@ impl Into<softy::SimParams> for SimParams {
             gravity: [0.0, -gravity, 0.0],
             tolerance,
             max_iterations,
+            print_level,
+            derivative_test,
         }
     }
 }
@@ -204,7 +208,7 @@ where
         match solver.update_solid_vertices(&pts) {
             Err(softy::Error::SizeMismatch) =>
                 return (None, None, CookResult::Error(
-                        format!("Input points ({}) don't coincide with solver mesh ({}).",
+                        format!("Input points ({}) don't coincide with solver TetMesh ({}).",
                         (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
             Err(softy::Error::AttribError(err)) =>
                 return (None, None, CookResult::Warning(
@@ -220,8 +224,8 @@ where
         match solver.update_shell_vertices(&pts) {
             Err(softy::Error::SizeMismatch) =>
                 return (None, None, CookResult::Error(
-                        format!("Input points ({}) don't coincide with solver mesh ({}).",
-                        (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
+                        format!("Input points ({}) don't coincide with solver PolyMesh ({}).",
+                        (*pts).num_vertices(), solver.try_borrow_kinematic_mesh().map(|x| x.num_vertices() as isize).unwrap_or(-1)))),
             Err(softy::Error::NoKinematicMesh) =>
                 return (None, None, CookResult::Warning("Missing kinematic mesh.".to_string())),
             Err(err) => 

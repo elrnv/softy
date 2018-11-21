@@ -1,6 +1,9 @@
 use crate::constraint::*;
 use crate::geo::mesh::topology::*;
 use crate::geo::mesh::{VertexPositions, Attrib};
+use crate::geo::math::Vector3;
+use crate::geo;
+use std::path::PathBuf;
 use crate::matrix::*;
 use crate::TetMesh;
 use crate::TriMesh;
@@ -41,10 +44,15 @@ impl LinearSmoothContactConstraint {
         self.0.update_surface_with(x);
     }
 
-
     pub fn invalidate_neighbour_data(&mut self) {
         self.0.invalidate_neighbour_data();
     }
+
+    #[inline]
+    pub fn reset_iter_count(&mut self) {
+        self.0.reset_iter_count();
+    }
+
 }
 
 impl Constraint<f64> for LinearSmoothContactConstraint {
@@ -63,16 +71,32 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
     #[inline]
     fn constraint(&mut self, dx: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
+        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let max_disp = disp.iter().map(|a| a.norm()).max_by(|a,b| a.partial_cmp(b).unwrap());
+        let avg_disp = dx.iter().cloned().sum::<f64>()/dx.len() as f64;
+        //println!("max_disp = {:?}, avg_disp = {:?}", max_disp, avg_disp);
 
         let collider = self.0.collision_object.borrow();
         let query_points = collider.vertex_positions();
+        //println!("query_points = {:?}", query_points);
+
+        //{
+        //    let mut mesh = self.0.simulation_object.borrow().clone();
+        //    for (pos, &disp) in mesh.vertex_position_iter_mut().zip(disp.iter()) {
+        //        *pos = (Vector3(*pos) + disp).into();
+        //    }
+
+        //    self.0.iter_count += 1;
+        //    geo::io::save_tetmesh(&mesh,
+        //                          &PathBuf::from(
+        //                              format!("out/mesh_{:?}.vtk", self.0.iter_count)));
+        //}
 
         for val in value.iter_mut() {
             *val = 0.0; // Clear potential value.
         }
 
         self.0.implicit_surface.borrow().potential(query_points, value).unwrap();
-        println!("vals before jac = {:?}", value);
 
         // Get Jacobian index iterator.
         let jac_idx_iter = {
@@ -86,7 +110,7 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
         for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
             value[row] += jac_val*dx[col];
         }
-        println!("vals after jac = {:?}", value);
+        //println!("g = {:?}", value);
     }
 }
 
@@ -133,6 +157,7 @@ pub struct SmoothContactConstraint {
     pub sample_verts: Vec<usize>,
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub collision_object: Rc<RefCell<TriMesh>>,
+    pub iter_count: usize,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -175,12 +200,17 @@ impl SmoothContactConstraint {
             sample_verts: surf_verts,
             implicit_surface: RefCell::new(surface),
             collision_object: Rc::clone(trimesh_rc),
+            iter_count: 0,
         };
 
         let trimesh = trimesh_rc.borrow();
         let query_points = trimesh.vertex_positions();
         constraint.implicit_surface.borrow().cache_neighbours(query_points);
         constraint
+    }
+
+    pub fn reset_iter_count(&mut self) {
+        self.iter_count = 0;
     }
 
     pub fn update_max_step(&mut self, step: f64) {

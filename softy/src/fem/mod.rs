@@ -12,4 +12,6 @@ pub struct SimParams {
     pub time_step: Option<f32>,
     pub tolerance: f32,
     pub max_iterations: u32,
+    pub print_level: u32,
+    pub derivative_test: u32,
 }

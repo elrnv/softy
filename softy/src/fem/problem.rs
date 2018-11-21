@@ -60,9 +60,15 @@ impl fmt::Debug for NonLinearProblem {
 }
 
 impl NonLinearProblem {
-    /// Get information about the current simulation
-    pub fn iteration_count(&self) -> usize {
-        self.iterations
+    /// Get the current iteration count and reset it.
+    pub fn pop_iteration_count(&mut self) -> usize {
+        let iter = self.iterations;
+        // Reset caunt
+        self.iterations = 0;
+        if let Some(ref mut scc) = self.smooth_contact_constraint.as_mut() {
+            scc.reset_iter_count();
+        }
+        iter
     }
 
     /// Intermediate callback for `Ipopt`.
@@ -97,6 +103,10 @@ impl NonLinearProblem {
             .zip(displacement.iter())
             .for_each(|((p, prev_p), disp)| *p = (*prev_p + *disp).into());
     }
+
+    //pub fn dot(a: &[f64], b: &[f64]) -> f64 {
+    //    a.iter().zip(b.iter()).map(|(&a,&b)| a*b).sum()
+    //}
 }
 
 /// Prepare the problem for Newton iterations.
@@ -168,7 +178,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         if let Some(ref scc) = self.smooth_contact_constraint{
             num += scc.constraint_size();
-            println!("num constraints  = {:?}", num);
+            //println!("num constraints  = {:?}", num);
         }
         num
     }
@@ -180,7 +190,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         if let Some(ref scc) = self.smooth_contact_constraint {
             num += scc.constraint_jacobian_size();
-            println!("scc jac size = {:?}", num);
+            //println!("scc jac size = {:?}", num);
         }
         num
     }
@@ -201,7 +211,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let n = scc.constraint_size();
             scc.constraint(dx, &mut g[i..i+n]);
-            println!("g = {:?}", &g[i..i+n]);
+            //println!("g = {:?}", &g[i..i+n]);
             //i += n;
         }
 

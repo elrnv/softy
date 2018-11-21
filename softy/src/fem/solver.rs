@@ -142,6 +142,7 @@ impl SolverBuilder {
             solids,
             shells,
             smooth_contact_params,
+            ..
         } = self;
 
         // Get kinematic shell
@@ -219,7 +220,7 @@ impl SolverBuilder {
         let displacement_bound = smooth_contact_params.map(|scp| {
             // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
             // bound).
-            scp.max_step/(2.0f64.sqrt())
+            scp.max_step / 3.0f64.sqrt()
         });
 
         let problem = NonLinearProblem {
@@ -243,13 +244,21 @@ impl SolverBuilder {
         ipopt.set_option("max_iter", params.max_iterations as i32);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
-        ipopt.set_option("print_level", 0);
+        ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
-        //ipopt.set_option("derivative_test", "second-order");
-        //ipopt.set_option("derivative_test_tol", 1e-4);
-        //ipopt.set_option("point_perturbation_radius", 0.01);
+        if params.derivative_test > 0 {
+            ipopt.set_option("derivative_test_tol", 1e-4);
+            ipopt.set_option("point_perturbation_radius", 0.01);
+            if params.derivative_test == 1 {
+                ipopt.set_option("derivative_test", "first-order");
+            } else if params.derivative_test == 2 {
+                ipopt.set_option("derivative_test", "second-order");
+            } else {
+                return Err(Error::InvalidParameter("derivative_test".to_string()));
+            }
+        }
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
         Ok(Solver {
@@ -454,7 +463,7 @@ impl Solver {
     /// Given a tetmesh, compute the elastic forces per vertex.
     fn compute_elastic_forces(
         forces: &mut [Vector3<f64>],
-        mesh: &mut TetMesh,
+        mesh: &TetMesh,
         lambda: f64,
         mu: f64,
     ) {
@@ -532,7 +541,7 @@ impl Solver {
             ..
         } = self.solver.solve();
 
-        let iterations = solver_data.problem.iteration_count() as u32;
+        let iterations = solver_data.problem.pop_iteration_count() as u32;
 
         let result = SolveResult {
             iterations,
@@ -611,6 +620,8 @@ mod tests {
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 100,
+        print_level: 0,
+        derivative_test: 0,
     };
 
     const DYNAMIC_PARAMS: SimParams = SimParams {

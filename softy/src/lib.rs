@@ -36,6 +36,7 @@ pub enum Error {
     InvertedReferenceElement,
     SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
     SolverCreateError(ipopt::CreateError),
+    InvalidParameter(String),
     MissingContactParams,
     NoSimulationMesh,
     NoKinematicMesh,
@@ -73,13 +74,25 @@ impl From<Error> for SimResult {
                     iterations,
                     objective_value,
                 },
-            ) => SimResult::Error(
-                format!(
-                    "Solve failed: {:?}\nIterations: {}\nObjective: {}",
-                    e, iterations, objective_value
-                )
-                .into(),
-            ),
+            ) => 
+                match e {
+                    ipopt::SolveStatus::MaximumIterationsExceeded => {
+                        SimResult::Warning(
+                            format!(
+                                "Maximum iterations exceeded. \nIterations: {}\nObjective: {}",
+                                iterations, objective_value
+                            )
+                            .into())
+                    }
+                    e => {
+                        SimResult::Error(
+                            format!(
+                                "Solve failed: {:?}\nIterations: {}\nObjective: {}",
+                                e, iterations, objective_value
+                            )
+                            .into())
+                    }
+                },
             Error::MissingContactParams =>
                 SimResult::Error(format!("Missing smooth contact parameters.").into()),
             Error::NoSimulationMesh =>
@@ -88,6 +101,8 @@ impl From<Error> for SimResult {
                 SimResult::Error(format!("Missing kinematic mesh.").into()),
             Error::SolverCreateError(err) =>
                 SimResult::Error(format!("Failed to create a solver: {:?}", err).into()),
+            Error::InvalidParameter(err) =>
+                SimResult::Error(format!("Invalid parameter: {:?}", err).into()),
         }
     }
 }
@@ -139,6 +154,8 @@ mod tests {
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 800,
+        print_level: 0,
+        derivative_test: 0,
     };
 
     const MATERIAL: Material = Material {

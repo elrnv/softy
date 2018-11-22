@@ -4,417 +4,25 @@
 //!
 
 use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{topology::VertexIndex, VertexMesh};
+use crate::geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use crate::geo::prim::Triangle;
 use crate::geo::Real;
 use crate::kernel::{self, KernelType, SphericalKernel};
 use rayon::prelude::*;
-use spade::{rtree::RTree, BoundingRect, SpatialObject};
+use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
 
 pub mod builder;
+pub mod samples;
+pub mod spatial_tree;
+pub mod background_potential;
+pub mod neighbour_cache;
 
 pub use self::builder::*;
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct OrientedPoint {
-    pub index: i32,
-    pub pos: Vector3<f64>,
-    pub nml: Vector3<f64>,
-}
-
-impl SpatialObject for OrientedPoint {
-    type Point = [f64; 3];
-
-    fn mbr(&self) -> BoundingRect<Self::Point> {
-        BoundingRect::from_point(self.pos.into())
-    }
-
-    fn distance2(&self, point: &Self::Point) -> f64 {
-        (Vector3(*point) - self.pos).norm_squared()
-    }
-}
-
-pub fn oriented_points_iter<'a, V3>(
-    points: &'a [V3],
-    normals: &'a [V3],
-) -> impl Iterator<Item = OrientedPoint> + Clone + 'a
-where
-    V3: Into<Vector3<f64>> + Copy,
-{
-    normals
-        .iter()
-        .zip(points.iter())
-        .enumerate()
-        .map(|(i, (&nml, &pos))| OrientedPoint {
-            index: i as i32,
-            pos: pos.into(),
-            nml: nml.into(),
-        })
-}
-
-pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
-    mesh: &M,
-) -> (Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
-    let points: Vec<Vector3<f64>> = mesh
-        .vertex_position_iter()
-        .map(|&x| -> Vector3<f64> {
-            Vector3(x)
-                .cast::<f64>()
-                .expect("Failed to convert positions to f64")
-        })
-        .collect();
-
-    let normals = mesh.attrib_iter::<[f32; 3], VertexIndex>("N").ok().map_or(
-        vec![Vector3::zeros(); points.len()],
-        |iter| {
-            iter.map(|&nml| Vector3(nml).cast::<f64>().unwrap())
-                .collect()
-        },
-    );
-
-    (points, normals)
-}
-
-pub fn build_rtree(
-    oriented_points_iter: impl Iterator<Item = OrientedPoint>,
-) -> RTree<OrientedPoint> {
-    let mut rtree = RTree::new();
-    for pt in oriented_points_iter {
-        rtree.insert(pt);
-    }
-    rtree
-}
-
-/// Cache neighbouring sample points for each query point.
-/// Note that this determines the entire sparsity structure of the query point neighbourhoods.
-#[derive(Clone, Debug, PartialEq)]
-struct NeighbourCache {
-    /// For each query point with a non-trivial neighbourhood of sample points, record the
-    /// neighbours indices in this vector. Along with the vector of neighbours, store the index of
-    /// the original query point, because this vector is a sparse subset of all the query points.
-    pub points: Vec<(usize, Vec<usize>)>,
-
-    /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
-    /// we can reuse the already allocated memory.
-    pub valid: bool,
-}
-
-impl NeighbourCache {
-    fn new() -> Self {
-        NeighbourCache {
-            points: Vec::new(),
-            valid: false,
-        }
-    }
-}
-
-/// A set of data stored on each sample for the implicit surface.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Sample<T: Real> {
-    /// Index of the sample in the original vector or array.
-    pub index: usize,
-    /// Position of the sample in 3D space.
-    pub pos: Vector3<T>,
-    /// Normal of the sample.
-    pub nml: Vector3<T>,
-    /// Offset stored at the sample point.
-    pub off: f64,
-}
-
-/// Sample points that define the implicit surface including the point positions, normals and
-/// offsets.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Samples<T: Real> {
-    /// Sample point positions defining the implicit surface.
-    pub points: Vec<Vector3<T>>,
-    /// Normals that define the potential field gradient at every sample point.
-    pub normals: Vec<Vector3<T>>,
-
-    /// Potential values at the interpolating points. These offsets indicate the values to
-    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
-    /// necessarily pass through the given points.
-    pub offsets: Vec<f64>,
-}
-
-/// A view into to the positions, normals and offsets of the sample points. This view need not be
-/// contiguous as it often isnt.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SamplesView<'i, 'd: 'i, T: Real> {
-    /// Indices into the sample points.
-    indices: &'i [usize],
-    /// Sample point positions defining the implicit surface.
-    points: &'d [Vector3<T>],
-    /// Normals that define the potential field gradient at every sample point.
-    normals: &'d [Vector3<T>],
-    /// Potential values at the interpolating points. These offsets indicate the values to
-    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
-    /// necessarily pass through the given points.
-    offsets: &'d [f64],
-}
-
-impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
-    /// Create a view of samples with a given indices slice into the provided samples.
-    #[inline]
-    pub fn new(indices: &'i [usize], samples: &'d Samples<T>) -> Self {
-        SamplesView {
-            indices,
-            points: samples.points.as_slice(),
-            normals: samples.normals.as_slice(),
-            offsets: samples.offsets.as_slice(),
-        }
-    }
-
-    #[inline]
-    pub fn from_view(indices: &'i [usize], samples: SamplesView<'i, 'd, T>) -> Self {
-        SamplesView {
-            indices,
-            points: samples.points.clone(),
-            normals: samples.normals.clone(),
-            offsets: samples.offsets.clone(),
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.indices.len()
-    }
-
-    #[inline]
-    pub fn iter(&'i self) -> impl Iterator<Item = Sample<T>> + 'i {
-        let SamplesView {
-            ref indices,
-            ref points,
-            ref normals,
-            ref offsets,
-        } = self;
-        indices.iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            off: offsets[i],
-        })
-    }
-
-    /// Consuming iterator.
-    #[inline]
-    pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + 'i {
-        let SamplesView {
-            indices,
-            points,
-            normals,
-            offsets,
-        } = self;
-        indices.into_iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            off: offsets[i],
-        })
-    }
-
-    #[inline]
-    pub fn points(&'d self) -> &'d [Vector3<T>] {
-        self.points
-    }
-
-    #[inline]
-    pub fn normals(&'d self) -> &'d [Vector3<T>] {
-        self.normals
-    }
-}
-
-/// Precomputed data used for background potential computation.
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum BackgroundPotentialValue<T: Real> {
-    /// The value of the background potential at the query point.
-    Constant(T),
-    /// A Dynamic potential is computed based on the distance to the closest sample point.
-    ClosestSampleDistance,
-}
-
-/// This struct represents the data needed to compute a background potential at a local query
-/// point. This struct also conviently computes useful information about the neighbourhood (like
-/// closest distance to a sample point) that can be reused elsewhere.
-#[derive(Clone, Debug)]
-pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug>
-{
-    /// Position of the point at which we should evaluate the potential field.
-    pub query_pos: Vector3<T>,
-    /// Samples that influence the potential field.
-    pub samples: SamplesView<'a, 'a, T>,
-    /// Data needed to compute the background potential value and its derivative.
-    pub bg_potential_value: BackgroundPotentialValue<T>,
-    /// The reciprocal of the sum of all the weights in the neighbourhood of the query point.
-    pub weight_sum_inv: T,
-    /// The spherical kernel used to compute the weights.
-    pub kernel: K,
-    /// The distance to the closest sample.
-    pub closest_sample_dist: T,
-    /// Displacement vector to the query point from the closest sample point.
-    pub closest_sample_disp: Vector3<T>,
-    /// The index of the closest sample point.
-    pub closest_sample_index: usize,
-    /// Radius of the neighbourhood of the query point.
-    pub radius: T,
-}
-
-impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a>
-    BackgroundPotential<'a, T, K>
-{
-    /// Pass in the unnormalized weight sum excluding the weight for the background potential.
-    fn new(
-        q: Vector3<T>,
-        samples: SamplesView<'a, 'a, T>,
-        radius: T,
-        kernel: K,
-        dynamic_bg: bool,
-    ) -> Self {
-        // Precompute data about the closest sample point (displacement, index and distance).
-        let min_sample = samples
-            .iter()
-            .map(|Sample { index, pos, .. }| {
-                let disp = q - pos;
-                (index, disp, disp.norm_squared())
-            })
-            .min_by(|(_, _, d0), (_, _, d1)| {
-                d0.partial_cmp(d1)
-                    .expect("Detected NaN. Please report this bug.")
-            });
-
-        if min_sample.is_none() {
-            panic!("No surface samples found. Please report this bug.");
-        }
-
-        let (closest_sample_index, closest_sample_disp, mut closest_sample_dist) =
-            min_sample.unwrap();
-        closest_sample_dist = closest_sample_dist.sqrt();
-
-        // Compute the weight sum here. This will be available to the usesr of bg data.
-        let mut weight_sum = T::zero();
-        for Sample { pos, .. } in samples.iter() {
-            let w = kernel.with_closest_dist(closest_sample_dist).eval(q, pos);
-            weight_sum += w;
-        }
-
-        // Initialize the background potential struct.
-        let mut bg = BackgroundPotential {
-            query_pos: q,
-            samples,
-            bg_potential_value: if dynamic_bg {
-                BackgroundPotentialValue::ClosestSampleDistance
-            } else {
-                BackgroundPotentialValue::Constant(T::zero()) // TODO: Support non-zero constant potentials
-            },
-            weight_sum_inv: T::zero(), // temporarily set the weight_sum_inv
-            kernel,
-            closest_sample_dist,
-            closest_sample_disp,
-            closest_sample_index,
-            radius,
-        };
-
-        // Finalize the weight sum reciprocal.
-        bg.weight_sum_inv = T::one() / (weight_sum + bg.background_weight());
-
-        bg
-    }
-
-    fn closest_sample_dist(&self) -> T {
-        self.closest_sample_dist
-    }
-
-    fn weight_sum_inv(&self) -> T {
-        self.weight_sum_inv
-    }
-
-    fn background_weight(&self) -> T {
-        self.kernel.f(self.radius - self.closest_sample_dist)
-    }
-
-    fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
-        if index == self.closest_sample_index {
-            self.closest_sample_disp
-                * (self.kernel.df(self.radius - self.closest_sample_dist)
-                    / self.closest_sample_dist)
-        } else {
-            Vector3::zeros()
-        }
-    }
-
-    /// Compute the unnormalized weighted background potential value. This is typically very
-    /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
-    /// background potential contribution.
-    fn compute_unnormalized_weighted_potential(&self) -> T {
-        // Unpack background data.
-        let BackgroundPotential {
-            bg_potential_value,
-            closest_sample_dist: dist,
-            ..
-        } = *self;
-
-        self.background_weight()
-            * match bg_potential_value {
-                BackgroundPotentialValue::Constant(potential) => potential,
-                BackgroundPotentialValue::ClosestSampleDistance => dist,
-            }
-    }
-
-    /// Compute background potential derivative contribution.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
-    /// assume the background potential is constant.
-    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
-        // Unpack background data.
-        let BackgroundPotential {
-            query_pos: q,
-            samples,
-            bg_potential_value,
-            weight_sum_inv,
-            kernel,
-            closest_sample_dist: dist,
-            closest_sample_disp: disp,
-            closest_sample_index,
-            radius,
-        } = *self;
-
-        // The unnormalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
-        let wb = kernel.f(radius - dist);
-
-        // Gradient of the unnormalized weight evaluated at the distance to the
-        // boundary of the neighbourhood.
-        let dwbdp = self.background_weight_gradient(closest_sample_index);
-
-        samples.into_iter().map(move |Sample { index, pos, .. }| {
-            // Gradient of the unnormalized weight for the current sample point.
-            let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
-
-            // This term is valid for constant or dynamic background potentials.
-            let constant_term =
-                |potential: T| dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv);
-
-            match bg_potential_value {
-                BackgroundPotentialValue::Constant(potential) => constant_term(potential),
-                BackgroundPotentialValue::ClosestSampleDistance => {
-                    let mut grad = constant_term(dist);
-
-                    if index == closest_sample_index {
-                        //grad += dwbdp * dist + disp * (wb / dist)
-                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - weight_sum_inv * wb))
-                            - disp * (wb * weight_sum_inv / dist)
-                    }
-
-                    grad
-                }
-            }
-        })
-    }
-}
+pub use self::samples::*;
+pub use self::spatial_tree::*;
+pub(crate) use self::background_potential::*;
+pub(crate) use self::neighbour_cache::NeighbourCache;
 
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
@@ -625,52 +233,32 @@ impl ImplicitSurface {
         &'a self,
         query_points: &[[f64; 3]],
         neigh: N,
-    ) -> Ref<'a, NeighbourCache>
+    ) -> Ref<'a, [(usize, Vec<usize>)]>
     where
         I: Iterator<Item = OrientedPoint> + 'a,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
-        if !self.neighbour_cache.borrow().valid {
+        {
             let mut cache = self.neighbour_cache.borrow_mut();
-            cache.points.clear();
-            cache.points.reserve(query_points.len());
-
-            for (qi, q) in query_points.iter().enumerate() {
-                let neighbours_iter = neigh(*q);
-                // Below we try to reuse the allocated memory by previously cached members for
-                // points.
-
-                // Cache points
-                for (iter_count, ni) in neighbours_iter.map(|op| op.index).enumerate() {
-                    if iter_count == 0 {
-                        // Initialize entry if there are any neighbours.
-                        cache.points.push((qi, Vec::new()));
-                    }
-
-                    debug_assert!(!cache.points.is_empty());
-                    let last_mut = cache.points.last_mut().unwrap();
-
-                    last_mut.1.push(ni as usize);
-                }
-            }
-
-            cache.valid = true;
+            cache.neighbour_points(query_points, neigh);
         }
 
-        self.neighbour_cache.borrow()
+        // Note there is no RefMut -> Ref map as of this writing, so we have to retrieve
+        // neighbour_points twice: once to recompute cache, and once to return a Ref.
+        Ref::map(self.neighbour_cache.borrow(), |c| c.cached_neighbour_points())
     }
 
     /// Set `neighbour_cache` to None. This triggers recomputation of the neighbour cache next time
     /// the potential or its derivatives are requested.
     pub fn invalidate_neighbour_cache(&self) {
         let mut cache = self.neighbour_cache.borrow_mut();
-        cache.valid = false;
+        cache.invalidate();
     }
 
     /// The number of query points currently in the cache.
     pub fn num_cached_query_points(&self) -> usize {
         let cache = self.neighbour_cache.borrow();
-        cache.points.len()
+        cache.cached_neighbour_points().len()
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -772,7 +360,9 @@ impl ImplicitSurface {
         K: SphericalKernel<f64> + Copy + std::fmt::Debug + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
-        let neigh = self.cached_neighbours_borrow(query_points, neigh);
+        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+
+        assert_eq!(neigh_points.len(), out_potential.len());
 
         let ImplicitSurface {
             ref samples,
@@ -781,8 +371,7 @@ impl ImplicitSurface {
         } = *self;
 
         zip!(
-            neigh
-                .points
+            neigh_points
                 .par_iter()
                 .map(|(qi, neigh)| (query_points[*qi], neigh)),
             out_potential.par_iter_mut()
@@ -842,7 +431,7 @@ impl ImplicitSurface {
     /// points.
     pub fn num_surface_jacobian_entries(&self) -> usize {
         let cache = self.neighbour_cache.borrow();
-        cache.points.iter().map(|(_, pts)| pts.len() * 3).sum()
+        cache.cached_neighbour_points().iter().map(|(_, pts)| pts.len() * 3).sum()
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -902,14 +491,11 @@ impl ImplicitSurface {
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
     /// by the precomputed `neighbour_cache` map.
     fn mls_surface_jacobian_indices_iter(&self) -> impl Iterator<Item = (usize, usize)> {
-        let ImplicitSurface {
-            ref neighbour_cache,
-            ..
-        } = *self;
-        let cache = neighbour_cache.borrow();
-        cache
-            .points
-            .clone()
+        let cached_pts = {
+            let cache = self.neighbour_cache.borrow();
+            cache.cached_neighbour_points().to_vec()
+        };
+        cached_pts
             .into_iter()
             .enumerate()
             .flat_map(move |(row, (_, nbr_points))| {
@@ -925,8 +511,7 @@ impl ImplicitSurface {
         // For each row
         let cache = self.neighbour_cache.borrow();
         let row_col_iter =
-            cache
-                .points
+            cache.cached_neighbour_points()
                 .iter()
                 .enumerate()
                 .flat_map(move |(row, (_, nbr_points))| {
@@ -962,11 +547,10 @@ impl ImplicitSurface {
             ..
         } = *self;
 
-        let neigh = self.cached_neighbours_borrow(query_points, neigh);
+        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
 
         // For each row
-        let jac_iter = neigh
-            .points
+        let jac_iter = neigh_points
             .iter()
             .map(|(qi, neigh)| (query_points[*qi], neigh))
             .flat_map(move |(q, nbr_points)| {
@@ -1181,34 +765,33 @@ impl ImplicitSurface {
                     ref normals,
                     ref offsets,
                 },
-            background_potential: generate_bg_potential,
             ..
         } = *self;
 
         // Initialize potential with zeros.
-        {
-            let mut bg_potential = vec![0.0f32; mesh.num_vertices()];
-            if generate_bg_potential {
-                // Generate a background potential field for every sample point. This will be mixed
-                // in with the computed potentials for local methods. Global methods like HRBF
-                // ignore this field.
-                for (pos, potential) in
-                    zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut())
-                {
-                    if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
-                        let q = Vector3(*pos);
-                        let p = nearest_neigh.pos;
-                        let nml = nearest_neigh.nml;
-                        *potential = (q - p).dot(nml) as f32;
-                    } else {
-                        return Err(super::Error::Failure);
-                    }
-                }
-                mesh.set_attrib_data::<_, VertexIndex>("potential", &bg_potential)?;
-            } else {
-                mesh.attrib_or_add_data::<_, VertexIndex>("potential", &bg_potential)?;
-            }
-        }
+        //{
+        //    let mut bg_potential = vec![0.0f32; mesh.num_vertices()];
+        //    if generate_bg_potential {
+        //        // Generate a background potential field for every sample point. This will be mixed
+        //        // in with the computed potentials for local methods. Global methods like HRBF
+        //        // ignore this field.
+        //        for (pos, potential) in
+        //            zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut())
+        //        {
+        //            if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
+        //                let q = Vector3(*pos);
+        //                let p = nearest_neigh.pos;
+        //                let nml = nearest_neigh.nml;
+        //                *potential = (q - p).dot(nml) as f32;
+        //            } else {
+        //                return Err(super::Error::Failure);
+        //            }
+        //        }
+        //        mesh.set_attrib_data::<_, VertexIndex>("potential", &bg_potential)?;
+        //    } else {
+        //        mesh.attrib_or_add_data::<_, VertexIndex>("potential", &bg_potential)?;
+        //    }
+        //}
 
         match *kernel {
             KernelType::Interpolating { radius } => {
@@ -1220,7 +803,7 @@ impl ImplicitSurface {
                         .cloned()
                 };
                 let kern = kernel::LocalInterpolating::new(radius);
-                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let radius2 = radius * radius;
@@ -1231,7 +814,7 @@ impl ImplicitSurface {
                         .cloned()
                 };
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Cubic { radius } => {
                 let radius2 = radius * radius;
@@ -1242,21 +825,23 @@ impl ImplicitSurface {
                         .cloned()
                 };
                 let kern = kernel::LocalCubic::new(radius);
-                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Global { tolerance } => {
                 let neigh = |_| oriented_points_iter(points, normals);
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                Self::compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Hrbf => {
                 Self::compute_hrbf_on_mesh(mesh, points, normals, offsets, interrupt)
             }
         }
     }
+
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
     fn compute_mls_on_mesh<'a, I, K, N, F, M>(
+        &self,
         mesh: &mut M,
         radius: f64,
         kernel: K,
@@ -1265,102 +850,95 @@ impl ImplicitSurface {
     ) -> Result<(), super::Error>
     where
         I: Iterator<Item = OrientedPoint> + Clone + 'a,
-        K: SphericalKernel<f64> + Copy + Sync + Send,
+        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<f64>,
     {
+        let ImplicitSurface {
+            ref samples,
+            background_potential: dynamic_bg,
+            ..
+        } = *self;
+
+        // Move the potential attrib out of the mesh. We will reinsert it after we are done.
+        let mut potential_attrib = mesh.remove_attrib::<VertexIndex>("potential")
+            .ok() // convert to option (None when it doesn't exist)
+            .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+
+        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
+        if potential.is_empty() {
+            // Couldn't cast, which means potential is of some non-numeric type.
+            // We overwrite it because we need that attribute spot.
+            potential = vec![0.0f32; mesh.num_vertices()];
+        }
+
+        let query_points = mesh.vertex_positions();
+        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
+
+        // Construct a vector of neighbours for all query points (not just the ones with
+        // neighbours).
+        let mut neigh_all_points = vec![Vec::new(); query_points.len()];
+        for (qi, neigh) in neigh_points.iter().cloned() {
+            neigh_all_points[qi] = neigh;
+        }
+
+        // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
         let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
-        let mut weight_attrib_data = vec![[0f32; 12]; mesh.num_vertices()];
-        let sample_pos = mesh.vertex_positions().to_vec();
+        let mut bg_weight_attrib_data = vec![0f32; mesh.num_vertices()];
+        let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
 
-        for (q_chunk, num_neighs_chunk, neighs_chunk, weight_chunk, potential_chunk) in zip!(
-            sample_pos.chunks(Self::PARALLEL_CHUNK_SIZE),
+        for (q_chunk, neigh, num_neighs_chunk, neighs_chunk, bg_weight_chunk, weight_sum_chunk, potential_chunk) in zip!(
+            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            neigh_all_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
-                .unwrap()
-                .chunks_mut(Self::PARALLEL_CHUNK_SIZE)
+            bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
         ) {
             if interrupt() {
                 return Err(super::Error::Interrupted);
             }
 
             zip!(
-                q_chunk.par_iter(),
+                q_chunk.par_iter().map(|&v| Vector3(v)),
+                neigh.par_iter(),
                 num_neighs_chunk.par_iter_mut(),
                 neighs_chunk.par_iter_mut(),
-                weight_chunk.par_iter_mut(),
+                bg_weight_chunk.par_iter_mut(),
+                weight_sum_chunk.par_iter_mut(),
                 potential_chunk.par_iter_mut()
             )
-            .for_each(|(q, num_neighs, neighs, weight, potential)| {
-                let neighbours_iter = neigh(*q);
+            .for_each(|(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential)| {
+                let view = SamplesView::new(neighs, &samples);
 
                 // Record number of neighbours in total.
-                *num_neighs = -1 as i32;
-                if let (lower, Some(upper)) = neighbours_iter.size_hint() {
-                    if lower == upper {
-                        *num_neighs = lower as i32;
-                    }
-                }
+                *num_neighs = view.len() as i32;
 
                 // Record up to 11 neighbours
-                for (k, neigh) in neighbours_iter.clone().enumerate() {
-                    if k >= 11 {
-                        break;
-                    }
-                    neighs[k] = neigh.index as i32;
+                for (k, neigh) in view.iter().take(11).enumerate() {
+                    out_neighs[k] = neigh.index as i32;
                 }
 
-                if *num_neighs != 0 {
-                    let mut closest_d = radius;
-                    for nbr in neighbours_iter.clone() {
-                        closest_d = closest_d.min((Vector3(*q) - nbr.pos).norm());
+                if !view.is_empty() {
+                    let bg = BackgroundPotential::new(q, view, radius, kernel, dynamic_bg);
+                    let closest_d = bg.closest_sample_dist();
+                    *bg_weight = bg.background_weight() as f32;
+                    *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
+
+                    *potential = bg.compute_unnormalized_weighted_potential() as f32;
+
+                    let mut numerator = 0.0;
+                    for Sample { pos, nml, off, .. } in view.iter() {
+                        let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                        let p = off + nml.dot(q - pos) / nml.norm();
+
+                        numerator += w * p;
                     }
-                    let mut weights = neighbours_iter
-                        .clone()
-                        .enumerate()
-                        .map(|(i, nbr)| {
-                            let w = kernel
-                                .with_closest_dist(closest_d)
-                                .eval(Vector3(*q), nbr.pos);
-                            if i < 11 {
-                                // Record the current weight
-                                weight[i] = w as f32;
-                            }
-                            w
-                        })
-                        .collect::<Vec<f64>>();
 
-                    // Add a background potential
-                    let bg = [q[0] - radius + closest_d, q[1], q[2]];
-                    let w = kernel
-                        .with_closest_dist(closest_d)
-                        .eval(Vector3(*q), bg.into());
-                    // Record the last weight for the background potential
-                    weight[11] = w as f32;
-                    weights.push(w);
-
-                    let mut potentials = neighbours_iter
-                        .clone()
-                        .map(|nbr| nbr.nml.dot(Vector3(*q) - nbr.pos))
-                        .collect::<Vec<f64>>();
-
-                    // Add background potential
-                    potentials.push(*potential as f64);
-
-                    let denominator: f64 = weights.iter().sum();
-                    let numerator: f64 = weights
-                        .iter()
-                        .zip(potentials.iter())
-                        .map(|(w, p)| w * p)
-                        .sum();
-
-                    if denominator != 0.0 {
-                        *potential = (numerator / denominator) as f32;
-                    }
+                    *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
                 }
             });
         }
@@ -1368,7 +946,9 @@ impl ImplicitSurface {
         {
             mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("weights", &weight_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
         }
 
         Ok(())

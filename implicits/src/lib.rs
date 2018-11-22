@@ -56,6 +56,7 @@ pub enum Error {
     Interrupted,
     MissingNormals,
     UnsupportedKernel,
+    InvalidPotentialType,
     Failure,
     IO(geo::io::Error),
 }
@@ -198,7 +199,7 @@ mod tests {
             for i in 0..3 { // for each component
     
                 // Initialize autodiff variable to differentiate with respect to.
-                let points = trimesh.vertex_position_iter().enumerate().map(|(vtx_idx, pos)| {
+                let points: Vec<[F;3]> = trimesh.vertex_position_iter().enumerate().map(|(vtx_idx, pos)| {
                     let mut pos = [F::cst(pos[0]), F::cst(pos[1]), F::cst(pos[2])];
                     if vtx_idx == cur_pt_idx {
                         pos[i] = F::var(pos[i]);
@@ -220,7 +221,7 @@ mod tests {
     
                 let potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
     
-                implicit_surface.potential(grid, potential)?;
+                implicit_surface.potential(grid.vertex_positions(), &potential)?;
     
                 println!("{:?}", potential);
     

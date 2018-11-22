@@ -24,7 +24,7 @@ pub use crate::kernel::KernelType;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub kernel: KernelType,
-    pub background_potential: bool,
+    pub background_potential: BackgroundPotentialType,
 }
 
 pub fn compute_potential<F>(
@@ -39,9 +39,9 @@ where
     let ptcloud = PointCloud::from(surface.clone());
 
     if let Some(implicit_surface) = ImplicitSurfaceBuilder::new()
-        .with_kernel(params.kernel)
-        .with_background_potential(params.background_potential)
-        .with_mesh(&ptcloud)
+        .kernel(params.kernel)
+        .background_potential(params.background_potential)
+        .mesh(&ptcloud)
         .build()
     {
         implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
@@ -56,7 +56,6 @@ pub enum Error {
     Interrupted,
     MissingNormals,
     UnsupportedKernel,
-    InvalidPotentialType,
     Failure,
     IO(geo::io::Error),
 }
@@ -166,7 +165,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_potential: true,
+                background_potential: BackgroundPotentialType::DistanceBased,
             },
             || false,
         )?;
@@ -208,15 +207,15 @@ mod tests {
                 }).collect();
     
                 let implicit_surface = ImplicitSurfaceBuilder::new()
-                    .with_kernel(
+                    .kernel(
                         KernelType::Approximate {
                             tolerance: 0.00001,
                             radius: 1.5,
                         }
                     )
-                    .with_background_potential(true)
-                    .with_triangles(triangles)
-                    .with_points(points)
+                    .background_potential(true)
+                    .triangles(triangles)
+                    .points(points)
                     .build();
     
                 let potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];

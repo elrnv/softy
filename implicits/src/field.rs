@@ -21,6 +21,7 @@ pub mod neighbour_cache;
 pub use self::builder::*;
 pub use self::samples::*;
 pub use self::spatial_tree::*;
+
 pub(crate) use self::background_potential::*;
 pub(crate) use self::neighbour_cache::NeighbourCache;
 
@@ -29,10 +30,11 @@ pub struct ImplicitSurface {
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
 
-    /// Toggle for computing a simple background potential that will be mixed in with the local
-    /// potentials. If `true`, this background potential will be automatically computed, if
-    /// `false`, the values in the input will be used as the background potential to be mixed in.
-    background_potential: bool,
+    /// Enum for choosing how to compute a background potential field that will be mixed in with
+    /// the local potentials. If `true`, this background potential will be automatically computed,
+    /// if `false`, the values in the input will be used as the background potential to be mixed
+    /// in.
+    bg_potential_type: BackgroundPotentialType,
 
     /// Local search tree for fast proximity queries.
     spatial_tree: RTree<OrientedPoint>,
@@ -366,7 +368,7 @@ impl ImplicitSurface {
 
         let ImplicitSurface {
             ref samples,
-            background_potential,
+            bg_potential_type,
             ..
         } = *self;
 
@@ -382,7 +384,7 @@ impl ImplicitSurface {
                 SamplesView::new(neighbours, samples),
                 radius,
                 kernel,
-                background_potential,
+                bg_potential_type,
                 potential,
             );
         });
@@ -399,7 +401,7 @@ impl ImplicitSurface {
         samples: SamplesView<T>,
         radius: f64,
         kernel: K,
-        dynamic_bg: bool,
+        bg_potential: BackgroundPotentialType,
         potential: &mut T,
     ) where
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
@@ -409,7 +411,7 @@ impl ImplicitSurface {
         }
 
         let radius = T::from(radius).unwrap();
-        let bg = BackgroundPotential::new(q, samples, radius, kernel, dynamic_bg);
+        let bg = BackgroundPotential::new(q, samples, radius, kernel, BackgroundPotentialValue::val(bg_potential, *potential));
         let closest_d = bg.closest_sample_dist();
 
         // Generate a background potential field for every query point. This will be mixed
@@ -543,7 +545,7 @@ impl ImplicitSurface {
             ref samples,
             ref dual_topo,
             ref surface_topo,
-            background_potential,
+            bg_potential_type,
             ..
         } = *self;
 
@@ -559,7 +561,7 @@ impl ImplicitSurface {
                     SamplesView::new(nbr_points, samples),
                     radius,
                     kernel,
-                    background_potential,
+                    bg_potential_type,
                     surface_topo,
                     dual_topo,
                 )
@@ -580,7 +582,7 @@ impl ImplicitSurface {
         samples: SamplesView<'a, 'a, T>,
         radius: f64,
         kernel: K,
-        dynamic_bg: bool,
+        bg_type: BackgroundPotentialType,
         surface_topo: &'a [[usize; 3]],
         dual_topo: &'a [Vec<usize>],
     ) -> impl Iterator<Item = Vector3<T>> + 'a
@@ -593,7 +595,7 @@ impl ImplicitSurface {
         // Compute background potential derivative contribution.
         // Compute derivative if the closest point in the neighbourhood. Otherwise we
         // assume the background potential is constant.
-        let bg = BackgroundPotential::new(q, samples, radius, kernel, dynamic_bg);
+        let bg = BackgroundPotential::new(q, samples, radius, kernel, BackgroundPotentialValue::jac(bg_type));
 
         let closest_d = bg.closest_sample_dist();
 
@@ -857,7 +859,7 @@ impl ImplicitSurface {
     {
         let ImplicitSurface {
             ref samples,
-            background_potential: dynamic_bg,
+            bg_potential_type,
             ..
         } = *self;
 
@@ -923,7 +925,8 @@ impl ImplicitSurface {
                 }
 
                 if !view.is_empty() {
-                    let bg = BackgroundPotential::new(q, view, radius, kernel, dynamic_bg);
+                    let bg = BackgroundPotential::new(q, view, radius, kernel,
+                          BackgroundPotentialValue::val(bg_potential_type, *potential as f64));
                     let closest_d = bg.closest_sample_dist();
                     *bg_weight = bg.background_weight() as f32;
                     *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
@@ -1011,7 +1014,7 @@ mod tests {
     use super::*;
     use autodiff::F;
 
-    fn easy_potential_derivative(radius: f64, dynamic_bg_potential: bool) {
+    fn easy_potential_derivative(radius: f64, bg_potential_type: BackgroundPotentialType) {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
@@ -1043,7 +1046,7 @@ mod tests {
             view,
             radius,
             kernel,
-            dynamic_bg_potential,
+            bg_potential_type,
             &surf_topo,
             &dual_topo,
         )
@@ -1069,7 +1072,7 @@ mod tests {
                 view,
                 radius,
                 kernel,
-                dynamic_bg_potential,
+                bg_potential_type,
                 &mut p,
             );
 
@@ -1090,15 +1093,17 @@ mod tests {
     fn easy_potential_derivative_test() {
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            easy_potential_derivative(radius, true); // dynamic potential
-            easy_potential_derivative(radius, false); // constant potential
+            easy_potential_derivative(radius, BackgroundPotentialType::Zero);
+            easy_potential_derivative(radius, BackgroundPotentialType::FromInput);
+            easy_potential_derivative(radius, BackgroundPotentialType::DistanceBased);
+            easy_potential_derivative(radius, BackgroundPotentialType::NormalBased);
         }
     }
 
     /// A more complex test parametrized by the background potential choice, radius and a perturbation
     /// function that is expected to generate a random perturbation at every consequent call.
     fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(
-        dynamic_bg_potential: bool,
+        bg_potential_type: BackgroundPotentialType,
         radius: f64,
         perturb: &mut P,
     ) {
@@ -1162,7 +1167,7 @@ mod tests {
                 view,
                 radius,
                 kernel,
-                dynamic_bg_potential,
+                bg_potential_type,
                 &tet_faces,
                 &dual_topo,
             )
@@ -1190,7 +1195,7 @@ mod tests {
                         view,
                         radius,
                         kernel,
-                        dynamic_bg_potential,
+                        bg_potential_type,
                         &mut p,
                     );
 
@@ -1219,8 +1224,10 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            hard_potential_derivative(true, radius, &mut perturb);
-            hard_potential_derivative(false, radius, &mut perturb);
+            hard_potential_derivative(BackgroundPotentialType::Zero, radius, &mut perturb);
+            hard_potential_derivative(BackgroundPotentialType::FromInput, radius, &mut perturb);
+            hard_potential_derivative(BackgroundPotentialType::DistanceBased, radius, &mut perturb);
+            hard_potential_derivative(BackgroundPotentialType::NormalBased, radius, &mut perturb);
         }
     }
 
@@ -1353,7 +1360,8 @@ mod tests {
         let view = SamplesView::new(indices.as_slice(), &samples);
 
         // Initialize a background potential. This function takes care of a lot of the setup.
-        let bg = BackgroundPotential::new(q, view, radius, kernel, true);
+        let bg = BackgroundPotential::new(q, view, radius, kernel,
+                                          BackgroundPotentialValue::jac(BackgroundPotentialType::DistanceBased));
 
         // Compute manual Jacobian. This is the function being tested for correctness.
         let jac: Vec<_> = bg.compute_jacobian().collect();
@@ -1376,7 +1384,8 @@ mod tests {
                 // This should be done outside the inner loop over samples, but here we make an
                 // exception for simplicity.
                 let view = SamplesView::new(indices.as_slice(), &ad_samples);
-                let ad_bg = BackgroundPotential::new(q, view, F::cst(radius), kernel, true);
+                let ad_bg = BackgroundPotential::new(q, view, F::cst(radius), kernel,
+                BackgroundPotentialValue::val(BackgroundPotentialType::DistanceBased, F::cst(0.0)));
 
                 let p = ad_bg.compute_unnormalized_weighted_potential() * ad_bg.weight_sum_inv();
 

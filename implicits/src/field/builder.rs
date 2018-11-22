@@ -13,7 +13,7 @@ pub enum ImplicitSurfaceType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplicitSurfaceBuilder {
     kernel: KernelType,
-    background_potential: bool,
+    background_potential: BackgroundPotentialType,
     triangles: Vec<[usize; 3]>,
     points: Vec<Vector3<f64>>,
     normals: Vec<Vector3<f64>>,
@@ -29,7 +29,7 @@ impl ImplicitSurfaceBuilder {
                 radius: 1.0,
                 tolerance: 1e-5,
             },
-            background_potential: false,
+            background_potential: BackgroundPotentialType::Zero,
             triangles: Vec::new(),
             points: Vec::new(),
             normals: Vec::new(),
@@ -39,22 +39,22 @@ impl ImplicitSurfaceBuilder {
         }
     }
 
-    pub fn with_triangles(&mut self, triangles: Vec<[usize; 3]>) -> &mut Self {
+    pub fn triangles(&mut self, triangles: Vec<[usize; 3]>) -> &mut Self {
         self.triangles = triangles;
         self
     }
 
-    pub fn with_points(&mut self, points: Vec<[f64; 3]>) -> &mut Self {
+    pub fn points(&mut self, points: Vec<[f64; 3]>) -> &mut Self {
         self.points = reinterpret::reinterpret_vec(points);
         self
     }
 
-    pub fn with_offsets(&mut self, offsets: Vec<f64>) -> &mut Self {
+    pub fn offsets(&mut self, offsets: Vec<f64>) -> &mut Self {
         self.offsets = offsets;
         self
     }
 
-    pub fn with_kernel(&mut self, kernel: KernelType) -> &mut Self {
+    pub fn kernel(&mut self, kernel: KernelType) -> &mut Self {
         self.kernel = kernel;
         self
     }
@@ -63,7 +63,7 @@ impl ImplicitSurfaceBuilder {
     /// attributes on the mesh struct.
     /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
     /// The offsets attribute is expected to be named "offsets" and have type `f32`.
-    pub fn with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
+    pub fn mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
         self.points = mesh
             .vertex_positions()
             .iter()
@@ -87,12 +87,12 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    pub fn with_background_potential(&mut self, background_potential: bool) -> &mut Self {
+    pub fn background_potential(&mut self, background_potential: BackgroundPotentialType) -> &mut Self {
         self.background_potential = background_potential;
         self
     }
 
-    pub fn with_max_step(&mut self, max_step: f64) -> &mut Self {
+    pub fn max_step(&mut self, max_step: f64) -> &mut Self {
         self.max_step = max_step;
         self
     }
@@ -158,7 +158,7 @@ impl ImplicitSurfaceBuilder {
         let oriented_points_iter = oriented_points_iter(&points, &normals);
         Some(ImplicitSurface {
             kernel,
-            background_potential,
+            bg_potential_type: background_potential,
             spatial_tree: build_rtree(oriented_points_iter),
             surface_topo: triangles,
             samples: Samples {

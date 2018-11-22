@@ -3,6 +3,15 @@ use crate::geo::Real;
 use crate::kernel::{SphericalKernel};
 use crate::field::samples::{Sample, SamplesView};
 
+/// Different types of background potentials supported.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum BackgroundPotentialType {
+    Zero,
+    FromInput,
+    DistanceBased,
+    NormalBased,
+}
+
 /// Precomputed data used for background potential computation.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum BackgroundPotentialValue<T: Real> {
@@ -10,6 +19,31 @@ pub(crate) enum BackgroundPotentialValue<T: Real> {
     Constant(T),
     /// A Dynamic potential is computed based on the distance to the closest sample point.
     ClosestSampleDistance,
+    /// A Dynamic potential is computed based on the normal displacement. In other words, this is
+    /// determined by the dot product of the sample displacement and a normal.
+    ClosestSampleNormalDisp,
+}
+
+impl<T: Real> BackgroundPotentialValue<T> {
+    /// Use this constructor for computing the Jacobian of the potential.
+    pub fn jac(ty: BackgroundPotentialType) -> Self {
+        match ty {
+            BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
+            BackgroundPotentialType::FromInput => BackgroundPotentialValue::Constant(T::zero()),
+            BackgroundPotentialType::DistanceBased => BackgroundPotentialValue::ClosestSampleDistance,
+            BackgroundPotentialType::NormalBased => BackgroundPotentialValue::ClosestSampleNormalDisp,
+        }
+    }
+    
+    /// Use this constructor for computing the potential.
+    pub fn val(ty: BackgroundPotentialType, potential_field_value: T) -> Self {
+        match ty {
+            BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
+            BackgroundPotentialType::FromInput => BackgroundPotentialValue::Constant(potential_field_value),
+            BackgroundPotentialType::DistanceBased => BackgroundPotentialValue::ClosestSampleDistance,
+            BackgroundPotentialType::NormalBased => BackgroundPotentialValue::ClosestSampleNormalDisp,
+        }
+    }
 }
 
 /// This struct represents the data needed to compute a background potential at a local query
@@ -47,7 +81,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
         samples: SamplesView<'a, 'a, T>,
         radius: T,
         kernel: K,
-        dynamic_bg: bool,
+        bg_value: BackgroundPotentialValue<T>,
     ) -> Self {
         // Precompute data about the closest sample point (displacement, index and distance).
         let min_sample = samples
@@ -80,11 +114,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
         let mut bg = BackgroundPotential {
             query_pos: q,
             samples,
-            bg_potential_value: if dynamic_bg {
-                BackgroundPotentialValue::ClosestSampleDistance
-            } else {
-                BackgroundPotentialValue::Constant(T::zero()) // TODO: Support non-zero constant potentials
-            },
+            bg_potential_value: bg_value,
             weight_sum_inv: T::zero(), // temporarily set the weight_sum_inv
             kernel,
             closest_sample_dist,
@@ -136,6 +166,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             * match bg_potential_value {
                 BackgroundPotentialValue::Constant(potential) => potential,
                 BackgroundPotentialValue::ClosestSampleDistance => dist,
+                BackgroundPotentialValue::ClosestSampleNormalDisp => dist,
             }
     }
 
@@ -174,6 +205,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
 
             match bg_potential_value {
                 BackgroundPotentialValue::Constant(potential) => constant_term(potential),
+                BackgroundPotentialValue::ClosestSampleNormalDisp |
                 BackgroundPotentialValue::ClosestSampleDistance => {
                     let mut grad = constant_term(dist);
 

@@ -25,6 +25,12 @@ pub use self::spatial_tree::*;
 pub(crate) use self::background_potential::*;
 pub(crate) use self::neighbour_cache::NeighbourCache;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ImplicitSurfaceType {
+    Vertex,
+    Face,
+}
+
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
     /// The type of kernel to use for fitting the data.
@@ -37,11 +43,15 @@ pub struct ImplicitSurface {
     bg_potential_type: BackgroundPotentialType,
 
     /// Local search tree for fast proximity queries.
-    spatial_tree: RTree<OrientedPoint>,
+    spatial_tree: RTree<Sample<f64>>,
 
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
     surface_topo: Vec<[usize; 3]>,
+
+    /// Save the vertex positions of the mesh because the samples may not coincide (e.g. face
+    /// centered samples).
+    surface_vertex_positions: Vec<[f64; 3]>,
 
     /// Sample points defining the entire implicit surface.
     samples: Samples<f64>,
@@ -62,20 +72,14 @@ pub struct ImplicitSurface {
     /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
     dual_topo: Vec<Vec<usize>>,
+
+    /// The type of implicit surface. For example should the samples be centered at vertices or
+    /// face centroids.
+    surface_type: ImplicitSurfaceType,
 }
 
 impl ImplicitSurface {
     const PARALLEL_CHUNK_SIZE: usize = 5000;
-
-    /// Number of sample triangles.
-    pub fn num_triangles(&self) -> usize {
-        return self.surface_topo.len();
-    }
-
-    /// Number of sample points used to represent the implicit surface.
-    pub fn num_points(&self) -> usize {
-        return self.samples.points.len();
-    }
 
     /// Compute unnormalized area weighted vertex normals given a triangle topology.
     /// Having this function be static and generic helps us test the normal derivatives.
@@ -149,46 +153,56 @@ impl ImplicitSurface {
         })
     }
 
-    /// Update the normals stored on the `ImplicitSurface`. This is usually called when the points
-    /// have changed. Note that these are unnormalized to make it eaiser to compute derivatives.
-    pub fn recompute_normals(&mut self) {
+    /// Update the stored samples. This assumes that vertex positions have been updated.
+    fn update_samples<I>(&mut self) {
         let ImplicitSurface {
-            samples:
-                Samples {
-                    ref points,
-                    ref mut normals,
-                    ..
-                },
+            ref mut samples,
             ref surface_topo,
+            ref surface_vertex_positions,
+            surface_type,
             ..
         } = self;
 
-        Self::compute_vertex_area_normals(surface_topo, points, normals);
+        match surface_type {
+            ImplicitSurfaceType::Vertex => {
+                let Samples { 
+                    ref mut points,
+                    ref mut normals,
+                } = samples;
+
+                for (vertex_pos, sample_pos) in surface_vertex_positions.iter().zip(points.iter_mut()) {
+                    *sample_pos = *vertex_pos;
+                }
+
+                Self::compute_vertex_area_normals(surface_topo, points, normals);
+            }
+            ImplicitSurfaceType::Face => {
+                samples.update_triangle_samples(surface_topo, surface_vertex_positions);
+            }
+        }
     }
 
-    /// Update points and normals (oriented points) using an iterator.
-    pub fn update_points<I>(&mut self, points_iter: I)
+    /// Update vertex positions and samples using an iterator over mesh vertices.
+    pub fn update<I>(&mut self, vertex_iter: I)
     where
         I: Iterator<Item = [f64; 3]>,
     {
-        for (p, new_p) in self.samples.points.iter_mut().zip(points_iter) {
+        // First we update the surface vertex positions.
+        for (p, new_p) in self.surface_vertex_positions.iter_mut().zip(vertex_iter) {
             *p = new_p.into();
         }
 
-        self.recompute_normals();
+        // Then update the samples that determine the shape of the implicit surface.
+        self.update_samples();
 
         let ImplicitSurface {
-            samples:
-                Samples {
-                    ref mut points,
-                    ref mut normals,
-                    ..
-                },
+            ref samples,
             ref mut spatial_tree,
             ..
         } = self;
 
-        *spatial_tree = build_rtree(oriented_points_iter(points, normals));
+        // Funally update the rtree responsible for neighbour search.
+        *spatial_tree = build_rtree_from_samples(samples);
     }
 
     /// Compute neighbour cache if it has been invalidated
@@ -196,12 +210,7 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            samples:
-                Samples {
-                    ref points,
-                    ref normals,
-                    ..
-                },
+            ref samples,
             max_step,
             ..
         } = self;
@@ -221,7 +230,7 @@ impl ImplicitSurface {
             }
             KernelType::Global { .. } | KernelType::Hrbf => {
                 // Global kernel, all points are neighbours
-                let neigh = |_| oriented_points_iter(points, normals);
+                let neigh = |_| samples.iter();
                 self.cached_neighbours_borrow(query_points, neigh);
             }
         }
@@ -237,7 +246,7 @@ impl ImplicitSurface {
         neigh: N,
     ) -> Ref<'a, [(usize, Vec<usize>)]>
     where
-        I: Iterator<Item = OrientedPoint> + 'a,
+        I: Iterator<Item = Sample<f64>> + 'a,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
         {
@@ -281,21 +290,10 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            samples:
-                Samples {
-                    ref points,
-                    ref normals,
-                    ref offsets,
-                },
+            ref samples,
             max_step,
             ..
         } = *self;
-
-        //let nml_flat: &[f64] = reinterpret::reinterpret_slice(normals);
-        //let max_nml = normals.iter().map(|a| a.norm()).max_by(|a,b| a.partial_cmp(b).unwrap());
-        //let avg_nml = nml_flat.iter().cloned().sum::<f64>()/nml_flat.len() as f64;
-
-        //println!("max_nml = {:?}; avg_nml = {:?}", max_nml, avg_nml);
 
         match *kernel {
             KernelType::Interpolating { radius } => {
@@ -336,14 +334,14 @@ impl ImplicitSurface {
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
-                let neigh = |_| oriented_points_iter(points, normals);
+                let neigh = |_| samples.iter();
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls(query_points, radius, kern, neigh, out_potential)
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
-                Self::compute_hrbf(query_points, points, normals, offsets, out_potential)
+                Self::compute_hrbf(query_points, samples, out_potential)
             }
         }
     }
@@ -358,7 +356,7 @@ impl ImplicitSurface {
         out_potential: &mut [f64],
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = OrientedPoint> + 'a,
+        I: Iterator<Item = Sample<f64>> + 'a,
         K: SphericalKernel<f64> + Copy + std::fmt::Debug + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
@@ -537,7 +535,7 @@ impl ImplicitSurface {
         neigh: N,
         values: &mut [f64],
     ) where
-        I: Iterator<Item = OrientedPoint> + 'a,
+        I: Iterator<Item = Sample<f64>> + 'a,
         K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
@@ -667,14 +665,16 @@ impl ImplicitSurface {
 
     fn compute_hrbf<V3>(
         query_points: &[[f64; 3]],
-        points: &[V3],
-        normals: &[V3],
-        offsets: &[f64],
+        samples: &Samples<f64>,
         out_potential: &mut [f64],
     ) -> Result<(), super::Error>
-    where
-        V3: Into<[f64; 3]> + Copy,
     {
+        let Samples {
+            ref points,
+            ref normals,
+            ref offsets,
+        } = samples;
+
         let pts: Vec<crate::na::Point3<f64>> = points
             .iter()
             .map(|&p| {
@@ -705,25 +705,20 @@ impl ImplicitSurface {
     pub fn update_oriented_points_with_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) {
         let ImplicitSurface {
             ref mut spatial_tree,
-            samples:
-                Samples {
-                    ref mut points,
-                    ref mut normals,
-                    ref mut offsets,
-                },
+            ref mut samples,
             ..
         } = self;
 
         let (pts, nmls) = points_and_normals_from_mesh(mesh);
-        *points = pts;
-        *normals = nmls;
+        samples.points = pts;
+        samples.normals = nmls;
 
-        *spatial_tree = build_rtree(oriented_points_iter(points, normals));
+        *spatial_tree = build_rtree_from_samples(samples);
 
-        if mesh.num_vertices() == offsets.len() {
+        if mesh.num_vertices() == samples.offsets.len() {
             // Update offsets if any.
             if let Ok(offset_iter) = mesh.attrib_iter::<f32, VertexIndex>("offset") {
-                for (off, new_off) in offsets.iter_mut().zip(offset_iter.map(|&x| x as f64)) {
+                for (off, new_off) in samples.offsets.iter_mut().zip(offset_iter.map(|&x| x as f64)) {
                     *off = new_off;
                 }
             }
@@ -733,15 +728,15 @@ impl ImplicitSurface {
 
             // Overwrite offsets or remove them.
             if let Ok(offset_iter) = mesh.attrib_iter::<f32, VertexIndex>("offset") {
-                *offsets = offset_iter.map(|&x| x as f64).collect();
+                samples.offsets = offset_iter.map(|&x| x as f64).collect();
             } else {
-                *offsets = vec![0.0; mesh.num_vertices()];
+                samples.offsets = vec![0.0; mesh.num_vertices()];
             }
         }
 
         // Check invariant.
-        assert_eq!(points.len(), offsets.len());
-        assert_eq!(normals.len(), offsets.len());
+        assert_eq!(samples.points.len(), samples.offsets.len());
+        assert_eq!(samples.normals.len(), samples.offsets.len());
     }
 
     /*
@@ -761,39 +756,9 @@ impl ImplicitSurface {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
-            samples:
-                Samples {
-                    ref points,
-                    ref normals,
-                    ref offsets,
-                },
+            ref samples,
             ..
         } = *self;
-
-        // Initialize potential with zeros.
-        //{
-        //    let mut bg_potential = vec![0.0f32; mesh.num_vertices()];
-        //    if generate_bg_potential {
-        //        // Generate a background potential field for every sample point. This will be mixed
-        //        // in with the computed potentials for local methods. Global methods like HRBF
-        //        // ignore this field.
-        //        for (pos, potential) in
-        //            zip!(mesh.vertex_positions().iter(), bg_potential.iter_mut())
-        //        {
-        //            if let Some(nearest_neigh) = spatial_tree.nearest_neighbor(pos) {
-        //                let q = Vector3(*pos);
-        //                let p = nearest_neigh.pos;
-        //                let nml = nearest_neigh.nml;
-        //                *potential = (q - p).dot(nml) as f32;
-        //            } else {
-        //                return Err(super::Error::Failure);
-        //            }
-        //        }
-        //        mesh.set_attrib_data::<_, VertexIndex>("potential", &bg_potential)?;
-        //    } else {
-        //        mesh.attrib_or_add_data::<_, VertexIndex>("potential", &bg_potential)?;
-        //    }
-        //}
 
         match *kernel {
             KernelType::Interpolating { radius } => {
@@ -830,13 +795,13 @@ impl ImplicitSurface {
                 self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Global { tolerance } => {
-                let neigh = |_| oriented_points_iter(points, normals);
+                let neigh = |_| samples.iter();
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
             KernelType::Hrbf => {
-                Self::compute_hrbf_on_mesh(mesh, points, normals, offsets, interrupt)
+                Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
             }
         }
     }
@@ -851,7 +816,7 @@ impl ImplicitSurface {
         interrupt: F,
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = OrientedPoint> + Clone + 'a,
+        I: Iterator<Item = Sample<f64>> + Clone + 'a,
         K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
         N: Fn([f64; 3]) -> I + Sync + Send,
         F: Fn() -> bool + Sync + Send,
@@ -864,7 +829,7 @@ impl ImplicitSurface {
         } = *self;
 
         // Move the potential attrib out of the mesh. We will reinsert it after we are done.
-        let mut potential_attrib = mesh.remove_attrib::<VertexIndex>("potential")
+        let potential_attrib = mesh.remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
             .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
 
@@ -959,9 +924,7 @@ impl ImplicitSurface {
 
     fn compute_hrbf_on_mesh<F, M, V3>(
         mesh: &mut M,
-        points: &[V3],
-        normals: &[V3],
-        offsets: &[f64],
+        samples: &Samples<f64>,
         interrupt: F,
     ) -> Result<(), super::Error>
     where
@@ -969,6 +932,11 @@ impl ImplicitSurface {
         M: VertexMesh<f64>,
         V3: Into<[f64; 3]> + Copy,
     {
+        let Samples {
+            ref points,
+            ref normals,
+            ref offsets,
+        } = samples;
         let sample_pos = mesh.vertex_positions().to_vec();
 
         let pts: Vec<crate::na::Point3<f64>> = points
@@ -1032,6 +1000,12 @@ mod tests {
         // Initialize the query point.
         let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
 
+        // Eliminate no neighbour test.
+        if bg_potential_type == BackgroundPotentialType::None && (q - samples.points[0]).norm() >= F::cst(radius) {
+            // Nothing to test, the potential is expected to be NaN in this case.
+            return;
+        }
+
         // There is no surface for the set of samples. As a result, the normal derivative should be
         // skipped in this test.
         let surf_topo = vec![];
@@ -1093,6 +1067,7 @@ mod tests {
     fn easy_potential_derivative_test() {
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
+            easy_potential_derivative(radius, BackgroundPotentialType::None);
             easy_potential_derivative(radius, BackgroundPotentialType::Zero);
             easy_potential_derivative(radius, BackgroundPotentialType::FromInput);
             easy_potential_derivative(radius, BackgroundPotentialType::DistanceBased);
@@ -1160,6 +1135,14 @@ mod tests {
         };
 
         for &q in tri_verts.iter() {
+            // Eliminate no neighbour test.
+            if bg_potential_type == BackgroundPotentialType::None {
+                if samples.points.iter().all(|&p| (q - p).norm() >= radius) {
+                    // Nothing to test, the potential is expected to be NaN in this case.
+                    continue;
+                }
+            }
+
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
             let jac: Vec<Vector3<f64>> = ImplicitSurface::compute_jacobian_at(
@@ -1224,6 +1207,7 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
+            hard_potential_derivative(BackgroundPotentialType::None, radius, &mut perturb);
             hard_potential_derivative(BackgroundPotentialType::Zero, radius, &mut perturb);
             hard_potential_derivative(BackgroundPotentialType::FromInput, radius, &mut perturb);
             hard_potential_derivative(BackgroundPotentialType::DistanceBased, radius, &mut perturb);

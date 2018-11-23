@@ -4,20 +4,14 @@ use crate::kernel::KernelType;
 use std::cell::RefCell;
 use super::*;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum ImplicitSurfaceType {
-    Vertex,
-    Face,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplicitSurfaceBuilder {
     kernel: KernelType,
     background_potential: BackgroundPotentialType,
     triangles: Vec<[usize; 3]>,
-    points: Vec<Vector3<f64>>,
-    normals: Vec<Vector3<f64>>,
-    offsets: Vec<f64>,
+    vertices: Vec<Vector3<f64>>,
+    vertex_normals: Vec<Vector3<f64>>,
+    sample_offsets: Vec<f64>,
     max_step: f64,
     surface_type: ImplicitSurfaceType,
 }
@@ -31,9 +25,9 @@ impl ImplicitSurfaceBuilder {
             },
             background_potential: BackgroundPotentialType::Zero,
             triangles: Vec::new(),
-            points: Vec::new(),
-            normals: Vec::new(),
-            offsets: Vec::new(),
+            vertices: Vec::new(),
+            vertex_normals: Vec::new(),
+            sample_offsets: Vec::new(),
             max_step: 0.0, // This is a sane default for static implicit surfaces.
             surface_type: ImplicitSurfaceType::Face,
         }
@@ -44,13 +38,13 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    pub fn points(&mut self, points: Vec<[f64; 3]>) -> &mut Self {
-        self.points = reinterpret::reinterpret_vec(points);
+    pub fn vertices(&mut self, points: Vec<[f64; 3]>) -> &mut Self {
+        self.vertices = reinterpret::reinterpret_vec(points);
         self
     }
 
     pub fn offsets(&mut self, offsets: Vec<f64>) -> &mut Self {
-        self.offsets = offsets;
+        self.sample_offsets = offsets;
         self
     }
 
@@ -64,7 +58,7 @@ impl ImplicitSurfaceBuilder {
     /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
     /// The offsets attribute is expected to be named "offsets" and have type `f32`.
     pub fn mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
-        self.points = mesh
+        self.vertices = mesh
             .vertex_positions()
             .iter()
             .map(|&x| {
@@ -73,14 +67,14 @@ impl ImplicitSurfaceBuilder {
                     .expect("Failed to convert positions to f64")
             })
             .collect();
-        self.normals = mesh
+        self.vertex_normals = mesh
             .attrib_iter::<[f32; 3], VertexIndex>("N")
             .map(|iter| {
                 iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap())
                     .collect()
             })
             .unwrap_or(vec![Vector3::zeros(); mesh.num_vertices()]);
-        self.offsets = mesh
+        self.sample_offsets = mesh
             .attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| x as f64).collect())
             .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
@@ -110,9 +104,9 @@ impl ImplicitSurfaceBuilder {
             kernel,
             background_potential,
             triangles,
-            points,
-            mut normals,
-            mut offsets,
+            vertices,
+            mut vertex_normals,
+            mut sample_offsets,
             max_step,
             surface_type,
         } = self.clone();
@@ -129,46 +123,76 @@ impl ImplicitSurfaceBuilder {
         }
 
         // Cannot build an implicit surface without sample points. This is an error.
-        if points.is_empty() {
+        if vertices.is_empty() {
             return None;
         }
 
-        if normals.is_empty() {
-            normals = vec![Vector3::zeros(); points.len()];
+        if vertex_normals.is_empty() {
+            vertex_normals = vec![Vector3::zeros(); vertices.len()];
         }
 
-        if offsets.is_empty() {
-            offsets = vec![0.0; points.len()];
-        }
-
-        assert_eq!(points.len(), normals.len());
-        assert_eq!(points.len(), offsets.len());
+        assert_eq!(vertices.len(), vertex_normals.len());
 
         let mut dual_topo = Vec::new();
-        if !triangles.is_empty() {
-            // Compute the one ring and store it in the dual topo vectors.
-            dual_topo.resize(points.len(), Vec::new());
-            for (tri_idx, tri) in triangles.iter().enumerate() {
-                for &vidx in tri {
-                    dual_topo[vidx].push(tri_idx);
+        // Surface type dependent setup:
+        match surface_type {
+            ImplicitSurfaceType::Vertex => {
+                if sample_offsets.is_empty() {
+                    sample_offsets = vec![0.0; vertices.len()];
                 }
+
+                assert_eq!(vertices.len(), sample_offsets.len());
+
+                // Construct dual topology for a vertex centered implicit surface which we may
+                // need to differentiate.
+                if !triangles.is_empty() {
+                    // Compute the one ring and store it in the dual topo vectors.
+                    dual_topo.resize(vertices.len(), Vec::new());
+                    for (tri_idx, tri) in triangles.iter().enumerate() {
+                        for &vidx in tri {
+                            dual_topo[vidx].push(tri_idx);
+                        }
+                    }
+                }
+            }
+            ImplicitSurfaceType::Face => {
+                // Can't create a face centered potential if there are no faces.
+                if triangles.is_empty() {
+                    return None;
+                }
+
+                // One sample per triangle.
+                if sample_offsets.is_empty() {
+                    sample_offsets = vec![0.0; triangles.len()];
+                }
+
+                assert_eq!(triangles.len(), sample_offsets.len());
             }
         }
 
-        let oriented_points_iter = oriented_points_iter(&points, &normals);
+        // Build the samples.
+        let samples = match surface_type {
+            ImplicitSurfaceType::Vertex =>
+                Samples { points: vertices, normals: vertex_normals, offsets: sample_offsets },
+            ImplicitSurfaceType::Face => {
+                Samples::new_triangle_samples(&triangles, &vertices, sample_offsets)
+            }
+        };
+
+        // Build the rtree.
+        let rtree = build_rtree_from_samples(&samples);
+
         Some(ImplicitSurface {
             kernel,
             bg_potential_type: background_potential,
-            spatial_tree: build_rtree(oriented_points_iter),
+            spatial_tree: rtree,
             surface_topo: triangles,
-            samples: Samples {
-                points,
-                normals,
-                offsets,
-            },
+            surface_vertex_positions: vertices,
+            samples,
             max_step,
             neighbour_cache: RefCell::new(NeighbourCache::new()),
             dual_topo,
+            surface_type,
         })
     }
 }

@@ -1,4 +1,4 @@
-use super::spatial_tree::OrientedPoint;
+use super::samples::Sample;
 
 /// Cache neighbouring sample points for each query point.
 /// Note that this determines the entire sparsity structure of the query point neighbourhoods.
@@ -51,7 +51,7 @@ impl NeighbourCache {
         neigh: N,
     ) -> &[(usize, Vec<usize>)]
     where
-        I: Iterator<Item = OrientedPoint> + 'a,
+        I: Iterator<Item = Sample<f64>> + 'a,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
         if !self.is_valid() {

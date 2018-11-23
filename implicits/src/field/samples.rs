@@ -16,6 +16,18 @@ pub struct Sample<T: Real> {
     pub off: f64,
 }
 
+/// Convert a sample of one type into a sample of another real type.
+impl<T: Real, S: Real> From<Sample<T>> for Sample<S> {
+    fn from(s: Sample<T>) -> Sample<S> {
+        Sample {
+            index: s.index,
+            pos: s.pos.map(|x| x.into().unwrap()),
+            nml: s.nml.map(|x| x.into().unwrap()),
+            off: s.off,
+        }
+    }
+}
+
 /// Sample points that define the implicit surface including the point positions, normals and
 /// offsets.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,11 +36,89 @@ pub struct Samples<T: Real> {
     pub points: Vec<Vector3<T>>,
     /// Normals that define the potential field gradient at every sample point.
     pub normals: Vec<Vector3<T>>,
-
     /// Potential values at the interpolating points. These offsets indicate the values to
     /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
     /// necessarily pass through the given points.
     pub offsets: Vec<f64>,
+}
+
+
+impl<T: Real> Samples<T> {
+    pub fn new_triangle_samples(triangles: &[[usize;3]], vertices: &[Vector3<f64>], offsets: Vec<f64>) -> Self {
+        let points = vec![Vector3::zeros(); triangles.len()];
+        let normals = vec![Vector3::zeros(); triangles.len()];
+
+        let mut samples = Samples {
+            points,
+            normals,
+            offsets,
+        };
+        
+        samples.update_triangle_samples(triangles, vertices);
+        samples
+    }
+
+    pub fn update_triangle_samples(&mut self, triangles: &[[usize;3]], vertices: &[Vector3<f64>]) {
+        let Samples {
+            ref mut points,
+            ref mut normals,
+            ..
+        } = self;
+
+        let new_pos_nml_iter = triangles.iter()
+            .map(|tri_indices| {
+                let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
+                (tri.centroid(), tri.normal())
+            });
+
+        for ((nml, pos), (new_pos, new_nml)) in (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter) {
+            *pos = new_pos;
+            *nml = new_nml;
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = Sample<T>> {
+        let Samples {
+            ref points,
+            ref normals,
+            ref offsets,
+        } = self;
+        points.iter().zip(normals.iter()).zip(offsets.iter()).enumerate()
+            .map(move |(i, ((&pos, &nml), &off))| Sample {
+            index: i,
+            pos,
+            nml,
+            off,
+        })
+    }
+
+    /// Consuming iterator.
+    #[inline]
+    pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> {
+        let Samples {
+            points,
+            normals,
+            offsets,
+        } = self;
+        points.into_iter().zip(normals.into_iter()).zip(offsets.into_iter()).enumerate()
+            .map(move |(i, ((pos, nml), off))| Sample {
+            index: i,
+            pos,
+            nml,
+            off,
+        })
+    }
 }
 
 /// A view into to the positions, normals and offsets of the sample points. This view need not be

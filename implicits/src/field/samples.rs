@@ -1,5 +1,6 @@
 use crate::geo::math::Vector3;
 use crate::geo::Real;
+use crate::geo::ops::*;
 
 pub use super::*;
 
@@ -17,13 +18,15 @@ pub struct Sample<T: Real> {
 }
 
 /// Convert a sample of one type into a sample of another real type.
-impl<T: Real, S: Real> From<Sample<T>> for Sample<S> {
-    fn from(s: Sample<T>) -> Sample<S> {
+impl<T: Real> Sample<T> {
+    /// Cast a sample into another real type. This function will unwrap internally, so it will
+    /// panic if the conversion is invalid.
+    pub fn cast<S: Real>(self) -> Sample<S> {
         Sample {
-            index: s.index,
-            pos: s.pos.map(|x| x.into().unwrap()),
-            nml: s.nml.map(|x| x.into().unwrap()),
-            off: s.off,
+            index: self.index,
+            pos: self.pos.map(|x| S::from(x).unwrap()),
+            nml: self.nml.map(|x| S::from(x).unwrap()),
+            off: self.off,
         }
     }
 }
@@ -44,7 +47,9 @@ pub struct Samples<T: Real> {
 
 
 impl<T: Real> Samples<T> {
-    pub fn new_triangle_samples(triangles: &[[usize;3]], vertices: &[Vector3<f64>], offsets: Vec<f64>) -> Self {
+    pub fn new_triangle_samples<V3>(triangles: &[[usize;3]], vertices: &[V3], offsets: Vec<f64>) -> Self
+        where V3: Into<Vector3<T>> + Clone
+    {
         let points = vec![Vector3::zeros(); triangles.len()];
         let normals = vec![Vector3::zeros(); triangles.len()];
 
@@ -53,12 +58,14 @@ impl<T: Real> Samples<T> {
             normals,
             offsets,
         };
-        
+
         samples.update_triangle_samples(triangles, vertices);
         samples
     }
 
-    pub fn update_triangle_samples(&mut self, triangles: &[[usize;3]], vertices: &[Vector3<f64>]) {
+    pub fn update_triangle_samples<V3>(&mut self, triangles: &[[usize;3]], vertices: &[V3])
+        where V3: Into<Vector3<T>> + Clone
+    {
         let Samples {
             ref mut points,
             ref mut normals,
@@ -68,10 +75,10 @@ impl<T: Real> Samples<T> {
         let new_pos_nml_iter = triangles.iter()
             .map(|tri_indices| {
                 let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
-                (tri.centroid(), tri.normal())
+                (tri.centroid(), tri.area_normal())
             });
 
-        for ((nml, pos), (new_pos, new_nml)) in (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter) {
+        for ((pos, nml), (new_pos, new_nml)) in (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter) {
             *pos = new_pos;
             *nml = new_nml;
         }
@@ -88,12 +95,12 @@ impl<T: Real> Samples<T> {
     }
 
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = Sample<T>> {
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = Sample<T>> + Clone + 'a {
         let Samples {
             ref points,
             ref normals,
             ref offsets,
-        } = self;
+        } = *self;
         points.iter().zip(normals.iter()).zip(offsets.iter()).enumerate()
             .map(move |(i, ((&pos, &nml), &off))| Sample {
             index: i,
@@ -105,7 +112,7 @@ impl<T: Real> Samples<T> {
 
     /// Consuming iterator.
     #[inline]
-    pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> {
+    pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + Clone {
         let Samples {
             points,
             normals,

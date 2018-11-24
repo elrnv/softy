@@ -1,5 +1,5 @@
 use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::VertexIndex, VertexMesh};
+use crate::geo::mesh::{topology::*, VertexMesh, TriMesh, VertexPositions};
 use crate::kernel::KernelType;
 use std::cell::RefCell;
 use super::*;
@@ -13,7 +13,7 @@ pub struct ImplicitSurfaceBuilder {
     vertex_normals: Vec<Vector3<f64>>,
     sample_offsets: Vec<f64>,
     max_step: f64,
-    surface_type: ImplicitSurfaceType,
+    sample_type: SampleType,
 }
 
 impl ImplicitSurfaceBuilder {
@@ -29,7 +29,7 @@ impl ImplicitSurfaceBuilder {
             vertex_normals: Vec::new(),
             sample_offsets: Vec::new(),
             max_step: 0.0, // This is a sane default for static implicit surfaces.
-            surface_type: ImplicitSurfaceType::Face,
+            sample_type: SampleType::Vertex,
         }
     }
 
@@ -53,11 +53,15 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    /// Initialize fit data using a mesh type which can include positions, normals and offsets as
-    /// attributes on the mesh struct.
-    /// The normals attribute is expected to be named "N" and have type `[f32;3]`.
-    /// The offsets attribute is expected to be named "offsets" and have type `f32`.
-    pub fn mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
+    /// Initialize fit data using a vertex mesh which can include positions, normals and offsets
+    /// as attributes on the mesh struct.  The normals attribute is expected to be named "N" and
+    /// have type `[f32;3]`.  The offsets attribute is expected to be named "offsets" and have type
+    /// `f32`.  This function initializes the `vertices`, `vertex_normals`, `sample_offsets`
+    /// and sets `sample_type` to `SampleType::Vertex`.
+    ///
+    /// Note that this initializer can create only a static implicit surface because the topology
+    /// of the mesh is unknown so the normals cannot be recomputed.
+    pub fn vertex_mesh<M: VertexMesh<f64>>(&mut self, mesh: &M) -> &mut Self {
         self.vertices = mesh
             .vertex_positions()
             .iter()
@@ -78,6 +82,62 @@ impl ImplicitSurfaceBuilder {
             .attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| x as f64).collect())
             .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
+        self.sample_type = SampleType::Vertex;
+        self
+    }
+
+    /// Initialize fit data using a triangle mesh which can include positions, normals and offsets
+    /// as attributes on the mesh struct.  The normals attribute is expected to be named "N" and
+    /// have type `[f32;3]`.  The offsets attribute is expected to be named "offsets" and have type
+    /// `f32`.  This function initializes the `vertices`, `vertex_normals`, `sample_offsets`,
+    /// `triangles` and sets `sample_type` to `SampleType::Vertex`.
+    pub fn vertex_samples_from_mesh(&mut self, mesh: &TriMesh<f64>) -> &mut Self {
+        self.vertices = mesh
+            .vertex_positions()
+            .iter()
+            .map(|&x| {
+                Vector3(x)
+                    .cast::<f64>()
+                    .expect("Failed to convert positions to f64")
+            })
+            .collect();
+        self.vertex_normals = mesh
+            .attrib_iter::<[f32; 3], VertexIndex>("N")
+            .map(|iter| {
+                iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap())
+                    .collect()
+            })
+            .unwrap_or(Vec::new());
+        self.sample_offsets = mesh
+            .attrib_iter::<f32, VertexIndex>("offset")
+            .map(|iter| iter.map(|&x| x as f64).collect())
+            .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
+        self.triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
+        self.sample_type = SampleType::Vertex;
+        self
+    }
+
+    /// Initialize fit data using a triangle mesh.
+    /// No normal attributes are expected, the triangle normals are computed automatically.
+    /// The offsets attribute on faces is expected to be named "offsets" and have type `f32`.
+    /// This function initializes the `vertices`, `sample_offsets` and sets `sample_type` to
+    /// `SampleType::Face`.
+    pub fn face_samples_from_mesh(&mut self, mesh: &TriMesh<f64>) -> &mut Self {
+        self.vertices = mesh
+            .vertex_positions()
+            .iter()
+            .map(|&x| {
+                Vector3(x)
+                    .cast::<f64>()
+                    .expect("Failed to convert positions to f64")
+            })
+            .collect();
+        self.sample_offsets = mesh
+            .attrib_iter::<f32, FaceIndex>("offset")
+            .map(|iter| iter.map(|&x| x as f64).collect())
+            .unwrap_or(vec![0.0f64; mesh.num_faces()]);
+        self.triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
+        self.sample_type = SampleType::Face;
         self
     }
 
@@ -91,8 +151,8 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    pub fn surface_type(&mut self, ty: ImplicitSurfaceType) -> &mut Self {
-        self.surface_type = ty;
+    pub fn sample_type(&mut self, ty: SampleType) -> &mut Self {
+        self.sample_type = ty;
         self
     }
 
@@ -108,7 +168,7 @@ impl ImplicitSurfaceBuilder {
             mut vertex_normals,
             mut sample_offsets,
             max_step,
-            surface_type,
+            sample_type,
         } = self.clone();
         // Cannot build an implicit surface when the radius is 0.0.
         match kernel {
@@ -127,22 +187,10 @@ impl ImplicitSurfaceBuilder {
             return None;
         }
 
-        if vertex_normals.is_empty() {
-            vertex_normals = vec![Vector3::zeros(); vertices.len()];
-        }
-
-        assert_eq!(vertices.len(), vertex_normals.len());
-
         let mut dual_topo = Vec::new();
-        // Surface type dependent setup:
-        match surface_type {
-            ImplicitSurfaceType::Vertex => {
-                if sample_offsets.is_empty() {
-                    sample_offsets = vec![0.0; vertices.len()];
-                }
-
-                assert_eq!(vertices.len(), sample_offsets.len());
-
+        // Build the dual topology. Only needed for vertex centric implicit surfaces.
+        match sample_type {
+            SampleType::Vertex => {
                 // Construct dual topology for a vertex centered implicit surface which we may
                 // need to differentiate.
                 if !triangles.is_empty() {
@@ -155,7 +203,26 @@ impl ImplicitSurfaceBuilder {
                     }
                 }
             }
-            ImplicitSurfaceType::Face => {
+            _ => {}
+        }
+
+        // Build the samples.
+        let samples = match sample_type {
+            SampleType::Vertex => {
+                if sample_offsets.is_empty() {
+                    sample_offsets = vec![0.0; vertices.len()];
+                }
+
+                assert_eq!(vertices.len(), sample_offsets.len());
+                if vertex_normals.is_empty() {
+                    vertex_normals = vec![Vector3::zeros(); vertices.len()];
+                    ImplicitSurface::compute_vertex_area_normals(&triangles, &vertices, &mut vertex_normals);
+                }
+
+                assert_eq!(vertices.len(), vertex_normals.len());
+                Samples { points: vertices.clone(), normals: vertex_normals, offsets: sample_offsets }
+            }
+            SampleType::Face => {
                 // Can't create a face centered potential if there are no faces.
                 if triangles.is_empty() {
                     return None;
@@ -165,16 +232,7 @@ impl ImplicitSurfaceBuilder {
                 if sample_offsets.is_empty() {
                     sample_offsets = vec![0.0; triangles.len()];
                 }
-
                 assert_eq!(triangles.len(), sample_offsets.len());
-            }
-        }
-
-        // Build the samples.
-        let samples = match surface_type {
-            ImplicitSurfaceType::Vertex =>
-                Samples { points: vertices, normals: vertex_normals, offsets: sample_offsets },
-            ImplicitSurfaceType::Face => {
                 Samples::new_triangle_samples(&triangles, &vertices, sample_offsets)
             }
         };
@@ -192,7 +250,7 @@ impl ImplicitSurfaceBuilder {
             max_step,
             neighbour_cache: RefCell::new(NeighbourCache::new()),
             dual_topo,
-            surface_type,
+            sample_type,
         })
     }
 }

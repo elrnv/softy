@@ -10,7 +10,7 @@ extern crate spade;
 #[macro_use]
 extern crate approx;
 
-use crate::geo::mesh::{attrib, PointCloud, PolyMesh};
+use crate::geo::mesh::{attrib, PolyMesh, TriMesh};
 
 #[macro_use]
 pub mod zip;
@@ -25,6 +25,7 @@ pub use crate::kernel::KernelType;
 pub struct Params {
     pub kernel: KernelType,
     pub background_potential: BackgroundPotentialType,
+    pub sample_type: SampleType,
 }
 
 pub fn compute_potential<F>(
@@ -36,14 +37,21 @@ pub fn compute_potential<F>(
 where
     F: Fn() -> bool + Sync + Send,
 {
-    let ptcloud = PointCloud::from(surface.clone());
+    let mut builder = ImplicitSurfaceBuilder::new();
 
-    if let Some(implicit_surface) = ImplicitSurfaceBuilder::new()
-        .kernel(params.kernel)
-        .background_potential(params.background_potential)
-        .mesh(&ptcloud)
-        .build()
-    {
+    builder.kernel(params.kernel);
+    builder.background_potential(params.background_potential);
+
+    match params.sample_type {
+        SampleType::Vertex => {
+            builder.vertex_samples_from_mesh(&TriMesh::from(surface.clone()));
+        }
+        SampleType::Face => {
+            builder.face_samples_from_mesh(&TriMesh::from(surface.clone()));
+        }
+    }
+
+    if let Some(implicit_surface) = builder.build() {
         implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
         Ok(())
     } else {
@@ -131,26 +139,12 @@ mod tests {
             0, 5, 3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 5, 0, 2, 0, 4, 2, 4, 1, 2, 1, 5, 2,
         ];
 
-        let mut oct = TriMesh::new(points, indices);
-
-        // Add normals
-        let normals = vec![
-            [-1.0f32, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, -1.0],
-            [0.0, 0.0, 1.0],
-        ];
-
-        oct.add_attrib_data::<_, VertexIndex>("N", normals).unwrap();
-
-        oct
+        TriMesh::new(points, indices)
     }
 
     /// Test the non-dynamic API.
     #[test]
-    fn mesh_with_approximate_kernel_test() -> Result<(), Error> {
+    fn vertex_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
         let trimesh = make_sample_octahedron();
@@ -166,13 +160,54 @@ mod tests {
                     radius: 1.5,
                 },
                 background_potential: BackgroundPotentialType::DistanceBased,
+                sample_type: SampleType::Vertex,
             },
             || false,
         )?;
 
+        //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
-            "assets/approximate_sphere_test_grid_expected.vtk",
+            "assets/octahedron_vertex_grid_expected.vtk",
+        ))?;
+        let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
+
+        for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
+            assert_relative_eq!(sol_pot, exp_pot, max_relative = 1e-6);
+        }
+
+        Ok(())
+    }
+
+    /// Face centered implicit surface test.
+    #[test]
+    fn face_samples_test() -> Result<(), Error> {
+        let mut grid = make_grid(22, 22);
+
+        let trimesh = make_sample_octahedron();
+
+        let mut sphere = PolyMesh::from(trimesh);
+
+        compute_potential(
+            &mut grid,
+            &mut sphere,
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.5,
+                },
+                background_potential: BackgroundPotentialType::DistanceBased,
+                sample_type: SampleType::Face,
+            },
+            || false,
+        )?;
+
+        geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+
+        let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
+        let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
+            "assets/octahedron_face_grid_expected.vtk",
         ))?;
         let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
 

@@ -168,9 +168,8 @@ mod tests {
         //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
-        let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
-            "assets/octahedron_vertex_grid_expected.vtk",
-        ))?;
+        let expected_grid: PolyMesh<f64> =
+            load_polymesh(&PathBuf::from("assets/octahedron_vertex_grid_expected.vtk"))?;
         let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
 
         for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
@@ -203,12 +202,43 @@ mod tests {
             || false,
         )?;
 
+        let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
+        let expected_grid: PolyMesh<f64> =
+            load_polymesh(&PathBuf::from("assets/octahedron_face_grid_expected.vtk"))?;
+        let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
+
+        for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
+            assert_relative_eq!(sol_pot, exp_pot, max_relative = 1e-6);
+        }
+
+        Ok(())
+    }
+
+    /// Vertex centered HRBF surface test.
+    #[test]
+    fn hrbf_vertex_test() -> Result<(), Error> {
+        let mut grid = make_grid(22, 22);
+
+        let trimesh = make_sample_octahedron();
+
+        let mut sphere = PolyMesh::from(trimesh);
+
+        compute_potential(
+            &mut grid,
+            &mut sphere,
+            Params {
+                kernel: KernelType::Hrbf,
+                background_potential: BackgroundPotentialType::DistanceBased,
+                sample_type: SampleType::Face,
+            },
+            || false,
+        )?;
+
         geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
-        let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
-            "assets/octahedron_face_grid_expected.vtk",
-        ))?;
+        let expected_grid: PolyMesh<f64> =
+            load_polymesh(&PathBuf::from("assets/octahedron_face_grid_expected.vtk"))?;
         let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
 
         for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {

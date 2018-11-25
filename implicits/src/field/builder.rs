@@ -1,8 +1,8 @@
+use super::*;
 use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::*, VertexMesh, TriMesh, VertexPositions};
+use crate::geo::mesh::{topology::*, TriMesh, VertexMesh, VertexPositions};
 use crate::kernel::KernelType;
 use std::cell::RefCell;
-use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplicitSurfaceBuilder {
@@ -141,7 +141,10 @@ impl ImplicitSurfaceBuilder {
         self
     }
 
-    pub fn background_potential(&mut self, background_potential: BackgroundPotentialType) -> &mut Self {
+    pub fn background_potential(
+        &mut self,
+        background_potential: BackgroundPotentialType,
+    ) -> &mut Self {
         self.background_potential = background_potential;
         self
     }
@@ -179,7 +182,7 @@ impl ImplicitSurfaceBuilder {
                     return None;
                 }
             }
-            _ => { } // Nothing to be done for global support kernels.
+            _ => {} // Nothing to be done for global support kernels.
         }
 
         // Cannot build an implicit surface without sample points. This is an error.
@@ -216,11 +219,19 @@ impl ImplicitSurfaceBuilder {
                 assert_eq!(vertices.len(), sample_offsets.len());
                 if vertex_normals.is_empty() {
                     vertex_normals = vec![Vector3::zeros(); vertices.len()];
-                    ImplicitSurface::compute_vertex_area_normals(&triangles, &vertices, &mut vertex_normals);
+                    ImplicitSurface::compute_vertex_area_normals(
+                        &triangles,
+                        &vertices,
+                        &mut vertex_normals,
+                    );
                 }
 
                 assert_eq!(vertices.len(), vertex_normals.len());
-                Samples { points: vertices.clone(), normals: vertex_normals, offsets: sample_offsets }
+                Samples {
+                    points: vertices.clone(),
+                    normals: vertex_normals,
+                    offsets: sample_offsets,
+                }
             }
             SampleType::Face => {
                 // Can't create a face centered potential if there are no faces.
@@ -254,4 +265,3 @@ impl ImplicitSurfaceBuilder {
         })
     }
 }
-

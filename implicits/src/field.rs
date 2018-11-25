@@ -12,19 +12,19 @@ use rayon::prelude::*;
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
 
+pub mod background_potential;
 pub mod builder;
+pub mod neighbour_cache;
 pub mod samples;
 pub mod spatial_tree;
-pub mod background_potential;
-pub mod neighbour_cache;
 
 pub use self::builder::*;
 pub use self::samples::*;
 pub use self::spatial_tree::*;
 
-pub(crate) use self::neighbour_cache::NeighbourCache;
-pub(crate) use self::background_potential::*;
 pub use self::background_potential::BackgroundPotentialType;
+pub(crate) use self::background_potential::*;
+pub(crate) use self::neighbour_cache::NeighbourCache;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SampleType {
@@ -171,14 +171,18 @@ impl ImplicitSurface {
     where
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
-        samples.clone().into_iter().zip(surface_topo.iter()).flat_map(move |(sample, tri_indices)| {
-            let norm_inv = T::one() / sample.nml.norm(); 
-            let nml = sample.nml * norm_inv;
-            let nml_proj = Matrix3::identity() - nml * nml.transpose();
-            let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-            let mult = multiplier(sample);
-            (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
-        })
+        samples
+            .clone()
+            .into_iter()
+            .zip(surface_topo.iter())
+            .flat_map(move |(sample, tri_indices)| {
+                let norm_inv = T::one() / sample.nml.norm();
+                let nml = sample.nml * norm_inv;
+                let nml_proj = Matrix3::identity() - nml * nml.transpose();
+                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+                let mult = multiplier(sample);
+                (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
+            })
     }
 
     /// Update the stored samples. This assumes that vertex positions have been updated.
@@ -193,13 +197,15 @@ impl ImplicitSurface {
 
         match sample_type {
             SampleType::Vertex => {
-                let Samples { 
+                let Samples {
                     ref mut points,
                     ref mut normals,
                     ..
                 } = samples;
 
-                for (vertex_pos, sample_pos) in surface_vertex_positions.iter().zip(points.iter_mut()) {
+                for (vertex_pos, sample_pos) in
+                    surface_vertex_positions.iter().zip(points.iter_mut())
+                {
                     *sample_pos = (*vertex_pos).into();
                 }
 
@@ -285,7 +291,9 @@ impl ImplicitSurface {
 
         // Note there is no RefMut -> Ref map as of this writing, so we have to retrieve
         // neighbour_points twice: once to recompute cache, and once to return a Ref.
-        Ref::map(self.neighbour_cache.borrow(), |c| c.cached_neighbour_points())
+        Ref::map(self.neighbour_cache.borrow(), |c| {
+            c.cached_neighbour_points()
+        })
     }
 
     /// Set `neighbour_cache` to None. This triggers recomputation of the neighbour cache next time
@@ -438,7 +446,13 @@ impl ImplicitSurface {
         }
 
         let radius = T::from(radius).unwrap();
-        let bg = BackgroundPotential::new(q, samples, radius, kernel, BackgroundPotentialValue::val(bg_potential, *potential));
+        let bg = BackgroundPotential::new(
+            q,
+            samples,
+            radius,
+            kernel,
+            BackgroundPotentialValue::val(bg_potential, *potential),
+        );
         let closest_d = bg.closest_sample_dist();
 
         // Generate a background potential field for every query point. This will be mixed
@@ -464,7 +478,13 @@ impl ImplicitSurface {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
-        cache.cached_neighbour_points().iter().map(|(_, pts)| pts.len()).sum::<usize>() * 3 * num_pts_per_sample
+        cache
+            .cached_neighbour_points()
+            .iter()
+            .map(|(_, pts)| pts.len())
+            .sum::<usize>()
+            * 3
+            * num_pts_per_sample
     }
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
@@ -523,37 +543,34 @@ impl ImplicitSurface {
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
     /// by the precomputed `neighbour_cache` map.
-    fn mls_surface_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = (usize, usize)> + 'a> {
+    fn mls_surface_jacobian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = (usize, usize)> + 'a> {
         let cached_pts = {
             let cache = self.neighbour_cache.borrow();
             cache.cached_neighbour_points().to_vec()
         };
         match self.sample_type {
-            SampleType::Vertex => 
-                Box::new(cached_pts
-                .into_iter()
-                .enumerate()
-                .flat_map(move |(row, (_, nbr_points))| {
+            SampleType::Vertex => Box::new(cached_pts.into_iter().enumerate().flat_map(
+                move |(row, (_, nbr_points))| {
                     nbr_points
                         .into_iter()
-                        .flat_map(move |col| {
-                            (0..3).map(move |i| (row, 3 * col + i))
-                        })
-                })),
+                        .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
+                },
+            )),
             SampleType::Face => {
-                let ImplicitSurface { ref surface_topo, .. } = *self;
-                Box::new(cached_pts
-                .into_iter()
-                .enumerate()
-                .flat_map(move |(row, (_, nbr_points))| {
-                    nbr_points
-                        .into_iter()
-                        .flat_map(move |pidx| {
-                            surface_topo[pidx].iter().flat_map(move |&col| {
-                                (0..3).map(move |i| (row, 3 * col + i))
-                            })
+                let ImplicitSurface {
+                    ref surface_topo, ..
+                } = *self;
+                Box::new(cached_pts.into_iter().enumerate().flat_map(
+                    move |(row, (_, nbr_points))| {
+                        nbr_points.into_iter().flat_map(move |pidx| {
+                            surface_topo[pidx]
+                                .iter()
+                                .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
                         })
-                }))
+                    },
+                ))
             }
         }
     }
@@ -565,39 +582,38 @@ impl ImplicitSurface {
         let cache = self.neighbour_cache.borrow();
         match self.sample_type {
             SampleType::Vertex => {
-                let row_col_iter = cache.cached_neighbour_points()
-                .iter()
-                .enumerate()
-                .flat_map(move |(row, (_, nbr_points))| {
-                    nbr_points
-                        .iter()
-                        .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
-                });
-                for ((row, col), out_row, out_col) in zip!(row_col_iter, rows.iter_mut(), cols.iter_mut()) {
+                let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
+                    move |(row, (_, nbr_points))| {
+                        nbr_points
+                            .iter()
+                            .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
+                    },
+                );
+                for ((row, col), out_row, out_col) in
+                    zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())
+                {
                     *out_row = row;
                     *out_col = col;
                 }
             }
             SampleType::Face => {
-                let row_col_iter = cache.cached_neighbour_points()
-                .iter()
-                .enumerate()
-                .flat_map(move |(row, (_, nbr_points))| {
-                    nbr_points
-                        .iter()
-                        .flat_map(move |&pidx| {
-                            self.surface_topo[pidx].iter().flat_map(move |&col| {
-                                (0..3).map(move |i| (row, 3 * col + i))
-                            })
+                let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
+                    move |(row, (_, nbr_points))| {
+                        nbr_points.iter().flat_map(move |&pidx| {
+                            self.surface_topo[pidx]
+                                .iter()
+                                .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
                         })
-                });
-                for ((row, col), out_row, out_col) in zip!(row_col_iter, rows.iter_mut(), cols.iter_mut()) {
+                    },
+                );
+                for ((row, col), out_row, out_col) in
+                    zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())
+                {
                     *out_row = row;
                     *out_col = col;
                 }
             }
         };
-
     }
 
     fn vertex_jacobian_at<'a, T: Real, K: 'a>(
@@ -605,11 +621,11 @@ impl ImplicitSurface {
         view: SamplesView<'a, 'a, T>,
         radius: f64,
         kernel: K,
-        surface_topo: &'a [[usize;3]],
+        surface_topo: &'a [[usize; 3]],
         dual_topo: &'a [Vec<usize>],
         bg_potential_type: BackgroundPotentialType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
-        where
+    where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, radius, kernel, bg_potential_type);
@@ -632,7 +648,7 @@ impl ImplicitSurface {
                 let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
                 (q - pos) * (wk * weight_sum_inv)
             },
-            );
+        );
 
         zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n)
     }
@@ -642,11 +658,11 @@ impl ImplicitSurface {
         view: SamplesView<'a, 'a, T>,
         radius: f64,
         kernel: K,
-        surface_topo: &'a [[usize;3]],
+        surface_topo: &'a [[usize; 3]],
         surface_vertex_positions: &'a [Vector3<T>],
         bg_potential_type: BackgroundPotentialType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
-        where
+    where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, radius, kernel, bg_potential_type);
@@ -660,7 +676,7 @@ impl ImplicitSurface {
         // For each surface vertex contribution
         let main_jac = Self::compute_jacobian_at(q, view, kernel, bg);
 
-        let third = T::from(1.0/3.0).unwrap();
+        let third = T::from(1.0 / 3.0).unwrap();
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = Self::compute_face_unit_normals_gradient_products(
@@ -671,10 +687,13 @@ impl ImplicitSurface {
                 let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
                 (q - pos) * (wk * weight_sum_inv)
             },
-            );
+        );
 
         // There are 3 contributions from each sample to each vertex.
-        zip!(bg_jac, main_jac).flat_map(move |(b, m)| std::iter::repeat(b + m).take(3)).zip(nml_jac).map(move |(m, n)| (m * third + n))
+        zip!(bg_jac, main_jac)
+            .flat_map(move |(b, m)| std::iter::repeat(b + m).take(3))
+            .zip(nml_jac)
+            .map(move |(m, n)| (m * third + n))
     }
 
     fn mls_surface_jacobian_values<'a, I, K, N>(
@@ -692,7 +711,7 @@ impl ImplicitSurface {
         let value_vecs: &mut [[f64; 3]] = reinterpret::reinterpret_mut_slice(values);
 
         let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
-        
+
         let ImplicitSurface {
             ref samples,
             ref surface_topo,
@@ -701,7 +720,7 @@ impl ImplicitSurface {
             bg_potential_type,
             sample_type,
             ..
-        } = * self;
+        } = *self;
 
         match sample_type {
             SampleType::Vertex => {
@@ -711,10 +730,20 @@ impl ImplicitSurface {
                     .map(|(qi, neigh)| (Vector3(query_points[*qi]), neigh))
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
-                        Self::vertex_jacobian_at(q, view, radius, kernel, surface_topo, dual_topo, bg_potential_type)
+                        Self::vertex_jacobian_at(
+                            q,
+                            view,
+                            radius,
+                            kernel,
+                            surface_topo,
+                            dual_topo,
+                            bg_potential_type,
+                        )
                     });
 
-                value_vecs.iter_mut().zip(vtx_jac)
+                value_vecs
+                    .iter_mut()
+                    .zip(vtx_jac)
                     .for_each(|(vec, new_vec)| {
                         *vec = new_vec.into();
                     });
@@ -726,17 +755,27 @@ impl ImplicitSurface {
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
 
-                        Self::face_jacobian_at(q, view, radius, kernel, surface_topo, surface_vertex_positions, bg_potential_type)
+                        Self::face_jacobian_at(
+                            q,
+                            view,
+                            radius,
+                            kernel,
+                            surface_topo,
+                            surface_vertex_positions,
+                            bg_potential_type,
+                        )
                     });
 
-                value_vecs.iter_mut().zip(face_jac)
+                value_vecs
+                    .iter_mut()
+                    .zip(face_jac)
                     .for_each(|(vec, new_vec)| {
                         *vec = new_vec.into();
                     });
             }
         }
     }
-    
+
     /// Compute the background potential field. This function returns a struct that provides some
     /// useful quanitities for computing derivatives of the field.
     pub(crate) fn compute_background_potential<'a, T: Real, K: 'a>(
@@ -755,7 +794,13 @@ impl ImplicitSurface {
         // Compute background potential derivative contribution.
         // Compute derivative if the closest point in the neighbourhood. Otherwise we
         // assume the background potential is constant.
-        BackgroundPotential::new(q, samples, radius, kernel, BackgroundPotentialValue::jac(bg_type))
+        BackgroundPotential::new(
+            q,
+            samples,
+            radius,
+            kernel,
+            BackgroundPotentialValue::jac(bg_type),
+        )
     }
 
     /// Compute the Jacobian for the implicit surface potential given by the samples with the
@@ -824,8 +869,7 @@ impl ImplicitSurface {
         query_points: &[[f64; 3]],
         samples: &Samples<f64>,
         out_potential: &mut [f64],
-    ) -> Result<(), super::Error>
-    {
+    ) -> Result<(), super::Error> {
         let Samples {
             ref points,
             ref normals,
@@ -841,7 +885,7 @@ impl ImplicitSurface {
             .collect();
         let nmls: Vec<crate::na::Vector3<f64>> = normals
             .iter()
-            .map(|&n| crate::na::Vector3::from(Into::<[f64;3]>::into(n)))
+            .map(|&n| crate::na::Vector3::from(Into::<[f64; 3]>::into(n)))
             .collect();
 
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
@@ -919,9 +963,7 @@ impl ImplicitSurface {
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            KernelType::Hrbf => {
-                Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
-            }
+            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
         }
     }
 
@@ -948,7 +990,8 @@ impl ImplicitSurface {
         } = *self;
 
         // Move the potential attrib out of the mesh. We will reinsert it after we are done.
-        let potential_attrib = mesh.remove_attrib::<VertexIndex>("potential")
+        let potential_attrib = mesh
+            .remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
             .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
 
@@ -975,7 +1018,15 @@ impl ImplicitSurface {
         let mut bg_weight_attrib_data = vec![0f32; mesh.num_vertices()];
         let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
 
-        for (q_chunk, neigh, num_neighs_chunk, neighs_chunk, bg_weight_chunk, weight_sum_chunk, potential_chunk) in zip!(
+        for (
+            q_chunk,
+            neigh,
+            num_neighs_chunk,
+            neighs_chunk,
+            bg_weight_chunk,
+            weight_sum_chunk,
+            potential_chunk,
+        ) in zip!(
             query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             neigh_all_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
@@ -997,37 +1048,44 @@ impl ImplicitSurface {
                 weight_sum_chunk.par_iter_mut(),
                 potential_chunk.par_iter_mut()
             )
-            .for_each(|(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential)| {
-                let view = SamplesView::new(neighs, &samples);
+            .for_each(
+                |(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential)| {
+                    let view = SamplesView::new(neighs, &samples);
 
-                // Record number of neighbours in total.
-                *num_neighs = view.len() as i32;
+                    // Record number of neighbours in total.
+                    *num_neighs = view.len() as i32;
 
-                // Record up to 11 neighbours
-                for (k, neigh) in view.iter().take(11).enumerate() {
-                    out_neighs[k] = neigh.index as i32;
-                }
-
-                if !view.is_empty() {
-                    let bg = BackgroundPotential::new(q, view, radius, kernel,
-                          BackgroundPotentialValue::val(bg_potential_type, *potential as f64));
-                    let closest_d = bg.closest_sample_dist();
-                    *bg_weight = bg.background_weight() as f32;
-                    *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
-
-                    *potential = bg.compute_unnormalized_weighted_potential() as f32;
-
-                    let mut numerator = 0.0;
-                    for Sample { pos, nml, off, .. } in view.iter() {
-                        let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-                        let p = off + nml.dot(q - pos) / nml.norm();
-
-                        numerator += w * p;
+                    // Record up to 11 neighbours
+                    for (k, neigh) in view.iter().take(11).enumerate() {
+                        out_neighs[k] = neigh.index as i32;
                     }
 
-                    *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
-                }
-            });
+                    if !view.is_empty() {
+                        let bg = BackgroundPotential::new(
+                            q,
+                            view,
+                            radius,
+                            kernel,
+                            BackgroundPotentialValue::val(bg_potential_type, *potential as f64),
+                        );
+                        let closest_d = bg.closest_sample_dist();
+                        *bg_weight = bg.background_weight() as f32;
+                        *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
+
+                        *potential = bg.compute_unnormalized_weighted_potential() as f32;
+
+                        let mut numerator = 0.0;
+                        for Sample { pos, nml, off, .. } in view.iter() {
+                            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                            let p = off + nml.dot(q - pos) / nml.norm();
+
+                            numerator += w * p;
+                        }
+
+                        *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
+                    }
+                },
+            );
         }
 
         {
@@ -1050,6 +1108,19 @@ impl ImplicitSurface {
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<f64>,
     {
+        // Move the potential attrib out of the mesh. We will reinsert it after we are done.
+        let potential_attrib = mesh
+            .remove_attrib::<VertexIndex>("potential")
+            .ok() // convert to option (None when it doesn't exist)
+            .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+
+        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
+        if potential.is_empty() {
+            // Couldn't cast, which means potential is of some non-numeric type.
+            // We overwrite it because we need that attribute spot.
+            potential = vec![0.0f32; mesh.num_vertices()];
+        }
+
         let Samples {
             ref points,
             ref normals,
@@ -1074,11 +1145,10 @@ impl ImplicitSurface {
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
         hrbf.fit_offset(&pts, offsets, &nmls);
 
-        for (q_chunk, potential_chunk) in sample_pos.chunks(Self::PARALLEL_CHUNK_SIZE).zip(
-            mesh.attrib_as_mut_slice::<f32, VertexIndex>("potential")
-                .unwrap()
-                .chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-        ) {
+        for (q_chunk, potential_chunk) in sample_pos
+            .chunks(Self::PARALLEL_CHUNK_SIZE)
+            .zip(potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE))
+        {
             if interrupt() {
                 return Err(super::Error::Interrupted);
             }
@@ -1090,6 +1160,8 @@ impl ImplicitSurface {
                     *potential = hrbf.eval(crate::na::Point3::from(*q)) as f32;
                 });
         }
+
+        mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
 
         Ok(())
     }
@@ -1119,7 +1191,9 @@ mod tests {
         let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
 
         // Eliminate no neighbour test.
-        if bg_potential_type == BackgroundPotentialType::None && (q - samples.points[0]).norm() >= F::cst(radius) {
+        if bg_potential_type == BackgroundPotentialType::None
+            && (q - samples.points[0]).norm() >= F::cst(radius)
+        {
             // Nothing to test, the potential is expected to be NaN in this case.
             return;
         }
@@ -1202,8 +1276,14 @@ mod tests {
         } = samples;
 
         Samples {
-            points: points.into_iter().map(|vec| vec.map(|x| F::cst(x))).collect(),
-            normals: normals.into_iter().map(|vec| vec.map(|x| F::cst(x))).collect(),
+            points: points
+                .into_iter()
+                .map(|vec| vec.map(|x| F::cst(x)))
+                .collect(),
+            normals: normals
+                .into_iter()
+                .map(|vec| vec.map(|x| F::cst(x)))
+                .collect(),
             offsets,
         }
     }
@@ -1337,8 +1417,11 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> =
-            tet_verts.iter().cloned().map(|v| v.map(|x| F::cst(x))).collect();
+        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
+            .iter()
+            .cloned()
+            .map(|v| v.map(|x| F::cst(x)))
+            .collect();
 
         for &q in tri_verts.iter() {
             // Eliminate no neighbour test when there is no background potential.
@@ -1362,7 +1445,7 @@ mod tests {
             )
             .collect();
 
-            assert_eq!(jac.len(), 3*neighbours.len());
+            assert_eq!(jac.len(), 3 * neighbours.len());
 
             // Reduce the Jacobian from face vertices to vertices.
             let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
@@ -1379,7 +1462,8 @@ mod tests {
                 for i in 0..3 {
                     ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
-                    let ad_samples = Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                    let ad_samples =
+                        Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
@@ -1419,15 +1503,39 @@ mod tests {
             let radius = 0.1 * (i as f64);
             hard_vertex_potential_derivative(BackgroundPotentialType::None, radius, &mut perturb);
             hard_vertex_potential_derivative(BackgroundPotentialType::Zero, radius, &mut perturb);
-            hard_vertex_potential_derivative(BackgroundPotentialType::FromInput, radius, &mut perturb);
-            hard_vertex_potential_derivative(BackgroundPotentialType::DistanceBased, radius, &mut perturb);
-            hard_vertex_potential_derivative(BackgroundPotentialType::NormalBased, radius, &mut perturb);
+            hard_vertex_potential_derivative(
+                BackgroundPotentialType::FromInput,
+                radius,
+                &mut perturb,
+            );
+            hard_vertex_potential_derivative(
+                BackgroundPotentialType::DistanceBased,
+                radius,
+                &mut perturb,
+            );
+            hard_vertex_potential_derivative(
+                BackgroundPotentialType::NormalBased,
+                radius,
+                &mut perturb,
+            );
 
             hard_face_potential_derivative(BackgroundPotentialType::None, radius, &mut perturb);
             hard_face_potential_derivative(BackgroundPotentialType::Zero, radius, &mut perturb);
-            hard_face_potential_derivative(BackgroundPotentialType::FromInput, radius, &mut perturb);
-            hard_face_potential_derivative(BackgroundPotentialType::DistanceBased, radius, &mut perturb);
-            hard_face_potential_derivative(BackgroundPotentialType::NormalBased, radius, &mut perturb);
+            hard_face_potential_derivative(
+                BackgroundPotentialType::FromInput,
+                radius,
+                &mut perturb,
+            );
+            hard_face_potential_derivative(
+                BackgroundPotentialType::DistanceBased,
+                radius,
+                &mut perturb,
+            );
+            hard_face_potential_derivative(
+                BackgroundPotentialType::NormalBased,
+                radius,
+                &mut perturb,
+            );
         }
     }
 
@@ -1450,7 +1558,7 @@ mod tests {
     }
 
     /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
-    fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize;3]>){
+    fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
         let tet_verts = vec![
             Vector3([0.0, 1.0, 0.0]),
             Vector3([-0.94281, -0.33333, 0.0]),
@@ -1500,14 +1608,19 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts.iter().cloned().map(|v| v.map(|x| F::cst(x))).collect();
+        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
+            .iter()
+            .cloned()
+            .map(|v| v.map(|x| F::cst(x)))
+            .collect();
 
         for (vtx, g) in vert_grad.iter().enumerate() {
             for i in 0..3 {
                 ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
                 // Convert the samples to use autodiff constants.
-                let mut ad_samples = Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                let mut ad_samples =
+                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
 
                 // Normalize face normals
                 for nml in ad_samples.normals.iter_mut() {
@@ -1516,7 +1629,8 @@ mod tests {
 
                 let mut exp = F::cst(0.0);
                 for sample in view.clone().iter() {
-                    exp += ad_samples.normals[sample.index].dot(multiplier(sample).map(|x| F::cst(x)));
+                    exp +=
+                        ad_samples.normals[sample.index].dot(multiplier(sample).map(|x| F::cst(x)));
                 }
 
                 assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
@@ -1622,8 +1736,13 @@ mod tests {
         let view = SamplesView::new(indices.as_slice(), &samples);
 
         // Initialize a background potential. This function takes care of a lot of the setup.
-        let bg = BackgroundPotential::new(q, view, radius, kernel,
-                                          BackgroundPotentialValue::jac(BackgroundPotentialType::DistanceBased));
+        let bg = BackgroundPotential::new(
+            q,
+            view,
+            radius,
+            kernel,
+            BackgroundPotentialValue::jac(BackgroundPotentialType::DistanceBased),
+        );
 
         // Compute manual Jacobian. This is the function being tested for correctness.
         let jac: Vec<_> = bg.compute_jacobian().collect();
@@ -1646,8 +1765,16 @@ mod tests {
                 // This should be done outside the inner loop over samples, but here we make an
                 // exception for simplicity.
                 let view = SamplesView::new(indices.as_slice(), &ad_samples);
-                let ad_bg = BackgroundPotential::new(q, view, F::cst(radius), kernel,
-                BackgroundPotentialValue::val(BackgroundPotentialType::DistanceBased, F::cst(0.0)));
+                let ad_bg = BackgroundPotential::new(
+                    q,
+                    view,
+                    F::cst(radius),
+                    kernel,
+                    BackgroundPotentialValue::val(
+                        BackgroundPotentialType::DistanceBased,
+                        F::cst(0.0),
+                    ),
+                );
 
                 let p = ad_bg.compute_unnormalized_weighted_potential() * ad_bg.weight_sum_inv();
 

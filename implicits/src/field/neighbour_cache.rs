@@ -22,7 +22,7 @@ impl NeighbourCache {
             valid: false,
         }
     }
-    
+
     /// Get the neighbour points for each query point. This call just returns the currently cached
     /// points and doesn't trigger recomputation. Sometimes there is not enough information
     /// available for recomputation, so the user is responsible for ensuring points are upto date.
@@ -83,4 +83,3 @@ impl NeighbourCache {
         self.cached_neighbour_points()
     }
 }
-

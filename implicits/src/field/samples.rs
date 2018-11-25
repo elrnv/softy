@@ -1,6 +1,6 @@
 use crate::geo::math::Vector3;
-use crate::geo::Real;
 use crate::geo::ops::*;
+use crate::geo::Real;
 
 pub use super::*;
 
@@ -45,10 +45,14 @@ pub struct Samples<T: Real> {
     pub offsets: Vec<f64>,
 }
 
-
 impl<T: Real> Samples<T> {
-    pub fn new_triangle_samples<V3>(triangles: &[[usize;3]], vertices: &[V3], offsets: Vec<f64>) -> Self
-        where V3: Into<Vector3<T>> + Clone
+    pub fn new_triangle_samples<V3>(
+        triangles: &[[usize; 3]],
+        vertices: &[V3],
+        offsets: Vec<f64>,
+    ) -> Self
+    where
+        V3: Into<Vector3<T>> + Clone,
     {
         let points = vec![Vector3::zeros(); triangles.len()];
         let normals = vec![Vector3::zeros(); triangles.len()];
@@ -63,8 +67,9 @@ impl<T: Real> Samples<T> {
         samples
     }
 
-    pub fn update_triangle_samples<V3>(&mut self, triangles: &[[usize;3]], vertices: &[V3])
-        where V3: Into<Vector3<T>> + Clone
+    pub fn update_triangle_samples<V3>(&mut self, triangles: &[[usize; 3]], vertices: &[V3])
+    where
+        V3: Into<Vector3<T>> + Clone,
     {
         let Samples {
             ref mut points,
@@ -72,13 +77,14 @@ impl<T: Real> Samples<T> {
             ..
         } = self;
 
-        let new_pos_nml_iter = triangles.iter()
-            .map(|tri_indices| {
-                let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
-                (tri.centroid(), tri.area_normal())
-            });
+        let new_pos_nml_iter = triangles.iter().map(|tri_indices| {
+            let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
+            (tri.centroid(), tri.area_normal())
+        });
 
-        for ((pos, nml), (new_pos, new_nml)) in (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter) {
+        for ((pos, nml), (new_pos, new_nml)) in
+            (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter)
+        {
             *pos = new_pos;
             *nml = new_nml;
         }
@@ -101,13 +107,17 @@ impl<T: Real> Samples<T> {
             ref normals,
             ref offsets,
         } = *self;
-        points.iter().zip(normals.iter()).zip(offsets.iter()).enumerate()
+        points
+            .iter()
+            .zip(normals.iter())
+            .zip(offsets.iter())
+            .enumerate()
             .map(move |(i, ((&pos, &nml), &off))| Sample {
-            index: i,
-            pos,
-            nml,
-            off,
-        })
+                index: i,
+                pos,
+                nml,
+                off,
+            })
     }
 
     /// Consuming iterator.
@@ -118,13 +128,17 @@ impl<T: Real> Samples<T> {
             normals,
             offsets,
         } = self;
-        points.into_iter().zip(normals.into_iter()).zip(offsets.into_iter()).enumerate()
+        points
+            .into_iter()
+            .zip(normals.into_iter())
+            .zip(offsets.into_iter())
+            .enumerate()
             .map(move |(i, ((pos, nml), off))| Sample {
-            index: i,
-            pos,
-            nml,
-            off,
-        })
+                index: i,
+                pos,
+                nml,
+                off,
+            })
     }
 }
 

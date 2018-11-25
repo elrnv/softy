@@ -1,7 +1,7 @@
+use crate::field::samples::{Sample, SamplesView};
 use crate::geo::math::Vector3;
 use crate::geo::Real;
-use crate::kernel::{SphericalKernel};
-use crate::field::samples::{Sample, SamplesView};
+use crate::kernel::SphericalKernel;
 
 /// Different types of background potentials supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -39,19 +39,29 @@ impl<T: Real> BackgroundPotentialValue<T> {
             BackgroundPotentialType::None => BackgroundPotentialValue::None,
             BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
             BackgroundPotentialType::FromInput => BackgroundPotentialValue::Constant(T::zero()),
-            BackgroundPotentialType::DistanceBased => BackgroundPotentialValue::ClosestSampleDistance,
-            BackgroundPotentialType::NormalBased => BackgroundPotentialValue::ClosestSampleNormalDisp,
+            BackgroundPotentialType::DistanceBased => {
+                BackgroundPotentialValue::ClosestSampleDistance
+            }
+            BackgroundPotentialType::NormalBased => {
+                BackgroundPotentialValue::ClosestSampleNormalDisp
+            }
         }
     }
-    
+
     /// Use this constructor for computing the potential.
     pub fn val(ty: BackgroundPotentialType, potential_field_value: T) -> Self {
         match ty {
             BackgroundPotentialType::None => BackgroundPotentialValue::None,
             BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
-            BackgroundPotentialType::FromInput => BackgroundPotentialValue::Constant(potential_field_value),
-            BackgroundPotentialType::DistanceBased => BackgroundPotentialValue::ClosestSampleDistance,
-            BackgroundPotentialType::NormalBased => BackgroundPotentialValue::ClosestSampleNormalDisp,
+            BackgroundPotentialType::FromInput => {
+                BackgroundPotentialValue::Constant(potential_field_value)
+            }
+            BackgroundPotentialType::DistanceBased => {
+                BackgroundPotentialValue::ClosestSampleDistance
+            }
+            BackgroundPotentialType::NormalBased => {
+                BackgroundPotentialValue::ClosestSampleNormalDisp
+            }
         }
     }
 }
@@ -155,7 +165,9 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
     }
 
     pub(crate) fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
-        if index == self.closest_sample_index && self.bg_potential_value != BackgroundPotentialValue::None {
+        if index == self.closest_sample_index
+            && self.bg_potential_value != BackgroundPotentialValue::None
+        {
             self.closest_sample_disp
                 * (self.kernel.df(self.radius - self.closest_sample_dist)
                     / self.closest_sample_dist)
@@ -220,8 +232,8 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             match bg_potential_value {
                 BackgroundPotentialValue::None => Vector3::zeros(),
                 BackgroundPotentialValue::Constant(potential) => constant_term(potential),
-                BackgroundPotentialValue::ClosestSampleNormalDisp |
-                BackgroundPotentialValue::ClosestSampleDistance => {
+                BackgroundPotentialValue::ClosestSampleNormalDisp
+                | BackgroundPotentialValue::ClosestSampleDistance => {
                     let mut grad = constant_term(dist);
 
                     if index == closest_sample_index {
@@ -235,4 +247,3 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
         })
     }
 }
-

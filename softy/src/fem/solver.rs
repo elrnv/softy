@@ -556,9 +556,25 @@ impl Solver {
         }
     }
 
-    pub fn compute_constraint_jacobian_product(&mut self) {
+    /// Compute and add the gradient of the objective. Panic if this failes
+    pub fn add_objective_gradient(&mut self, grad: &mut [f64]) {
+        use ipopt::BasicProblem;
         let SolverDataMut {
             problem,
+            primal_variables,
+            ..
+        } = self.solver.solver_data_mut();
+
+        assert_eq!(grad.len(), primal_variables.len());
+        assert!(problem.objective_grad(primal_variables, grad));
+    }
+
+    /// Compute and add the Jacobian and constraint multiplier product to the given vector.
+    pub fn add_constraint_jacobian_product(&mut self, jac_prod: &mut [f64]) {
+        use ipopt::ConstrainedProblem;
+        let SolverDataMut {
+            problem,
+            primal_variables,
             constraint_multipliers,
             ..
         } = self.solver.solver_data_mut();
@@ -566,8 +582,16 @@ impl Solver {
         let jac_nnz = problem.num_constraint_jac_non_zeros();
         let mut rows = vec![0; jac_nnz];
         let mut cols = vec![0; jac_nnz];
-        problem.constraint_jac_indices(&mut rows, &mut cols);
+        assert!(problem.constraint_jac_indices(&mut rows, &mut cols));
 
+        let mut values = vec![0.0; jac_nnz];
+        assert!(problem.constraint_jac_values(primal_variables, &mut values));
+
+        assert_eq!(jac_prod.len(), primal_variables.len());
+        // Effectively this is jac.transpose() * constraint_multipliers
+        for ((row, col), val) in rows.into_iter().zip(cols.into_iter()).zip(values.into_iter()) {
+            jac_prod[col as usize] += val*constraint_multipliers[row as usize];
+        }
     }
 
     /// Run the optimization solver on one time step.
@@ -577,18 +601,32 @@ impl Solver {
             self.solver.set_option("warm_start_init_point", "yes");
         }
 
-        let step_result = self.solve_step();
+        let mut residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
+        self.add_objective_gradient(&mut residual);
+        let init_residual_norm = residual.iter().map(|&x| x*x).sum::<f64>().sqrt();
 
-        // Statics solve when the time step is missing.
+        let mut step_result = self.solve_step();
+
         // We should iterate until a relative residual goes to zero.
-        if self.sim_params.time_step.is_none() || self.sim_params.time_step == Some(0.0) {
-            let mut allowed_failed_steps = 4; // Number of allowed failed steps
-
+        for iter in 0..self.sim_params.max_outer_iterations-1 {
             // Since we are using linearized constraints, we compute the true constraint violation
             // residual and iterate until it vanishes.
-            
+            residual.iter_mut().for_each(|x| *x = 0.0); // Reset the residual.
+            self.add_constraint_jacobian_product(&mut residual);
+            self.add_objective_gradient(&mut residual);
 
-        }
+            let residual_norm = residual.iter().map(|&x| x*x).sum::<f64>().sqrt();
+            if residual_norm < self.sim_params.outer_tolerance as f64 * init_residual_norm {
+                break;
+            }
+
+            if iter >= self.sim_params.max_outer_iterations - 1 {
+                eprintln!("WARNING: Reached max outer iterations: {:?}", iter);
+            }
+
+            step_result = self.solve_step();
+        };
+
 
         self.step_count += 1;
 
@@ -645,6 +683,8 @@ mod tests {
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 100,
+        max_outer_iterations: 1,
+        outer_tolerance: 0.001,
         print_level: 0,
         derivative_test: 0,
     };

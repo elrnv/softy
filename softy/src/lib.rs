@@ -154,6 +154,8 @@ mod tests {
         time_step: None,
         tolerance: 1e-9,
         max_iterations: 800,
+        outer_tolerance: 0.001,
+        max_outer_iterations: 5,
         print_level: 0,
         derivative_test: 0,
     };

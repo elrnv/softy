@@ -1,9 +1,6 @@
 use crate::constraint::*;
 use crate::geo::mesh::topology::*;
 use crate::geo::mesh::{VertexPositions, Attrib};
-use crate::geo::math::Vector3;
-use crate::geo;
-use std::path::PathBuf;
 use crate::matrix::*;
 use crate::TetMesh;
 use crate::TriMesh;
@@ -71,9 +68,9 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
     #[inline]
     fn constraint(&mut self, dx: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
-        let max_disp = disp.iter().map(|a| a.norm()).max_by(|a,b| a.partial_cmp(b).unwrap());
-        let avg_disp = dx.iter().cloned().sum::<f64>()/dx.len() as f64;
+        //let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        //let max_disp = disp.iter().map(|a| a.norm()).max_by(|a,b| a.partial_cmp(b).unwrap());
+        //let avg_disp = dx.iter().cloned().sum::<f64>()/dx.len() as f64;
         //println!("max_disp = {:?}, avg_disp = {:?}", max_disp, avg_disp);
 
         let collider = self.0.collision_object.borrow();
@@ -99,10 +96,8 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
         self.0.implicit_surface.borrow().potential(query_points, value).unwrap();
 
         // Get Jacobian index iterator.
-        let jac_idx_iter = {
-            let surf = self.0.implicit_surface.borrow();
-            surf.surface_jacobian_indices_iter().unwrap()
-        };
+        let surf = self.0.implicit_surface.borrow();
+        let jac_idx_iter = surf.surface_jacobian_indices_iter().unwrap();
 
         // Compute Jacobian . dx (dot product).
         let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
@@ -181,16 +176,17 @@ impl SmoothContactConstraint {
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
-            .with_triangles(triangles)
-            .with_points(points)
-            .with_kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
-            .with_max_step(params.max_step*2.0) // double it because the step can be by samples or query points
-            .with_background_potential(false);
+            .triangles(triangles)
+            .vertices(points)
+            .kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
+            .max_step(params.max_step*2.0) // double it because the step can be by samples or query points
+            .sample_type(SampleType::Face)
+            .background_potential(BackgroundPotentialType::None);
 
         if let Ok(all_offsets) = tetmesh.attrib_as_slice::<f32, VertexIndex>("offset") {
             let offsets = surf_verts.iter()
                 .map(|&i| all_offsets[i] as f64).collect();
-            surface_builder.with_offsets(offsets);
+            surface_builder.offsets(offsets);
         }
 
         let surface = surface_builder.build().expect("No surface points detected");
@@ -223,7 +219,7 @@ impl SmoothContactConstraint {
         let points_iter = self.sample_verts.iter().map(|&i| all_points[i]);
 
         self.implicit_surface.borrow_mut()
-            .update_points(points_iter);
+            .update(points_iter);
     }
 
     pub fn invalidate_neighbour_data(&mut self) {

@@ -556,6 +556,20 @@ impl Solver {
         }
     }
 
+    pub fn compute_constraint_jacobian_product(&mut self) {
+        let SolverDataMut {
+            problem,
+            constraint_multipliers,
+            ..
+        } = self.solver.solver_data_mut();
+
+        let jac_nnz = problem.num_constraint_jac_non_zeros();
+        let mut rows = vec![0; jac_nnz];
+        let mut cols = vec![0; jac_nnz];
+        problem.constraint_jac_indices(&mut rows, &mut cols);
+
+    }
+
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         if self.step_count == 1 {
@@ -565,6 +579,17 @@ impl Solver {
 
         let step_result = self.solve_step();
 
+        // Statics solve when the time step is missing.
+        // We should iterate until a relative residual goes to zero.
+        if self.sim_params.time_step.is_none() || self.sim_params.time_step == Some(0.0) {
+            let mut allowed_failed_steps = 4; // Number of allowed failed steps
+
+            // Since we are using linearized constraints, we compute the true constraint violation
+            // residual and iterate until it vanishes.
+            
+
+        }
+
         self.step_count += 1;
 
         // On success, update the mesh with new positions and useful metrics.
@@ -572,8 +597,8 @@ impl Solver {
             let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
             let SolverDataMut {
-                ref mut problem,
-                ref primal_variables,
+                problem,
+                primal_variables,
                 ..
             } = self.solver.solver_data_mut();
 
@@ -976,6 +1001,40 @@ mod tests {
         compare_meshes(&solution, &expected);
     }
 
+    fn compute_contact_constraint(sample_mesh: &PolyMesh, tetmesh: &TetMesh, radius: f64, tolerance: f64) -> Vec<f32> {
+        use implicits::*;
+        let mut trimesh_copy = sample_mesh.clone();
+        let surface_trimesh = tetmesh.surface_trimesh();
+        let mut surface_polymesh = PolyMesh::from(surface_trimesh);
+        compute_potential(&mut trimesh_copy, &mut surface_polymesh,
+                          implicits::Params {
+                              kernel: KernelType::Approximate {
+                                  tolerance,
+                                  radius,
+                              },
+                              background_potential: BackgroundPotentialType::None,
+                              sample_type: SampleType::Face,
+                          }, || false)
+        .expect("Failed to compute constraint value");
+        
+        let pot_attrib = trimesh_copy.attrib_clone_into_vec::<f32, VertexIndex>("potential")
+            .expect("Potential attribute doesn't exist");
+        //let mut builder = ImplicitSurfaceBuilder::new();
+        //builder.triangles(reinterpret::reinterpret_slice(surface_trimesh.faces()).to_vec())
+        //    .vertices(surface_trimesh.vertex_positions().to_vec())
+        //    .kernel(KernelType::Approximate { tolerance, radius })
+        //    .sample_type(SampleType::Face)
+        //    .background_potential(BackgroundPotentialType::None);
+
+        //let surf = builder.build().expect("Failed to build implicit surface.");
+        //
+        //let mut pot_attrib = vec![0.0f64; sample_mesh.num_vertices()];
+        //surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib);
+
+        println!("potential = {:?}", pot_attrib);
+        pot_attrib.into_iter().map(|x| x as f32).collect()
+    }
+
     #[test]
     fn tet_push_test() {
         // A triangle is being pushed on top of a tet.
@@ -1004,11 +1063,17 @@ mod tests {
 
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
+        // Set contact parameters
+        let radius = 2.0;
+        let tolerance = 0.1;
+
+        compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
+
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(MEDIUM_SOLID_MATERIAL)
-            .add_solid(tetmesh)
-            .add_shell(trimesh)
-            .smooth_contact_params(SmoothContactParams { radius: 10.0, tolerance: 1e-5, max_step: 2.0 })
+            .add_solid(tetmesh.clone())
+            .add_shell(trimesh.clone())
+            .smooth_contact_params(SmoothContactParams { radius: 2.0, tolerance: 0.1, max_step: 2.0 })
             .build()
             .unwrap();
         assert!(solver.step().is_ok());
@@ -1020,15 +1085,23 @@ mod tests {
             }
         }
 
+        // Verify constraint, should be positive before push
+        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+        assert!(constraint.iter().all(|&x| x > 0.0f32));
+
         let offset = 0.5;
         tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
         let pts = PointCloud::new(tri_verts.clone());
         assert!(solver.update_kinematic_vertices(&pts).is_ok());
         assert!(solver.step().is_ok());
 
+        // Verify constraint, should be positive after push
+        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+        assert!(constraint.iter().all(|&x| x > 0.0f32));
+
         // Expect only the top vertex to be pushed down.
         let offset_verts = vec![
-            [0.0, 0.6535391887937654, 0.0],
+            [0.0, 0.604067, 0.0],
             tet_verts[1],
             tet_verts[2],
             tet_verts[3],
@@ -1036,7 +1109,7 @@ mod tests {
 
         for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(offset_verts.iter()) {
             for i in 0..3 {
-                assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-6);
+                assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-4);
             }
         }
     }

@@ -16,12 +16,13 @@ pub struct Params {
     pub tolerance: f32,
     pub radius: f32,
     pub kernel: i32,
-    pub background_potential: bool,
+    pub background_potential: i32,
+    pub sample_type: i32,
 }
 
 impl Into<implicits::Params> for Params {
     fn into(self) -> implicits::Params {
-        let Params { tolerance, radius, kernel, background_potential } = self;
+        let Params { tolerance, radius, kernel, background_potential, sample_type } = self;
         implicits::Params {
             kernel: match kernel {
                 0 => implicits::KernelType::Interpolating {
@@ -35,7 +36,17 @@ impl Into<implicits::Params> for Params {
                 3 => implicits::KernelType::Global { tolerance: tolerance as f64 },
                 _ => implicits::KernelType::Hrbf,
             },
-            background_potential,
+            background_potential: match background_potential {
+                0 => implicits::BackgroundPotentialType::None,
+                1 => implicits::BackgroundPotentialType::Zero,
+                2 => implicits::BackgroundPotentialType::FromInput,
+                3 => implicits::BackgroundPotentialType::DistanceBased,
+                _ => implicits::BackgroundPotentialType::NormalBased,
+            },
+            sample_type: match sample_type {
+                0 => implicits::SampleType::Vertex,
+                _ => implicits::SampleType::Face,
+            },
         }
     }
 }

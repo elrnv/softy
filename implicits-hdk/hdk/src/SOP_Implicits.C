@@ -51,6 +51,19 @@ static const char *theDsFile = R"THEDSFILE(
             "hrbf" "HRBF potential"
         }
     }
+
+    parm {
+        name "sampletype"
+        cppname "SampleType"
+        label "Sample Type"
+        type ordinal
+        default { "vertex" }
+        menu {
+            "vertex"   "Vertex"
+            "face"     "Face"
+        }
+    }
+
     parm {
         name "radius"
         label "Radius"
@@ -73,8 +86,16 @@ static const char *theDsFile = R"THEDSFILE(
         name "bgpotential"
         cppname "BgPotential"
         label "Background Potential"
-        type toggle
-        default { "off" }
+        type ordinal
+        default { "none" }
+        menu {
+            "none"       "None"
+            "zero"       "Zero"
+            "input"      "From Input"
+            "distance"   "Distance to Closest"
+            "normaldisp" "Normal Displacement"
+        }
+        hidewhen "{ kernel == global } { kernel == hrbf }"
     }
 }
 )THEDSFILE";
@@ -139,7 +160,8 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     params.tolerance = sopparms.getTolerance();
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());
-    params.background_potential = sopparms.getBgPotential();
+    params.background_potential = static_cast<int>(sopparms.getBgPotential());
+    params.sample_type = static_cast<int>(sopparms.getSampleType());
 
     CookResult res = hdkrs::cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
 

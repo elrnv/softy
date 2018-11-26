@@ -229,20 +229,55 @@ mod tests {
             Params {
                 kernel: KernelType::Hrbf,
                 background_potential: BackgroundPotentialType::DistanceBased,
-                sample_type: SampleType::Face,
+                sample_type: SampleType::Vertex,
             },
             || false,
         )?;
 
-        geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+        //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =
-            load_polymesh(&PathBuf::from("assets/octahedron_face_grid_expected.vtk"))?;
+            load_polymesh(&PathBuf::from("assets/hrbf_octahedron_vertex_grid_expected.vtk"))?;
         let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
 
         for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
             assert_relative_eq!(sol_pot, exp_pot, max_relative = 1e-6);
+        }
+
+        Ok(())
+    }
+
+    /// Test the dynamic API (I.e. one which provides derivatives). We don't test the derivatives
+    /// themselves here.
+    #[test]
+    fn vertex_samples_dynamic_test() -> Result<(), Error> {
+        use super::geo::mesh::VertexPositions;
+
+        let grid = make_grid(22, 22);
+
+        let trimesh = make_sample_octahedron();
+
+        let mut builder = ImplicitSurfaceBuilder::new();
+        builder.kernel(KernelType::Approximate { tolerance: 1e-5, radius: 1.5 })
+            .background_potential(BackgroundPotentialType::DistanceBased)
+            .sample_type(SampleType::Vertex)
+            .triangles(reinterpret::reinterpret_slice::<_, [usize;3]>(trimesh.faces()).to_vec())
+            .vertices(trimesh.vertex_positions().to_vec());
+
+        let surf = builder.build().expect("Failed to create implicit surface.");
+
+        let mut potential = vec![0.0f64; grid.num_vertices()];
+        surf.potential(grid.vertex_positions(), &mut potential).expect("Failed to compute potential.");
+
+        //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+
+        let expected_grid: PolyMesh<f64> =
+            load_polymesh(&PathBuf::from("assets/octahedron_vertex_grid_expected.vtk"))?;
+        let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
+
+        for (sol_pot, &exp_pot) in potential.into_iter().zip(expected_potential_iter) {
+            assert_relative_eq!(sol_pot, exp_pot as f64, max_relative = 1e-6);
         }
 
         Ok(())

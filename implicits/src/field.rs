@@ -489,9 +489,9 @@ impl ImplicitSurface {
 
     /// Compute the indices for the implicit surface potential jacobian with respect to surface
     /// points.
-    pub fn surface_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Iterator<Item = (usize, usize)> + 'a>, super::Error> {
+    pub fn surface_jacobian_indices_iter(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, super::Error> {
         match self.kernel {
             KernelType::Approximate { .. } => Ok(self.mls_surface_jacobian_indices_iter()),
             _ => Err(super::Error::UnsupportedKernel),
@@ -543,34 +543,36 @@ impl ImplicitSurface {
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
     /// by the precomputed `neighbour_cache` map.
-    fn mls_surface_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = (usize, usize)> + 'a> {
-        let cached_pts = {
-            let cache = self.neighbour_cache.borrow();
-            cache.cached_neighbour_points().to_vec()
-        };
+    fn mls_surface_jacobian_indices_iter(
+        &self,
+    ) -> Box<dyn Iterator<Item = (usize, usize)>> {
         match self.sample_type {
-            SampleType::Vertex => Box::new(cached_pts.into_iter().enumerate().flat_map(
-                move |(row, (_, nbr_points))| {
-                    nbr_points
-                        .into_iter()
-                        .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
-                },
-            )),
-            SampleType::Face => {
-                let ImplicitSurface {
-                    ref surface_topo, ..
-                } = *self;
+            SampleType::Vertex => {
+                let cached_pts = {
+                    let cache = self.neighbour_cache.borrow();
+                    cache.cached_neighbour_points().to_vec()
+                };
                 Box::new(cached_pts.into_iter().enumerate().flat_map(
-                    move |(row, (_, nbr_points))| {
-                        nbr_points.into_iter().flat_map(move |pidx| {
-                            surface_topo[pidx]
-                                .iter()
-                                .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
-                        })
-                    },
-                ))
+                        move |(row, (_, nbr_points))| {
+                            nbr_points
+                                .into_iter()
+                                .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
+                        },
+                        ))
+            }
+            SampleType::Face => {
+                let cached: Vec<_> = {
+                    let cache = self.neighbour_cache.borrow();
+                    cache.cached_neighbour_points().iter().enumerate().flat_map(
+                        |(row, &(_, ref nbr_points))| {
+                            nbr_points.iter().flat_map(move |&pidx| {
+                                self.surface_topo[pidx].iter().flat_map(
+                                    move |col| (0..3).map(move |i| (row, 3 * col + i)))
+                            })
+                        }).collect()
+                };
+
+                Box::new(cached.into_iter())
             }
         }
     }

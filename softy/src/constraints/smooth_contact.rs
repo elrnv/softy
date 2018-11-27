@@ -25,6 +25,13 @@ impl LinearSmoothContactConstraint {
         self.0.update_max_step(step);
     }
 
+    pub fn current_constraint_value(&self, values: &mut [f64]) {
+        debug_assert_eq!(values.len(), self.constraint_size());
+        let collider = self.0.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+        self.0.implicit_surface.borrow().potential(query_points, value).unwrap();
+    }
+
     /// Compute the constraint jacobian at the current configuration.
     pub fn current_constraint_jacobian_values(&self, values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());

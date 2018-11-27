@@ -594,34 +594,60 @@ impl Solver {
         }
     }
 
+    /// Update the `mesh` and `prev_pos` with the current solution.
+    fn commit_solution(&mut self) {
+        let SolverDataMut {
+            problem,
+            primal_variables,
+            ..
+        } = self.solver.solver_data_mut();
+
+        let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
+
+        let mesh = &mut problem.tetmesh.borrow_mut();
+        let mut prev_pos = problem.prev_pos.borrow_mut();
+
+        Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+    }
+
+    fn inf_norm(vec: &[f64]) -> f64 {
+        vec.iter().map(|x| x.abs()).max_by(|&a, &b| a.partial_cmp(b).expect("Detected NaNs"))
+    }
+
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        if self.step_count == 1 {
+        let mut residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
+        self.add_objective_gradient(&mut residual);
+        let init_residual_norm = Self::inf_norm(&residual);
+        println!("initial residual = {:?}", init_residual_norm);
+
+        let mut step_result = self.solve_step();
+
+        if self.step_count == 0 {
             // After the first step lets set ipopt into warm start mode
             self.solver.set_option("warm_start_init_point", "yes");
         }
 
-        let mut residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
-        self.add_objective_gradient(&mut residual);
-        let init_residual_norm = residual.iter().map(|&x| x*x).sum::<f64>().sqrt();
-
-        let mut step_result = self.solve_step();
-
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations-1 {
+            self.commit_solution();
+
             // Since we are using linearized constraints, we compute the true constraint violation
             // residual and iterate until it vanishes.
             residual.iter_mut().for_each(|x| *x = 0.0); // Reset the residual.
             self.add_constraint_jacobian_product(&mut residual);
+            println!("jac residual = {:?}", Self::inf_norm(&residual));
             self.add_objective_gradient(&mut residual);
+            println!("jac + grad residual = {:?}", Self::inf_norm(&residual));
 
-            let residual_norm = residual.iter().map(|&x| x*x).sum::<f64>().sqrt();
+            let residual_norm = Self::inf_norm(&residual);
+            println!("relative residual = {:?}", residual_norm / init_residual_norm);
             if residual_norm < self.sim_params.outer_tolerance as f64 * init_residual_norm {
                 break;
             }
 
             if iter >= self.sim_params.max_outer_iterations - 1 {
-                eprintln!("WARNING: Reached max outer iterations: {:?}", iter);
+                println!("WARNING: Reached max outer iterations: {:?}", iter);
             }
 
             step_result = self.solve_step();
@@ -634,31 +660,22 @@ impl Solver {
         if let Ok(_) = step_result {
             let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
-            let SolverDataMut {
-                problem,
-                primal_variables,
-                ..
-            } = self.solver.solver_data_mut();
-
-            let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
+            self.commit_solution();
 
             // Get the tetmesh and prev_pos so we can update fixed vertices only.
             {
-                let mesh = &mut problem.tetmesh.borrow_mut();
-                let mut prev_pos = problem.prev_pos.borrow_mut();
-
-                Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+                let mut mesh = self.borrow_mut_mesh();
 
                 // Write back elastic strain energy for visualization.
-                Self::compute_strain_energy_attrib(mesh, lambda, mu);
+                Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
 
                 // Write back elastic forces on each node.
-                Self::compute_elastic_forces_attrib(mesh, lambda, mu);
+                Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
             }
 
             // Since we advected the mesh, we need to invalidate its neighbour data so it's
             // recomputed at the next time step (if applicable).
-            if let Some(ref mut scc) = problem.smooth_contact_constraint {
+            if let Some(ref mut scc) = self.solver.solver_data_mut().problem.smooth_contact_constraint {
                 scc.invalidate_neighbour_data();
                 scc.update_surface();
             }
@@ -1035,6 +1052,39 @@ mod tests {
             .build()
             .unwrap();
         assert!(solver.step().is_ok());
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        compare_meshes(&solution, &expected);
+    }
+
+    /// This test insures that a non-linearized constraint like volume doesn't cause multiple outer
+    /// iterations, and converges after the first solve.
+    #[test]
+    fn box_twist_volume_constraint_flexible_outer_iterations_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
+            incompressibility: true,
+            ..MEDIUM_SOLID_MATERIAL
+        };
+
+        let params = SimParams {
+            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
+            max_outer_iterations: 10,
+            print_level: 5,
+            ..STRETCH_PARAMS
+        };
+
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
+
+        // This test should produce the exact same mesh as the original
+        // box_twist_volume_constraint_test
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();

@@ -556,6 +556,35 @@ impl Solver {
         }
     }
 
+    /// Compute and add the value of the constraint function minus constraint bounds.
+    pub fn add_constraint_function(&mut self, constraint: &mut [f64]) {
+        use ipopt::ConstrainedProblem;
+        let SolverDataMut {
+            problem,
+            primal_variables,
+            constraint_multipliers,
+            ..
+        } = self.solver.solver_data_mut();
+
+        assert_eq!(constraint.len(), constraint_multipliers.len());
+        let (lower, upper) = problem.constraint_bounds();
+        assert!(problem.constraint(&vec![0.0; primal_variables.len()], constraint));
+        for (c, (l, u)) in constraint.iter_mut().zip(lower.into_iter().zip(upper.into_iter())) {
+            assert!(l <= u); // sanity check
+            // Subtract the appropriate bound from the constraint function:
+            // If the constraint is lower than the lower bound, then the multiplier will be
+            // non-zero and the result of the constraint force must be balanced by the objective
+            // gradient under convergence. The same goes for the upper bound.
+            if *c < l {
+                *c -= l;
+            } else if *c > u {
+                *c -= u;
+            } else {
+                *c = 0.0; // Otherwise the constraint is satisfied so we set it to zero.
+            }
+        }
+    }
+
     /// Compute and add the gradient of the objective. Panic if this failes
     pub fn add_objective_gradient(&mut self, grad: &mut [f64]) {
         use ipopt::BasicProblem;
@@ -566,7 +595,7 @@ impl Solver {
         } = self.solver.solver_data_mut();
 
         assert_eq!(grad.len(), primal_variables.len());
-        assert!(problem.objective_grad(primal_variables, grad));
+        assert!(problem.objective_grad(&vec![0.0; primal_variables.len()], grad));
     }
 
     /// Compute and add the Jacobian and constraint multiplier product to the given vector.
@@ -585,7 +614,7 @@ impl Solver {
         assert!(problem.constraint_jac_indices(&mut rows, &mut cols));
 
         let mut values = vec![0.0; jac_nnz];
-        assert!(problem.constraint_jac_values(primal_variables, &mut values));
+        assert!(problem.constraint_jac_values(&vec![0.0; primal_variables.len()], &mut values));
 
         assert_eq!(jac_prod.len(), primal_variables.len());
         // Effectively this is jac.transpose() * constraint_multipliers
@@ -602,23 +631,44 @@ impl Solver {
             ..
         } = self.solver.solver_data_mut();
 
+        // Reinterpret solver variables as positions in 3D space.
         let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
-        let mesh = &mut problem.tetmesh.borrow_mut();
-        let mut prev_pos = problem.prev_pos.borrow_mut();
+        // Update the mesh itself.
+        {
+            let mesh = &mut problem.tetmesh.borrow_mut();
+            let mut prev_pos = problem.prev_pos.borrow_mut();
 
-        Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+            Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+        }
+
+        // Since we advected the mesh, we need to invalidate its neighbour data so it's
+        // recomputed at the next time step (if applicable).
+        if let Some(ref mut scc) = problem.smooth_contact_constraint {
+            scc.invalidate_neighbour_data();
+            scc.update_surface();
+        }
     }
 
     fn inf_norm(vec: &[f64]) -> f64 {
-        vec.iter().map(|x| x.abs()).max_by(|&a, &b| a.partial_cmp(b).expect("Detected NaNs"))
+        vec.iter().map(|x| x.abs()).max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
+            .expect("Failed to compute inf norm for residual computation.")
     }
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        let mut residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
-        self.add_objective_gradient(&mut residual);
-        let init_residual_norm = Self::inf_norm(&residual);
+        let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
+        self.add_objective_gradient(&mut objective_residual);
+        let objective_residual_norm = Self::inf_norm(&objective_residual);
+        println!("obj residual = {:?}", objective_residual_norm);
+
+        let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
+        self.add_constraint_function(&mut constraint_violation);
+        let constraint_violation_norm = Self::inf_norm(&constraint_violation);
+        println!("constraint violation norm = {:?}", constraint_violation_norm);
+
+        let init_residual_norm = objective_residual_norm.max(constraint_violation_norm);
+
         println!("initial residual = {:?}", init_residual_norm);
 
         let mut step_result = self.solve_step();
@@ -628,19 +678,24 @@ impl Solver {
             self.solver.set_option("warm_start_init_point", "yes");
         }
 
+        self.commit_solution();
+
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations-1 {
-            self.commit_solution();
 
             // Since we are using linearized constraints, we compute the true constraint violation
             // residual and iterate until it vanishes.
-            residual.iter_mut().for_each(|x| *x = 0.0); // Reset the residual.
-            self.add_constraint_jacobian_product(&mut residual);
-            println!("jac residual = {:?}", Self::inf_norm(&residual));
-            self.add_objective_gradient(&mut residual);
-            println!("jac + grad residual = {:?}", Self::inf_norm(&residual));
+            objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
+            self.add_constraint_jacobian_product(&mut objective_residual);
+            println!("jac objective_residual = {:?}", Self::inf_norm(&objective_residual));
+            self.add_objective_gradient(&mut objective_residual);
+            println!("jac + grad objective_residual = {:?}", Self::inf_norm(&objective_residual));
 
-            let residual_norm = Self::inf_norm(&residual);
+            constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
+            self.add_constraint_function(&mut constraint_violation);
+            println!("constraint violation = {:?}", Self::inf_norm(&constraint_violation));
+
+            let residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
             println!("relative residual = {:?}", residual_norm / init_residual_norm);
             if residual_norm < self.sim_params.outer_tolerance as f64 * init_residual_norm {
                 break;
@@ -651,16 +706,15 @@ impl Solver {
             }
 
             step_result = self.solve_step();
-        };
 
+            self.commit_solution();
+        };
 
         self.step_count += 1;
 
         // On success, update the mesh with new positions and useful metrics.
         if let Ok(_) = step_result {
             let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
-
-            self.commit_solution();
 
             // Get the tetmesh and prev_pos so we can update fixed vertices only.
             {
@@ -673,12 +727,6 @@ impl Solver {
                 Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
             }
 
-            // Since we advected the mesh, we need to invalidate its neighbour data so it's
-            // recomputed at the next time step (if applicable).
-            if let Some(ref mut scc) = self.solver.solver_data_mut().problem.smooth_contact_constraint {
-                scc.invalidate_neighbour_data();
-                scc.update_surface();
-            }
         }
 
         step_result

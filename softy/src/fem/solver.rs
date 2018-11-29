@@ -245,7 +245,7 @@ impl SolverBuilder {
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-7);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -651,8 +651,7 @@ impl Solver {
     }
 
     fn inf_norm(vec: &[f64]) -> f64 {
-        vec.iter().map(|x| x.abs()).max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
-            .expect("Failed to compute inf norm for residual computation.")
+        vec.iter().map(|x| x.abs()).max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs")).unwrap_or(0.0)
     }
 
     /// Run the optimization solver on one time step.
@@ -672,6 +671,8 @@ impl Solver {
         println!("initial residual = {:?}", init_residual_norm);
 
         let mut step_result = self.solve_step();
+
+        println!("done step: {:?}", step_result);
 
         if self.step_count == 0 {
             // After the first step lets set ipopt into warm start mode
@@ -783,22 +784,21 @@ mod tests {
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
-            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0],
         ];
         let indices = vec![0, 2, 1, 3];
-        let mut mesh = TetMesh::new(verts, indices);
+        let mut mesh = TetMesh::new(verts.clone(), indices);
         mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 0, 0, 0])
             .unwrap();
 
-        let ref_verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
-
-        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
             .unwrap();
+        mesh
+    }
+
+    fn make_one_deformed_tet_mesh() -> TetMesh {
+        let mut mesh = make_one_tet_mesh();
+        mesh.vertex_positions_mut()[3][2] = 2.0;
         mesh
     }
 
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn one_tet_test() {
-        let mesh = make_one_tet_mesh();
+        let mesh = make_one_deformed_tet_mesh();
 
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .solid_material(HARD_SOLID_MATERIAL)
@@ -863,9 +863,33 @@ mod tests {
         assert!(solver.step().is_ok());
     }
 
+    /// Test that ipopt reduces the same residual that our outer solver compares againts.
+    #[test]
+    fn one_tet_equilibrium_test() {
+        let params = SimParams {
+            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
+            max_outer_iterations: 1,
+            print_level: 5,
+            ..STATIC_PARAMS
+        };
+
+        let mesh = make_one_tet_mesh();
+
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(HARD_SOLID_MATERIAL)
+            .add_solid(mesh.clone())
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
+
+        // Expect the tet to remain in original configuration
+        let solution = solver.borrow_mesh();
+        compare_meshes(&solution, &mesh);
+    }
+
     #[test]
     fn one_tet_volume_constraint_test() {
-        let mesh = make_one_tet_mesh();
+        let mesh = make_one_deformed_tet_mesh();
 
         let material = Material {
             incompressibility: true,

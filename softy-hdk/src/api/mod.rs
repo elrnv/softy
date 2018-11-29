@@ -85,6 +85,8 @@ impl Into<softy::SimParams> for SimParams {
             gravity: [0.0, -gravity, 0.0],
             tolerance,
             max_iterations,
+            outer_tolerance: 1e-3,
+            max_outer_iterations: 5,
             print_level,
             derivative_test,
         }

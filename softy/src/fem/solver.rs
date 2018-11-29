@@ -245,7 +245,7 @@ impl SolverBuilder {
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-7);
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -624,7 +624,7 @@ impl Solver {
     }
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self) {
+    fn commit_solution(&mut self, iter: usize) {
         let SolverDataMut {
             problem,
             primal_variables,
@@ -637,6 +637,7 @@ impl Solver {
         // Update the mesh itself.
         {
             let mesh = &mut problem.tetmesh.borrow_mut();
+            crate::geo::io::save_tetmesh(mesh, &std::path::PathBuf::from(format!("./out/mesh_{}.vtk", iter))).unwrap();
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
             Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
@@ -679,7 +680,7 @@ impl Solver {
             self.solver.set_option("warm_start_init_point", "yes");
         }
 
-        self.commit_solution();
+        self.commit_solution(1);
 
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations-1 {
@@ -708,7 +709,7 @@ impl Solver {
 
             step_result = self.solve_step();
 
-            self.commit_solution();
+            self.commit_solution(iter as usize+2);
         };
 
         self.step_count += 1;
@@ -747,11 +748,11 @@ mod tests {
     const STATIC_PARAMS: SimParams = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
-        tolerance: 1e-9,
+        tolerance: 1e-11,
         max_iterations: 100,
         max_outer_iterations: 1,
         outer_tolerance: 0.001,
-        print_level: 0,
+        print_level: 5,
         derivative_test: 0,
     };
 
@@ -761,22 +762,14 @@ mod tests {
         ..STATIC_PARAMS
     };
 
-    const HARD_SOLID_MATERIAL: Material = Material {
-        elasticity: ElasticityParameters {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
-        },
-        incompressibility: false,
-        density: 1000.0,
-        damping: 0.0,
-    };
-
-    const SOFT_SOLID_MATERIAL: Material = Material {
+    const SOLID_MATERIAL: Material = Material {
         elasticity: ElasticityParameters {
             bulk_modulus: 1e6,
             shear_modulus: 1e5,
         },
-        ..HARD_SOLID_MATERIAL
+        incompressibility: false,
+        density: 1000.0,
+        damping: 0.0,
     };
 
     fn make_one_tet_mesh() -> TetMesh {
@@ -788,7 +781,7 @@ mod tests {
         ];
         let indices = vec![0, 2, 1, 3];
         let mut mesh = TetMesh::new(verts.clone(), indices);
-        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 0, 0, 0])
+        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
             .unwrap();
 
         mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
@@ -851,32 +844,31 @@ mod tests {
      * One tet tests
      */
 
-    #[test]
-    fn one_tet_test() {
+    /// Helper function to generate a simple solver for one initially deformed tet under gravity.
+    fn one_tet_solver() -> Solver {
         let mesh = make_one_deformed_tet_mesh();
 
-        let mut solver = SolverBuilder::new(STATIC_PARAMS)
-            .solid_material(HARD_SOLID_MATERIAL)
+        SolverBuilder::new(STATIC_PARAMS)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .unwrap()
     }
 
-    /// Test that ipopt reduces the same residual that our outer solver compares againts.
+    /// Test that the solver produces no change for an equilibrium configuration.
     #[test]
     fn one_tet_equilibrium_test() {
         let params = SimParams {
-            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-            max_outer_iterations: 1,
-            print_level: 5,
+            gravity: [0.0f32, 0.0, 0.0],
+            outer_tolerance: 1e-10, // This is a fairly strict tolerance.
+            max_outer_iterations: 2,
             ..STATIC_PARAMS
         };
 
         let mesh = make_one_tet_mesh();
 
         let mut solver = SolverBuilder::new(params)
-            .solid_material(HARD_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh.clone())
             .build()
             .unwrap();
@@ -887,13 +879,58 @@ mod tests {
         compare_meshes(&solution, &mesh);
     }
 
+    /// Test one deformed tet under gravity fixed at two vertices. This is not an easy test because
+    /// the initial condition is far from the solution and this is a fully static solve.
+    /// This test has a unique solution.
+    #[test]
+    fn one_deformed_tet_test() {
+        let mut solver = one_tet_solver();
+        assert!(solver.step().is_ok());
+        let solution = solver.borrow_mesh();
+        let verts = solution.vertex_positions();
+
+        // Check that the free verts are below the horizontal.
+        assert!(verts[2][1] < 0.0 && verts[3][1] < 0.0);
+
+        // Check that they are approximately at the same altitude.
+        assert_relative_eq!(verts[2][1], verts[3][1], max_relative = 1e-3);
+    }
+
+    /// Test that subsequent outer iterations don't change the solution when Ipopt has converged.
+    /// This is not the case with linearized constraints.
+    #[test]
+    fn one_tet_outer_test() {
+        let params = SimParams {
+            max_iterations: 4,
+            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
+            max_outer_iterations: 2,
+            print_level: 5,
+            ..STATIC_PARAMS
+        };
+
+        let mesh = make_one_deformed_tet_mesh();
+
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(SOLID_MATERIAL)
+            .add_solid(mesh.clone())
+            .build()
+            .unwrap();
+        assert!(solver.step().is_ok());
+
+        let solution = solver.borrow_mesh();
+        let mut expected_solver = one_tet_solver();
+        expected_solver.step().unwrap();
+        let expected = expected_solver.borrow_mesh();
+        compare_meshes(&solution, &expected);
+    }
+
     #[test]
     fn one_tet_volume_constraint_test() {
         let mesh = make_one_deformed_tet_mesh();
 
         let material = Material {
             incompressibility: true,
-            ..HARD_SOLID_MATERIAL
+            ..SOLID_MATERIAL
         };
 
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
@@ -912,7 +949,7 @@ mod tests {
     fn three_tets_static_test() {
         let mesh = make_three_tet_mesh();
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
-            .solid_material(HARD_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
@@ -927,7 +964,7 @@ mod tests {
     fn three_tets_dynamic_test() {
         let mesh = make_three_tet_mesh();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOFT_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
@@ -944,7 +981,7 @@ mod tests {
         let mesh = make_three_tet_mesh();
         let material = Material {
             incompressibility: true,
-            ..HARD_SOLID_MATERIAL
+            ..SOLID_MATERIAL
         };
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .solid_material(material)
@@ -965,7 +1002,7 @@ mod tests {
         let mesh = make_three_tet_mesh();
         let material = Material {
             incompressibility: true,
-            ..SOFT_SOLID_MATERIAL
+            ..SOLID_MATERIAL
         };
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(material)
@@ -994,7 +1031,7 @@ mod tests {
         let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOFT_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
@@ -1022,7 +1059,7 @@ mod tests {
 
         let incompressible_material = Material {
             incompressibility: true,
-            ..SOFT_SOLID_MATERIAL
+            ..SOLID_MATERIAL
         };
 
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
@@ -1054,7 +1091,7 @@ mod tests {
             bulk_modulus: 300e6,
             shear_modulus: 100e6,
         },
-        ..HARD_SOLID_MATERIAL
+        ..SOLID_MATERIAL
     };
 
     #[test]
@@ -1133,7 +1170,7 @@ mod tests {
     /// This test insures that a non-linearized constraint like volume doesn't cause multiple outer
     /// iterations, and converges after the first solve.
     #[test]
-    fn box_twist_volume_constraint_flexible_outer_iterations_test() {
+    fn box_twist_volume_constraint_outer_test() {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
             incompressibility: true,
@@ -1281,7 +1318,7 @@ mod tests {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.4),
-            ..HARD_SOLID_MATERIAL
+            ..SOLID_MATERIAL
         };
 
         let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk")).unwrap();
@@ -1305,7 +1342,7 @@ mod tests {
     fn torus_medium_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOFT_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
@@ -1317,7 +1354,7 @@ mod tests {
     fn torus_long_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOFT_SOLID_MATERIAL)
+            .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();

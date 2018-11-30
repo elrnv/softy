@@ -12,6 +12,7 @@ extern crate implicits;
 extern crate approx;
 
 mod attrib_defines;
+pub mod mask_iter;
 mod bench;
 mod constraint;
 mod constraints;

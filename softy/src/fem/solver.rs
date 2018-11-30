@@ -17,6 +17,8 @@ use std::{
     rc::Rc,
 };
 
+use crate::mask_iter::*;
+
 use super::NonLinearProblem;
 use super::SimParams;
 use crate::Error;
@@ -172,6 +174,11 @@ impl SolverBuilder {
         // Prepare deformable solid for simulation.
         Self::prepare_mesh_attributes(&mut mesh)?;
 
+        // Get previous position vector from the tetmesh.
+        let prev_pos = Rc::new(RefCell::new(
+            reinterpret_slice(mesh.vertex_positions()).to_vec()
+        ));
+
         let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
 
         // Retrieve lame parameters.
@@ -201,11 +208,6 @@ impl SolverBuilder {
             params.gravity[2] as f64,
         ];
 
-        // Get previous position vector from the tetmesh.
-        let prev_pos = Rc::new(RefCell::new(
-            reinterpret_slice(mesh.vertex_positions()).to_vec(),
-        ));
-
         // Initialize volume constraint
         let volume_constraint = if solid_material.incompressibility {
             Some(VolumeConstraint::new(&mesh))
@@ -233,9 +235,9 @@ impl SolverBuilder {
         });
 
         let problem = NonLinearProblem {
+            prev_pos,
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
-            prev_pos,
             energy_model: energy_model_builder.build(),
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
             momentum_potential,
@@ -253,6 +255,7 @@ impl SolverBuilder {
         // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
         // should reflect these properties.
         let tol = params.tolerance as f64 * max_vol * lambda.max(mu);
+        println!("tol = {:?}", tol);
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", 10.0 * tol);
@@ -260,6 +263,7 @@ impl SolverBuilder {
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
+        ipopt.set_option("nlp_scaling_method", "none");
         //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
@@ -317,6 +321,19 @@ impl SolverBuilder {
         mesh.attrib_or_add_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
 
         mesh.attrib_or_add::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
+
+        // If this attribute doesn't exist, assume no vertices are fixed. This function will
+        // return an error if there is an existing Fixed attribute with the wrong type.
+        {
+            use crate::geo::mesh::attrib::*;
+            let fixed_buf = mesh.remove_attrib::<VertexIndex>(FIXED_ATTRIB)
+                .unwrap_or(Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])).into_buffer();
+            let mut fixed = fixed_buf.cast_into_vec::<FixedIntType>();
+            if fixed.is_empty() { // If non-numeric type detected, just fill it with zeros.
+                fixed.resize(mesh.num_vertices(), 0);
+            }
+            mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::from_vec(fixed))?;
+        }
 
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
         mesh.set_attrib_data::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
@@ -414,7 +431,7 @@ impl Solver {
         }
 
         // Only update fixed vertices, if no such attribute exists, return an error.
-        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?; 
         prev_pos
             .iter_mut()
             .zip(pts.vertex_position_iter())
@@ -527,7 +544,7 @@ impl Solver {
 
     /// Update the state of the system, which includes new positions and velocities stored on the
     /// mesh, as well as previous positions stored in `prev_pos`.
-    fn update_state(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
+    fn advance(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
         // Write back the velocity for the next iteration.
         for ((prev_dx, prev_x), &dx) in mesh
             .attrib_iter_mut::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
@@ -600,7 +617,7 @@ impl Solver {
         }
     }
 
-    /// Compute and add the gradient of the objective. Panic if this failes
+    /// Compute and add the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
     pub fn add_objective_gradient(&mut self, grad: &mut [f64]) {
         use ipopt::BasicProblem;
         let SolverDataMut {
@@ -611,6 +628,15 @@ impl Solver {
 
         assert_eq!(grad.len(), primal_variables.len());
         assert!(problem.objective_grad(&vec![0.0; primal_variables.len()], grad));
+
+        // Erase fixed vert data. This doesn't contribute to the solve.
+        let mesh = problem.tetmesh.borrow();
+        let fixed_iter = mesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            .expect("Missing fixed verts attribute").map(|&x| x != 0);
+        let vert_grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+        for g in vert_grad.iter_mut().filter_masked(fixed_iter) {
+            *g = Vector3::zeros();
+        }
     }
 
     /// Compute and add the Jacobian and constraint multiplier product to the given vector.
@@ -631,10 +657,17 @@ impl Solver {
         let mut values = vec![0.0; jac_nnz];
         assert!(problem.constraint_jac_values(&vec![0.0; primal_variables.len()], &mut values));
 
+        // We don't consider values for fixed vertices.
+        let mesh = problem.tetmesh.borrow();
+        let fixed = mesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            .expect("Missing fixed verts attribute");
+
         assert_eq!(jac_prod.len(), primal_variables.len());
         // Effectively this is jac.transpose() * constraint_multipliers
         for ((row, col), val) in rows.into_iter().zip(cols.into_iter()).zip(values.into_iter()) {
-            jac_prod[col as usize] += val*constraint_multipliers[row as usize];
+            if fixed[(col as usize)/3] == 0 {
+                jac_prod[col as usize] += val*constraint_multipliers[row as usize];
+            }
         }
     }
 
@@ -652,10 +685,10 @@ impl Solver {
         // Update the mesh itself.
         {
             let mesh = &mut problem.tetmesh.borrow_mut();
-            crate::geo::io::save_tetmesh(mesh, &std::path::PathBuf::from(format!("./out/mesh_{}.vtk", iter))).unwrap();
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
-            Self::update_state(mesh, prev_pos.as_mut_slice(), displacement);
+            Self::advance(mesh, prev_pos.as_mut_slice(), displacement);
+            crate::geo::io::save_tetmesh(mesh, &std::path::PathBuf::from(format!("./out/mesh_{}.vtk", iter))).unwrap();
         }
 
         // Since we advected the mesh, we need to invalidate its neighbour data so it's
@@ -672,6 +705,7 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+
         let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
         self.add_objective_gradient(&mut objective_residual);
         let objective_residual_norm = Self::inf_norm(&objective_residual);
@@ -714,7 +748,7 @@ impl Solver {
 
             let residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
             println!("relative residual = {:?}", residual_norm / init_residual_norm);
-            if residual_norm < self.sim_params.outer_tolerance as f64 * init_residual_norm {
+            if residual_norm <= self.sim_params.outer_tolerance as f64 * init_residual_norm {
                 break;
             }
 
@@ -733,7 +767,6 @@ impl Solver {
         if let Ok(_) = step_result {
             let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
-            // Get the tetmesh and prev_pos so we can update fixed vertices only.
             {
                 let mut mesh = self.borrow_mut_mesh();
 
@@ -767,7 +800,7 @@ mod tests {
         max_iterations: 300,
         max_outer_iterations: 1,
         outer_tolerance: 0.001,
-        print_level: 5,
+        print_level: 0,
         derivative_test: 0,
     };
 
@@ -777,10 +810,15 @@ mod tests {
         ..STATIC_PARAMS
     };
 
+    // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus
+    // (mu) and density in the same range of magnitude. Higher stiffnesses compared to denisty will
+    // produce highly oscillatory configurations and keep the solver from converging fast.
+    // As an example if we increase the moduli below by 1000, the solver can't converge, even in
+    // 300 steps.
     const SOLID_MATERIAL: Material = Material {
         elasticity: ElasticityParameters {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
+            bulk_modulus: 1750e3,
+            shear_modulus: 10e3,
         },
         incompressibility: false,
         density: 1000.0,
@@ -916,10 +954,8 @@ mod tests {
     #[test]
     fn one_tet_outer_test() {
         let params = SimParams {
-            max_iterations: 4,
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
             max_outer_iterations: 2,
-            print_level: 5,
             ..STATIC_PARAMS
         };
 
@@ -1195,7 +1231,6 @@ mod tests {
         let params = SimParams {
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
             max_outer_iterations: 10,
-            print_level: 5,
             ..STRETCH_PARAMS
         };
 

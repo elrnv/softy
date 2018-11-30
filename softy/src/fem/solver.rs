@@ -164,6 +164,11 @@ impl SolverBuilder {
         // Get deformable solid.
         let mut mesh = solids[0].clone();
 
+        // We need this quantity to compute the tolerance.
+        let max_vol = mesh.tet_iter().map(|tet| tet.volume()).max_by(|a,b| a.partial_cmp(b)
+                                                                     .expect("Degenerate tetrahedron detected"))
+            .expect("Given TetMesh is empty");
+
         // Prepare deformable solid for simulation.
         Self::prepare_mesh_attributes(&mut mesh)?;
 
@@ -186,6 +191,10 @@ impl SolverBuilder {
             0.0
         } * solid_material.damping as f64
             / mu;
+
+        // All values are normalized by mu including mu itself so it becomes 1.0.
+        let mu = 1.0;
+
         let gravity = [
             params.gravity[0] as f64,
             params.gravity[1] as f64,
@@ -208,7 +217,7 @@ impl SolverBuilder {
         let mesh = Rc::new(RefCell::new(mesh));
 
         let energy_model_builder =
-            ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh)).material(lambda, 1.0, damping);
+            ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh)).material(lambda, mu, damping);
 
         let momentum_potential = params
             .time_step
@@ -239,13 +248,19 @@ impl SolverBuilder {
 
         let mut ipopt = Ipopt::new(problem)?;
 
-        ipopt.set_option("tol", params.tolerance as f64);
-        ipopt.set_option("acceptable_tol", 10.0 * params.tolerance as f64);
+        // Determine the true force tolerance. To start we base this tolerance on the elastic
+        // response which depends on mu and lambda as well as per tet volume:
+        // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
+        // should reflect these properties.
+        let tol = params.tolerance as f64 * max_vol * lambda.max(mu);
+
+        ipopt.set_option("tol", tol);
+        ipopt.set_option("acceptable_tol", 10.0 * tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
+        //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -748,8 +763,8 @@ mod tests {
     const STATIC_PARAMS: SimParams = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         time_step: None,
-        tolerance: 1e-11,
-        max_iterations: 100,
+        tolerance: 1e-9,
+        max_iterations: 300,
         max_outer_iterations: 1,
         outer_tolerance: 0.001,
         print_level: 5,
@@ -764,8 +779,8 @@ mod tests {
 
     const SOLID_MATERIAL: Material = Material {
         elasticity: ElasticityParameters {
-            bulk_modulus: 1e6,
-            shear_modulus: 1e5,
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
         },
         incompressibility: false,
         density: 1000.0,

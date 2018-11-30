@@ -47,6 +47,13 @@ pub struct SolveResult {
     pub objective_value: f64,
 }
 
+impl std::fmt::Display for SolveResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Iterations: {}\nObjective: {}\nMax Inner Iterations: {}",
+               self.iterations, self.objective_value, self.max_inner_iterations)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ElasticityParameters {
     /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
@@ -150,7 +157,7 @@ impl SolverBuilder {
     /// Build the simulation solver.
     pub fn build(&self) -> Result<Solver, Error> {
         let SolverBuilder {
-            sim_params: params,
+            sim_params: mut params,
             solid_material,
             solids,
             shells,
@@ -266,7 +273,10 @@ impl SolverBuilder {
         // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
         // should reflect these properties.
         let tol = params.tolerance as f64 * max_vol * lambda.max(mu);
-        println!("tol = {:?}", tol);
+        params.tolerance = tol as f32;
+        params.outer_tolerance *= (max_vol * lambda.max(mu)) as f32;
+        println!("tol = {:?}", params.tolerance);
+        println!("outer_tol = {:?}", params.outer_tolerance);
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", 10.0 * tol);
@@ -720,52 +730,20 @@ impl Solver {
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
 
-        let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
-        self.compute_objective_gradient(&mut objective_residual);
-        let objective_residual_norm = Self::inf_norm(&objective_residual);
-
-        let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
-        self.add_constraint_function(&mut constraint_violation);
-        let constraint_violation_norm = Self::inf_norm(&constraint_violation);
-
-        let init_residual_norm = objective_residual_norm.max(constraint_violation_norm);
-
-        let step_result = self.inner_step()?;
-
         // Initialize the result of this function.
         let mut result = SolveResult {
-            max_inner_iterations: step_result.iterations,
-            iterations: 1,
-            objective_value: step_result.objective_value,
+            max_inner_iterations: 0,
+            iterations: 0,
+            objective_value: 0.0,
         };
 
-        if self.step_count == 0 {
-            // After the first step lets set ipopt into warm start mode
-            self.solver.set_option("warm_start_init_point", "yes");
-        }
+        let mut residual_norm = 0.0;
 
-        self.commit_solution();
+        let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
+        let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
 
         // We should iterate until a relative residual goes to zero.
-        for iter in 0..self.sim_params.max_outer_iterations-1 {
-
-            // Since we are using linearized constraints, we compute the true constraint violation
-            // residual and iterate until it vanishes.
-            objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
-            self.compute_objective_gradient(&mut objective_residual);
-            self.add_constraint_jacobian_product(&mut objective_residual);
-
-            constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
-            self.add_constraint_function(&mut constraint_violation);
-
-            let residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
-            if residual_norm <= self.sim_params.outer_tolerance as f64 * init_residual_norm {
-                break;
-            }
-
-            if iter >= self.sim_params.max_outer_iterations - 1 {
-                println!("WARNING: Reached max outer iterations: {:?}", iter);
-            }
+        for iter in 0..self.sim_params.max_outer_iterations {
 
             let step_result = self.inner_step();
 
@@ -779,6 +757,7 @@ impl Solver {
                     result.max_inner_iterations =
                         step_result.iterations.max(result.max_inner_iterations);
                     result.iterations += 1;
+                    result.objective_value = step_result.objective_value;
                 }
                 Err(Error::SolveError(status, step_result)) => {
                     // In case of solve error, update our result and return. We don't increment
@@ -790,6 +769,8 @@ impl Solver {
                     result.max_inner_iterations =
                         step_result.iterations.max(result.max_inner_iterations);
                     result.iterations += 1;
+                    result.objective_value = step_result.objective_value;
+
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
@@ -798,6 +779,32 @@ impl Solver {
                     return Err(e);
                 }
             }
+
+            if self.step_count == 0 && iter == 0 {
+                // After the first step lets set ipopt into warm start mode
+                self.solver.set_option("warm_start_init_point", "yes");
+            }
+
+            // Since we are using linearized constraints, we compute the true constraint violation
+            // residual and iterate until it vanishes.
+            objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
+            self.compute_objective_gradient(&mut objective_residual);
+            self.add_constraint_jacobian_product(&mut objective_residual);
+
+            constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
+            self.add_constraint_function(&mut constraint_violation);
+
+            residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
+            println!("residual = {:?}", residual_norm);
+
+            if residual_norm <= self.sim_params.outer_tolerance as f64 {
+                break;
+            }
+        }
+
+        if result.iterations >= self.sim_params.max_outer_iterations {
+            eprintln!("WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
+                      result.iterations, residual_norm);
         }
 
         self.step_count += 1;
@@ -1285,6 +1292,10 @@ mod tests {
         compare_meshes(&solution, &expected);
     }
 
+    /*
+     * Tests with contact constraints
+     */
+
     fn compute_contact_constraint(sample_mesh: &PolyMesh, tetmesh: &TetMesh, radius: f64, tolerance: f64) -> Vec<f32> {
         use implicits::*;
         // There are currently two different ways to compute the implicit function representing the
@@ -1368,14 +1379,22 @@ mod tests {
 
         compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
 
-        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+        let params = SimParams {
+            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
+            max_outer_iterations: 100,
+            ..STRETCH_PARAMS
+        };
+
+        let mut solver = SolverBuilder::new(params)
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh.clone())
             .add_shell(trimesh.clone())
             .smooth_contact_params(SmoothContactParams { radius: 2.0, tolerance: 0.1, max_step: 2.0 })
             .build()
             .unwrap();
-        assert!(solver.step().is_ok());
+
+        let solve_result = solver.step().expect("Failed equilibrium solve.");
+        assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
 
         // Expect no push since the triangle is outside the surface.
         for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(tet_verts.iter()) {
@@ -1388,11 +1407,13 @@ mod tests {
         let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
         assert!(constraint.iter().all(|&x| x > 0.0f32));
 
+        // Simulate push
         let offset = 0.5;
         tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
         let pts = PointCloud::new(tri_verts.clone());
         assert!(solver.update_kinematic_vertices(&pts).is_ok());
-        assert!(solver.step().is_ok());
+        let solve_result = solver.step().expect("Failed push solve.");
+        assert!(solve_result.iterations < params.max_outer_iterations);
 
         // Verify constraint, should be positive after push
         let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
@@ -1400,7 +1421,7 @@ mod tests {
 
         // Expect only the top vertex to be pushed down.
         let offset_verts = vec![
-            [0.0, 0.604067, 0.0],
+            [0.0, 0.723103, 0.0],
             tet_verts[1],
             tet_verts[2],
             tet_verts[3],
@@ -1421,8 +1442,14 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
+        let params = SimParams {
+            outer_tolerance: 1e-5, // This is a fairly strict tolerance.
+            max_outer_iterations: 10,
+            ..DYNAMIC_PARAMS
+        };
+
         let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk")).unwrap();
-        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+        let mut solver = SolverBuilder::new(params)
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
@@ -1430,8 +1457,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let res = solver.step();
-        assert!(res.is_ok());
+        let res = solver.step().expect("Failed push solve.");
+        println!("res = {:?}", res);
+        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
     }
 
     /*

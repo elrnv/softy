@@ -73,28 +73,18 @@ impl From<Error> for SimResult {
             }
             Error::SolveError(
                 e,
-                SolveResult {
-                    max_inner_iterations,
-                    iterations,
-                    objective_value,
-                },
+                solve_result,
             ) => 
                 match e {
                     ipopt::SolveStatus::MaximumIterationsExceeded => {
                         SimResult::Warning(
                             format!(
-                                "Maximum iterations exceeded. \nIterations: {}\nObjective: {}\nMax Inner Iterations: {}",
-                                iterations, objective_value, max_inner_iterations,
+                                "Maximum iterations exceeded. \n{}", solve_result
                             )
                             .into())
                     }
                     e => {
-                        SimResult::Error(
-                            format!(
-                                "Solve failed: {:?}\nIterations: {}\nObjective: {}\nMax Inner Iterations: {}",
-                                e, iterations, objective_value, max_inner_iterations,
-                            )
-                            .into())
+                        SimResult::Error(format!( "Solve failed: {:?}\n{}", e, solve_result) .into())
                     }
                 },
             Error::MissingContactParams =>
@@ -114,13 +104,7 @@ impl From<Error> for SimResult {
 impl Into<SimResult> for Result<SolveResult, Error> {
     fn into(self) -> SimResult {
         match self {
-            Ok(SolveResult {
-                iterations,
-                objective_value,
-                ..
-            }) => SimResult::Success(
-                format!("Iterations: {}\nObjective: {}", iterations, objective_value).into(),
-            ),
+            Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
             Err(err) => err.into(),
         }
     }

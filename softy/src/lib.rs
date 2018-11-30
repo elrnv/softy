@@ -35,7 +35,9 @@ pub enum Error {
     SizeMismatch,
     AttribError(attrib::Error),
     InvertedReferenceElement,
-    SolveError(ipopt::SolveStatus, SolveResult), // Iterations and objective value
+    /// Error during main solve step. This reports iterations, objective value and max inner
+    /// iterations.
+    SolveError(ipopt::SolveStatus, SolveResult),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
     MissingContactParams,
@@ -72,6 +74,7 @@ impl From<Error> for SimResult {
             Error::SolveError(
                 e,
                 SolveResult {
+                    max_inner_iterations,
                     iterations,
                     objective_value,
                 },
@@ -80,16 +83,16 @@ impl From<Error> for SimResult {
                     ipopt::SolveStatus::MaximumIterationsExceeded => {
                         SimResult::Warning(
                             format!(
-                                "Maximum iterations exceeded. \nIterations: {}\nObjective: {}",
-                                iterations, objective_value
+                                "Maximum iterations exceeded. \nIterations: {}\nObjective: {}\nMax Inner Iterations: {}",
+                                iterations, objective_value, max_inner_iterations,
                             )
                             .into())
                     }
                     e => {
                         SimResult::Error(
                             format!(
-                                "Solve failed: {:?}\nIterations: {}\nObjective: {}",
-                                e, iterations, objective_value
+                                "Solve failed: {:?}\nIterations: {}\nObjective: {}\nMax Inner Iterations: {}",
+                                e, iterations, objective_value, max_inner_iterations,
                             )
                             .into())
                     }

@@ -27,10 +27,21 @@ use crate::TetMesh;
 use crate::PolyMesh;
 use crate::TriMesh;
 
+/// Result from one inner simulation step.
+#[derive(Debug)]
+pub struct InnerSolveResult {
+    /// Number of inner iterations in one step.
+    pub iterations: u32,
+    /// The value of the objective at the end of the step.
+    pub objective_value: f64,
+}
+
 /// Result from one simulation step.
 #[derive(Debug)]
 pub struct SolveResult {
-    /// Number of inner iterations of the step result.
+    /// Maximum number of inner iterations during one outer step.
+    pub max_inner_iterations: u32,
+    /// Number of outer iterations of the step.
     pub iterations: u32,
     /// The value of the objective at the end of the time step.
     pub objective_value: f64,
@@ -563,7 +574,7 @@ impl Solver {
 
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
-    pub fn solve_step(&mut self) -> Result<SolveResult, Error> {
+    pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
         // Solve non-linear problem
         let ipopt::SolveResult {
             // unpack ipopt result
@@ -575,7 +586,7 @@ impl Solver {
 
         let iterations = solver_data.problem.pop_iteration_count() as u32;
 
-        let result = SolveResult {
+        let result = InnerSolveResult {
             iterations,
             objective_value,
         };
@@ -584,7 +595,11 @@ impl Solver {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::SolveError(e, result)),
+            e => Err(Error::SolveError(e, SolveResult {
+                max_inner_iterations: iterations,
+                iterations,
+                objective_value
+            })),
         }
     }
 
@@ -617,8 +632,8 @@ impl Solver {
         }
     }
 
-    /// Compute and add the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
-    pub fn add_objective_gradient(&mut self, grad: &mut [f64]) {
+    /// Compute the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
+    pub fn compute_objective_gradient(&mut self, grad: &mut [f64]) {
         use ipopt::BasicProblem;
         let SolverDataMut {
             problem,
@@ -672,7 +687,7 @@ impl Solver {
     }
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self, iter: usize) {
+    fn commit_solution(&mut self) {
         let SolverDataMut {
             problem,
             primal_variables,
@@ -688,7 +703,6 @@ impl Solver {
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
             Self::advance(mesh, prev_pos.as_mut_slice(), displacement);
-            crate::geo::io::save_tetmesh(mesh, &std::path::PathBuf::from(format!("./out/mesh_{}.vtk", iter))).unwrap();
         }
 
         // Since we advected the mesh, we need to invalidate its neighbour data so it's
@@ -707,29 +721,30 @@ impl Solver {
     pub fn step(&mut self) -> Result<SolveResult, Error> {
 
         let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
-        self.add_objective_gradient(&mut objective_residual);
+        self.compute_objective_gradient(&mut objective_residual);
         let objective_residual_norm = Self::inf_norm(&objective_residual);
-        println!("obj residual = {:?}", objective_residual_norm);
 
         let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
         self.add_constraint_function(&mut constraint_violation);
         let constraint_violation_norm = Self::inf_norm(&constraint_violation);
-        println!("constraint violation norm = {:?}", constraint_violation_norm);
 
         let init_residual_norm = objective_residual_norm.max(constraint_violation_norm);
 
-        println!("initial residual = {:?}", init_residual_norm);
+        let step_result = self.inner_step()?;
 
-        let mut step_result = self.solve_step();
-
-        println!("done step: {:?}", step_result);
+        // Initialize the result of this function.
+        let mut result = SolveResult {
+            max_inner_iterations: step_result.iterations,
+            iterations: 1,
+            objective_value: step_result.objective_value,
+        };
 
         if self.step_count == 0 {
             // After the first step lets set ipopt into warm start mode
             self.solver.set_option("warm_start_init_point", "yes");
         }
 
-        self.commit_solution(1);
+        self.commit_solution();
 
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations-1 {
@@ -737,17 +752,13 @@ impl Solver {
             // Since we are using linearized constraints, we compute the true constraint violation
             // residual and iterate until it vanishes.
             objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
+            self.compute_objective_gradient(&mut objective_residual);
             self.add_constraint_jacobian_product(&mut objective_residual);
-            println!("jac objective_residual = {:?}", Self::inf_norm(&objective_residual));
-            self.add_objective_gradient(&mut objective_residual);
-            println!("jac + grad objective_residual = {:?}", Self::inf_norm(&objective_residual));
 
             constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
             self.add_constraint_function(&mut constraint_violation);
-            println!("constraint violation = {:?}", Self::inf_norm(&constraint_violation));
 
             let residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
-            println!("relative residual = {:?}", residual_norm / init_residual_norm);
             if residual_norm <= self.sim_params.outer_tolerance as f64 * init_residual_norm {
                 break;
             }
@@ -756,30 +767,53 @@ impl Solver {
                 println!("WARNING: Reached max outer iterations: {:?}", iter);
             }
 
-            step_result = self.solve_step();
+            let step_result = self.inner_step();
 
-            self.commit_solution(iter as usize+2);
-        };
+            // Commit the solution whether or not there is an error. In case of error we will be
+            // able to investigate the result.
+            self.commit_solution();
+
+            // Update output result with new data.
+            match step_result {
+                Ok(step_result) => {
+                    result.max_inner_iterations =
+                        step_result.iterations.max(result.max_inner_iterations);
+                    result.iterations += 1;
+                }
+                Err(Error::SolveError(status, step_result)) => {
+                    // In case of solve error, update our result and return. We don't increment
+                    // step count so we dont trigger warm start using these multipliers.
+
+                    // Reset warm start after we encounter an error
+                    self.solver.set_option("warm_start_init_point", "no");
+
+                    result.max_inner_iterations =
+                        step_result.iterations.max(result.max_inner_iterations);
+                    result.iterations += 1;
+                    return Err(Error::SolveError(status, result));
+                }
+                Err(e) => {
+                    // Unknown error: Reset warm start and return.
+                    self.solver.set_option("warm_start_init_point", "no");
+                    return Err(e);
+                }
+            }
+        }
 
         self.step_count += 1;
 
         // On success, update the mesh with new positions and useful metrics.
-        if let Ok(_) = step_result {
-            let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
+        let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
-            {
-                let mut mesh = self.borrow_mut_mesh();
+        let mut mesh = self.borrow_mut_mesh();
 
-                // Write back elastic strain energy for visualization.
-                Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
+        // Write back elastic strain energy for visualization.
+        Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
 
-                // Write back elastic forces on each node.
-                Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
-            }
+        // Write back elastic forces on each node.
+        Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
 
-        }
-
-        step_result
+        Ok(result)
     }
 }
 
@@ -1230,7 +1264,7 @@ mod tests {
 
         let params = SimParams {
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-            max_outer_iterations: 10,
+            max_outer_iterations: 2,
             ..STRETCH_PARAMS
         };
 
@@ -1240,7 +1274,8 @@ mod tests {
             .add_solid(mesh)
             .build()
             .unwrap();
-        assert!(solver.step().is_ok());
+        let solve_result = solver.step().expect("Solve failed");
+        assert_eq!(solve_result.iterations, 1);
 
         // This test should produce the exact same mesh as the original
         // box_twist_volume_constraint_test
@@ -1252,9 +1287,13 @@ mod tests {
 
     fn compute_contact_constraint(sample_mesh: &PolyMesh, tetmesh: &TetMesh, radius: f64, tolerance: f64) -> Vec<f32> {
         use implicits::*;
+        // There are currently two different ways to compute the implicit function representing the
+        // contact constraint. Since this is a test we do it both ways and make sure the result is
+        // the same. This douples as a test for the implicits crate.
+
         let mut trimesh_copy = sample_mesh.clone();
         let surface_trimesh = tetmesh.surface_trimesh();
-        let mut surface_polymesh = PolyMesh::from(surface_trimesh);
+        let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
         compute_potential(&mut trimesh_copy, &mut surface_polymesh,
                           implicits::Params {
                               kernel: KernelType::Approximate {
@@ -1268,19 +1307,30 @@ mod tests {
         
         let pot_attrib = trimesh_copy.attrib_clone_into_vec::<f32, VertexIndex>("potential")
             .expect("Potential attribute doesn't exist");
-        //let mut builder = ImplicitSurfaceBuilder::new();
-        //builder.triangles(reinterpret::reinterpret_slice(surface_trimesh.faces()).to_vec())
-        //    .vertices(surface_trimesh.vertex_positions().to_vec())
-        //    .kernel(KernelType::Approximate { tolerance, radius })
-        //    .sample_type(SampleType::Face)
-        //    .background_potential(BackgroundPotentialType::None);
 
-        //let surf = builder.build().expect("Failed to build implicit surface.");
-        //
-        //let mut pot_attrib = vec![0.0f64; sample_mesh.num_vertices()];
-        //surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib);
 
-        println!("potential = {:?}", pot_attrib);
+        {
+            let mut builder = ImplicitSurfaceBuilder::new();
+            builder.triangles(reinterpret::reinterpret_slice(surface_trimesh.faces()).to_vec())
+                .vertices(surface_trimesh.vertex_positions().to_vec())
+                .kernel(KernelType::Approximate { tolerance, radius })
+                .sample_type(SampleType::Face)
+                .background_potential(BackgroundPotentialType::None);
+
+            let surf = builder.build().expect("Failed to build implicit surface.");
+            
+            let mut pot_attrib64 = vec![0.0f64; sample_mesh.num_vertices()];
+            surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib64)
+                .expect("Failed to compute contact constraint potential.");
+
+            // Make sure the two potentials are identical.
+            println!("potential = {:?}", pot_attrib);
+            println!("potential64 = {:?}", pot_attrib64);
+            for (&x,&y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
+                assert_relative_eq!(x, y as f32, max_relative = 1e-5);
+            }
+        }
+
         pot_attrib.into_iter().map(|x| x as f32).collect()
     }
 

@@ -565,13 +565,13 @@ impl Solver {
 
     /// Update the state of the system, which includes new positions and velocities stored on the
     /// mesh, as well as previous positions stored in `prev_pos`.
-    fn advance(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp: &[Vector3<f64>]) {
+    fn advance(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp_iter: impl Iterator<Item = Vector3<f64>>) {
         // Write back the velocity for the next iteration.
         for ((prev_dx, prev_x), &dx) in mesh
             .attrib_iter_mut::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
             .unwrap()
             .zip(prev_pos.iter_mut())
-            .zip(disp.iter())
+            .zip(disp_iter)
         {
             *prev_dx = dx.into();
             *prev_x += dx;
@@ -712,7 +712,34 @@ impl Solver {
             let mesh = &mut problem.tetmesh.borrow_mut();
             let mut prev_pos = problem.prev_pos.borrow_mut();
 
-            Self::advance(mesh, prev_pos.as_mut_slice(), displacement);
+            Self::advance(mesh, prev_pos.as_mut_slice(), displacement.iter().cloned());
+        }
+
+        // Since we advected the mesh, we need to invalidate its neighbour data so it's
+        // recomputed at the next time step (if applicable).
+        if let Some(ref mut scc) = problem.smooth_contact_constraint {
+            scc.invalidate_neighbour_data();
+            scc.update_surface();
+        }
+    }
+
+    /// Revert previously committed solution. We just subtract step here.
+    fn revert_solution(&mut self) {
+        let SolverDataMut {
+            problem,
+            primal_variables,
+            ..
+        } = self.solver.solver_data_mut();
+
+        // Reinterpret solver variables as positions in 3D space.
+        let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
+
+        // Update the mesh itself.
+        {
+            let mesh = &mut problem.tetmesh.borrow_mut();
+            let mut prev_pos = problem.prev_pos.borrow_mut();
+
+            Self::advance(mesh, prev_pos.as_mut_slice(), displacement.iter().map(|&x| -x));
         }
 
         // Since we advected the mesh, we need to invalidate its neighbour data so it's
@@ -729,6 +756,8 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        println!("params = {:?}", self.sim_params);
+        println!("material = {:?}", self.solid_material);
 
         // Initialize the result of this function.
         let mut result = SolveResult {
@@ -742,6 +771,19 @@ impl Solver {
         let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
         let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
 
+        // Debug info
+        {
+            objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
+            self.compute_objective_gradient(&mut objective_residual);
+            println!("init obj grad residual = {:?}", Self::inf_norm(&objective_residual));
+            self.add_constraint_jacobian_product(&mut objective_residual);
+            println!("init grad residual = {:?}", Self::inf_norm(&objective_residual));
+
+            constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
+            self.add_constraint_function(&mut constraint_violation);
+            println!("init constraint residual = {:?}", Self::inf_norm(&constraint_violation));
+        }
+
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations {
 
@@ -750,6 +792,11 @@ impl Solver {
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
             self.commit_solution();
+
+            //{
+            //    let mesh = self.borrow_mesh();
+            //    crate::geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter+1)));
+            //}
 
             // Update output result with new data.
             match step_result {
@@ -789,10 +836,13 @@ impl Solver {
             // residual and iterate until it vanishes.
             objective_residual.iter_mut().for_each(|x| *x = 0.0); // Reset the objective residual.
             self.compute_objective_gradient(&mut objective_residual);
+            println!("obj grad residual = {:?}", Self::inf_norm(&objective_residual));
             self.add_constraint_jacobian_product(&mut objective_residual);
+            println!("grad residual = {:?}", Self::inf_norm(&objective_residual));
 
             constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
             self.add_constraint_function(&mut constraint_violation);
+            println!("constraint residual = {:?}", Self::inf_norm(&constraint_violation));
 
             residual_norm = Self::inf_norm(&objective_residual).max(Self::inf_norm(&constraint_violation));
             println!("residual = {:?}", residual_norm);
@@ -1438,13 +1488,15 @@ mod tests {
     fn ball_tri_push_test() {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
         let material = Material {
-            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.4),
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             ..SOLID_MATERIAL
         };
 
         let params = SimParams {
+            max_iterations: 100,
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-            max_outer_iterations: 10,
+            max_outer_iterations: 1,
+            print_level: 5,
             ..DYNAMIC_PARAMS
         };
 
@@ -1453,7 +1505,7 @@ mod tests {
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
-            .smooth_contact_params(SmoothContactParams { radius: 1.0, tolerance: 1e-5, max_step: 1.5 })
+            .smooth_contact_params(SmoothContactParams { radius: 2.5, tolerance: 0.07, max_step: 1.5 })
             .build()
             .unwrap();
 

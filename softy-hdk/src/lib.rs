@@ -27,6 +27,8 @@ pub struct SimParams {
     pub gravity: f32,
     pub tolerance: f32,
     pub max_iterations: u32,
+    pub outer_tolerance: f32,
+    pub max_outer_iterations: u32,
     pub volume_constraint: bool,
     pub contact_radius: f32,
     pub smoothness_tolerance: f32,

@@ -138,18 +138,35 @@ static const char *theDsFile = R"THEDSFILE(
         grouptag { "group_type" "simple" }
 
         parm {
-            name "tolerance"
-            label "Error Tolerance"
-            type float
+            name "innertolerance"
+            cppname "InnerTolerance"
+            label "Inner Error Tolerance"
+            type log
             default { "1e-9" }
             range { 0.0 1.0 }
         }
         parm {
-            name "maxiterations"
-            cppname "MaxIterations"
-            label "Max Iterations"
+            name "maxinneriterations"
+            cppname "MaxInnerIterations"
+            label "Max Inner Iterations"
             type integer
-            default { "800" }
+            default { "500" }
+            range { 0 1000 }
+        }
+        parm {
+            name "outertolerance"
+            cppname "OuterTolerance"
+            label "Outer Error Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+        }
+        parm {
+            name "maxouteriterations"
+            cppname "MaxOuterIterations"
+            label "Max Outer Iterations"
+            type integer
+            default { "10" }
             range { 0 1000 }
         }
     }
@@ -321,8 +338,10 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.material.damping = sopparms.getDamping();
     sim_params.material.density = sopparms.getDensity();
     sim_params.gravity = sopparms.getGravity();
-    sim_params.tolerance = sopparms.getTolerance();
-    sim_params.max_iterations = sopparms.getMaxIterations();
+    sim_params.tolerance = sopparms.getInnerTolerance();
+    sim_params.max_iterations = sopparms.getMaxInnerIterations();
+    sim_params.outer_tolerance = sopparms.getOuterTolerance();
+    sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
     sim_params.contact_radius = sopparms.getContactRadius();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();

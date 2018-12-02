@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use super::samples::Sample;
 
 /// Cache neighbouring sample points for each query point.
@@ -5,10 +6,8 @@ use super::samples::Sample;
 /// This structure is meant to live inside a `RefCell`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NeighbourCache {
-    /// For each query point with a non-trivial neighbourhood of sample points, record the
-    /// neighbours indices in this vector. Along with the vector of neighbours, store the index of
-    /// the original query point, because this vector is a sparse subset of all the query points.
-    points: Vec<(usize, Vec<usize>)>,
+    /// For each query point, record the neighbours indices in this vector.
+    points: Vec<Vec<usize>>,
 
     /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
     /// we can reuse the already allocated memory.
@@ -26,7 +25,7 @@ impl NeighbourCache {
     /// Get the neighbour points for each query point. This call just returns the currently cached
     /// points and doesn't trigger recomputation. Sometimes there is not enough information
     /// available for recomputation, so the user is responsible for ensuring points are upto date.
-    pub(crate) fn cached_neighbour_points(&self) -> &[(usize, Vec<usize>)] {
+    pub(crate) fn cached_neighbour_points(&self) -> &[Vec<usize>] {
         &self.points
     }
 
@@ -41,7 +40,7 @@ impl NeighbourCache {
         self.valid = false;
     }
 
-    /// Compute neighbour cache if it hasn't been computed yet it is invalid. Return the neighbours
+    /// Compute neighbour cache if it hasn't been computed or it is invalid. Return the neighbours
     /// of the given query points. Note that the cache must be invalidated explicitly, there is no
     /// real way to automatically cache results because both: query points and sample points may
     /// change slightly, but we expect the neighbourhood information to remain the same.
@@ -49,33 +48,19 @@ impl NeighbourCache {
         &mut self,
         query_points: &[[f64; 3]],
         neigh: N,
-    ) -> &[(usize, Vec<usize>)]
+    ) -> &[Vec<usize>]
     where
         I: Iterator<Item = Sample<f64>> + 'a,
         N: Fn([f64; 3]) -> I + Sync + Send,
     {
         if !self.is_valid() {
-            self.points.clear();
-            self.points.reserve(query_points.len());
+            // Allocate additional neighbourhoods to match the size of query_points.
+            self.points.resize(query_points.len(), Vec::new());
 
-            for (qi, q) in query_points.iter().enumerate() {
-                let neighbours_iter = neigh(*q);
-                // Below we try to reuse the allocated memory by previously cached members for
-                // points.
-
-                // Cache points
-                for (iter_count, ni) in neighbours_iter.map(|op| op.index).enumerate() {
-                    if iter_count == 0 {
-                        // Initialize entry if there are any neighbours.
-                        self.points.push((qi, Vec::new()));
-                    }
-
-                    debug_assert!(!self.points.is_empty());
-                    let last_mut = self.points.last_mut().unwrap();
-
-                    last_mut.1.push(ni as usize);
-                }
-            }
+            query_points.par_iter().zip(self.points.par_iter_mut()).for_each(|(q, pts)| {
+                pts.clear();
+                pts.extend(neigh(*q).map(|op| op.index));
+            });
 
             self.valid = true;
         }

@@ -5,7 +5,7 @@ use crate::geo::Real;
 use spade::{rtree::RTree, BoundingRect, SpadeNum, SpatialObject};
 
 /// Implement the trait required for `Sample` to live inside an `RTree`.
-impl<T: SpadeNum + Real> SpatialObject for Sample<T> {
+impl<T: SpadeNum + Real + Send + Sync> SpatialObject for Sample<T> {
     type Point = [T; 3];
 
     fn mbr(&self) -> BoundingRect<Self::Point> {
@@ -43,7 +43,7 @@ pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
 }
 
 /// Build an rtree from a set of samples.
-pub fn build_rtree_from_samples<T: SpadeNum + Real>(samples: &Samples<T>) -> RTree<Sample<T>> {
+pub fn build_rtree_from_samples<T: SpadeNum + Real + Send + Sync>(samples: &Samples<T>) -> RTree<Sample<T>> {
     let mut rtree = RTree::new();
     for pt in samples.iter() {
         rtree.insert(pt);

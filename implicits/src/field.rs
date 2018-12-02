@@ -279,7 +279,7 @@ impl ImplicitSurface {
         &'a self,
         query_points: &[[f64; 3]],
         neigh: N,
-    ) -> Ref<'a, [(usize, Vec<usize>)]>
+    ) -> Ref<'a, [Vec<usize>]>
     where
         I: Iterator<Item = Sample<f64>> + 'a,
         N: Fn([f64; 3]) -> I + Sync + Send,
@@ -390,7 +390,7 @@ impl ImplicitSurface {
         radius: f64,
         kernel: K,
         neigh: N,
-        out_potential: &mut [f64],
+        out_potential: &'a mut [f64],
     ) -> Result<(), super::Error>
     where
         I: Iterator<Item = Sample<f64>> + 'a,
@@ -408,14 +408,12 @@ impl ImplicitSurface {
         } = *self;
 
         zip!(
-            neigh_points
-                .par_iter()
-                .map(|(qi, neigh)| (query_points[*qi], neigh)),
+            query_points.par_iter(),
+            neigh_points.par_iter(),
             out_potential.par_iter_mut()
-        )
-        .for_each(|((q, neighbours), potential)| {
+        ).for_each(move |(q, neighbours, potential)| {
             Self::compute_local_potential_at(
-                Vector3(q),
+                Vector3(*q),
                 SamplesView::new(neighbours, samples),
                 radius,
                 kernel,
@@ -481,7 +479,7 @@ impl ImplicitSurface {
         cache
             .cached_neighbour_points()
             .iter()
-            .map(|(_, pts)| pts.len())
+            .map(|pts| pts.len())
             .sum::<usize>()
             * 3
             * num_pts_per_sample
@@ -553,7 +551,7 @@ impl ImplicitSurface {
                     cache.cached_neighbour_points().to_vec()
                 };
                 Box::new(cached_pts.into_iter().enumerate().flat_map(
-                        move |(row, (_, nbr_points))| {
+                        move |(row, nbr_points)| {
                             nbr_points
                                 .into_iter()
                                 .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
@@ -564,7 +562,7 @@ impl ImplicitSurface {
                 let cached: Vec<_> = {
                     let cache = self.neighbour_cache.borrow();
                     cache.cached_neighbour_points().iter().enumerate().flat_map(
-                        |(row, &(_, ref nbr_points))| {
+                        |(row, nbr_points)| {
                             nbr_points.iter().flat_map(move |&pidx| {
                                 self.surface_topo[pidx].iter().flat_map(
                                     move |col| (0..3).map(move |i| (row, 3 * col + i)))
@@ -585,7 +583,7 @@ impl ImplicitSurface {
         match self.sample_type {
             SampleType::Vertex => {
                 let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
-                    move |(row, (_, nbr_points))| {
+                    move |(row, nbr_points)| {
                         nbr_points
                             .iter()
                             .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
@@ -600,7 +598,7 @@ impl ImplicitSurface {
             }
             SampleType::Face => {
                 let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
-                    move |(row, (_, nbr_points))| {
+                    move |(row, nbr_points)| {
                         nbr_points.iter().flat_map(move |&pidx| {
                             self.surface_topo[pidx]
                                 .iter()
@@ -727,13 +725,13 @@ impl ImplicitSurface {
         match sample_type {
             SampleType::Vertex => {
                 // For each row (query point)
-                let vtx_jac = neigh_points
-                    .iter()
-                    .map(|(qi, neigh)| (Vector3(query_points[*qi]), neigh))
-                    .flat_map(move |(q, nbr_points)| {
+                let vtx_jac = zip!(
+                        query_points.iter(),
+                        neigh_points.iter()
+                    ).flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::vertex_jacobian_at(
-                            q,
+                            Vector3(*q),
                             view,
                             radius,
                             kernel,
@@ -751,14 +749,14 @@ impl ImplicitSurface {
                     });
             }
             SampleType::Face => {
-                let face_jac = neigh_points
-                    .iter()
-                    .map(|(qi, neigh)| (Vector3(query_points[*qi]), neigh))
-                    .flat_map(move |(q, nbr_points)| {
+                let face_jac = zip!(
+                        query_points.iter(),
+                        neigh_points.iter()
+                    ).flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
 
                         Self::face_jacobian_at(
-                            q,
+                            Vector3(*q),
                             view,
                             radius,
                             kernel,
@@ -1007,13 +1005,6 @@ impl ImplicitSurface {
         let query_points = mesh.vertex_positions();
         let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
 
-        // Construct a vector of neighbours for all query points (not just the ones with
-        // neighbours).
-        let mut neigh_all_points = vec![Vec::new(); query_points.len()];
-        for (qi, neigh) in neigh_points.iter().cloned() {
-            neigh_all_points[qi] = neigh;
-        }
-
         // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
         let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
@@ -1030,7 +1021,7 @@ impl ImplicitSurface {
             potential_chunk,
         ) in zip!(
             query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            neigh_all_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),

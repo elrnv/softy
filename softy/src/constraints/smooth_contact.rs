@@ -25,6 +25,14 @@ impl LinearSmoothContactConstraint {
         self.0.update_max_step(step);
     }
 
+    ///// This function computes the constraint value for the current configuration.
+    //pub fn current_constraint_value(&self, values: &mut [f64]) {
+    //    debug_assert_eq!(values.len(), self.constraint_size());
+    //    let collider = self.0.collision_object.borrow();
+    //    let query_points = collider.vertex_positions();
+    //    self.0.implicit_surface.borrow().potential(query_points, values).unwrap();
+    //}
+
     /// Compute the constraint jacobian at the current configuration.
     pub fn current_constraint_jacobian_values(&self, values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
@@ -41,8 +49,8 @@ impl LinearSmoothContactConstraint {
         self.0.update_surface_with(x);
     }
 
-    pub fn invalidate_neighbour_data(&mut self) {
-        self.0.invalidate_neighbour_data();
+    pub fn update_cache(&mut self, query_points: &[[f64;3]]) {
+        self.0.update_cache(query_points);
     }
 
     #[inline]
@@ -222,8 +230,10 @@ impl SmoothContactConstraint {
             .update(points_iter);
     }
 
-    pub fn invalidate_neighbour_data(&mut self) {
-        self.implicit_surface.borrow_mut().invalidate_neighbour_cache();
+    pub fn update_cache(&mut self, query_points: &[[f64;3]]) {
+        let surf = self.implicit_surface.borrow_mut();
+        surf.invalidate_neighbour_cache();
+        surf.cache_neighbours(query_points);
     }
 }
 

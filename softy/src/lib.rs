@@ -7,7 +7,6 @@ extern crate rayon;
 extern crate reinterpret;
 extern crate implicits;
 
-#[cfg(test)]
 #[macro_use]
 extern crate approx;
 

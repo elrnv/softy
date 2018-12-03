@@ -115,20 +115,20 @@ impl ipopt::BasicProblem for NonLinearProblem {
         self.tetmesh.borrow().num_vertices() * 3
     }
 
-    fn bounds(&self) -> (Vec<Number>, Vec<Number>) {
+    fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
         let tetmesh = self.tetmesh.borrow();
-        let n = tetmesh.num_vertices();
-        let mut lo = Vec::with_capacity(n);
-        let mut hi = Vec::with_capacity(n);
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
         let bound = self.displacement_bound.unwrap_or(2e19);
-        lo.resize(n, [-bound; 3]);
-        hi.resize(n, [bound; 3]);
+        x_l.iter_mut().for_each(|x| *x = -bound);
+        x_u.iter_mut().for_each(|x| *x = bound);
+        //println!("SETTING BOUNDS!! {:?}", bound);
 
         if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB) {
             // Find and set fixed vertices.
-            lo.iter_mut()
-                .zip(hi.iter_mut())
+            let pos_lo: &mut [[Number; 3]] = reinterpret_mut_slice(x_l);
+            let pos_hi: &mut [[Number; 3]] = reinterpret_mut_slice(x_u);
+            pos_lo.iter_mut()
+                .zip(pos_hi.iter_mut())
                 .zip(fixed_verts.iter())
                 .filter(|&(_, &fixed)| fixed != 0)
                 .for_each(|((l, u), _)| {
@@ -136,7 +136,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     *u = [0.0; 3];
                 });
         }
-        (reinterpret_vec(lo), reinterpret_vec(hi))
+        true
     }
 
     fn initial_point(&self) -> Vec<Number> {
@@ -218,21 +218,23 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_bounds(&self) -> (Vec<Number>, Vec<Number>) {
-        let mut lower = Vec::new();
-        let mut upper = Vec::new();
+    fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
+        let mut i = 0;
         if let Some(ref vc) = self.volume_constraint {
             let mut bounds = vc.constraint_bounds();
-            lower.extend_from_slice(&mut bounds.0);
-            upper.extend_from_slice(&mut bounds.1);
+            let n = vc.constraint_size();
+            g_l[i..i+n].swap_with_slice(&mut bounds.0);
+            g_u[i..i+n].swap_with_slice(&mut bounds.1);
+            i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let mut bounds = scc.constraint_bounds();
-            lower.extend_from_slice(&mut bounds.0);
-            upper.extend_from_slice(&mut bounds.1);
+            let n = scc.constraint_size();
+            g_l[i..i+n].swap_with_slice(&mut bounds.0);
+            g_u[i..i+n].swap_with_slice(&mut bounds.1);
         }
-        (lower, upper)
+        true
     }
 
     fn constraint_jac_indices(&mut self, rows: &mut [Index], cols: &mut [Index]) -> bool {

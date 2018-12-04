@@ -30,7 +30,7 @@ pub trait TetEnergy<T: Scalar> {
 /// objective function for an optimization algorithm.
 pub trait Energy<T: Scalar> {
     /// Compute the energy of the current configuration.
-    fn energy(&mut self, x: &[T]) -> T;
+    fn energy(&self, x: &[T]) -> T;
 }
 
 /// The energy gradient is required for optimization methods that require first order derivative

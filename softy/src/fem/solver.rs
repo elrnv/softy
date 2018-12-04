@@ -10,7 +10,7 @@ use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{VertexPositions, tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
-use ipopt::{self, Ipopt, SolverDataMut};
+use ipopt::{self, Ipopt, SolverDataMut, SolverDataRef};
 use reinterpret::*;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -18,6 +18,7 @@ use std::{
 };
 
 use crate::mask_iter::*;
+use crate::inf_norm;
 
 use super::NonLinearProblem;
 use super::SimParams;
@@ -256,9 +257,9 @@ impl SolverBuilder {
             prev_pos,
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
-            energy_model: energy_model_builder.build(),
+            energy_model: RefCell::new(energy_model_builder.build()),
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
-            momentum_potential,
+            momentum_potential: momentum_potential.map(|x| RefCell::new(x)),
             volume_constraint,
             smooth_contact_constraint,
             displacement_bound,
@@ -615,8 +616,43 @@ impl Solver {
         }
     }
 
+    pub fn compute_model_lagrangian(&mut self) -> f64 {
+        let SolverDataRef {
+            primal_variables,
+            constraint_multipliers,
+            ..
+        } = self.solver.solver_data_ref();
+        self.compute_lagrangian(primal_variables, constraint_multipliers)
+    }
+
+    /// Compute the lagrangian of the function.
+    pub fn compute_merit_function(&self, dx: &[f64], multipliers: &[f64]) -> f64 {
+        use ipopt::ConstrainedProblem;
+
+        let obj = self.compute_objective();
+
+        let SolverDataRef {
+            problem,
+            primal_variables,
+            constraint_multipliers,
+            ..
+        } = self.solver.solver_data_ref();
+
+        assert_eq!(multipliers.len(), constraint_multipliers.len());
+        assert_eq!(dx.len(), primal_variables.len());
+        let mut constraint = vec![0.0; multipliers.len()];
+        assert!(problem.constraint(dx, &mut constraint));
+
+        let mut lagrangian = obj;
+        for (c, &lambda) in constraint.into_iter().zip(multipliers.iter()) {
+            lagrangian += c*lambda;
+        }
+
+        lagrangian
+    }
+
     /// Compute and add the value of the constraint function minus constraint bounds.
-    pub fn add_constraint_function(&mut self, constraint: &mut [f64]) {
+    pub fn add_constraint_violation(&mut self, constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
         let SolverDataMut {
             problem,
@@ -647,13 +683,13 @@ impl Solver {
     }
 
     /// Compute the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
-    pub fn compute_objective(&mut self) -> f64 {
+    pub fn compute_objective(&self) -> f64 {
         use ipopt::BasicProblem;
-        let SolverDataMut {
+        let SolverDataRef {
             problem,
             primal_variables,
             ..
-        } = self.solver.solver_data_mut();
+        } = self.solver.solver_data_ref();
 
         let mut obj = 0.0;
         problem.objective(&vec![0.0; primal_variables.len()], &mut obj);
@@ -714,6 +750,14 @@ impl Solver {
         }
     }
 
+    fn dx(&self) -> &[f64] {
+        self.solver.solver_data_ref().primal_variables
+    }
+
+    fn lambda(&self) -> &[f64] {
+        self.solver.solver_data_ref().constraint_multipliers
+    }
+
     /// Update the `mesh` and `prev_pos` with the current solution.
     fn commit_solution(&mut self) {
         let SolverDataMut {
@@ -764,11 +808,6 @@ impl Solver {
         }
     }
 
-    fn inf_norm(vec: &[f64]) -> f64 {
-        vec.iter().map(|x| x.abs()).max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs")).unwrap_or(0.0)
-    }
-
-
     fn output_meshes(&self, iter: u32) {
         let mesh = self.borrow_mesh();
         crate::geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter+1))).unwrap();
@@ -790,8 +829,6 @@ impl Solver {
             objective_value: 0.0,
         };
 
-        let mut residual_norm = 0.0;
-
         let mut objective_residual = vec![0.0; self.solver.solver_data_ref().primal_variables.len()];
         let mut constraint_violation = vec![0.0; self.solver.solver_data_ref().constraint_multipliers.len()];
 
@@ -800,12 +837,16 @@ impl Solver {
         self.add_constraint_jacobian_product(&mut objective_residual);
 
         constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
-        self.add_constraint_function(&mut constraint_violation);
-        let mut constraint_violation_norm = Self::inf_norm(&constraint_violation);
-        residual_norm = Self::inf_norm(&objective_residual).max(constraint_violation_norm);
+        self.add_constraint_violation(&mut constraint_violation);
+        let mut constraint_violation_norm = inf_norm(&constraint_violation);
+        let mut residual_norm = inf_norm(&objective_residual).max(constraint_violation_norm);
 
-        let mut prev_r = residual_norm; //constraint_violation_norm;
-        println!("init residual = {:?}", prev_r);
+        let zero_dx = vec![0.0; self.dx().len()];
+        let zero_lambda = vec![0.0; self.lambda().len()];
+
+        let mut prev_merit_value = self.compute_lagrangian(&zero_dx, &zero_lambda);
+        let mut prev_merit_model = prev_merit_value;
+        println!("init merit = {:?}", prev_merit_value);
 
         self.output_meshes(0);
 
@@ -813,6 +854,8 @@ impl Solver {
         for iter in 0..self.sim_params.max_outer_iterations {
 
             let step_result = self.inner_step();
+
+            let model_lagrangian = self.compute_model_lagrangian();
 
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
@@ -861,10 +904,10 @@ impl Solver {
             self.add_constraint_jacobian_product(&mut objective_residual);
 
             constraint_violation.iter_mut().for_each(|x| *x = 0.0); // Reset the constraint residual.
-            self.add_constraint_function(&mut constraint_violation);
-            constraint_violation_norm = Self::inf_norm(&constraint_violation);
+            self.add_constraint_violation(&mut constraint_violation);
+            constraint_violation_norm = inf_norm(&constraint_violation);
 
-            residual_norm = Self::inf_norm(&objective_residual).max(constraint_violation_norm);
+            residual_norm = inf_norm(&objective_residual).max(constraint_violation_norm);
             println!("residual = {:?}, cv = {:?}", residual_norm, constraint_violation_norm);
 
             if residual_norm <= self.sim_params.outer_tolerance as f64 {
@@ -878,6 +921,7 @@ impl Solver {
             // feasible domain).
             let mut reduced = false;
             {
+                let merit_value = self.compute_lagrangian(&zero_dx, self.lambda());
                 let max_step = self.max_step;
                 let SolverDataMut {
                     problem,
@@ -887,16 +931,16 @@ impl Solver {
 
                 if max_step > 0.0 {
                     if let Some(disp) = problem.displacement_bound {
-                        let f_2 = residual_norm; //constraint_violation_norm;
-                        let f_1 = prev_r;
-
-                        let reduction = (f_1 - f_2) / f_1;
+                        let merit_model = model_lagrangian;
+                        println!("f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
+                                 prev_merit_value, merit_value, prev_merit_model, merit_model);
+                        let reduction = (prev_merit_value - merit_value) / (prev_merit_model - merit_model);
                         println!("reduction = {:?}", reduction);
 
-                        let step_size = Self::inf_norm(primal_variables);
+                        let step_size = inf_norm(primal_variables);
 
                         if reduction < 0.25 {
-                            if step_size < 1e-5 {
+                            if step_size < 1e-5*max_step {
                                 break; // Reducing the step wont help at this point
                             }
                             // The constraint violation is not decreasing, roll back and reduce the step size.
@@ -916,7 +960,8 @@ impl Solver {
                         }
                         if reduction > 0.05 {
                             // We are in good shape, continue.
-                            prev_r = f_2;
+                            prev_merit_value = merit_value;
+                            prev_merit_model = merit_model;
                         } else {
                             // Otherwise constraint violation is not properly decreasing
                             Self::revert_solution(problem, primal_variables);

@@ -50,7 +50,7 @@ impl Constraint<f64> for VolumeConstraint {
         (vec![6.0 * self.rest_volume], vec![6.0 * self.rest_volume])
     }
 
-    fn constraint(&mut self, x: &[f64], value: &mut [f64]) {
+    fn constraint(&self, x: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         let disp: &[Vector3<f64>] = reinterpret_slice(x);
         let mut total_volume = 0.0;

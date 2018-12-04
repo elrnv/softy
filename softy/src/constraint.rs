@@ -12,7 +12,7 @@ pub trait Constraint<T: Scalar> {
     /// Unequal lower and upper bounds correspond to inequality constraints.
     fn constraint_bounds(&self) -> (Vec<T>, Vec<T>);
     /// Compute the constraint function of the current configuration.
-    fn constraint(&mut self, x: &[T], value: &mut [T]);
+    fn constraint(&self, x: &[T], value: &mut [T]);
 }
 
 /// The constraint Jacobian. Required for optimizers that use first order derivative information.

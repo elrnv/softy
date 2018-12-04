@@ -31,7 +31,7 @@ impl Gravity {
 /// Gravity is a position based energy.
 impl Energy<f64> for Gravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&mut self, x: &[f64]) -> f64 {
+    fn energy(&self, x: &[f64]) -> f64 {
         let pos: &[Vector3<f64>] = reinterpret_slice(x);
         let tetmesh = self.tetmesh.borrow();
         let tet_iter = tetmesh

@@ -324,7 +324,7 @@ impl ElasticTetMeshEnergy {
 /// Define energy for ElasticTetMeshEnergy materials.
 impl Energy<f64> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy(&mut self, dx: &[f64]) -> f64 {
+    fn energy(&self, dx: &[f64]) -> f64 {
         let ElasticTetMeshEnergy {
             ref tetmesh,
             material:

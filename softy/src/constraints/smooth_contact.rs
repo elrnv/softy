@@ -74,7 +74,7 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
     }
 
     #[inline]
-    fn constraint(&mut self, dx: &[f64], value: &mut [f64]) {
+    fn constraint(&self, dx: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         //let disp: &[Vector3<f64>] = reinterpret_slice(dx);
         //let max_disp = disp.iter().map(|a| a.norm()).max_by(|a,b| a.partial_cmp(b).unwrap());
@@ -250,7 +250,7 @@ impl Constraint<f64> for SmoothContactConstraint {
     }
 
     #[inline]
-    fn constraint(&mut self, x: &[f64], value: &mut [f64]) {
+    fn constraint(&self, x: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         self.update_surface_with(x);
         let collider = self.collision_object.borrow();

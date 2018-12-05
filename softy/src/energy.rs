@@ -7,6 +7,8 @@
  */
 
 use crate::geo::math::{Matrix3, Scalar, Vector3};
+use crate::geo::prim::Tetrahedron;
+use num_traits::FromPrimitive;
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
@@ -23,14 +25,19 @@ pub trait TetEnergy<T: Scalar> {
     /// Elasticity Hessian*displacement product per element. Represented by a 3x3 matrix where
     /// column `i` produces the hessian product contribution for the vertex `i` within the current
     /// element.
-    fn elastic_energy_hessian_product(&self, dx: &[Vector3<T>; 4]) -> Matrix3<T>;
+    fn elastic_energy_hessian_product(&self, dx: &Tetrahedron<f64>) -> Matrix3<T>;
 }
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
 pub trait Energy<T: Scalar> {
     /// Compute the energy of the current configuration.
-    fn energy(&self, x: &[T]) -> T;
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    fn energy(&self, x: &[T], dx: &[T]) -> T;
 }
 
 /// The energy gradient is required for optimization methods that require first order derivative
@@ -38,28 +45,20 @@ pub trait Energy<T: Scalar> {
 pub trait EnergyGradient<T: Scalar> {
     /// Compute the change in energy with respect to change in configuration and add it to the
     /// given slice of global gradient values.
-    fn add_energy_gradient(&self, x: &[T], grad: &mut [T]);
-}
-
-/// The energy Hessian provides second order information for optimization methods like
-/// Newton-Raphson. This trait provides the energy Hessian in terms of non-zero values provided by
-/// `energy_hessian_values` and indexed by a slice of `MatrixElementIndex`es, which is provided by
-/// `energy_hessian_indices`.
-pub trait EnergyHessian<T: Scalar> {
-    /// The number of non-zeros in the Hessian matrix of the energy.
-    fn energy_hessian_size(&self) -> usize;
-    /// Compute the Hessian row and column indices of the Hessian matrix values.
-    fn energy_hessian_indices(&mut self) -> &[MatrixElementIndex];
-    /// Compute the Hessian matrix values corresponding to their positions in the matrix returned
-    /// by `energy_hessian_indices`. This means that the vector returned from this function must
-    /// have the same length as the vector returned by `energy_hessian_indices`.
-    fn energy_hessian_values(&mut self, x: &[T]) -> &[T];
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    ///
+    /// This derivative is with respect to `dx`.
+    fn add_energy_gradient(&self, x: &[T], dx: &[T], grad: &mut [T]);
 }
 
 /// This trait provides an interface for retrieving the energy Hessian just like
 /// `EnergyHessianIndicesValues`, however the indices and values are combined together into
 /// the `MatrixElementTriplet` type.
-pub trait EnergyHessian2<T: Scalar> {
+pub trait EnergyHessian<T: Scalar> {
     /// The number of non-zeros in the Hessian matrix of the energy.
     fn energy_hessian_size(&self) -> usize;
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
@@ -70,13 +69,42 @@ pub trait EnergyHessian2<T: Scalar> {
         offset: MatrixElementIndex,
         indices: &mut [MatrixElementIndex],
     );
+
     /// Compute the Hessian matrix values corresponding to their positions in the matrix returned
     /// by `energy_hessian_indices` or `energy_hessian_indices_offset`.
-    fn energy_hessian_values(&self, x: &[T], values: &mut [T]);
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    ///
+    /// This derivative is with respect to `dx`.
+    fn energy_hessian_values(&self, x: &[T], dx: &[T], values: &mut [T]);
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
         self.energy_hessian_indices_offset((0, 0).into(), indices)
+    }
+
+    /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
+    /// separate arrays.
+    fn energy_hessian_rows_cols<I: FromPrimitive + Send>(&self, rows: &mut [I], cols: &mut [I]) {
+        self.energy_hessian_rows_cols_offset((0,0).into(), rows, cols);
+    }
+
+    /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
+    /// separate arrays.
+    /// The `offset` parameter positions this energy Hessian
+    /// within a global Hessian matrix specified by the user.
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(&self, offset: MatrixElementIndex, rows: &mut [I], cols: &mut [I]) {
+        let n = self.energy_hessian_size();
+        let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
+        self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
+        for (MatrixElementIndex { row, col }, (r, c)) in indices.into_iter().zip(rows.iter_mut().zip(cols.iter_mut()))
+        {
+            *r = I::from_usize(row).unwrap();
+            *c = I::from_usize(col).unwrap();
+        }
     }
 
     /*
@@ -85,11 +113,19 @@ pub trait EnergyHessian2<T: Scalar> {
      */
 
     /// Compute the Hessian matrix triplets.
-    /// The `offset` parameter positions this energy Hessian
-    /// within a global Hessian matrix specified by the user.
+    /// The `offset` parameter positions this energy Hessian within a global Hessian matrix
+    /// specified by the user.
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    ///
+    /// This derivative is with respect to `dx`.
     fn energy_hessian_offset(
         &self,
         x: &[T],
+        dx: &[T],
         offset: MatrixElementIndex,
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
@@ -97,21 +133,21 @@ pub trait EnergyHessian2<T: Scalar> {
         let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
         let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
-        self.energy_hessian_values(x, values.as_mut_slice());
+        self.energy_hessian_values(x, dx, values.as_mut_slice());
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices.iter().zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
     }
 
     /// Compute the Hessian matrix triplets.
-    fn energy_hessian(&self, x: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
-        self.energy_hessian_offset(x, (0, 0).into(), triplets)
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    ///
+    /// This derivative is with respect to `dx`.
+    fn energy_hessian(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
+        self.energy_hessian_offset(x, dx, (0, 0).into(), triplets)
     }
-}
-
-/// Some optimizers require only the energy Hessian product with another vector. This trait
-/// provides an interface for such applications.
-pub trait EnergyHessianProduct<T: Scalar> {
-    /// Compute the product of Hessian and a given vector `dx`.
-    fn energy_hessian_product(&mut self, x: &[T], dx: &[T]) -> &[T];
 }

@@ -198,6 +198,9 @@ impl SolverBuilder {
             reinterpret_slice(mesh.vertex_positions()).to_vec()
         ));
 
+        // Initialize zero velocities
+        let prev_vel = Rc::new(RefCell::new(vec![Vector3::zeros(); mesh.num_vertices()]));
+
         let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
 
         // Retrieve lame parameters.
@@ -207,15 +210,13 @@ impl SolverBuilder {
         let lambda = lambda / mu;
         let density = solid_material.density as f64 / mu;
         // premultiply damping by timestep reciprocal.
-        let damping = if let Some(dt) = params.time_step {
+        let damping = params.time_step.map_or(0.0, |dt| 
             if dt != 0.0 {
                 1.0 / dt as f64
             } else {
                 0.0
             }
-        } else {
-            0.0
-        } * solid_material.damping as f64
+        ) * solid_material.damping as f64
             / mu;
 
         // All values are normalized by mu including mu itself so it becomes 1.0.
@@ -255,11 +256,13 @@ impl SolverBuilder {
 
         let problem = NonLinearProblem {
             prev_pos,
+            prev_vel,
+            time_step: params.time_step.unwrap_or(0.0f32) as f64,
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
-            energy_model: RefCell::new(energy_model_builder.build()),
+            energy_model: energy_model_builder.build(),
             gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
-            momentum_potential: momentum_potential.map(|x| RefCell::new(x)),
+            momentum_potential,
             volume_constraint,
             smooth_contact_constraint,
             displacement_bound,
@@ -616,41 +619,6 @@ impl Solver {
         }
     }
 
-    pub fn compute_model_lagrangian(&mut self) -> f64 {
-        let SolverDataRef {
-            primal_variables,
-            constraint_multipliers,
-            ..
-        } = self.solver.solver_data_ref();
-        self.compute_lagrangian(primal_variables, constraint_multipliers)
-    }
-
-    /// Compute the lagrangian of the function.
-    pub fn compute_merit_function(&self, dx: &[f64], multipliers: &[f64]) -> f64 {
-        use ipopt::ConstrainedProblem;
-
-        let obj = self.compute_objective();
-
-        let SolverDataRef {
-            problem,
-            primal_variables,
-            constraint_multipliers,
-            ..
-        } = self.solver.solver_data_ref();
-
-        assert_eq!(multipliers.len(), constraint_multipliers.len());
-        assert_eq!(dx.len(), primal_variables.len());
-        let mut constraint = vec![0.0; multipliers.len()];
-        assert!(problem.constraint(dx, &mut constraint));
-
-        let mut lagrangian = obj;
-        for (c, &lambda) in constraint.into_iter().zip(multipliers.iter()) {
-            lagrangian += c*lambda;
-        }
-
-        lagrangian
-    }
-
     /// Compute and add the value of the constraint function minus constraint bounds.
     pub fn add_constraint_violation(&mut self, constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
@@ -780,7 +748,6 @@ impl Solver {
         // Since we advected the mesh, we need to invalidate its neighbour data so it's
         // recomputed at the next time step (if applicable).
         if let Some(ref mut scc) = problem.smooth_contact_constraint {
-            scc.update_surface();
             let mesh = problem.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
         }
@@ -802,7 +769,6 @@ impl Solver {
         // Since we advected the mesh, we need to invalidate its neighbour data so it's
         // recomputed at the next time step (if applicable).
         if let Some(ref mut scc) = problem.smooth_contact_constraint {
-            scc.update_surface();
             let mesh = problem.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
         }
@@ -842,11 +808,10 @@ impl Solver {
         let mut residual_norm = inf_norm(&objective_residual).max(constraint_violation_norm);
 
         let zero_dx = vec![0.0; self.dx().len()];
-        let zero_lambda = vec![0.0; self.lambda().len()];
 
-        let mut prev_merit_value = self.compute_lagrangian(&zero_dx, &zero_lambda);
-        let mut prev_merit_model = prev_merit_value;
-        println!("init merit = {:?}", prev_merit_value);
+        //let mut prev_merit_value = self.merit_l1(&zero_dx, 0.0);
+        //let mut prev_merit_model = prev_merit_value;
+        //println!("init merit = {:?}", prev_merit_value);
 
         self.output_meshes(0);
 
@@ -855,7 +820,7 @@ impl Solver {
 
             let step_result = self.inner_step();
 
-            let model_lagrangian = self.compute_model_lagrangian();
+            //let model_function = self.model_l1();
 
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
@@ -919,59 +884,59 @@ impl Solver {
             // energy estimate from the solve of the inner problem. As such we will iterate on the
             // infinity norm of all violated linearized constraints (constraint points outside the
             // feasible domain).
-            let mut reduced = false;
-            {
-                let merit_value = self.compute_lagrangian(&zero_dx, self.lambda());
-                let max_step = self.max_step;
-                let SolverDataMut {
-                    problem,
-                    primal_variables,
-                    ..
-                } = self.solver.solver_data_mut();
+            //let mut reduced = false;
+            //{
+            //    let merit_value = self.compute_lagrangian(&zero_dx, self.lambda());
+            //    let max_step = self.max_step;
+            //    let SolverDataMut {
+            //        problem,
+            //        primal_variables,
+            //        ..
+            //    } = self.solver.solver_data_mut();
 
-                if max_step > 0.0 {
-                    if let Some(disp) = problem.displacement_bound {
-                        let merit_model = model_lagrangian;
-                        println!("f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
-                                 prev_merit_value, merit_value, prev_merit_model, merit_model);
-                        let reduction = (prev_merit_value - merit_value) / (prev_merit_model - merit_model);
-                        println!("reduction = {:?}", reduction);
+            //    if max_step > 0.0 {
+            //        if let Some(disp) = problem.displacement_bound {
+            //            //let merit_model = ;
+            //            //println!("f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
+            //            //         prev_merit_value, merit_value, prev_merit_model, merit_model);
+            //            let reduction = (prev_merit_value - merit_value) / (prev_merit_model - merit_model);
+            //            println!("reduction = {:?}", reduction);
 
-                        let step_size = inf_norm(primal_variables);
+            //            let step_size = inf_norm(primal_variables);
 
-                        if reduction < 0.25 {
-                            if step_size < 1e-5*max_step {
-                                break; // Reducing the step wont help at this point
-                            }
-                            // The constraint violation is not decreasing, roll back and reduce the step size.
-                            reduced = true;
-                            println!("step size taken {:?}", step_size);
-                            problem.displacement_bound.replace(0.25 * step_size);
-                            println!("reducing step to {:?}", problem.displacement_bound.unwrap());
-                        } else {
-                            println!("step size = {:?} vs. disp = {:?}", step_size, disp);
-                            if reduction > 0.75 && relative_eq!(step_size, disp) {
-                                // we took a full step
-                                // The linearized constraints are a good model of the actual constraints,
-                                // increase the step size and continue.
-                                problem.displacement_bound.replace(max_step.min(2.0 * disp));
-                                println!("increase step to {:?}", problem.displacement_bound.unwrap());
-                            } // Otherwise keep the step size the same.
-                        }
-                        if reduction > 0.05 {
-                            // We are in good shape, continue.
-                            prev_merit_value = merit_value;
-                            prev_merit_model = merit_model;
-                        } else {
-                            // Otherwise constraint violation is not properly decreasing
-                            Self::revert_solution(problem, primal_variables);
-                        }
-                    }
-                }
-            }
-            if reduced {
-                self.solver.set_option("warm_start_init_point", "no");
-            }
+            //            if reduction < 0.25 {
+            //                if step_size < 1e-5*max_step {
+            //                    break; // Reducing the step wont help at this point
+            //                }
+            //                // The constraint violation is not decreasing, roll back and reduce the step size.
+            //                reduced = true;
+            //                println!("step size taken {:?}", step_size);
+            //                problem.displacement_bound.replace(0.25 * step_size);
+            //                println!("reducing step to {:?}", problem.displacement_bound.unwrap());
+            //            } else {
+            //                println!("step size = {:?} vs. disp = {:?}", step_size, disp);
+            //                if reduction > 0.75 && relative_eq!(step_size, disp) {
+            //                    // we took a full step
+            //                    // The linearized constraints are a good model of the actual constraints,
+            //                    // increase the step size and continue.
+            //                    problem.displacement_bound.replace(max_step.min(2.0 * disp));
+            //                    println!("increase step to {:?}", problem.displacement_bound.unwrap());
+            //                } // Otherwise keep the step size the same.
+            //            }
+            //            if reduction > 0.05 {
+            //                // We are in good shape, continue.
+            //                prev_merit_value = merit_value;
+            //                prev_merit_model = merit_model;
+            //            } else {
+            //                // Otherwise constraint violation is not properly decreasing
+            //                Self::revert_solution(problem, primal_variables);
+            //            }
+            //        }
+            //    }
+            //}
+            //if reduced {
+            //    self.solver.set_option("warm_start_init_point", "no");
+            //}
         }
 
         if result.iterations >= self.sim_params.max_outer_iterations {
@@ -1094,14 +1059,14 @@ mod tests {
     }
 
     /// Utility function to compare positions of two meshes.
-    fn compare_meshes(solution: &TetMesh, expected: &TetMesh) {
+    fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
         for (pos, expected_pos) in solution
             .vertex_positions()
             .iter()
             .zip(expected.vertex_positions().iter())
         {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = 1.0e-6);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol);
             }
         }
     }
@@ -1142,7 +1107,7 @@ mod tests {
 
         // Expect the tet to remain in original configuration
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &mesh);
+        compare_meshes(&solution, &mesh, 1e-6);
     }
 
     /// Test one deformed tet under gravity fixed at two vertices. This is not an easy test because
@@ -1185,7 +1150,7 @@ mod tests {
         let mut expected_solver = one_tet_solver();
         expected_solver.step().unwrap();
         let expected = expected_solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     #[test]
@@ -1221,7 +1186,7 @@ mod tests {
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk")).unwrap();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     #[test]
@@ -1234,10 +1199,13 @@ mod tests {
             .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
+
+            geo::io::save_tetmesh(&solution, &PathBuf::from("assets/three_tets_dynamic_result.vtk"))
+                .unwrap();
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk"))
                 .unwrap();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-2);
     }
 
     #[test]
@@ -1258,7 +1226,7 @@ mod tests {
             "assets/three_tets_static_volume_constraint_expected.vtk",
         ))
         .unwrap();
-        compare_meshes(&solution, &exptected);
+        compare_meshes(&solution, &exptected, 1e-6);
     }
 
     #[test]
@@ -1275,11 +1243,13 @@ mod tests {
             .unwrap();
         assert!(solver.step().is_ok());
         let solution = solver.borrow_mesh();
+            geo::io::save_tetmesh(&solution, &PathBuf::from("assets/three_tets_dynamic_volume_constraint_result.vtk"))
+                .unwrap();
         let expected = geo::io::load_tetmesh(&PathBuf::from(
             "assets/three_tets_dynamic_volume_constraint_expected.vtk",
         ))
         .unwrap();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-2);
     }
 
     #[test]
@@ -1370,7 +1340,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     #[test]
@@ -1389,7 +1359,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     #[test]
@@ -1408,7 +1378,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     #[test]
@@ -1428,7 +1398,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     /// This test insures that a non-linearized constraint like volume doesn't cause multiple outer
@@ -1461,7 +1431,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected);
+        compare_meshes(&solution, &expected, 1e-6);
     }
 
     /*

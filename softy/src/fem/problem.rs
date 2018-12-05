@@ -25,16 +25,18 @@ pub(crate) struct NonLinearProblem {
     /// explicitly since we are doing a displacement solve. This vector is updated between steps
     /// and shared with other solver components like energies and constraints.
     pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
+    /// Velocity from the previous time step.
+    pub prev_vel: Rc<RefCell<Vec<Vector3<f64>>>>,
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub tetmesh: Rc<RefCell<TetMesh>>,
     /// Static or animated collision object represented by a triangle mesh.
     pub kinematic_object: Option<Rc<RefCell<TriMesh>>>,
     /// Elastic energy model.
-    pub energy_model: RefCell<ElasticTetMeshEnergy>,
+    pub energy_model: ElasticTetMeshEnergy,
     /// Gravitational potential energy.
     pub gravity: Gravity,
     /// Momentum potential. The energy responsible for inertia.
-    pub momentum_potential: Option<RefCell<MomentumPotential>>,
+    pub momentum_potential: Option<MomentumPotential>,
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
     /// Contact constraint on the smooth solid representation against the kinematic object.
@@ -42,6 +44,8 @@ pub(crate) struct NonLinearProblem {
     /// Displacement bounds. This controlls how big of a step we can take per vertex position
     /// component. In otherwords the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
+    /// The time step defines the amount of time elapsed between steps (calls to `advance`).
+    pub time_step: f64,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: Box<FnMut() -> bool>,
@@ -91,37 +95,115 @@ impl NonLinearProblem {
         !(self.interrupt_checker)()
     }
 
-    /// Update the tetmesh vertex positions with the given displacment field.
-    /// `dx` is expected to contain contiguous triplets of coordinates (x,y,z) for each vertex.
-    pub fn update(&self, dx: &[f64]) {
-        let displacement: &[Vector3<f64>] = reinterpret_slice(dx);
+    /// Commit displacement by advancing the internal state by the given displacement `dx`.
+    pub fn advance(&mut self, dx: &[f64]) {
+        let dt_inv = 1.0 / self.time_step;
+
+        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let mut prev_vel = self.prev_vel.borrow_mut();
+        let mut prev_pos = self.prev_pos.borrow_mut();
+
+        disp.iter()
+            .zip(prev_pos.iter_mut()
+            .zip(prev_vel.iter_mut()))
+            .for_each(|(dp, (prev_p, prev_v))| {
+                *prev_p = (*prev_p + *dp).into();
+                *prev_v = *dp * dt_inv;
+            });
+
         let mut tetmesh = self.tetmesh.borrow_mut();
         let verts = tetmesh.vertex_positions_mut();
-        let prev_pos = self.prev_pos.borrow();
-        verts
-            .iter_mut()
-            .zip(prev_pos.iter())
-            .zip(displacement.iter())
-            .for_each(|((p, prev_p), disp)| *p = (*prev_p + *disp).into());
+        verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
     }
 
-    /// L1 merit function of as defined in Nocedal and Wright in Ch 17.2, eq 17.22.
+    /// l1 merit function of as defined in Nocedal and Wright in Ch 17.2, eq 17.22.
+    pub fn merit_l1(&self, dx: &[f64], mu: f64) -> f64 {
+        self.objective_value(dx) + mu * self.linearized_constraint_violation_l1(dx)
+    }
+
+    pub fn model_l1(&self, dx: &[f64], mu: f64) -> f64 {
+        self.objective_value(dx) + mu * self.linearized_constraint_violation_model_l1(dx)
+    }
    
-    /// Constraint violation measure. 
-    pub fn constraint_violation(&self, lambda: &[f64]) -> f64 {
-        let mut phi = self.objective_value(dx);
-        let mu_star = inf_norm(lambda);
-        phi += mu_star * ;
+    /// Linearized constraint true violation measure. 
+    pub fn linearized_constraint_violation_l1(&self, dx: &[f64]) -> f64 {
+        let mut value = 0.0;
+
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let prev_pos = self.prev_pos.borrow();
+            let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
+            let n = scc.constraint_size();
+
+            let mut g = vec![0.0; n];
+            scc.0.constraint(x, dx, &mut g);
+
+            let (g_l, g_u) = scc.0.constraint_bounds();
+            assert_eq!(g_l.len(), n);
+            assert_eq!(g_u.len(), n);
+
+            value += g.into_iter()
+                .zip(g_l.into_iter().zip(g_u.into_iter()))
+                .map(|(c, (l,u))| {
+                    assert!(l <= u);
+                    if c < l { // below lower bound
+                        l - c
+                    } else if c > u { // above upper bound
+                        c - u
+                    } else {  // Constraint not violated
+                        0.0
+                    }
+                }).sum::<f64>();
+        }
+
+        value
     }
 
+    /// Linearized constraint model violation measure. 
+    pub fn linearized_constraint_violation_model_l1(&self, dx: &[f64]) -> f64 {
+        let mut value = 0.0;
+
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let prev_pos = self.prev_pos.borrow();
+            let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
+            let n = scc.constraint_size();
+
+            let mut g = vec![0.0; n];
+            scc.constraint(x, dx, &mut g);
+
+            let (g_l, g_u) = scc.constraint_bounds();
+            assert_eq!(g_l.len(), n);
+            assert_eq!(g_u.len(), n);
+
+            value += g.into_iter().zip(g_l.into_iter().zip(g_u.into_iter())).map(|(c, (l,u))| {
+                assert!(l <= u);
+                if c < l { // below lower bound
+                    l - c
+                } else if c > u { // above upper bound
+                    c - u
+                } else {  // Constraint not violated
+                    0.0
+                }
+            }).sum::<f64>();
+        }
+
+        value
+    }
+
+    /// Compute and return the objective value.
     pub fn objective_value(&self, dx: &[Number]) -> f64 {
-        self.update(dx);
-        let tetmesh = self.tetmesh.borrow();
-        let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
-        let mut obj = self.energy_model.borrow().energy(dx);
-        obj += self.gravity.energy(pos);
+        let prev_pos = self.prev_pos.borrow();
+        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
+        let mut obj = self.energy_model.energy(x, dx);
+
+        obj += self.gravity.energy(x, dx);
+
         if let Some(ref mp) = self.momentum_potential {
-            obj += mp.borrow().energy(dx);
+            let prev_vel = self.prev_pos.borrow();
+            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            obj += mp.energy(v, dx);
         }
         obj
     }
@@ -166,19 +248,20 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn objective(&self, dx: &[Number], obj: &mut Number) -> bool {
-        *obj = objective_value(self, dx);
+        *obj = self.objective_value(dx);
         true
     }
 
     fn objective_grad(&self, dx: &[Number], grad_f: &mut [Number]) -> bool {
-        self.update(dx);
         grad_f.iter_mut().for_each(|x| *x = 0.0); // clear gradient vector
-        let tetmesh = self.tetmesh.borrow();
-        let pos: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
-        self.energy_model.borrow().add_energy_gradient(dx, grad_f);
-        self.gravity.add_energy_gradient(pos, grad_f);
+        let prev_pos = self.prev_pos.borrow();
+        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        self.energy_model.add_energy_gradient(x, dx, grad_f);
+        self.gravity.add_energy_gradient(x, dx, grad_f);
         if let Some(ref mp) = self.momentum_potential {
-            mp.borrow().add_energy_gradient(dx, grad_f);
+            let prev_vel = self.prev_pos.borrow();
+            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            mp.add_energy_gradient(v, dx, grad_f);
         }
 
         true
@@ -211,23 +294,20 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
-        self.update(dx);
-        let tetmesh = self.tetmesh.borrow();
-        let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
+        let prev_pos = self.prev_pos.borrow();
+        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         let mut i = 0; // Counter.
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_size();
-            vc.constraint(x, &mut g[i..i+n]);
+            vc.constraint(x, dx, &mut g[i..i+n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_size();
-            scc.constraint(dx, &mut g[i..i+n]);
-            //println!("g = {:?}", &g[i..i+n]);
-            //i += n;
+            scc.constraint(x, dx, &mut g[i..i+n]);
         }
 
         true
@@ -278,21 +358,20 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn constraint_jac_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
-        self.update(dx);
-        let tetmesh = self.tetmesh.borrow();
-        let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
+        let prev_pos = self.prev_pos.borrow();
+        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         let mut i = 0;
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x, &mut vals[i..i+n]);
+            vc.constraint_jacobian_values(x, dx, &mut vals[i..i+n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_jacobian_size();
-            scc.constraint_jacobian_values(dx, &mut vals[i..i+n]);
+            scc.constraint_jacobian_values(x, dx, &mut vals[i..i+n]);
             //println!("jac g vals = {:?}", &vals[i..i+n]);
             //i += n;
         }
@@ -301,9 +380,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn num_hessian_non_zeros(&self) -> usize {
-        let mut num = self.energy_model.borrow().energy_hessian_size();
+        let mut num = self.energy_model.energy_hessian_size();
         if let Some(ref mp) = self.momentum_potential {
-            num += mp.borrow().energy_hessian_size();
+            num += mp.energy_hessian_size();
         }
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_hessian_size();
@@ -318,20 +397,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0;
 
         // Add energy indices
-        for MatrixElementIndex { ref row, ref col } in
-            self.energy_model.borrow_mut().energy_hessian_indices().iter()
-        {
-            rows[i] = *row as Index;
-            cols[i] = *col as Index;
-            i += 1;
-        }
+        let n = self.energy_model.energy_hessian_size();
+        self.energy_model.energy_hessian_rows_cols(&mut rows[i..i+n], &mut cols[i..i+n]);
+        i += n;
 
         if let Some(ref mp) = self.momentum_potential {
-            for MatrixElementIndex { ref row, ref col } in mp.borrow_mut().energy_hessian_indices().iter() {
-                rows[i] = *row as Index;
-                cols[i] = *col as Index;
-                i += 1;
-            }
+            let n = mp.energy_hessian_size();
+            mp.energy_hessian_rows_cols(&mut rows[i..i+n], &mut cols[i..i+n]);
+            i += n;
         }
 
         // Add volume constraint indices
@@ -359,22 +432,25 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         lambda: &[Number],
         vals: &mut [Number],
     ) -> bool {
-        self.update(dx);
-        let tetmesh = self.tetmesh.borrow();
-        let x: &[Number] = reinterpret_slice(tetmesh.vertex_positions());
+        let prev_pos = self.prev_pos.borrow();
+        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         let mut i = 0;
-
-        for val in self.energy_model.borrow_mut().energy_hessian_values(dx).iter() {
-            vals[i] = obj_factor * (*val as Number);
-            i += 1;
-        }
+        let n = self.energy_model.energy_hessian_size();
+        self.energy_model.energy_hessian_values(x, dx, &mut vals[i..i+n]);
+        i += n;
 
         if let Some(ref mp) = self.momentum_potential {
-            for val in mp.borrow_mut().energy_hessian_values(dx).iter() {
-                vals[i] = obj_factor * (*val as Number);
-                i += 1;
-            }
+            let n = mp.energy_hessian_size();
+            let prev_vel = self.prev_pos.borrow();
+            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            mp.energy_hessian_values(v, dx, &mut vals[i..i+n]);
+            i += n;
+        }
+
+        // Multiply energy hessian by objective factor.
+        for v in vals[0..i].iter_mut() {
+            *v *= obj_factor;
         }
 
         let coff = 0;
@@ -382,7 +458,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
-            vc.constraint_hessian_values(x, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
+            vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
             //i += nh;
             //coff += nc
         }

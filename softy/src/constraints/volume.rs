@@ -50,12 +50,13 @@ impl Constraint<f64> for VolumeConstraint {
         (vec![6.0 * self.rest_volume], vec![6.0 * self.rest_volume])
     }
 
-    fn constraint(&self, x: &[f64], value: &mut [f64]) {
+    fn constraint(&self, x: &[f64], dx: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        let disp: &[Vector3<f64>] = reinterpret_slice(x);
+        let pos: &[[f64;3]] = reinterpret_slice(x);
+        let disp: &[[f64;3]] = reinterpret_slice(dx);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
-            let p = tri_at(disp, tri);
+            let p = Matrix3(tri_at(pos, tri)) + Matrix3(tri_at(disp, tri));
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
@@ -82,11 +83,13 @@ impl VolumeConstraint {
     fn constraint_jacobian_values_iter<'a>(
         &'a self,
         x: &'a [f64],
+        dx: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        let disp: &[Vector3<f64>] = reinterpret_slice(x);
+        let pos: &[[f64;3]] = reinterpret_slice(x);
+        let disp: &[[f64;3]] = reinterpret_slice(dx);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = tri_at(disp, tri);
+            let p = Matrix3(tri_at(pos, tri)) + Matrix3(tri_at(disp, tri));
             let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
 
             (0..3).flat_map(move |vi| (0..3).map(move |j| c[vi][j]))
@@ -102,11 +105,11 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
     fn constraint_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self))
     }
-    fn constraint_jacobian_values(&self, x: &[f64], values: &mut [f64]) {
+    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         for (out, val) in values
             .iter_mut()
-            .zip(self.constraint_jacobian_values_iter(x))
+            .zip(self.constraint_jacobian_values_iter(x, dx))
         {
             *out = val;
         }
@@ -163,12 +166,14 @@ impl VolumeConstraint {
     pub fn constraint_hessian_values_iter<'a>(
         &'a self,
         x: &'a [f64],
+        dx: &'a [f64],
         lambda: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        let disp: &[Vector3<f64>] = reinterpret_slice(x);
+        let pos: &[[f64; 3]] = reinterpret_slice(x);
+        let disp: &[[f64; 3]] = reinterpret_slice(dx);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = tri_at(disp, tri);
+            let p = Matrix3(tri_at(pos, tri)) + Matrix3(tri_at(disp, tri));
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
             Self::constraint_hessian_iter(tri).map(move |(_, (r, c), vi, off)| {
                 let vjn = (vi + off + off) % 3;
@@ -187,11 +192,11 @@ impl ConstraintHessian<f64> for VolumeConstraint {
     fn constraint_hessian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         Box::new(VolumeConstraint::constraint_hessian_indices_iter(self))
     }
-    fn constraint_hessian_values(&self, x: &[f64], lambda: &[f64], values: &mut [f64]) {
+    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_hessian_size());
         for (out, val) in values
             .iter_mut()
-            .zip(self.constraint_hessian_values_iter(x, lambda))
+            .zip(self.constraint_hessian_values_iter(x, dx, lambda))
         {
             *out = val;
         }

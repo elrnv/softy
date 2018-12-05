@@ -31,12 +31,14 @@ impl Gravity {
 /// Gravity is a position based energy.
 impl Energy<f64> for Gravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, x: &[f64]) -> f64 {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
+    fn energy(&self, x: &[f64], dx: &[f64]) -> f64 {
+        let prev_pos: &[Vector3<f64>] = reinterpret_slice(x);
+        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
         let tetmesh = self.tetmesh.borrow();
         let tet_iter = tetmesh
             .cell_iter()
-            .map(|cell| Tetrahedron::from_indexed_slice(cell.get(), pos));
+            .map(|cell| Tetrahedron::from_indexed_slice(cell.get(), prev_pos) 
+                      + Tetrahedron::from_indexed_slice(cell.get(), disp));
 
         tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -53,7 +55,7 @@ impl Energy<f64> for Gravity {
 
 impl EnergyGradient<f64> for Gravity {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x: &[f64], grad: &mut [f64]) {
+    fn add_energy_gradient(&self, _x: &[f64], _dx: &[f64], grad: &mut [f64]) {
         debug_assert_eq!(grad.len(), _x.len());
 
         let tetmesh = self.tetmesh.borrow();
@@ -73,10 +75,10 @@ impl EnergyGradient<f64> for Gravity {
     }
 }
 
-impl EnergyHessian2<f64> for Gravity {
+impl EnergyHessian<f64> for Gravity {
     fn energy_hessian_size(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values(&self, _x: &[f64], _: &mut [f64]) {}
+    fn energy_hessian_values(&self, _x: &[f64], _dx: &[f64], _: &mut [f64]) {}
 }

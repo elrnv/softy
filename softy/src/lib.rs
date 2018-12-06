@@ -25,7 +25,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
-pub use self::fem::{ElasticityParameters, Material, SimParams, SolveResult};
+pub use self::fem::{ElasticityParameters, Material, SimParams, SolveResult, InnerSolveResult};
 pub use self::constraints::SmoothContactParams;
 use crate::geo::mesh::attrib;
 
@@ -37,6 +37,8 @@ pub enum Error {
     /// Error during main solve step. This reports iterations, objective value and max inner
     /// iterations.
     SolveError(ipopt::SolveStatus, SolveResult),
+    /// Error during an inner solve step. This reports iterations and objective value.
+    InnerSolveError(ipopt::SolveStatus, InnerSolveResult),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
     MissingContactParams,
@@ -76,16 +78,14 @@ impl From<Error> for SimResult {
             ) => 
                 match e {
                     ipopt::SolveStatus::MaximumIterationsExceeded => {
-                        SimResult::Warning(
-                            format!(
-                                "Maximum iterations exceeded. \n{}", solve_result
-                            )
-                            .into())
+                        SimResult::Warning( format!( "Maximum iterations exceeded. \n{}", solve_result) .into())
                     }
                     e => {
                         SimResult::Error(format!( "Solve failed: {:?}\n{}", e, solve_result) .into())
                     }
                 },
+            Error::InnerSolveError(e, solve_result) =>
+                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result).into()),
             Error::MissingContactParams =>
                 SimResult::Error(format!("Missing smooth contact parameters.").into()),
             Error::NoSimulationMesh =>

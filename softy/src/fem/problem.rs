@@ -225,7 +225,6 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let bound = self.displacement_bound.unwrap_or(2e19);
         x_l.iter_mut().for_each(|x| *x = -bound);
         x_u.iter_mut().for_each(|x| *x = bound);
-        //println!("SETTING BOUNDS!! {:?}", bound);
 
         if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB) {
             // Find and set fixed vertices.

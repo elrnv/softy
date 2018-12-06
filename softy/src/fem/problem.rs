@@ -16,7 +16,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::TetMesh;
 use crate::TriMesh;
-use crate::inf_norm;
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
@@ -96,33 +95,30 @@ impl NonLinearProblem {
     }
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
-    pub fn advance(&mut self, dx: &[f64]) {
+    pub fn advance(&mut self, disp: impl Iterator<Item=Vector3<f64>>) {
         let dt_inv = 1.0 / self.time_step;
 
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
         let mut prev_vel = self.prev_vel.borrow_mut();
         let mut prev_pos = self.prev_pos.borrow_mut();
 
-        disp.iter()
+        disp
             .zip(prev_pos.iter_mut()
             .zip(prev_vel.iter_mut()))
             .for_each(|(dp, (prev_p, prev_v))| {
-                *prev_p = (*prev_p + *dp).into();
-                *prev_v = *dp * dt_inv;
+                *prev_p = (*prev_p + dp).into();
+                *prev_v = dp * dt_inv;
             });
 
         let mut tetmesh = self.tetmesh.borrow_mut();
         let verts = tetmesh.vertex_positions_mut();
         verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
-    }
 
-    /// l1 merit function of as defined in Nocedal and Wright in Ch 17.2, eq 17.22.
-    pub fn merit_l1(&self, dx: &[f64], mu: f64) -> f64 {
-        self.objective_value(dx) + mu * self.linearized_constraint_violation_l1(dx)
-    }
-
-    pub fn model_l1(&self, dx: &[f64], mu: f64) -> f64 {
-        self.objective_value(dx) + mu * self.linearized_constraint_violation_model_l1(dx)
+        // Since we transformed the mesh, we need to invalidate its neighbour data so it's
+        // recomputed at the next time step (if applicable).
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
+            scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
+        }
     }
    
     /// Linearized constraint true violation measure. 

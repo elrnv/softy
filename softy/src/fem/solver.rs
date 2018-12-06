@@ -420,12 +420,12 @@ impl Solver {
 
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
-        self.solver.solver_data_mut().problem.interrupt_checker = checker;
+        self.problem_mut().interrupt_checker = checker;
     }
 
     /// Get an immutable borrow for the underlying `TriMesh` of the kinematic object.
     pub fn try_borrow_kinematic_mesh(&self) -> Option<Ref<'_, TriMesh>> {
-        self.solver.solver_data_ref().problem.kinematic_object.as_ref().map(|x| x.borrow())
+        self.problem().kinematic_object.as_ref().map(|x| x.borrow())
         //match &self.solver.solver_data_ref().problem.kinematic_object {
         //    Some(x) => Some(x.borrow()),
         //    None => None,
@@ -465,15 +465,14 @@ impl Solver {
     /// Update the maximal displacement allowed. If zero, no limit is applied.
     pub fn update_max_step(&mut self, step: f64) {
         self.max_step = step;
-        if let Some(ref mut scc) = self.solver.solver_data_mut().problem.smooth_contact_constraint {
+        if let Some(ref mut scc) = self.problem_mut().smooth_contact_constraint {
             scc.update_max_step(step);
         }
     }
 
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
-        // Get solver data. We want to update the primal variables with new positions from `pts`.
-        let SolverDataMut { problem, .. } = self.solver.solver_data_mut();
+        let problem = self.problem_mut();
 
         // Get the tetmesh and prev_pos so we can update fixed vertices only.
         let tetmesh = &problem.tetmesh.borrow();
@@ -497,11 +496,8 @@ impl Solver {
 
     /// Update the kinematic object mesh with the given points.
     pub fn update_kinematic_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
-        // Get solver data. We want to update the primal variables with new positions from `pts`.
-        let SolverDataMut { problem, .. } = self.solver.solver_data_mut();
-
         // Get the kinematic object so we can update the vertices.
-        let mut trimesh = match &problem.kinematic_object {
+        let mut trimesh = match &self.problem_mut().kinematic_object {
             Some(ref mesh) => mesh.borrow_mut(),
             None => return Err(Error::NoKinematicMesh),
         };
@@ -594,25 +590,6 @@ impl Solver {
         // Reinsert forces back into the attrib map
         mesh.insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)
             .unwrap();
-    }
-
-    /// Update the state of the system, which includes new positions and velocities stored on the
-    /// mesh, as well as previous positions stored in `prev_pos`.
-    fn advance(mesh: &mut TetMesh, prev_pos: &mut [Vector3<f64>], disp_iter: impl Iterator<Item = Vector3<f64>>) {
-        // Write back the velocity for the next iteration.
-        for ((prev_dx, prev_x), dx) in mesh
-            .attrib_iter_mut::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB)
-            .unwrap()
-            .zip(prev_pos.iter_mut())
-            .zip(disp_iter)
-        {
-            *prev_dx = dx.into();
-            *prev_x += dx;
-        }
-
-        mesh.vertex_position_iter_mut()
-            .zip(prev_pos.iter())
-            .for_each(|(pos, prev_pos)| *pos = (*prev_pos).into());
     }
 
     /// Solve one step without updating the mesh. This function is useful for testing and
@@ -761,41 +738,15 @@ impl Solver {
         // Reinterpret solver variables as positions in 3D space.
         let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
 
-        // Update the mesh itself.
-        {
-            let mesh = &mut problem.tetmesh.borrow_mut();
-            let mut prev_pos = problem.prev_pos.borrow_mut();
-
-            Self::advance(mesh, prev_pos.as_mut_slice(), displacement.iter().cloned());
-        }
-
-        // Since we transformed the mesh, we need to invalidate its neighbour data so it's
-        // recomputed at the next time step (if applicable).
-        if let Some(ref mut scc) = problem.smooth_contact_constraint {
-            let mesh = problem.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
-        }
+        // Advance internal state (positions and velocities) of the problem.
+        problem.advance(displacement.iter().cloned());
     }
 
     /// Revert previously committed solution. We just subtract step here.
     fn revert_solution(problem: &mut NonLinearProblem, dx: &[f64]) {
         // Reinterpret solver variables as positions in 3D space.
         let displacement: &[Vector3<f64>] = reinterpret_slice(dx);
-
-        // Update the mesh itself.
-        {
-            let mesh = &mut problem.tetmesh.borrow_mut();
-            let mut prev_pos = problem.prev_pos.borrow_mut();
-
-            Self::advance(mesh, prev_pos.as_mut_slice(), displacement.iter().map(|&x| -x));
-        }
-
-        // Since we transformed the mesh, we need to invalidate its neighbour data so it's
-        // recomputed at the next time step (if applicable).
-        if let Some(ref mut scc) = problem.smooth_contact_constraint {
-            let mesh = problem.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
-        }
+        problem.advance(displacement.iter().map(|&x| -x));
     }
 
     fn output_meshes(&self, iter: u32) {
@@ -874,7 +825,7 @@ impl Solver {
 
         let zero_dx = vec![0.0; self.dx().len()];
 
-        let rho = 0.5;
+        let rho = 0.1;
 
         self.output_meshes(0);
 
@@ -891,7 +842,8 @@ impl Solver {
                 0.0
             } else {
                 let fdx = self.compute_objective_gradient_product(&mut objective_gradient);
-                fdx / ((1.0-rho)*c_k)
+                println!("fdx = {:?}", fdx);
+                (fdx / ((1.0-rho)*c_k)).max(0.0)
             };
             println!("mu = {:?}", mu);
 
@@ -915,15 +867,25 @@ impl Solver {
                     result = result.combine_inner_result(step_result);
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
-                    // In case of solve error, update our result and return. We don't increment
-                    // step count so we dont trigger warm start using these multipliers.
+                    // If the problem is infeasible, it may be that our step size is too small, 
+                    // Try to increase it (but not past max_step) and try again:
+                    if status == ipopt::SolveStatus::InfeasibleProblemDetected {
+                        let max_step = self.max_step;
+                        let problem = self.problem_mut();
+                        if let Some(disp) = problem.displacement_bound {
+                            problem.displacement_bound.replace(max_step.min(1.5 * disp));
+                            continue;
+                        }
+                    } else {
+                        // Otherwise we don't know what else to do so return an error.
 
-                    // Reset warm start after we encounter an error
-                    self.solver.set_option("warm_start_init_point", "no");
+                        // Reset warm start after we encounter an error
+                        self.solver.set_option("warm_start_init_point", "no");
 
-                    result = result.combine_inner_result(step_result);
+                        result = result.combine_inner_result(step_result);
 
-                    return Err(Error::SolveError(status, result));
+                        return Err(Error::SolveError(status, result));
+                    }
                 }
                 Err(e) => {
                     // Unknown error: Reset warm start and return.
@@ -987,7 +949,7 @@ impl Solver {
                                 println!("increase step to {:?}", problem.displacement_bound.unwrap());
                             } // Otherwise keep the step size the same.
                         }
-                        if reduction < 0.05 {
+                        if reduction < 0.15 {
                             // Otherwise constraint violation is not properly decreasing
                             Self::revert_solution(problem, primal_variables);
                         }

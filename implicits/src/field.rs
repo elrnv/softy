@@ -650,7 +650,9 @@ impl ImplicitSurface {
             },
         );
 
-        zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n)
+        zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| {
+            b + m + n
+        })
     }
 
     fn face_jacobian_at<'a, T: Real, K: 'a>(
@@ -693,7 +695,9 @@ impl ImplicitSurface {
         zip!(bg_jac, main_jac)
             .flat_map(move |(b, m)| std::iter::repeat(b + m).take(3))
             .zip(nml_jac)
-            .map(move |(m, n)| (m * third + n))
+            .map(move |(m, n)| {
+                m * third + n
+            })
     }
 
     fn mls_surface_jacobian_values<'a, I, K, N>(
@@ -1183,14 +1187,6 @@ mod tests {
         // Initialize the query point.
         let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
 
-        // Eliminate no neighbour test.
-        if bg_potential_type == BackgroundPotentialType::None
-            && (q - samples.points[0]).norm() >= F::cst(radius)
-        {
-            // Nothing to test, the potential is expected to be NaN in this case.
-            return;
-        }
-
         // There is no surface for the set of samples. As a result, the normal derivative should be
         // skipped in this test.
         let surf_topo = vec![];
@@ -1235,6 +1231,9 @@ mod tests {
                 &mut p,
             );
 
+            println!("j = {:?}, p = {:?}",
+                jac[0][i].value(),
+                p.deriv());
             // Check the derivative of the autodiff with our previously computed Jacobian.
             assert_relative_eq!(
                 jac[0][i].value(),
@@ -1322,14 +1321,6 @@ mod tests {
         let mut ad_samples = samples_to_autodiff(samples.clone());
 
         for &q in tri_verts.iter() {
-            // Eliminate no neighbour test.
-            if bg_potential_type == BackgroundPotentialType::None {
-                if samples.points.iter().all(|&p| (q - p).norm() >= radius) {
-                    // Nothing to test, the potential is expected to be NaN in this case.
-                    continue;
-                }
-            }
-
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
             let jac: Vec<Vector3<f64>> = ImplicitSurface::vertex_jacobian_at(
@@ -1417,14 +1408,6 @@ mod tests {
             .collect();
 
         for &q in tri_verts.iter() {
-            // Eliminate no neighbour test when there is no background potential.
-            if bg_potential_type == BackgroundPotentialType::None {
-                if samples.points.iter().all(|&p| (q - p).norm() >= radius) {
-                    // Nothing to test, the potential is expected to be NaN in this case.
-                    continue;
-                }
-            }
-
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
             let jac: Vec<Vector3<f64>> = ImplicitSurface::face_jacobian_at(

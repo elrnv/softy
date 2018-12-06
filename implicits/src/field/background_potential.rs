@@ -78,8 +78,8 @@ pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone
     pub samples: SamplesView<'a, 'a, T>,
     /// Data needed to compute the background potential value and its derivative.
     pub bg_potential_value: BackgroundPotentialValue<T>,
-    /// The reciprocal of the sum of all the weights in the neighbourhood of the query point.
-    pub weight_sum_inv: T,
+    /// The sum of all the weights in the neighbourhood of the query point.
+    pub weight_sum: T,
     /// The spherical kernel used to compute the weights.
     pub kernel: K,
     /// The distance to the closest sample.
@@ -135,7 +135,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             query_pos: q,
             samples,
             bg_potential_value: bg_value,
-            weight_sum_inv: T::zero(), // temporarily set the weight_sum_inv
+            weight_sum,
             kernel,
             closest_sample_dist,
             closest_sample_disp,
@@ -143,8 +143,8 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             radius,
         };
 
-        // Finalize the weight sum reciprocal.
-        bg.weight_sum_inv = T::one() / (weight_sum + bg.background_weight());
+        // Finalize the weight sum.
+        bg.weight_sum += bg.background_weight();
 
         bg
     }
@@ -154,7 +154,7 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
     }
 
     pub(crate) fn weight_sum_inv(&self) -> T {
-        self.weight_sum_inv
+        if self.weight_sum == T::zero() { T::zero() } else { T::one() / self.weight_sum }
     }
 
     pub(crate) fn background_weight(&self) -> T {
@@ -205,13 +205,14 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             query_pos: q,
             samples,
             bg_potential_value,
-            weight_sum_inv,
             kernel,
             closest_sample_dist: dist,
             closest_sample_disp: disp,
             closest_sample_index,
             ..
         } = *self;
+
+        let weight_sum_inv = self.weight_sum_inv();
 
         // The unnormalized weight evaluated at the distance to the boundary of the
         // neighbourhood.

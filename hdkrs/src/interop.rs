@@ -2,7 +2,7 @@
 //! This module defines utility functions for translating C types to rust types.
 //!
 
-use cffi;
+use crate::cffi;
 pub use libc::c_void;
 use std::ffi::CString;
 use std::ptr::NonNull;

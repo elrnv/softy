@@ -988,6 +988,7 @@ mod tests {
     use super::*;
     use crate::geo;
     use std::path::PathBuf;
+    use utils::*;
 
     /*
      * Setup code
@@ -1504,7 +1505,7 @@ mod tests {
         pot_attrib.into_iter().map(|x| x as f32).collect()
     }
 
-  #[test]
+    #[test]
     fn tet_push_test() {
         // A triangle is being pushed on top of a tet.
         let height = 1.18032;
@@ -1593,7 +1594,7 @@ mod tests {
         }
     }
 
-  #[test]
+    #[test]
     fn ball_tri_push_test() {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
         let material = Material {
@@ -1618,6 +1619,43 @@ mod tests {
             .unwrap();
 
         let res = solver.step().expect("Failed push solve.");
+        println!("res = {:?}", res);
+        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
+    }
+
+    #[test]
+    fn ball_bounce_test() {
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            ..SOLID_MATERIAL
+        };
+
+        let params = SimParams {
+            max_iterations: 100,
+            outer_tolerance: 0.1,
+            max_outer_iterations: 1,
+            gravity: [0.0f32, -9.81, 0.0],
+            ..DYNAMIC_PARAMS
+        };
+
+        let mut grid = make_grid(Grid { rows: 10, cols: 10, orientation: AxisPlaneOrientation::ZX });
+        scale(&mut grid, [2.0, 1.0, 2.0].into());
+        translate(&mut grid, [0.0, -1.1, 0.0].into());
+
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(material)
+            .add_solid(tetmesh)
+            .add_shell(grid)
+            .smooth_contact_params(SmoothContactParams { radius: 0.4, tolerance: 0.01, max_step: 0.5 })
+            .build()
+            .unwrap();
+
+        let res = solver.step().expect("Failed bounce solve.");
+        println!("res = {:?}", res);
+        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
+
+        let res = solver.step().expect("Failed bounce solve.");
         println!("res = {:?}", res);
         assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
     }

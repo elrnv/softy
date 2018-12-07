@@ -92,54 +92,12 @@ mod tests {
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.
-    fn make_grid(nx: usize, ny: usize) -> PolyMesh<f64> {
-        let mut positions = Vec::new();
-
-        // iterate over vertices
-        for i in 0..nx + 1 {
-            for j in 0..ny + 1 {
-                positions.push([
-                    -1.0 + 2.0 * (i as f64) / nx as f64,
-                    -1.0 + 2.0 * (j as f64) / ny as f64,
-                    0.0,
-                ]);
-            }
-        }
-
-        let mut indices = Vec::new();
-
-        // iterate over faces
-        for i in 0..nx {
-            for j in 0..ny {
-                indices.push(4);
-                indices.push((nx + 1) * j + i);
-                indices.push((nx + 1) * j + i + 1);
-                indices.push((nx + 1) * (j + 1) + i + 1);
-                indices.push((nx + 1) * (j + 1) + i);
-            }
-        }
-
-        let mut mesh = PolyMesh::new(positions, &indices);
+    fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
+        use utils::*;
+        let mut mesh = make_grid(Grid { rows, cols, orientation: AxisPlaneOrientation::XY });
         mesh.add_attrib::<_, VertexIndex>("potential", 0.0f32)
             .unwrap();
         mesh
-    }
-
-    fn make_sample_octahedron() -> TriMesh<f64> {
-        let points = vec![
-            [-0.5, 0.0, 0.0],
-            [0.5, 0.0, 0.0],
-            [0.0, -0.5, 0.0],
-            [0.0, 0.5, 0.0],
-            [0.0, 0.0, -0.5],
-            [0.0, 0.0, 0.5],
-        ];
-
-        let indices = vec![
-            0, 5, 3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 5, 0, 2, 0, 4, 2, 4, 1, 2, 1, 5, 2,
-        ];
-
-        TriMesh::new(points, indices)
     }
 
     /// Test the non-dynamic API.
@@ -147,7 +105,7 @@ mod tests {
     fn vertex_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = make_sample_octahedron();
+        let trimesh = utils::make_sample_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -184,7 +142,7 @@ mod tests {
     fn face_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = make_sample_octahedron();
+        let trimesh = utils::make_sample_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -219,7 +177,7 @@ mod tests {
     fn hrbf_vertex_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = make_sample_octahedron();
+        let trimesh = utils::make_sample_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -256,7 +214,7 @@ mod tests {
 
         let grid = make_grid(22, 22);
 
-        let trimesh = make_sample_octahedron();
+        let trimesh = utils::make_sample_octahedron();
 
         let mut builder = ImplicitSurfaceBuilder::new();
         builder.kernel(KernelType::Approximate { tolerance: 1e-5, radius: 1.5 })
@@ -292,7 +250,7 @@ mod tests {
     
         let mut grid = make_grid(22, 22);
     
-        let trimesh = make_sample_octahedron();
+        let trimesh = utils::make_sample_octahedron();
         let triangles: Vec<[usize;3]> = trimesh.face_iter().cloned().map(|x| x.into_inner()).collect();
         for cur_pt_idx in 0..trimesh.num_vertices() { // for each vertex
             for i in 0..3 { // for each component

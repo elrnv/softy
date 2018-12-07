@@ -411,7 +411,8 @@ impl ImplicitSurface {
             query_points.par_iter(),
             neigh_points.par_iter(),
             out_potential.par_iter_mut()
-        ).for_each(move |(q, neighbours, potential)| {
+        ).filter(|(_, nbrs, _)| !nbrs.is_empty())
+         .for_each(move |(q, neighbours, potential)| {
             Self::compute_local_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
@@ -550,7 +551,7 @@ impl ImplicitSurface {
                     let cache = self.neighbour_cache.borrow();
                     cache.cached_neighbour_points().to_vec()
                 };
-                Box::new(cached_pts.into_iter().enumerate().flat_map(
+                Box::new(cached_pts.into_iter().filter(|c| !c.is_empty()).enumerate().flat_map(
                         move |(row, nbr_points)| {
                             nbr_points
                                 .into_iter()
@@ -561,7 +562,7 @@ impl ImplicitSurface {
             SampleType::Face => {
                 let cached: Vec<_> = {
                     let cache = self.neighbour_cache.borrow();
-                    cache.cached_neighbour_points().iter().enumerate().flat_map(
+                    cache.cached_neighbour_points().iter().filter(|c| !c.is_empty()).enumerate().flat_map(
                         |(row, nbr_points)| {
                             nbr_points.iter().flat_map(move |&pidx| {
                                 self.surface_topo[pidx].iter().flat_map(
@@ -582,7 +583,7 @@ impl ImplicitSurface {
         let cache = self.neighbour_cache.borrow();
         match self.sample_type {
             SampleType::Vertex => {
-                let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
+                let row_col_iter = cache.cached_neighbour_points().iter().filter(|c| !c.is_empty()).enumerate().flat_map(
                     move |(row, nbr_points)| {
                         nbr_points
                             .iter()
@@ -597,7 +598,7 @@ impl ImplicitSurface {
                 }
             }
             SampleType::Face => {
-                let row_col_iter = cache.cached_neighbour_points().iter().enumerate().flat_map(
+                let row_col_iter = cache.cached_neighbour_points().iter().filter(|c| !c.is_empty()).enumerate().flat_map(
                     move |(row, nbr_points)| {
                         nbr_points.iter().flat_map(move |&pidx| {
                             self.surface_topo[pidx]
@@ -732,7 +733,8 @@ impl ImplicitSurface {
                 let vtx_jac = zip!(
                         query_points.iter(),
                         neigh_points.iter()
-                    ).flat_map(move |(q, nbr_points)| {
+                ).filter(|(_, nbrs)| !nbrs.is_empty())
+                 .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::vertex_jacobian_at(
                             Vector3(*q),
@@ -756,7 +758,8 @@ impl ImplicitSurface {
                 let face_jac = zip!(
                         query_points.iter(),
                         neigh_points.iter()
-                    ).flat_map(move |(q, nbr_points)| {
+                ).filter(|(_, nbrs)| !nbrs.is_empty())
+                 .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
 
                         Self::face_jacobian_at(

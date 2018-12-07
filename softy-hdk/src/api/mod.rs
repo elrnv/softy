@@ -4,8 +4,10 @@ use hdkrs::interop::CookResult;
 use softy::{self, fem};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use MaterialProperties;
-use SimParams;
+use crate::{
+    MaterialProperties,
+    SimParams,
+};
 
 mod solver;
 

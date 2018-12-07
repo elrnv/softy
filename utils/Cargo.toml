@@ -1,0 +1,8 @@
+[package]
+name = "utils"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }

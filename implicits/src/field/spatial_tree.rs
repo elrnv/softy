@@ -19,7 +19,7 @@ impl<T: SpadeNum + Real + Send + Sync> SpatialObject for Sample<T> {
 
 /// Given a vertex based mesh, extract the vertex positions (points) and vertex normals and return
 /// them in as two vectors in that order.
-pub fn points_and_normals_from_mesh<'a, M: VertexMesh<f64>>(
+pub fn points_and_normals_from_mesh<M: VertexMesh<f64>>(
     mesh: &M,
 ) -> (Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
     let points: Vec<Vector3<f64>> = mesh

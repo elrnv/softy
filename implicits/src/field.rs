@@ -120,7 +120,7 @@ impl ImplicitSurface {
     where
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
-        samples.clone().into_iter().map(move |sample| {
+        samples.into_iter().map(move |sample| {
             let Sample { index, nml, .. } = sample;
             let norm_inv = T::one() / nml.norm();
             // Compute the normal component of the derivative
@@ -140,7 +140,7 @@ impl ImplicitSurface {
                         .expect("Triangle mesh topology corruption."),
                 );
                 let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in SamplesView::from_view(tri_indices, samples.clone()).into_iter() {
+                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
                     if sample.index != index {
                         let normk_inv = T::one() / sample.nml.norm();
                         let nmlk_proj = Matrix3::identity()
@@ -172,7 +172,6 @@ impl ImplicitSurface {
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
         samples
-            .clone()
             .into_iter()
             .zip(surface_topo.iter())
             .flat_map(move |(sample, tri_indices)| {
@@ -206,7 +205,7 @@ impl ImplicitSurface {
                 for (vertex_pos, sample_pos) in
                     surface_vertex_positions.iter().zip(points.iter_mut())
                 {
-                    *sample_pos = (*vertex_pos).into();
+                    *sample_pos = *vertex_pos;
                 }
 
                 Self::compute_vertex_area_normals(surface_topo, points, normals);
@@ -505,7 +504,10 @@ impl ImplicitSurface {
         cols: &mut [usize],
     ) -> Result<(), super::Error> {
         match self.kernel {
-            KernelType::Approximate { .. } => Ok(self.mls_surface_jacobian_indices(rows, cols)),
+            KernelType::Approximate { .. } => {
+                self.mls_surface_jacobian_indices(rows, cols);
+                Ok(())
+            }
             _ => Err(super::Error::UnsupportedKernel),
         }
     }
@@ -642,7 +644,7 @@ impl ImplicitSurface {
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = ImplicitSurface::compute_vertex_unit_normals_gradient_products(
-            view.clone(),
+            view,
             &surface_topo,
             &dual_topo,
             move |Sample { pos, .. }| {
@@ -683,7 +685,7 @@ impl ImplicitSurface {
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = Self::compute_face_unit_normals_gradient_products(
-            view.clone(),
+            view,
             surface_vertex_positions,
             &surface_topo,
             move |Sample { pos, .. }| {
@@ -828,7 +830,7 @@ impl ImplicitSurface {
         let weight_sum_inv = bg.weight_sum_inv();
         let weight_sum_inv2 = weight_sum_inv * weight_sum_inv;
 
-        samples.clone().into_iter().map(
+        samples.into_iter().map(
             move |Sample {
                       index,
                       pos,
@@ -1000,7 +1002,7 @@ impl ImplicitSurface {
         let potential_attrib = mesh
             .remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
 
         let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
         if potential.is_empty() {
@@ -1066,7 +1068,7 @@ impl ImplicitSurface {
                             view,
                             radius,
                             kernel,
-                            BackgroundPotentialValue::val(bg_potential_type, *potential as f64),
+                            BackgroundPotentialValue::val(bg_potential_type, f64::from(*potential)),
                         );
                         let closest_d = bg.closest_sample_dist();
                         *bg_weight = bg.background_weight() as f32;
@@ -1112,7 +1114,7 @@ impl ImplicitSurface {
         let potential_attrib = mesh
             .remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or(Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
 
         let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
         if potential.is_empty() {

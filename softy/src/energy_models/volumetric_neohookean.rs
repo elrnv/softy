@@ -217,6 +217,7 @@ pub struct ElasticTetMeshEnergy {
 
 /// A builder for the `ElasticTetMeshEnergy` struct. The only required field is the `tetmesh` which
 /// is specified in the `new` method.
+#[derive(Debug, PartialEq)]
 pub struct ElasticTetMeshEnergyBuilder {
     tetmesh: Rc<RefCell<TetMesh>>,
     material: Option<MaterialModel>,
@@ -267,11 +268,11 @@ impl ElasticTetMeshEnergyBuilder {
     }
 
     pub fn build(&self) -> ElasticTetMeshEnergy {
-        let ElasticTetMeshEnergyBuilder { tetmesh, material } = self.clone();
+        let ElasticTetMeshEnergyBuilder { ref tetmesh, ref material } = self;
 
         ElasticTetMeshEnergy {
             tetmesh: tetmesh.clone(),
-            material: material.unwrap_or(MaterialModel::default()),
+            material: material.unwrap_or_default(),
         }
     }
 }

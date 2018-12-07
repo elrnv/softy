@@ -16,6 +16,12 @@ pub struct ImplicitSurfaceBuilder {
     sample_type: SampleType,
 }
 
+impl Default for ImplicitSurfaceBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImplicitSurfaceBuilder {
     pub fn new() -> Self {
         ImplicitSurfaceBuilder {
@@ -77,11 +83,11 @@ impl ImplicitSurfaceBuilder {
                 iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap())
                     .collect()
             })
-            .unwrap_or(vec![Vector3::zeros(); mesh.num_vertices()]);
+            .unwrap_or_else(|_| vec![Vector3::zeros(); mesh.num_vertices()]);
         self.sample_offsets = mesh
             .attrib_iter::<f32, VertexIndex>("offset")
-            .map(|iter| iter.map(|&x| x as f64).collect())
-            .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
+            .map(|iter| iter.map(|&x| f64::from(x)).collect())
+            .unwrap_or_else(|_| vec![0.0f64; mesh.num_vertices()]);
         self.sample_type = SampleType::Vertex;
         self
     }
@@ -107,11 +113,11 @@ impl ImplicitSurfaceBuilder {
                 iter.map(|nml| Vector3(*nml).cast::<f64>().unwrap())
                     .collect()
             })
-            .unwrap_or(Vec::new());
+            .unwrap_or_default();
         self.sample_offsets = mesh
             .attrib_iter::<f32, VertexIndex>("offset")
-            .map(|iter| iter.map(|&x| x as f64).collect())
-            .unwrap_or(vec![0.0f64; mesh.num_vertices()]);
+            .map(|iter| iter.map(|&x| f64::from(x)).collect())
+            .unwrap_or_else(|_| vec![0.0f64; mesh.num_vertices()]);
         self.triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
         self.sample_type = SampleType::Vertex;
         self
@@ -134,8 +140,8 @@ impl ImplicitSurfaceBuilder {
             .collect();
         self.sample_offsets = mesh
             .attrib_iter::<f32, FaceIndex>("offset")
-            .map(|iter| iter.map(|&x| x as f64).collect())
-            .unwrap_or(vec![0.0f64; mesh.num_faces()]);
+            .map(|iter| iter.map(|&x| f64::from(x)).collect())
+            .unwrap_or_else(|_| vec![0.0f64; mesh.num_faces()]);
         self.triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
         self.sample_type = SampleType::Face;
         self
@@ -192,21 +198,18 @@ impl ImplicitSurfaceBuilder {
 
         let mut dual_topo = Vec::new();
         // Build the dual topology. Only needed for vertex centric implicit surfaces.
-        match sample_type {
-            SampleType::Vertex => {
-                // Construct dual topology for a vertex centered implicit surface which we may
-                // need to differentiate.
-                if !triangles.is_empty() {
-                    // Compute the one ring and store it in the dual topo vectors.
-                    dual_topo.resize(vertices.len(), Vec::new());
-                    for (tri_idx, tri) in triangles.iter().enumerate() {
-                        for &vidx in tri {
-                            dual_topo[vidx].push(tri_idx);
-                        }
+        if let SampleType::Vertex = sample_type {
+            // Construct dual topology for a vertex centered implicit surface which we may
+            // need to differentiate.
+            if !triangles.is_empty() {
+                // Compute the one ring and store it in the dual topo vectors.
+                dual_topo.resize(vertices.len(), Vec::new());
+                for (tri_idx, tri) in triangles.iter().enumerate() {
+                    for &vidx in tri {
+                        dual_topo[vidx].push(tri_idx);
                     }
                 }
             }
-            _ => {}
         }
 
         // Build the samples.

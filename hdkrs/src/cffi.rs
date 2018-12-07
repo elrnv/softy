@@ -1,3 +1,5 @@
+#![allow(clippy::cyclomatic_complexity)]
+
 use geo::io::{
     convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
@@ -335,7 +337,7 @@ pub unsafe extern "C" fn free_attribute(attrib: *mut Attribute) {
 #[no_mangle]
 pub unsafe extern "C" fn attrib_name(data: *const Attribute) -> *const c_char {
     if data.is_null() {
-        CString::new("").unwrap().as_ptr()
+        std::ptr::null()
     } else {
         (*data).name.as_ptr()
     }
@@ -794,15 +796,11 @@ macro_rules! impl_add_attrib {
     // Points only attributes
     (_impl_points $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         {
-            match $loc {
-                AttribLocation::Vertex => {
-                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
-                    }
-                },
-                _ => (),
-            };
+            if let AttribLocation::Vertex = $loc {
+                if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                    println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
+                }
+            }
         }
     };
     // Surface type meshes like tri- or quad-meshes typically have face attributes but no
@@ -811,21 +809,18 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 AttribLocation::Face => {
-                    match (*$mesh).add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 AttribLocation::FaceVertex => {
-                    match (*$mesh).add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 _ => (),
@@ -837,21 +832,18 @@ macro_rules! impl_add_attrib {
         {
             match $loc {
                 AttribLocation::Vertex => {
-                    match (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 AttribLocation::Cell=> {
-                    match (*$mesh).add_attrib_data::<_,topo::CellIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::CellIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 AttribLocation::CellVertex => {
-                    match (*$mesh).add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
-                        Err(error) => println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error),
-                        Ok(_) => {}
+                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
+                        println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
                 _ => (),

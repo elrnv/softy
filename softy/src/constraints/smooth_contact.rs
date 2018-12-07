@@ -201,7 +201,7 @@ impl SmoothContactConstraint {
 
         if let Ok(all_offsets) = tetmesh.attrib_as_slice::<f32, VertexIndex>("offset") {
             let offsets = surf_verts.iter()
-                .map(|&i| all_offsets[i] as f64).collect();
+                .map(|&i| f64::from(all_offsets[i])).collect();
             surface_builder.offsets(offsets);
         }
 

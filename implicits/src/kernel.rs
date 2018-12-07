@@ -1,3 +1,5 @@
+#![allow(clippy::just_underscores_and_digits)]
+
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::Real;
 

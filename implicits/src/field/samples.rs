@@ -122,6 +122,7 @@ impl<T: Real> Samples<T> {
     }
 
     /// Consuming iterator.
+    #[allow(clippy::should_implement_trait)] // waiting for impl trait on associated types
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + Clone {
         let Samples {
@@ -219,9 +220,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     pub fn from_view(indices: &'i [usize], samples: SamplesView<'i, 'd, T>) -> Self {
         SamplesView {
             indices,
-            points: samples.points.clone(),
-            normals: samples.normals.clone(),
-            offsets: samples.offsets.clone(),
+            ..samples
         }
     }
 
@@ -252,6 +251,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 
     /// Consuming iterator.
+    #[allow(clippy::should_implement_trait)] // waiting for impl trait on associated types
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + 'i {
         let SamplesView {

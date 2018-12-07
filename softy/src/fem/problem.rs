@@ -76,19 +76,10 @@ impl NonLinearProblem {
     }
 
     /// Intermediate callback for `Ipopt`.
+    #[allow(clippy::too_many_arguments)] // TODO: Improve on the ipopt interface
     pub fn intermediate_cb(
         &mut self,
-        _alg_mod: Index,
-        _iter_count: Index,
-        _obj_value: Number,
-        _inf_pr: Number,
-        _inf_du: Number,
-        _mu: Number,
-        _d_norm: Number,
-        _regularization_size: Number,
-        _alpha_du: Number,
-        _alpha_pr: Number,
-        _ls_trials: Index,
+        _data: ipopt::IntermediateCallbackData,
     ) -> bool {
         self.iterations += 1;
         !(self.interrupt_checker)()
@@ -105,7 +96,7 @@ impl NonLinearProblem {
             .zip(prev_pos.iter_mut()
             .zip(prev_vel.iter_mut()))
             .for_each(|(dp, (prev_p, prev_v))| {
-                *prev_p = (*prev_p + dp).into();
+                *prev_p += dp;
                 *prev_v = dp * dt_inv;
             });
 

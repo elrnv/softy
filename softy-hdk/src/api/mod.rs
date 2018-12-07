@@ -61,7 +61,7 @@ pub(crate) fn get_solver(
     } else {
         // Given solver id is invalid, need to create a new solver.
         match tetmesh {
-            Some(tetmesh) => register_new_solver(tetmesh, polymesh, params),
+            Some(tetmesh) => register_new_solver(*tetmesh, polymesh, params),
             None => Err(Error::MissingSolverAndMesh),
         }
     }
@@ -132,17 +132,18 @@ impl Into<softy::SmoothContactParams> for SimParams {
             ..
         } = self;
         softy::SmoothContactParams {
-            radius: contact_radius as f64,
-            tolerance: smoothness_tolerance as f64,
-            max_step: max_step as f64,
+            radius: f64::from(contact_radius),
+            tolerance: f64::from(smoothness_tolerance),
+            max_step: f64::from(max_step),
         }
     }
 }
 
 /// Register a new solver in the registry. (Rust side)
+//#[allow(clippy::needless_pass_by_value)]
 #[inline]
 pub(crate) fn register_new_solver(
-    tetmesh: Box<TetMesh<f64>>,
+    tetmesh: TetMesh<f64>,
     shell: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
@@ -151,7 +152,7 @@ pub(crate) fn register_new_solver(
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
     solver_builder
-        .add_solid(*tetmesh)
+        .add_solid(tetmesh)
         .solid_material(params.into());
 
     // Add a shell if one was given.
@@ -188,7 +189,7 @@ pub(crate) fn register_new_solver(
         // Insert a new solver at the location we determined is vacant.
         let new_solver = solver_table
             .entry(id)
-            .or_insert(Arc::new(Mutex::new(solver)));
+            .or_insert_with(|| Arc::new(Mutex::new(solver)));
         Ok((id, Arc::clone(new_solver)))
     } else {
         Err(Error::RegistryFull)
@@ -198,7 +199,7 @@ pub(crate) fn register_new_solver(
 /// Perform one solve step given a solver.
 #[inline]
 pub(crate) fn step<F>(
-    solver: Arc<Mutex<dyn Solver>>,
+    solver: &mut Solver,
     tetmesh_points: Option<Box<PointCloud<f64>>>,
     polymesh_points: Option<Box<PointCloud<f64>>>,
     check_interrupt: F,
@@ -206,7 +207,6 @@ pub(crate) fn step<F>(
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {
-    let solver = &mut *solver.lock().unwrap();
     solver.set_interrupter(Box::new(check_interrupt));
 
     // Update mesh points

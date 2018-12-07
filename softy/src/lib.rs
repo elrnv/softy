@@ -67,10 +67,10 @@ pub enum SimResult {
 impl From<Error> for SimResult {
     fn from(err: Error) -> SimResult {
         match err {
-            Error::SizeMismatch => SimResult::Error(format!("Size mismatch error.").into()),
-            Error::AttribError(e) => SimResult::Error(format!("Attribute error: {:?}", e).into()),
+            Error::SizeMismatch => SimResult::Error("Size mismatch error.".to_string()),
+            Error::AttribError(e) => SimResult::Error(format!("Attribute error: {:?}", e)),
             Error::InvertedReferenceElement => {
-                SimResult::Error(format!("Inverted reference element detected.").into())
+                SimResult::Error("Inverted reference element detected.".to_string())
             }
             Error::SolveError(
                 e,
@@ -78,24 +78,24 @@ impl From<Error> for SimResult {
             ) => 
                 match e {
                     ipopt::SolveStatus::MaximumIterationsExceeded => {
-                        SimResult::Warning( format!( "Maximum iterations exceeded. \n{}", solve_result) .into())
+                        SimResult::Warning( format!( "Maximum iterations exceeded. \n{}", solve_result))
                     }
                     e => {
-                        SimResult::Error(format!( "Solve failed: {:?}\n{}", e, solve_result) .into())
+                        SimResult::Error(format!( "Solve failed: {:?}\n{}", e, solve_result))
                     }
                 },
             Error::InnerSolveError(e, solve_result) =>
-                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result).into()),
+                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result)),
             Error::MissingContactParams =>
-                SimResult::Error(format!("Missing smooth contact parameters.").into()),
+                SimResult::Error("Missing smooth contact parameters.".to_string()),
             Error::NoSimulationMesh =>
-                SimResult::Error(format!("Missing simulation mesh.").into()),
+                SimResult::Error("Missing simulation mesh.".to_string()),
             Error::NoKinematicMesh =>
-                SimResult::Error(format!("Missing kinematic mesh.").into()),
+                SimResult::Error("Missing kinematic mesh.".to_string()),
             Error::SolverCreateError(err) =>
-                SimResult::Error(format!("Failed to create a solver: {:?}", err).into()),
+                SimResult::Error(format!("Failed to create a solver: {:?}", err)),
             Error::InvalidParameter(err) =>
-                SimResult::Error(format!("Invalid parameter: {:?}", err).into()),
+                SimResult::Error(format!("Invalid parameter: {:?}", err)),
         }
     }
 }
@@ -112,12 +112,17 @@ impl Into<SimResult> for Result<SolveResult, Error> {
 pub fn sim(
     tetmesh: Option<TetMesh>,
     material: Material,
-    _polymesh: Option<PolyMesh>,
+    polymesh: Option<PolyMesh>,
     sim_params: SimParams,
     interrupter: Option<Box<FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
-        match fem::SolverBuilder::new(sim_params).add_solid(mesh).solid_material(material).build() {
+        let mut builder = fem::SolverBuilder::new(sim_params);
+        builder.add_solid(mesh).solid_material(material);
+        if let Some(shell_mesh) = polymesh {
+            builder.add_shell(shell_mesh);
+        }
+        match builder.build() {
             Ok(mut engine) => {
                 if let Some(interrupter) = interrupter {
                     engine.set_interrupter(interrupter);

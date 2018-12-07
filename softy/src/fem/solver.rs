@@ -10,7 +10,7 @@ use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{VertexPositions, tetmesh::TetCell, topology::*, Attrib};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
-use ipopt::{self, Ipopt, SolverDataMut, SolverDataRef};
+use ipopt::{self, Ipopt, SolverDataMut, SolverData};
 use reinterpret::*;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -29,7 +29,7 @@ use crate::PolyMesh;
 use crate::TriMesh;
 
 /// Result from one inner simulation step.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct InnerSolveResult {
     /// Number of inner iterations in one step.
     pub iterations: u32,
@@ -38,7 +38,7 @@ pub struct InnerSolveResult {
 }
 
 /// Result from one simulation step.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SolveResult {
     /// Maximum number of inner iterations during one outer step.
     pub max_inner_iterations: u32,
@@ -107,9 +107,9 @@ impl ElasticityParameters {
     }
 
     /// Convert internal elasticity parameters to Lame parameters for Neo-Hookean energy.
-    pub fn lame_parameters(&self) -> (f64, f64) {
-        let lambda = self.bulk_modulus as f64 - 2.0 * self.shear_modulus as f64 / 3.0;
-        let mu = self.shear_modulus as f64;
+    pub fn lame_parameters(self) -> (f64, f64) {
+        let lambda = f64::from(self.bulk_modulus) - 2.0 * f64::from(self.shear_modulus) / 3.0;
+        let mu = f64::from(self.shear_modulus);
         (lambda, mu)
     }
 }
@@ -184,7 +184,7 @@ impl SolverBuilder {
         } = self;
 
         // Get kinematic shell
-        let kinematic_object = if shells.len() > 0 {
+        let kinematic_object = if !shells.is_empty() {
             if smooth_contact_params.is_none() {
                 return Err(Error::MissingContactParams);
             }
@@ -195,7 +195,7 @@ impl SolverBuilder {
         };
 
         // TODO: add support for more solids.
-        if solids.len() == 0 {
+        if solids.is_empty() {
             return Err(Error::NoSimulationMesh);
         }
 
@@ -225,24 +225,24 @@ impl SolverBuilder {
 
         // Normalize material parameters with mu.
         let lambda = lambda / mu;
-        let density = solid_material.density as f64 / mu;
+        let density = f64::from(solid_material.density) / mu;
         // premultiply damping by timestep reciprocal.
         let damping = params.time_step.map_or(0.0, |dt| 
             if dt != 0.0 {
-                1.0 / dt as f64
+                1.0 / f64::from(dt)
             } else {
                 0.0
             }
-        ) * solid_material.damping as f64
+        ) * f64::from(solid_material.damping)
             / mu;
 
         // All values are normalized by mu including mu itself so it becomes 1.0.
         let mu = 1.0;
 
         let gravity = [
-            params.gravity[0] as f64,
-            params.gravity[1] as f64,
-            params.gravity[2] as f64,
+            f64::from(params.gravity[0]),
+            f64::from(params.gravity[1]),
+            f64::from(params.gravity[2]),
         ];
 
         // Initialize volume constraint
@@ -260,7 +260,7 @@ impl SolverBuilder {
 
         let momentum_potential = params
             .time_step
-            .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, dt as f64));
+            .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
         let smooth_contact_constraint = kinematic_object.as_ref()
             .map(|trimesh| LinearSmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap()));
@@ -274,7 +274,7 @@ impl SolverBuilder {
         let problem = NonLinearProblem {
             prev_pos,
             prev_vel,
-            time_step: params.time_step.unwrap_or(0.0f32) as f64,
+            time_step: f64::from(params.time_step.unwrap_or(0.0f32)),
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
             energy_model: energy_model_builder.build(),
@@ -293,7 +293,7 @@ impl SolverBuilder {
         // response which depends on mu and lambda as well as per tet volume:
         // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
         // should reflect these properties.
-        let tol = params.tolerance as f64 * max_vol * lambda.max(mu);
+        let tol = f64::from(params.tolerance) * max_vol * lambda.max(mu);
         params.tolerance = tol as f32;
         params.outer_tolerance *= (max_vol * lambda.max(mu)) as f32;
         println!("tol = {:?}", params.tolerance);
@@ -326,7 +326,7 @@ impl SolverBuilder {
         Ok(Solver {
             solver: ipopt,
             step_count: 0,
-            sim_params: params.clone(),
+            sim_params: params,
             solid_material: Some(solid_material),
             max_step: smooth_contact_params.map_or(0.0, |x| x.max_step),
         })
@@ -338,7 +338,7 @@ impl SolverBuilder {
             .cell_iter()
             .map(|cell| ref_tet(&mesh, cell).signed_volume())
             .collect();
-        if ref_volumes.iter().find(|&&x| x <= 0.0).is_some() {
+        if ref_volumes.iter().any(|&x| x <= 0.0) {
             return Err(Error::InvertedReferenceElement);
         }
         Ok(ref_volumes)
@@ -370,7 +370,7 @@ impl SolverBuilder {
         {
             use crate::geo::mesh::attrib::*;
             let fixed_buf = mesh.remove_attrib::<VertexIndex>(FIXED_ATTRIB)
-                .unwrap_or(Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])).into_buffer();
+                .unwrap_or_else(|_| Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])).into_buffer();
             let mut fixed = fixed_buf.cast_into_vec::<FixedIntType>();
             if fixed.is_empty() { // If non-numeric type detected, just fill it with zeros.
                 fixed.resize(mesh.num_vertices(), 0);
@@ -426,7 +426,7 @@ impl Solver {
     /// Get an immutable borrow for the underlying `TriMesh` of the kinematic object.
     pub fn try_borrow_kinematic_mesh(&self) -> Option<Ref<'_, TriMesh>> {
         self.problem().kinematic_object.as_ref().map(|x| x.borrow())
-        //match &self.solver.solver_data_ref().problem.kinematic_object {
+        //match &self.solver.solver_data().problem.kinematic_object {
         //    Some(x) => Some(x.borrow()),
         //    None => None,
         //}
@@ -434,7 +434,7 @@ impl Solver {
 
     /// Get an immutable reference to the underlying problem.
     fn problem(&self) -> &NonLinearProblem {
-        self.solver.solver_data_ref().problem
+        self.solver.solver_data().problem
     }
 
     /// Get a mutable reference to the underlying problem.
@@ -622,12 +622,12 @@ impl Solver {
     /// Compute and add the value of the constraint function minus constraint bounds.
     pub fn add_constraint_violation(&self, constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
-        let SolverDataRef {
+        let SolverData {
             problem,
             primal_variables,
             constraint_multipliers,
             ..
-        } = self.solver.solver_data_ref();
+        } = self.solver.solver_data();
 
         assert_eq!(constraint.len(), constraint_multipliers.len());
         let mut lower = vec![0.0; constraint.len()];
@@ -653,11 +653,11 @@ impl Solver {
     /// Compute the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
     pub fn compute_objective_gradient_product(&self, grad: &mut [f64]) -> f64 {
         use ipopt::BasicProblem;
-        let SolverDataRef {
+        let SolverData {
             problem,
             primal_variables,
             ..
-        } = self.solver.solver_data_ref();
+        } = self.solver.solver_data();
 
         assert_eq!(grad.len(), primal_variables.len());
         assert!(problem.objective_grad(primal_variables, grad));
@@ -668,11 +668,11 @@ impl Solver {
     /// Compute the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
     pub fn compute_objective_gradient(&self, grad: &mut [f64]) {
         use ipopt::BasicProblem;
-        let SolverDataRef {
+        let SolverData {
             problem,
             primal_variables,
             ..
-        } = self.solver.solver_data_ref();
+        } = self.solver.solver_data();
 
         assert_eq!(grad.len(), primal_variables.len());
         assert!(problem.objective_grad(&vec![0.0; primal_variables.len()], grad));
@@ -690,12 +690,12 @@ impl Solver {
     /// Compute and add the Jacobian and constraint multiplier product to the given vector.
     pub fn add_constraint_jacobian_product(&self, jac_prod: &mut [f64]) {
         use ipopt::ConstrainedProblem;
-        let SolverDataRef {
+        let SolverData {
             problem,
             primal_variables,
             constraint_multipliers,
             ..
-        } = self.solver.solver_data_ref();
+        } = self.solver.solver_data();
 
         let jac_nnz = problem.num_constraint_jac_non_zeros();
         let mut rows = vec![0; jac_nnz];
@@ -720,12 +720,12 @@ impl Solver {
     }
 
     fn dx(&self) -> &[f64] {
-        self.solver.solver_data_ref().primal_variables
+        self.solver.solver_data().primal_variables
     }
 
-    fn lambda(&self) -> &[f64] {
-        self.solver.solver_data_ref().constraint_multipliers
-    }
+    //fn lambda(&self) -> &[f64] {
+    //    self.solver.solver_data().constraint_multipliers
+    //}
 
     /// Update the `mesh` and `prev_pos` with the current solution.
     fn commit_solution(&mut self) {
@@ -759,7 +759,7 @@ impl Solver {
     }
 
     fn compute_objective(&self) -> f64 {
-        self.compute_objective_dx(self.solver.solver_data_ref().primal_variables)
+        self.compute_objective_dx(self.solver.solver_data().primal_variables)
     }
 
     fn compute_objective_dx(&self, dx: &[f64]) -> f64 {
@@ -767,7 +767,7 @@ impl Solver {
     }
 
     fn model_l1(&self) -> f64 {
-        self.model_l1_dx(self.solver.solver_data_ref().primal_variables)
+        self.model_l1_dx(self.solver.solver_data().primal_variables)
     }
 
     fn model_l1_dx(&self, dx: &[f64]) -> f64 {
@@ -775,7 +775,7 @@ impl Solver {
     }
 
     fn merit_l1(&self) -> f64 {
-        self.merit_l1_dx(self.solver.solver_data_ref().primal_variables)
+        self.merit_l1_dx(self.solver.solver_data().primal_variables)
     }
 
     fn merit_l1_dx(&self, dx: &[f64]) -> f64 {
@@ -903,7 +903,7 @@ impl Solver {
             // residual and iterate until it vanishes.
             residual_norm = self.compute_residual(&mut residual);
 
-            if residual_norm <= self.sim_params.outer_tolerance as f64 {
+            if residual_norm <= f64::from(self.sim_params.outer_tolerance) {
                 break;
             }
 

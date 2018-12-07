@@ -59,12 +59,12 @@ pub unsafe extern "C" fn register_new_solver(
         let shell = interop::into_box(polymesh);
 
         match api::register_new_solver(
-            tetmesh,
+            *tetmesh,
             shell,
             sim_params,
         ) {
             Ok((id, _)) => RegistryResult { 
-                solver_id: id as i64,
+                solver_id: i64::from(id),
                 cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             },
             Err(err) => RegistryResult {
@@ -82,26 +82,26 @@ pub unsafe extern "C" fn register_new_solver(
 
 /// Validate the given id from C side by converting it to a Rust option type.
 fn validate_id(id: i64) -> Option<u32> {
-    if id == (id as u32) as i64 {
+    if id == i64::from(id as u32) {
         Some(id as u32)
     } else {
         None
     }
 }
 
-/// Validate the given solver pointer from C side by converting it to an Arc if it still exists in
-/// the registry.
-unsafe fn validate_solver_ptr(solver: *mut SolverPtr) -> Option<Arc<Mutex<dyn api::Solver>>> {
-    interop::into_box(solver as *mut Arc<Mutex<dyn api::Solver>>).map(|x| *x)
+/// Validate the given solver pointer from C side by converting it to an `Arc` if it still exists
+/// in the registry.
+unsafe fn validate_solver_ptr(solver: *mut SolverPtr) -> Option<SolverPtr> {
+    interop::into_box(solver).map(|x| *x)
 }
 
-/// Move the `Arc` to the heap an return its raw pointer.
-fn solver_ptr(solver: Arc<Mutex<dyn api::Solver>>) -> *mut SolverPtr {
+/// Move the `Arc` to the heap and return its raw pointer.
+fn solver_ptr(solver: SolverPtr) -> *mut SolverPtr {
     Box::into_raw(Box::new(solver)) as *mut SolverPtr
 }
 
 /// Opaque struct to represent `Arc<Mutex<api::Solver>>` on the C side.
-pub struct SolverPtr;
+pub type SolverPtr = Arc<Mutex<dyn api::Solver>>;
 
 #[repr(C)]
 pub struct SolverResult {
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn get_solver(
         Ok((id, solver)) => {
             assert!(Arc::strong_count(&solver) != 1);
             SolverResult {
-                id: id as i64,
+                id: i64::from(id),
                 solver: solver_ptr(solver),
                 cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             }
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn step(
 ) -> StepResult {
     if let Some(solver) = validate_solver_ptr(solver) {
         let (tetmesh_mb, polymesh_mb, cook_result) = api::step(
-            solver,
+            &mut *solver.lock().unwrap(),
             interop::into_box(tetmesh_points),
             interop::into_box(polymesh_points),
             interop::interrupt_callback(interrupt_checker, check_interrupt),
@@ -230,12 +230,12 @@ pub unsafe extern "C" fn solve(
         validate_id(solver_id),
         interop::into_box(tetmesh),
         interop::into_box(polymesh),
-        sim_params.into(),
+        sim_params,
         interop::interrupt_callback(interrupt_checker, check_interrupt),
     );
     if let Some((new_solver_id, solver_tetmesh)) = data {
         SolveResult {
-            solver_id: new_solver_id as i64,
+            solver_id: i64::from(new_solver_id),
             tetmesh: Box::into_raw(Box::new(solver_tetmesh)),
             polymesh: ::std::ptr::null_mut(),
             cook_result: cook_result.into(),

@@ -67,7 +67,7 @@ impl Energy<f64> for MomentumPotential {
                 let tet_dv = tet_dx * dt_inv - tet_v;
 
                 0.5 * dt_inv * {
-                    let dvTdv: f64 = tet_dv.as_array()
+                    let dvTdv: f64 = tet_dv.into_array()
                     .into_iter()
                     .map(|&dv| dv.dot(dv))
                     .sum();
@@ -108,7 +108,7 @@ impl EnergyGradient<f64> for MomentumPotential {
         {
             let tet_v = Tetrahedron::from_indexed_slice(cell.get(), vel);
             let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
-            let tet_dv = (tet_dx * dt_inv - tet_v).as_array();
+            let tet_dv = (tet_dx * dt_inv - tet_v).into_array();
 
             for i in 0..4 {
                 gradient[cell[i]] += dt_inv * 0.25 * vol * density * tet_dv[i];

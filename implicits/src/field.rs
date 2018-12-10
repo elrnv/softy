@@ -184,6 +184,7 @@ impl ImplicitSurface {
             })
     }
 
+    /// Block lower triangular part of the unit normal Hessian.
     pub(crate) fn compute_face_unit_normals_hessian_products<'a, T: Real, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_vertices: &'a [Vector3<T>],
@@ -193,6 +194,7 @@ impl ImplicitSurface {
     where
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
+        // For each triangle contribution (one element in a sum)
         samples
             .into_iter()
             .zip(surface_topo.iter())
@@ -200,9 +202,16 @@ impl ImplicitSurface {
                 let norm_inv = T::one() / sample.nml.norm();
                 let nml = sample.nml * norm_inv;
                 let nml_proj = Matrix3::identity() - nml * nml.transpose();
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 let mult = multiplier(sample);
-                (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
+                // row >= col
+                // For each row
+                (0..3).flat_map(move |j| {
+                    let vtx_row = tri_indices[j];
+                    (0..3).filter(move |&i| tri_indices[i] <= vtx_row).map(move |i| {
+                        let vtx_col = tri_indices[i];
+                        (vtx_row, vtx_col, Triangle::area_normal_hessian_product(j, i, mult))
+                    })
+                })
             })
     }
 
@@ -1767,7 +1776,11 @@ mod tests {
         let multipliers: Vec<_> = (0..tet_faces.len())
             .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
             .collect();
+        let ad_multipliers: Vec<_> = multipliers.iter().map(|&v| v.map(|x| F::cst(x))).collect();
+
         let multiplier = move |Sample { index, .. }| multipliers[index];
+
+        let ad_multiplier = move |Sample { index, .. }| ad_multipliers[index];
 
         // Compute the normal hessian product.
         let view = SamplesView::new(indices.as_ref(), &samples);
@@ -1781,7 +1794,7 @@ mod tests {
         // Convert to grad wrt tet vertex indices instead of surface triangle vertex indices.
         let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
 
-        let hess = Matrix12::zeros(); // Dense matrix
+        let mut hess = Matrix12::zeros(); // Dense matrix
         for (r, c, m) in hess_iter {
             // map to tet vertices instead of surface vertices
             let r_v = tet_indices[r];
@@ -1804,8 +1817,12 @@ mod tests {
         for r in 0..4 {
             for i in 0..3 {
                 ad_tet_verts[r][i] = F::var(ad_tet_verts[r][i]);
+
+                let ad_samples = Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                let ad_view = SamplesView::new(indices.as_ref(), &ad_samples);
+
                 // Convert the samples to use autodiff constants.
-                let grad = ImplicitSurface::compute_face_unit_normal_derivative(&ad_tet_verts, &tet_faces, view, multiplier.clone());
+                let grad = compute_face_unit_normal_derivative(&ad_tet_verts, &tet_faces, ad_view, ad_multiplier.clone());
 
                 for c in 0..4 {
                     for j in 0..3 {

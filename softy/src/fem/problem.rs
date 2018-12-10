@@ -17,6 +17,69 @@ use std::{cell::RefCell, rc::Rc};
 use crate::TetMesh;
 use crate::TriMesh;
 
+pub struct Solution {
+    /// This is the solution of the solve.
+    pub primal_variables: Vec<f64>,
+    /// Lower bound multipliers.
+    pub lower_bound_multipliers: Vec<f64>,
+    /// Upper bound multipliers.
+    pub upper_bound_multipliers: Vec<f64>,
+    /// Constraint (Lagrange) multipliers.
+    pub constraint_multipliers: Vec<f64>,
+}
+
+/// Create an empty solution.
+impl Default for Solution {
+    fn default() -> Solution {
+        Solution {
+            primal_variables: Vec::new(),
+            lower_bound_multipliers: Vec::new(),
+            upper_bound_multipliers: Vec::new(),
+            constraint_multipliers: Vec::new(),
+        }
+    }
+}
+
+/// Materialize a solution from the references got from Ipopt.
+impl<'a> From<ipopt::Solution<'a>> for Solution {
+    fn from(sol: ipopt::Solution<'a>) -> Solution {
+        let mut mysol = Solution::default();
+        mysol.update(sol);
+        mysol
+    }
+}
+
+impl Solution {
+    /// Initialize a solution with all variables and multipliers set to zero.
+    pub fn reset(&mut self, num_variables: usize, num_constraints: usize) -> &mut Self {
+        self.clear();
+        let x = vec![0.0; num_variables];
+        self.primal_variables.extend_from_slice(&x);
+        self.lower_bound_multipliers.extend_from_slice(&x);
+        self.upper_bound_multipliers.extend_from_slice(&x);
+        self.constraint_multipliers.extend_from_slice(&vec![0.0; num_constraints]);
+        self
+    }
+
+    /// Clear all solution vectors.
+    pub fn clear(&mut self) {
+        self.primal_variables.clear();
+        self.lower_bound_multipliers.clear();
+        self.upper_bound_multipliers.clear();
+        self.constraint_multipliers.clear();
+    }
+
+    /// Update allocated solution vectors with new data from Ipopt.
+    pub fn update<'a>(&mut self, sol: ipopt::Solution<'a>) -> &mut Self {
+        self.clear();
+        self.primal_variables.extend_from_slice(sol.primal_variables);
+        self.lower_bound_multipliers.extend_from_slice(sol.lower_bound_multipliers);
+        self.upper_bound_multipliers.extend_from_slice(sol.upper_bound_multipliers);
+        self.constraint_multipliers.extend_from_slice(sol.constraint_multipliers);
+        self
+    }
+}
+
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 pub(crate) struct NonLinearProblem {
@@ -50,6 +113,8 @@ pub(crate) struct NonLinearProblem {
     pub interrupt_checker: Box<FnMut() -> bool>,
     /// Count the number of iterations.
     pub iterations: usize,
+    /// Solution data. This is kept around for warm starts.
+    pub solution: Solution,
 }
 
 impl fmt::Debug for NonLinearProblem {
@@ -64,6 +129,17 @@ impl fmt::Debug for NonLinearProblem {
 }
 
 impl NonLinearProblem {
+    /// Save Ipopt solution for warm starts.
+    pub fn save_solution(&mut self, solution: ipopt::Solution) {
+        self.solution.update(solution);
+    }
+
+    /// Reset solution used for warm starts.
+    pub fn reset_solution(&mut self) {
+        use ipopt::{BasicProblem, ConstrainedProblem};
+        self.solution.reset(self.num_variables(), self.num_constraints());
+    }
+
     /// Get the current iteration count and reset it.
     pub fn pop_iteration_count(&mut self) -> usize {
         let iter = self.iterations;
@@ -229,8 +305,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
         true
     }
 
-    fn initial_point(&self) -> Vec<Number> {
-        vec![0.0; self.num_variables()]
+    fn initial_point(&self, x: &mut [Number]) {
+        x.copy_from_slice(self.solution.primal_variables.as_slice());
+    }
+
+    fn initial_bounds_multipliers(&self, z_l: &mut [Number], z_u: &mut [Number]) {
+        z_l.copy_from_slice(self.solution.lower_bound_multipliers.as_slice());
+        z_u.copy_from_slice(self.solution.upper_bound_multipliers.as_slice());
     }
 
     fn objective(&self, dx: &[Number], obj: &mut Number) -> bool {
@@ -267,7 +348,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         num
     }
 
-    fn num_constraint_jac_non_zeros(&self) -> usize {
+    fn num_constraint_jacobian_non_zeros(&self) -> usize {
         let mut num = 0;
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_jacobian_size();
@@ -277,6 +358,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("scc jac size = {:?}", num);
         }
         num
+    }
+
+    fn initial_constraint_multipliers(&self, lambda: &mut [Number]) {
+        lambda.copy_from_slice(self.solution.constraint_multipliers.as_slice());
     }
 
     fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
@@ -318,7 +403,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_jac_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         let mut i = 0; // counter
 
         let mut row_offset = 0;
@@ -343,7 +428,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_jac_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
+    fn constraint_jacobian_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 

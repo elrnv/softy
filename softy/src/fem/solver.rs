@@ -20,6 +20,7 @@ use std::{
 use crate::mask_iter::*;
 use crate::inf_norm;
 
+use super::Solution;
 use super::NonLinearProblem;
 use super::SimParams;
 use crate::Error;
@@ -271,7 +272,7 @@ impl SolverBuilder {
             scp.max_step / 3.0f64.sqrt()
         });
 
-        let problem = NonLinearProblem {
+        let mut problem = NonLinearProblem {
             prev_pos,
             prev_vel,
             time_step: f64::from(params.time_step.unwrap_or(0.0f32)),
@@ -285,7 +286,12 @@ impl SolverBuilder {
             displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
+            solution: Solution::default(),
         };
+
+        // Note that we don't need the solution field to get the number of variables and
+        // constraints. This means we can use these functions to initialize solution.
+        problem.reset_solution();
 
         let mut ipopt = Ipopt::new(problem)?;
 
@@ -306,6 +312,7 @@ impl SolverBuilder {
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("nlp_scaling_method", "none");
+        ipopt.set_option("warm_start_init_point", "yes");
         ipopt.set_option("jac_d_constant", "yes");
         //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
@@ -624,8 +631,11 @@ impl Solver {
         use ipopt::ConstrainedProblem;
         let SolverData {
             problem,
-            primal_variables,
-            constraint_multipliers,
+            solution: ipopt::Solution {
+                primal_variables,
+                constraint_multipliers,
+                ..
+            },
             ..
         } = self.solver.solver_data();
 
@@ -655,7 +665,10 @@ impl Solver {
         use ipopt::BasicProblem;
         let SolverData {
             problem,
-            primal_variables,
+            solution: ipopt::Solution {
+                primal_variables,
+                ..
+            },
             ..
         } = self.solver.solver_data();
 
@@ -670,7 +683,10 @@ impl Solver {
         use ipopt::BasicProblem;
         let SolverData {
             problem,
-            primal_variables,
+            solution: ipopt::Solution {
+                primal_variables,
+                ..
+            },
             ..
         } = self.solver.solver_data();
 
@@ -692,18 +708,21 @@ impl Solver {
         use ipopt::ConstrainedProblem;
         let SolverData {
             problem,
-            primal_variables,
-            constraint_multipliers,
+            solution: ipopt::Solution {
+                primal_variables,
+                constraint_multipliers,
+                ..
+            },
             ..
         } = self.solver.solver_data();
 
-        let jac_nnz = problem.num_constraint_jac_non_zeros();
+        let jac_nnz = problem.num_constraint_jacobian_non_zeros();
         let mut rows = vec![0; jac_nnz];
         let mut cols = vec![0; jac_nnz];
-        assert!(problem.constraint_jac_indices(&mut rows, &mut cols));
+        assert!(problem.constraint_jacobian_indices(&mut rows, &mut cols));
 
         let mut values = vec![0.0; jac_nnz];
-        assert!(problem.constraint_jac_values(&vec![0.0; primal_variables.len()], &mut values));
+        assert!(problem.constraint_jacobian_values(&vec![0.0; primal_variables.len()], &mut values));
 
         // We don't consider values for fixed vertices.
         let mesh = problem.tetmesh.borrow();
@@ -720,7 +739,7 @@ impl Solver {
     }
 
     fn dx(&self) -> &[f64] {
-        self.solver.solver_data().primal_variables
+        self.solver.solver_data().solution.primal_variables
     }
 
     //fn lambda(&self) -> &[f64] {
@@ -731,15 +750,18 @@ impl Solver {
     fn commit_solution(&mut self) {
         let SolverDataMut {
             problem,
-            primal_variables,
+            solution,
             ..
         } = self.solver.solver_data_mut();
 
         // Reinterpret solver variables as positions in 3D space.
-        let displacement: &[Vector3<f64>] = reinterpret_slice(primal_variables);
+        let displacement: &[Vector3<f64>] = reinterpret_slice(solution.primal_variables);
 
         // Advance internal state (positions and velocities) of the problem.
         problem.advance(displacement.iter().cloned());
+
+        // Update problem solution for warm starts.
+        problem.save_solution(solution);
     }
 
     /// Revert previously committed solution. We just subtract step here.
@@ -747,6 +769,7 @@ impl Solver {
         // Reinterpret solver variables as positions in 3D space.
         let displacement: &[Vector3<f64>] = reinterpret_slice(dx);
         problem.advance(displacement.iter().map(|&x| -x));
+        problem.reset_solution();
     }
 
     fn output_meshes(&self, iter: u32) {
@@ -759,7 +782,7 @@ impl Solver {
     }
 
     fn compute_objective(&self) -> f64 {
-        self.compute_objective_dx(self.solver.solver_data().primal_variables)
+        self.compute_objective_dx(self.solver.solver_data().solution.primal_variables)
     }
 
     fn compute_objective_dx(&self, dx: &[f64]) -> f64 {
@@ -767,7 +790,7 @@ impl Solver {
     }
 
     fn model_l1(&self) -> f64 {
-        self.model_l1_dx(self.solver.solver_data().primal_variables)
+        self.model_l1_dx(self.solver.solver_data().solution.primal_variables)
     }
 
     fn model_l1_dx(&self, dx: &[f64]) -> f64 {
@@ -775,7 +798,7 @@ impl Solver {
     }
 
     fn merit_l1(&self) -> f64 {
-        self.merit_l1_dx(self.solver.solver_data().primal_variables)
+        self.merit_l1_dx(self.solver.solver_data().solution.primal_variables)
     }
 
     fn merit_l1_dx(&self, dx: &[f64]) -> f64 {
@@ -878,12 +901,7 @@ impl Solver {
                         }
                     } else {
                         // Otherwise we don't know what else to do so return an error.
-
-                        // Reset warm start after we encounter an error
-                        self.solver.set_option("warm_start_init_point", "no");
-
                         result = result.combine_inner_result(step_result);
-
                         return Err(Error::SolveError(status, result));
                     }
                 }
@@ -892,11 +910,6 @@ impl Solver {
                     self.solver.set_option("warm_start_init_point", "no");
                     return Err(e);
                 }
-            }
-
-            if self.step_count == 0 && iter == 0 {
-                // After the first step we set ipopt into warm start mode
-                self.solver.set_option("warm_start_init_point", "yes");
             }
 
             // Since we are using linearized constraints, we compute the true constraint violation
@@ -912,12 +925,11 @@ impl Solver {
             // energy estimate from the solve of the inner problem. As such we will iterate on the
             // infinity norm of all violated linearized constraints (constraint points outside the
             // feasible domain).
-            let mut reduced = false;
             {
                 let max_step = self.max_step;
                 let SolverDataMut {
                     problem,
-                    primal_variables,
+                    solution,
                     ..
                 } = self.solver.solver_data_mut();
 
@@ -928,14 +940,13 @@ impl Solver {
                         let reduction = (prev_merit - merit_value) / (prev_model - merit_model);
                         println!("reduction = {:?}", reduction);
 
-                        let step_size = inf_norm(primal_variables);
+                        let step_size = inf_norm(solution.primal_variables);
 
                         if reduction < 0.25 {
                             if step_size < 1e-5*max_step {
                                 break; // Reducing the step wont help at this point
                             }
                             // The constraint violation is not decreasing, roll back and reduce the step size.
-                            reduced = true;
                             println!("step size taken {:?}", step_size);
                             problem.displacement_bound.replace(0.25 * step_size);
                             println!("reducing step to {:?}", problem.displacement_bound.unwrap());
@@ -951,13 +962,10 @@ impl Solver {
                         }
                         if reduction < 0.15 {
                             // Otherwise constraint violation is not properly decreasing
-                            Self::revert_solution(problem, primal_variables);
+                            Self::revert_solution(problem, solution.primal_variables);
                         }
                     }
                 }
-            }
-            if reduced {
-                self.solver.set_option("warm_start_init_point", "no");
             }
         }
 
@@ -1634,7 +1642,7 @@ mod tests {
         let params = SimParams {
             max_iterations: 100,
             outer_tolerance: 0.1,
-            max_outer_iterations: 1,
+            max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
             ..DYNAMIC_PARAMS
         };

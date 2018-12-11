@@ -26,9 +26,26 @@ pub struct Params {
     pub kernel: KernelType,
     pub background_potential: BackgroundPotentialType,
     pub sample_type: SampleType,
+    pub max_step: f64,
 }
 
-pub fn compute_potential<F>(
+impl Default for Params {
+    fn default() -> Params {
+        Params {
+            // Note that this is not a good default and should always be set explicitly.
+            kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+            },
+            background_potential: BackgroundPotentialType::None,
+            sample_type: SampleType::Face,
+            max_step: 0.0,
+        }
+    }
+}
+
+/// Compute potential with debug information on the given mesh.
+pub fn compute_potential_debug<F>(
     query_points: &mut PolyMesh<f64>,
     surface: &mut PolyMesh<f64>,
     params: Params,
@@ -53,6 +70,31 @@ where
 
     if let Some(implicit_surface) = builder.build() {
         implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
+        Ok(())
+    } else {
+        Err(Error::Failure)
+    }
+}
+
+pub fn dynamic_surface<F>(
+    query_points: &mut PolyMesh<f64>,
+    surface: &mut PolyMesh<f64>,
+    params: Params,
+    interrupt: F,
+) -> Result<ImplicitSurface, Error>
+where
+    F: Fn() -> bool + Sync + Send,
+{
+    let mut builder = ImplicitSurfaceBuilder::new();
+
+    builder.kernel(params.kernel);
+    builder.max_step(params.max_step);
+    builder.background_potential(params.background_potential);
+    builder.sample_type(params.sample_type);
+    builder.vertices()
+
+    if let Some(implicit_surface) = builder.build() {
+        implicit_surface.potential(query_points, interrupt)?;
         Ok(())
     } else {
         Err(Error::Failure)
@@ -109,7 +151,7 @@ mod tests {
 
         let mut sphere = PolyMesh::from(trimesh);
 
-        compute_potential(
+        compute_potential_debug(
             &mut grid,
             &mut sphere,
             Params {
@@ -119,6 +161,7 @@ mod tests {
                 },
                 background_potential: BackgroundPotentialType::DistanceBased,
                 sample_type: SampleType::Vertex,
+                ..Default::default()
             },
             || false,
         )?;
@@ -146,7 +189,7 @@ mod tests {
 
         let mut sphere = PolyMesh::from(trimesh);
 
-        compute_potential(
+        compute_potential_debug(
             &mut grid,
             &mut sphere,
             Params {
@@ -156,6 +199,7 @@ mod tests {
                 },
                 background_potential: BackgroundPotentialType::DistanceBased,
                 sample_type: SampleType::Face,
+                ..Default::default()
             },
             || false,
         )?;
@@ -181,13 +225,14 @@ mod tests {
 
         let mut sphere = PolyMesh::from(trimesh);
 
-        compute_potential(
+        compute_potential_debug(
             &mut grid,
             &mut sphere,
             Params {
                 kernel: KernelType::Hrbf,
                 background_potential: BackgroundPotentialType::DistanceBased,
                 sample_type: SampleType::Vertex,
+                ..Default::default()
             },
             || false,
         )?;

@@ -1471,32 +1471,28 @@ mod tests {
         // contact constraint. Since this is a test we do it both ways and make sure the result is
         // the same. This douples as a test for the implicits crate.
 
+        let params = implicits::Params {
+            kernel: KernelType::Approximate {
+                tolerance,
+                radius,
+            },
+            background_potential: BackgroundPotentialType::None,
+            sample_type: SampleType::Face,
+            ..Default::default()
+        };
+
         let mut trimesh_copy = sample_mesh.clone();
         let surface_trimesh = tetmesh.surface_trimesh();
         let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
-        compute_potential(&mut trimesh_copy, &mut surface_polymesh,
-                          implicits::Params {
-                              kernel: KernelType::Approximate {
-                                  tolerance,
-                                  radius,
-                              },
-                              background_potential: BackgroundPotentialType::None,
-                              sample_type: SampleType::Face,
-                          }, || false)
-        .expect("Failed to compute constraint value");
+        compute_potential_debug(&mut trimesh_copy, &mut surface_polymesh, params, || false)
+            .expect("Failed to compute constraint value");
         
         let pot_attrib = trimesh_copy.attrib_clone_into_vec::<f32, VertexIndex>("potential")
             .expect("Potential attribute doesn't exist");
 
         {
-            let mut builder = ImplicitSurfaceBuilder::new();
-            builder.triangles(reinterpret::reinterpret_slice(surface_trimesh.faces()).to_vec())
-                .vertices(surface_trimesh.vertex_positions().to_vec())
-                .kernel(KernelType::Approximate { tolerance, radius })
-                .sample_type(SampleType::Face)
-                .background_potential(BackgroundPotentialType::None);
-
-            let surf = builder.build().expect("Failed to build implicit surface.");
+            let surf = surface_from_trimesh(&surface_trimesh, params)
+                .expect("Failed to build implicit surface.");
 
             let mut pot_attrib64 = vec![0.0f64; sample_mesh.num_vertices()];
             surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib64)

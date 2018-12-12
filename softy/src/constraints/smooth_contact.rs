@@ -115,7 +115,7 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
         let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
         surf.surface_jacobian_values(query_points, &mut jac_values).unwrap();
         for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
-            value[row] += jac_val*dx[col];
+            value[row] += jac_val*dx[self.0.tetmesh_coordinate_index(col)];
         }
         //println!("g = {:?}", value);
     }
@@ -164,7 +164,10 @@ impl ConstraintHessian<f64> for LinearSmoothContactConstraint {
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
 #[derive(Clone, Debug)]
 pub struct SmoothContactConstraint {
-    /// Indices to surface vertices of the simulation mesh.
+    /// Indices to the original tetmesh. This is the mapping from surface mesh vertices to the
+    /// original tetmesh vertices. This mapping is important for computing correct Jacobians and
+    /// mapping incoming tetmesh vertex positions and displacements to sample positions and
+    /// displacements.
     pub sample_verts: Vec<usize>,
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub collision_object: Rc<RefCell<TriMesh>>,
@@ -185,31 +188,26 @@ pub struct SmoothContactParams {
 impl SmoothContactConstraint {
     pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>, trimesh_rc: &Rc<RefCell<TriMesh>>, params: SmoothContactParams) -> Self {
         let tetmesh = tetmesh_rc.borrow();
-        let surf_mesh = tetmesh.surface_mesh_with_mapping();
-        let surf_verts = tetmesh.surface_vertices();
-        let all_positions = tetmesh.vertex_positions();
-        let points = surf_verts.iter().map(|&i| all_positions[i]).collect();
+        let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
+        let sample_verts = surf_mesh
+            .remove_attrib::<VertexIndex>("i")
+            .expect("Failed to map indices.")
+            .into_buffer()
+            .into_vec::<usize>()
+            .expect("Incorrect index type: not usize");
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
-            .triangles(triangles)
-            .vertices(points)
+            .trimesh(&surf_mesh)
             .kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
             .max_step(params.max_step*2.0) // double it because the step can be by samples or query points
             .sample_type(SampleType::Face)
             .background_potential(BackgroundPotentialType::None);
 
-        if let Ok(all_offsets) = tetmesh.attrib_as_slice::<f32, VertexIndex>("offset") {
-            let offsets = surf_verts.iter()
-                .map(|&i| f64::from(all_offsets[i])).collect();
-            surface_builder.offsets(offsets);
-        }
+        let surface = surface_builder.build().expect("No surface points detected.");
 
-        let surface = surface_builder.build().expect("No surface points detected");
-
-        println!("sample verts = {:?}", surf_verts);
         let constraint = SmoothContactConstraint {
-            sample_verts: surf_verts,
+            sample_verts,
             implicit_surface: RefCell::new(surface),
             collision_object: Rc::clone(trimesh_rc),
             iter_count: 0,
@@ -227,6 +225,12 @@ impl SmoothContactConstraint {
 
     pub fn update_max_step(&mut self, step: f64) {
         self.implicit_surface.borrow_mut().update_max_step(step);
+    }
+
+    /// Given an index into the surface point position coordinates, return the corresponding index
+    /// into the original `TetMesh`.
+    pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
+        3*self.sample_verts[idx/3] + idx%3
     }
 
     /// Update implicit surface using the given position and displacement data.
@@ -294,10 +298,7 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
             surf.surface_jacobian_indices_iter().unwrap()
         };
         Box::new(idx_iter.map(move |(row, col)| {
-            let vtx_idx = col/3;
-            let comp_idx = col%3;
-            assert_eq!(vtx_idx, self.sample_verts[vtx_idx]);
-            MatrixElementIndex { row, col: 3*self.sample_verts[vtx_idx] + comp_idx }
+            MatrixElementIndex { row, col: self.tetmesh_coordinate_index(col) }
         }))
     }
     fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {

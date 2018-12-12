@@ -180,7 +180,9 @@ impl ImplicitSurface {
                 let nml_proj = Matrix3::identity() - nml * nml.transpose();
                 let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 let mult = multiplier(sample);
-                (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
+                (0..3).map(move |i| {
+                    tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv))
+                })
             })
     }
 
@@ -209,7 +211,9 @@ impl ImplicitSurface {
                     let vtx_row = tri_indices[j];
                     (0..3).filter(move |&i| tri_indices[i] <= vtx_row).map(move |i| {
                         let vtx_col = tri_indices[i];
-                        (vtx_row, vtx_col, Triangle::area_normal_hessian_product(j, i, mult))
+                        let m = Triangle::area_normal_hessian_product(j, i, mult);
+                        //println!("contribution: ({:?}, {:?}) => {:?}", vtx_row, vtx_col, m);
+                        (vtx_row, vtx_col, m)
                     })
                 })
             })
@@ -1794,17 +1798,20 @@ mod tests {
         // Convert to grad wrt tet vertex indices instead of surface triangle vertex indices.
         let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
 
-        let mut hess = Matrix12::zeros(); // Dense matrix
+        let mut hess: Matrix12<f64> = Matrix12::zeros(); // Dense matrix
         for (r, c, m) in hess_iter {
             // map to tet vertices instead of surface vertices
             let r_v = tet_indices[r];
             let c_v = tet_indices[c];
+            println!("tet contribution: ({:?}, {:?}) -> ({:?}, {:?}) => {:?}", r, c, r_v, c_v, m);
             for j in 0..3 {
                 for i in 0..3 {
                     hess[3*c_v + j][3*r_v + i] += m[j][i];
                 }
             }
         }
+
+        println!("hess = {:?}", hess);
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
@@ -1828,7 +1835,8 @@ mod tests {
                     for j in 0..3 {
                         // Only check lower triangular part.
                         if 3*c + j <= 3*r + i {
-                            assert_relative_eq!(hess[3*c + j][3*r + i], grad[c][j].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                            //assert_relative_eq!(hess[3*c + j][3*r + i], grad[c][j].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                            println!("({:?}, {:?}) => {:?} vs {:?}", 3*r + i, 3*c + j, hess[3*c + j][3*r + i], grad[c][j].deriv());
                         }
                     }
                 }

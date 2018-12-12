@@ -54,19 +54,14 @@ pub fn compute_potential_debug<F>(
 where
     F: Fn() -> bool + Sync + Send,
 {
+    let surf_trimesh = TriMesh::from(surface.clone());
+
     let mut builder = ImplicitSurfaceBuilder::new();
 
     builder.kernel(params.kernel);
     builder.background_potential(params.background_potential);
-
-    match params.sample_type {
-        SampleType::Vertex => {
-            builder.vertex_samples_from_mesh(&TriMesh::from(surface.clone()));
-        }
-        SampleType::Face => {
-            builder.face_samples_from_mesh(&TriMesh::from(surface.clone()));
-        }
-    }
+    builder.trimesh(&surf_trimesh);
+    builder.sample_type(params.sample_type);
 
     if let Some(implicit_surface) = builder.build() {
         implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
@@ -76,30 +71,30 @@ where
     }
 }
 
-pub fn dynamic_surface<F>(
-    query_points: &mut PolyMesh<f64>,
-    surface: &mut PolyMesh<f64>,
-    params: Params,
-    interrupt: F,
-) -> Result<ImplicitSurface, Error>
-where
-    F: Fn() -> bool + Sync + Send,
-{
-    let mut builder = ImplicitSurfaceBuilder::new();
-
-    builder.kernel(params.kernel);
-    builder.max_step(params.max_step);
-    builder.background_potential(params.background_potential);
-    builder.sample_type(params.sample_type);
-    builder.vertices()
-
-    if let Some(implicit_surface) = builder.build() {
-        implicit_surface.potential(query_points, interrupt)?;
-        Ok(())
-    } else {
-        Err(Error::Failure)
-    }
-}
+//pub fn dynamic_surface<F>(
+//    query_points: &mut PolyMesh<f64>,
+//    surface: &mut PolyMesh<f64>,
+//    params: Params,
+//    interrupt: F,
+//) -> Result<ImplicitSurface, Error>
+//where
+//    F: Fn() -> bool + Sync + Send,
+//{
+//    let mut builder = ImplicitSurfaceBuilder::new();
+//
+//    builder.kernel(params.kernel);
+//    builder.max_step(params.max_step);
+//    builder.background_potential(params.background_potential);
+//    builder.sample_type(params.sample_type);
+//    builder.trimesh();
+//
+//    if let Some(implicit_surface) = builder.build() {
+//        implicit_surface.potential(query_points, interrupt)?;
+//        Ok(())
+//    } else {
+//        Err(Error::Failure)
+//    }
+//}
 
 #[derive(Debug)]
 pub enum Error {
@@ -265,8 +260,7 @@ mod tests {
         builder.kernel(KernelType::Approximate { tolerance: 1e-5, radius: 1.5 })
             .background_potential(BackgroundPotentialType::DistanceBased)
             .sample_type(SampleType::Vertex)
-            .triangles(reinterpret::reinterpret_slice::<_, [usize;3]>(trimesh.faces()).to_vec())
-            .vertices(trimesh.vertex_positions().to_vec());
+            .trimesh(&trimesh);
 
         let surf = builder.build().expect("Failed to create implicit surface.");
 

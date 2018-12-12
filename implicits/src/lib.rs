@@ -45,6 +45,8 @@ impl Default for Params {
 }
 
 /// Compute potential with debug information on the given mesh.
+/// This function builds an implicit surface and computes values on the given query points. For a
+/// reusable implicit surface use the `surface_from_*` function.
 pub fn compute_potential_debug<F>(
     query_points: &mut PolyMesh<f64>,
     surface: &mut PolyMesh<f64>,
@@ -54,47 +56,41 @@ pub fn compute_potential_debug<F>(
 where
     F: Fn() -> bool + Sync + Send,
 {
-    let surf_trimesh = TriMesh::from(surface.clone());
+    surface_from_polymesh(surface, params)
+        .and_then(|surf| surf.compute_potential_on_mesh(query_points, interrupt))
+}
 
-    let mut builder = ImplicitSurfaceBuilder::new();
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `TriMesh`.
+pub fn surface_from_trimesh(
+    surface: &TriMesh<f64>,
+    params: Params,
+) -> Result<ImplicitSurface, Error>
+{
+    let surf = ImplicitSurfaceBuilder::new()
+        .kernel(params.kernel)
+        .max_step(params.max_step)
+        .background_potential(params.background_potential)
+        .sample_type(params.sample_type)
+        .trimesh(surface)
+        .build();
 
-    builder.kernel(params.kernel);
-    builder.background_potential(params.background_potential);
-    builder.trimesh(&surf_trimesh);
-    builder.sample_type(params.sample_type);
-
-    if let Some(implicit_surface) = builder.build() {
-        implicit_surface.compute_potential_on_mesh(query_points, interrupt)?;
-        Ok(())
-    } else {
-        Err(Error::Failure)
+    match surf {
+        Some(s) => Ok(s),
+        None => Err(Error::Failure),
     }
 }
 
-//pub fn dynamic_surface<F>(
-//    query_points: &mut PolyMesh<f64>,
-//    surface: &mut PolyMesh<f64>,
-//    params: Params,
-//    interrupt: F,
-//) -> Result<ImplicitSurface, Error>
-//where
-//    F: Fn() -> bool + Sync + Send,
-//{
-//    let mut builder = ImplicitSurfaceBuilder::new();
-//
-//    builder.kernel(params.kernel);
-//    builder.max_step(params.max_step);
-//    builder.background_potential(params.background_potential);
-//    builder.sample_type(params.sample_type);
-//    builder.trimesh();
-//
-//    if let Some(implicit_surface) = builder.build() {
-//        implicit_surface.potential(query_points, interrupt)?;
-//        Ok(())
-//    } else {
-//        Err(Error::Failure)
-//    }
-//}
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `PolyMesh`.
+pub fn surface_from_polymesh(
+    surface: &PolyMesh<f64>,
+    params: Params,
+) -> Result<ImplicitSurface, Error>
+{
+    let surf_trimesh = TriMesh::from(surface.clone());
+    surface_from_trimesh(&surf_trimesh, params)
+}
 
 #[derive(Debug)]
 pub enum Error {

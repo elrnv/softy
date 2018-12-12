@@ -5,6 +5,7 @@ members = [
     "hdkrs",
     "softy",
     "implicits",
+    "implicits-c",
     "softy-hdk",
     "implicits-hdk",
     "vtkio-hdk",

@@ -185,10 +185,10 @@ pub struct SmoothContactParams {
 impl SmoothContactConstraint {
     pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>, trimesh_rc: &Rc<RefCell<TriMesh>>, params: SmoothContactParams) -> Self {
         let tetmesh = tetmesh_rc.borrow();
-        let triangles: Vec<[usize; 3]> = tetmesh.surface_topo();
+        let surf_mesh = tetmesh.surface_mesh_with_mapping();
         let surf_verts = tetmesh.surface_vertices();
-        let all_points = tetmesh.vertex_positions();
-        let points = surf_verts.iter().map(|&i| all_points[i]).collect();
+        let all_positions = tetmesh.vertex_positions();
+        let points = surf_verts.iter().map(|&i| all_positions[i]).collect();
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
@@ -207,6 +207,7 @@ impl SmoothContactConstraint {
 
         let surface = surface_builder.build().expect("No surface points detected");
 
+        println!("sample verts = {:?}", surf_verts);
         let constraint = SmoothContactConstraint {
             sample_verts: surf_verts,
             implicit_surface: RefCell::new(surface),
@@ -231,8 +232,8 @@ impl SmoothContactConstraint {
     /// Update implicit surface using the given position and displacement data.
     pub fn update_surface_with_displacement(&self, x: &[f64], dx: &[f64]) {
         let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
-        let all_points: &[Vector3<f64>] = reinterpret_slice(x);
-        let points_iter = self.sample_verts.iter().map(|&i| (all_points[i] + all_displacements[i]).into());
+        let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
+        let points_iter = self.sample_verts.iter().map(|&i| (all_positions[i] + all_displacements[i]).into());
 
         self.implicit_surface.borrow_mut()
             .update(points_iter);
@@ -240,8 +241,8 @@ impl SmoothContactConstraint {
 
     /// Update implicit surface using the given position data.
     pub fn update_surface(&self, x: &[f64]) {
-        let all_points: &[[f64;3]] = reinterpret_slice(x);
-        let points_iter = self.sample_verts.iter().map(|&i| all_points[i]);
+        let all_positions: &[[f64;3]] = reinterpret_slice(x);
+        let points_iter = self.sample_verts.iter().map(|&i| all_positions[i]);
 
         self.implicit_surface.borrow_mut()
             .update(points_iter);
@@ -292,7 +293,12 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
             let surf = self.implicit_surface.borrow();
             surf.surface_jacobian_indices_iter().unwrap()
         };
-        Box::new(idx_iter.map(|(row, col)| MatrixElementIndex { row, col }))
+        Box::new(idx_iter.map(move |(row, col)| {
+            let vtx_idx = col/3;
+            let comp_idx = col%3;
+            assert_eq!(vtx_idx, self.sample_verts[vtx_idx]);
+            MatrixElementIndex { row, col: 3*self.sample_verts[vtx_idx] + comp_idx }
+        }))
     }
     fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());

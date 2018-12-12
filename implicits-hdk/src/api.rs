@@ -47,6 +47,7 @@ impl Into<implicits::Params> for Params {
                 0 => implicits::SampleType::Vertex,
                 _ => implicits::SampleType::Face,
             },
+            ..Default::default()
         }
     }
 }
@@ -63,7 +64,7 @@ where
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            let res = implicits::compute_potential(samples, surface, params.into(), check_interrupt);
+            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt);
             convert_to_cookresult(res)
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())

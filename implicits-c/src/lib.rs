@@ -78,6 +78,14 @@ pub unsafe extern "C" fn create_trimesh(
     Box::into_raw(mesh) as *mut TriMesh
 }
 
+/// Free memory allocated for the trimesh.
+#[no_mangle]
+pub unsafe extern "C" fn free_trimesh(trimesh: *mut TriMesh) {
+    if !trimesh.is_null() {
+        let _ = Box::from_raw(trimesh);
+    }
+}
+
 /// Create a new implicit surface. If creation fails, a null pointer is returned.
 #[no_mangle]
 pub unsafe extern "C" fn create_implicit_surface(
@@ -90,5 +98,88 @@ pub unsafe extern "C" fn create_implicit_surface(
     ) {
         Ok(surf) => Box::into_raw(Box::new(surf)) as *mut ImplicitSurface,
         Err(_) => std::ptr::null_mut()
+    }
+}
+
+/// Free memory allocated for the implicit surface.
+#[no_mangle]
+pub unsafe extern "C" fn free_implicit_surface(implicit_surface: *mut ImplicitSurface) {
+    if !implicit_surface.is_null() {
+        let _ = Box::from_raw(implicit_surface);
+    }
+}
+
+/// Compute potential. Return 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn compute_potential(
+    implicit_surface: *const ImplicitSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+    out_potential: *mut f64,
+) -> c_int {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize*3);
+    let query_points: &[[f64;3]] = reinterpret_slice(coords);
+    let out_potential = std::slice::from_raw_parts_mut(out_potential, num_query_points as usize);
+
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.potential(query_points, out_potential) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// Get the number of non zeros in the Jacobian of the implicit function.
+#[no_mangle]
+pub unsafe extern "C" fn num_jacobian_non_zeros(
+    implicit_surface: *const ImplicitSurface,
+) -> c_int {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    surf.num_surface_jacobian_entries() as c_int
+}
+
+/// Compute the index structure of the Jacobian for the given implicit function.
+#[no_mangle]
+pub unsafe extern "C" fn compute_jacobian_indices(
+    implicit_surface: *const ImplicitSurface,
+    num_non_zeros: c_int,
+    rows: *mut c_int,
+    cols: *mut c_int,
+) -> c_int {
+    let n = num_non_zeros as usize;
+    let rows = std::slice::from_raw_parts_mut(rows, n);
+    let cols = std::slice::from_raw_parts_mut(cols, n);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.surface_jacobian_indices_iter() {
+        Ok(iter) => {
+            for ((out_row, out_col), (r,c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
+                *out_row = r as c_int;
+                *out_col = c as c_int;
+            }
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
+/// Compute Jacobian values for the given implicit function. The values correspond to the indices
+/// provided by `compute_jacobian_indices`.
+#[no_mangle]
+pub unsafe extern "C" fn compute_jacobian_values(
+    implicit_surface: *const ImplicitSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+    num_non_zeros: c_int,
+    values: *mut f64,
+) -> c_int {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize*3);
+    let query_points: &[[f64;3]] = reinterpret_slice(coords);
+    let vals = std::slice::from_raw_parts_mut(values, num_non_zeros as usize);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.surface_jacobian_values(query_points, vals) {
+        Ok(()) => 0,
+        Err(_) => 1,
     }
 }

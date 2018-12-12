@@ -1,0 +1,7 @@
+[package]
+name = "implicits-c"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+
+[dependencies]

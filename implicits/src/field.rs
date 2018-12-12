@@ -531,7 +531,7 @@ impl ImplicitSurface {
         }
     }
 
-    /// Compute the indices for the implicit surface potential jacobian with respect to surface
+    /// Compute the indices for the implicit surface potential Jacobian with respect to surface
     /// points.
     pub fn surface_jacobian_indices(
         &self,
@@ -547,6 +547,8 @@ impl ImplicitSurface {
         }
     }
 
+    /// Compute the Jacobian of this implicit surface function with respect to surface
+    /// points.
     pub fn surface_jacobian_values(
         &self,
         query_points: &[[f64; 3]],

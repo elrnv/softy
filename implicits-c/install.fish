@@ -5,7 +5,7 @@ set target_dir (dirname (status --current-filename))/../target
 set build_type release
 
 if [ (count $argv) -eq 0 ]
-    set target_dir $target_dir/$build_type
+    set build_type release
 else
     if [ $argv[1] = "debug" ]
         set build_type debug

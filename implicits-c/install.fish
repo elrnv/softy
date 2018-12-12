@@ -85,7 +85,7 @@ if [ $platform = "Darwin" ]
 else if [ $platform = "Linux" ]
     # we are in a vm, just copy to the vm share folder
 
-    pushd $target_dir
+    pushd $target_dir/$build_type
 
     sudo cp libimplicits.so /media/sf_vm-share/
 

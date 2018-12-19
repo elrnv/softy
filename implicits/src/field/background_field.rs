@@ -3,14 +3,14 @@ use crate::geo::math::Vector3;
 use crate::geo::Real;
 use crate::kernel::SphericalKernel;
 
-/// Different types of background potentials supported.
+/// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum BackgroundPotentialType {
-    /// Don't use a background potential at all, no weights are included for that.
+pub enum BackgroundFieldType {
+    /// Don't use a background field at all, no weights are included for that.
     None,
-    /// Use a zero background potential.
+    /// Use a zero background field.
     Zero,
-    /// Use the background potential given in the input.
+    /// Use the background field given in the input.
     FromInput,
     /// Distance to the closest point.
     DistanceBased,
@@ -18,66 +18,68 @@ pub enum BackgroundPotentialType {
     NormalBased,
 }
 
-/// Precomputed data used for background potential computation.
+/// Precomputed data used for background field computation.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum BackgroundPotentialValue<T: Real> {
+pub(crate) enum BackgroundFieldValue<T> {
     /// No value, nothing to mix in, background weight is always zero.
     None,
-    /// The value of the background potential at the query point.
+    /// The value of the background field at the query point.
     Constant(T),
-    /// A Dynamic potential is computed based on the distance to the closest sample point.
+    /// A Dynamic field is computed based on the distance to the closest sample point.
     ClosestSampleDistance,
-    /// A Dynamic potential is computed based on the normal displacement. In other words, this is
+    /// A Dynamic field is computed based on the normal displacement. In other words, this is
     /// determined by the dot product of the sample displacement and a normal.
     ClosestSampleNormalDisp,
 }
 
-impl<T: Real> BackgroundPotentialValue<T> {
-    /// Use this constructor for computing the Jacobian of the potential.
-    pub fn jac(ty: BackgroundPotentialType) -> Self {
+impl<V: num_traits::Zero> BackgroundFieldValue<V> {
+    /// Use this constructor for computing the Jacobian of the field.
+    pub fn jac(ty: BackgroundFieldType) -> Self {
         match ty {
-            BackgroundPotentialType::None => BackgroundPotentialValue::None,
-            BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
-            BackgroundPotentialType::FromInput => BackgroundPotentialValue::Constant(T::zero()),
-            BackgroundPotentialType::DistanceBased => {
-                BackgroundPotentialValue::ClosestSampleDistance
+            BackgroundFieldType::None => BackgroundFieldValue::None,
+            BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
+            BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(V::zero()),
+            BackgroundFieldType::DistanceBased => {
+                BackgroundFieldValue::ClosestSampleDistance
             }
-            BackgroundPotentialType::NormalBased => {
-                BackgroundPotentialValue::ClosestSampleNormalDisp
+            BackgroundFieldType::NormalBased => {
+                BackgroundFieldValue::ClosestSampleNormalDisp
             }
         }
     }
 
-    /// Use this constructor for computing the potential.
-    pub fn val(ty: BackgroundPotentialType, potential_field_value: T) -> Self {
+    /// Use this constructor for computing the field.
+    pub fn val(ty: BackgroundFieldType, field_value: V) -> Self {
         match ty {
-            BackgroundPotentialType::None => BackgroundPotentialValue::None,
-            BackgroundPotentialType::Zero => BackgroundPotentialValue::Constant(T::zero()),
-            BackgroundPotentialType::FromInput => {
-                BackgroundPotentialValue::Constant(potential_field_value)
+            BackgroundFieldType::None => BackgroundFieldValue::None,
+            BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
+            BackgroundFieldType::FromInput => {
+                BackgroundFieldValue::Constant(field_value)
             }
-            BackgroundPotentialType::DistanceBased => {
-                BackgroundPotentialValue::ClosestSampleDistance
+            BackgroundFieldType::DistanceBased => {
+                BackgroundFieldValue::ClosestSampleDistance
             }
-            BackgroundPotentialType::NormalBased => {
-                BackgroundPotentialValue::ClosestSampleNormalDisp
+            BackgroundFieldType::NormalBased => {
+                BackgroundFieldValue::ClosestSampleNormalDisp
             }
         }
     }
 }
 
-/// This struct represents the data needed to compute a background potential at a local query
+/// This struct represents the data needed to compute a background field at a local query
 /// point. This struct also conviently computes useful information about the neighbourhood (like
 /// closest distance to a sample point) that can be reused elsewhere.
 #[derive(Clone, Debug)]
-pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone + std::fmt::Debug>
+pub(crate) struct BackgroundField<'a,T,V,K>
+where T: Real,
+      K: SphericalKernel<T> + Clone + std::fmt::Debug
 {
-    /// Position of the point at which we should evaluate the potential field.
+    /// Position of the point at which we should evaluate the field.
     pub query_pos: Vector3<T>,
-    /// Samples that influence the potential field.
+    /// Samples that influence the field.
     pub samples: SamplesView<'a, 'a, T>,
-    /// Data needed to compute the background potential value and its derivative.
-    pub bg_potential_value: BackgroundPotentialValue<T>,
+    /// Data needed to compute the background field value and its derivative.
+    pub bg_field_value: BackgroundFieldValue<V>,
     /// The sum of all the weights in the neighbourhood of the query point.
     pub weight_sum: T,
     /// The spherical kernel used to compute the weights.
@@ -92,16 +94,19 @@ pub(crate) struct BackgroundPotential<'a, T: Real, K: SphericalKernel<T> + Clone
     pub radius: T,
 }
 
-impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a>
-    BackgroundPotential<'a, T, K>
+impl<'a, T, V, K>
+    BackgroundField<'a, T, V, K>
+    where T: Real,
+          V: Copy + Clone + std::fmt::Debug + PartialEq,
+          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
 {
-    /// Pass in the unnormalized weight sum excluding the weight for the background potential.
+    /// Pass in the unnormalized weight sum excluding the weight for the background field.
     pub(crate) fn new(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
         radius: T,
         kernel: K,
-        bg_value: BackgroundPotentialValue<T>,
+        bg_value: BackgroundFieldValue<V>,
     ) -> Self {
         // Precompute data about the closest sample point (displacement, index and distance).
         let min_sample = samples
@@ -130,11 +135,11 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             weight_sum += w;
         }
 
-        // Initialize the background potential struct.
-        let mut bg = BackgroundPotential {
+        // Initialize the background field struct.
+        let mut bg = BackgroundField {
             query_pos: q,
             samples,
-            bg_potential_value: bg_value,
+            bg_field_value: bg_value,
             weight_sum,
             kernel,
             closest_sample_dist,
@@ -158,15 +163,15 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
     }
 
     pub(crate) fn background_weight(&self) -> T {
-        match self.bg_potential_value {
-            BackgroundPotentialValue::None => T::zero(),
+        match self.bg_field_value {
+            BackgroundFieldValue::None => T::zero(),
             _ => self.kernel.f(self.radius - self.closest_sample_dist),
         }
     }
 
     pub(crate) fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
         if index == self.closest_sample_index
-            && self.bg_potential_value != BackgroundPotentialValue::None
+            && self.bg_field_value != BackgroundFieldValue::None
         {
             self.closest_sample_disp
                 * (self.kernel.df(self.radius - self.closest_sample_dist)
@@ -175,36 +180,67 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
             Vector3::zeros()
         }
     }
+}
 
-    /// Compute the unnormalized weighted background potential value. This is typically very
+impl<'a, T, V, K> BackgroundField<'a, T, V, K>
+    where T: Real,
+          V: Copy + Clone + std::fmt::Debug + PartialEq + std::ops::Mul<T, Output=V> + num_traits::Zero,
+          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
+{
+    /// Compute the unnormalized weighted background field value. This is typically very
     /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
-    /// background potential contribution.
-    pub(crate) fn compute_unnormalized_weighted_potential(&self) -> T {
+    /// background field contribution.
+    pub(crate) fn compute_unnormalized_weighted_vector_field(&self) -> V {
         // Unpack background data.
-        let BackgroundPotential {
-            bg_potential_value,
+        let BackgroundField {
+            bg_field_value,
+            ..
+        } = *self;
+
+        let field_val = match bg_field_value {
+            BackgroundFieldValue::None => V::zero(),
+            BackgroundFieldValue::Constant(val) => val,
+            BackgroundFieldValue::ClosestSampleDistance => V::zero(),
+            BackgroundFieldValue::ClosestSampleNormalDisp => V::zero(),
+        };
+
+        field_val * self.background_weight()
+    }
+}
+
+impl<'a, T, K> BackgroundField<'a, T, T, K>
+    where T: Real,
+          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
+{
+    /// Compute the unnormalized weighted background field value. This is typically very
+    /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
+    /// background field contribution.
+    pub(crate) fn compute_unnormalized_weighted_scalar_field(&self) -> T {
+        // Unpack background data.
+        let BackgroundField {
+            bg_field_value,
             closest_sample_dist: dist,
             ..
         } = *self;
 
-        self.background_weight()
-            * match bg_potential_value {
-                BackgroundPotentialValue::None => T::zero(),
-                BackgroundPotentialValue::Constant(potential) => potential,
-                BackgroundPotentialValue::ClosestSampleDistance => dist,
-                BackgroundPotentialValue::ClosestSampleNormalDisp => dist,
-            }
+        let field_val = match bg_field_value {
+            BackgroundFieldValue::None => T::zero(),
+            BackgroundFieldValue::Constant(val) => val,
+            BackgroundFieldValue::ClosestSampleDistance => dist,
+            BackgroundFieldValue::ClosestSampleNormalDisp => dist,
+        };
+        field_val * self.background_weight()
     }
 
-    /// Compute background potential derivative contribution.
+    /// Compute background field derivative contribution.
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
-    /// assume the background potential is constant.
+    /// assume the background field is constant.
     pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         // Unpack background data.
-        let BackgroundPotential {
+        let BackgroundField {
             query_pos: q,
             samples,
-            bg_potential_value,
+            bg_field_value,
             kernel,
             closest_sample_dist: dist,
             closest_sample_disp: disp,
@@ -224,17 +260,17 @@ impl<'a, T: Real, K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync +
 
         samples.into_iter().map(move |Sample { index, pos, .. }| {
             // This term is valid for constant or dynamic background potentials.
-            let constant_term = |potential: T| {
+            let constant_term = |field: T| {
                 // Gradient of the unnormalized weight for the current sample point.
                 let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
-                dwdp * (-potential * wb * weight_sum_inv * weight_sum_inv)
+                dwdp * (-field * wb * weight_sum_inv * weight_sum_inv)
             };
 
-            match bg_potential_value {
-                BackgroundPotentialValue::None => Vector3::zeros(),
-                BackgroundPotentialValue::Constant(potential) => constant_term(potential),
-                BackgroundPotentialValue::ClosestSampleNormalDisp
-                | BackgroundPotentialValue::ClosestSampleDistance => {
+            match bg_field_value {
+                BackgroundFieldValue::None => Vector3::zeros(),
+                BackgroundFieldValue::Constant(field) => constant_term(field),
+                BackgroundFieldValue::ClosestSampleNormalDisp
+                | BackgroundFieldValue::ClosestSampleDistance => {
                     let mut grad = constant_term(dist);
 
                     if index == closest_sample_index {

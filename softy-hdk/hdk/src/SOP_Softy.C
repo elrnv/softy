@@ -324,13 +324,13 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.time_step = sopparms.getTimeStep();
 
     if (sopparms.getStiffness_type() == 0) { 
-        sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e6;
-        sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e6;
+        sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e3;
+        sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e3;
     } else {
         // K = E / 3(1-2v)
         // G = E / 2(1+v)
         auto nu = sopparms.getPoissonRatio();
-        auto E = sopparms.getYoungModulus()*1e6;
+        auto E = sopparms.getYoungModulus()*1e3;
         sim_params.material.bulk_modulus = E / (3*(1.0 - 2*nu));
         sim_params.material.shear_modulus = E / (2*(1+nu));
     }

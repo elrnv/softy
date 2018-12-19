@@ -16,7 +16,7 @@ enum SamplesMesh<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplicitSurfaceBuilder<'mesh> {
     kernel: KernelType,
-    background_potential: BackgroundPotentialType,
+    bg_field: BackgroundFieldType,
     mesh: SamplesMesh<'mesh>,
     max_step: f64,
     sample_type: SampleType,
@@ -35,7 +35,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                 radius: 1.0,
                 tolerance: 1e-5,
             },
-            background_potential: BackgroundPotentialType::Zero,
+            bg_field: BackgroundFieldType::Zero,
             mesh: SamplesMesh::None,
             max_step: 0.0, // This is a sane default for static implicit surfaces.
             sample_type: SampleType::Vertex,
@@ -80,11 +80,11 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         self
     }
 
-    pub fn background_potential(
+    pub fn background_field(
         &mut self,
-        background_potential: BackgroundPotentialType,
+        bg_field: BackgroundFieldType,
     ) -> &mut Self {
-        self.background_potential = background_potential;
+        self.bg_field = bg_field;
         self
     }
 
@@ -134,7 +134,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     pub fn build(&self) -> Option<ImplicitSurface> {
         let ImplicitSurfaceBuilder {
             kernel,
-            background_potential,
+            bg_field,
             mesh,
             max_step,
             sample_type,
@@ -249,7 +249,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
         Some(ImplicitSurface {
             kernel,
-            bg_potential_type: background_potential,
+            bg_field_type: bg_field,
             spatial_tree: rtree,
             surface_topo: triangles,
             surface_vertex_positions: vertices,

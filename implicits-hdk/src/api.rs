@@ -36,12 +36,12 @@ impl Into<implicits::Params> for Params {
                 3 => implicits::KernelType::Global { tolerance: tolerance as f64 },
                 _ => implicits::KernelType::Hrbf,
             },
-            background_potential: match background_potential {
-                0 => implicits::BackgroundPotentialType::None,
-                1 => implicits::BackgroundPotentialType::Zero,
-                2 => implicits::BackgroundPotentialType::FromInput,
-                3 => implicits::BackgroundPotentialType::DistanceBased,
-                _ => implicits::BackgroundPotentialType::NormalBased,
+            background_field: match background_potential {
+                0 => implicits::BackgroundFieldType::None,
+                1 => implicits::BackgroundFieldType::Zero,
+                2 => implicits::BackgroundFieldType::FromInput,
+                3 => implicits::BackgroundFieldType::DistanceBased,
+                _ => implicits::BackgroundFieldType::NormalBased,
             },
             sample_type: match sample_type {
                 0 => implicits::SampleType::Vertex,
@@ -60,12 +60,17 @@ pub fn cook<F>(
     check_interrupt: F,
 ) -> CookResult
 where
-    F: Fn() -> bool + Sync + Send,
+    F: Fn() -> bool + Sync + Send + Clone,
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt);
-            convert_to_cookresult(res)
+            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt.clone());
+            if res.is_err() {
+                convert_to_cookresult(res)
+            } else {
+                let res = implicits::compute_normal_field_debug(samples, surface, params.into(), check_interrupt);
+                convert_to_cookresult(res)
+            }
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())
         }

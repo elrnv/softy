@@ -1,7 +1,6 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 extern crate geometry as geo;
 extern crate hrbf;
-extern crate nalgebra as na;
 extern crate rayon;
 extern crate reinterpret;
 extern crate spade;
@@ -24,7 +23,7 @@ pub use crate::kernel::KernelType;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub kernel: KernelType,
-    pub background_potential: BackgroundPotentialType,
+    pub background_field: BackgroundFieldType,
     pub sample_type: SampleType,
     pub max_step: f64,
 }
@@ -37,7 +36,7 @@ impl Default for Params {
                     tolerance: 0.00001,
                     radius: 1.0,
             },
-            background_potential: BackgroundPotentialType::None,
+            background_field: BackgroundFieldType::None,
             sample_type: SampleType::Face,
             max_step: 0.0,
         }
@@ -60,6 +59,22 @@ where
         .and_then(|surf| surf.compute_potential_on_mesh(query_points, interrupt))
 }
 
+/// Compute potential with debug information on the given mesh.
+/// This function builds an implicit surface and computes values on the given query points. For a
+/// reusable implicit surface use the `surface_from_*` function.
+pub fn compute_normal_field_debug<F>(
+    query_points: &mut PolyMesh<f64>,
+    surface: &mut PolyMesh<f64>,
+    params: Params,
+    interrupt: F,
+) -> Result<(), Error>
+where
+    F: Fn() -> bool + Sync + Send,
+{
+    surface_from_polymesh(surface, params)
+        .and_then(|surf| surf.compute_vector_field_on_mesh(query_points, interrupt))
+}
+
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
 pub fn surface_from_trimesh(
@@ -70,7 +85,7 @@ pub fn surface_from_trimesh(
     let surf = ImplicitSurfaceBuilder::new()
         .kernel(params.kernel)
         .max_step(params.max_step)
-        .background_potential(params.background_potential)
+        .background_field(params.background_field)
         .sample_type(params.sample_type)
         .trimesh(surface)
         .build();
@@ -150,7 +165,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_potential: BackgroundPotentialType::DistanceBased,
+                background_field: BackgroundFieldType::DistanceBased,
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -188,7 +203,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_potential: BackgroundPotentialType::DistanceBased,
+                background_field: BackgroundFieldType::DistanceBased,
                 sample_type: SampleType::Face,
                 ..Default::default()
             },
@@ -221,7 +236,7 @@ mod tests {
             &mut sphere,
             Params {
                 kernel: KernelType::Hrbf,
-                background_potential: BackgroundPotentialType::DistanceBased,
+                background_field: BackgroundFieldType::DistanceBased,
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -254,7 +269,7 @@ mod tests {
 
         let mut builder = ImplicitSurfaceBuilder::new();
         builder.kernel(KernelType::Approximate { tolerance: 1e-5, radius: 1.5 })
-            .background_potential(BackgroundPotentialType::DistanceBased)
+            .background_field(BackgroundFieldType::DistanceBased)
             .sample_type(SampleType::Vertex)
             .trimesh(&trimesh);
 

@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 pub unsafe fn interrupt_callback(
     checker: *mut c_void,
     check_interrupt: Option<extern "C" fn(*const c_void) -> bool>,
-) -> impl Fn() -> bool {
+) -> impl Fn() -> bool + Clone {
     let interrupt_ref = &*checker; // conversion needed since *mut c_void is not Send
     move || match check_interrupt {
         Some(cb) => cb(interrupt_ref as *const c_void),

@@ -12,6 +12,7 @@ geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] 
 spade = "1.5"
 autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
 reinterpret = "0.1"
+num-traits = "0.2"
 
 [dev-dependencies]
 utils = { path = "../utils" }

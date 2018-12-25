@@ -33,6 +33,8 @@ pub enum SampleType {
     Face,
 }
 
+/// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
+/// vector, this type will fit a vector field.
 #[derive(Clone, Debug)]
 pub struct ImplicitSurface {
     /// The type of kernel to use for fitting the data.
@@ -104,144 +106,6 @@ impl ImplicitSurface {
         }
     }
 
-    /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
-    /// vertices given in the sample view.
-    ///
-    /// This function returns an iterator with the same size as `samples.len()`.
-    ///
-    /// Note that the product vector is given by a closure `dx` which must give a valid vector
-    /// value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T: Real, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_topo: &'a [[usize; 3]],
-        dual_topo: &'a [Vec<usize>],
-        mut dx: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        samples.into_iter().map(move |sample| {
-            let Sample { index, nml, .. } = sample;
-            let norm_inv = T::one() / nml.norm();
-            // Compute the normal component of the derivative
-            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
-            let mut nml_deriv = Vector3::zeros();
-            // Look at the ring of triangles around the vertex with respect to which we are
-            // taking the derivative.
-            for &tri_idx in dual_topo[index].iter() {
-                let tri_indices = &surface_topo[tri_idx];
-                // Pull contributions from all neighbours on the surface, not just ones part of the
-                // neighbourhood,
-                let tri = Triangle::from_indexed_slice(tri_indices, samples.points());
-                let nml_grad = tri.area_normal_gradient(
-                    tri_indices
-                        .iter()
-                        .position(|&j| j == index)
-                        .expect("Triangle mesh topology corruption."),
-                );
-                let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
-                    if sample.index != index {
-                        let normk_inv = T::one() / sample.nml.norm();
-                        let nmlk_proj = Matrix3::identity()
-                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
-                        tri_grad += nmlk_proj * (dx(sample) * normk_inv);
-                    }
-                }
-                nml_deriv += nml_grad * tri_grad;
-            }
-            nml_deriv
-        })
-    }
-
-    /// Compute the gradient vector product of the face normals with respect to
-    /// surface vertices.
-    ///
-    /// This function returns an iterator with the same size as `surface_vertices.len()`.
-    ///
-    /// Note that the product vector is given by a closure `multiplier` which must give a valid
-    /// vector value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_face_unit_normals_gradient_products<'a, T: Real, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        samples
-            .into_iter()
-            .zip(surface_topo.iter())
-            .flat_map(move |(sample, tri_indices)| {
-                let norm_inv = T::one() / sample.nml.norm();
-                let nml = sample.nml * norm_inv;
-                let nml_proj = Matrix3::identity() - nml * nml.transpose();
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-                let mult = multiplier(sample);
-                (0..3).map(move |i| {
-                    tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv))
-                })
-            })
-    }
-
-    /// Get the number of Hessian non-zeros for the face unit normal Hessian.
-    /// This is essentially the number of items returned by
-    /// `compute_face_unit_normals_hessian_products`.
-    pub(crate) fn num_face_unit_normals_hessian_entries(
-        num_samples: usize,
-    ) -> usize {
-        num_samples * 6 * 6
-    }
-
-    /// Block lower triangular part of the unit normal Hessian.
-    pub(crate) fn compute_face_unit_normals_hessian_products<'a, T: Real, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        // For each triangle contribution (one element in a sum)
-        samples
-            .into_iter()
-            .zip(surface_topo.iter())
-            .flat_map(move |(sample, tri_indices)| {
-                let norm_inv = T::one() / sample.nml.norm();
-                let nml = sample.nml * norm_inv;
-                let nml_proj = Matrix3::identity() - nml * nml.transpose();
-                let mult = multiplier(sample);
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-                let grad = [
-                    tri.area_normal_gradient(0),
-                    tri.area_normal_gradient(1),
-                    tri.area_normal_gradient(2),
-                ];
-
-                // row >= col
-                // For each row
-                (0..3).flat_map(move |j| {
-                    let vtx_row = tri_indices[j];
-                    (0..3).filter(move |&i| tri_indices[i] <= vtx_row).map(move |i| {
-                        let vtx_col = tri_indices[i];
-                        let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
-                        let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
-                        let nml_mult_prod =
-                            nml_proj * nml_dot_mult_div_norm
-                            + proj_mult * nml.transpose()
-                            + nml * proj_mult.transpose();
-                        let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
-                            + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
-                        (vtx_row, vtx_col, m)
-                    })
-                })
-            })
-    }
-
     /// Update the stored samples. This assumes that vertex positions have been updated.
     fn update_samples(&mut self) {
         let ImplicitSurface {
@@ -257,6 +121,7 @@ impl ImplicitSurface {
                 let Samples {
                     ref mut points,
                     ref mut normals,
+                    // ref mut tangents
                     ..
                 } = samples;
 
@@ -379,7 +244,7 @@ impl ImplicitSurface {
     pub fn potential(
         &self,
         query_points: &[[f64; 3]],
-        out_potential: &mut [f64],
+        out_field: &mut [f64],
     ) -> Result<(), super::Error> {
         let ImplicitSurface {
             ref kernel,
@@ -404,26 +269,26 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_potential)
+                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_potential)
+                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_potential)
+                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
                 let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls(query_points, radius, kern, neigh, out_potential)
+                self.compute_mls(query_points, radius, kern, neigh, out_field)
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
-                Self::compute_hrbf(query_points, samples, out_potential)
+                Self::compute_hrbf(query_points, samples, out_field)
             }
         }
     }
@@ -435,7 +300,7 @@ impl ImplicitSurface {
         radius: f64,
         kernel: K,
         neigh: N,
-        out_potential: &'a mut [f64],
+        out_field: &'a mut [f64],
     ) -> Result<(), super::Error>
     where
         I: Iterator<Item = Sample<f64>> + 'a,
@@ -444,7 +309,7 @@ impl ImplicitSurface {
     {
         let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
 
-        assert_eq!(neigh_points.len(), out_potential.len());
+        assert_eq!(neigh_points.len(), out_field.len());
 
         let ImplicitSurface {
             ref samples,
@@ -455,16 +320,16 @@ impl ImplicitSurface {
         zip!(
             query_points.par_iter(),
             neigh_points.par_iter(),
-            out_potential.par_iter_mut()
+            out_field.par_iter_mut()
         ).filter(|(_, nbrs, _)| !nbrs.is_empty())
-         .for_each(move |(q, neighbours, potential)| {
+         .for_each(move |(q, neighbours, field)| {
             Self::compute_local_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
                 radius,
                 kernel,
                 bg_field_type,
-                potential,
+                field,
             );
         });
 
@@ -504,9 +369,9 @@ impl ImplicitSurface {
         *potential = bg.compute_unnormalized_weighted_scalar_field();
 
         let mut numerator = T::zero();
-        for Sample { pos, nml, off, .. } in samples.iter() {
+        for Sample { pos, nml, value, .. } in samples.iter() {
             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-            let p = T::from(off).unwrap() + nml.dot(q - pos) / nml.norm();
+            let p = value + nml.dot(q - pos) / nml.norm();
 
             numerator += w * p;
         }
@@ -662,6 +527,498 @@ impl ImplicitSurface {
 
         *vector = out_field.into();
     }
+
+    /*
+     * The methods below are designed for debugging and visualization.
+     */
+
+    /// Compute the implicit surface potential on the given polygon mesh.
+    pub fn compute_potential_on_mesh<F, M>(
+        &self,
+        mesh: &mut M,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
+    {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            ref samples,
+            ..
+        } = *self;
+
+        // Make a local neighbourhood lookup function.
+        let local_neigh = |radius| {
+            let radius2 = radius * radius;
+            move |q| {
+                spatial_tree
+                    .lookup_in_circle(&q, &radius2)
+                    .into_iter()
+                    .cloned()
+            }
+        };
+
+        match *kernel {
+            KernelType::Interpolating { radius } => {
+                let kern = kernel::LocalInterpolating::new(radius);
+                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Approximate { tolerance, radius } => {
+                let kern = kernel::LocalApproximate::new(radius, tolerance);
+                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Cubic { radius } => {
+                let kern = kernel::LocalCubic::new(radius);
+                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Global { tolerance } => {
+                let neigh = |_| samples.iter();
+                let radius = 1.0;
+                let kern = kernel::GlobalInvDistance2::new(tolerance);
+                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+            }
+            KernelType::Hrbf => {
+                Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
+            }
+        }
+    }
+
+    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
+    fn compute_mls_on_mesh<'a, I, K, N, F, M>(
+        &self,
+        mesh: &mut M,
+        radius: f64,
+        kernel: K,
+        neigh: N,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        I: Iterator<Item = Sample<f64>> + Clone + 'a,
+        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
+        N: Fn([f64; 3]) -> I + Sync + Send,
+        F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
+    {
+        let ImplicitSurface {
+            ref samples,
+            bg_field_type,
+            ..
+        } = *self;
+
+        // Move the potential attrib out of the mesh. We will reinsert it after we are done.
+        let potential_attrib = mesh
+            .remove_attrib::<VertexIndex>("potential")
+            .ok() // convert to option (None when it doesn't exist)
+            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+
+        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
+        if potential.is_empty() {
+            // Couldn't cast, which means potential is of some non-numeric type.
+            // We overwrite it because we need that attribute spot.
+            potential = vec![0.0f32; mesh.num_vertices()];
+        }
+
+        let query_points = mesh.vertex_positions();
+        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
+
+        // Initialize extra debug info.
+        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
+        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
+        let mut bg_weight_attrib_data = vec![0f32; mesh.num_vertices()];
+        let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
+
+        for (
+            q_chunk,
+            neigh,
+            num_neighs_chunk,
+            neighs_chunk,
+            bg_weight_chunk,
+            weight_sum_chunk,
+            potential_chunk,
+        ) in zip!(
+            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
+        ) {
+            if interrupt() {
+                return Err(super::Error::Interrupted);
+            }
+
+            zip!(
+                q_chunk.par_iter().map(|&v| Vector3(v)),
+                neigh.par_iter(),
+                num_neighs_chunk.par_iter_mut(),
+                neighs_chunk.par_iter_mut(),
+                bg_weight_chunk.par_iter_mut(),
+                weight_sum_chunk.par_iter_mut(),
+                potential_chunk.par_iter_mut()
+            )
+            .for_each(
+                |(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential)| {
+                    let view = SamplesView::new(neighs, &samples);
+
+                    // Record number of neighbours in total.
+                    *num_neighs = view.len() as i32;
+
+                    // Record up to 11 neighbours
+                    for (k, neigh) in view.iter().take(11).enumerate() {
+                        out_neighs[k] = neigh.index as i32;
+                    }
+
+                    if !view.is_empty() {
+                        let bg = BackgroundField::new(
+                            q,
+                            view,
+                            radius,
+                            kernel,
+                            BackgroundFieldValue::val(bg_field_type, f64::from(*potential)),
+                        );
+                        let closest_d = bg.closest_sample_dist();
+                        *bg_weight = bg.background_weight() as f32;
+                        *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
+
+                        *potential = bg.compute_unnormalized_weighted_scalar_field() as f32;
+
+                        let mut numerator = 0.0;
+                        for Sample { pos, nml, value, .. } in view.iter() {
+                            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                            let p = value + nml.dot(q - pos) / nml.norm();
+
+                            numerator += w * p;
+                        }
+
+                        *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
+                    }
+                },
+            );
+        }
+
+        {
+            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
+        }
+
+        Ok(())
+    }
+    /// Interpolate a vector field on the given polygon mesh.
+    pub fn compute_vector_field_on_mesh<F, M>(
+        &self,
+        mesh: &mut M,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
+    {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            ref samples,
+            ..
+        } = *self;
+
+        // Make a local neighbourhood lookup function.
+        let local_neigh = |radius| {
+            let radius2 = radius * radius;
+            move |q| {
+                spatial_tree
+                    .lookup_in_circle(&q, &radius2)
+                    .into_iter()
+                    .cloned()
+            }
+        };
+
+        match *kernel {
+            KernelType::Interpolating { radius } => {
+                let kern = kernel::LocalInterpolating::new(radius);
+                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Approximate { tolerance, radius } => {
+                let kern = kernel::LocalApproximate::new(radius, tolerance);
+                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Cubic { radius } => {
+                let kern = kernel::LocalCubic::new(radius);
+                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+            }
+            KernelType::Global { tolerance } => {
+                let neigh = |_| samples.iter();
+                let radius = 1.0;
+                let kern = kernel::GlobalInvDistance2::new(tolerance);
+                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, neigh, interrupt)
+            }
+            KernelType::Hrbf => {
+                // unimplemented ( do nothing )
+                Err(super::Error::UnsupportedKernel)
+            }
+        }
+    }
+
+    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
+    fn compute_mls_vector_field_on_mesh<'a, I, K, N, F, M>(
+        &self,
+        mesh: &mut M,
+        radius: f64,
+        kernel: K,
+        neigh: N,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        I: Iterator<Item = Sample<f64>> + Clone + 'a,
+        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
+        N: Fn([f64; 3]) -> I + Sync + Send,
+        F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<f64>,
+    {
+        let ImplicitSurface {
+            ref samples,
+            bg_field_type,
+            ..
+        } = *self;
+
+        // Overwrite this attribute.
+        mesh.remove_attrib::<VertexIndex>("vector_field").ok();
+        let mut field = vec![[0.0f32; 3]; mesh.num_vertices()];
+
+        let query_points = mesh.vertex_positions();
+        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
+
+        // Initialize extra debug info.
+        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
+        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
+        let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
+
+        for (
+            q_chunk,
+            neigh,
+            num_neighs_chunk,
+            neighs_chunk,
+            weight_sum_chunk,
+            field_chunk,
+        ) in zip!(
+            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            field.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
+        ) {
+            if interrupt() {
+                return Err(super::Error::Interrupted);
+            }
+
+            zip!(
+                q_chunk.par_iter().map(|&v| Vector3(v)),
+                neigh.par_iter(),
+                num_neighs_chunk.par_iter_mut(),
+                neighs_chunk.par_iter_mut(),
+                weight_sum_chunk.par_iter_mut(),
+                field_chunk.par_iter_mut()
+            )
+            .for_each(
+                |(q, neighs, num_neighs, out_neighs, weight_sum, field)| {
+                    let view = SamplesView::new(neighs, &samples);
+
+                    // Record number of neighbours in total.
+                    *num_neighs = view.len() as i32;
+
+                    // Record up to 11 neighbours
+                    for (k, neigh) in view.iter().take(11).enumerate() {
+                        out_neighs[k] = neigh.index as i32;
+                    }
+
+                    if !view.is_empty() {
+                        let bg = BackgroundField::new(
+                            q,
+                            view,
+                            radius,
+                            kernel,
+                            BackgroundFieldValue::val(bg_field_type, Vector3::zeros()),
+                        );
+                        let closest_dist = bg.closest_sample_dist();
+                        *weight_sum = bg.weight_sum as f32;
+                        let weight_sum_inv = bg.weight_sum_inv();
+
+                        let mut grad_w_sum_normalized = Vector3::zeros();
+                        for grad in samples.iter().map(|Sample { pos, .. }| 
+                            kernel.with_closest_dist(closest_dist).grad(q, pos)) {
+                            grad_w_sum_normalized += grad;
+                        }
+                        grad_w_sum_normalized *= weight_sum_inv;
+
+                        let mut out_field = bg.compute_unnormalized_weighted_vector_field();
+                        for Sample { pos, nml, .. } in view.iter() {
+                            let w = kernel.with_closest_dist(closest_dist).eval(q, pos);
+                            let grad_w = kernel.with_closest_dist(closest_dist).grad(q, pos);
+                            let w_normalized = w * weight_sum_inv;
+                            let grad_w_normalized = grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
+
+                            out_field += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
+                        }
+
+                        *field = out_field.map(|x| x as f32).into();
+                    }
+                },
+            );
+        }
+
+        {
+            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("vector_field", &field)?;
+        }
+
+        Ok(())
+    }
+
+    /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
+    /// vertices given in the sample view.
+    ///
+    /// This function returns an iterator with the same size as `samples.len()`.
+    ///
+    /// Note that the product vector is given by a closure `dx` which must give a valid vector
+    /// value for any vertex index, however not all indices will be used since only the
+    /// neighbourhood of vertex at `index` will have non-zero gradients.
+    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T: Real, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_topo: &'a [[usize; 3]],
+        dual_topo: &'a [Vec<usize>],
+        mut dx: F,
+    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    {
+        samples.into_iter().map(move |sample| {
+            let Sample { index, nml, .. } = sample;
+            let norm_inv = T::one() / nml.norm();
+            // Compute the normal component of the derivative
+            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
+            let mut nml_deriv = Vector3::zeros();
+            // Look at the ring of triangles around the vertex with respect to which we are
+            // taking the derivative.
+            for &tri_idx in dual_topo[index].iter() {
+                let tri_indices = &surface_topo[tri_idx];
+                // Pull contributions from all neighbours on the surface, not just ones part of the
+                // neighbourhood,
+                let tri = Triangle::from_indexed_slice(tri_indices, samples.points());
+                let nml_grad = tri.area_normal_gradient(
+                    tri_indices
+                        .iter()
+                        .position(|&j| j == index)
+                        .expect("Triangle mesh topology corruption."),
+                );
+                let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
+                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
+                    if sample.index != index {
+                        let normk_inv = T::one() / sample.nml.norm();
+                        let nmlk_proj = Matrix3::identity()
+                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
+                        tri_grad += nmlk_proj * (dx(sample) * normk_inv);
+                    }
+                }
+                nml_deriv += nml_grad * tri_grad;
+            }
+            nml_deriv
+        })
+    }
+
+    /// Compute the gradient vector product of the face normals with respect to
+    /// surface vertices.
+    ///
+    /// This function returns an iterator with the same size as `surface_vertices.len()`.
+    ///
+    /// Note that the product vector is given by a closure `multiplier` which must give a valid
+    /// vector value for any vertex index, however not all indices will be used since only the
+    /// neighbourhood of vertex at `index` will have non-zero gradients.
+    pub(crate) fn compute_face_unit_normals_gradient_products<'a, T: Real, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_vertices: &'a [Vector3<T>],
+        surface_topo: &'a [[usize; 3]],
+        mut multiplier: F,
+    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    {
+        samples
+            .into_iter()
+            .zip(surface_topo.iter())
+            .flat_map(move |(sample, tri_indices)| {
+                let norm_inv = T::one() / sample.nml.norm();
+                let nml = sample.nml * norm_inv;
+                let nml_proj = Matrix3::identity() - nml * nml.transpose();
+                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+                let mult = multiplier(sample);
+                (0..3).map(move |i| {
+                    tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv))
+                })
+            })
+    }
+
+    /// Get the number of Hessian non-zeros for the face unit normal Hessian.
+    /// This is essentially the number of items returned by
+    /// `compute_face_unit_normals_hessian_products`.
+    pub(crate) fn num_face_unit_normals_hessian_entries(
+        num_samples: usize,
+    ) -> usize {
+        num_samples * 6 * 6
+    }
+
+    /// Block lower triangular part of the unit normal Hessian.
+    pub(crate) fn compute_face_unit_normals_hessian_products<'a, T: Real, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_vertices: &'a [Vector3<T>],
+        surface_topo: &'a [[usize; 3]],
+        mut multiplier: F,
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    {
+        // For each triangle contribution (one element in a sum)
+        samples
+            .into_iter()
+            .zip(surface_topo.iter())
+            .flat_map(move |(sample, tri_indices)| {
+                let norm_inv = T::one() / sample.nml.norm();
+                let nml = sample.nml * norm_inv;
+                let nml_proj = Matrix3::identity() - nml * nml.transpose();
+                let mult = multiplier(sample);
+                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+                let grad = [
+                    tri.area_normal_gradient(0),
+                    tri.area_normal_gradient(1),
+                    tri.area_normal_gradient(2),
+                ];
+
+                // row >= col
+                // For each row
+                (0..3).flat_map(move |j| {
+                    let vtx_row = tri_indices[j];
+                    (0..3).filter(move |&i| tri_indices[i] <= vtx_row).map(move |i| {
+                        let vtx_col = tri_indices[i];
+                        let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
+                        let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
+                        let nml_mult_prod =
+                            nml_proj * nml_dot_mult_div_norm
+                            + proj_mult * nml.transpose()
+                            + nml * proj_mult.transpose();
+                        let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
+                            + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
+                        (vtx_row, vtx_col, m)
+                    })
+                })
+            })
+    }
+
 
     /// Compute the number of indices (non-zeros) needed for the implicit surface potential
     /// Jacobian with respect to surface points.
@@ -1042,6 +1399,7 @@ impl ImplicitSurface {
         }
     }
 
+
     /// Compute the background potential field. This function returns a struct that provides some
     /// useful quanitities for computing derivatives of the field.
     pub(crate) fn compute_background_potential<'a, T: Real, K: 'a>(
@@ -1092,7 +1450,8 @@ impl ImplicitSurface {
                       index,
                       pos,
                       nml,
-                      off,
+                      value,
+                      ..
                   }| {
                 let diff = q - pos;
 
@@ -1104,7 +1463,7 @@ impl ImplicitSurface {
                 for Sample {
                     pos: posk,
                     nml: nmlk,
-                    off: offk,
+                    value: offk,
                     ..
                 } in samples.iter()
                 {
@@ -1121,7 +1480,7 @@ impl ImplicitSurface {
                 let dwb = bg.background_weight_gradient(index);
                 dw_p += dwb * (dw_neigh * weight_sum_inv2);
 
-                dw_p += dw * (weight_sum_inv * (T::from(off).unwrap() + unit_nml.dot(diff)));
+                dw_p += dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
 
                 // Compute the normal component of the derivative
                 let w = kernel.with_closest_dist(closest_d).eval(q, pos);
@@ -1131,6 +1490,7 @@ impl ImplicitSurface {
         )
     }
 
+
     fn compute_hrbf(
         query_points: &[[f64; 3]],
         samples: &Samples<f64>,
@@ -1139,7 +1499,8 @@ impl ImplicitSurface {
         let Samples {
             ref points,
             ref normals,
-            ref offsets,
+            ref values,
+            ..
         } = samples;
 
         let pts: Vec<na::Point3<f64>> = points
@@ -1156,7 +1517,7 @@ impl ImplicitSurface {
 
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
 
-        hrbf.fit_offset(&pts, offsets, &nmls);
+        hrbf.fit_offset(&pts, values, &nmls);
 
         query_points
             .par_iter()
@@ -1168,185 +1529,6 @@ impl ImplicitSurface {
         Ok(())
     }
 
-    /*
-     * The methods below are designed for debugging and visualization.
-     */
-
-    /// Compute the implicit surface potential on the given polygon mesh.
-    pub fn compute_potential_on_mesh<F, M>(
-        &self,
-        mesh: &mut M,
-        interrupt: F,
-    ) -> Result<(), super::Error>
-    where
-        F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
-    {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            ref samples,
-            ..
-        } = *self;
-
-        // Make a local neighbourhood lookup function.
-        let local_neigh = |radius| {
-            let radius2 = radius * radius;
-            move |q| {
-                spatial_tree
-                    .lookup_in_circle(&q, &radius2)
-                    .into_iter()
-                    .cloned()
-            }
-        };
-
-        match *kernel {
-            KernelType::Interpolating { radius } => {
-                let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Approximate { tolerance, radius } => {
-                let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Cubic { radius } => {
-                let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Global { tolerance } => {
-                let neigh = |_| samples.iter();
-                let radius = 1.0;
-                let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
-            }
-            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
-        }
-    }
-
-    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, I, K, N, F, M>(
-        &self,
-        mesh: &mut M,
-        radius: f64,
-        kernel: K,
-        neigh: N,
-        interrupt: F,
-    ) -> Result<(), super::Error>
-    where
-        I: Iterator<Item = Sample<f64>> + Clone + 'a,
-        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([f64; 3]) -> I + Sync + Send,
-        F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
-    {
-        let ImplicitSurface {
-            ref samples,
-            bg_field_type,
-            ..
-        } = *self;
-
-        // Move the potential attrib out of the mesh. We will reinsert it after we are done.
-        let potential_attrib = mesh
-            .remove_attrib::<VertexIndex>("potential")
-            .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
-
-        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
-        if potential.is_empty() {
-            // Couldn't cast, which means potential is of some non-numeric type.
-            // We overwrite it because we need that attribute spot.
-            potential = vec![0.0f32; mesh.num_vertices()];
-        }
-
-        let query_points = mesh.vertex_positions();
-        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
-
-        // Initialize extra debug info.
-        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
-        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
-        let mut bg_weight_attrib_data = vec![0f32; mesh.num_vertices()];
-        let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
-
-        for (
-            q_chunk,
-            neigh,
-            num_neighs_chunk,
-            neighs_chunk,
-            bg_weight_chunk,
-            weight_sum_chunk,
-            potential_chunk,
-        ) in zip!(
-            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
-        ) {
-            if interrupt() {
-                return Err(super::Error::Interrupted);
-            }
-
-            zip!(
-                q_chunk.par_iter().map(|&v| Vector3(v)),
-                neigh.par_iter(),
-                num_neighs_chunk.par_iter_mut(),
-                neighs_chunk.par_iter_mut(),
-                bg_weight_chunk.par_iter_mut(),
-                weight_sum_chunk.par_iter_mut(),
-                potential_chunk.par_iter_mut()
-            )
-            .for_each(
-                |(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential)| {
-                    let view = SamplesView::new(neighs, &samples);
-
-                    // Record number of neighbours in total.
-                    *num_neighs = view.len() as i32;
-
-                    // Record up to 11 neighbours
-                    for (k, neigh) in view.iter().take(11).enumerate() {
-                        out_neighs[k] = neigh.index as i32;
-                    }
-
-                    if !view.is_empty() {
-                        let bg = BackgroundField::new(
-                            q,
-                            view,
-                            radius,
-                            kernel,
-                            BackgroundFieldValue::val(bg_field_type, f64::from(*potential)),
-                        );
-                        let closest_d = bg.closest_sample_dist();
-                        *bg_weight = bg.background_weight() as f32;
-                        *weight_sum = (1.0 / bg.weight_sum_inv()) as f32;
-
-                        *potential = bg.compute_unnormalized_weighted_scalar_field() as f32;
-
-                        let mut numerator = 0.0;
-                        for Sample { pos, nml, off, .. } in view.iter() {
-                            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-                            let p = off + nml.dot(q - pos) / nml.norm();
-
-                            numerator += w * p;
-                        }
-
-                        *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
-                    }
-                },
-            );
-        }
-
-        {
-            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
-        }
-
-        Ok(())
-    }
 
     fn compute_hrbf_on_mesh<F, M>(
         mesh: &mut M,
@@ -1373,7 +1555,8 @@ impl ImplicitSurface {
         let Samples {
             ref points,
             ref normals,
-            ref offsets,
+            ref values,
+            ..
         } = samples;
         let sample_pos = mesh.vertex_positions().to_vec();
 
@@ -1392,7 +1575,7 @@ impl ImplicitSurface {
             })
             .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-        hrbf.fit_offset(&pts, offsets, &nmls);
+        hrbf.fit_offset(&pts, values, &nmls);
 
         for (q_chunk, potential_chunk) in sample_pos
             .chunks(Self::PARALLEL_CHUNK_SIZE)
@@ -1414,178 +1597,6 @@ impl ImplicitSurface {
 
         Ok(())
     }
-
-    /// Interpolate a vector field on the given polygon mesh.
-    pub fn compute_vector_field_on_mesh<F, M>(
-        &self,
-        mesh: &mut M,
-        interrupt: F,
-    ) -> Result<(), super::Error>
-    where
-        F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
-    {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            ref samples,
-            ..
-        } = *self;
-
-        // Make a local neighbourhood lookup function.
-        let local_neigh = |radius| {
-            let radius2 = radius * radius;
-            move |q| {
-                spatial_tree
-                    .lookup_in_circle(&q, &radius2)
-                    .into_iter()
-                    .cloned()
-            }
-        };
-
-        match *kernel {
-            KernelType::Interpolating { radius } => {
-                let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Approximate { tolerance, radius } => {
-                let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Cubic { radius } => {
-                let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
-            }
-            KernelType::Global { tolerance } => {
-                let neigh = |_| samples.iter();
-                let radius = 1.0;
-                let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_vector_field_on_mesh(mesh, radius, kern, neigh, interrupt)
-            }
-            KernelType::Hrbf => {
-                // unimplemented ( do nothing )
-                Err(super::Error::UnsupportedKernel)
-            }
-        }
-    }
-
-    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_vector_field_on_mesh<'a, I, K, N, F, M>(
-        &self,
-        mesh: &mut M,
-        radius: f64,
-        kernel: K,
-        neigh: N,
-        interrupt: F,
-    ) -> Result<(), super::Error>
-    where
-        I: Iterator<Item = Sample<f64>> + Clone + 'a,
-        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([f64; 3]) -> I + Sync + Send,
-        F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
-    {
-        let ImplicitSurface {
-            ref samples,
-            bg_field_type,
-            ..
-        } = *self;
-
-        // Overwrite this attribute.
-        mesh.remove_attrib::<VertexIndex>("vector_field").ok();
-        let mut field = vec![[0.0f32; 3]; mesh.num_vertices()];
-
-        let query_points = mesh.vertex_positions();
-        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
-
-        // Initialize extra debug info.
-        let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
-        let mut neighs_attrib_data = vec![[-1i32; 11]; mesh.num_vertices()];
-        let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
-
-        for (
-            q_chunk,
-            neigh,
-            num_neighs_chunk,
-            neighs_chunk,
-            weight_sum_chunk,
-            field_chunk,
-        ) in zip!(
-            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            field.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
-        ) {
-            if interrupt() {
-                return Err(super::Error::Interrupted);
-            }
-
-            zip!(
-                q_chunk.par_iter().map(|&v| Vector3(v)),
-                neigh.par_iter(),
-                num_neighs_chunk.par_iter_mut(),
-                neighs_chunk.par_iter_mut(),
-                weight_sum_chunk.par_iter_mut(),
-                field_chunk.par_iter_mut()
-            )
-            .for_each(
-                |(q, neighs, num_neighs, out_neighs, weight_sum, field)| {
-                    let view = SamplesView::new(neighs, &samples);
-
-                    // Record number of neighbours in total.
-                    *num_neighs = view.len() as i32;
-
-                    // Record up to 11 neighbours
-                    for (k, neigh) in view.iter().take(11).enumerate() {
-                        out_neighs[k] = neigh.index as i32;
-                    }
-
-                    if !view.is_empty() {
-                        let bg = BackgroundField::new(
-                            q,
-                            view,
-                            radius,
-                            kernel,
-                            BackgroundFieldValue::val(bg_field_type, Vector3::zeros()),
-                        );
-                        let closest_dist = bg.closest_sample_dist();
-                        *weight_sum = bg.weight_sum as f32;
-                        let weight_sum_inv = bg.weight_sum_inv();
-
-                        let mut grad_w_sum_normalized = Vector3::zeros();
-                        for grad in samples.iter().map(|Sample { pos, .. }| 
-                            kernel.with_closest_dist(closest_dist).grad(q, pos)) {
-                            grad_w_sum_normalized += grad;
-                        }
-                        grad_w_sum_normalized *= weight_sum_inv;
-
-                        let mut out_field = bg.compute_unnormalized_weighted_vector_field();
-                        for Sample { pos, nml, .. } in view.iter() {
-                            let w = kernel.with_closest_dist(closest_dist).eval(q, pos);
-                            let grad_w = kernel.with_closest_dist(closest_dist).grad(q, pos);
-                            let w_normalized = w * weight_sum_inv;
-                            let grad_w_normalized = grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
-
-                            out_field += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
-                        }
-
-                        *field = out_field.map(|x| x as f32).into();
-                    }
-                },
-            );
-        }
-
-        {
-            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("vector_field", &field)?;
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -1599,7 +1610,8 @@ mod tests {
         let mut samples = Samples {
             points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
             normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
-            offsets: vec![0.0],
+            tangents: vec![Vector3([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
+            values: vec![F::cst(0.0)],
         };
 
         // The set of neighbours is the one sample given.
@@ -1690,7 +1702,8 @@ mod tests {
         let mut samples = Samples {
             points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
             normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
-            offsets: vec![0.0],
+            tangents: vec![Vector3([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
+            values: vec![F::cst(0.0)],
         };
 
         // The set of neighbours is the one sample given.
@@ -1779,7 +1792,8 @@ mod tests {
         let Samples {
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         } = samples;
 
         Samples {
@@ -1791,7 +1805,11 @@ mod tests {
                 .into_iter()
                 .map(|vec| vec.map(|x| F::cst(x)))
                 .collect(),
-            offsets,
+            tangents: tangents
+                .into_iter()
+                .map(|vec| vec.map(|x| F::cst(x)))
+                .collect(),
+            values: values.into_iter().map(|x| F::cst(x)).collect(),
         }
     }
 
@@ -1825,7 +1843,8 @@ mod tests {
         let samples = Samples {
             points: tet_verts.clone(),
             normals: normals.clone(),
-            offsets: vec![0.0; 4],
+            tangents: vec![Vector3::zeros(); 4],
+            values: vec![0.0; 4],
         };
 
         let neighbours = vec![0, 1, 2, 3];
@@ -1954,7 +1973,7 @@ mod tests {
                     ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
                     let ad_samples =
-                        Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                        Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
@@ -2125,7 +2144,7 @@ mod tests {
 
                 // Compute autodiff samples.
                 let mut ad_samples =
-                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
 
                 // Normalize face normals
                 for nml in ad_samples.normals.iter_mut() {
@@ -2207,7 +2226,7 @@ mod tests {
             for i in 0..3 {
                 ad_tet_verts[r][i] = F::var(ad_tet_verts[r][i]);
 
-                let ad_samples = Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![0.0; 4]);
+                let ad_samples = Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
                 let ad_view = SamplesView::new(indices.as_ref(), &ad_samples);
 
                 // Convert the samples to use autodiff constants.
@@ -2249,7 +2268,8 @@ mod tests {
         let samples = Samples {
             points: tet_verts.clone(),
             normals: normals.clone(),
-            offsets: vec![0.0; 4], // This is not actually used in this test.
+            tangents: vec![Vector3::zeros(); tet_verts.len()],
+            values: vec![0.0; 4], // This is not actually used in this test.
         };
 
         let indices = vec![0, 1, 2, 3]; // look at all the vertices
@@ -2310,7 +2330,8 @@ mod tests {
         let samples = Samples {
             points: points.clone(),
             normals: vec![Vector3::zeros(); points.len()], // Not used
-            offsets: vec![0.0; points.len()],              // Not used
+            tangents: vec![Vector3::zeros(); points.len()], // Not used
+            values: vec![0.0; points.len()],               // Not used
         };
 
         let indices: Vec<usize> = (0..points.len()).collect();
@@ -2339,7 +2360,8 @@ mod tests {
         let mut ad_samples = Samples {
             points: points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect(),
             normals: vec![Vector3::zeros(); points.len()], // Not used
-            offsets: vec![0.0; points.len()],              // Not used
+            tangents: vec![Vector3::zeros(); points.len()], // Not used
+            values: vec![F::cst(0.0); points.len()],              // Not used
         };
 
         let q = q.map(|x| F::cst(x));

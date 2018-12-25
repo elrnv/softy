@@ -50,7 +50,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Initialize fit data using a vertex mesh which can include positions, normals and offsets
     /// as attributes on the mesh struct.  The normals attribute is expected to be named "N" and
     /// have type `[f32;3]`.  The offsets attribute is expected to be named "offsets" and have type
-    /// `f32`.  This function initializes the `vertices`, `vertex_normals`, `sample_offsets`
+    /// `f32`.  This function initializes the `vertices`, `vertex_normals`, `sample_values`
     /// and sets `sample_type` to `SampleType::Vertex`.
     ///
     /// Note that this initializer can create only a static implicit surface because the topology
@@ -128,6 +128,18 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         .unwrap_or_default()
     }
 
+    /// A helper function to extract a tangents vector from the mesh.
+    /// The resulting vector is empty if no tangents are found.
+    fn vertex_tangents_from_mesh<M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<f64>> {
+        mesh
+            .attrib_iter::<[f32; 3], VertexIndex>("T")
+            .map(|iter| {
+                iter.map(|tng| Vector3(*tng).cast::<f64>().unwrap())
+                    .collect()
+            })
+        .unwrap_or_default()
+    }
+
     /// Builds the implicit surface. This function returns `None` when theres is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
@@ -159,19 +171,25 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     return None; // Given an incompatible sample type.
                 }
 
-                let sample_offsets = Self::vertex_offsets_from_mesh(&ptcloud);
-                assert_eq!(vertices.len(), sample_offsets.len());
+                let sample_values = Self::vertex_offsets_from_mesh(&ptcloud);
+                assert_eq!(vertices.len(), sample_values.len());
 
                 let vertex_normals = Self::vertex_normals_from_mesh(&ptcloud);
                 if vertex_normals.is_empty() {
                     return None; // Must have normals on vertices for point clouds.
                 }
 
+                let mut vertex_tangents = Self::vertex_tangents_from_mesh(&ptcloud);
+                if vertex_tangents.is_empty() {
+                    vertex_tangents = vec![Vector3::zeros(); vertices.len()];
+                }
+
                 assert_eq!(vertices.len(), vertex_normals.len());
                 let samples = Samples {
                     points: vertices.clone(),
                     normals: vertex_normals,
-                    offsets: sample_offsets,
+                    tangents: vertex_tangents,
+                    values: sample_values,
                 };
 
                 (samples, vertices, Vec::new())
@@ -183,8 +201,8 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                 // Build the samples.
                 let samples = match sample_type {
                     SampleType::Vertex => {
-                        let sample_offsets = Self::vertex_offsets_from_mesh(mesh);
-                        assert_eq!(vertices.len(), sample_offsets.len());
+                        let sample_values = Self::vertex_offsets_from_mesh(mesh);
+                        assert_eq!(vertices.len(), sample_values.len());
 
                         let mut vertex_normals = Self::vertex_normals_from_mesh(mesh);
                         if vertex_normals.is_empty() {
@@ -197,11 +215,18 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                                 );
                         }
 
-                        assert_eq!(vertices.len(), vertex_normals.len());
+                        let mut vertex_tangents = Self::vertex_tangents_from_mesh(mesh);
+                        if vertex_tangents.is_empty() {
+                            // If empty, just set to zero.
+                            vertex_tangents = vec![Vector3::zeros(); vertices.len()];
+                        }
+
+                        assert_eq!(vertices.len(), vertex_tangents.len());
                         Samples {
                             points: vertices.clone(),
                             normals: vertex_normals,
-                            offsets: sample_offsets,
+                            tangents: vertex_tangents,
+                            values: sample_values,
                         }
                     }
                     SampleType::Face => {
@@ -211,13 +236,13 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                         }
 
                         // One sample per triangle.
-                        let sample_offsets = mesh
+                        let sample_values = mesh
                             .attrib_iter::<f32, FaceIndex>("offset")
                             .map(|iter| iter.map(|&x| f64::from(x)).collect())
                             .unwrap_or_else(|_| vec![0.0f64; mesh.num_faces()]);
-                        assert_eq!(triangles.len(), sample_offsets.len());
+                        assert_eq!(triangles.len(), sample_values.len());
 
-                        Samples::new_triangle_samples(&triangles, &vertices, sample_offsets)
+                        Samples::new_triangle_samples(&triangles, &vertices, sample_values)
                     }
                 };
 

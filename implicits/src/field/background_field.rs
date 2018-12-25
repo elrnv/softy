@@ -20,11 +20,11 @@ pub enum BackgroundFieldType {
 
 /// Precomputed data used for background field computation.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum BackgroundFieldValue<T> {
+pub(crate) enum BackgroundFieldValue<V> {
     /// No value, nothing to mix in, background weight is always zero.
     None,
     /// The value of the background field at the query point.
-    Constant(T),
+    Constant(V),
     /// A Dynamic field is computed based on the distance to the closest sample point.
     ClosestSampleDistance,
     /// A Dynamic field is computed based on the normal displacement. In other words, this is
@@ -268,7 +268,7 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
 
             match bg_field_value {
                 BackgroundFieldValue::None => Vector3::zeros(),
-                BackgroundFieldValue::Constant(field) => constant_term(field),
+                BackgroundFieldValue::Constant(field) => constant_term(T::from(field).unwrap()),
                 BackgroundFieldValue::ClosestSampleNormalDisp
                 | BackgroundFieldValue::ClosestSampleDistance => {
                     let mut grad = constant_term(dist);

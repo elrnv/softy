@@ -14,8 +14,10 @@ pub struct Sample<T: Real> {
     pub pos: Vector3<T>,
     /// Normal of the sample.
     pub nml: Vector3<T>,
-    /// Offset stored at the sample point.
-    pub off: f64,
+    /// Tangent at the sample.
+    pub tng: Vector3<T>,
+    /// Value stored at the sample point.
+    pub value: T,
 }
 
 /// Convert a sample of one type into a sample of another real type.
@@ -27,47 +29,53 @@ impl<T: Real> Sample<T> {
             index: self.index,
             pos: self.pos.map(|x| S::from(x).unwrap()),
             nml: self.nml.map(|x| S::from(x).unwrap()),
-            off: self.off,
+            tng: self.tng.map(|x| S::from(x).unwrap()),
+            value: S::from(self.value).unwrap(),
         }
     }
 }
 
 /// Sample points that define the implicit surface including the point positions, normals and
-/// offsets.
+/// values.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Samples<T: Real> {
     /// Sample point positions defining the implicit surface.
     pub points: Vec<Vector3<T>>,
-    /// Normals that define the potential field gradient at every sample point.
+    /// Normals that define the field gradient at every sample point.
     pub normals: Vec<Vector3<T>>,
-    /// Potential values at the interpolating points. These offsets indicate the values to
-    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
-    /// necessarily pass through the given points.
-    pub offsets: Vec<f64>,
+    /// Vectors that identify a tangent to the iso-surface at every sample point.
+    pub tangents: Vec<Vector3<T>>,
+    /// Field values at the interpolating points. These are the values to
+    /// match by interpolating implicit surfaces. This means that, for example, the zero
+    /// iso-surface will not necessarily pass through the given points.
+    pub values: Vec<T>,
 }
 
 impl<T: Real> Samples<T> {
     pub fn new_triangle_samples<V3>(
         triangles: &[[usize; 3]],
         vertices: &[V3],
-        offsets: Vec<f64>,
+        values: Vec<T>,
     ) -> Self
     where
         V3: Into<Vector3<T>> + Clone,
     {
         let points = vec![Vector3::zeros(); triangles.len()];
         let normals = vec![Vector3::zeros(); triangles.len()];
+        let tangents = vec![Vector3::zeros(); triangles.len()];
 
         let mut samples = Samples {
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         };
 
         samples.update_triangle_samples(triangles, vertices);
         samples
     }
 
+    /// Update samples centered at the centroids of the given triangles.
     pub fn update_triangle_samples<V3>(&mut self, triangles: &[[usize; 3]], vertices: &[V3])
     where
         V3: Into<Vector3<T>> + Clone,
@@ -75,19 +83,22 @@ impl<T: Real> Samples<T> {
         let Samples {
             ref mut points,
             ref mut normals,
+            ref mut tangents,
             ..
         } = self;
 
-        let new_pos_nml_iter = triangles.iter().map(|tri_indices| {
+        let new_iter = triangles.iter().map(|tri_indices| {
             let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
-            (tri.centroid(), tri.area_normal())
+            let v = tri[1] - tri[0]; // tangent direction
+            (tri.centroid(), tri.area_normal(), v / v.norm())
         });
 
-        for ((pos, nml), (new_pos, new_nml)) in
-            (points.iter_mut().zip(normals.iter_mut())).zip(new_pos_nml_iter)
+        for (((pos, nml), tng), (new_pos, new_nml, new_tng)) in
+            (points.iter_mut().zip(normals.iter_mut()).zip(tangents.iter_mut())).zip(new_iter)
         {
             *pos = new_pos;
             *nml = new_nml;
+            *tng = new_tng;
         }
     }
 
@@ -106,18 +117,21 @@ impl<T: Real> Samples<T> {
         let Samples {
             ref points,
             ref normals,
-            ref offsets,
+            ref tangents,
+            ref values,
         } = *self;
         points
             .iter()
             .zip(normals.iter())
-            .zip(offsets.iter())
+            .zip(tangents.iter())
+            .zip(values.iter())
             .enumerate()
-            .map(move |(i, ((&pos, &nml), &off))| Sample {
+            .map(move |(i, (((&pos, &nml), &tng), &value))| Sample {
                 index: i,
                 pos,
                 nml,
-                off,
+                tng,
+                value,
             })
     }
 
@@ -128,18 +142,21 @@ impl<T: Real> Samples<T> {
         let Samples {
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         } = self;
         points
             .into_iter()
             .zip(normals.into_iter())
-            .zip(offsets.into_iter())
+            .zip(tangents.into_iter())
+            .zip(values.into_iter())
             .enumerate()
-            .map(move |(i, ((pos, nml), off))| Sample {
+            .map(move |(i, (((pos, nml), tng), value))| Sample {
                 index: i,
                 pos,
                 nml,
-                off,
+                tng,
+                value,
             })
     }
 }
@@ -150,18 +167,21 @@ impl<T: Real + Send + Sync> Samples<T> {
         let Samples {
             ref points,
             ref normals,
-            ref offsets,
+            ref tangents,
+            ref values,
         } = *self;
         points
             .par_iter()
             .zip(normals.par_iter())
-            .zip(offsets.par_iter())
+            .zip(tangents.par_iter())
+            .zip(values.par_iter())
             .enumerate()
-            .map(move |(i, ((&pos, &nml), &off))| Sample {
+            .map(move |(i, (((&pos, &nml), &tng), &value))| Sample {
                 index: i,
                 pos,
                 nml,
-                off,
+                tng,
+                value,
             })
     }
 
@@ -172,18 +192,21 @@ impl<T: Real + Send + Sync> Samples<T> {
         let Samples {
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         } = self;
         points
             .into_par_iter()
             .zip(normals.into_par_iter())
-            .zip(offsets.into_par_iter())
+            .zip(tangents.into_par_iter())
+            .zip(values.into_par_iter())
             .enumerate()
-            .map(move |(i, ((pos, nml), off))| Sample {
+            .map(move |(i, (((pos, nml), tng), value))| Sample {
                 index: i,
                 pos,
                 nml,
-                off,
+                tng,
+                value,
             })
     }
 }
@@ -198,10 +221,12 @@ pub struct SamplesView<'i, 'd: 'i, T: Real> {
     points: &'d [Vector3<T>],
     /// Normals that define the potential field gradient at every sample point.
     normals: &'d [Vector3<T>],
-    /// Potential values at the interpolating points. These offsets indicate the values to
-    /// match by interpolating implicit surfaces. This means that the zero iso-surface will not
-    /// necessarily pass through the given points.
-    offsets: &'d [f64],
+    /// Vectors that identify a tangent to the iso-surface at every sample point.
+    tangents: &'d [Vector3<T>],
+    /// Field values at the interpolating points. These are the values to match by interpolating
+    /// implicit surfaces. This means that, for example, the zero iso-surface will not necessarily
+    /// pass through the given points.
+    values: &'d [T],
 }
 
 impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
@@ -212,7 +237,8 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
             indices,
             points: samples.points.as_slice(),
             normals: samples.normals.as_slice(),
-            offsets: samples.offsets.as_slice(),
+            tangents: samples.tangents.as_slice(),
+            values: samples.values.as_slice(),
         }
     }
 
@@ -240,13 +266,15 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
             ref indices,
             ref points,
             ref normals,
-            ref offsets,
+            ref tangents,
+            ref values,
         } = self;
         indices.iter().map(move |&i| Sample {
             index: i,
             pos: points[i],
             nml: normals[i],
-            off: offsets[i],
+            tng: tangents[i],
+            value: values[i],
         })
     }
 
@@ -258,13 +286,15 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
             indices,
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         } = self;
         indices.into_iter().map(move |&i| Sample {
             index: i,
             pos: points[i],
             nml: normals[i],
-            off: offsets[i],
+            tng: tangents[i],
+            value: values[i],
         })
     }
     #[inline]
@@ -285,13 +315,15 @@ impl<'i, 'd: 'i, T: Real + Send + Sync> SamplesView<'i, 'd, T> {
             ref indices,
             ref points,
             ref normals,
-            ref offsets,
+            ref tangents,
+            ref values,
         } = self;
         indices.par_iter().map(move |&i| Sample {
             index: i,
             pos: points[i],
             nml: normals[i],
-            off: offsets[i],
+            tng: tangents[i],
+            value: values[i],
         })
     }
 
@@ -303,13 +335,15 @@ impl<'i, 'd: 'i, T: Real + Send + Sync> SamplesView<'i, 'd, T> {
             indices,
             points,
             normals,
-            offsets,
+            tangents,
+            values,
         } = self;
         indices.into_par_iter().map(move |&i| Sample {
             index: i,
             pos: points[i],
             nml: normals[i],
-            off: offsets[i],
+            tng: tangents[i],
+            value: values[i],
         })
     }
 

@@ -162,6 +162,9 @@ impl<'a, T, V, K>
         if self.weight_sum == T::zero() { T::zero() } else { T::one() / self.weight_sum }
     }
 
+    /// The background weight is given by `w(b)` where `w` is the kernel function,
+    /// `b = r - |q - p|` is the distance from the closest point to the edge of the kernel
+    /// boundary. Note that this weight is unnormalized.
     pub(crate) fn background_weight(&self) -> T {
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
@@ -169,15 +172,27 @@ impl<'a, T, V, K>
         }
     }
 
-    pub(crate) fn background_weight_gradient(&self, index: usize) -> Vector3<T> {
-        if index == self.closest_sample_index
-            && self.bg_field_value != BackgroundFieldValue::None
-        {
-            self.closest_sample_disp
+    /// Unnormalized background wieght derivative with respect to the given sample point index.
+    /// If the given sample is not the closest sample, then the drivative is zero.
+    /// If the given index is `None`, then the derivative is with respect to the query point.
+    #[inline]
+    pub(crate) fn background_weight_gradient(&self, index: Option<usize>) -> Vector3<T> {
+        if self.bg_field_value == BackgroundFieldValue::None {
+            return Vector3::zeros();
+        }
+
+        if let Some(index) = index { // Derivative with respect to the sample at the given index
+            if index == self.closest_sample_index {
+                self.closest_sample_disp
+                    * (self.kernel.df(self.radius - self.closest_sample_dist)
+                        / self.closest_sample_dist)
+            } else {
+                Vector3::zeros()
+            }
+        } else { // Derivative with respect to the query position
+            -self.closest_sample_disp
                 * (self.kernel.df(self.radius - self.closest_sample_dist)
-                    / self.closest_sample_dist)
-        } else {
-            Vector3::zeros()
+                   / self.closest_sample_dist)
         }
     }
 }
@@ -208,33 +223,54 @@ impl<'a, T, V, K> BackgroundField<'a, T, V, K>
     }
 }
 
+// The following functions are value for scalar fields of type T only.
 impl<'a, T, K> BackgroundField<'a, T, T, K>
     where T: Real,
           K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
 {
-    /// Compute the unnormalized weighted background field value. This is typically very
-    /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
-    /// background field contribution.
-    pub(crate) fn compute_unnormalized_weighted_scalar_field(&self) -> T {
+    /// Return the background field value.
+    pub(crate) fn field_value(&self) -> T {
+        // Unpack background data.
+        match self.bg_field_value {
+            BackgroundFieldValue::None => T::zero(),
+            BackgroundFieldValue::Constant(val) => val,
+            BackgroundFieldValue::ClosestSampleDistance |
+            BackgroundFieldValue::ClosestSampleNormalDisp
+                => self.closest_sample_dist,
+        }
+    }
+
+    /// Return the background field gradient.
+    pub(crate) fn field_gradient(&self) -> Vector3<T> {
         // Unpack background data.
         let BackgroundField {
             bg_field_value,
             closest_sample_dist: dist,
+            closest_sample_disp: disp,
             ..
         } = *self;
 
-        let field_val = match bg_field_value {
-            BackgroundFieldValue::None => T::zero(),
-            BackgroundFieldValue::Constant(val) => val,
-            BackgroundFieldValue::ClosestSampleDistance => dist,
-            BackgroundFieldValue::ClosestSampleNormalDisp => dist,
-        };
-        field_val * self.background_weight()
+        match bg_field_value {
+            BackgroundFieldValue::None | 
+            BackgroundFieldValue::Constant(_)
+                => Vector3::zeros(),
+            BackgroundFieldValue::ClosestSampleDistance |
+            BackgroundFieldValue::ClosestSampleNormalDisp
+                => disp * (T::one() / dist),
+        }
+    }
+
+    /// Compute the unnormalized weighted background field value. This is typically very
+    /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
+    /// background field contribution.
+    pub(crate) fn compute_unnormalized_weighted_scalar_field(&self) -> T {
+        self.field_value() * self.background_weight()
     }
 
     /// Compute background field derivative contribution.
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
-    /// assume the background field is constant.
+    /// assume the background field is constant. This Jacobian is taken with respect to the
+    /// sample points.
     pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         // Unpack background data.
         let BackgroundField {
@@ -250,20 +286,22 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
 
         let weight_sum_inv = self.weight_sum_inv();
 
-        // The unnormalized weight evaluated at the distance to the boundary of the
+        // The normalized weight evaluated at the distance to the boundary of the
         // neighbourhood.
-        let wb = self.background_weight();
+        let wb = self.background_weight() * weight_sum_inv;
 
         // Gradient of the unnormalized weight evaluated at the distance to the
         // boundary of the neighbourhood.
-        let dwbdp = self.background_weight_gradient(closest_sample_index);
+        let dwbdp = self.background_weight_gradient(Some(closest_sample_index));
+
+        let bg_grad = self.field_gradient();
 
         samples.into_iter().map(move |Sample { index, pos, .. }| {
             // This term is valid for constant or dynamic background potentials.
             let constant_term = |field: T| {
                 // Gradient of the unnormalized weight for the current sample point.
-                let dwdp = -kernel.with_closest_dist(dist).grad(q, pos);
-                dwdp * (-field * wb * weight_sum_inv * weight_sum_inv)
+                let dwdp = kernel.with_closest_dist(dist).grad(q, pos);
+                dwdp * (field * wb * weight_sum_inv)
             };
 
             match bg_field_value {
@@ -274,13 +312,57 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
                     let mut grad = constant_term(dist);
 
                     if index == closest_sample_index {
-                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - weight_sum_inv * wb))
-                            - disp * (wb * weight_sum_inv / dist)
+                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - wb))
+                            - bg_grad * wb
                     }
 
                     grad
                 }
             }
         })
+    }
+
+    /// Compute background field derivative contribution.
+    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// assume the background field is constant. This Jacobian is taken with respect to the
+    /// query position.
+    pub(crate) fn compute_query_jacobian(&self) -> Vector3<T> {
+        // Unpack background data.
+        let BackgroundField {
+            query_pos: q,
+            samples,
+            kernel,
+            bg_field_value,
+            closest_sample_dist: dist,
+            closest_sample_disp: disp,
+            radius,
+            ..
+        } = *self;
+
+        let weight_sum_inv = self.weight_sum_inv();
+
+        // The normalized weight evaluated at the distance to the boundary of the
+        // neighbourhood.
+        let wb = self.background_weight() * weight_sum_inv;
+
+        let mut dw_total = Vector3::zeros();
+        for grad in samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)) {
+            dw_total += grad;
+        }
+
+        let dwb = self.background_weight_gradient(None);
+        dw_total += dwb;
+
+        let bg_val = self.field_value();
+
+        // The term without the background field derivative.
+        let constant_term = (dwb - dw_total * wb) * (bg_val * weight_sum_inv);
+
+        let grad = match bg_field_value {
+            BackgroundFieldValue::None => Vector3::zeros(),
+            _ => constant_term,
+        };
+
+        grad + self.field_gradient() * wb
     }
 }

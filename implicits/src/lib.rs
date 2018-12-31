@@ -59,22 +59,6 @@ where
         .and_then(|surf| surf.compute_potential_on_mesh(query_points, interrupt))
 }
 
-/// Compute potential with debug information on the given mesh.
-/// This function builds an implicit surface and computes values on the given query points. For a
-/// reusable implicit surface use the `surface_from_*` function.
-pub fn compute_normal_field_debug<F>(
-    query_points: &mut PolyMesh<f64>,
-    surface: &mut PolyMesh<f64>,
-    params: Params,
-    interrupt: F,
-) -> Result<(), Error>
-where
-    F: Fn() -> bool + Sync + Send,
-{
-    surface_from_polymesh(surface, params)
-        .and_then(|surf| surf.compute_vector_field_on_mesh(query_points, interrupt))
-}
-
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
 pub fn surface_from_trimesh(

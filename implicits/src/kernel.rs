@@ -261,6 +261,13 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
     fn with_closest_dist(self, dist: T) -> Self;
 }
 
+/// This kernel trait defines a spherical kernel with compact support. This means that there is a
+/// radius beyond which the kernel value is always zero.
+pub trait LocalKernel<T: Real>: SphericalKernel<T> {
+    /// Produce the radius of influence of this kernel.
+    fn radius(&self) -> T;
+}
+
 //
 // Implement Spherical kernel for all kernels defined above
 //
@@ -291,6 +298,31 @@ impl<T: Real> SphericalKernel<T> for LocalApproximate {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
+    }
+}
+
+//
+// Implement Local Spherical kernel for all kernels defined above
+//
+
+impl<T: Real> LocalKernel<T> for LocalCubic {
+    #[inline]
+    fn radius(&self) -> T {
+        T::from(self.radius).unwrap()
+    }
+}
+
+impl<T: Real> LocalKernel<T> for LocalInterpolating {
+    #[inline]
+    fn radius(&self) -> T {
+        T::from(self.radius).unwrap()
+    }
+}
+
+impl<T: Real> LocalKernel<T> for LocalApproximate {
+    #[inline]
+    fn radius(&self) -> T {
+        T::from(self.radius).unwrap()
     }
 }
 

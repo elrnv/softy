@@ -1,6 +1,6 @@
+use super::samples::Sample;
 use geo::Real;
 use rayon::prelude::*;
-use super::samples::Sample;
 
 /// Cache neighbouring sample points for each query point.
 /// Note that this determines the entire sparsity structure of the query point neighbourhoods.
@@ -59,10 +59,13 @@ impl NeighbourCache {
             // Allocate additional neighbourhoods to match the size of query_points.
             self.points.resize(query_points.len(), Vec::new());
 
-            query_points.par_iter().zip(self.points.par_iter_mut()).for_each(|(q, pts)| {
-                pts.clear();
-                pts.extend(neigh(*q).map(|op| op.index));
-            });
+            query_points
+                .par_iter()
+                .zip(self.points.par_iter_mut())
+                .for_each(|(q, pts)| {
+                    pts.clear();
+                    pts.extend(neigh(*q).map(|op| op.index));
+                });
 
             self.valid = true;
         }

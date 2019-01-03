@@ -1,7 +1,7 @@
-use rayon::prelude::{IndexedParallelIterator};
 use geo::math::Vector3;
 use geo::ops::*;
 use geo::Real;
+use rayon::prelude::IndexedParallelIterator;
 
 pub use super::*;
 
@@ -93,8 +93,11 @@ impl<T: Real> Samples<T> {
             (tri.centroid(), tri.area_normal(), v / v.norm())
         });
 
-        for (((pos, nml), vel), (new_pos, new_nml, new_vel)) in
-            (points.iter_mut().zip(normals.iter_mut()).zip(velocities.iter_mut())).zip(new_iter)
+        for (((pos, nml), vel), (new_pos, new_nml, new_vel)) in (points
+            .iter_mut()
+            .zip(normals.iter_mut())
+            .zip(velocities.iter_mut()))
+        .zip(new_iter)
         {
             *pos = new_pos;
             *nml = new_nml;
@@ -185,7 +188,6 @@ impl<T: Real + Send + Sync> Samples<T> {
             })
     }
 
-
     /// Consuming iterator.
     #[inline]
     pub fn into_par_iter(self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone {
@@ -244,10 +246,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
 
     #[inline]
     pub fn from_view(indices: &'i [usize], samples: SamplesView<'i, 'd, T>) -> Self {
-        SamplesView {
-            indices,
-            ..samples
-        }
+        SamplesView { indices, ..samples }
     }
 
     #[inline]

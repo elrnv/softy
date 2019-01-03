@@ -1,7 +1,7 @@
 use crate::field::samples::{Sample, SamplesView};
+use crate::kernel::SphericalKernel;
 use geo::math::Vector3;
 use geo::Real;
-use crate::kernel::SphericalKernel;
 
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -39,12 +39,8 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
             BackgroundFieldType::None => BackgroundFieldValue::None,
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
             BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(V::zero()),
-            BackgroundFieldType::DistanceBased => {
-                BackgroundFieldValue::ClosestSampleDistance
-            }
-            BackgroundFieldType::NormalBased => {
-                BackgroundFieldValue::ClosestSampleNormalDisp
-            }
+            BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
+            BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
         }
     }
 
@@ -53,15 +49,9 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
         match ty {
             BackgroundFieldType::None => BackgroundFieldValue::None,
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
-            BackgroundFieldType::FromInput => {
-                BackgroundFieldValue::Constant(field_value)
-            }
-            BackgroundFieldType::DistanceBased => {
-                BackgroundFieldValue::ClosestSampleDistance
-            }
-            BackgroundFieldType::NormalBased => {
-                BackgroundFieldValue::ClosestSampleNormalDisp
-            }
+            BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(field_value),
+            BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
+            BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
         }
     }
 }
@@ -70,9 +60,10 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
 /// point. This struct also conviently computes useful information about the neighbourhood (like
 /// closest distance to a sample point) that can be reused elsewhere.
 #[derive(Clone, Debug)]
-pub(crate) struct BackgroundField<'a,T,V,K>
-where T: Real,
-      K: SphericalKernel<T> + Clone + std::fmt::Debug
+pub(crate) struct BackgroundField<'a, T, V, K>
+where
+    T: Real,
+    K: SphericalKernel<T> + Clone + std::fmt::Debug,
 {
     /// Position of the point at which we should evaluate the field.
     pub query_pos: Vector3<T>,
@@ -94,11 +85,11 @@ where T: Real,
     pub radius: T,
 }
 
-impl<'a, T, V, K>
-    BackgroundField<'a, T, V, K>
-    where T: Real,
-          V: Copy + Clone + std::fmt::Debug + PartialEq,
-          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
+impl<'a, T, V, K> BackgroundField<'a, T, V, K>
+where
+    T: Real,
+    V: Copy + Clone + std::fmt::Debug + PartialEq,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
     /// Pass in the unnormalized weight sum excluding the weight for the background field.
     pub(crate) fn new(
@@ -159,7 +150,11 @@ impl<'a, T, V, K>
     }
 
     pub(crate) fn weight_sum_inv(&self) -> T {
-        if self.weight_sum == T::zero() { T::zero() } else { T::one() / self.weight_sum }
+        if self.weight_sum == T::zero() {
+            T::zero()
+        } else {
+            T::one() / self.weight_sum
+        }
     }
 
     /// The background weight is given by `w(b)` where `w` is the kernel function,
@@ -181,7 +176,8 @@ impl<'a, T, V, K>
             return Vector3::zeros();
         }
 
-        if let Some(index) = index { // Derivative with respect to the sample at the given index
+        if let Some(index) = index {
+            // Derivative with respect to the sample at the given index
             if index == self.closest_sample_index {
                 self.closest_sample_disp
                     * (self.kernel.df(self.radius - self.closest_sample_dist)
@@ -189,28 +185,27 @@ impl<'a, T, V, K>
             } else {
                 Vector3::zeros()
             }
-        } else { // Derivative with respect to the query position
+        } else {
+            // Derivative with respect to the query position
             -self.closest_sample_disp
                 * (self.kernel.df(self.radius - self.closest_sample_dist)
-                   / self.closest_sample_dist)
+                    / self.closest_sample_dist)
         }
     }
 }
 
 impl<'a, T, V, K> BackgroundField<'a, T, V, K>
-    where T: Real,
-          V: Copy + Clone + std::fmt::Debug + PartialEq + std::ops::Mul<T, Output=V> + num_traits::Zero,
-          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
+where
+    T: Real,
+    V: Copy + Clone + std::fmt::Debug + PartialEq + std::ops::Mul<T, Output = V> + num_traits::Zero,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
     /// Compute the unnormalized weighted background field value. This is typically very
     /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
     /// background field contribution.
     pub(crate) fn compute_unnormalized_weighted_vector_field(&self) -> V {
         // Unpack background data.
-        let BackgroundField {
-            bg_field_value,
-            ..
-        } = *self;
+        let BackgroundField { bg_field_value, .. } = *self;
 
         let field_val = match bg_field_value {
             BackgroundFieldValue::None => V::zero(),
@@ -225,8 +220,9 @@ impl<'a, T, V, K> BackgroundField<'a, T, V, K>
 
 // The following functions are value for scalar fields of type T only.
 impl<'a, T, K> BackgroundField<'a, T, T, K>
-    where T: Real,
-          K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
     /// Return the background field value.
     pub(crate) fn field_value(&self) -> T {
@@ -234,9 +230,8 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
             BackgroundFieldValue::Constant(val) => val,
-            BackgroundFieldValue::ClosestSampleDistance |
-            BackgroundFieldValue::ClosestSampleNormalDisp
-                => self.closest_sample_dist,
+            BackgroundFieldValue::ClosestSampleDistance
+            | BackgroundFieldValue::ClosestSampleNormalDisp => self.closest_sample_dist,
         }
     }
 
@@ -251,12 +246,9 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
         } = *self;
 
         match bg_field_value {
-            BackgroundFieldValue::None | 
-            BackgroundFieldValue::Constant(_)
-                => Vector3::zeros(),
-            BackgroundFieldValue::ClosestSampleDistance |
-            BackgroundFieldValue::ClosestSampleNormalDisp
-                => disp * (T::one() / dist),
+            BackgroundFieldValue::None | BackgroundFieldValue::Constant(_) => Vector3::zeros(),
+            BackgroundFieldValue::ClosestSampleDistance
+            | BackgroundFieldValue::ClosestSampleNormalDisp => disp * (T::one() / dist),
         }
     }
 
@@ -311,8 +303,7 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
                     let mut grad = constant_term(dist);
 
                     if index == closest_sample_index {
-                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - wb))
-                            - bg_grad * wb
+                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - wb)) - bg_grad * wb
                     }
 
                     grad
@@ -343,7 +334,10 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
         let wb = self.background_weight() * weight_sum_inv;
 
         let mut dw_total = Vector3::zeros();
-        for grad in samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)) {
+        for grad in samples
+            .into_iter()
+            .map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos))
+        {
             dw_total += grad;
         }
 

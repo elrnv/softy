@@ -18,7 +18,8 @@ impl<T: Real> SpatialObject for Sample<T> {
 
 /// Build an rtree from a set of samples.
 pub fn build_rtree_from_samples<T: Real + Send + Sync>(samples: &Samples<T>) -> RTree<Sample<T>>
-    where Sample<T>: SpatialObject
+where
+    Sample<T>: SpatialObject,
 {
     let mut rtree = RTree::new();
     for pt in samples.iter() {

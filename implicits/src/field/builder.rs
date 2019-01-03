@@ -1,7 +1,7 @@
 use super::*;
+use crate::kernel::KernelType;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, PointCloud, TriMesh, VertexMesh};
-use crate::kernel::KernelType;
 use std::cell::RefCell;
 
 /// A mesh type to represent the samples for the implicit surface. This enum is used solely for
@@ -80,10 +80,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         self
     }
 
-    pub fn background_field(
-        &mut self,
-        bg_field: BackgroundFieldType,
-    ) -> &mut Self {
+    pub fn background_field(&mut self, bg_field: BackgroundFieldType) -> &mut Self {
         self.bg_field = bg_field;
         self
     }
@@ -106,7 +103,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     .cast::<T>()
                     .expect("Failed to convert positions float type")
             })
-        .collect()
+            .collect()
     }
     /// A helper function to extract an offset vector from the mesh.
     fn vertex_offsets_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<T> {
@@ -115,35 +112,26 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             .unwrap_or_else(|_| vec![T::zero(); mesh.num_vertices()])
     }
 
-
     /// A helper function to extract a normals vector from the mesh.
     /// The resulting vector is empty if no normals are found.
     fn vertex_normals_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
-        mesh
-            .attrib_iter::<[f32; 3], VertexIndex>("N")
-            .map(|iter| {
-                iter.map(|nml| Vector3(*nml).cast::<T>().unwrap())
-                    .collect()
-            })
-        .unwrap_or_default()
+        mesh.attrib_iter::<[f32; 3], VertexIndex>("N")
+            .map(|iter| iter.map(|nml| Vector3(*nml).cast::<T>().unwrap()).collect())
+            .unwrap_or_default()
     }
 
     /// A helper function to extract a satcked velocity vector from the mesh.
     /// The resulting vector is empty if no velocities are found.
     fn vertex_velocities_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
-        mesh
-            .attrib_iter::<[f32; 3], VertexIndex>("V")
-            .map(|iter| {
-                iter.map(|vel| Vector3(*vel).cast::<T>().unwrap())
-                    .collect()
-            })
-        .unwrap_or_else(|_| vec![Vector3::zeros(); mesh.num_vertices()])
+        mesh.attrib_iter::<[f32; 3], VertexIndex>("V")
+            .map(|iter| iter.map(|vel| Vector3(*vel).cast::<T>().unwrap()).collect())
+            .unwrap_or_else(|_| vec![Vector3::zeros(); mesh.num_vertices()])
     }
 
     /// A helper function to compute the dual topology of a triangle mesh. The dual topology
     /// corresponds to a list of indices to adjacent triangles on each vertex of the triangle mesh.
     /// If triangles is empty, then an empty vector is returned.
-    pub(crate) fn compute_dual_topo(num_verts: usize, triangles: &[[usize;3]]) -> Vec<Vec<usize>> {
+    pub(crate) fn compute_dual_topo(num_verts: usize, triangles: &[[usize; 3]]) -> Vec<Vec<usize>> {
         let mut dual_topo = Vec::new();
 
         if !triangles.is_empty() {
@@ -162,8 +150,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Builds the implicit surface. This function returns `None` when theres is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
-    pub fn build<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>> 
-    where Sample<T>: spade::SpatialObject
+    pub fn build<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>>
+    where
+        Sample<T>: spade::SpatialObject,
     {
         let ImplicitSurfaceBuilder {
             kernel,
@@ -230,7 +219,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                                 &triangles,
                                 &vertices,
                                 &mut vertex_normals,
-                                );
+                            );
                         }
 
                         let velocities = Self::vertex_velocities_from_mesh(mesh);
@@ -256,7 +245,8 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                             .unwrap_or_else(|_| vec![T::zero(); mesh.num_faces()]);
                         assert_eq!(triangles.len(), sample_values.len());
 
-                        let mut samples = Samples::new_triangle_samples(&triangles, &vertices, sample_values);
+                        let mut samples =
+                            Samples::new_triangle_samples(&triangles, &vertices, sample_values);
 
                         let vertex_velocities = Self::vertex_velocities_from_mesh(mesh);
 

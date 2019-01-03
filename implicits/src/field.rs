@@ -3,23 +3,23 @@
 //! potential and its derivatives.
 //!
 
+use crate::kernel::{self, KernelType, LocalKernel, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 use geo::Real;
-use crate::kernel::{self, KernelType, SphericalKernel, LocalKernel};
+use nalgebra as na;
+use num_traits::cast;
 use rayon::prelude::*;
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
-use nalgebra as na;
-use num_traits::cast;
 
 pub mod background_field;
 pub mod builder;
+pub mod jacobian;
 pub mod neighbour_cache;
 pub mod samples;
 pub mod spatial_tree;
-pub mod jacobian;
 
 pub use self::builder::*;
 pub use self::samples::*;
@@ -38,7 +38,10 @@ pub enum SampleType {
 /// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
 /// vector, this type will fit a vector field.
 #[derive(Clone, Debug)]
-pub struct ImplicitSurface<T = f64> where T: Real {
+pub struct ImplicitSurface<T = f64>
+where
+    T: Real,
+{
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
 
@@ -269,7 +272,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         // Make a local neighbourhood lookup function.
         let local_neigh = |radius| {
-            let radius_ext= radius + cast::<_, f64>(max_step).unwrap();
+            let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
             let radius2 = radius_ext * radius_ext;
             move |q| {
                 let q_pos = Vector3(q).cast::<f64>().unwrap().into();
@@ -338,8 +341,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             query_points.par_iter(),
             neigh_points.par_iter(),
             out_field.par_iter_mut()
-        ).filter(|(_, nbrs, _)| !nbrs.is_empty())
-         .for_each(move |(q, neighbours, field)| {
+        )
+        .filter(|(_, nbrs, _)| !nbrs.is_empty())
+        .for_each(move |(q, neighbours, field)| {
             Self::compute_local_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
@@ -386,7 +390,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         *potential = bg.compute_unnormalized_weighted_scalar_field();
 
         let mut numerator = T::zero();
-        for Sample { pos, nml, value, .. } in samples.iter() {
+        for Sample {
+            pos, nml, value, ..
+        } in samples.iter()
+        {
             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
             let p = value + nml.dot(q - pos) / nml.norm();
 
@@ -395,7 +402,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         *potential = (*potential + numerator) * bg.weight_sum_inv();
     }
-
 
     /*
      * The following functions interpolate vector fields instead of potentials
@@ -432,17 +438,35 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
+                self.compute_mls_vector_field(
+                    query_points,
+                    radius_t,
+                    kern,
+                    local_neigh(radius),
+                    out_vectors,
+                )
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
+                self.compute_mls_vector_field(
+                    query_points,
+                    radius_t,
+                    kern,
+                    local_neigh(radius),
+                    out_vectors,
+                )
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
+                self.compute_mls_vector_field(
+                    query_points,
+                    radius_t,
+                    kern,
+                    local_neigh(radius),
+                    out_vectors,
+                )
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
@@ -465,7 +489,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         radius: T,
         kernel: K,
         neigh: N,
-        out_vectors: &'a mut [[T;3]],
+        out_vectors: &'a mut [[T; 3]],
     ) -> Result<(), super::Error>
     where
         I: Iterator<Item = Sample<T>> + 'a,
@@ -486,8 +510,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             query_points.par_iter(),
             neigh_points.par_iter(),
             out_vectors.par_iter_mut()
-        ).filter(|(_, nbrs, _)| !nbrs.is_empty())
-         .for_each(move |(q, neighbours, vector)| {
+        )
+        .filter(|(_, nbrs, _)| !nbrs.is_empty())
+        .for_each(move |(q, neighbours, vector)| {
             Self::compute_local_vector_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
@@ -531,10 +556,23 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // in with the computed potentials for local methods.
         let mut out_field = bg.compute_unnormalized_weighted_vector_field();
 
-        let grad_w_sum_normalized = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_w_sum_normalized =
+            Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
 
-        for Sample { pos, vel, value, .. } in samples.iter() {
-            out_field += Self::sample_contact_jacobian_at(q, pos, value, kernel, vel, grad_w_sum_normalized, weight_sum_inv, closest_dist);
+        for Sample {
+            pos, vel, value, ..
+        } in samples.iter()
+        {
+            out_field += Self::sample_contact_jacobian_at(
+                q,
+                pos,
+                value,
+                kernel,
+                vel,
+                grad_w_sum_normalized,
+                weight_sum_inv,
+                closest_dist,
+            );
         }
 
         *vector = out_field.into();
@@ -595,9 +633,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
-            KernelType::Hrbf => {
-                Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
-            }
+            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
         }
     }
 
@@ -688,7 +724,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 tangents_chunk.par_iter_mut()
             )
             .for_each(
-                |(q, neighs, num_neighs, out_neighs, bg_weight, weight_sum, potential, normal, tangent)| {
+                |(
+                    q,
+                    neighs,
+                    num_neighs,
+                    out_neighs,
+                    bg_weight,
+                    weight_sum,
+                    potential,
+                    normal,
+                    tangent,
+                )| {
                     let view = SamplesView::new(neighs, &samples);
 
                     // Record number of neighbours in total.
@@ -712,11 +758,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         *weight_sum = bg.weight_sum.to_f32().unwrap();
                         let weight_sum_inv = bg.weight_sum_inv();
 
-                        *potential = bg.compute_unnormalized_weighted_scalar_field().to_f32().unwrap();
+                        *potential = bg
+                            .compute_unnormalized_weighted_scalar_field()
+                            .to_f32()
+                            .unwrap();
 
                         let mut grad_w_sum_normalized = Vector3::zeros();
-                        for grad in samples.iter().map(|Sample { pos, .. }| 
-                            kernel.with_closest_dist(closest_d).grad(q, pos)) {
+                        for grad in samples.iter().map(|Sample { pos, .. }| {
+                            kernel.with_closest_dist(closest_d).grad(q, pos)
+                        }) {
                             grad_w_sum_normalized += grad;
                         }
                         grad_w_sum_normalized *= weight_sum_inv;
@@ -725,20 +775,31 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         let mut out_tangent = Vector3::zeros();
 
                         let mut numerator = T::zero();
-                        for Sample { pos, nml, vel, value, .. } in view.iter() {
+                        for Sample {
+                            pos,
+                            nml,
+                            vel,
+                            value,
+                            ..
+                        } in view.iter()
+                        {
                             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
                             let grad_w = kernel.with_closest_dist(closest_d).grad(q, pos);
                             let w_normalized = w * weight_sum_inv;
-                            let grad_w_normalized = grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
+                            let grad_w_normalized =
+                                grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
 
                             let p = value + nml.dot(q - pos) / nml.norm();
 
                             numerator += w * p;
-                            out_normal += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
-                            out_tangent += grad_w_normalized * (q - pos).dot(vel) + vel * w_normalized;
+                            out_normal +=
+                                grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
+                            out_tangent +=
+                                grad_w_normalized * (q - pos).dot(vel) + vel * w_normalized;
                         }
 
-                        *potential = (*potential + numerator.to_f32().unwrap()) * bg.weight_sum_inv().to_f32().unwrap();
+                        *potential = (*potential + numerator.to_f32().unwrap())
+                            * bg.weight_sum_inv().to_f32().unwrap();
                         *normal = out_normal.map(|x| x.to_f32().unwrap()).into();
                         *tangent = out_tangent.map(|x| x.to_f32().unwrap()).into();
                     }
@@ -836,9 +897,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let nml_proj = Matrix3::identity() - nml * nml.transpose();
                 let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 let mult = multiplier(sample);
-                (0..3).map(move |i| {
-                    tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv))
-                })
+                (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
             })
     }
 
@@ -872,18 +931,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 // For each row
                 (0..3).flat_map(move |j| {
                     let vtx_row = tri_indices[j];
-                    (0..3).filter(move |&i| tri_indices[i] <= vtx_row).map(move |i| {
-                        let vtx_col = tri_indices[i];
-                        let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
-                        let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
-                        let nml_mult_prod =
-                            nml_proj * nml_dot_mult_div_norm
-                            + proj_mult * nml.transpose()
-                            + nml * proj_mult.transpose();
-                        let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
-                            + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
-                        (vtx_row, vtx_col, m)
-                    })
+                    (0..3)
+                        .filter(move |&i| tri_indices[i] <= vtx_row)
+                        .map(move |i| {
+                            let vtx_col = tri_indices[i];
+                            let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
+                            let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
+                            let nml_mult_prod = nml_proj * nml_dot_mult_div_norm
+                                + proj_mult * nml.transpose()
+                                + nml * proj_mult.transpose();
+                            let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
+                                + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
+                            (vtx_row, vtx_col, m)
+                        })
                 })
             })
     }
@@ -1019,7 +1079,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         Ok(())
     }
 
-
     fn compute_hrbf_on_mesh<F, M>(
         mesh: &mut M,
         samples: &Samples<T>,
@@ -1062,7 +1121,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .map(|&n| {
                 let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
                 na::Vector3::from(nml)
-            }) .collect();
+            })
+            .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
 
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
@@ -1095,15 +1155,10 @@ impl<T: Real> ImplicitSurface<T> {
     /// Get the number of Hessian non-zeros for the face unit normal Hessian.
     /// This is essentially the number of items returned by
     /// `compute_face_unit_normals_hessian_products`.
-    pub(crate) fn num_face_unit_normals_hessian_entries(
-        num_samples: usize,
-    ) -> usize {
+    pub(crate) fn num_face_unit_normals_hessian_entries(num_samples: usize) -> usize {
         num_samples * 6 * 6
     }
 }
 
-
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}

@@ -64,13 +64,8 @@ where
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt.clone());
-            if res.is_err() {
-                convert_to_cookresult(res)
-            } else {
-                let res = implicits::compute_normal_field_debug(samples, surface, params.into(), check_interrupt);
-                convert_to_cookresult(res)
-            }
+            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt);
+            convert_to_cookresult(res)
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())
         }

@@ -1,7 +1,7 @@
 #![allow(clippy::just_underscores_and_digits)]
 
-use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::Real;
+use geo::math::{Matrix3, Vector3};
+use geo::Real;
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]

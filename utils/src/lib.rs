@@ -9,6 +9,7 @@ use geometry::{
     mesh::{
         PolyMesh,
         TriMesh,
+        TetMesh,
     }
 };
 
@@ -73,7 +74,7 @@ pub fn make_grid(grid_params: Grid) -> PolyMesh<f64> {
 }
 
 pub fn make_sample_octahedron() -> TriMesh<f64> {
-    let points = vec![
+    let vertices = vec![
         [-0.5, 0.0, 0.0],
         [0.5, 0.0, 0.0],
         [0.0, -0.5, 0.0],
@@ -86,5 +87,21 @@ pub fn make_sample_octahedron() -> TriMesh<f64> {
         0, 5, 3, 4, 0, 3, 1, 4, 3, 5, 1, 3, 5, 0, 2, 0, 4, 2, 4, 1, 2, 1, 5, 2,
     ];
 
-    TriMesh::new(points, indices)
+    TriMesh::new(vertices, indices)
+}
+
+pub fn make_regular_tet() -> TetMesh<f64> {
+    let sqrt_8_by_9 = f64::sqrt(8.0/9.0);
+    let sqrt_2_by_9 = f64::sqrt(2.0/9.0);
+    let sqrt_2_by_3 = f64::sqrt(2.0/3.0);
+    let vertices = vec![
+        [0.0, 1.0, 0.0],
+        [-sqrt_8_by_9, -1.0/3.0, 0.0],
+        [sqrt_2_by_9, -1.0/3.0, sqrt_2_by_3],
+        [sqrt_2_by_9, -1.0/3.0, -sqrt_2_by_3],
+    ];
+
+    let indices = vec![1, 2, 3, 0];
+
+    TetMesh::new(vertices, indices)
 }

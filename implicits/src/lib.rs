@@ -1,15 +1,10 @@
 #![cfg_attr(feature = "unstable", feature(test))]
-extern crate geometry as geo;
-extern crate hrbf;
-extern crate rayon;
-extern crate reinterpret;
-extern crate spade;
 
 #[cfg(test)]
 #[macro_use]
 extern crate approx;
 
-use crate::geo::mesh::{attrib, PolyMesh, TriMesh};
+use geo::mesh::{attrib, PolyMesh, TriMesh};
 
 #[macro_use]
 pub mod zip;
@@ -19,6 +14,7 @@ mod kernel;
 
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
+use geo::Real;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -61,11 +57,10 @@ where
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
-pub fn surface_from_trimesh(
+pub fn surface_from_trimesh<T: Real + Send + Sync>(
     surface: &TriMesh<f64>,
     params: Params,
-) -> Result<ImplicitSurface, Error>
-{
+) -> Result<ImplicitSurface<T>, Error> {
     let surf = ImplicitSurfaceBuilder::new()
         .kernel(params.kernel)
         .max_step(params.max_step)
@@ -118,9 +113,9 @@ impl From<geo::io::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo::io::load_polymesh;
-    use crate::geo::mesh::topology::*;
-    use crate::geo::mesh::*;
+    use geo::io::load_polymesh;
+    use geo::mesh::topology::*;
+    use geo::mesh::*;
     use std::path::PathBuf;
 
     /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.
@@ -245,7 +240,7 @@ mod tests {
     /// themselves here.
     #[test]
     fn vertex_samples_dynamic_test() -> Result<(), Error> {
-        use super::geo::mesh::VertexPositions;
+        use geo::mesh::VertexPositions;
 
         let grid = make_grid(22, 22);
 

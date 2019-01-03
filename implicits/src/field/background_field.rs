@@ -1,6 +1,6 @@
 use crate::field::samples::{Sample, SamplesView};
-use crate::geo::math::Vector3;
-use crate::geo::Real;
+use geo::math::Vector3;
+use geo::Real;
 use crate::kernel::SphericalKernel;
 
 /// Different types of background fields supported.
@@ -279,7 +279,6 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
             bg_field_value,
             kernel,
             closest_sample_dist: dist,
-            closest_sample_disp: disp,
             closest_sample_index,
             ..
         } = *self;
@@ -334,8 +333,6 @@ impl<'a, T, K> BackgroundField<'a, T, T, K>
             kernel,
             bg_field_value,
             closest_sample_dist: dist,
-            closest_sample_disp: disp,
-            radius,
             ..
         } = *self;
 

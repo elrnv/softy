@@ -3,15 +3,16 @@
 //! potential and its derivatives.
 //!
 
-use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
-use crate::geo::prim::Triangle;
-use crate::geo::Real;
+use geo::math::{Matrix3, Vector3};
+use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
+use geo::prim::Triangle;
+use geo::Real;
 use crate::kernel::{self, KernelType, SphericalKernel, LocalKernel};
 use rayon::prelude::*;
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
 use nalgebra as na;
+use num_traits::cast;
 
 pub mod background_field;
 pub mod builder;
@@ -37,7 +38,7 @@ pub enum SampleType {
 /// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
 /// vector, this type will fit a vector field.
 #[derive(Clone, Debug)]
-pub struct ImplicitSurface {
+pub struct ImplicitSurface<T = f64> where T: Real {
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
 
@@ -48,7 +49,7 @@ pub struct ImplicitSurface {
     bg_field_type: BackgroundFieldType,
 
     /// Local search tree for fast proximity queries.
-    spatial_tree: RTree<Sample<f64>>,
+    spatial_tree: RTree<Sample<T>>,
 
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
@@ -56,10 +57,10 @@ pub struct ImplicitSurface {
 
     /// Save the vertex positions of the mesh because the samples may not coincide (e.g. face
     /// centered samples).
-    surface_vertex_positions: Vec<Vector3<f64>>,
+    surface_vertex_positions: Vec<Vector3<T>>,
 
     /// Sample points defining the entire implicit surface.
-    samples: Samples<f64>,
+    samples: Samples<T>,
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
@@ -67,7 +68,7 @@ pub struct ImplicitSurface {
     /// there may be errors in the derivative. It is the callers responsibility to set this step
     /// accurately using `update_max_step`. If the implicit surface is not changing, leave this at
     /// 0.0.
-    max_step: f64,
+    max_step: T,
 
     /// Cache the neighbouring sample points for each query point we see. This cache can be
     /// invalidated explicitly when the sparsity pattern is expected to change. This is wrapped in
@@ -83,12 +84,22 @@ pub struct ImplicitSurface {
     sample_type: SampleType,
 }
 
-impl ImplicitSurface {
+impl<T: Real + Send + Sync> ImplicitSurface<T> {
     const PARALLEL_CHUNK_SIZE: usize = 5000;
+
+    /// Return the number of samples used by this implicit surface.
+    pub fn samples(&self) -> &Samples<T> {
+        &self.samples
+    }
+
+    /// Return the number of samples used by this implicit surface.
+    pub fn num_samples(&self) -> usize {
+        self.samples.len()
+    }
 
     /// Compute unnormalized area weighted vertex normals given a triangle topology.
     /// Having this function be static and generic helps us test the normal derivatives.
-    pub(crate) fn compute_vertex_area_normals<T: Real>(
+    pub(crate) fn compute_vertex_area_normals(
         surf_topo: &[[usize; 3]],
         points: &[Vector3<T>],
         normals: &mut [Vector3<T>],
@@ -143,7 +154,7 @@ impl ImplicitSurface {
     /// Update vertex positions and samples using an iterator over mesh vertices.
     pub fn update<I>(&mut self, vertex_iter: I)
     where
-        I: Iterator<Item = [f64; 3]>,
+        I: Iterator<Item = [T; 3]>,
     {
         // First we update the surface vertex positions.
         for (p, new_p) in self.surface_vertex_positions.iter_mut().zip(vertex_iter) {
@@ -164,23 +175,24 @@ impl ImplicitSurface {
     }
 
     /// Compute neighbour cache if it has been invalidated
-    pub fn cache_neighbours(&self, query_points: &[[f64; 3]]) {
+    pub fn cache_neighbours(&self, query_points: &[[T; 3]]) {
         let ImplicitSurface {
             ref kernel,
             ref spatial_tree,
             ref samples,
             max_step,
             ..
-        } = self;
+        } = *self;
         match *kernel {
             KernelType::Interpolating { radius }
             | KernelType::Approximate { radius, .. }
             | KernelType::Cubic { radius } => {
-                let radius_ext = radius + max_step;
+                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neigh = |q| {
+                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                     spatial_tree
-                        .lookup_in_circle(&q, &radius2)
+                        .lookup_in_circle(&q_pos, &radius2)
                         .into_iter()
                         .cloned()
                 };
@@ -200,12 +212,12 @@ impl ImplicitSurface {
     /// slightly, but we expect the neighbourhood information to remain the same.
     fn cached_neighbours_borrow<'a, I, N>(
         &'a self,
-        query_points: &[[f64; 3]],
+        query_points: &[[T; 3]],
         neigh: N,
     ) -> Ref<'a, [Vec<usize>]>
     where
-        I: Iterator<Item = Sample<f64>> + 'a,
-        N: Fn([f64; 3]) -> I + Sync + Send,
+        I: Iterator<Item = Sample<T>> + 'a,
+        N: Fn([T; 3]) -> I + Sync + Send,
     {
         {
             let mut cache = self.neighbour_cache.borrow_mut();
@@ -237,15 +249,15 @@ impl ImplicitSurface {
     /// derivative will be denser than then needed, which typically results in slower performance.
     /// If it is set too low, there will be errors in the derivative. It is the callers
     /// responsibility to set this step accurately.
-    pub fn update_max_step(&mut self, max_step: f64) {
+    pub fn update_max_step(&mut self, max_step: T) {
         self.max_step = max_step;
     }
 
     /// Compute the implicit surface potential.
     pub fn potential(
         &self,
-        query_points: &[[f64; 3]],
-        out_field: &mut [f64],
+        query_points: &[[T; 3]],
+        out_field: &mut [T],
     ) -> Result<(), super::Error> {
         let ImplicitSurface {
             ref kernel,
@@ -257,11 +269,12 @@ impl ImplicitSurface {
 
         // Make a local neighbourhood lookup function.
         let local_neigh = |radius| {
-            let radius_ext = radius + max_step;
+            let radius_ext= radius + cast::<_, f64>(max_step).unwrap();
             let radius2 = radius_ext * radius_ext;
             move |q| {
+                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                 spatial_tree
-                    .lookup_in_circle(&q, &radius2)
+                    .lookup_in_circle(&q_pos, &radius2)
                     .into_iter()
                     .cloned()
             }
@@ -270,21 +283,24 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls(query_points, radius, kern, local_neigh(radius), out_field)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
-                let radius = 1.0;
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
+                let radius = T::one();
                 self.compute_mls(query_points, radius, kern, neigh, out_field)
             }
             KernelType::Hrbf => {
@@ -297,16 +313,16 @@ impl ImplicitSurface {
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
     fn compute_mls<'a, I, K, N>(
         &self,
-        query_points: &[[f64; 3]],
-        radius: f64,
+        query_points: &[[T; 3]],
+        radius: T,
         kernel: K,
         neigh: N,
-        out_field: &'a mut [f64],
+        out_field: &'a mut [T],
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<f64>> + 'a,
-        K: SphericalKernel<f64> + Copy + std::fmt::Debug + Sync + Send,
-        N: Fn([f64; 3]) -> I + Sync + Send,
+        I: Iterator<Item = Sample<T>> + 'a,
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+        N: Fn([T; 3]) -> I + Sync + Send,
     {
         let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
 
@@ -341,10 +357,10 @@ impl ImplicitSurface {
     /// is empty, `potential` is not modified, otherwise it's updated.
     /// Note: passing the output parameter potential as a mut reference allows us to optionally mix
     /// a preinitialized custom global potential field with the local potential.
-    pub(crate) fn compute_local_potential_at<T: Real, K>(
+    pub(crate) fn compute_local_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
-        radius: f64,
+        radius: T,
         kernel: K,
         bg_potential: BackgroundFieldType,
         potential: &mut T,
@@ -388,8 +404,8 @@ impl ImplicitSurface {
     /// Compute vector field on the surface.
     pub fn vector_field(
         &self,
-        query_points: &[[f64; 3]],
-        out_vectors: &mut [[f64;3]],
+        query_points: &[[T; 3]],
+        out_vectors: &mut [[T; 3]],
     ) -> Result<(), super::Error> {
         let ImplicitSurface {
             ref kernel,
@@ -401,11 +417,12 @@ impl ImplicitSurface {
 
         // Make a local neighbourhood lookup function.
         let local_neigh = |radius| {
-            let radius_ext = radius + max_step;
+            let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
             let radius2 = radius_ext * radius_ext;
             move |q| {
+                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                 spatial_tree
-                    .lookup_in_circle(&q, &radius2)
+                    .lookup_in_circle(&q_pos, &radius2)
                     .into_iter()
                     .cloned()
             }
@@ -414,20 +431,23 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_vector_field(query_points, radius, kern, local_neigh(radius), out_vectors)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_vector_field(query_points, radius, kern, local_neigh(radius), out_vectors)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_vector_field(query_points, radius, kern, local_neigh(radius), out_vectors)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_vector_field(query_points, radius_t, kern, local_neigh(radius), out_vectors)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
-                let radius = 1.0;
+                let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls_vector_field(query_points, radius, kern, neigh, out_vectors)
             }
@@ -441,16 +461,16 @@ impl ImplicitSurface {
     /// Interpolate the given vector field at the given query points.
     fn compute_mls_vector_field<'a, I, K, N>(
         &self,
-        query_points: &[[f64; 3]],
-        radius: f64,
+        query_points: &[[T; 3]],
+        radius: T,
         kernel: K,
         neigh: N,
-        out_vectors: &'a mut [[f64;3]],
+        out_vectors: &'a mut [[T;3]],
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<f64>> + 'a,
-        K: SphericalKernel<f64> + Copy + std::fmt::Debug + Sync + Send,
-        N: Fn([f64; 3]) -> I + Sync + Send,
+        I: Iterator<Item = Sample<T>> + 'a,
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+        N: Fn([T; 3]) -> I + Sync + Send,
     {
         let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
 
@@ -481,10 +501,10 @@ impl ImplicitSurface {
         Ok(())
     }
 
-    pub(crate) fn compute_local_vector_at<T: Real, K>(
+    pub(crate) fn compute_local_vector_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
-        radius: f64,
+        radius: T,
         kernel: K,
         bg_potential: BackgroundFieldType,
         vector: &mut [T; 3],
@@ -509,22 +529,12 @@ impl ImplicitSurface {
 
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
-        *vector = bg.compute_unnormalized_weighted_vector_field().into();
-
-        let mut grad_w_sum_normalized = Vector3::zeros();
-        for grad in samples.iter().map(|Sample { pos, .. }| kernel.with_closest_dist(closest_dist).grad(q, pos)) {
-            grad_w_sum_normalized += grad;
-        }
-        grad_w_sum_normalized *= weight_sum_inv;
-
         let mut out_field = bg.compute_unnormalized_weighted_vector_field();
-        for Sample { pos, nml, .. } in samples.iter() {
-            let w = kernel.with_closest_dist(closest_dist).eval(q, pos);
-            let grad_w = kernel.with_closest_dist(closest_dist).grad(q, pos);
-            let w_normalized = w * weight_sum_inv;
-            let grad_w_normalized = grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
 
-            out_field += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
+        let grad_w_sum_normalized = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+
+        for Sample { pos, vel, value, .. } in samples.iter() {
+            out_field += Self::sample_contact_jacobian_at(q, pos, value, kernel, vel, grad_w_sum_normalized, weight_sum_inv, closest_dist);
         }
 
         *vector = out_field.into();
@@ -542,7 +552,7 @@ impl ImplicitSurface {
     ) -> Result<(), super::Error>
     where
         F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
+        M: VertexMesh<T>,
     {
         let ImplicitSurface {
             ref kernel,
@@ -555,8 +565,9 @@ impl ImplicitSurface {
         let local_neigh = |radius| {
             let radius2 = radius * radius;
             move |q| {
+                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                 spatial_tree
-                    .lookup_in_circle(&q, &radius2)
+                    .lookup_in_circle(&q_pos, &radius2)
                     .into_iter()
                     .cloned()
             }
@@ -565,19 +576,22 @@ impl ImplicitSurface {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_on_mesh(mesh, radius, kern, local_neigh(radius), interrupt)
+                let radius_t = T::from(radius).unwrap();
+                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
             }
             KernelType::Global { tolerance } => {
                 let neigh = |_| samples.iter();
-                let radius = 1.0;
+                let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
             }
@@ -591,17 +605,17 @@ impl ImplicitSurface {
     fn compute_mls_on_mesh<'a, I, K, N, F, M>(
         &self,
         mesh: &mut M,
-        radius: f64,
+        radius: T,
         kernel: K,
         neigh: N,
         interrupt: F,
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<f64>> + Clone + 'a,
-        K: SphericalKernel<f64> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([f64; 3]) -> I + Sync + Send,
+        I: Iterator<Item = Sample<T>> + Clone + 'a,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        N: Fn([T; 3]) -> I + Sync + Send,
         F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
+        M: VertexMesh<T>,
     {
         let ImplicitSurface {
             ref samples,
@@ -691,14 +705,14 @@ impl ImplicitSurface {
                             view,
                             radius,
                             kernel,
-                            BackgroundFieldValue::val(bg_field_type, f64::from(*potential)),
+                            BackgroundFieldValue::val(bg_field_type, T::from(*potential).unwrap()),
                         );
                         let closest_d = bg.closest_sample_dist();
-                        *bg_weight = bg.background_weight() as f32;
-                        *weight_sum = bg.weight_sum as f32;
+                        *bg_weight = bg.background_weight().to_f32().unwrap();
+                        *weight_sum = bg.weight_sum.to_f32().unwrap();
                         let weight_sum_inv = bg.weight_sum_inv();
 
-                        *potential = bg.compute_unnormalized_weighted_scalar_field() as f32;
+                        *potential = bg.compute_unnormalized_weighted_scalar_field().to_f32().unwrap();
 
                         let mut grad_w_sum_normalized = Vector3::zeros();
                         for grad in samples.iter().map(|Sample { pos, .. }| 
@@ -710,8 +724,8 @@ impl ImplicitSurface {
                         let mut out_normal = Vector3::zeros();
                         let mut out_tangent = Vector3::zeros();
 
-                        let mut numerator = 0.0;
-                        for Sample { pos, nml, tng, value, .. } in view.iter() {
+                        let mut numerator = T::zero();
+                        for Sample { pos, nml, vel, value, .. } in view.iter() {
                             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
                             let grad_w = kernel.with_closest_dist(closest_d).grad(q, pos);
                             let w_normalized = w * weight_sum_inv;
@@ -721,12 +735,12 @@ impl ImplicitSurface {
 
                             numerator += w * p;
                             out_normal += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
-                            out_tangent += grad_w_normalized * (q - pos).dot(tng) + tng * w_normalized;
+                            out_tangent += grad_w_normalized * (q - pos).dot(vel) + vel * w_normalized;
                         }
 
-                        *potential = (*potential + numerator as f32) * bg.weight_sum_inv() as f32;
-                        *normal = out_normal.map(|x| x as f32).into();
-                        *tangent = out_tangent.map(|x| x as f32).into();
+                        *potential = (*potential + numerator.to_f32().unwrap()) * bg.weight_sum_inv().to_f32().unwrap();
+                        *normal = out_normal.map(|x| x.to_f32().unwrap()).into();
+                        *tangent = out_tangent.map(|x| x.to_f32().unwrap()).into();
                     }
                 },
             );
@@ -753,7 +767,7 @@ impl ImplicitSurface {
     /// Note that the product vector is given by a closure `dx` which must give a valid vector
     /// value for any vertex index, however not all indices will be used since only the
     /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T: Real, F>(
+    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_topo: &'a [[usize; 3]],
         dual_topo: &'a [Vec<usize>],
@@ -804,7 +818,7 @@ impl ImplicitSurface {
     /// Note that the product vector is given by a closure `multiplier` which must give a valid
     /// vector value for any vertex index, however not all indices will be used since only the
     /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_face_unit_normals_gradient_products<'a, T: Real, F>(
+    pub(crate) fn compute_face_unit_normals_gradient_products<'a, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_vertices: &'a [Vector3<T>],
         surface_topo: &'a [[usize; 3]],
@@ -828,17 +842,8 @@ impl ImplicitSurface {
             })
     }
 
-    /// Get the number of Hessian non-zeros for the face unit normal Hessian.
-    /// This is essentially the number of items returned by
-    /// `compute_face_unit_normals_hessian_products`.
-    pub(crate) fn num_face_unit_normals_hessian_entries(
-        num_samples: usize,
-    ) -> usize {
-        num_samples * 6 * 6
-    }
-
     /// Block lower triangular part of the unit normal Hessian.
-    pub(crate) fn compute_face_unit_normals_hessian_products<'a, T: Real, F>(
+    pub(crate) fn compute_face_unit_normals_hessian_products<'a, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_vertices: &'a [Vector3<T>],
         surface_topo: &'a [[usize; 3]],
@@ -915,8 +920,8 @@ impl ImplicitSurface {
     /// points.
     pub fn surface_hessian_product_values(
         &self,
-        query_points: &[[f64; 3]],
-        values: &mut [f64],
+        query_points: &[[T; 3]],
+        values: &mut [T],
     ) -> Result<(), super::Error> {
         let ImplicitSurface {
             ref kernel,
@@ -927,11 +932,12 @@ impl ImplicitSurface {
 
         match *kernel {
             KernelType::Approximate { tolerance, radius } => {
-                let radius_ext = radius + max_step;
+                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neigh = |q| {
+                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                     spatial_tree
-                        .lookup_in_circle(&q, &radius2)
+                        .lookup_in_circle(&q_pos, &radius2)
                         .into_iter()
                         .cloned()
                 };
@@ -945,7 +951,7 @@ impl ImplicitSurface {
 
     /// Compute the background potential field. This function returns a struct that provides some
     /// useful quanitities for computing derivatives of the field.
-    pub(crate) fn compute_background_potential<'a, T: Real, K: 'a>(
+    pub(crate) fn compute_background_potential<'a, K: 'a>(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
         kernel: K,
@@ -970,9 +976,9 @@ impl ImplicitSurface {
     }
 
     fn compute_hrbf(
-        query_points: &[[f64; 3]],
-        samples: &Samples<f64>,
-        out_potential: &mut [f64],
+        query_points: &[[T; 3]],
+        samples: &Samples<T>,
+        out_potential: &mut [T],
     ) -> Result<(), super::Error> {
         let Samples {
             ref points,
@@ -984,24 +990,30 @@ impl ImplicitSurface {
         let pts: Vec<na::Point3<f64>> = points
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.into();
+                let pos: [f64; 3] = p.cast::<f64>().unwrap().into();
                 na::Point3::from(pos)
             })
             .collect();
         let nmls: Vec<na::Vector3<f64>> = normals
             .iter()
-            .map(|&n| na::Vector3::from(Into::<[f64; 3]>::into(n)))
+            .map(|&n| {
+                let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
+                na::Vector3::from(nml)
+            })
             .collect();
 
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
 
-        hrbf.fit_offset(&pts, values, &nmls);
+        let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
+
+        hrbf.fit_offset(&pts, &hrbf_values, &nmls);
 
         query_points
             .par_iter()
             .zip(out_potential.par_iter_mut())
             .for_each(|(q, potential)| {
-                *potential = hrbf.eval(na::Point3::from(*q));
+                let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
+                *potential = T::from(hrbf.eval(na::Point3::from(pos))).unwrap();
             });
 
         Ok(())
@@ -1010,12 +1022,12 @@ impl ImplicitSurface {
 
     fn compute_hrbf_on_mesh<F, M>(
         mesh: &mut M,
-        samples: &Samples<f64>,
+        samples: &Samples<T>,
         interrupt: F,
     ) -> Result<(), super::Error>
     where
         F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<f64>,
+        M: VertexMesh<T>,
     {
         // Move the potential attrib out of the mesh. We will reinsert it after we are done.
         let potential_attrib = mesh
@@ -1041,19 +1053,20 @@ impl ImplicitSurface {
         let pts: Vec<na::Point3<f64>> = points
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.into();
+                let pos: [f64; 3] = p.cast::<f64>().unwrap().into();
                 na::Point3::from(pos)
             })
             .collect();
         let nmls: Vec<na::Vector3<f64>> = normals
             .iter()
             .map(|&n| {
-                let nml: [f64; 3] = n.into();
+                let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
                 na::Vector3::from(nml)
-            })
-            .collect();
+            }) .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-        hrbf.fit_offset(&pts, values, &nmls);
+
+        let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
+        hrbf.fit_offset(&pts, &hrbf_values, &nmls);
 
         for (q_chunk, potential_chunk) in sample_pos
             .chunks(Self::PARALLEL_CHUNK_SIZE)
@@ -1067,7 +1080,8 @@ impl ImplicitSurface {
                 .par_iter()
                 .zip(potential_chunk.par_iter_mut())
                 .for_each(|(q, potential)| {
-                    *potential = hrbf.eval(na::Point3::from(*q)) as f32;
+                    let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
+                    *potential = hrbf.eval(na::Point3::from(pos)) as f32;
                 });
         }
 
@@ -1077,9 +1091,19 @@ impl ImplicitSurface {
     }
 }
 
+impl<T: Real> ImplicitSurface<T> {
+    /// Get the number of Hessian non-zeros for the face unit normal Hessian.
+    /// This is essentially the number of items returned by
+    /// `compute_face_unit_normals_hessian_products`.
+    pub(crate) fn num_face_unit_normals_hessian_entries(
+        num_samples: usize,
+    ) -> usize {
+        num_samples * 6 * 6
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use autodiff::F;
 
 }

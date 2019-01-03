@@ -1,3 +1,4 @@
+use geo::Real;
 use rayon::prelude::*;
 use super::samples::Sample;
 
@@ -44,14 +45,15 @@ impl NeighbourCache {
     /// of the given query points. Note that the cache must be invalidated explicitly, there is no
     /// real way to automatically cache results because both: query points and sample points may
     /// change slightly, but we expect the neighbourhood information to remain the same.
-    pub(crate) fn neighbour_points<'a, I, N>(
+    pub(crate) fn neighbour_points<'a, T, I, N>(
         &mut self,
-        query_points: &[[f64; 3]],
+        query_points: &[[T; 3]],
         neigh: N,
     ) -> &[Vec<usize>]
     where
-        I: Iterator<Item = Sample<f64>> + 'a,
-        N: Fn([f64; 3]) -> I + Sync + Send,
+        T: Real + Send + Sync,
+        I: Iterator<Item = Sample<T>> + 'a,
+        N: Fn([T; 3]) -> I + Sync + Send,
     {
         if !self.is_valid() {
             // Allocate additional neighbourhoods to match the size of query_points.

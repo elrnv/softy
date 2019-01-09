@@ -17,6 +17,7 @@ use std::cell::{Ref, RefCell};
 pub mod background_field;
 pub mod builder;
 pub mod jacobian;
+pub mod hessian;
 pub mod neighbour_cache;
 pub mod samples;
 pub mod spatial_tree;
@@ -255,6 +256,80 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn update_max_step(&mut self, max_step: T) {
         self.max_step = max_step;
     }
+
+    /// Project the given set of positions to be above the specified iso-value along the gradient.
+    /// If the query point is already above the given iso-value, then it is not modified.
+    /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
+    /// projected, essentially it is the thickness above the iso-surface of value projections.
+    pub fn project_to_above(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<(), super::Error> {
+        let mut potential = vec![T::zero(); query_points.len()];
+        let mut candidate_potential = vec![T::zero(); query_points.len()];
+        let mut steps = vec![[T::zero();3]; query_points.len()];
+
+        let max_steps = 10;
+        let max_binary_search_iters = 10;
+
+        for _ in 0..max_steps {
+            self.potential(query_points, &mut potential)?;
+
+            // Count the number of points with values less than iso_value.
+            let count_violations =
+                potential.iter().filter(|&&x| x < iso_value).count();
+
+            if count_violations == 0 {
+                break;
+            }
+
+            // The transpose of the potential gradient at each of the query points.
+            self.query_jacobian(query_points, &mut steps)?;
+
+            // Compute step directions
+            for (step, &value) in zip!(
+                steps.iter_mut(),
+                potential.iter()
+            ).filter(|(_, &pot)| pot < iso_value) {
+                let nml = Vector3(*step);
+                let offset = (value + epsilon*T::from(0.5).unwrap()) / nml.norm();
+                *step = (nml*offset).into();
+            }
+
+            for _ in 0..max_binary_search_iters {
+                // Advect points
+                for (q, &step, _) in zip!(
+                    query_points.iter_mut(),
+                    steps.iter(),
+                    potential.iter()
+                ).filter(|(_, _, &pot)| pot < iso_value) {
+                    let pos = Vector3(*q);
+                    *q = (pos + Vector3(step)).into();
+                }
+
+                self.potential(query_points, &mut candidate_potential)?;
+
+                let mut count_overshoots = 0;
+                for (step, _, _) in zip!(
+                    steps.iter_mut(),
+                    potential.iter(),
+                    candidate_potential.iter()
+                ).filter(|(_, &old, &new)| old < iso_value && new > iso_value + epsilon) {
+                    *step = (Vector3(*step)*T::from(0.5).unwrap()).into();
+                    count_overshoots += 1;
+                }
+
+                if count_overshoots == 0 {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
 
     /// Compute the implicit surface potential.
     pub fn potential(
@@ -901,114 +976,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             })
     }
 
-    /// Block lower triangular part of the unit normal Hessian.
-    pub(crate) fn compute_face_unit_normals_hessian_products<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        // For each triangle contribution (one element in a sum)
-        samples
-            .into_iter()
-            .zip(surface_topo.iter())
-            .flat_map(move |(sample, tri_indices)| {
-                let norm_inv = T::one() / sample.nml.norm();
-                let nml = sample.nml * norm_inv;
-                let nml_proj = Matrix3::identity() - nml * nml.transpose();
-                let mult = multiplier(sample);
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-                let grad = [
-                    tri.area_normal_gradient(0),
-                    tri.area_normal_gradient(1),
-                    tri.area_normal_gradient(2),
-                ];
-
-                // row >= col
-                // For each row
-                (0..3).flat_map(move |j| {
-                    let vtx_row = tri_indices[j];
-                    (0..3)
-                        .filter(move |&i| tri_indices[i] <= vtx_row)
-                        .map(move |i| {
-                            let vtx_col = tri_indices[i];
-                            let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
-                            let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
-                            let nml_mult_prod = nml_proj * nml_dot_mult_div_norm
-                                + proj_mult * nml.transpose()
-                                + nml * proj_mult.transpose();
-                            let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
-                                + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
-                            (vtx_row, vtx_col, m)
-                        })
-                })
-            })
-    }
-
-    /// Compute the number of indices (non-zeros) needed for the implicit surface potential Hessian
-    /// with respect to surface points.
-    pub fn num_surface_hessian_product_entries(&self) -> usize {
-        let cache = self.neighbour_cache.borrow();
-        let num_pts_per_sample = match self.sample_type {
-            SampleType::Vertex => 1,
-            SampleType::Face => 3,
-        };
-        cache
-            .cached_neighbour_points()
-            .iter()
-            .map(|pts| pts.len())
-            .sum::<usize>()
-            * 3
-            * num_pts_per_sample
-    }
-
-    /// Compute the indices for the implicit surface potential Hessian with respect to surface
-    /// points.
-    pub fn surface_hessian_product_indices_iter(
-        &self,
-    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, super::Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => Ok(self.mls_surface_jacobian_indices_iter()),
-            _ => Err(super::Error::UnsupportedKernel),
-        }
-    }
-
-    /// Compute the Hessian of this implicit surface function with respect to surface
-    /// points.
-    pub fn surface_hessian_product_values(
-        &self,
-        query_points: &[[T; 3]],
-        values: &mut [T],
-    ) -> Result<(), super::Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            max_step,
-            ..
-        } = *self;
-
-        match *kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
-                        .into_iter()
-                        .cloned()
-                };
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_jacobian_values(query_points, kernel, neigh, values);
-                Ok(())
-            }
-            _ => Err(super::Error::UnsupportedKernel),
-        }
-    }
-
     /// Compute the background potential field. This function returns a struct that provides some
     /// useful quanitities for computing derivatives of the field.
     pub(crate) fn compute_background_potential<'a, K: 'a>(
@@ -1151,14 +1118,35 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 }
 
-impl<T: Real> ImplicitSurface<T> {
-    /// Get the number of Hessian non-zeros for the face unit normal Hessian.
-    /// This is essentially the number of items returned by
-    /// `compute_face_unit_normals_hessian_products`.
-    pub(crate) fn num_face_unit_normals_hessian_entries(num_samples: usize) -> usize {
-        num_samples * 6 * 6
-    }
+
+/// Generate a tetrahedron with vertex positions and indices for the triangle faces.
+#[cfg(test)]
+pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+    use geo::mesh::TriMesh;
+    use utils::*;
+    let tet = make_regular_tet();
+    let TriMesh {
+        vertex_positions,
+        indices,
+        ..
+    } = TriMesh::from(tet);
+    let tet_verts = vertex_positions.into_iter().map(|x| Vector3(x)).collect();
+    let tet_faces = reinterpret::reinterpret_vec(indices.into_vec());
+
+    (tet_verts, tet_faces)
 }
+
+/// Generate a random vector of `Vector3` multipliers.
+#[cfg(test)]
+pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
+    use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+    let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
+    let range = Uniform::new(-1.0, 1.0);
+    (0..n)
+        .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
+        .collect()
+}
+
 
 #[cfg(test)]
 mod tests {}

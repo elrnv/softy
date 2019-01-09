@@ -325,6 +325,79 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .map(move |(m, n)| m * third + n)
     }
 
+    /// Compute the Jacobian of this implicit surface function with respect to query points,
+    /// multiplied by the given vector of multipliers.
+    pub fn query_jacobian(
+        &self,
+        query_points: &[[T; 3]],
+        values: &mut [[T; 3]],
+    ) -> Result<(), Error> {
+        let ImplicitSurface {
+            ref kernel,
+            ref spatial_tree,
+            max_step,
+            ..
+        } = *self;
+
+        match *kernel {
+            KernelType::Approximate { tolerance, radius } => {
+                let kernel = kernel::LocalApproximate::new(radius, tolerance);
+                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
+                let radius2 = radius_ext * radius_ext;
+                let neigh = |q| {
+                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
+                    spatial_tree
+                        .lookup_in_circle(&q_pos, &radius2)
+                        .into_iter()
+                        .cloned()
+                };
+                self.mls_query_jacobian(query_points, kernel, neigh, values);
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedKernel),
+        }
+    }
+
+    /// Multiplier is a stacked velocity stored at samples.
+    pub(crate) fn mls_query_jacobian<'a, I, K, N>(
+        &self,
+        query_points: &[[T; 3]],
+        kernel: K,
+        neigh: N,
+        value_vecs: &mut [[T;3]],
+    ) where
+        I: Iterator<Item = Sample<T>> + 'a,
+        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        N: Fn([T; 3]) -> I + Sync + Send,
+    {
+        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+
+        let ImplicitSurface {
+            ref samples,
+            bg_field_type,
+            ..
+        } = *self;
+
+        // For each row (query point)
+        let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
+            .filter(|(_, nbrs)| !nbrs.is_empty())
+            .map(move |(q, nbr_points)| {
+                let view = SamplesView::new(nbr_points, samples);
+                Self::query_jacobian_at(
+                    Vector3(*q),
+                    view,
+                    kernel,
+                    bg_field_type)
+            });
+
+        value_vecs
+            .iter_mut()
+            .zip(vtx_jac)
+            .for_each(|(vec, new_vec)| {
+                *vec = new_vec.into();
+            });
+    }
+
     /// Compute the Jacobian of the potential field with respect to the given query point.
     pub(crate) fn query_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
@@ -497,7 +570,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         &self,
         query_points: &[[T; 3]],
         multipliers: &[[T; 3]],
-        values: &mut [T],
+        values: &mut [[T; 3]],
     ) -> Result<(), Error> {
         let ImplicitSurface {
             ref kernel,
@@ -532,14 +605,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multiplier: &[[T; 3]],
         kernel: K,
         neigh: N,
-        values: &mut [T],
+        value_vecs: &mut [[T;3]],
     ) where
         I: Iterator<Item = Sample<T>> + 'a,
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
         N: Fn([T; 3]) -> I + Sync + Send,
     {
-        let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);
-
         let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
 
         let ImplicitSurface {
@@ -695,6 +766,31 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 }
 
+
+/// Compute the face normal derivative with respect to tet vertices.
+#[cfg(test)]
+pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
+    tet_verts: &[Vector3<T>],
+    tet_faces: &[[usize; 3]],
+    view: SamplesView<'_, '_, T>,
+    multiplier: impl FnMut(Sample<T>) -> Vector3<T>,
+    ) -> Vec<Vector3<T>> {
+    // Compute the normal gradient product.
+    let grad_iter = ImplicitSurface::compute_face_unit_normals_gradient_products(
+        view, tet_verts, tet_faces, multiplier,
+        );
+
+    // Convert to grad wrt tet vertex indices instead of surface triangle vertex indices.
+    let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
+    let mut vert_grad = vec![Vector3::zeros(); tet_verts.len()];
+    for (g, &vtx_idx) in grad_iter.zip(tet_indices) {
+        vert_grad[vtx_idx] += g;
+    }
+
+    vert_grad
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,93 +880,6 @@ mod tests {
             easy_potential_derivative(radius, BackgroundFieldType::FromInput);
             easy_potential_derivative(radius, BackgroundFieldType::DistanceBased);
             easy_potential_derivative(radius, BackgroundFieldType::NormalBased);
-        }
-    }
-
-    fn easy_potential_hessian(radius: f64, bg_field_type: BackgroundFieldType) {
-        // The set of samples is just one point. These are initialized using a forward
-        // differentiator.
-        let mut samples = Samples {
-            points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
-            normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
-            velocities: vec![Vector3([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
-            values: vec![F::cst(0.0)],
-        };
-
-        // The set of neighbours is the one sample given.
-        let neighbours = vec![0];
-
-        // Radius is such that samples are captured by the query point.
-        let kernel = kernel::LocalApproximate::new(radius, 0.00001);
-
-        // Initialize the query point.
-        let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
-
-        // There is no surface for the set of samples. As a result, the normal derivative should be
-        // skipped in this test.
-        let surf_topo = vec![];
-        let dual_topo = vec![vec![]];
-
-        // Create a view of the samples for the Jacobian computation.
-        let view = SamplesView::new(neighbours.as_ref(), &samples);
-
-        // Compute the complete jacobian.
-        let jac: Vec<Vector3<F>> = ImplicitSurface::vertex_jacobian_at(
-            q,
-            view,
-            kernel,
-            &surf_topo,
-            &dual_topo,
-            bg_field_type,
-        )
-        .collect();
-
-        // Test the accuracy of each component of the jacobian against an autodiff version of the
-        // derivative.
-        for i in 0..3 {
-            // Set a variable to take the derivative with respect to, using autodiff.
-            samples.points[0][i] = F::var(samples.points[0][i]);
-
-            // Create a view of the samples for the potential function.
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
-
-            // Initialize background potential to zero.
-            let mut p = F::cst(0.0);
-
-            // Compute the local potential function. After calling this function, calling
-            // `.deriv()` on the potential output will give us the derivative with resepct to the
-            // preset variable.
-            ImplicitSurface::compute_local_potential_at(
-                q,
-                view,
-                F::cst(radius),
-                kernel,
-                bg_field_type,
-                &mut p,
-            );
-
-            // Check the derivative of the autodiff with our previously computed Jacobian.
-            assert_relative_eq!(
-                jac[0][i].value(),
-                p.deriv(),
-                max_relative = 1e-6,
-                epsilon = 1e-12
-            );
-
-            // Reset the variable back to being a constant.
-            samples.points[0][i] = F::cst(samples.points[0][i]);
-        }
-    }
-
-    #[test]
-    fn easy_potential_hessian_test() {
-        for i in 1..50 {
-            let radius = 0.1 * (i as f64);
-            easy_potential_hessian(radius, BackgroundFieldType::None);
-            easy_potential_hessian(radius, BackgroundFieldType::Zero);
-            easy_potential_hessian(radius, BackgroundFieldType::FromInput);
-            easy_potential_hessian(radius, BackgroundFieldType::DistanceBased);
-            easy_potential_hessian(radius, BackgroundFieldType::NormalBased);
         }
     }
 
@@ -1143,54 +1152,6 @@ mod tests {
         }
     }
 
-    /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
-    fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
-        use geo::mesh::TriMesh;
-        use utils::*;
-        let tet = make_regular_tet();
-        let TriMesh {
-            vertex_positions,
-            indices,
-            ..
-        } = TriMesh::from(tet);
-        let tet_verts = vertex_positions.into_iter().map(|x| Vector3(x)).collect();
-        let tet_faces = reinterpret::reinterpret_vec(indices.into_vec());
-
-        (tet_verts, tet_faces)
-    }
-
-    /// Compute the face normal derivative with respect to tet vertices.
-    fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
-        tet_verts: &[Vector3<T>],
-        tet_faces: &[[usize; 3]],
-        view: SamplesView<'_, '_, T>,
-        multiplier: impl FnMut(Sample<T>) -> Vector3<T>,
-    ) -> Vec<Vector3<T>> {
-        // Compute the normal gradient product.
-        let grad_iter = ImplicitSurface::compute_face_unit_normals_gradient_products(
-            view, tet_verts, tet_faces, multiplier,
-        );
-
-        // Convert to grad wrt tet vertex indices instead of surface triangle vertex indices.
-        let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
-        let mut vert_grad = vec![Vector3::zeros(); tet_verts.len()];
-        for (g, &vtx_idx) in grad_iter.zip(tet_indices) {
-            vert_grad[vtx_idx] += g;
-        }
-
-        vert_grad
-    }
-
-    /// Generate a random vector of `Vector3` multipliers.
-    fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let range = Uniform::new(-1.0, 1.0);
-        (0..n)
-            .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
-            .collect()
-    }
-
     /// Test the first order derivatives of our normal computation method for face normals.
     #[test]
     fn face_normal_derivative_test() {
@@ -1242,100 +1203,6 @@ mod tests {
             }
         }
     }
-
-    /// Test the second order derivatives of our normal computation method for face normals.
-    #[test]
-    fn face_normal_hessian_test() {
-        use geo::math::Matrix12;
-
-        let (tet_verts, tet_faces) = make_tet();
-
-        // Initialize the samples with regular f64 for now to keep debug output clean.
-        let samples = Samples::new_triangle_samples(&tet_faces, &tet_verts, vec![0.0; 4]);
-
-        let indices = vec![0, 1, 2, 3]; // look at all the faces
-
-        // Set a random product vector.
-        let multipliers = random_vectors(tet_faces.len());
-        let ad_multipliers: Vec<_> = multipliers.iter().map(|&v| v.map(|x| F::cst(x))).collect();
-
-        let multiplier = move |Sample { index, .. }| multipliers[index];
-
-        let ad_multiplier = move |Sample { index, .. }| ad_multipliers[index];
-
-        // Compute the normal hessian product.
-        let view = SamplesView::new(indices.as_ref(), &samples);
-        let hess_iter = ImplicitSurface::compute_face_unit_normals_hessian_products(
-            view,
-            &tet_verts,
-            &tet_faces,
-            multiplier.clone(),
-        );
-
-        let mut num_hess_entries = 0;
-        let mut hess: Matrix12<f64> = Matrix12::zeros(); // Dense matrix
-        for (r, c, m) in hess_iter {
-            // map to tet vertices instead of surface vertices
-            for j in 0..3 {
-                for i in 0..3 {
-                    hess[3 * c + j][3 * r + i] += m[j][i];
-                    if i >= j {
-                        // Only record lower triangular non-zeros
-                        num_hess_entries += 1;
-                    }
-                }
-            }
-        }
-
-        assert_eq!(
-            ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(samples.len()),
-            num_hess_entries
-        );
-
-        // Convert tet vertices into varibales because we are taking the derivative with respect to
-        // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
-            .iter()
-            .cloned()
-            .map(|v| v.map(|x| F::cst(x)))
-            .collect();
-
-        for r in 0..4 {
-            for i in 0..3 {
-                ad_tet_verts[r][i] = F::var(ad_tet_verts[r][i]);
-
-                let ad_samples =
-                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
-                let ad_view = SamplesView::new(indices.as_ref(), &ad_samples);
-
-                // Convert the samples to use autodiff constants.
-                let grad = compute_face_unit_normal_derivative(
-                    &ad_tet_verts,
-                    &tet_faces,
-                    ad_view,
-                    ad_multiplier.clone(),
-                );
-
-                for c in 0..4 {
-                    for j in 0..3 {
-                        // Only check lower triangular part.
-                        if 3 * c + j <= 3 * r + i {
-                            assert_relative_eq!(
-                                hess[3 * c + j][3 * r + i],
-                                grad[c][j].deriv(),
-                                max_relative = 1e-5,
-                                epsilon = 1e-10
-                            );
-                            //println!("({:?}, {:?}) => {:?} vs {:?}", 3*r + i, 3*c + j, hess[3*c + j][3*r + i], grad[c][j].deriv());
-                        }
-                    }
-                }
-
-                ad_tet_verts[r][i] = F::cst(ad_tet_verts[r][i]);
-            }
-        }
-    }
-
     /// Test the derivatives of our normal computation method for vertex normals.
     #[test]
     fn vertex_normal_derivative_test() {
@@ -1608,14 +1475,12 @@ mod tests {
             .collect();
         let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
 
-        let mut jac_prod_values = vec![0.0; 3 * tri_verts.len()];
+        let mut jac_prod = vec![[0.0; 3]; tri_verts.len()];
 
         // Compute the Jacobian.
         assert!(surf
-            .contact_jacobian_product(&tri_verts, &multipliers, &mut jac_prod_values,)
+            .contact_jacobian_product(&tri_verts, &multipliers, &mut jac_prod)
             .is_ok());
-
-        let jac_prod: Vec<[f64; 3]> = reinterpret::reinterpret_vec(jac_prod_values);
 
         let mut expected = vec![[0.0; 3]; tri_verts.len()];
         surf.vector_field(&tri_verts, &mut expected).unwrap();

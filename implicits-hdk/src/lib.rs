@@ -1,6 +1,6 @@
-extern crate implicits;
 extern crate geometry as geo;
 extern crate hdkrs;
+extern crate implicits;
 
 mod api;
 
@@ -22,5 +22,6 @@ pub unsafe extern "C" fn cook(
         interop::as_mut(polymesh),
         params.into(),
         interop::interrupt_callback(interrupt_checker, check_interrupt),
-    ).into()
+    )
+    .into()
 }

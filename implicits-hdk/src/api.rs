@@ -4,15 +4,15 @@
  * This file is intended to be completely free from C FFI except for POD types, which must be
  * designated as `#[repr(C)]`.
  */
-
 use geo;
-use implicits;
 use hdkrs::interop::CookResult;
+use implicits;
 
 /// A C interface for passing parameters from SOP parameters to the Rust code.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
+    pub action: i32,
     pub tolerance: f32,
     pub radius: f32,
     pub kernel: i32,
@@ -22,7 +22,14 @@ pub struct Params {
 
 impl Into<implicits::Params> for Params {
     fn into(self) -> implicits::Params {
-        let Params { tolerance, radius, kernel, background_potential, sample_type } = self;
+        let Params {
+            tolerance,
+            radius,
+            kernel,
+            background_potential,
+            sample_type,
+            ..
+        } = self;
         implicits::Params {
             kernel: match kernel {
                 0 => implicits::KernelType::Interpolating {
@@ -32,8 +39,12 @@ impl Into<implicits::Params> for Params {
                     radius: radius as f64,
                     tolerance: tolerance as f64,
                 },
-                2 => implicits::KernelType::Cubic { radius: radius as f64 },
-                3 => implicits::KernelType::Global { tolerance: tolerance as f64 },
+                2 => implicits::KernelType::Cubic {
+                    radius: radius as f64,
+                },
+                3 => implicits::KernelType::Global {
+                    tolerance: tolerance as f64,
+                },
                 _ => implicits::KernelType::Hrbf,
             },
             background_field: match background_potential {
@@ -52,6 +63,21 @@ impl Into<implicits::Params> for Params {
     }
 }
 
+fn project_vertices(
+    samplemesh: &mut geo::mesh::PolyMesh<f64>,
+    surface: &mut geo::mesh::PolyMesh<f64>,
+    params: Params) -> Result<(), implicits::Error>
+{
+    use geo::mesh::VertexPositions;
+
+    let surf = implicits::surface_from_polymesh(surface, params.into())?;
+
+    let pos = samplemesh.vertex_positions_mut();
+    surf.project_to_above(0.0, 1e-4, pos)?;
+
+    Ok(())
+}
+
 /// Main entry point to Rust code.
 pub fn cook<F>(
     samplemesh: Option<&mut geo::mesh::PolyMesh<f64>>,
@@ -64,8 +90,21 @@ where
 {
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
-            let res = implicits::compute_potential_debug(samples, surface, params.into(), check_interrupt);
-            convert_to_cookresult(res)
+            match params.action {
+                0 => { // Compute potential
+                    let res = implicits::compute_potential_debug(
+                        samples,
+                        surface,
+                        params.into(),
+                        check_interrupt,
+                    );
+                    convert_to_cookresult(res)
+                },
+                _ => { // Project vertices
+                    let res = project_vertices(samples, surface, params);
+                    convert_to_cookresult(res)
+                }
+            }
         } else {
             CookResult::Error("Missing Polygonal Surface".to_string())
         }
@@ -77,15 +116,16 @@ where
 fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
     match res {
         Ok(()) => CookResult::Success("".to_string()),
-        Err(implicits::Error::Interrupted) =>
-            CookResult::Error("Execution was interrupted.".to_string()),
-        Err(implicits::Error::MissingNormals) =>
-            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string()),
-        Err(implicits::Error::Failure) =>
-            CookResult::Error("Internal Error.".to_string()),
-        Err(implicits::Error::UnsupportedKernel) =>
-            CookResult::Error("Given kernel is not supported yet.".to_string()),
-        Err(implicits::Error::IO(err)) =>
-            CookResult::Error(format!("IO Error: {:?}", err)),
+        Err(implicits::Error::Interrupted) => {
+            CookResult::Error("Execution was interrupted.".to_string())
+        }
+        Err(implicits::Error::MissingNormals) => {
+            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
+        }
+        Err(implicits::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
+        Err(implicits::Error::UnsupportedKernel) => {
+            CookResult::Error("Given kernel is not supported yet.".to_string())
+        }
+        Err(implicits::Error::IO(err)) => CookResult::Error(format!("IO Error: {:?}", err)),
     }
 }

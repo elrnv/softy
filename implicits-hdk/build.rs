@@ -1,7 +1,7 @@
 extern crate cbindgen;
 
-use std::fs;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() {
@@ -9,10 +9,7 @@ fn main() {
 
     let package_name = env::var("CARGO_PKG_NAME").unwrap();
     let header_file = format!("{}.h", package_name);
-    let output_file = target_dir()
-        .join(header_file.clone())
-        .display()
-        .to_string();
+    let output_file = target_dir().join(header_file.clone()).display().to_string();
 
     let mut config: cbindgen::Config = Default::default();
 
@@ -38,5 +35,13 @@ fn target_dir() -> PathBuf {
 fn cmake_target_dir() -> PathBuf {
     let target_dir = target_dir();
     // Point to where the library is stored.
-    PathBuf::from(target_dir.parent().unwrap().parent().unwrap().parent().unwrap())
+    PathBuf::from(
+        target_dir
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+    )
 }

@@ -39,6 +39,17 @@ static const char *theDsFile = R"THEDSFILE(
     name implicits
 
     parm {
+        name "action"
+        label "Action"
+        type ordinal
+        default { "potential" }
+        menu {
+            "potential"   "Compute Potential"
+            "project"     "Project Out"
+        }
+    }
+
+    parm {
         name "kernel"
         label "Kernel"
         type ordinal
@@ -157,6 +168,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     // Gather parameters
     Params params;
+    params.action = static_cast<int>(sopparms.getAction());
     params.tolerance = sopparms.getTolerance();
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());

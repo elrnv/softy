@@ -261,12 +261,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// If the query point is already above the given iso-value, then it is not modified.
     /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
     /// projected, essentially it is the thickness above the iso-surface of value projections.
+    /// This function will return true if convergence is achieve and false if the projection needed
+    /// more iterations.
     pub fn project_to_above(
         &self,
         iso_value: T,
         epsilon: T,
         query_points: &mut [[T; 3]],
-    ) -> Result<(), super::Error> {
+    ) -> Result<bool, super::Error> {
+        let mut candidate_points = query_points.to_vec();
         let mut potential = vec![T::zero(); query_points.len()];
         let mut candidate_potential = vec![T::zero(); query_points.len()];
         let mut steps = vec![[T::zero();3]; query_points.len()];
@@ -274,7 +277,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let max_steps = 10;
         let max_binary_search_iters = 10;
 
-        for _ in 0..max_steps {
+        let mut convergence = true;
+
+        for i in 0..max_steps {
             self.potential(query_points, &mut potential)?;
 
             // Count the number of points with values less than iso_value.
@@ -288,28 +293,28 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             // The transpose of the potential gradient at each of the query points.
             self.query_jacobian(query_points, &mut steps)?;
 
-            // Compute step directions
+            // Compute initial step directions
             for (step, &value) in zip!(
                 steps.iter_mut(),
                 potential.iter()
             ).filter(|(_, &pot)| pot < iso_value) {
                 let nml = Vector3(*step);
-                let offset = (value + epsilon*T::from(0.5).unwrap()) / nml.norm();
+                let offset = (epsilon*T::from(0.5).unwrap() + (iso_value - value)) / nml.norm();
                 *step = (nml*offset).into();
             }
 
-            for _ in 0..max_binary_search_iters {
-                // Advect points
-                for (q, &step, _) in zip!(
-                    query_points.iter_mut(),
+            for j in 0..max_binary_search_iters {
+                // Try this step
+                for (p, q, &step, _) in zip!(
+                    candidate_points.iter_mut(),
+                    query_points.iter(),
                     steps.iter(),
                     potential.iter()
-                ).filter(|(_, _, &pot)| pot < iso_value) {
-                    let pos = Vector3(*q);
-                    *q = (pos + Vector3(step)).into();
+                ).filter(|(_, _, _, &pot)| pot < iso_value) {
+                    *p = (Vector3(*q) + Vector3(step)).into();
                 }
 
-                self.potential(query_points, &mut candidate_potential)?;
+                self.potential(&candidate_points, &mut candidate_potential)?;
 
                 let mut count_overshoots = 0;
                 for (step, _, _) in zip!(
@@ -324,12 +329,22 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 if count_overshoots == 0 {
                     break;
                 }
+
+                if j == max_binary_search_iters-1 {
+                    convergence = false;
+                }
+            }
+
+            // Update query points
+            query_points.iter_mut().zip(candidate_points.iter()).for_each(|(q,p)| *q = *p);
+
+            if i == max_steps-1 {
+                convergence = false;
             }
         }
 
-        Ok(())
+        Ok(convergence)
     }
-
 
     /// Compute the implicit surface potential.
     pub fn potential(
@@ -1149,4 +1164,51 @@ pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
 
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::path::PathBuf;
+    use geo::mesh::*;
+
+    /// Test the projection.
+    #[test]
+    fn projection_test() -> Result<(), crate::Error> {
+        use crate::*;
+
+        let trimesh = utils::make_sample_octahedron();
+
+        let mut sphere = PolyMesh::from(trimesh);
+        utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
+
+        let surface = surface_from_polymesh(&sphere, 
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.5,
+                },
+                background_field: BackgroundFieldType::DistanceBased,
+                sample_type: SampleType::Vertex,
+                ..Default::default()
+            })?;
+
+        let mut grid = make_grid(22, 22);
+
+        let pos = grid.vertex_positions_mut();
+
+        let mut init_potential = vec![0.0; pos.len()];
+        surface.potential(pos, &mut init_potential)?;
+
+        assert!(surface.project_to_above(0.0, 1e-4, pos)?);
+
+        let mut final_potential = vec![0.0; pos.len()];
+        surface.potential(pos, &mut final_potential)?;
+
+        for (&old, &new) in init_potential.iter().zip(final_potential.iter()) {
+            assert!(new >= 0.0, "old = {}", old);
+            if old < 0.0 {
+                assert!(new <= 1e-4, "new = {}", new);
+            }
+        }
+
+        Ok(())
+    }
+
+}

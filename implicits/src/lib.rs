@@ -109,6 +109,24 @@ impl From<geo::io::Error> for Error {
     }
 }
 
+/// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution and a potential field
+/// attribute.
+#[cfg(test)]
+pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
+    use utils::*;
+    use geo::mesh::topology::*;
+    use geo::mesh::attrib::*;
+
+    let mut mesh = make_grid(Grid {
+        rows,
+        cols,
+        orientation: AxisPlaneOrientation::XY,
+    });
+    mesh.add_attrib::<_, VertexIndex>("potential", 0.0f32)
+        .unwrap();
+    mesh
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,19 +134,6 @@ mod tests {
     use geo::mesh::topology::*;
     use geo::mesh::*;
     use std::path::PathBuf;
-
-    /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution.
-    fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
-        use utils::*;
-        let mut mesh = make_grid(Grid {
-            rows,
-            cols,
-            orientation: AxisPlaneOrientation::XY,
-        });
-        mesh.add_attrib::<_, VertexIndex>("potential", 0.0f32)
-            .unwrap();
-        mesh
-    }
 
     /// Test the non-dynamic API.
     #[test]

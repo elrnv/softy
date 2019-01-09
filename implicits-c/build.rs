@@ -1,17 +1,14 @@
 extern crate cbindgen;
 
-use std::fs;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
     let header_file = "implicits.h";
-    let output_file = target_dir()
-        .join(header_file.clone())
-        .display()
-        .to_string();
+    let output_file = target_dir().join(header_file.clone()).display().to_string();
 
     let mut config: cbindgen::Config = Default::default();
 
@@ -37,5 +34,13 @@ fn target_dir() -> PathBuf {
 fn cmake_target_dir() -> PathBuf {
     let target_dir = target_dir();
     // Point to where the library is stored.
-    PathBuf::from(target_dir.parent().unwrap().parent().unwrap().parent().unwrap())
+    PathBuf::from(
+        target_dir
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+    )
 }

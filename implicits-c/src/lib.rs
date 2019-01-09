@@ -160,16 +160,17 @@ pub unsafe extern "C" fn project_to_above(
     }
 }
 
-/// Get the number of non zeros in the Jacobian of the implicit function.
+/// Get the number of non zeros in the Jacobian of the implicit function with respect to surface
+/// vertices.
 #[no_mangle]
-pub unsafe extern "C" fn num_jacobian_non_zeros(implicit_surface: *const ImplicitSurface) -> c_int {
+pub unsafe extern "C" fn num_surface_jacobian_non_zeros(implicit_surface: *const ImplicitSurface) -> c_int {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
     surf.num_surface_jacobian_entries() as c_int
 }
 
-/// Compute the index structure of the Jacobian for the given implicit function.
+/// Compute the index structure of the surface Jacobian for the given implicit function.
 #[no_mangle]
-pub unsafe extern "C" fn compute_jacobian_indices(
+pub unsafe extern "C" fn surface_jacobian_indices(
     implicit_surface: *const ImplicitSurface,
     num_non_zeros: c_int,
     rows: *mut c_int,
@@ -192,10 +193,10 @@ pub unsafe extern "C" fn compute_jacobian_indices(
     }
 }
 
-/// Compute Jacobian values for the given implicit function. The values correspond to the indices
-/// provided by `compute_jacobian_indices`.
+/// Compute surface Jacobian values for the given implicit function. The values correspond to the indices
+/// provided by `surface_jacobian_indices`.
 #[no_mangle]
-pub unsafe extern "C" fn compute_jacobian_values(
+pub unsafe extern "C" fn surface_jacobian_values(
     implicit_surface: *const ImplicitSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
@@ -208,6 +209,28 @@ pub unsafe extern "C" fn compute_jacobian_values(
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
 
     match surf.surface_jacobian_values(query_points, vals) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// Compute query Jacobian for the given implicit function. Each triplet of coordinates corresponds
+/// to the Jacobian at each query point with respect to the query position. This means that
+/// `values` has size `num_query_points*3`, just like `query_point_coords`.
+#[no_mangle]
+pub unsafe extern "C" fn query_jacobian(
+    implicit_surface: *const ImplicitSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+    values: *mut f64,
+) -> c_int {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
+    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let vals = std::slice::from_raw_parts_mut(values, num_query_points as usize * 3);
+    let value_vecs: &mut [[f64; 3]] = reinterpret_mut_slice(vals);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.query_jacobian(query_points, value_vecs) {
         Ok(()) => 0,
         Err(_) => 1,
     }

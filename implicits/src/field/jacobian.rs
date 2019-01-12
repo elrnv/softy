@@ -3,20 +3,23 @@ use crate::Error;
 
 impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// Compute the number of indices (non-zeros) needed for the implicit surface potential
-    /// Jacobian with respect to surface points.
-    pub fn num_surface_jacobian_entries(&self) -> usize {
-        let cache = self.neighbour_cache.borrow();
+    /// Jacobian with respect to surface points. If neighbourhoods haven't been precomputed, this
+    /// function will return `None`.
+    pub fn num_surface_jacobian_entries(&self) -> Option<usize> {
+        let neigh_points = match self.sample_type {
+            SampleType::Vertex => self.extended_neighbourhood_borrow().ok()?,
+            SampleType::Face => self.trivial_neighbourhood_borrow().ok()?,
+        };
         let num_pts_per_sample = match self.sample_type {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
-        cache
-            .cached_neighbour_points()
+        Some(neigh_points
             .iter()
             .map(|pts| pts.len())
             .sum::<usize>()
             * 3
-            * num_pts_per_sample
+            * num_pts_per_sample)
     }
 
     /// Compute the indices for the implicit surface potential Jacobian with respect to surface
@@ -25,7 +28,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         &self,
     ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
         match self.kernel {
-            KernelType::Approximate { .. } => Ok(self.mls_surface_jacobian_indices_iter()),
+            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices_iter(),
             _ => Err(Error::UnsupportedKernel),
         }
     }
@@ -38,10 +41,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         cols: &mut [usize],
     ) -> Result<(), Error> {
         match self.kernel {
-            KernelType::Approximate { .. } => {
-                self.mls_surface_jacobian_indices(rows, cols);
-                Ok(())
-            }
+            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices(rows, cols),
             _ => Err(Error::UnsupportedKernel),
         }
     }
@@ -53,27 +53,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [T],
     ) -> Result<(), Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            max_step,
-            ..
-        } = *self;
-
-        match *kernel {
+        match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
-                        .into_iter()
-                        .cloned()
-                };
-                self.mls_surface_jacobian_values(query_points, kernel, neigh, values);
-                Ok(())
+                self.mls_surface_jacobian_values(query_points, kernel, values)
             }
             _ => Err(Error::UnsupportedKernel),
         }
@@ -83,33 +66,30 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// by the precomputed `neighbour_cache` map.
     pub(crate) fn mls_surface_jacobian_indices_iter(
         &self,
-    ) -> Box<dyn Iterator<Item = (usize, usize)>> {
+    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
         match self.sample_type {
             SampleType::Vertex => {
                 let cached_pts = {
-                    let cache = self.neighbour_cache.borrow();
-                    cache.cached_neighbour_points().to_vec()
+                    let neigh_points = self.extended_neighbourhood_borrow()?;
+                    neigh_points.to_vec()
                 };
-                Box::new(
-                    cached_pts
-                        .into_iter()
-                        .filter(|c| !c.is_empty())
+                Ok(Box::new(
+                    cached_pts.into_iter()
                         .enumerate()
+                        .filter(|(_, nbr_points)| !nbr_points.is_empty())
                         .flat_map(move |(row, nbr_points)| {
                             nbr_points
                                 .into_iter()
                                 .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
                         }),
-                )
+                ))
             }
             SampleType::Face => {
                 let cached: Vec<_> = {
-                    let cache = self.neighbour_cache.borrow();
-                    cache
-                        .cached_neighbour_points()
-                        .iter()
-                        .filter(|c| !c.is_empty())
+                    let neigh_points = self.trivial_neighbourhood_borrow()?;
+                    neigh_points.iter()
                         .enumerate()
+                        .filter(|(_, nbr_points)| !nbr_points.is_empty())
                         .flat_map(|(row, nbr_points)| {
                             nbr_points.iter().flat_map(move |&pidx| {
                                 self.surface_topo[pidx]
@@ -120,23 +100,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .collect()
                 };
 
-                Box::new(cached.into_iter())
+                Ok(Box::new(cached.into_iter()))
             }
         }
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
     /// by the precomputed `neighbour_cache` map.
-    fn mls_surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) {
+    fn mls_surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) -> Result<(), Error> {
         // For each row
-        let cache = self.neighbour_cache.borrow();
         match self.sample_type {
             SampleType::Vertex => {
-                let row_col_iter = cache
-                    .cached_neighbour_points()
-                    .iter()
-                    .filter(|c| !c.is_empty())
+                let neigh_points = self.extended_neighbourhood_borrow()?;
+                let row_col_iter = neigh_points.iter()
                     .enumerate()
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
                         nbr_points
                             .iter()
@@ -150,11 +128,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 }
             }
             SampleType::Face => {
-                let row_col_iter = cache
-                    .cached_neighbour_points()
-                    .iter()
-                    .filter(|c| !c.is_empty())
+                let neigh_points = self.trivial_neighbourhood_borrow()?;
+                let row_col_iter = neigh_points.iter()
                     .enumerate()
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
                         nbr_points.iter().flat_map(move |&pidx| {
                             self.surface_topo[pidx]
@@ -170,22 +147,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 }
             }
         };
+        Ok(())
     }
 
-    pub(crate) fn mls_surface_jacobian_values<'a, I, K, N>(
+    pub(crate) fn mls_surface_jacobian_values<'a, K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
-        neigh: N,
         values: &mut [T],
-    ) where
-        I: Iterator<Item = Sample<T>> + 'a,
+    ) -> Result<(), Error> where
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
         let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);
 
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
 
         let ImplicitSurface {
             ref samples,
@@ -199,6 +174,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         match sample_type {
             SampleType::Vertex => {
+                let neigh_points = self.extended_neighbourhood_borrow()?;
                 // For each row (query point)
                 let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
                     .filter(|(_, nbrs)| !nbrs.is_empty())
@@ -222,6 +198,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     });
             }
             SampleType::Face => {
+                let neigh_points = self.trivial_neighbourhood_borrow()?;
                 let face_jac = zip!(query_points.iter(), neigh_points.iter())
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, nbr_points)| {
@@ -245,6 +222,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     });
             }
         }
+        Ok(())
     }
 
     pub(crate) fn vertex_jacobian_at<'a, K: 'a>(
@@ -332,45 +310,26 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            max_step,
-            ..
-        } = *self;
-
-        match *kernel {
+        match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
-                        .into_iter()
-                        .cloned()
-                };
-                self.mls_query_jacobian(query_points, kernel, neigh, values);
-                Ok(())
+                self.mls_query_jacobian(query_points, kernel, values)
             }
             _ => Err(Error::UnsupportedKernel),
         }
     }
 
     /// Multiplier is a stacked velocity stored at samples.
-    pub(crate) fn mls_query_jacobian<'a, I, K, N>(
+    pub(crate) fn mls_query_jacobian<'a, K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
-        neigh: N,
         value_vecs: &mut [[T;3]],
-    ) where
-        I: Iterator<Item = Sample<T>> + 'a,
+    ) -> Result<(), Error> where
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
+        let neigh_points = self.extended_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref samples,
@@ -396,6 +355,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .for_each(|(vec, new_vec)| {
                 *vec = new_vec.into();
             });
+        Ok(())
     }
 
     /// Compute the Jacobian of the potential field with respect to the given query point.
@@ -572,46 +532,28 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multipliers: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            max_step,
-            ..
-        } = *self;
-
-        match *kernel {
+        match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
-                        .into_iter()
-                        .cloned()
-                };
-                self.mls_contact_jacobian_product(query_points, multipliers, kernel, neigh, values);
-                Ok(())
+                self.mls_contact_jacobian_product(query_points, multipliers, kernel, values)
             }
             _ => Err(Error::UnsupportedKernel),
         }
     }
 
     /// Multiplier is a stacked velocity stored at samples.
-    pub(crate) fn mls_contact_jacobian_product<'a, I, K, N>(
+    pub(crate) fn mls_contact_jacobian_product<'a, K>(
         &self,
         query_points: &[[T; 3]],
         multiplier: &[[T; 3]],
         kernel: K,
-        neigh: N,
         value_vecs: &mut [[T;3]],
-    ) where
-        I: Iterator<Item = Sample<T>> + 'a,
+    ) -> Result<(), Error>
+        where
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref samples,
@@ -667,6 +609,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     });
             }
         }
+        Ok(())
     }
 
     /// Compute the Jacobian of a vector on the surface in physical space with respect to the
@@ -1012,7 +955,6 @@ mod tests {
     ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
-
         let h = 1.18032;
         let tri_verts = vec![
             Vector3([0.5, h, 0.0]) + perturb(),
@@ -1037,6 +979,7 @@ mod tests {
             .collect();
 
         for &q in tri_verts.iter() {
+
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
             let jac: Vec<Vector3<f64>> = ImplicitSurface::face_jacobian_at(
@@ -1052,9 +995,9 @@ mod tests {
             assert_eq!(jac.len(), 3 * neighbours.len());
 
             // Reduce the Jacobian from face vertices to vertices.
-            let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
+            let tet_indices_iter = neighbours.iter().flat_map(|&neigh| tet_faces[neigh].iter().cloned());
             let mut vert_jac = vec![Vector3::zeros(); tet_verts.len()];
-            for (&jac, &vtx_idx) in jac.iter().zip(tet_indices) {
+            for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
                 vert_jac[vtx_idx] += jac;
             }
 
@@ -1338,6 +1281,110 @@ mod tests {
                 assert_relative_eq!(jac[i][j], p.deriv());
                 ad_samples.points[i][j] = F::cst(ad_samples.points[i][j]);
             }
+        }
+    }
+
+    /// A test parametrized by the background potential choice, sample type, radius and a
+    /// perturbation function that is expected to generate a random perturbation at every
+    /// consequent call.  This function tests the surface Jacobian of the implicit function.
+    pub fn surface_jacobian<P: FnMut() -> Vector3<f64>>(
+        bg_field_type: BackgroundFieldType,
+        sample_type: SampleType,
+        radius: f64,
+        perturb: &mut P,
+    ) {
+        let h = 1.18032;
+        let tri_vert_vecs = vec![
+            Vector3([0.5, h, 0.0]) + perturb(),
+            Vector3([-0.25, h, 0.433013]) + perturb(),
+            Vector3([-0.25, h, -0.433013]) + perturb(),
+        ];
+
+        let tri_verts: Vec<[f64;3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
+
+        let params = crate::Params {
+            kernel: KernelType::Approximate {
+                tolerance: 0.00001,
+                radius,
+            },
+            background_field: bg_field_type,
+            sample_type,
+            ..Default::default()
+        };
+
+        let tet = geo::mesh::TriMesh::from(utils::make_regular_tet());
+        let surf = crate::surface_from_trimesh(&tet, params).expect("Failed to create a surface for a tet.");
+
+        let (tet_verts, _) = make_tet(); // expect this to be the same as in make_regular_tet.
+
+        // Convert tet vertices into varibales because we are taking the derivative with respect to
+        // vertices.
+        let mut ad_tet_verts: Vec<[F;3]> = tet_verts
+            .iter()
+            .cloned()
+            .map(|v| v.map(|x| F::cst(x)).into())
+            .collect();
+
+        let mut ad_surf = crate::surface_from_trimesh::<F>(&tet, params).expect("Failed to create a surface for a autodiff tet.");
+        let ad_tri_verts: Vec<[F;3]> = tri_vert_vecs.iter().map(|&v| v.map(|x| F::cst(x)).into()).collect();
+
+        surf.cache_neighbours(&tri_verts);
+        let nnz = surf.num_surface_jacobian_entries().unwrap();
+        let mut jac_vals = vec![0.0; nnz];
+        let mut jac_rows = vec![0; nnz];
+        let mut jac_cols = vec![0; nnz];
+        surf.surface_jacobian_indices(&mut jac_rows, &mut jac_cols).expect("Failed to compute surface jacobian indices");
+        surf.surface_jacobian_values(&tri_verts, &mut jac_vals).expect("Failed to compute surface jacobian");
+
+        let mut jac = [[0.0; 3]; 12];
+
+        // Make sure the indices are the same as when using iter.
+        for ((i, idx), &val) in surf.surface_jacobian_indices_iter().unwrap().enumerate().zip(jac_vals.iter()) {
+            assert_eq!(idx.0, jac_rows[i]);
+            assert_eq!(idx.1, jac_cols[i]);
+            jac[idx.1][idx.0] += val;
+        }
+
+        for pidx in 0..ad_tet_verts.len() {
+            for i in 0..3 {
+                ad_tet_verts[pidx][i] = F::var(ad_tet_verts[pidx][i]);
+                ad_surf.update(ad_tet_verts.iter().cloned());
+
+                let mut potential = vec![F::cst(0.0); ad_tri_verts.len()];
+                ad_surf.potential(&ad_tri_verts, &mut potential).expect("Failed to compute autodiff potential");
+
+                for idx in surf.surface_jacobian_indices_iter().unwrap().filter(|idx| idx.1 == 3*pidx + i) {
+                    assert_relative_eq!(jac[idx.1][idx.0], potential[idx.0].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                }
+
+                ad_tet_verts[pidx][i] = F::cst(ad_tet_verts[pidx][i]);
+            }
+        }
+    }
+
+    #[test]
+    fn surface_jacobian_test() {
+        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+
+        let mut rng: StdRng = SeedableRng::from_seed([5; 32]);
+        let range = Uniform::new(-0.1, 0.1);
+
+        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+
+        // Run for some number of perturbations
+        for i in 1..50 {
+            let radius = 0.1 * (i as f64);
+            surface_jacobian(BackgroundFieldType::None, SampleType::Vertex, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::Zero, SampleType::Vertex, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::FromInput, SampleType::Vertex, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::DistanceBased, SampleType::Vertex, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::NormalBased, SampleType::Vertex, radius, &mut perturb);
+
+            surface_jacobian(BackgroundFieldType::None, SampleType::Face, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::Zero, SampleType::Face, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::FromInput, SampleType::Face, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::DistanceBased, SampleType::Face, radius, &mut perturb);
+            surface_jacobian(BackgroundFieldType::NormalBased, SampleType::Face, radius, &mut perturb);
         }
     }
 

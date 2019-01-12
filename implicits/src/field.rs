@@ -28,7 +28,7 @@ pub use self::spatial_tree::*;
 
 pub use self::background_field::BackgroundFieldType;
 pub(crate) use self::background_field::*;
-pub(crate) use self::neighbour_cache::NeighbourCache;
+pub(crate) use self::neighbour_cache::Neighbourhood;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SampleType {
@@ -77,7 +77,7 @@ where
     /// Cache the neighbouring sample points for each query point we see. This cache can be
     /// invalidated explicitly when the sparsity pattern is expected to change. This is wrapped in
     /// a `RefCell` because it may be updated in non mutable functions since it's a cache.
-    neighbour_cache: RefCell<NeighbourCache>,
+    query_neighbourhood: RefCell<Neighbourhood>,
 
     /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
@@ -184,9 +184,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ref kernel,
             ref spatial_tree,
             ref samples,
+            ref surface_topo,
+            ref dual_topo,
             max_step,
             ..
         } = *self;
+
         match *kernel {
             KernelType::Interpolating { radius }
             | KernelType::Approximate { radius, .. }
@@ -200,52 +203,59 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .into_iter()
                         .cloned()
                 };
-                self.cached_neighbours_borrow(query_points, neigh);
+                let mut cache = self.query_neighbourhood.borrow_mut();
+                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo);
             }
             KernelType::Global { .. } | KernelType::Hrbf => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
-                self.cached_neighbours_borrow(query_points, neigh);
+                let mut cache = self.query_neighbourhood.borrow_mut();
+                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo);
             }
         }
     }
 
-    /// Compute neighbour cache if it hasn't been computed yet. Return the neighbours of the given
-    /// query points. Note that the cache must be invalidated explicitly, there is no real way to
-    /// automatically cache results because both: query points and sample points may change
-    /// slightly, but we expect the neighbourhood information to remain the same.
-    fn cached_neighbours_borrow<'a, I, N>(
-        &'a self,
-        query_points: &[[T; 3]],
-        neigh: N,
-    ) -> Ref<'a, [Vec<usize>]>
-    where
-        I: Iterator<Item = Sample<T>> + 'a,
-        N: Fn([T; 3]) -> I + Sync + Send,
-    {
-        {
-            let mut cache = self.neighbour_cache.borrow_mut();
-            cache.neighbour_points(query_points, neigh);
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and `None` otherwise.
+    fn trivial_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+        // cache and actually retrieving the neighbour points is done separately
+        let valid = self.query_neighbourhood.borrow().trivial_set().is_some();
+        if valid {
+            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
+                c.trivial_set().unwrap()
+            }))
+        } else {
+            Err(super::Error::MissingNeighbourData)
         }
-
-        // Note there is no RefMut -> Ref map as of this writing, so we have to retrieve
-        // neighbour_points twice: once to recompute cache, and once to return a Ref.
-        Ref::map(self.neighbour_cache.borrow(), |c| {
-            c.cached_neighbour_points()
-        })
     }
 
-    /// Set `neighbour_cache` to None. This triggers recomputation of the neighbour cache next time
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and `None` otherwise.
+    fn extended_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+        // cache and actually retrieving the neighbour points is done separately
+        let valid = self.query_neighbourhood.borrow().extended_set().is_some();
+        if valid {
+            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
+                c.extended_set().unwrap()
+            }))
+        } else {
+            Err(super::Error::MissingNeighbourData)
+        }
+    }
+
+    /// Set `query_neighbourhood` to None. This triggers recomputation of the neighbour cache next time
     /// the potential or its derivatives are requested.
-    pub fn invalidate_neighbour_cache(&self) {
-        let mut cache = self.neighbour_cache.borrow_mut();
+    pub fn invalidate_query_neighbourhood(&self) {
+        let mut cache = self.query_neighbourhood.borrow_mut();
         cache.invalidate();
     }
 
     /// The number of query points currently in the cache.
     pub fn num_cached_query_points(&self) -> usize {
-        let cache = self.neighbour_cache.borrow();
-        cache.cached_neighbour_points().len()
+        let cache = self.query_neighbourhood.borrow();
+        cache.trivial_set().map_or(0, |x| x.len())
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -354,47 +364,31 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     ) -> Result<(), super::Error> {
         let ImplicitSurface {
             ref kernel,
-            ref spatial_tree,
             ref samples,
-            max_step,
             ..
         } = *self;
-
-        // Make a local neighbourhood lookup function.
-        let local_neigh = |radius| {
-            let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-            let radius2 = radius_ext * radius_ext;
-            move |q| {
-                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                spatial_tree
-                    .lookup_in_circle(&q_pos, &radius2)
-                    .into_iter()
-                    .cloned()
-            }
-        };
 
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
+                self.compute_mls(query_points, radius_t, kern, out_field)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
+                self.compute_mls(query_points, radius_t, kern, out_field)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, local_neigh(radius), out_field)
+                self.compute_mls(query_points, radius_t, kern, out_field)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
-                let neigh = |_| samples.iter();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
                 let radius = T::one();
-                self.compute_mls(query_points, radius, kern, neigh, out_field)
+                self.compute_mls(query_points, radius, kern, out_field)
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
@@ -404,20 +398,18 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls<'a, I, K, N>(
+    fn compute_mls<'a, K>(
         &self,
         query_points: &[[T; 3]],
         radius: T,
         kernel: K,
-        neigh: N,
         out_field: &'a mut [T],
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<T>> + 'a,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         assert_eq!(neigh_points.len(), out_field.len());
 
@@ -503,28 +495,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         out_vectors: &mut [[T; 3]],
     ) -> Result<(), super::Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            ref samples,
-            max_step,
-            ..
-        } = *self;
-
-        // Make a local neighbourhood lookup function.
-        let local_neigh = |radius| {
-            let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-            let radius2 = radius_ext * radius_ext;
-            move |q| {
-                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                spatial_tree
-                    .lookup_in_circle(&q_pos, &radius2)
-                    .into_iter()
-                    .cloned()
-            }
-        };
-
-        match *kernel {
+        match self.kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
                 let radius_t = T::from(radius).unwrap();
@@ -532,7 +503,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     query_points,
                     radius_t,
                     kern,
-                    local_neigh(radius),
                     out_vectors,
                 )
             }
@@ -543,7 +513,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     query_points,
                     radius_t,
                     kern,
-                    local_neigh(radius),
                     out_vectors,
                 )
             }
@@ -554,16 +523,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     query_points,
                     radius_t,
                     kern,
-                    local_neigh(radius),
                     out_vectors,
                 )
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
-                let neigh = |_| samples.iter();
                 let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_vector_field(query_points, radius, kern, neigh, out_vectors)
+                self.compute_mls_vector_field(query_points, radius, kern, out_vectors)
             }
             _ => {
                 // unimplemented ( do nothing )
@@ -573,20 +540,18 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Interpolate the given vector field at the given query points.
-    fn compute_mls_vector_field<'a, I, K, N>(
+    fn compute_mls_vector_field<'a, K>(
         &self,
         query_points: &[[T; 3]],
         radius: T,
         kernel: K,
-        neigh: N,
         out_vectors: &'a mut [[T; 3]],
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<T>> + 'a,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         assert_eq!(neigh_points.len(), out_vectors.len());
 
@@ -684,62 +649,45 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let ImplicitSurface {
             ref kernel,
-            ref spatial_tree,
             ref samples,
             ..
         } = *self;
-
-        // Make a local neighbourhood lookup function.
-        let local_neigh = |radius| {
-            let radius2 = radius * radius;
-            move |q| {
-                let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                spatial_tree
-                    .lookup_in_circle(&q_pos, &radius2)
-                    .into_iter()
-                    .cloned()
-            }
-        };
 
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
+                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
+                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, local_neigh(radius), interrupt)
+                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
             }
             KernelType::Global { tolerance } => {
-                let neigh = |_| samples.iter();
                 let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_on_mesh(mesh, radius, kern, neigh, interrupt)
+                self.compute_mls_on_mesh(mesh, radius, kern, interrupt)
             }
             KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
         }
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, I, K, N, F, M>(
+    fn compute_mls_on_mesh<'a, K, F, M>(
         &self,
         mesh: &mut M,
         radius: T,
         kernel: K,
-        neigh: N,
         interrupt: F,
     ) -> Result<(), super::Error>
     where
-        I: Iterator<Item = Sample<T>> + Clone + 'a,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
     {
@@ -769,7 +717,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let mut tangents = vec![[0.0f32; 3]; mesh.num_vertices()];
 
         let query_points = mesh.vertex_positions();
-        let neigh_points = self.cached_neighbours_borrow(&query_points, neigh);
+        self.cache_neighbours(&query_points);
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
@@ -980,8 +929,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         samples
             .into_iter()
-            .zip(surface_topo.iter())
-            .flat_map(move |(sample, tri_indices)| {
+            .flat_map(move |sample| {
+                let tri_indices = &surface_topo[sample.index];
                 let norm_inv = T::one() / sample.nml.norm();
                 let nml = sample.nml * norm_inv;
                 let nml_proj = Matrix3::identity() - nml * nml.transpose();
@@ -1165,7 +1114,6 @@ pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use geo::mesh::*;
 
     /// Test the projection.

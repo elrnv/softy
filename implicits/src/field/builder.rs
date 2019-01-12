@@ -291,7 +291,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             surface_vertex_positions: vertices,
             samples,
             max_step: T::from(max_step).unwrap(),
-            neighbour_cache: RefCell::new(NeighbourCache::new()),
+            query_neighbourhood: RefCell::new(Neighbourhood::new()),
             dual_topo,
             sample_type,
         })

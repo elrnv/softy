@@ -60,20 +60,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Get the total number of entries for the sparse Hessian non-zeros. The Hessian is taken with
     /// respect to sample points. This estimate is based on the current neighbour cache, which
-    /// gives the number of query points.
-    pub fn num_surface_hessian_product_entries(&self) -> usize {
-        let cache = self.neighbour_cache.borrow();
+    /// gives the number of query points, if the neighbourhood was not precomputed this function
+    /// returns `None`.
+    pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
+        let neigh_points = self.extended_neighbourhood_borrow().ok()?;
         let num_pts_per_sample = match self.sample_type {
             SampleType::Vertex => unimplemented!(),
             SampleType::Face => 3,
         };
-        cache
-            .cached_neighbour_points()
-            .iter()
+        Some(neigh_points.iter()
             .map(|pts| pts.len())
             .sum::<usize>()
             * 3
-            * num_pts_per_sample
+            * num_pts_per_sample)
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -82,7 +81,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         &self,
     ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
         match self.kernel {
-            KernelType::Approximate { .. } => Ok(self.mls_surface_jacobian_indices_iter()),
+            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices_iter(),
             _ => Err(Error::UnsupportedKernel),
         }
     }
@@ -95,47 +94,29 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multipliers: &[T],
         values: &mut [T],
     ) -> Result<(), Error> {
-        let ImplicitSurface {
-            ref kernel,
-            ref spatial_tree,
-            max_step,
-            ..
-        } = *self;
-
-        match *kernel {
+        match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
-                        .into_iter()
-                        .cloned()
-                };
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_hessian_product_values(query_points, multipliers, kernel, neigh, values);
-                Ok(())
+                self.mls_surface_hessian_product_values(query_points, multipliers, kernel, values)
             }
             _ => Err(Error::UnsupportedKernel),
         }
     }
 
-    pub(crate) fn mls_surface_hessian_product_values<'a, I, K, N>(
+    pub(crate) fn mls_surface_hessian_product_values<'a, K>(
         &self,
         query_points: &[[T; 3]],
         multipliers: &[T],
         kernel: K,
-        neigh: N,
         values: &mut [T],
-    ) where
-        I: Iterator<Item = Sample<T>> + 'a,
+    ) -> Result<(), Error>
+        where
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-        N: Fn([T; 3]) -> I + Sync + Send,
     {
         let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);
 
-        let neigh_points = self.cached_neighbours_borrow(query_points, neigh);
+        self.cache_neighbours(query_points);
+        let neigh_points = self.extended_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref samples,
@@ -194,6 +175,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     });
             }
         }
+        Ok(())
     }
 
     pub(crate) fn vertex_hessian_at<'a, K: 'a>(

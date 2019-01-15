@@ -329,7 +329,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         self.cache_neighbours(query_points);
-        let neigh_points = self.extended_neighbourhood_borrow()?;
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref samples,

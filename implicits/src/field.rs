@@ -155,14 +155,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         }
     }
 
-    /// Update vertex positions and samples using an iterator over mesh vertices.
-    pub fn update<I>(&mut self, vertex_iter: I)
+    /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
+    /// permissive `update` function, which will update as many positions as possible and recompute
+    /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
+    /// positions were specified to cover all surface vertices. This function will return the
+    /// number of vertices that were indeed updated.
+    pub fn update<I>(&mut self, vertex_iter: I) -> usize
     where
         I: Iterator<Item = [T; 3]>,
     {
         // First we update the surface vertex positions.
+        let mut num_updated = 0;
         for (p, new_p) in self.surface_vertex_positions.iter_mut().zip(vertex_iter) {
             *p = new_p.into();
+            num_updated += 1;
         }
 
         // Then update the samples that determine the shape of the implicit surface.
@@ -176,6 +182,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         // Funally update the rtree responsible for neighbour search.
         *spatial_tree = build_rtree_from_samples(samples);
+
+        num_updated
     }
 
     /// Compute neighbour cache if it has been invalidated
@@ -989,7 +997,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .iter()
             .map(|&n| {
                 let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
-                na::Vector3::from(nml)
+                na::Vector3::from(nml).normalize()
             })
             .collect();
 
@@ -1051,7 +1059,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .iter()
             .map(|&n| {
                 let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
-                na::Vector3::from(nml)
+                na::Vector3::from(nml).normalize()
             })
             .collect();
         let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());

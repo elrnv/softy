@@ -41,6 +41,7 @@ impl<T: Real> Kernel<T> for GlobalInvDistance2 {
         let w = T::one() / (x * x + eps * eps);
         w * w
     }
+
     fn df(&self, x: T) -> T {
         T::from(self.f(autodiff::F::var(x)).deriv()).unwrap()
     }
@@ -220,7 +221,7 @@ impl<T: Real> Kernel<T> for LocalApproximate {
 }
 
 /// This kernel trait defines a radial basis kernel interface.
-pub trait SphericalKernel<T: Real>: Kernel<T> {
+pub trait RadialKernel<T: Real>: Kernel<T> {
     /// Main kernel function evaluated at `x` with center at `p`.
     #[inline]
     fn eval(&self, x: Vector3<T>, p: Vector3<T>) -> T {
@@ -261,32 +262,36 @@ pub trait SphericalKernel<T: Real>: Kernel<T> {
     fn with_closest_dist(self, dist: T) -> Self;
 }
 
-/// This kernel trait defines a spherical kernel with compact support. This means that there is a
-/// radius beyond which the kernel value is always zero.
-pub trait LocalKernel<T: Real>: SphericalKernel<T> {
+/// A spherical kernel with a well defined radius of influence. This means that there is a
+/// radius beyond which the kernel value is always zero. If radius is finite, it typically means
+/// that the kernel has compact support, although it is still valid to set radius to a finite
+/// number for something like the Gaussian kernel, which will just mean that the background
+/// potential will be mixed in full past the the radius, which can represent a standard
+/// deviation.
+pub trait SphericalKernel<T: Real>: RadialKernel<T> {
     /// Produce the radius of influence of this kernel.
     fn radius(&self) -> T;
 }
 
 //
-// Implement Spherical kernel for all kernels defined above
+// Implement Radial kernel for all kernels defined above
 //
 
-impl<T: Real> SphericalKernel<T> for GlobalInvDistance2 {
+impl<T: Real> RadialKernel<T> for GlobalInvDistance2 {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
     }
 }
 
-impl<T: Real> SphericalKernel<T> for LocalCubic {
+impl<T: Real> RadialKernel<T> for LocalCubic {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
     }
 }
 
-impl<T: Real> SphericalKernel<T> for LocalInterpolating {
+impl<T: Real> RadialKernel<T> for LocalInterpolating {
     #[inline]
     fn with_closest_dist(mut self, dist: T) -> Self {
         self.closest_d = dist.to_f64().unwrap();
@@ -294,7 +299,7 @@ impl<T: Real> SphericalKernel<T> for LocalInterpolating {
     }
 }
 
-impl<T: Real> SphericalKernel<T> for LocalApproximate {
+impl<T: Real> RadialKernel<T> for LocalApproximate {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
@@ -302,27 +307,34 @@ impl<T: Real> SphericalKernel<T> for LocalApproximate {
 }
 
 //
-// Implement Local Spherical kernel for all kernels defined above
+// Implement Spherical kernel for all kernels defined above
 //
 
-impl<T: Real> LocalKernel<T> for LocalCubic {
+impl<T: Real> SphericalKernel<T> for LocalCubic {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
     }
 }
 
-impl<T: Real> LocalKernel<T> for LocalInterpolating {
+impl<T: Real> SphericalKernel<T> for LocalInterpolating {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
     }
 }
 
-impl<T: Real> LocalKernel<T> for LocalApproximate {
+impl<T: Real> SphericalKernel<T> for LocalApproximate {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
+    }
+}
+
+impl<T: Real> SphericalKernel<T> for GlobalInvDistance2 {
+    #[inline]
+    fn radius(&self) -> T {
+        T::infinity()
     }
 }
 
@@ -344,8 +356,8 @@ mod tests {
         }
     }
 
-    /// Test spherical derivative.
-    fn test_spherical_derivatives<K: SphericalKernel<F>>(kern: &K, start: usize) {
+    /// Test radial derivative.
+    fn test_radial_derivatives<K: RadialKernel<F>>(kern: &K, start: usize) {
         for j in 0..3 {
             // for each component
             for i in start..55 {
@@ -379,7 +391,7 @@ mod tests {
         let kern = GlobalInvDistance2::new(tol);
 
         test_derivatives(&kern, 0);
-        test_spherical_derivatives(&kern, 1);
+        test_radial_derivatives(&kern, 1);
     }
 
     #[test]
@@ -392,7 +404,7 @@ mod tests {
         test_locality(&kern, radius);
 
         test_derivatives(&kern, 0);
-        test_spherical_derivatives(&kern, 1);
+        test_radial_derivatives(&kern, 1);
     }
 
     #[test]
@@ -406,7 +418,7 @@ mod tests {
         test_locality(&kern, radius);
 
         test_derivatives(&kern, 0);
-        test_spherical_derivatives(&kern, 1);
+        test_radial_derivatives(&kern, 1);
     }
 
     #[test]
@@ -414,14 +426,14 @@ mod tests {
         // Test the properties of the local approximate kernel and check its derivatives.
         let radius = 5.0;
         let kern = LocalInterpolating::new(radius);
-        let kern = SphericalKernel::<f64>::with_closest_dist(kern, 0.1);
+        let kern = RadialKernel::<f64>::with_closest_dist(kern, 0.1);
 
         // Check that the kernel has compact support: it's zero outside the radius
         test_locality(&kern, radius);
 
         // Note: interpolating kernel is degenerate at 0, so start with 1.
         test_derivatives(&kern, 1);
-        test_spherical_derivatives(&kern, 1);
+        test_radial_derivatives(&kern, 1);
     }
 
 }

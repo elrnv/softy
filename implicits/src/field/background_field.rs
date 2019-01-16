@@ -1,5 +1,5 @@
 use crate::field::samples::{Sample, SamplesView};
-use crate::kernel::SphericalKernel;
+use crate::kernel::{RadialKernel, SphericalKernel};
 use geo::math::Vector3;
 use geo::Real;
 
@@ -63,7 +63,7 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
 pub(crate) struct BackgroundField<'a, T, V, K>
 where
     T: Real,
-    K: SphericalKernel<T> + Clone + std::fmt::Debug,
+    K: RadialKernel<T> + Clone + std::fmt::Debug,
 {
     /// Position of the point at which we should evaluate the field.
     pub query_pos: Vector3<T>,
@@ -73,7 +73,7 @@ where
     pub bg_field_value: BackgroundFieldValue<V>,
     /// The sum of all the weights in the neighbourhood of the query point.
     pub weight_sum: T,
-    /// The spherical kernel used to compute the weights.
+    /// The radial kernel used to compute the weights.
     pub kernel: K,
     /// The distance to the closest sample.
     pub closest_sample_dist: T,
@@ -81,8 +81,6 @@ where
     pub closest_sample_disp: Vector3<T>,
     /// The index of the closest sample point.
     pub closest_sample_index: usize,
-    /// Radius of the neighbourhood of the query point.
-    pub radius: T,
 }
 
 impl<'a, T, V, K> BackgroundField<'a, T, V, K>
@@ -91,11 +89,9 @@ where
     V: Copy + Clone + std::fmt::Debug + PartialEq,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
-    /// Pass in the unnormalized weight sum excluding the weight for the background field.
     pub(crate) fn new(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
-        radius: T,
         kernel: K,
         bg_value: BackgroundFieldValue<V>,
     ) -> Self {
@@ -136,7 +132,6 @@ where
             closest_sample_dist,
             closest_sample_disp,
             closest_sample_index,
-            radius,
         };
 
         // Finalize the weight sum.
@@ -163,7 +158,7 @@ where
     pub(crate) fn background_weight(&self) -> T {
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
-            _ => self.kernel.f(self.radius - self.closest_sample_dist),
+            _ => self.kernel.f(self.kernel.radius() - self.closest_sample_dist),
         }
     }
 
@@ -180,7 +175,7 @@ where
             // Derivative with respect to the sample at the given index
             if index == self.closest_sample_index {
                 self.closest_sample_disp
-                    * (self.kernel.df(self.radius - self.closest_sample_dist)
+                    * (self.kernel.df(self.kernel.radius() - self.closest_sample_dist)
                         / self.closest_sample_dist)
             } else {
                 Vector3::zeros()
@@ -188,7 +183,7 @@ where
         } else {
             // Derivative with respect to the query position
             -self.closest_sample_disp
-                * (self.kernel.df(self.radius - self.closest_sample_dist)
+                * (self.kernel.df(self.kernel.radius() - self.closest_sample_dist)
                     / self.closest_sample_dist)
         }
     }

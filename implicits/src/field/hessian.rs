@@ -107,7 +107,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         values: &mut [T],
     ) -> Result<(), Error>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);
 
@@ -183,7 +183,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
@@ -219,7 +219,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
@@ -314,7 +314,6 @@ mod tests {
             ImplicitSurface::compute_local_potential_at(
                 q,
                 view,
-                F::cst(radius),
                 kernel,
                 bg_field_type,
                 &mut p,

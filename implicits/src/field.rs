@@ -3,7 +3,7 @@
 //! potential and its derivatives.
 //!
 
-use crate::kernel::{self, KernelType, LocalKernel, SphericalKernel};
+use crate::kernel::{self, KernelType, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
@@ -386,24 +386,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, out_field)
+                self.compute_mls(query_points, kern, out_field)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, out_field)
+                self.compute_mls(query_points, kern, out_field)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls(query_points, radius_t, kern, out_field)
+                self.compute_mls(query_points, kern, out_field)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                let radius = T::one();
-                self.compute_mls(query_points, radius, kern, out_field)
+                self.compute_mls(query_points, kern, out_field)
             }
             KernelType::Hrbf => {
                 // Global kernel, all points are neighbours.
@@ -416,7 +412,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     fn compute_mls<'a, K>(
         &self,
         query_points: &[[T; 3]],
-        radius: T,
         kernel: K,
         out_field: &'a mut [T],
     ) -> Result<(), super::Error>
@@ -444,7 +439,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             Self::compute_local_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
-                radius,
                 kernel,
                 bg_field_type,
                 field,
@@ -461,7 +455,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn compute_local_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
-        radius: T,
         kernel: K,
         bg_potential: BackgroundFieldType,
         potential: &mut T,
@@ -472,11 +465,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             return;
         }
 
-        let radius = T::from(radius).unwrap();
         let bg = BackgroundField::new(
             q,
             samples,
-            radius,
             kernel,
             BackgroundFieldValue::val(bg_potential, *potential),
         );
@@ -513,24 +504,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match self.kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
+                self.compute_mls_vector_field(query_points, kern, out_vectors)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
+                self.compute_mls_vector_field(query_points, kern, out_vectors)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
+                self.compute_mls_vector_field(query_points, kern, out_vectors)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
-                let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_vector_field(query_points, radius, kern, out_vectors)
+                self.compute_mls_vector_field(query_points, kern, out_vectors)
             }
             _ => {
                 // unimplemented ( do nothing )
@@ -543,7 +530,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     fn compute_mls_vector_field<'a, K>(
         &self,
         query_points: &[[T; 3]],
-        radius: T,
         kernel: K,
         out_vectors: &'a mut [[T; 3]],
     ) -> Result<(), super::Error>
@@ -571,7 +557,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             Self::compute_local_vector_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
-                radius,
                 kernel,
                 bg_field_type,
                 vector,
@@ -584,7 +569,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn compute_local_vector_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
-        radius: T,
         kernel: K,
         bg_potential: BackgroundFieldType,
         vector: &mut [T; 3],
@@ -595,11 +579,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             return;
         }
 
-        let radius = T::from(radius).unwrap();
         let bg = BackgroundField::new(
             q,
             samples,
-            radius,
             kernel,
             BackgroundFieldValue::val(bg_potential, Vector3(*vector)),
         );
@@ -656,23 +638,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match *kernel {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
+                self.compute_mls_on_mesh(mesh, kern, interrupt)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
+                self.compute_mls_on_mesh(mesh, kern, interrupt)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
-                let radius_t = T::from(radius).unwrap();
-                self.compute_mls_on_mesh(mesh, radius_t, kern, interrupt)
+                self.compute_mls_on_mesh(mesh, kern, interrupt)
             }
             KernelType::Global { tolerance } => {
-                let radius = T::one();
                 let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_on_mesh(mesh, radius, kern, interrupt)
+                self.compute_mls_on_mesh(mesh, kern, interrupt)
             }
             KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
         }
@@ -682,7 +660,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     fn compute_mls_on_mesh<'a, K, F, M>(
         &self,
         mesh: &mut M,
-        radius: T,
         kernel: K,
         interrupt: F,
     ) -> Result<(), super::Error>
@@ -788,7 +765,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         let bg = BackgroundField::new(
                             q,
                             view,
-                            radius,
                             kernel,
                             BackgroundFieldValue::val(bg_field_type, T::from(*potential).unwrap()),
                         );
@@ -947,18 +923,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_type: BackgroundFieldType,
     ) -> BackgroundField<'a, T, T, K>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        // Find the closest vertex for background potential derivative.
-        let radius = kernel.radius();
-
-        // Compute background potential derivative contribution.
-        // Compute derivative if the closest point in the neighbourhood. Otherwise we
-        // assume the background potential is constant.
+        // Construct a background field for computing derivative contribution.
         BackgroundField::new(
             q,
             samples,
-            radius,
             kernel,
             BackgroundFieldValue::jac(bg_type),
         )

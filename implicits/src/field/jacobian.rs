@@ -160,7 +160,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         values: &mut [T],
     ) -> Result<(), Error>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);
 
@@ -238,7 +238,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
@@ -274,7 +274,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
@@ -331,7 +331,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         value_vecs: &mut [[T; 3]],
     ) -> Result<(), Error>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
@@ -367,7 +367,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> Vector3<T>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
@@ -551,7 +551,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         value_vecs: &mut [[T; 3]],
     ) -> Result<(), Error>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
@@ -625,7 +625,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         bg_field_type: BackgroundFieldType,
     ) -> Vector3<T>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, samples, kernel, bg_field_type);
 
@@ -673,7 +673,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         triangles: &'a [[usize; 3]],
     ) -> Vector3<T>
     where
-        K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, samples, kernel, bg_field_type);
 
@@ -795,7 +795,6 @@ mod tests {
             ImplicitSurface::compute_local_potential_at(
                 q,
                 view,
-                F::cst(radius),
                 kernel,
                 bg_field_type,
                 &mut p,
@@ -948,7 +947,6 @@ mod tests {
                     ImplicitSurface::compute_local_potential_at(
                         q,
                         view,
-                        F::cst(radius),
                         kernel,
                         bg_field_type,
                         &mut p,
@@ -1140,7 +1138,6 @@ mod tests {
         let bg = BackgroundField::new(
             q,
             view,
-            radius,
             kernel,
             BackgroundFieldValue::jac(BackgroundFieldType::DistanceBased),
         );
@@ -1166,7 +1163,6 @@ mod tests {
                 let ad_bg = BackgroundField::new(
                     q,
                     view,
-                    F::cst(radius),
                     kernel,
                     BackgroundFieldValue::val(BackgroundFieldType::DistanceBased, F::cst(0.0)),
                 );
@@ -1396,7 +1392,6 @@ mod tests {
                 ImplicitSurface::compute_local_potential_at(
                     q,
                     view,
-                    F::cst(radius),
                     kernel,
                     bg_field_type,
                     &mut p,
@@ -1504,12 +1499,12 @@ mod tests {
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
             contact_jacobian(BackgroundFieldType::None, radius, &mut perturb);
-            //contact_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
-            //contact_jacobian(
-            //    BackgroundFieldType::FromInput,
-            //    radius,
-            //    &mut perturb,
-            //);
+            contact_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
+            contact_jacobian(
+                BackgroundFieldType::FromInput,
+                radius,
+                &mut perturb,
+            );
             //contact_jacobian(
             //    BackgroundFieldType::DistanceBased,
             //    radius,

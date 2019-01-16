@@ -103,18 +103,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute unnormalized area weighted vertex normals given a triangle topology.
     /// Having this function be static and generic helps us test the normal derivatives.
-    pub(crate) fn compute_vertex_area_normals(
+    pub(crate) fn compute_vertex_area_normals<V3>(
         surf_topo: &[[usize; 3]],
-        points: &[Vector3<T>],
+        points: &[V3],
         normals: &mut [Vector3<T>],
-    ) {
+    ) where
+        V3: Into<Vector3<T>> + Clone
+    {
         // Clear the normals.
         for nml in normals.iter_mut() {
             *nml = Vector3::zeros();
         }
 
         for tri_indices in surf_topo.iter() {
-            let tri = Triangle::from_indexed_slice(tri_indices, &points);
+            let tri = Triangle::from_indexed_slice(tri_indices, points);
             let area_nml = tri.area_normal();
             normals[tri_indices[0]] += area_nml;
             normals[tri_indices[1]] += area_nml;
@@ -1129,11 +1131,14 @@ mod tests {
     fn projection_test() -> Result<(), crate::Error> {
         use crate::*;
 
-        let trimesh = utils::make_sample_octahedron();
+        // Create a surface sample mesh.
+        let octahedron_trimesh = utils::make_sample_octahedron();
+        let mut sphere = PolyMesh::from(octahedron_trimesh);
 
-        let mut sphere = PolyMesh::from(trimesh);
+        // Translate the mesh slightly in z.
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
 
+        // Construct the implicit surface.
         let surface = surface_from_polymesh(&sphere, 
             Params {
                 kernel: KernelType::Approximate {
@@ -1145,21 +1150,29 @@ mod tests {
                 ..Default::default()
             })?;
 
+        // Make a mesh to be projected.
         let mut grid = make_grid(22, 22);
 
+        // Get grid node positions to be projected.
         let pos = grid.vertex_positions_mut();
 
+        // Compute potential before projection.
         let mut init_potential = vec![0.0; pos.len()];
         surface.potential(pos, &mut init_potential)?;
 
+        // Project grid outside the implicit surface.
         assert!(surface.project_to_above(0.0, 1e-4, pos)?);
 
+        // Compute potential after projection.
         let mut final_potential = vec![0.0; pos.len()];
         surface.potential(pos, &mut final_potential)?;
 
         for (&old, &new) in init_potential.iter().zip(final_potential.iter()) {
+            // Check that all vertices are outside the implicit solid.
             assert!(new >= 0.0, "old = {}", old);
             if old < 0.0 {
+                // Check that the projected vertices are now within the narrow band of valid
+                // projections (between 0 and 1e-4).
                 assert!(new <= 1e-4, "new = {}", new);
             }
         }

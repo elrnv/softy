@@ -733,13 +733,13 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
     vert_grad
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use autodiff::F;
 
-    fn easy_potential_derivative(radius: f64, bg_field_type: BackgroundFieldType) {
+    /// Tester for the Jacobian at a single position with respect to a surface defined by a single point.
+    fn one_point_potential_derivative_tester(radius: f64, bg_field_type: BackgroundFieldType) {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
@@ -814,15 +814,16 @@ mod tests {
         }
     }
 
+    /// Test the Jacobian at a single position with respect to a surface defined by a single point.
     #[test]
-    fn easy_potential_derivative_test() {
+    fn one_point_potential_derivative_test() {
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            easy_potential_derivative(radius, BackgroundFieldType::None);
-            easy_potential_derivative(radius, BackgroundFieldType::Zero);
-            easy_potential_derivative(radius, BackgroundFieldType::FromInput);
-            easy_potential_derivative(radius, BackgroundFieldType::DistanceBased);
-            easy_potential_derivative(radius, BackgroundFieldType::NormalBased);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::None);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::Zero);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::FromInput);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::DistanceBased);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::NormalBased);
         }
     }
 
@@ -852,119 +853,44 @@ mod tests {
         }
     }
 
-    /// A more complex test parametrized by the background potential choice, radius and a perturbation
-    /// function that is expected to generate a random perturbation at every consequent call.
-    /// This function tests vertex based implicit surfaaces.
-    fn hard_vertex_potential_derivative<P: FnMut() -> Vector3<f64>>(
+    /// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
+    fn make_query_tri(perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
+        let h = 1.18032;
+        vec![
+            Vector3([0.5, h, 0.0]) + perturb(),
+            Vector3([-0.25, h, 0.433013]) + perturb(),
+            Vector3([-0.25, h, -0.433013]) + perturb(),
+        ]
+    }
+
+    fn new_test_samples<T, V3>(sample_type: SampleType, triangles: &[[usize;3]], verts: &[V3]) -> Samples<T>
+    where
+        T: Real + Send + Sync,
+        V3: Into<Vector3<T>> + Clone,
+    {
+        match sample_type {
+            SampleType::Face => Samples::new_triangle_samples(&triangles, &verts, vec![T::zero(); triangles.len()]),
+            SampleType::Vertex => Samples::new_vertex_samples(&triangles, &verts, None, vec![T::zero(); verts.len()]),
+        }
+    }
+
+    /// A more complex test parametrized by the background potential choice, sample type, radius
+    /// and a perturbation function that is expected to generate a random perturbation at every
+    /// consequent call.
+    fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(
         bg_field_type: BackgroundFieldType,
+        sample_type: SampleType,
         radius: f64,
         perturb: &mut P,
     ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
-
-        let h = 1.18032;
-        let tri_verts = vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ];
-
+        let tri_verts = make_query_tri(perturb);
         let (tet_verts, tet_faces) = make_tet();
 
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(tet_verts.len(), &tet_faces);
 
-        // Initialize the samples with regular f64 for now to keep debug output clean.
-        // Compute normals. Make sure this is done the same way as everywhere else.
-        let mut normals = vec![Vector3::zeros(); tet_verts.len()];
-        ImplicitSurface::compute_vertex_area_normals(&tet_faces, &tet_verts, &mut normals);
-
-        let samples = Samples {
-            points: tet_verts.clone(),
-            normals: normals.clone(),
-            velocities: vec![Vector3::zeros(); 4],
-            values: vec![0.0; 4],
-        };
-
-        let neighbours = vec![0, 1, 2, 3];
-
-        let kernel = kernel::LocalApproximate::new(radius, 1e-5);
-
-        // Convert the samples to use autodiff constants.
-        let mut ad_samples = samples_to_autodiff(samples.clone());
-
-        for &q in tri_verts.iter() {
-            // Compute the Jacobian.
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
-            let jac: Vec<Vector3<f64>> = ImplicitSurface::vertex_jacobian_at(
-                q,
-                view,
-                kernel,
-                &tet_faces,
-                &dual_topo,
-                bg_field_type,
-            )
-            .collect();
-
-            assert_eq!(jac.len(), neighbours.len());
-
-            let q = q.map(|x| F::cst(x));
-
-            for &vtx in neighbours.iter() {
-                for i in 0..3 {
-                    ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
-
-                    // Compute normals. This is necessary to capture the normal derivatives.
-                    ImplicitSurface::compute_vertex_area_normals(
-                        &tet_faces,
-                        &ad_samples.points,
-                        &mut ad_samples.normals,
-                    );
-
-                    let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
-                    let mut p = F::cst(0.0);
-                    ImplicitSurface::compute_local_potential_at(
-                        q,
-                        view,
-                        F::cst(radius),
-                        kernel,
-                        bg_field_type,
-                        &mut p,
-                    );
-
-                    assert_relative_eq!(
-                        jac[vtx][i],
-                        p.deriv(),
-                        max_relative = 1e-5,
-                        epsilon = 1e-10
-                    );
-
-                    ad_samples.points[vtx][i] = F::cst(ad_samples.points[vtx][i]);
-                }
-            }
-        }
-    }
-
-    /// A more complex test parametrized by the background potential choice, radius and a perturbation
-    /// function that is expected to generate a random perturbation at every consequent call.
-    /// This function tests face centric implicit surfaces.
-    fn hard_face_potential_derivative<P: FnMut() -> Vector3<f64>>(
-        bg_field_type: BackgroundFieldType,
-        radius: f64,
-        perturb: &mut P,
-    ) {
-        // This is a similar test to the one above, but has a non-trivial surface topology for the
-        // surface.
-        let h = 1.18032;
-        let tri_verts = vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ];
-
-        let (tet_verts, tet_faces) = make_tet();
-
-        let samples = Samples::new_triangle_samples(&tet_faces, &tet_verts, vec![0.0; 4]);
+        let samples = new_test_samples(sample_type, &tet_faces, &tet_verts);
 
         let neighbours = vec![0, 1, 2, 3]; // All tet faces
 
@@ -982,26 +908,48 @@ mod tests {
 
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
-            let jac: Vec<Vector3<f64>> = ImplicitSurface::face_jacobian_at(
-                q,
-                view,
-                kernel,
-                &tet_faces,
-                &tet_verts,
-                bg_field_type,
-            )
-            .collect();
 
-            assert_eq!(jac.len(), 3 * neighbours.len());
+            let vert_jac = match sample_type {
+                SampleType::Face => {
+                    let jac: Vec<Vector3<f64>> = ImplicitSurface::face_jacobian_at(
+                        q,
+                        view,
+                        kernel,
+                        &tet_faces,
+                        &tet_verts,
+                        bg_field_type,
+                        ).collect();
 
-            // Reduce the Jacobian from face vertices to vertices.
-            let tet_indices_iter = neighbours.iter().flat_map(|&neigh| tet_faces[neigh].iter().cloned());
-            let mut vert_jac = vec![Vector3::zeros(); tet_verts.len()];
-            for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
-                vert_jac[vtx_idx] += jac;
-            }
+                    assert_eq!(jac.len(), 3 * neighbours.len());
 
-            assert_eq!(vert_jac.len(), tet_verts.len());
+                    // Reduce the Jacobian from face vertices to vertices.
+                    let tet_indices_iter = neighbours.iter().flat_map(|&neigh| tet_faces[neigh].iter().cloned());
+                    let mut vert_jac = vec![Vector3::zeros(); tet_verts.len()];
+                    for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
+                        vert_jac[vtx_idx] += jac;
+                    }
+
+                    assert_eq!(vert_jac.len(), tet_verts.len());
+
+                    vert_jac
+                }
+                SampleType::Vertex => {
+                    let jac: Vec<Vector3<f64>> = ImplicitSurface::vertex_jacobian_at(
+                        q,
+                        view,
+                        kernel,
+                        &tet_faces,
+                        &dual_topo,
+                        bg_field_type,
+                        ).collect();
+
+                    assert_eq!(jac.len(), neighbours.len());
+
+                    // Sample jacobian coincides with vertex jacobian, nothing else to do here.
+                    jac
+                }
+            };
+
 
             let q = q.map(|x| F::cst(x));
 
@@ -1009,11 +957,7 @@ mod tests {
                 for i in 0..3 {
                     ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
-                    let ad_samples = Samples::new_triangle_samples(
-                        &tet_faces,
-                        &ad_tet_verts,
-                        vec![F::cst(0.0); 4],
-                    );
+                    let ad_samples = new_test_samples(sample_type, &tet_faces, &ad_tet_verts);
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
@@ -1051,29 +995,30 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            hard_vertex_potential_derivative(BackgroundFieldType::None, radius, &mut perturb);
-            hard_vertex_potential_derivative(BackgroundFieldType::Zero, radius, &mut perturb);
-            hard_vertex_potential_derivative(BackgroundFieldType::FromInput, radius, &mut perturb);
-            hard_vertex_potential_derivative(
-                BackgroundFieldType::DistanceBased,
+            hard_potential_derivative(BackgroundFieldType::None, SampleType::Vertex, radius, &mut perturb);
+            hard_potential_derivative(BackgroundFieldType::Zero,  SampleType::Vertex,radius, &mut perturb);
+            hard_potential_derivative(BackgroundFieldType::FromInput,  SampleType::Vertex,radius, &mut perturb);
+            hard_potential_derivative(
+                BackgroundFieldType::DistanceBased, SampleType::Vertex,
                 radius,
                 &mut perturb,
             );
-            hard_vertex_potential_derivative(
-                BackgroundFieldType::NormalBased,
+            hard_potential_derivative(
+                BackgroundFieldType::NormalBased, SampleType::Vertex,
                 radius,
                 &mut perturb,
             );
 
-            hard_face_potential_derivative(BackgroundFieldType::None, radius, &mut perturb);
-            hard_face_potential_derivative(BackgroundFieldType::Zero, radius, &mut perturb);
-            hard_face_potential_derivative(BackgroundFieldType::FromInput, radius, &mut perturb);
-            hard_face_potential_derivative(
+            hard_potential_derivative(BackgroundFieldType::None, SampleType::Face, radius, &mut perturb);
+            hard_potential_derivative(BackgroundFieldType::Zero, SampleType::Face, radius, &mut perturb);
+            hard_potential_derivative(BackgroundFieldType::FromInput, SampleType::Face, radius, &mut perturb);
+            hard_potential_derivative(
                 BackgroundFieldType::DistanceBased,
+                SampleType::Face,
                 radius,
                 &mut perturb,
             );
-            hard_face_potential_derivative(BackgroundFieldType::NormalBased, radius, &mut perturb);
+            hard_potential_derivative(BackgroundFieldType::NormalBased, SampleType::Face, radius, &mut perturb);
         }
     }
 

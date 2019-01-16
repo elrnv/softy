@@ -211,26 +211,14 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                         let sample_values = Self::vertex_offsets_from_mesh(mesh);
                         assert_eq!(vertices.len(), sample_values.len());
 
-                        let mut vertex_normals = Self::vertex_normals_from_mesh(mesh);
-                        if vertex_normals.is_empty() {
-                            // If empty, just recompute from the given topology.
-                            vertex_normals = vec![Vector3::zeros(); vertices.len()];
-                            ImplicitSurface::compute_vertex_area_normals(
-                                &triangles,
-                                &vertices,
-                                &mut vertex_normals,
-                            );
-                        }
+                        let vertex_normals = Self::vertex_normals_from_mesh(mesh);
+                        let mut samples = Samples::new_vertex_samples(&triangles, &vertices,
+                                                    if vertex_normals.is_empty() { None } else { Some(&vertex_normals) },
+                                                    sample_values);
 
-                        let velocities = Self::vertex_velocities_from_mesh(mesh);
-
-                        assert_eq!(vertices.len(), velocities.len());
-                        Samples {
-                            points: vertices.clone(),
-                            normals: vertex_normals,
-                            velocities,
-                            values: sample_values,
-                        }
+                        samples.velocities = Self::vertex_velocities_from_mesh(mesh);
+                        assert_eq!(vertices.len(), samples.velocities.len());
+                        samples
                     }
                     SampleType::Face => {
                         // Can't create a face centered potential if there are no faces.

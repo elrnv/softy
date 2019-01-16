@@ -51,6 +51,62 @@ pub struct Samples<T: Real> {
     pub values: Vec<T>,
 }
 
+impl<T: Real + Send + Sync> Samples<T> {
+    /// Construct samples centered at vertices. The normals are optionally given, or otherwise
+    /// computed using an area weighted method.
+    pub fn new_vertex_samples<V3>(
+        triangles: &[[usize; 3]],
+        vertices: &[V3],
+        new_normals: Option<&[V3]>,
+        values: Vec<T>,
+    ) -> Self
+    where
+        V3: Into<Vector3<T>> + Clone,
+    {
+        let points = vec![Vector3::zeros(); vertices.len()];
+        let velocities = vec![Vector3::zeros(); vertices.len()];
+        let normals = vec![Vector3::zeros(); vertices.len()];
+
+        let mut samples = Samples {
+            points,
+            normals,
+            velocities,
+            values,
+        };
+
+        samples.update_vertex_samples(triangles, vertices, new_normals);
+        samples
+    }
+
+
+    /// Update samples centered at vertices. Normals are given optionally, otherwise they will be
+    /// automatically computed using the area weighted method.
+    pub fn update_vertex_samples<V3>(&mut self, triangles: &[[usize; 3]], new_vertices: &[V3], new_normals: Option<&[V3]>)
+    where
+        V3: Into<Vector3<T>> + Clone,
+    {
+        let Samples {
+            ref mut points,
+            ref mut normals,
+            ..
+        } = self;
+
+        // Update positons
+        for (pos, new_pos) in points.iter_mut().zip(new_vertices.iter()) {
+            *pos = new_pos.clone().into();
+        }
+
+        if let Some(nmls) = new_normals {
+            assert_eq!(nmls.len(), new_vertices.len());
+            for (nml, new_nml) in normals.iter_mut().zip(nmls.iter()) {
+                *nml = new_nml.clone().into();
+            }
+        } else {
+            ImplicitSurface::compute_vertex_area_normals(triangles, new_vertices, normals);
+        }
+    }
+}
+
 impl<T: Real> Samples<T> {
     pub fn new_triangle_samples<V3>(
         triangles: &[[usize; 3]],

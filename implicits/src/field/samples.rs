@@ -111,6 +111,19 @@ impl<T: Real + Send + Sync> Samples<T> {
 }
 
 impl<T: Real> Samples<T> {
+    /// Utility function only used in tests for creating a dummy set of samples just from a set of
+    /// points.
+    #[cfg(test)]
+    pub(crate) fn new_point_samples(points: Vec<Vector3<T>>) -> Self {
+        let n = points.len();
+        Samples {
+            points,
+            normals: vec![Vector3::zeros(); n],
+            velocities: vec![Vector3::zeros(); n],
+            values: vec![T::zero(); n],
+        }
+    }
+
     pub fn new_triangle_samples<V3>(
         triangles: &[[usize; 3]],
         vertices: &[V3],

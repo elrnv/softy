@@ -1124,12 +1124,7 @@ mod tests {
             Vector3([0.2, 0.1, 0.3]),
         ];
 
-        let samples = Samples {
-            points: points.clone(),
-            normals: vec![Vector3::zeros(); points.len()], // Not used
-            velocities: vec![Vector3::zeros(); points.len()], // Not used
-            values: vec![0.0; points.len()],               // Not used
-        };
+        let samples = Samples::new_point_samples(points.clone());
 
         let indices: Vec<usize> = (0..points.len()).collect();
 
@@ -1154,12 +1149,8 @@ mod tests {
         let jac: Vec<_> = bg.compute_jacobian().collect();
 
         // Prepare autodiff variables.
-        let mut ad_samples = Samples {
-            points: points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect(),
-            normals: vec![Vector3::zeros(); points.len()], // Not used
-            velocities: vec![Vector3::zeros(); points.len()], // Not used
-            values: vec![F::cst(0.0); points.len()],       // Not used
-        };
+        let mut ad_samples =
+            Samples::new_point_samples(points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect());
 
         let q = q.map(|x| F::cst(x));
 
@@ -1197,12 +1188,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let h = 1.18032;
-        let tri_vert_vecs = vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ];
+        let tri_vert_vecs = make_query_tri(perturb);
 
         let tri_verts: Vec<[f64; 3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
 
@@ -1373,12 +1359,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let h = 1.18032;
-        let tri_verts = vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ];
+        let tri_verts = make_query_tri(perturb);
 
         let (tet_verts, tet_faces) = make_tet();
 
@@ -1459,12 +1440,7 @@ mod tests {
         use geo::NumVertices;
         use utils::*;
 
-        let h = 1.18032;
-        let tri_vert_pos = vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ];
+        let tri_vert_pos = make_query_tri(perturb);
 
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
 

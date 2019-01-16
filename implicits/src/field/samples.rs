@@ -78,11 +78,14 @@ impl<T: Real + Send + Sync> Samples<T> {
         samples
     }
 
-
     /// Update samples centered at vertices. Normals are given optionally, otherwise they will be
     /// automatically computed using the area weighted method.
-    pub fn update_vertex_samples<V3>(&mut self, triangles: &[[usize; 3]], new_vertices: &[V3], new_normals: Option<&[V3]>)
-    where
+    pub fn update_vertex_samples<V3>(
+        &mut self,
+        triangles: &[[usize; 3]],
+        new_vertices: &[V3],
+        new_normals: Option<&[V3]>,
+    ) where
         V3: Into<Vector3<T>> + Clone,
     {
         let Samples {

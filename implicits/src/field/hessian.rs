@@ -68,11 +68,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Vertex => unimplemented!(),
             SampleType::Face => 3,
         };
-        Some(neigh_points.iter()
-            .map(|pts| pts.len())
-            .sum::<usize>()
-            * 3
-            * num_pts_per_sample)
+        Some(neigh_points.iter().map(|pts| pts.len()).sum::<usize>() * 3 * num_pts_per_sample)
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -110,7 +106,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         kernel: K,
         values: &mut [T],
     ) -> Result<(), Error>
-        where
+    where
         K: SphericalKernel<T> + LocalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let value_vecs: &mut [[T; 3]] = reinterpret::reinterpret_mut_slice(values);

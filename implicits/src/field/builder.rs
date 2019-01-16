@@ -212,9 +212,16 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                         assert_eq!(vertices.len(), sample_values.len());
 
                         let vertex_normals = Self::vertex_normals_from_mesh(mesh);
-                        let mut samples = Samples::new_vertex_samples(&triangles, &vertices,
-                                                    if vertex_normals.is_empty() { None } else { Some(&vertex_normals) },
-                                                    sample_values);
+                        let mut samples = Samples::new_vertex_samples(
+                            &triangles,
+                            &vertices,
+                            if vertex_normals.is_empty() {
+                                None
+                            } else {
+                                Some(&vertex_normals)
+                            },
+                            sample_values,
+                        );
 
                         samples.velocities = Self::vertex_velocities_from_mesh(mesh);
                         assert_eq!(vertices.len(), samples.velocities.len());

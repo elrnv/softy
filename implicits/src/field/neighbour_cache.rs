@@ -136,9 +136,7 @@ impl Neighbourhood {
                     let mut set: BTreeSet<_> = triv_pts.into_iter().collect();
                     if !dual_topo.is_empty() {
                         set.extend(triv_pts.iter().flat_map(|&pt| {
-                            dual_topo[pt].iter().flat_map(|&tri| {
-                                tri_topo[tri].iter()
-                            })
+                            dual_topo[pt].iter().flat_map(|&tri| tri_topo[tri].iter())
                         }));
                     }
                     ext_pts.extend(set.into_iter());

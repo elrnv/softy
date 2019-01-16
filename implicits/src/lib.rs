@@ -114,9 +114,9 @@ impl From<geo::io::Error> for Error {
 /// attribute.
 #[cfg(test)]
 pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
-    use utils::*;
-    use geo::mesh::topology::*;
     use geo::mesh::attrib::*;
+    use geo::mesh::topology::*;
+    use utils::*;
 
     let mut mesh = make_grid(Grid {
         rows,

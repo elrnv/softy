@@ -16,8 +16,8 @@ use std::cell::{Ref, RefCell};
 
 pub mod background_field;
 pub mod builder;
-pub mod jacobian;
 pub mod hessian;
+pub mod jacobian;
 pub mod neighbour_cache;
 pub mod samples;
 pub mod spatial_tree;
@@ -108,7 +108,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         points: &[V3],
         normals: &mut [Vector3<T>],
     ) where
-        V3: Into<Vector3<T>> + Clone
+        V3: Into<Vector3<T>> + Clone,
     {
         // Clear the normals.
         for nml in normals.iter_mut() {
@@ -292,7 +292,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let mut candidate_points = query_points.to_vec();
         let mut potential = vec![T::zero(); query_points.len()];
         let mut candidate_potential = vec![T::zero(); query_points.len()];
-        let mut steps = vec![[T::zero();3]; query_points.len()];
+        let mut steps = vec![[T::zero(); 3]; query_points.len()];
 
         let max_steps = 10;
         let max_binary_search_iters = 10;
@@ -303,8 +303,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             self.potential(query_points, &mut potential)?;
 
             // Count the number of points with values less than iso_value.
-            let count_violations =
-                potential.iter().filter(|&&x| x < iso_value).count();
+            let count_violations = potential.iter().filter(|&&x| x < iso_value).count();
 
             if count_violations == 0 {
                 break;
@@ -314,13 +313,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             self.query_jacobian(query_points, &mut steps)?;
 
             // Compute initial step directions
-            for (step, &value) in zip!(
-                steps.iter_mut(),
-                potential.iter()
-            ).filter(|(_, &pot)| pot < iso_value) {
+            for (step, &value) in
+                zip!(steps.iter_mut(), potential.iter()).filter(|(_, &pot)| pot < iso_value)
+            {
                 let nml = Vector3(*step);
-                let offset = (epsilon*T::from(0.5).unwrap() + (iso_value - value)) / nml.norm();
-                *step = (nml*offset).into();
+                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / nml.norm();
+                *step = (nml * offset).into();
             }
 
             for j in 0..max_binary_search_iters {
@@ -330,7 +328,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     query_points.iter(),
                     steps.iter(),
                     potential.iter()
-                ).filter(|(_, _, _, &pot)| pot < iso_value) {
+                )
+                .filter(|(_, _, _, &pot)| pot < iso_value)
+                {
                     *p = (Vector3(*q) + Vector3(step)).into();
                 }
 
@@ -341,8 +341,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     steps.iter_mut(),
                     potential.iter(),
                     candidate_potential.iter()
-                ).filter(|(_, &old, &new)| old < iso_value && new > iso_value + epsilon) {
-                    *step = (Vector3(*step)*T::from(0.5).unwrap()).into();
+                )
+                .filter(|(_, &old, &new)| old < iso_value && new > iso_value + epsilon)
+                {
+                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
                     count_overshoots += 1;
                 }
 
@@ -350,15 +352,18 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     break;
                 }
 
-                if j == max_binary_search_iters-1 {
+                if j == max_binary_search_iters - 1 {
                     convergence = false;
                 }
             }
 
             // Update query points
-            query_points.iter_mut().zip(candidate_points.iter()).for_each(|(q,p)| *q = *p);
+            query_points
+                .iter_mut()
+                .zip(candidate_points.iter())
+                .for_each(|(q, p)| *q = *p);
 
-            if i == max_steps-1 {
+            if i == max_steps - 1 {
                 convergence = false;
             }
         }
@@ -509,32 +514,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             KernelType::Interpolating { radius } => {
                 let kern = kernel::LocalInterpolating::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(
-                    query_points,
-                    radius_t,
-                    kern,
-                    out_vectors,
-                )
+                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
             }
             KernelType::Approximate { tolerance, radius } => {
                 let kern = kernel::LocalApproximate::new(radius, tolerance);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(
-                    query_points,
-                    radius_t,
-                    kern,
-                    out_vectors,
-                )
+                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
             }
             KernelType::Cubic { radius } => {
                 let kern = kernel::LocalCubic::new(radius);
                 let radius_t = T::from(radius).unwrap();
-                self.compute_mls_vector_field(
-                    query_points,
-                    radius_t,
-                    kern,
-                    out_vectors,
-                )
+                self.compute_mls_vector_field(query_points, radius_t, kern, out_vectors)
             }
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
@@ -937,17 +927,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     where
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
-        samples
-            .into_iter()
-            .flat_map(move |sample| {
-                let tri_indices = &surface_topo[sample.index];
-                let norm_inv = T::one() / sample.nml.norm();
-                let nml = sample.nml * norm_inv;
-                let nml_proj = Matrix3::identity() - nml * nml.transpose();
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-                let mult = multiplier(sample);
-                (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
-            })
+        samples.into_iter().flat_map(move |sample| {
+            let tri_indices = &surface_topo[sample.index];
+            let norm_inv = T::one() / sample.nml.norm();
+            let nml = sample.nml * norm_inv;
+            let nml_proj = Matrix3::identity() - nml * nml.transpose();
+            let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+            let mult = multiplier(sample);
+            (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
+        })
     }
 
     /// Compute the background potential field. This function returns a struct that provides some
@@ -1092,7 +1080,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 }
 
-
 /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
 #[cfg(test)]
 pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
@@ -1121,7 +1108,6 @@ pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use geo::mesh::*;
@@ -1139,7 +1125,8 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh(&sphere, 
+        let surface = surface_from_polymesh(
+            &sphere,
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
@@ -1148,7 +1135,8 @@ mod tests {
                 background_field: BackgroundFieldType::DistanceBased,
                 sample_type: SampleType::Vertex,
                 ..Default::default()
-            })?;
+            },
+        )?;
 
         // Make a mesh to be projected.
         let mut grid = make_grid(22, 22);

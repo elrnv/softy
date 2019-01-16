@@ -827,32 +827,6 @@ mod tests {
         }
     }
 
-    /// Convert samples to autodiff number type constants.
-    fn samples_to_autodiff(samples: Samples<f64>) -> Samples<F> {
-        let Samples {
-            points,
-            normals,
-            velocities,
-            values,
-        } = samples;
-
-        Samples {
-            points: points
-                .into_iter()
-                .map(|vec| vec.map(|x| F::cst(x)))
-                .collect(),
-            normals: normals
-                .into_iter()
-                .map(|vec| vec.map(|x| F::cst(x)))
-                .collect(),
-            velocities: velocities
-                .into_iter()
-                .map(|vec| vec.map(|x| F::cst(x)))
-                .collect(),
-            values: values.into_iter().map(|x| F::cst(x)).collect(),
-        }
-    }
-
     /// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
     fn make_query_tri(perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
         let h = 1.18032;
@@ -918,7 +892,7 @@ mod tests {
 
             let vert_jac = match sample_type {
                 SampleType::Face => {
-                    let jac: Vec<Vector3<f64>> = ImplicitSurface::face_jacobian_at(
+                    let jac: Vec<_> = ImplicitSurface::face_jacobian_at(
                         q,
                         view,
                         kernel,
@@ -944,7 +918,7 @@ mod tests {
                     vert_jac
                 }
                 SampleType::Vertex => {
-                    let jac: Vec<Vector3<f64>> = ImplicitSurface::vertex_jacobian_at(
+                    let jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(
                         q,
                         view,
                         kernel,
@@ -1069,102 +1043,16 @@ mod tests {
         }
     }
 
-    /// Compute normalized area weighted vertex normals given a triangle topology.
-    /// This is a helper function for the `vertex_normal_derivative_test`.
-    /// Note that it is strictly more useful to precompute unnormalized vertex normals because they
-    /// cary more information like area.
-    pub(crate) fn compute_vertex_unit_normals<T: Real + Send + Sync>(
-        surf_topo: &[[usize; 3]],
-        points: &[Vector3<T>],
-        normals: &mut [Vector3<T>],
-    ) {
-        // Compute area normals.
-        ImplicitSurface::compute_vertex_area_normals(surf_topo, points, normals);
-
-        // Normalize.
-        for nml in normals.iter_mut() {
-            *nml = *nml / nml.norm();
-        }
-    }
-
-    /// Test the first order derivatives of our normal computation method for face normals.
-    #[test]
-    fn face_normal_derivative_test() {
+    /// Test the derivatives of our normal computation method.
+    fn normal_derivative_test(sample_type: SampleType) {
         let (tet_verts, tet_faces) = make_tet();
-
-        // Initialize the samples with regular f64 for now to keep debug output clean.
-        let samples = Samples::new_triangle_samples(&tet_faces, &tet_verts, vec![0.0; 4]);
-
-        let indices = vec![0, 1, 2, 3]; // look at all the faces
-
-        // Set a random product vector.
-        let multipliers = random_vectors(tet_faces.len());
-        let multiplier = move |Sample { index, .. }| multipliers[index];
-
-        let view = SamplesView::new(indices.as_ref(), &samples);
-        let vert_grad =
-            compute_face_unit_normal_derivative(&tet_verts, &tet_faces, view, multiplier.clone());
-
-        // Convert tet vertices into varibales because we are taking the derivative with respect to
-        // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
-            .iter()
-            .cloned()
-            .map(|v| v.map(|x| F::cst(x)))
-            .collect();
-
-        for (vtx, g) in vert_grad.iter().enumerate() {
-            for i in 0..3 {
-                ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
-
-                // Compute autodiff samples.
-                let mut ad_samples =
-                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
-
-                // Normalize face normals
-                for nml in ad_samples.normals.iter_mut() {
-                    *nml = *nml / nml.norm();
-                }
-
-                let mut exp = F::cst(0.0);
-                for sample in view.clone().iter() {
-                    exp +=
-                        ad_samples.normals[sample.index].dot(multiplier(sample).map(|x| F::cst(x)));
-                }
-
-                assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
-
-                ad_tet_verts[vtx][i] = F::cst(ad_tet_verts[vtx][i]);
-            }
-        }
-    }
-    /// Test the derivatives of our normal computation method for vertex normals.
-    #[test]
-    fn vertex_normal_derivative_test() {
-        let (tet_verts, tet_faces) = make_tet();
-
-        let mut normals = vec![Vector3::zeros(); tet_verts.len()];
-        ImplicitSurface::compute_vertex_area_normals(
-            tet_faces.as_slice(),
-            tet_verts.as_slice(),
-            &mut normals,
-        );
 
         // Vertex to triangle map
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(tet_verts.len(), &tet_faces);
 
-        // Initialize the samples with regular f64 for now to keep debug output clean.
-        let samples = Samples {
-            points: tet_verts.clone(),
-            normals: normals.clone(),
-            velocities: vec![Vector3::zeros(); tet_verts.len()],
-            values: vec![0.0; 4], // This is not actually used in this test.
-        };
+        let samples = new_test_samples(sample_type, &tet_faces, &tet_verts);
 
         let indices = vec![0, 1, 2, 3]; // look at all the vertices
-
-        // Convert the samples to use autodiff constants.
-        let mut ad_samples = samples_to_autodiff(samples.clone());
 
         // Set a random product vector.
         let dxs = random_vectors(tet_verts.len());
@@ -1172,23 +1060,36 @@ mod tests {
 
         // Compute the normal gradient product.
         let view = SamplesView::new(indices.as_ref(), &samples);
-        let grad_iter = ImplicitSurface::compute_vertex_unit_normals_gradient_products(
-            view,
-            &tet_faces,
-            &dual_topo,
-            dx.clone(),
-        );
 
-        for (&vtx, g) in indices.iter().zip(grad_iter) {
+        let grad: Vec<_> = match sample_type {
+            SampleType::Vertex => ImplicitSurface::compute_vertex_unit_normals_gradient_products(
+                view,
+                &tet_faces,
+                &dual_topo,
+                dx.clone(),
+            )
+            .collect(),
+            SampleType::Face => {
+                compute_face_unit_normal_derivative(&tet_verts, &tet_faces, view, dx.clone())
+            }
+        };
+
+        // Convert tet vertices into varibales because we are taking the derivative with respect to
+        // vertices.
+        let mut ad_tet_verts: Vec<Vector3<F>> =
+            tet_verts.iter().map(|&v| v.map(|x| F::cst(x))).collect();
+
+        for (vtx, g) in grad.iter().enumerate() {
             for i in 0..3 {
-                ad_samples.points[vtx][i] = F::var(ad_samples.points[vtx][i]);
+                ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
-                // Compute normalized normals. This is necessary to capture the normal derivatives.
-                compute_vertex_unit_normals(
-                    &tet_faces,
-                    &ad_samples.points,
-                    &mut ad_samples.normals,
-                );
+                // Recompute normals by computing new autodiff samples.
+                let mut ad_samples = new_test_samples(sample_type, &tet_faces, &ad_tet_verts);
+
+                // Normalize normals
+                for nml in ad_samples.normals.iter_mut() {
+                    *nml = *nml / nml.norm();
+                }
 
                 let mut exp = F::cst(0.0);
                 for sample in view.clone().iter() {
@@ -1197,9 +1098,20 @@ mod tests {
 
                 assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
-                ad_samples.points[vtx][i] = F::cst(ad_samples.points[vtx][i]);
+                ad_tet_verts[vtx][i] = F::cst(ad_tet_verts[vtx][i]);
             }
         }
+    }
+
+    /// Test the first order derivatives of our normal computation method for face normals.
+    #[test]
+    fn face_normal_derivative_test() {
+        normal_derivative_test(SampleType::Face);
+    }
+    /// Test the derivatives of our normal computation method for vertex normals.
+    #[test]
+    fn vertex_normal_derivative_test() {
+        normal_derivative_test(SampleType::Vertex);
     }
 
     #[test]

@@ -420,7 +420,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // Background potential adds to the total weight sum, so we should get the updated weight
         // sum from there.
         let weight_sum_inv = bg.weight_sum_inv();
-        let weight_sum_inv2 = weight_sum_inv * weight_sum_inv;
 
         samples.into_iter().map(
             move |Sample {
@@ -435,29 +434,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let norm_inv = T::one() / nml.norm();
                 let unit_nml = nml * norm_inv;
 
-                let mut dw_neigh = T::zero();
+                let w_neigh = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
 
-                for Sample {
-                    pos: posk,
-                    nml: nmlk,
-                    value: offk,
-                    ..
-                } in samples.iter()
-                {
-                    let wk = kernel.with_closest_dist(closest_d).eval(q, posk);
-                    let diffk = q - posk;
-                    let pk = T::from(offk).unwrap() + (nmlk.dot(diffk) / nmlk.norm());
-                    dw_neigh -= wk * pk;
-                }
-
-                let dw = -kernel.with_closest_dist(closest_d).grad(q, pos);
-                let mut dw_p = dw * (dw_neigh * weight_sum_inv2);
-
+                let dw = kernel.with_closest_dist(closest_d).grad(q, pos);
                 // Contribution from the background potential
                 let dwb = bg.background_weight_gradient(Some(index));
-                dw_p += dwb * (dw_neigh * weight_sum_inv2);
+                let mut dw_p = (dw - dwb) * (w_neigh * weight_sum_inv);
 
-                dw_p += dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
+                dw_p -= dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
 
                 // Compute the normal component of the derivative
                 let w = kernel.with_closest_dist(closest_d).eval(q, pos);
@@ -792,7 +776,7 @@ mod tests {
             // Compute the local potential function. After calling this function, calling
             // `.deriv()` on the potential output will give us the derivative with resepct to the
             // preset variable.
-            ImplicitSurface::compute_local_potential_at(
+            ImplicitSurface::compute_potential_at(
                 q,
                 view,
                 kernel,
@@ -944,7 +928,7 @@ mod tests {
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
-                    ImplicitSurface::compute_local_potential_at(
+                    ImplicitSurface::compute_potential_at(
                         q,
                         view,
                         kernel,
@@ -1389,7 +1373,7 @@ mod tests {
                 let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_local_potential_at(
+                ImplicitSurface::compute_potential_at(
                     q,
                     view,
                     kernel,

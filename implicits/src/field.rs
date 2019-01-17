@@ -436,7 +436,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         )
         .filter(|(_, nbrs, _)| !nbrs.is_empty())
         .for_each(move |(q, neighbours, field)| {
-            Self::compute_local_potential_at(
+            Self::compute_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
                 kernel,
@@ -452,7 +452,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// is empty, `potential` is not modified, otherwise it's updated.
     /// Note: passing the output parameter potential as a mut reference allows us to optionally mix
     /// a preinitialized custom global potential field with the local potential.
-    pub(crate) fn compute_local_potential_at<K>(
+    pub(crate) fn compute_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
         kernel: K,
@@ -471,24 +471,35 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             kernel,
             BackgroundFieldValue::val(bg_potential, *potential),
         );
-        let closest_d = bg.closest_sample_dist();
+
+        let weight_sum_inv = bg.weight_sum_inv();
 
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
-        *potential = bg.compute_unnormalized_weighted_scalar_field();
+        *potential = bg.compute_unnormalized_weighted_scalar_field() * weight_sum_inv;
 
-        let mut numerator = T::zero();
-        for Sample {
-            pos, nml, value, ..
-        } in samples.iter()
-        {
+        let local_field = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, bg.closest_sample_dist());
+
+        *potential += local_field;
+    }
+
+    /// Compiute the potential field (excluding background field) at a given query point. If the
+    #[inline]
+    pub(crate) fn compute_local_potential_at<K>(
+        q: Vector3<T>,
+        samples: SamplesView<T>,
+        kernel: K,
+        weight_sum_inv: T,
+        closest_d: T,
+    ) -> T
+    where
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+    {
+        samples.iter().map(|Sample { pos, nml, value, .. }| {
             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
             let p = value + nml.dot(q - pos) / nml.norm();
-
-            numerator += w * p;
-        }
-
-        *potential = (*potential + numerator) * bg.weight_sum_inv();
+            w * p
+        }).sum::<T>() * weight_sum_inv
     }
 
     /*

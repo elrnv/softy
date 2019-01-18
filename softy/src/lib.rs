@@ -1,14 +1,7 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 
-extern crate geometry as geo;
-extern crate implicits;
-extern crate ipopt;
-extern crate nalgebra as na;
-extern crate rayon;
-extern crate reinterpret;
-
-#[macro_use]
-extern crate approx;
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 mod attrib_defines;
 mod bench;
@@ -27,7 +20,7 @@ pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::constraints::SmoothContactParams;
 pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, SimParams, SolveResult};
-use crate::geo::mesh::attrib;
+use geo::mesh::attrib;
 
 #[derive(Debug)]
 pub enum Error {
@@ -142,7 +135,7 @@ pub(crate) fn inf_norm(vec: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo::mesh::{topology::*, Attrib, TetMesh};
+    use geo::mesh::{topology::*, Attrib, TetMesh};
 
     const STATIC_PARAMS: SimParams = SimParams {
         gravity: [0.0f32, -9.81, 0.0],

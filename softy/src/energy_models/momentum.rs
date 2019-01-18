@@ -1,8 +1,8 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
-use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::*, Attrib};
-use crate::geo::prim::Tetrahedron;
+use geo::math::Vector3;
+use geo::mesh::{topology::*, Attrib};
+use geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
 use num_traits::FromPrimitive;

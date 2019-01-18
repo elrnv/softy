@@ -6,8 +6,8 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use crate::geo::math::{Matrix3, Scalar};
-use crate::geo::prim::Tetrahedron;
+use geo::math::{Matrix3, Scalar};
+use geo::prim::Tetrahedron;
 use num_traits::FromPrimitive;
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};

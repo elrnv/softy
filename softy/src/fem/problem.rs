@@ -6,8 +6,8 @@ use crate::energy_models::{
 };
 //use geo::io::save_tetmesh_ascii;
 use crate::constraints::{smooth_contact::LinearSmoothContactConstraint, volume::VolumeConstraint};
-use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::*, Attrib, VertexPositions};
+use geo::math::Vector3;
+use geo::mesh::{topology::*, Attrib, VertexPositions};
 use crate::matrix::*;
 use ipopt::{self, Index, Number};
 use reinterpret::*;

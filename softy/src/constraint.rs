@@ -1,6 +1,6 @@
 //! This module provides an interface for specifying constraints to an optimization solver.
 
-use crate::geo::math::Scalar;
+use geo::math::Scalar;
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 

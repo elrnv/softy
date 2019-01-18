@@ -7,8 +7,8 @@ mod bench {
     extern crate test;
     use self::test::Bencher;
     use crate::fem::{self, ElasticityProperties, MaterialProperties, SimParams};
-    use crate::geo::mesh::topology::VertexIndex;
-    use crate::geo::mesh::{Attrib, TetMesh};
+    use geo::mesh::topology::VertexIndex;
+    use geo::mesh::{Attrib, TetMesh};
 
     const DYNAMIC_PARAMS: SimParams = SimParams {
         material: MaterialProperties {

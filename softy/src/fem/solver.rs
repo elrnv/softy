@@ -6,16 +6,18 @@ use crate::energy_models::{
     momentum::MomentumPotential,
     volumetric_neohookean::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
-use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib, VertexPositions};
-use crate::geo::ops::{ShapeMatrix, Volume};
-use crate::geo::prim::Tetrahedron;
+use geo::math::{Matrix3, Vector3};
+use geo::mesh::{tetmesh::TetCell, topology::*, Attrib, VertexPositions};
+use geo::ops::{ShapeMatrix, Volume};
+use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use reinterpret::*;
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
+
+use approx::*;
 
 use crate::inf_norm;
 use crate::mask_iter::*;
@@ -381,7 +383,7 @@ impl SolverBuilder {
         // If this attribute doesn't exist, assume no vertices are fixed. This function will
         // return an error if there is an existing Fixed attribute with the wrong type.
         {
-            use crate::geo::mesh::attrib::*;
+            use geo::mesh::attrib::*;
             let fixed_buf = mesh
                 .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
                 .unwrap_or_else(|_| {
@@ -798,14 +800,14 @@ impl Solver {
 
     fn output_meshes(&self, iter: u32) {
         let mesh = self.borrow_mesh();
-        crate::geo::io::save_tetmesh(
+        geo::io::save_tetmesh(
             &mesh,
             &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter + 1)),
         )
         .unwrap();
         if let Some(mesh) = self.try_borrow_kinematic_mesh() {
             let polymesh = PolyMesh::from(mesh.clone());
-            crate::geo::io::save_polymesh(
+            geo::io::save_polymesh(
                 &polymesh,
                 &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter + 1)),
             )
@@ -1033,7 +1035,7 @@ impl Solver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo;
+    use geo;
     use std::path::PathBuf;
     use utils::*;
 
@@ -1517,7 +1519,7 @@ mod tests {
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
-            background_potential: BackgroundPotentialType::None,
+            background_field: BackgroundFieldType::None,
             sample_type: SampleType::Face,
             ..Default::default()
         };

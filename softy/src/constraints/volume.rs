@@ -1,6 +1,6 @@
 use crate::constraint::*;
-use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::ops::Volume;
+use geo::math::{Matrix3, Vector3};
+use geo::ops::Volume;
 use crate::matrix::*;
 use crate::TetMesh;
 use reinterpret::*;

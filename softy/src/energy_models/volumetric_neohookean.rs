@@ -2,10 +2,10 @@
 //use geo::io::save_tetmesh;
 use crate::attrib_defines::*;
 use crate::energy::*;
-use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{topology::*, Attrib};
-use crate::geo::ops::*;
-use crate::geo::prim::Tetrahedron;
+use geo::math::{Matrix3, Vector3};
+use geo::mesh::{topology::*, Attrib};
+use geo::ops::*;
+use geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
 use num_traits::FromPrimitive;

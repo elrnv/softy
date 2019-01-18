@@ -1,7 +1,7 @@
 use crate::constraint::*;
-use crate::geo::math::Vector3;
-use crate::geo::mesh::topology::*;
-use crate::geo::mesh::{Attrib, VertexPositions};
+use geo::math::Vector3;
+use geo::mesh::topology::*;
+use geo::mesh::{Attrib, VertexPositions};
 use crate::matrix::*;
 use crate::TetMesh;
 use crate::TriMesh;
@@ -220,7 +220,7 @@ impl SmoothContactConstraint {
             })
             .max_step(params.max_step * 2.0) // double it because the step can be by samples or query points
             .sample_type(SampleType::Face)
-            .background_potential(BackgroundPotentialType::None);
+            .background_field(BackgroundFieldType::None);
 
         let surface = surface_builder
             .build()
@@ -278,7 +278,7 @@ impl SmoothContactConstraint {
 
     pub fn update_cache(&mut self, query_points: &[[f64; 3]]) {
         let surf = self.implicit_surface.borrow_mut();
-        surf.invalidate_neighbour_cache();
+        surf.invalidate_query_neighbourhood();
         surf.cache_neighbours(query_points);
     }
 }
@@ -316,7 +316,7 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
     fn constraint_jacobian_size(&self) -> usize {
         self.implicit_surface
             .borrow()
-            .num_surface_jacobian_entries()
+            .num_surface_jacobian_entries().unwrap_or(0)
     }
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,

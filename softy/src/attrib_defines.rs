@@ -1,4 +1,4 @@
-use crate::geo::math::Matrix3;
+use geo::math::Matrix3;
 
 pub(crate) const FIXED_ATTRIB: &str = "fixed";
 pub(crate) const DISPLACEMENT_ATTRIB: &str = "displacement";

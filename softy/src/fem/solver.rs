@@ -1155,7 +1155,7 @@ mod tests {
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
-            .unwrap()
+            .expect("Failed to build a solver for a one tet test.")
     }
 
     /// Test that the solver produces no change for an equilibrium configuration.
@@ -1178,6 +1178,40 @@ mod tests {
         assert!(solver.step().is_ok());
 
         // Expect the tet to remain in original configuration
+        let solution = solver.borrow_mesh();
+        compare_meshes(&solution, &mesh, 1e-6);
+    }
+
+    /// Test that the solver produces no change for an equilibrium configuration for a
+    /// tetrahedralized box. This example also uses a softer material and a momentum term
+    /// (dynamics enabled), which is more sensitive to perturbations.
+    #[test]
+    fn box_equilibrium_test() {
+        let params = SimParams {
+            gravity: [0.0f32, 0.0, 0.0],
+            outer_tolerance: 1e-10, // This is a fairly strict tolerance.
+            max_outer_iterations: 2,
+            ..DYNAMIC_PARAMS
+        };
+
+        let soft_material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.49),
+            incompressibility: false,
+            density: 1000.0,
+            damping: 0.0,
+        };
+
+        // Box in equilibrium configuration should stay in equilibrium configuration
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box.vtk")).unwrap();
+
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(soft_material)
+            .add_solid(mesh.clone())
+            .build()
+            .expect("Failed to create solver for soft box equilibrium test");
+        assert!(solver.step().is_ok());
+
+        // Expect the box to remain in original configuration
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &mesh, 1e-6);
     }

@@ -341,7 +341,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         self.energy_model.add_energy_gradient(x, dx, grad_f);
         self.gravity.add_energy_gradient(x, dx, grad_f);
         if let Some(ref mp) = self.momentum_potential {
-            let prev_vel = self.prev_pos.borrow();
+            let prev_vel = self.prev_vel.borrow();
             let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
             mp.add_energy_gradient(v, dx, grad_f);
         }

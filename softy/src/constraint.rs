@@ -28,7 +28,9 @@ pub trait ConstraintJacobian<T: Scalar> {
     fn constraint_jacobian_size(&self) -> usize;
 
     /// Compute the indices of the sparse matrix entries of the constraint Jacobian.
-    fn constraint_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item =  MatrixElementIndex> + 'a>;
+    fn constraint_jacobian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>;
 
     /// Compute the values of the constraint Jacobian.
     ///
@@ -51,7 +53,9 @@ pub trait ConstraintJacobian<T: Scalar> {
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
         let n = self.constraint_jacobian_size();
-        let indices_iter = self.constraint_jacobian_indices_iter().map(|idx| idx + offset);
+        let indices_iter = self
+            .constraint_jacobian_indices_iter()
+            .map(|idx| idx + offset);
         let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
         self.constraint_jacobian_values(x, dx, values.as_mut_slice());
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
@@ -90,7 +94,9 @@ pub trait ConstraintHessian<T: Scalar> {
 
     /// Compute the Hessian row and column indices of the matrix resulting from the constraint
     /// Hessian multiplied by the Lagrange multiplier vector.
-    fn constraint_hessian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>;
+    fn constraint_hessian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>;
 
     /*
      * Below are convenience functions for auxiliary applications. Users should provide custom
@@ -114,7 +120,9 @@ pub trait ConstraintHessian<T: Scalar> {
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
         let n = self.constraint_hessian_size();
-        let indices_iter = self.constraint_hessian_indices_iter().map(|idx| idx + offset);
+        let indices_iter = self
+            .constraint_hessian_indices_iter()
+            .map(|idx| idx + offset);
         let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
         self.constraint_hessian_values(x, dx, lambda, values.as_mut_slice());
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
@@ -130,7 +138,13 @@ pub trait ConstraintHessian<T: Scalar> {
     ///   - `x` is the variable expected by the specific constraint for the previous configuration.
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
-    fn constraint_hessian(&self, x: &[T], dx: &[T], lambda: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
+    fn constraint_hessian(
+        &self,
+        x: &[T],
+        dx: &[T],
+        lambda: &[T],
+        triplets: &mut [MatrixElementTriplet<T>],
+    ) {
         self.constraint_hessian_offset(x, dx, lambda, (0, 0).into(), triplets)
     }
 }

@@ -46,8 +46,7 @@ pub trait FilterMaskedTrait {
     }
 }
 
-impl<I: Iterator> FilterMaskedTrait for I { }
-
+impl<I: Iterator> FilterMaskedTrait for I {}
 
 /// Expand a given iterator into an iterator which spits out values wherever the given mask
 /// evaluates to `true` and some default value otherwise.
@@ -100,5 +99,4 @@ pub trait DistributeTrait {
     }
 }
 
-impl<T: Clone, I: Iterator<Item = T>> DistributeTrait for I { }
-
+impl<T: Clone, I: Iterator<Item = T>> DistributeTrait for I {}

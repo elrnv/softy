@@ -5,10 +5,10 @@ use crate::geo::mesh::{topology::*, Attrib};
 use crate::geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
+use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use num_traits::FromPrimitive;
 
 /// The potential energy responsible for maintaining the intertial motion of an object.
 #[derive(Debug, PartialEq)]
@@ -67,10 +67,7 @@ impl Energy<f64> for MomentumPotential {
                 let tet_dv = tet_dx * dt_inv - tet_v;
 
                 0.5 * dt_inv * {
-                    let dvTdv: f64 = tet_dv.into_array()
-                    .into_iter()
-                    .map(|&dv| dv.dot(dv))
-                    .sum();
+                    let dvTdv: f64 = tet_dv.into_array().into_iter().map(|&dv| dv.dot(dv)).sum();
                     // momentum
                     0.25 * vol * density * dvTdv * dt
                 }
@@ -122,7 +119,12 @@ impl EnergyHessian<f64> for MomentumPotential {
         self.tetmesh.borrow().num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
 
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(&self, offset: MatrixElementIndex, rows: &mut [I], cols: &mut [I]) {
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+        &self,
+        offset: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
@@ -144,14 +146,20 @@ impl EnergyHessian<f64> for MomentumPotential {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        tet_hess_rows[3 * vi + j] = I::from_usize(3 * cell[vi] + j + offset.row).unwrap();
-                        tet_hess_cols[3 * vi + j] = I::from_usize(3 * cell[vi] + j + offset.col).unwrap();
+                        tet_hess_rows[3 * vi + j] =
+                            I::from_usize(3 * cell[vi] + j + offset.row).unwrap();
+                        tet_hess_cols[3 * vi + j] =
+                            I::from_usize(3 * cell[vi] + j + offset.col).unwrap();
                     }
                 }
             });
     }
 
-    fn energy_hessian_indices_offset(&self, offset: MatrixElementIndex, indices: &mut [MatrixElementIndex]) {
+    fn energy_hessian_indices_offset(
+        &self,
+        offset: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
         let tetmesh = self.tetmesh.borrow();

@@ -1,13 +1,13 @@
 use crate::constraint::*;
-use crate::geo::mesh::topology::*;
-use crate::geo::mesh::{VertexPositions, Attrib};
-use crate::matrix::*;
 use crate::geo::math::Vector3;
+use crate::geo::mesh::topology::*;
+use crate::geo::mesh::{Attrib, VertexPositions};
+use crate::matrix::*;
 use crate::TetMesh;
 use crate::TriMesh;
+use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use implicits::*;
 
 ///// Linearization of a constraint given by `C`.
 //pub struct Linearized<C> {
@@ -50,9 +50,11 @@ use implicits::*;
 pub struct LinearSmoothContactConstraint(pub SmoothContactConstraint);
 
 impl LinearSmoothContactConstraint {
-    pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>,
-               trimesh_rc: &Rc<RefCell<TriMesh>>,
-               params: SmoothContactParams) -> Self {
+    pub fn new(
+        tetmesh_rc: &Rc<RefCell<TetMesh>>,
+        trimesh_rc: &Rc<RefCell<TriMesh>>,
+        params: SmoothContactParams,
+    ) -> Self {
         LinearSmoothContactConstraint(SmoothContactConstraint::new(tetmesh_rc, trimesh_rc, params))
     }
 
@@ -68,7 +70,7 @@ impl LinearSmoothContactConstraint {
     //    self.0.implicit_surface.borrow().potential(query_points, values).unwrap();
     //}
 
-    pub fn update_cache(&mut self, query_points: &[[f64;3]]) {
+    pub fn update_cache(&mut self, query_points: &[[f64; 3]]) {
         self.0.update_cache(query_points);
     }
 
@@ -113,9 +115,10 @@ impl Constraint<f64> for LinearSmoothContactConstraint {
 
         // Compute Jacobian . dx (dot product).
         let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
-        surf.surface_jacobian_values(query_points, &mut jac_values).unwrap();
+        surf.surface_jacobian_values(query_points, &mut jac_values)
+            .unwrap();
         for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
-            value[row] += jac_val*dx[self.0.tetmesh_coordinate_index(col)];
+            value[row] += jac_val * dx[self.0.tetmesh_coordinate_index(col)];
         }
         //println!("g = {:?}", value);
     }
@@ -128,8 +131,7 @@ impl ConstraintJacobian<f64> for LinearSmoothContactConstraint {
     }
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-    {
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         self.0.constraint_jacobian_indices_iter()
     }
 
@@ -139,7 +141,11 @@ impl ConstraintJacobian<f64> for LinearSmoothContactConstraint {
         self.0.update_surface(x);
         let collider = self.0.collision_object.borrow();
         let query_points = collider.vertex_positions();
-        self.0.implicit_surface.borrow().surface_jacobian_values(query_points, values).unwrap();
+        self.0
+            .implicit_surface
+            .borrow()
+            .surface_jacobian_values(query_points, values)
+            .unwrap();
     }
 }
 
@@ -151,11 +157,16 @@ impl ConstraintHessian<f64> for LinearSmoothContactConstraint {
     }
     fn constraint_hessian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-    {
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         Box::new(std::iter::empty())
     }
-    fn constraint_hessian_values(&self, _x: &[f64], _dx: &[f64], _lambda: &[f64], _values: &mut [f64]) {
+    fn constraint_hessian_values(
+        &self,
+        _x: &[f64],
+        _dx: &[f64],
+        _lambda: &[f64],
+        _values: &mut [f64],
+    ) {
         debug_assert_eq!(_values.len(), self.constraint_hessian_size());
     }
 }
@@ -186,7 +197,11 @@ pub struct SmoothContactParams {
 }
 
 impl SmoothContactConstraint {
-    pub fn new(tetmesh_rc: &Rc<RefCell<TetMesh>>, trimesh_rc: &Rc<RefCell<TriMesh>>, params: SmoothContactParams) -> Self {
+    pub fn new(
+        tetmesh_rc: &Rc<RefCell<TetMesh>>,
+        trimesh_rc: &Rc<RefCell<TriMesh>>,
+        params: SmoothContactParams,
+    ) -> Self {
         let tetmesh = tetmesh_rc.borrow();
         let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
         let sample_verts = surf_mesh
@@ -199,12 +214,17 @@ impl SmoothContactConstraint {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&surf_mesh)
-            .kernel(KernelType::Approximate { radius: params.radius, tolerance: params.tolerance })
-            .max_step(params.max_step*2.0) // double it because the step can be by samples or query points
+            .kernel(KernelType::Approximate {
+                radius: params.radius,
+                tolerance: params.tolerance,
+            })
+            .max_step(params.max_step * 2.0) // double it because the step can be by samples or query points
             .sample_type(SampleType::Face)
             .background_potential(BackgroundPotentialType::None);
 
-        let surface = surface_builder.build().expect("No surface points detected.");
+        let surface = surface_builder
+            .build()
+            .expect("No surface points detected.");
 
         let constraint = SmoothContactConstraint {
             sample_verts,
@@ -215,7 +235,10 @@ impl SmoothContactConstraint {
 
         let trimesh = trimesh_rc.borrow();
         let query_points = trimesh.vertex_positions();
-        constraint.implicit_surface.borrow().cache_neighbours(query_points);
+        constraint
+            .implicit_surface
+            .borrow()
+            .cache_neighbours(query_points);
         constraint
     }
 
@@ -230,29 +253,30 @@ impl SmoothContactConstraint {
     /// Given an index into the surface point position coordinates, return the corresponding index
     /// into the original `TetMesh`.
     pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
-        3*self.sample_verts[idx/3] + idx%3
+        3 * self.sample_verts[idx / 3] + idx % 3
     }
 
     /// Update implicit surface using the given position and displacement data.
     pub fn update_surface_with_displacement(&self, x: &[f64], dx: &[f64]) {
         let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
         let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
-        let points_iter = self.sample_verts.iter().map(|&i| (all_positions[i] + all_displacements[i]).into());
+        let points_iter = self
+            .sample_verts
+            .iter()
+            .map(|&i| (all_positions[i] + all_displacements[i]).into());
 
-        self.implicit_surface.borrow_mut()
-            .update(points_iter);
+        self.implicit_surface.borrow_mut().update(points_iter);
     }
 
     /// Update implicit surface using the given position data.
     pub fn update_surface(&self, x: &[f64]) {
-        let all_positions: &[[f64;3]] = reinterpret_slice(x);
+        let all_positions: &[[f64; 3]] = reinterpret_slice(x);
         let points_iter = self.sample_verts.iter().map(|&i| all_positions[i]);
 
-        self.implicit_surface.borrow_mut()
-            .update(points_iter);
+        self.implicit_surface.borrow_mut().update(points_iter);
     }
 
-    pub fn update_cache(&mut self, query_points: &[[f64;3]]) {
+    pub fn update_cache(&mut self, query_points: &[[f64; 3]]) {
         let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_neighbour_cache();
         surf.cache_neighbours(query_points);
@@ -280,25 +304,30 @@ impl Constraint<f64> for SmoothContactConstraint {
         for val in value.iter_mut() {
             *val = 0.0; // Clear potential value.
         }
-        self.implicit_surface.borrow().potential(query_points, value).unwrap();
+        self.implicit_surface
+            .borrow()
+            .potential(query_points, value)
+            .unwrap();
     }
 }
 
 impl ConstraintJacobian<f64> for SmoothContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
-        self.implicit_surface.borrow().num_surface_jacobian_entries()
+        self.implicit_surface
+            .borrow()
+            .num_surface_jacobian_entries()
     }
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-    {
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
             surf.surface_jacobian_indices_iter().unwrap()
         };
-        Box::new(idx_iter.map(move |(row, col)| {
-            MatrixElementIndex { row, col: self.tetmesh_coordinate_index(col) }
+        Box::new(idx_iter.map(move |(row, col)| MatrixElementIndex {
+            row,
+            col: self.tetmesh_coordinate_index(col),
         }))
     }
     fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
@@ -306,7 +335,10 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
         self.update_surface_with_displacement(x, dx);
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
-        self.implicit_surface.borrow().surface_jacobian_values(query_points, values).unwrap();
+        self.implicit_surface
+            .borrow()
+            .surface_jacobian_values(query_points, values)
+            .unwrap();
     }
 }
 

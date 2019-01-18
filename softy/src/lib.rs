@@ -1,23 +1,23 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 
 extern crate geometry as geo;
+extern crate implicits;
 extern crate ipopt;
 extern crate nalgebra as na;
 extern crate rayon;
 extern crate reinterpret;
-extern crate implicits;
 
 #[macro_use]
 extern crate approx;
 
 mod attrib_defines;
-pub mod mask_iter;
 mod bench;
 mod constraint;
 mod constraints;
 mod energy;
 mod energy_models;
 pub mod fem;
+pub mod mask_iter;
 mod matrix;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
@@ -25,8 +25,8 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
-pub use self::fem::{ElasticityParameters, Material, SimParams, SolveResult, InnerSolveResult};
 pub use self::constraints::SmoothContactParams;
+pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, SimParams, SolveResult};
 use crate::geo::mesh::attrib;
 
 #[derive(Debug)]
@@ -72,30 +72,26 @@ impl From<Error> for SimResult {
             Error::InvertedReferenceElement => {
                 SimResult::Error("Inverted reference element detected.".to_string())
             }
-            Error::SolveError(
-                e,
-                solve_result,
-            ) => 
-                match e {
-                    ipopt::SolveStatus::MaximumIterationsExceeded => {
-                        SimResult::Warning( format!( "Maximum iterations exceeded. \n{}", solve_result))
-                    }
-                    e => {
-                        SimResult::Error(format!( "Solve failed: {:?}\n{}", e, solve_result))
-                    }
-                },
-            Error::InnerSolveError(e, solve_result) =>
-                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result)),
-            Error::MissingContactParams =>
-                SimResult::Error("Missing smooth contact parameters.".to_string()),
-            Error::NoSimulationMesh =>
-                SimResult::Error("Missing simulation mesh.".to_string()),
-            Error::NoKinematicMesh =>
-                SimResult::Error("Missing kinematic mesh.".to_string()),
-            Error::SolverCreateError(err) =>
-                SimResult::Error(format!("Failed to create a solver: {:?}", err)),
-            Error::InvalidParameter(err) =>
-                SimResult::Error(format!("Invalid parameter: {:?}", err)),
+            Error::SolveError(e, solve_result) => match e {
+                ipopt::SolveStatus::MaximumIterationsExceeded => {
+                    SimResult::Warning(format!("Maximum iterations exceeded. \n{}", solve_result))
+                }
+                e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
+            },
+            Error::InnerSolveError(e, solve_result) => {
+                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result))
+            }
+            Error::MissingContactParams => {
+                SimResult::Error("Missing smooth contact parameters.".to_string())
+            }
+            Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh.".to_string()),
+            Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh.".to_string()),
+            Error::SolverCreateError(err) => {
+                SimResult::Error(format!("Failed to create a solver: {:?}", err))
+            }
+            Error::InvalidParameter(err) => {
+                SimResult::Error(format!("Invalid parameter: {:?}", err))
+            }
         }
     }
 }
@@ -137,7 +133,10 @@ pub fn sim(
 }
 
 pub(crate) fn inf_norm(vec: &[f64]) -> f64 {
-    vec.iter().map(|x| x.abs()).max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs")).unwrap_or(0.0)
+    vec.iter()
+        .map(|x| x.abs())
+        .max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
+        .unwrap_or(0.0)
 }
 
 #[cfg(test)]

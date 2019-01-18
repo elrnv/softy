@@ -52,8 +52,8 @@ impl Constraint<f64> for VolumeConstraint {
 
     fn constraint(&self, x: &[f64], dx: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        let pos: &[[f64;3]] = reinterpret_slice(x);
-        let disp: &[[f64;3]] = reinterpret_slice(dx);
+        let pos: &[[f64; 3]] = reinterpret_slice(x);
+        let disp: &[[f64; 3]] = reinterpret_slice(dx);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
             let p = Matrix3(tri_at(pos, tri)) + Matrix3(tri_at(disp, tri));
@@ -85,8 +85,8 @@ impl VolumeConstraint {
         x: &'a [f64],
         dx: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        let pos: &[[f64;3]] = reinterpret_slice(x);
-        let disp: &[[f64;3]] = reinterpret_slice(dx);
+        let pos: &[[f64; 3]] = reinterpret_slice(x);
+        let disp: &[[f64; 3]] = reinterpret_slice(dx);
 
         self.surface_topo.iter().flat_map(move |tri| {
             let p = Matrix3(tri_at(pos, tri)) + Matrix3(tri_at(disp, tri));
@@ -102,7 +102,9 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
     fn constraint_jacobian_size(&self) -> usize {
         3 * 3 * self.surface_topo.len()
     }
-    fn constraint_jacobian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    fn constraint_jacobian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self))
     }
     fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
@@ -189,7 +191,9 @@ impl ConstraintHessian<f64> for VolumeConstraint {
     fn constraint_hessian_size(&self) -> usize {
         6 * 3 * self.surface_topo.len()
     }
-    fn constraint_hessian_indices_iter<'a>(&'a self) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    fn constraint_hessian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         Box::new(VolumeConstraint::constraint_hessian_indices_iter(self))
     }
     fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {

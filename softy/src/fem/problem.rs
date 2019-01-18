@@ -7,7 +7,7 @@ use crate::energy_models::{
 //use geo::io::save_tetmesh_ascii;
 use crate::constraints::{smooth_contact::LinearSmoothContactConstraint, volume::VolumeConstraint};
 use crate::geo::math::Vector3;
-use crate::geo::mesh::{topology::*, VertexPositions, Attrib};
+use crate::geo::mesh::{topology::*, Attrib, VertexPositions};
 use crate::matrix::*;
 use ipopt::{self, Index, Number};
 use reinterpret::*;
@@ -57,7 +57,8 @@ impl Solution {
         self.primal_variables.extend_from_slice(&x);
         self.lower_bound_multipliers.extend_from_slice(&x);
         self.upper_bound_multipliers.extend_from_slice(&x);
-        self.constraint_multipliers.extend_from_slice(&vec![0.0; num_constraints]);
+        self.constraint_multipliers
+            .extend_from_slice(&vec![0.0; num_constraints]);
         self
     }
 
@@ -72,10 +73,14 @@ impl Solution {
     /// Update allocated solution vectors with new data from Ipopt.
     pub fn update<'a>(&mut self, sol: ipopt::Solution<'a>) -> &mut Self {
         self.clear();
-        self.primal_variables.extend_from_slice(sol.primal_variables);
-        self.lower_bound_multipliers.extend_from_slice(sol.lower_bound_multipliers);
-        self.upper_bound_multipliers.extend_from_slice(sol.upper_bound_multipliers);
-        self.constraint_multipliers.extend_from_slice(sol.constraint_multipliers);
+        self.primal_variables
+            .extend_from_slice(sol.primal_variables);
+        self.lower_bound_multipliers
+            .extend_from_slice(sol.lower_bound_multipliers);
+        self.upper_bound_multipliers
+            .extend_from_slice(sol.upper_bound_multipliers);
+        self.constraint_multipliers
+            .extend_from_slice(sol.constraint_multipliers);
         self
     }
 }
@@ -137,7 +142,8 @@ impl NonLinearProblem {
     /// Reset solution used for warm starts.
     pub fn reset_solution(&mut self) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        self.solution.reset(self.num_variables(), self.num_constraints());
+        self.solution
+            .reset(self.num_variables(), self.num_constraints());
     }
 
     /// Get the current iteration count and reset it.
@@ -153,24 +159,19 @@ impl NonLinearProblem {
 
     /// Intermediate callback for `Ipopt`.
     #[allow(clippy::too_many_arguments)] // TODO: Improve on the ipopt interface
-    pub fn intermediate_cb(
-        &mut self,
-        _data: ipopt::IntermediateCallbackData,
-    ) -> bool {
+    pub fn intermediate_cb(&mut self, _data: ipopt::IntermediateCallbackData) -> bool {
         self.iterations += 1;
         !(self.interrupt_checker)()
     }
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
-    pub fn advance(&mut self, disp: impl Iterator<Item=Vector3<f64>>) {
+    pub fn advance(&mut self, disp: impl Iterator<Item = Vector3<f64>>) {
         let dt_inv = 1.0 / self.time_step;
 
         let mut prev_vel = self.prev_vel.borrow_mut();
         let mut prev_pos = self.prev_pos.borrow_mut();
 
-        disp
-            .zip(prev_pos.iter_mut()
-            .zip(prev_vel.iter_mut()))
+        disp.zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
             .for_each(|(dp, (prev_p, prev_v))| {
                 *prev_p += dp;
                 *prev_v = dp * dt_inv;
@@ -184,11 +185,11 @@ impl NonLinearProblem {
         // recomputed at the next time step (if applicable).
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64;3]>(mesh.vertex_positions()));
+            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
         }
     }
-   
-    /// Linearized constraint true violation measure. 
+
+    /// Linearized constraint true violation measure.
     pub fn linearized_constraint_violation_l1(&self, dx: &[f64]) -> f64 {
         let mut value = 0.0;
 
@@ -205,24 +206,29 @@ impl NonLinearProblem {
             assert_eq!(g_l.len(), n);
             assert_eq!(g_u.len(), n);
 
-            value += g.into_iter()
+            value += g
+                .into_iter()
                 .zip(g_l.into_iter().zip(g_u.into_iter()))
-                .map(|(c, (l,u))| {
+                .map(|(c, (l, u))| {
                     assert!(l <= u);
-                    if c < l { // below lower bound
+                    if c < l {
+                        // below lower bound
                         l - c
-                    } else if c > u { // above upper bound
+                    } else if c > u {
+                        // above upper bound
                         c - u
-                    } else {  // Constraint not violated
+                    } else {
+                        // Constraint not violated
                         0.0
                     }
-                }).sum::<f64>();
+                })
+                .sum::<f64>();
         }
 
         value
     }
 
-    /// Linearized constraint model violation measure. 
+    /// Linearized constraint model violation measure.
     pub fn linearized_constraint_violation_model_l1(&self, dx: &[f64]) -> f64 {
         let mut value = 0.0;
 
@@ -239,16 +245,23 @@ impl NonLinearProblem {
             assert_eq!(g_l.len(), n);
             assert_eq!(g_u.len(), n);
 
-            value += g.into_iter().zip(g_l.into_iter().zip(g_u.into_iter())).map(|(c, (l,u))| {
-                assert!(l <= u);
-                if c < l { // below lower bound
-                    l - c
-                } else if c > u { // above upper bound
-                    c - u
-                } else {  // Constraint not violated
-                    0.0
-                }
-            }).sum::<f64>();
+            value += g
+                .into_iter()
+                .zip(g_l.into_iter().zip(g_u.into_iter()))
+                .map(|(c, (l, u))| {
+                    assert!(l <= u);
+                    if c < l {
+                        // below lower bound
+                        l - c
+                    } else if c > u {
+                        // above upper bound
+                        c - u
+                    } else {
+                        // Constraint not violated
+                        0.0
+                    }
+                })
+                .sum::<f64>();
         }
 
         value
@@ -289,11 +302,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
         x_l.iter_mut().for_each(|x| *x = -bound);
         x_u.iter_mut().for_each(|x| *x = bound);
 
-        if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB) {
+        if let Ok(fixed_verts) = tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+        {
             // Find and set fixed vertices.
             let pos_lo: &mut [[Number; 3]] = reinterpret_mut_slice(x_l);
             let pos_hi: &mut [[Number; 3]] = reinterpret_mut_slice(x_u);
-            pos_lo.iter_mut()
+            pos_lo
+                .iter_mut()
                 .zip(pos_hi.iter_mut())
                 .zip(fixed_verts.iter())
                 .filter(|&(_, &fixed)| fixed != 0)
@@ -341,7 +356,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_size();
         }
-        if let Some(ref scc) = self.smooth_contact_constraint{
+        if let Some(ref scc) = self.smooth_contact_constraint {
             num += scc.constraint_size();
             //println!("num constraints  = {:?}", num);
         }
@@ -372,13 +387,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_size();
-            vc.constraint(x, dx, &mut g[i..i+n]);
+            vc.constraint(x, dx, &mut g[i..i + n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_size();
-            scc.constraint(x, dx, &mut g[i..i+n]);
+            scc.constraint(x, dx, &mut g[i..i + n]);
         }
 
         true
@@ -389,16 +404,16 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             let mut bounds = vc.constraint_bounds();
             let n = vc.constraint_size();
-            g_l[i..i+n].swap_with_slice(&mut bounds.0);
-            g_u[i..i+n].swap_with_slice(&mut bounds.1);
+            g_l[i..i + n].swap_with_slice(&mut bounds.0);
+            g_u[i..i + n].swap_with_slice(&mut bounds.1);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let mut bounds = scc.constraint_bounds();
             let n = scc.constraint_size();
-            g_l[i..i+n].swap_with_slice(&mut bounds.0);
-            g_u[i..i+n].swap_with_slice(&mut bounds.1);
+            g_l[i..i + n].swap_with_slice(&mut bounds.0);
+            g_u[i..i + n].swap_with_slice(&mut bounds.1);
         }
         true
     }
@@ -436,13 +451,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x, dx, &mut vals[i..i+n]);
+            vc.constraint_jacobian_values(x, dx, &mut vals[i..i + n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_jacobian_size();
-            scc.constraint_jacobian_values(x, dx, &mut vals[i..i+n]);
+            scc.constraint_jacobian_values(x, dx, &mut vals[i..i + n]);
             //println!("jac g vals = {:?}", &vals[i..i+n]);
             //i += n;
         }
@@ -469,12 +484,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         // Add energy indices
         let n = self.energy_model.energy_hessian_size();
-        self.energy_model.energy_hessian_rows_cols(&mut rows[i..i+n], &mut cols[i..i+n]);
+        self.energy_model
+            .energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
         i += n;
 
         if let Some(ref mp) = self.momentum_potential {
             let n = mp.energy_hessian_size();
-            mp.energy_hessian_rows_cols(&mut rows[i..i+n], &mut cols[i..i+n]);
+            mp.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
             i += n;
         }
 
@@ -508,14 +524,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut i = 0;
         let n = self.energy_model.energy_hessian_size();
-        self.energy_model.energy_hessian_values(x, dx, &mut vals[i..i+n]);
+        self.energy_model
+            .energy_hessian_values(x, dx, &mut vals[i..i + n]);
         i += n;
 
         if let Some(ref mp) = self.momentum_potential {
             let n = mp.energy_hessian_size();
             let prev_vel = self.prev_pos.borrow();
             let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            mp.energy_hessian_values(v, dx, &mut vals[i..i+n]);
+            mp.energy_hessian_values(v, dx, &mut vals[i..i + n]);
             i += n;
         }
 
@@ -529,7 +546,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
-            vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
+            vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh]);
             //i += nh;
             //coff += nc
         }

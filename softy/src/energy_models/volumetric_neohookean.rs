@@ -4,14 +4,14 @@ use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::geo::math::{Matrix3, Vector3};
 use crate::geo::mesh::{topology::*, Attrib};
-use crate::geo::prim::Tetrahedron;
 use crate::geo::ops::*;
+use crate::geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
+use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use num_traits::FromPrimitive;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -268,7 +268,10 @@ impl ElasticTetMeshEnergyBuilder {
     }
 
     pub fn build(&self) -> ElasticTetMeshEnergy {
-        let ElasticTetMeshEnergyBuilder { ref tetmesh, ref material } = self;
+        let ElasticTetMeshEnergyBuilder {
+            ref tetmesh,
+            ref material,
+        } = self;
 
         ElasticTetMeshEnergy {
             tetmesh: tetmesh.clone(),
@@ -423,7 +426,12 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
     fn energy_hessian_size(&self) -> usize {
         NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS * self.tetmesh.borrow().num_cells()
     }
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(&self, offset: MatrixElementIndex, rows: &mut [I], cols: &mut [I]) {
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+        &self,
+        offset: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
@@ -436,7 +444,10 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
             let hess_col_chunks: &mut [[I; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
                 reinterpret_mut_slice(cols);
 
-            let hess_iter = hess_row_chunks.par_iter_mut().zip(hess_col_chunks.par_iter_mut()).zip(tetmesh.cells().par_iter());
+            let hess_iter = hess_row_chunks
+                .par_iter_mut()
+                .zip(hess_col_chunks.par_iter_mut())
+                .zip(tetmesh.cells().par_iter());
 
             hess_iter.for_each(|((tet_hess_rows, tet_hess_cols), cell)| {
                 Self::hessian_for_each(
@@ -456,7 +467,11 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
         }
     }
 
-    fn energy_hessian_indices_offset(&self, offset: MatrixElementIndex, indices: &mut [MatrixElementIndex]) {
+    fn energy_hessian_indices_offset(
+        &self,
+        offset: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
         let tetmesh = self.tetmesh.borrow();
@@ -464,8 +479,7 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
         {
             // Break up the hessian indices into chunks of elements for each tet.
             let hess_chunks: &mut [[MatrixElementIndex;
-                                       NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
-                reinterpret_mut_slice(indices);
+                      NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] = reinterpret_mut_slice(indices);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 

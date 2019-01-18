@@ -89,18 +89,25 @@ pub trait EnergyHessian<T: Scalar> {
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
     /// separate arrays.
     fn energy_hessian_rows_cols<I: FromPrimitive + Send>(&self, rows: &mut [I], cols: &mut [I]) {
-        self.energy_hessian_rows_cols_offset((0,0).into(), rows, cols);
+        self.energy_hessian_rows_cols_offset((0, 0).into(), rows, cols);
     }
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
     /// separate arrays.
     /// The `offset` parameter positions this energy Hessian
     /// within a global Hessian matrix specified by the user.
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(&self, offset: MatrixElementIndex, rows: &mut [I], cols: &mut [I]) {
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+        &self,
+        offset: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
         let n = self.energy_hessian_size();
         let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
-        for (MatrixElementIndex { row, col }, (r, c)) in indices.into_iter().zip(rows.iter_mut().zip(cols.iter_mut()))
+        for (MatrixElementIndex { row, col }, (r, c)) in indices
+            .into_iter()
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
         {
             *r = I::from_usize(row).unwrap();
             *c = I::from_usize(col).unwrap();

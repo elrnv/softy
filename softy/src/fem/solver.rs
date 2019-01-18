@@ -7,26 +7,26 @@ use crate::energy_models::{
     volumetric_neohookean::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
 use crate::geo::math::{Matrix3, Vector3};
-use crate::geo::mesh::{VertexPositions, tetmesh::TetCell, topology::*, Attrib};
+use crate::geo::mesh::{tetmesh::TetCell, topology::*, Attrib, VertexPositions};
 use crate::geo::ops::{ShapeMatrix, Volume};
 use crate::geo::prim::Tetrahedron;
-use ipopt::{self, Ipopt, SolverDataMut, SolverData};
+use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use reinterpret::*;
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
 
-use crate::mask_iter::*;
 use crate::inf_norm;
+use crate::mask_iter::*;
 
-use super::Solution;
 use super::NonLinearProblem;
 use super::SimParams;
+use super::Solution;
 use crate::Error;
 use crate::PointCloud;
-use crate::TetMesh;
 use crate::PolyMesh;
+use crate::TetMesh;
 use crate::TriMesh;
 
 /// Result from one inner simulation step.
@@ -68,8 +68,11 @@ impl SolveResult {
 
 impl std::fmt::Display for SolveResult {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Iterations: {}\nObjective: {}\nMax Inner Iterations: {}",
-               self.iterations, self.objective_value, self.max_inner_iterations)
+        write!(
+            f,
+            "Iterations: {}\nObjective: {}\nMax Inner Iterations: {}",
+            self.iterations, self.objective_value, self.max_inner_iterations
+        )
     }
 }
 
@@ -204,8 +207,10 @@ impl SolverBuilder {
         let mut mesh = solids[0].clone();
 
         // We need this quantity to compute the tolerance.
-        let max_vol = mesh.tet_iter().map(|tet| tet.volume()).max_by(|a,b| a.partial_cmp(b)
-                                                                     .expect("Degenerate tetrahedron detected"))
+        let max_vol = mesh
+            .tet_iter()
+            .map(|tet| tet.volume())
+            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
             .expect("Given TetMesh is empty");
 
         // Prepare deformable solid for simulation.
@@ -213,7 +218,7 @@ impl SolverBuilder {
 
         // Get previous position vector from the tetmesh.
         let prev_pos = Rc::new(RefCell::new(
-            reinterpret_slice(mesh.vertex_positions()).to_vec()
+            reinterpret_slice(mesh.vertex_positions()).to_vec(),
         ));
 
         // Initialize zero velocities
@@ -228,14 +233,12 @@ impl SolverBuilder {
         let lambda = lambda / mu;
         let density = f64::from(solid_material.density) / mu;
         // premultiply damping by timestep reciprocal.
-        let damping = params.time_step.map_or(0.0, |dt| 
-            if dt != 0.0 {
-                1.0 / f64::from(dt)
-            } else {
-                0.0
-            }
-        ) * f64::from(solid_material.damping)
-            / mu;
+        let damping =
+            params
+                .time_step
+                .map_or(0.0, |dt| if dt != 0.0 { 1.0 / f64::from(dt) } else { 0.0 })
+                * f64::from(solid_material.damping)
+                / mu;
 
         // All values are normalized by mu including mu itself so it becomes 1.0.
         let mu = 1.0;
@@ -263,8 +266,9 @@ impl SolverBuilder {
             .time_step
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
-        let smooth_contact_constraint = kinematic_object.as_ref()
-            .map(|trimesh| LinearSmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap()));
+        let smooth_contact_constraint = kinematic_object.as_ref().map(|trimesh| {
+            LinearSmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())
+        });
 
         let displacement_bound = smooth_contact_params.map(|scp| {
             // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
@@ -354,8 +358,7 @@ impl SolverBuilder {
     /// Compute shape matrix inverses for reference elements in the given `TetMesh`.
     fn compute_ref_tet_shape_matrix_inverses(mesh: &mut TetMesh) -> Vec<Matrix3<f64>> {
         // Compute reference shape matrix inverses
-        mesh
-            .cell_iter()
+        mesh.cell_iter()
             .map(|cell| {
                 let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
@@ -368,7 +371,10 @@ impl SolverBuilder {
     fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
         let verts = mesh.vertex_positions().to_vec();
 
-        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts.as_slice())?;
+        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
+            REFERENCE_POSITION_ATTRIB,
+            verts.as_slice(),
+        )?;
 
         mesh.attrib_or_add::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
 
@@ -376,17 +382,25 @@ impl SolverBuilder {
         // return an error if there is an existing Fixed attribute with the wrong type.
         {
             use crate::geo::mesh::attrib::*;
-            let fixed_buf = mesh.remove_attrib::<VertexIndex>(FIXED_ATTRIB)
-                .unwrap_or_else(|_| Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])).into_buffer();
+            let fixed_buf = mesh
+                .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
+                .unwrap_or_else(|_| {
+                    Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])
+                })
+                .into_buffer();
             let mut fixed = fixed_buf.cast_into_vec::<FixedIntType>();
-            if fixed.is_empty() { // If non-numeric type detected, just fill it with zeros.
+            if fixed.is_empty() {
+                // If non-numeric type detected, just fill it with zeros.
                 fixed.resize(mesh.num_vertices(), 0);
             }
             mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::from_vec(fixed))?;
         }
 
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
-        mesh.set_attrib_data::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes.as_slice())?;
+        mesh.set_attrib_data::<RefVolType, CellIndex>(
+            REFERENCE_VOLUME_ATTRIB,
+            ref_volumes.as_slice(),
+        )?;
 
         let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
         mesh.set_attrib_data::<_, CellIndex>(
@@ -424,7 +438,6 @@ pub struct Solver {
 }
 
 impl Solver {
-
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
         self.problem_mut().interrupt_checker = checker;
@@ -491,7 +504,7 @@ impl Solver {
         }
 
         // Only update fixed vertices, if no such attribute exists, return an error.
-        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?; 
+        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
         prev_pos
             .iter_mut()
             .zip(pts.vertex_position_iter())
@@ -515,7 +528,8 @@ impl Solver {
         }
 
         // Update all the vertices.
-        trimesh.vertex_position_iter_mut()
+        trimesh
+            .vertex_position_iter_mut()
             .zip(pts.vertex_position_iter())
             .for_each(|(pos, new_pos)| *pos = *new_pos);
         Ok(())
@@ -535,8 +549,10 @@ impl Solver {
                     .unwrap(),
             )
             .zip(
-                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
-                    .unwrap(),
+                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(
+                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                )
+                .unwrap(),
             )
             .zip(mesh.tet_iter())
             .for_each(|(((strain, &vol), &ref_shape_mtx_inv), tet)| {
@@ -550,12 +566,7 @@ impl Solver {
     }
 
     /// Given a tetmesh, compute the elastic forces per vertex.
-    fn compute_elastic_forces(
-        forces: &mut [Vector3<f64>],
-        mesh: &TetMesh,
-        lambda: f64,
-        mu: f64,
-    ) {
+    fn compute_elastic_forces(forces: &mut [Vector3<f64>], mesh: &TetMesh, lambda: f64, mu: f64) {
         // Reset forces
         for f in forces.iter_mut() {
             *f = Vector3::zeros();
@@ -565,8 +576,10 @@ impl Solver {
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(
-                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
-                    .unwrap(),
+                mesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(
+                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                )
+                .unwrap(),
             )
             .zip(mesh.tet_iter())
             .map(|((&vol, &ref_shape_mtx_inv), tet)| {
@@ -631,11 +644,12 @@ impl Solver {
         use ipopt::ConstrainedProblem;
         let SolverData {
             problem,
-            solution: ipopt::Solution {
-                primal_variables,
-                constraint_multipliers,
-                ..
-            },
+            solution:
+                ipopt::Solution {
+                    primal_variables,
+                    constraint_multipliers,
+                    ..
+                },
             ..
         } = self.solver.solver_data();
 
@@ -644,12 +658,15 @@ impl Solver {
         let mut upper = vec![0.0; constraint.len()];
         problem.constraint_bounds(&mut lower, &mut upper);
         assert!(problem.constraint(&vec![0.0; primal_variables.len()], constraint));
-        for (c, (l, u)) in constraint.iter_mut().zip(lower.into_iter().zip(upper.into_iter())) {
+        for (c, (l, u)) in constraint
+            .iter_mut()
+            .zip(lower.into_iter().zip(upper.into_iter()))
+        {
             assert!(l <= u); // sanity check
-            // Subtract the appropriate bound from the constraint function:
-            // If the constraint is lower than the lower bound, then the multiplier will be
-            // non-zero and the result of the constraint force must be balanced by the objective
-            // gradient under convergence. The same goes for the upper bound.
+                             // Subtract the appropriate bound from the constraint function:
+                             // If the constraint is lower than the lower bound, then the multiplier will be
+                             // non-zero and the result of the constraint force must be balanced by the objective
+                             // gradient under convergence. The same goes for the upper bound.
             if *c < l {
                 *c -= l;
             } else if *c > u {
@@ -666,8 +683,7 @@ impl Solver {
         let SolverData {
             problem,
             solution: ipopt::Solution {
-                primal_variables,
-                ..
+                primal_variables, ..
             },
             ..
         } = self.solver.solver_data();
@@ -675,7 +691,10 @@ impl Solver {
         assert_eq!(grad.len(), primal_variables.len());
         assert!(problem.objective_grad(primal_variables, grad));
 
-        grad.iter().zip(primal_variables.iter()).map(|(g,dx)| g*dx).sum()
+        grad.iter()
+            .zip(primal_variables.iter())
+            .map(|(g, dx)| g * dx)
+            .sum()
     }
 
     /// Compute the gradient of the objective. We only consider unfixed vertices.  Panic if this fails.
@@ -684,8 +703,7 @@ impl Solver {
         let SolverData {
             problem,
             solution: ipopt::Solution {
-                primal_variables,
-                ..
+                primal_variables, ..
             },
             ..
         } = self.solver.solver_data();
@@ -695,8 +713,10 @@ impl Solver {
 
         // Erase fixed vert data. This doesn't contribute to the solve.
         let mesh = problem.tetmesh.borrow();
-        let fixed_iter = mesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-            .expect("Missing fixed verts attribute").map(|&x| x != 0);
+        let fixed_iter = mesh
+            .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            .expect("Missing fixed verts attribute")
+            .map(|&x| x != 0);
         let vert_grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
         for g in vert_grad.iter_mut().filter_masked(fixed_iter) {
             *g = Vector3::zeros();
@@ -708,11 +728,12 @@ impl Solver {
         use ipopt::ConstrainedProblem;
         let SolverData {
             problem,
-            solution: ipopt::Solution {
-                primal_variables,
-                constraint_multipliers,
-                ..
-            },
+            solution:
+                ipopt::Solution {
+                    primal_variables,
+                    constraint_multipliers,
+                    ..
+                },
             ..
         } = self.solver.solver_data();
 
@@ -726,14 +747,19 @@ impl Solver {
 
         // We don't consider values for fixed vertices.
         let mesh = problem.tetmesh.borrow();
-        let fixed = mesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+        let fixed = mesh
+            .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             .expect("Missing fixed verts attribute");
 
         assert_eq!(jac_prod.len(), primal_variables.len());
         // Effectively this is jac.transpose() * constraint_multipliers
-        for ((row, col), val) in rows.into_iter().zip(cols.into_iter()).zip(values.into_iter()) {
-            if fixed[(col as usize)/3] == 0 {
-                jac_prod[col as usize] += val*constraint_multipliers[row as usize];
+        for ((row, col), val) in rows
+            .into_iter()
+            .zip(cols.into_iter())
+            .zip(values.into_iter())
+        {
+            if fixed[(col as usize) / 3] == 0 {
+                jac_prod[col as usize] += val * constraint_multipliers[row as usize];
             }
         }
     }
@@ -749,9 +775,7 @@ impl Solver {
     /// Update the `mesh` and `prev_pos` with the current solution.
     fn commit_solution(&mut self) {
         let SolverDataMut {
-            problem,
-            solution,
-            ..
+            problem, solution, ..
         } = self.solver.solver_data_mut();
 
         // Reinterpret solver variables as positions in 3D space.
@@ -774,10 +798,18 @@ impl Solver {
 
     fn output_meshes(&self, iter: u32) {
         let mesh = self.borrow_mesh();
-        crate::geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter+1))).unwrap();
+        crate::geo::io::save_tetmesh(
+            &mesh,
+            &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter + 1)),
+        )
+        .unwrap();
         if let Some(mesh) = self.try_borrow_kinematic_mesh() {
             let polymesh = PolyMesh::from(mesh.clone());
-            crate::geo::io::save_polymesh(&polymesh, &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter+1))).unwrap();
+            crate::geo::io::save_polymesh(
+                &polymesh,
+                &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter + 1)),
+            )
+            .unwrap();
         }
     }
 
@@ -823,7 +855,10 @@ impl Solver {
         let constraint_violation_norm = inf_norm(constraint_violation);
         let residual_norm = inf_norm(residual);
 
-        println!("residual = {:?}, cv = {:?}", residual_norm, constraint_violation_norm);
+        println!(
+            "residual = {:?}, cv = {:?}",
+            residual_norm, constraint_violation_norm
+        );
 
         residual_norm
     }
@@ -854,7 +889,6 @@ impl Solver {
 
         // We should iterate until a relative residual goes to zero.
         for iter in 0..self.sim_params.max_outer_iterations {
-
             let step_result = self.inner_step();
 
             let f_k = self.compute_objective_dx(&zero_dx);
@@ -866,7 +900,7 @@ impl Solver {
             } else {
                 let fdx = self.compute_objective_gradient_product(&mut objective_gradient);
                 println!("fdx = {:?}", fdx);
-                (fdx / ((1.0-rho)*c_k)).max(0.0)
+                (fdx / ((1.0 - rho) * c_k)).max(0.0)
             };
             println!("mu = {:?}", mu);
 
@@ -882,7 +916,7 @@ impl Solver {
             // able to investigate the result.
             self.commit_solution();
 
-            self.output_meshes(iter+1);
+            self.output_meshes(iter + 1);
 
             // Update output result with new data.
             match step_result {
@@ -890,7 +924,7 @@ impl Solver {
                     result = result.combine_inner_result(step_result);
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
-                    // If the problem is infeasible, it may be that our step size is too small, 
+                    // If the problem is infeasible, it may be that our step size is too small,
                     // Try to increase it (but not past max_step) and try again:
                     if status == ipopt::SolveStatus::InfeasibleProblemDetected {
                         let max_step = self.max_step;
@@ -928,22 +962,22 @@ impl Solver {
             {
                 let max_step = self.max_step;
                 let SolverDataMut {
-                    problem,
-                    solution,
-                    ..
+                    problem, solution, ..
                 } = self.solver.solver_data_mut();
 
                 if max_step > 0.0 {
                     if let Some(disp) = problem.displacement_bound {
-                        println!("f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
-                                 prev_merit, merit_value, prev_model, merit_model);
+                        println!(
+                            "f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
+                            prev_merit, merit_value, prev_model, merit_model
+                        );
                         let reduction = (prev_merit - merit_value) / (prev_model - merit_model);
                         println!("reduction = {:?}", reduction);
 
                         let step_size = inf_norm(solution.primal_variables);
 
                         if reduction < 0.25 {
-                            if step_size < 1e-5*max_step {
+                            if step_size < 1e-5 * max_step {
                                 break; // Reducing the step wont help at this point
                             }
                             // The constraint violation is not decreasing, roll back and reduce the step size.
@@ -957,7 +991,10 @@ impl Solver {
                                 // The linearized constraints are a good model of the actual constraints,
                                 // increase the step size and continue.
                                 problem.displacement_bound.replace(max_step.min(2.0 * disp));
-                                println!("increase step to {:?}", problem.displacement_bound.unwrap());
+                                println!(
+                                    "increase step to {:?}",
+                                    problem.displacement_bound.unwrap()
+                                );
                             } // Otherwise keep the step size the same.
                         }
                         if reduction < 0.15 {
@@ -970,8 +1007,10 @@ impl Solver {
         }
 
         if result.iterations >= self.sim_params.max_outer_iterations {
-            eprintln!("WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
-                      result.iterations, residual_norm);
+            eprintln!(
+                "WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
+                result.iterations, residual_norm
+            );
         }
 
         self.step_count += 1;
@@ -1464,7 +1503,12 @@ mod tests {
      * Tests with contact constraints
      */
 
-    fn compute_contact_constraint(sample_mesh: &PolyMesh, tetmesh: &TetMesh, radius: f64, tolerance: f64) -> Vec<f32> {
+    fn compute_contact_constraint(
+        sample_mesh: &PolyMesh,
+        tetmesh: &TetMesh,
+        radius: f64,
+        tolerance: f64,
+    ) -> Vec<f32> {
         use implicits::*;
 
         // There are currently two different ways to compute the implicit function representing the
@@ -1472,10 +1516,7 @@ mod tests {
         // the same. This douples as a test for the implicits crate.
 
         let params = implicits::Params {
-            kernel: KernelType::Approximate {
-                tolerance,
-                radius,
-            },
+            kernel: KernelType::Approximate { tolerance, radius },
             background_potential: BackgroundPotentialType::None,
             sample_type: SampleType::Face,
             ..Default::default()
@@ -1486,8 +1527,9 @@ mod tests {
         let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
         compute_potential_debug(&mut trimesh_copy, &mut surface_polymesh, params, || false)
             .expect("Failed to compute constraint value");
-        
-        let pot_attrib = trimesh_copy.attrib_clone_into_vec::<f32, VertexIndex>("potential")
+
+        let pot_attrib = trimesh_copy
+            .attrib_clone_into_vec::<f32, VertexIndex>("potential")
             .expect("Potential attribute doesn't exist");
 
         {
@@ -1501,7 +1543,7 @@ mod tests {
             // Make sure the two potentials are identical.
             println!("potential = {:?}", pot_attrib);
             println!("potential64 = {:?}", pot_attrib64);
-            for (&x,&y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
+            for (&x, &y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
                 assert_relative_eq!(x, y as f32, max_relative = 1e-5);
             }
         }
@@ -1531,9 +1573,11 @@ mod tests {
         let tet = vec![3, 1, 0, 2];
 
         let fixed = vec![0, 1, 1, 1];
-            
+
         let mut tetmesh = TetMesh::new(tet_verts.clone(), tet);
-        tetmesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed).unwrap();
+        tetmesh
+            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)
+            .unwrap();
 
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
@@ -1553,7 +1597,11 @@ mod tests {
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh.clone())
             .add_shell(trimesh.clone())
-            .smooth_contact_params(SmoothContactParams { radius, tolerance, max_step: 2.0 })
+            .smooth_contact_params(SmoothContactParams {
+                radius,
+                tolerance,
+                max_step: 2.0,
+            })
             .build()
             .unwrap();
 
@@ -1561,14 +1609,19 @@ mod tests {
         assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
 
         // Expect no push since the triangle is outside the surface.
-        for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(tet_verts.iter()) {
+        for (pos, exp_pos) in solver
+            .borrow_mesh()
+            .vertex_position_iter()
+            .zip(tet_verts.iter())
+        {
             for i in 0..3 {
-                assert_relative_eq!(pos[i], exp_pos[i], max_relative=1e-5, epsilon = 1e-6);
+                assert_relative_eq!(pos[i], exp_pos[i], max_relative = 1e-5, epsilon = 1e-6);
             }
         }
 
         // Verify constraint, should be positive before push
-        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+        let constraint =
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
         assert!(constraint.iter().all(|&x| x > 0.0f32));
 
         // Simulate push
@@ -1580,7 +1633,8 @@ mod tests {
         assert!(solve_result.iterations < params.max_outer_iterations);
 
         // Verify constraint, should be positive after push
-        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+        let constraint =
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
         assert!(constraint.iter().all(|&x| x >= -params.outer_tolerance));
 
         // Expect only the top vertex to be pushed down.
@@ -1591,7 +1645,11 @@ mod tests {
             tet_verts[3],
         ];
 
-        for (pos, exp_pos) in solver.borrow_mesh().vertex_position_iter().zip(offset_verts.iter()) {
+        for (pos, exp_pos) in solver
+            .borrow_mesh()
+            .vertex_position_iter()
+            .zip(offset_verts.iter())
+        {
             for i in 0..3 {
                 assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-4);
             }
@@ -1618,13 +1676,20 @@ mod tests {
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
-            .smooth_contact_params(SmoothContactParams { radius: 1.1, tolerance: 0.07, max_step: 1.5 })
+            .smooth_contact_params(SmoothContactParams {
+                radius: 1.1,
+                tolerance: 0.07,
+                max_step: 1.5,
+            })
             .build()
             .unwrap();
 
         let res = solver.step().expect("Failed push solve.");
         println!("res = {:?}", res);
-        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
+        assert!(
+            res.iterations < params.max_outer_iterations,
+            "Exceeded max outer iterations."
+        );
     }
 
     #[test]
@@ -1643,7 +1708,11 @@ mod tests {
             ..DYNAMIC_PARAMS
         };
 
-        let mut grid = make_grid(Grid { rows: 10, cols: 10, orientation: AxisPlaneOrientation::ZX });
+        let mut grid = make_grid(Grid {
+            rows: 10,
+            cols: 10,
+            orientation: AxisPlaneOrientation::ZX,
+        });
         scale(&mut grid, [2.0, 1.0, 2.0].into());
         translate(&mut grid, [0.0, -1.1, 0.0].into());
 
@@ -1651,17 +1720,27 @@ mod tests {
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(grid)
-            .smooth_contact_params(SmoothContactParams { radius: 0.4, tolerance: 0.01, max_step: 0.5 })
+            .smooth_contact_params(SmoothContactParams {
+                radius: 0.4,
+                tolerance: 0.01,
+                max_step: 0.5,
+            })
             .build()
             .unwrap();
 
         let res = solver.step().expect("Failed bounce solve.");
         println!("res = {:?}", res);
-        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
+        assert!(
+            res.iterations < params.max_outer_iterations,
+            "Exceeded max outer iterations."
+        );
 
         let res = solver.step().expect("Failed bounce solve.");
         println!("res = {:?}", res);
-        assert!(res.iterations < params.max_outer_iterations, "Exceeded max outer iterations.");
+        assert!(
+            res.iterations < params.max_outer_iterations,
+            "Exceeded max outer iterations."
+        );
     }
 
     /*
@@ -1690,10 +1769,10 @@ mod tests {
             .unwrap();
 
         for _i in 0..10 {
-        //geo::io::save_tetmesh_ascii(
-        //    &solver.borrow_mesh(),
-        //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
-        //    ).unwrap();
+            //geo::io::save_tetmesh_ascii(
+            //    &solver.borrow_mesh(),
+            //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+            //    ).unwrap();
             let res = solver.step();
             assert!(res.is_ok());
         }

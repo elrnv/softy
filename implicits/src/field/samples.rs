@@ -317,8 +317,8 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 
     #[inline]
-    pub fn from_view(indices: &'i [usize], samples: SamplesView<'i, 'd, T>) -> Self {
-        SamplesView { indices, ..samples }
+    pub fn from_view(self, indices: &'i [usize]) -> Self {
+        SamplesView { indices, ..self }
     }
 
     #[inline]

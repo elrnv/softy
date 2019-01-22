@@ -257,8 +257,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             &surface_topo,
             &dual_topo,
             move |Sample { pos, .. }| {
-                let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
-                (q - pos) * (wk * weight_sum_inv)
+                let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                (q - pos) * (w * weight_sum_inv)
             },
         );
 
@@ -421,6 +421,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // sum from there.
         let weight_sum_inv = bg.weight_sum_inv();
 
+        let local_pot = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
+
         samples.into_iter().map(
             move |Sample {
                       index,
@@ -434,19 +436,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let norm_inv = T::one() / nml.norm();
                 let unit_nml = nml * norm_inv;
 
-                let w_neigh = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
-
                 let dw = kernel.with_closest_dist(closest_d).grad(q, pos);
                 // Contribution from the background potential
                 let dwb = bg.background_weight_gradient(Some(index));
-                let mut dw_p = (dw - dwb) * (w_neigh * weight_sum_inv);
+                let mut dwdp = (dw - dwb) * (local_pot * weight_sum_inv);
 
-                dw_p -= dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
+                dwdp -= dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
 
                 // Compute the normal component of the derivative
                 let w = kernel.with_closest_dist(closest_d).eval(q, pos);
                 let nml_deriv = unit_nml * (w * weight_sum_inv);
-                dw_p - nml_deriv
+                dwdp - nml_deriv
             },
         )
     }

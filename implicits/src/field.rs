@@ -883,7 +883,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .expect("Triangle mesh topology corruption."),
                 );
                 let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
+                for sample in samples.from_view(tri_indices).into_iter() {
                     if sample.index != index {
                         let normk_inv = T::one() / sample.nml.norm();
                         let nmlk_proj = Matrix3::identity()
@@ -915,13 +915,60 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         F: FnMut(Sample<T>) -> Vector3<T> + 'a,
     {
         samples.into_iter().flat_map(move |sample| {
-            let tri_indices = &surface_topo[sample.index];
-            let norm_inv = T::one() / sample.nml.norm();
-            let nml = sample.nml * norm_inv;
-            let nml_proj = Matrix3::identity() - nml * nml.transpose();
-            let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
             let mult = multiplier(sample);
-            (0..3).map(move |i| tri.area_normal_gradient(i) * (nml_proj * (mult * norm_inv)))
+            let grad = Self::face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
+            grad.map(move |g| g * mult)
+        })
+    }
+
+    /// Compute the gradient of the face normal at the given sample with respect to
+    /// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
+    /// three matrices corresponding to each triangle vertex, which together construct the actual
+    /// `9x3` component-wise gradient.
+    pub(crate) fn face_unit_normal_gradient_iter(
+        sample: Sample<T>,
+        surface_vertices: &[Vector3<T>],
+        surface_topo: &[[usize; 3]],
+    ) -> impl Iterator<Item = Matrix3<T>> {
+        let tri_indices = &surface_topo[sample.index];
+        let norm_inv = T::one() / sample.nml.norm();
+        let nml = sample.nml * norm_inv;
+        let nml_proj = Matrix3::diag([norm_inv;3]) - (nml * norm_inv) * nml.transpose();
+        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+        (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
+    }
+
+    /// Compute the symmetric jacobian of the face normals with respect to
+    /// surface vertices. This is the Jacobian plus its transpose.
+    /// This function is needed to compute the Hessian, which means we are only interested in the
+    /// lower triangular part.
+    pub(crate) fn compute_face_unit_normals_symmetric_jacobian<'a, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_vertices: &'a [Vector3<T>],
+        surface_topo: &'a [[usize; 3]],
+        mut multiplier: F,
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
+    where
+        F: FnMut(Sample<T>) -> T + 'a,
+    {
+        samples.into_iter().flat_map(move |sample| {
+            let Sample { index, nml, .. } = sample;
+            let tri_indices = &surface_topo[index];
+            let norm_inv = T::one() / nml.norm();
+            let unit_nml = nml * norm_inv;
+            let nml_proj = Matrix3::identity() - unit_nml * unit_nml.transpose();
+            let lambda = multiplier(sample);
+            (0..3).flat_map(move |k| {
+                let vtx_row = tri_indices[k];
+                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+                (0..3)
+                    .filter(move |&l| tri_indices[l] <= vtx_row)
+                    .map(move |l| {
+                        let vtx_col = tri_indices[l];
+                        let mtx = tri.area_normal_gradient(k) + tri.area_normal_gradient(l);
+                        (vtx_row, vtx_col, mtx * nml_proj * (norm_inv * lambda))
+                    })
+            })
         })
     }
 

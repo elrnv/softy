@@ -240,7 +240,7 @@ pub trait RadialKernel<T: Real>: Kernel<T> {
         }
     }
     /// Second derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
-    /// To compute the derivatives wrt `p`, simply negate this derivative.
+    /// The hessian wrt `p` is identical.
     #[inline]
     fn hess(&self, x: Vector3<T>, p: Vector3<T>) -> Matrix3<T> {
         let diff = x - p;

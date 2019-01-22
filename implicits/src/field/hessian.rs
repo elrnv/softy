@@ -11,7 +11,7 @@ impl<T: Real> ImplicitSurface<T> {
 }
 
 impl<T: Real + Send + Sync> ImplicitSurface<T> {
-    /// Block lower triangular part of the unit normal Hessian.
+    /// Block lower triangular part of the unit normal Hessian multiplied by the given multiplier.
     pub(crate) fn compute_face_unit_normals_hessian_products<'a, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_vertices: &'a [Vector3<T>],
@@ -173,22 +173,136 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let weight_sum_inv = bg.weight_sum_inv();
 
         // For each surface vertex contribution
-        //let main_jac = Self::sample_jacobian_at(q, view, kernel, bg);
+        let main_jac = Self::sample_hessian_at(q, view, kernel, bg.clone());
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
-        let nml_jac = Self::compute_face_unit_normals_hessian_products(
+        let nml_jac = Self::normal_hessian_at(
+            q,
             view,
-            surface_vertex_positions,
+            kernel,
             &surface_topo,
-            move |Sample { pos, .. }| {
-                let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
-                (q - pos) * (wk * weight_sum_inv)
-            },
+            surface_vertex_positions,
+            bg,
+            multiplier,
         );
 
         // There are 3 contributions from each sample to each vertex.
-        //zip!(nml_jac, main_jac).map(move |(n, m)| n + m)
-        nml_jac.map(move |n| n.2 * multiplier)
+        zip!(nml_jac, main_jac).map(move |(n, m)| (n.2 + m) * multiplier)
+    }
+
+    pub(crate) fn sample_hessian_at<'a, K: 'a>(
+        q: Vector3<T>,
+        samples: SamplesView<'a, 'a, T>,
+        kernel: K,
+        bg: BackgroundField<'a, T, T, K>,
+    ) -> impl Iterator<Item = Matrix3<T>> + 'a
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let csd = bg.closest_sample_dist();
+        let ws_inv = bg.weight_sum_inv();
+
+        let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
+
+        samples.into_iter().flat_map(
+            move |Sample {
+                index: i,
+                pos: pos_i,
+                nml: nml_i,
+                value: phi_i,
+                ..
+            }| {
+                let bg = bg.clone();
+                let psi_i = phi_i + (q - pos_i).dot(nml_i) * (T::one() / nml_i.norm());
+                let dw_i = kernel.with_closest_dist(csd).grad(q, pos_i);
+                samples.into_iter().map(
+                    move |Sample {
+                        index: j,
+                        pos: pos_j,
+                        nml: nml_j,
+                        value: phi_j,
+                        ..
+                    }| {
+                        let psi_j = phi_j + (q - pos_j).dot(nml_j) * (T::one() / nml_j.norm());
+
+                        let mut h = Matrix3::zeros();
+
+                        if i == j {
+                            // Diagonal entries
+                            let ddw = kernel.with_closest_dist(csd).hess(q, pos_i);
+                            h += ddw * ws_inv * psi_i;
+
+                            h -= ddw * ws_inv * local_pot;
+                        }
+
+                        let dw_j = kernel.with_closest_dist(csd).grad(q, pos_j);
+                        let dwb_j = bg.background_weight_gradient(Some(j));
+                        let dws_j = dw_j - dwb_j;
+
+                        h -= dw_i * (dws_j.transpose() * (psi_i * ws_inv));
+
+                        h -= dw_i * (dw_j.transpose() * (psi_j * ws_inv * ws_inv) - dws_j.transpose() * (T::from(2.0).unwrap() * local_pot * ws_inv * ws_inv));
+
+                        h
+                    },
+                )
+            },
+        )
+    }
+
+    /// A helper function to compute the normal part of the hessian for this field.
+    fn normal_hessian_at<'a, K: 'a>(
+        q: Vector3<T>,
+        samples: SamplesView<'a, 'a, T>,
+        kernel: K,
+        surface_topo: &'a [[usize; 3]],
+        surface_vertex_positions: &'a [Vector3<T>],
+        bg: BackgroundField<'a, T, T, K>,
+        multiplier: T,
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let csd = bg.closest_sample_dist();
+        let ws_inv = bg.weight_sum_inv();
+
+        let sym_mult = move |Sample { index, pos, .. }| {
+            kernel.with_closest_dist(csd).eval(q, pos) * ws_inv
+        };
+
+        let sym =
+            Self::compute_face_unit_normals_symmetric_jacobian(samples, surface_vertex_positions, surface_topo, sym_mult);
+
+        let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
+
+        let nml_hess_multiplier = move |Sample { index, pos, nml, .. }| {
+            let w = kernel.with_closest_dist(csd).eval(q, pos);
+            (q - pos) * (w * ws_inv)
+        };
+
+        // Compute the unit normal hessian product.
+        let nml_hess_iter = ImplicitSurface::compute_face_unit_normals_hessian_products(
+            samples,
+            &surface_vertex_positions,
+            &surface_topo,
+            nml_hess_multiplier,
+        );
+
+        // Remaining hessian terms
+        //let coupling_nml_hess_iter = samples.into_iter().flat_map(move |sample| {
+        //    let grad = Self::face_unit_normal_gradient(sample, surface_vertex_positions, surface_topo);
+
+
+        //    
+
+        //});
+
+
+        zip!(sym, nml_hess_iter).map(move |(s, n)| {
+            assert_eq!(s.0, n.0);
+            assert_eq!(s.1, n.1);
+            (s.0, s.1, n.2 - s.2)
+        })
     }
 }
 

@@ -153,7 +153,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         Ok(())
     }
 
-    pub(crate) fn mls_surface_jacobian_values<'a, K>(
+    pub(crate) fn mls_surface_jacobian_values<K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
@@ -265,6 +265,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n)
     }
 
+    /// Jacobian of the face based local potential with respect to surface vertex positions.
     pub(crate) fn face_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         view: SamplesView<'a, 'a, T>,
@@ -287,7 +288,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // For each surface vertex contribution
         let main_jac = Self::sample_jacobian_at(q, view, kernel, bg);
 
-        let third = T::from(1.0 / 3.0).unwrap();
+        let third = T::one() / T::from(3.0).unwrap();
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = Self::compute_face_unit_normals_gradient_products(
@@ -717,6 +718,48 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
     vert_grad
 }
 
+/// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
+#[cfg(test)]
+pub(crate) fn make_test_tri(perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
+    let h = 1.18032;
+    vec![
+        Vector3([0.5, h, 0.0]) + perturb(),
+        Vector3([-0.25, h, 0.433013]) + perturb(),
+        Vector3([-0.25, h, -0.433013]) + perturb(),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
+    use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+    let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
+    let range = Uniform::new(-0.1, 0.1);
+    move || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)])
+}
+
+
+/// Reduce the given Jacobian from face vertices to vertices.
+#[cfg(test)]
+pub(crate) fn consolidate_jacobian<T: Real>(
+    jac: &[Vector3<T>],
+    neighbours: &[usize],
+    faces: &[[usize;3]],
+    num_verts: usize
+) -> Vec<Vector3<T>> {
+
+    let tet_indices_iter = neighbours
+        .iter()
+        .flat_map(|&neigh| faces[neigh].iter().cloned());
+
+    let mut vert_jac = vec![Vector3::zeros(); num_verts];
+
+    for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
+        vert_jac[vtx_idx] += jac;
+    }
+
+    vert_jac
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,16 +853,6 @@ mod tests {
         }
     }
 
-    /// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
-    fn make_query_tri(perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
-        let h = 1.18032;
-        vec![
-            Vector3([0.5, h, 0.0]) + perturb(),
-            Vector3([-0.25, h, 0.433013]) + perturb(),
-            Vector3([-0.25, h, -0.433013]) + perturb(),
-        ]
-    }
-
     fn new_test_samples<T, V3>(
         sample_type: SampleType,
         triangles: &[[usize; 3]],
@@ -850,24 +883,21 @@ mod tests {
     ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
-        let tri_verts = make_query_tri(perturb);
+        let tri_verts = make_test_tri(perturb);
         let (tet_verts, tet_faces) = make_tet();
 
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(tet_verts.len(), &tet_faces);
 
         let samples = new_test_samples(sample_type, &tet_faces, &tet_verts);
 
-        let neighbours = vec![0, 1, 2, 3]; // All tet faces
+        let neighbours = vec![0, 1, 2, 3]; // All tet faces or verts (depending on sample_type)
 
         let kernel = kernel::LocalApproximate::new(radius, 1e-5);
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
-            .iter()
-            .cloned()
-            .map(|v| v.map(|x| F::cst(x)))
-            .collect();
+        let mut ad_tet_verts: Vec<Vector3<F>> =
+            tet_verts.iter().map(|&v| v.map(|x| F::cst(x))).collect();
 
         for &q in tri_verts.iter() {
             // Compute the Jacobian.
@@ -887,18 +917,7 @@ mod tests {
 
                     assert_eq!(jac.len(), 3 * neighbours.len());
 
-                    // Reduce the Jacobian from face vertices to vertices.
-                    let tet_indices_iter = neighbours
-                        .iter()
-                        .flat_map(|&neigh| tet_faces[neigh].iter().cloned());
-                    let mut vert_jac = vec![Vector3::zeros(); tet_verts.len()];
-                    for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
-                        vert_jac[vtx_idx] += jac;
-                    }
-
-                    assert_eq!(vert_jac.len(), tet_verts.len());
-
-                    vert_jac
+                    consolidate_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
                 }
                 SampleType::Vertex => {
                     let jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(
@@ -913,14 +932,14 @@ mod tests {
 
                     assert_eq!(jac.len(), neighbours.len());
 
-                    // Sample jacobian coincides with vertex jacobian, nothing else to do here.
+                    // Sample Jacobian coincides with vertex jacobian, nothing else to do here.
                     jac
                 }
             };
 
             let q = q.map(|x| F::cst(x));
 
-            for &vtx in neighbours.iter() {
+            for (vtx, jac) in vert_jac.iter().enumerate() {
                 for i in 0..3 {
                     ad_tet_verts[vtx][i] = F::var(ad_tet_verts[vtx][i]);
 
@@ -937,7 +956,7 @@ mod tests {
                     );
 
                     assert_relative_eq!(
-                        vert_jac[vtx][i],
+                        jac[i],
                         p.deriv(),
                         max_relative = 1e-5,
                         epsilon = 1e-10
@@ -951,12 +970,7 @@ mod tests {
 
     #[test]
     fn hard_potential_derivative_test() {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-
-        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let range = Uniform::new(-0.1, 0.1);
-
-        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+        let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
         for i in 1..50 {
@@ -1168,7 +1182,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_vert_vecs = make_query_tri(perturb);
+        let tri_vert_vecs = make_test_tri(perturb);
 
         let tri_verts: Vec<[f64; 3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
 
@@ -1257,12 +1271,7 @@ mod tests {
 
     #[test]
     fn surface_jacobian_test() {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-
-        let mut rng: StdRng = SeedableRng::from_seed([5; 32]);
-        let range = Uniform::new(-0.1, 0.1);
-
-        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+        let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
         for i in 1..50 {
@@ -1339,7 +1348,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_verts = make_query_tri(perturb);
+        let tri_verts = make_test_tri(perturb);
 
         let (tet_verts, tet_faces) = make_tet();
 
@@ -1390,12 +1399,7 @@ mod tests {
 
     #[test]
     fn query_jacobian_test() {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-
-        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let range = Uniform::new(-0.1, 0.1);
-
-        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+        let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
         for i in 1..50 {
@@ -1419,7 +1423,7 @@ mod tests {
         use geo::NumVertices;
         use utils::*;
 
-        let tri_vert_pos = make_query_tri(perturb);
+        let tri_vert_pos = make_test_tri(perturb);
 
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
 
@@ -1472,12 +1476,7 @@ mod tests {
 
     #[test]
     fn contact_jacobian_test() {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-
-        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let range = Uniform::new(-0.1, 0.1);
-
-        let mut perturb = || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]);
+        let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
         for i in 1..50 {

@@ -5,7 +5,7 @@ impl<T: Real> ImplicitSurface<T> {
     /// Get the number of Hessian non-zeros for the face unit normal Hessian.
     /// This is essentially the number of items returned by
     /// `compute_face_unit_normals_hessian_products`.
-    pub(crate) fn num_face_unit_normals_hessian_entries(num_samples: usize) -> usize {
+    pub fn num_face_unit_normals_hessian_entries(num_samples: usize) -> usize {
         num_samples * 6 * 6
     }
 }
@@ -63,7 +63,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// gives the number of query points, if the neighbourhood was not precomputed this function
     /// returns `None`.
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
-        let neigh_points = self.extended_neighbourhood_borrow().ok()?;
+        let neigh_points = self.trivial_neighbourhood_borrow().ok()?;
         let num_pts_per_sample = match self.sample_type {
             SampleType::Vertex => unimplemented!(),
             SampleType::Face => 3,
@@ -75,44 +75,33 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// points.
     pub fn surface_hessian_product_indices_iter(
         &self,
-    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices_iter(),
-            _ => Err(Error::UnsupportedKernel),
-        }
-    }
-
-    /// Compute the Hessian of this implicit surface function with respect to surface
-    /// points multiplied by a vector of multipliers (one for each query point).
-    pub fn surface_hessian_product_values(
-        &self,
         query_points: &[[T; 3]],
         multipliers: &[T],
-        values: &mut [T],
+        rows: &mut [usize],
+        cols: &mut [usize],
     ) -> Result<(), Error> {
         match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_hessian_product_values(query_points, multipliers, kernel, values)
+                self.mls_surface_hessian_product_indices(query_points, multipliers, kernel, rows, cols)
             }
             _ => Err(Error::UnsupportedKernel),
         }
     }
 
-    pub(crate) fn mls_surface_hessian_product_values<'a, K>(
+    pub(crate) fn mls_surface_hessian_product_indices<K>(
         &self,
         query_points: &[[T; 3]],
         multipliers: &[T],
         kernel: K,
-        values: &mut [T],
+        rows: &mut [usize],
+        cols: &mut [usize],
     ) -> Result<(), Error>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let value_matrices: &mut [Matrix3<T>] = reinterpret::reinterpret_mut_slice(values);
-
         self.cache_neighbours(query_points);
-        let neigh_points = self.extended_neighbourhood_borrow()?;
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref samples,
@@ -139,16 +128,98 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             kernel,
                             surface_topo,
                             surface_vertex_positions,
+                            dual_topo,
                             bg_field_type,
                             *lambda,
                         )
                     });
 
-                value_matrices
+                for (i, (r,c)) in face_jac.flat_map(move |(row,col,_)| {
+                    (0..3).flat_map(move |r| {
+                        (0..3).filter(move |c| 3*row + r >= 3*col + c)
+                            .map(move |c| (3*row + r, 3*col + c))
+                    })
+                }).enumerate() {
+                    rows[i] = r;
+                    cols[i] = c;
+                }
+
+            }
+        }
+        Ok(())
+    }
+
+    /// Compute the Hessian of this implicit surface function with respect to surface
+    /// points multiplied by a vector of multipliers (one for each query point).
+    pub fn surface_hessian_product_values(
+        &self,
+        query_points: &[[T; 3]],
+        multipliers: &[T],
+        values: &mut [T],
+    ) -> Result<(), Error> {
+        match self.kernel {
+            KernelType::Approximate { tolerance, radius } => {
+                let kernel = kernel::LocalApproximate::new(radius, tolerance);
+                self.mls_surface_hessian_product_values(query_points, multipliers, kernel, values)
+            }
+            _ => Err(Error::UnsupportedKernel),
+        }
+    }
+
+    pub(crate) fn mls_surface_hessian_product_values<K>(
+        &self,
+        query_points: &[[T; 3]],
+        multipliers: &[T],
+        kernel: K,
+        values: &mut [T],
+    ) -> Result<(), Error>
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        self.cache_neighbours(query_points);
+        let neigh_points = self.trivial_neighbourhood_borrow()?;
+
+        let ImplicitSurface {
+            ref samples,
+            ref surface_topo,
+            ref dual_topo,
+            ref surface_vertex_positions,
+            bg_field_type,
+            sample_type,
+            ..
+        } = *self;
+
+        match sample_type {
+            SampleType::Vertex => {
+                unimplemented!();
+            }
+            SampleType::Face => {
+                let face_jac = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
+                    .filter(|(_, _, nbrs)| !nbrs.is_empty())
+                    .flat_map(move |(q, lambda, nbr_points)| {
+                        let view = SamplesView::new(nbr_points, samples);
+                        Self::face_hessian_at(
+                            Vector3(*q),
+                            view,
+                            kernel,
+                            surface_topo,
+                            surface_vertex_positions,
+                            dual_topo,
+                            bg_field_type,
+                            *lambda,
+                        )
+                    });
+
+                values
                     .iter_mut()
-                    .zip(face_jac)
-                    .for_each(|(mtx, new_mtx)| {
-                        *mtx = new_mtx;
+                    .zip(face_jac.flat_map(move |(row,col,mtx)| {
+                        (0..3).flat_map(move |r| {
+                            (0..3).filter(move |c| 3*row + r >= 3*col + c)
+                                .map(move |c| mtx[c][r])
+                        })
+                    }))
+                    .for_each(|(val, new_val)| {
+                        *val = new_val;
                     });
             }
         }
@@ -161,19 +232,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         kernel: K,
         surface_topo: &'a [[usize; 3]],
         surface_vertex_positions: &'a [Vector3<T>],
+        dual_topo: &'a [Vec<usize>],
         bg_field_type: BackgroundFieldType,
         multiplier: T,
-    ) -> impl Iterator<Item = Matrix3<T>> + 'a
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
 
-        let closest_d = bg.closest_sample_dist();
-        let weight_sum_inv = bg.weight_sum_inv();
+        let ninth = T::one() / T::from(9.0).unwrap();
 
         // For each surface vertex contribution
-        let main_jac = Self::sample_hessian_at(q, view, kernel, bg.clone());
+        let main_jac = Self::sample_hessian_at(q, view, kernel, bg.clone())
+            .flat_map(move |jac| {
+                (0..3).flat_map(move |i| {
+                    (0..3).map(move |j| (surface_topo[jac.0][i], surface_topo[jac.1][j], jac.2 * ninth))
+                })
+            });
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = Self::normal_hessian_at(
@@ -182,20 +258,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             kernel,
             &surface_topo,
             surface_vertex_positions,
+            dual_topo,
             bg,
-            multiplier,
         );
 
         // There are 3 contributions from each sample to each vertex.
-        zip!(nml_jac, main_jac).map(move |(n, m)| (n.2 + m) * multiplier)
+        nml_jac.chain(main_jac).map(move |jac| (jac.0, jac.1, jac.2 * multiplier))
     }
 
+    /// Hessian part with respect to samples.
     pub(crate) fn sample_hessian_at<'a, K: 'a>(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
         kernel: K,
         bg: BackgroundField<'a, T, T, K>,
-    ) -> impl Iterator<Item = Matrix3<T>> + 'a
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
@@ -243,7 +320,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
                         h -= dw_i * (dw_j.transpose() * (psi_j * ws_inv * ws_inv) - dws_j.transpose() * (T::from(2.0).unwrap() * local_pot * ws_inv * ws_inv));
 
-                        h
+                        (j, i, h)
                     },
                 )
             },
@@ -257,8 +334,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         kernel: K,
         surface_topo: &'a [[usize; 3]],
         surface_vertex_positions: &'a [Vector3<T>],
+        dual_topo: &'a [Vec<usize>],
         bg: BackgroundField<'a, T, T, K>,
-        multiplier: T,
     ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
@@ -266,16 +343,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let csd = bg.closest_sample_dist();
         let ws_inv = bg.weight_sum_inv();
 
-        let sym_mult = move |Sample { index, pos, .. }| {
+        let sym_mult = move |Sample { pos, .. }| {
             kernel.with_closest_dist(csd).eval(q, pos) * ws_inv
         };
 
         let sym =
             Self::compute_face_unit_normals_symmetric_jacobian(samples, surface_vertex_positions, surface_topo, sym_mult);
 
-        let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
-
-        let nml_hess_multiplier = move |Sample { index, pos, nml, .. }| {
+        let nml_hess_multiplier = move |Sample { pos, .. }| {
             let w = kernel.with_closest_dist(csd).eval(q, pos);
             (q - pos) * (w * ws_inv)
         };
@@ -288,112 +363,178 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             nml_hess_multiplier,
         );
 
+        let third = T::one() / T::from(3.0).unwrap();
+
         // Remaining hessian terms
-        //let coupling_nml_hess_iter = samples.into_iter().flat_map(move |sample| {
-        //    let grad = Self::face_unit_normal_gradient(sample, surface_vertex_positions, surface_topo);
+        let coupling_nml_hess_iter = samples.into_iter().flat_map(move |sample| {
+            let Sample { index, pos, nml, .. } = sample;
 
+            let dwbdp = bg.background_weight_gradient(Some(index));
+            let dwdp = -kernel.with_closest_dist(csd).grad(q, pos);
+            let dwsdp = dwdp + dwbdp;
+            
+            (0..3).flat_map(move |i| {
+                let grad = Self::face_unit_normal_gradient_iter(sample, surface_vertex_positions, surface_topo);
+                grad.enumerate().map(move |(j, g)| {
+                    let row_vtx = surface_topo[index][j];
+                    let col_vtx = surface_topo[index][i];
 
-        //    
+                    let num_neighs = T::from(dual_topo[row_vtx].len()).unwrap();
 
-        //});
+                    let mtx = ((g * (q - pos) * num_neighs - nml * third) * dwdp.transpose()) * (ws_inv * third);
 
+                    if row_vtx > col_vtx {
+                        (row_vtx, col_vtx, mtx) 
+                    } else if row_vtx < col_vtx {
+                        (col_vtx, row_vtx, mtx.transpose())
+                    } else { // == 
+                        (row_vtx, col_vtx, mtx + mtx.transpose())
+                    }
+                })
+            }).chain(
+                (0..3).flat_map(move |i| {
+                    samples.clone().into_iter().flat_map(move |sample_j| {
+                        let wj = kernel.with_closest_dist(csd).eval(q, sample_j.pos) * ws_inv;
+                        (0..3).map(move |j| {
+                            let row_vtx = surface_topo[sample_j.index][j];
+                            let col_vtx = surface_topo[index][i];
+
+                            let neigh_d = samples.from_view(&dual_topo[row_vtx]).into_iter().map(|sample| {
+                                let wk = kernel.with_closest_dist(csd).eval(q, sample.pos);
+                                let j_vtx = surface_topo[sample.index].iter().position(|&vtx| vtx == row_vtx).expect("Corrupt topo");
+                                let grad = Self::face_unit_normal_gradient(sample, j_vtx, surface_vertex_positions, surface_topo);
+                                grad * (q - sample.pos) * wk
+                            }).sum::<Vector3<T>>() * ws_inv;
+
+                            let mtx = (sample_j.nml * (wj * third) - neigh_d) * dwsdp.transpose() * (ws_inv * third);
+                            if row_vtx > col_vtx {
+                                (row_vtx, col_vtx, mtx) 
+                            } else if row_vtx < col_vtx {
+                                (col_vtx, row_vtx, mtx.transpose())
+                            } else { // == 
+                                (row_vtx, col_vtx, mtx + mtx.transpose())
+                            }
+                        })
+                    })
+                })
+            )
+        });
 
         zip!(sym, nml_hess_iter).map(move |(s, n)| {
             assert_eq!(s.0, n.0);
             assert_eq!(s.1, n.1);
             (s.0, s.1, n.2 - s.2)
-        })
+        }).chain(coupling_nml_hess_iter)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    //use geo::mesh::TriMesh;
     use super::*;
+    use jacobian::{make_test_tri, make_perturb_fn, consolidate_jacobian};
     use autodiff::F;
 
-    //fn easy_potential_hessian(radius: f64, bg_field_type: BackgroundFieldType) {
-    //    // The set of samples is just one point. These are initialized using a forward
-    //    // differentiator.
-    //    let mut samples = Samples {
-    //        points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
-    //        normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
-    //        velocities: vec![Vector3([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
-    //        values: vec![F::cst(0.0)],
-    //    };
+    fn one_triangle_potential_hessian<P: FnMut() -> Vector3<f64>>(
+        radius: f64,
+        bg_field_type: BackgroundFieldType,
+        perturb: &mut P,
+    ) {
+        let mut tri_verts: Vec<_> = make_test_tri(perturb).into_iter().map(|x| x.map(|x| F::cst(x))).collect();
+        let tri_indices = vec![0usize, 1, 2];
+        let tri_faces: Vec<[usize;3]> = reinterpret::reinterpret_vec(tri_indices.clone());
+        let num_verts = tri_verts.len();
 
-    //    // The set of neighbours is the one sample given.
-    //    let neighbours = vec![0];
+        let samples = Samples {
+            points: vec![tri_verts.iter().cloned().sum::<Vector3<F>>() / F::cst(num_verts as f64)],
+            normals: vec![(tri_verts[3] - tri_verts[0]).cross(tri_verts[1] - tri_verts[0])],
+            velocities: vec![Vector3::<F>::zeros()],
+            values: vec![F::cst(0.0)],
+        };
 
-    //    // Radius is such that samples are captured by the query point.
-    //    let kernel = kernel::LocalApproximate::new(radius, 0.00001);
+        // Initialize the query point.
+        let q = Vector3([0.0, 1.2, 0.0]).map(|x| F::cst(x));
 
-    //    // Initialize the query point.
-    //    let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
+        let neighbours = vec![0,1,2];
 
-    //    let surf_topo = vec![];
+        // Radius is such that samples are captured by the query point.
+        let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
-    //    // Create a view of the samples for the Jacobian computation.
-    //    let view = SamplesView::new(neighbours.as_ref(), &samples);
+        let view = SamplesView::new(neighbours.as_ref(), &samples);
 
-    //    // Compute the complete hessian.
-    //    let jac: Vec<Vector3<F>> = ImplicitSurface::face_hessian_at(
-    //        q,
-    //        view,
-    //        kernel,
-    //        &surf_topo,
-    //        &,
-    //        bg_field_type,
-    //        1.0,
-    //    )
-    //    .collect();
+        // Compute the complete hessian.
+        let hess: Vec<(usize, usize, Matrix3<F>)> = ImplicitSurface::face_hessian_at(
+            q,
+            view,
+            kernel,
+            &tri_faces,
+            &tri_verts,
+            &vec![vec![0];3],
+            bg_field_type,
+            F::cst(1.0),
+        ).collect();
 
-    //    // Test the accuracy of each component of the jacobian against an autodiff version of the
-    //    // derivative.
-    //    for i in 0..3 {
-    //        // Set a variable to take the derivative with respect to, using autodiff.
-    //        samples.points[0][i] = F::var(samples.points[0][i]);
+        // Test the accuracy of each component of the hessian against an autodiff version of the
+        // second derivative.
+        for vtx in 0..num_verts {
+            for i in 0..3 {
+                // Set a variable to take the derivative with respect to, using autodiff.
+                tri_verts[vtx][i] = F::var(tri_verts[vtx][i]);
 
-    //        // Create a view of the samples for the potential function.
-    //        let view = SamplesView::new(neighbours.as_ref(), &samples);
+                // Create a view of the samples for the potential function.
+                let view = SamplesView::new(neighbours.as_ref(), &samples);
 
-    //        // Initialize background potential to zero.
-    //        let mut p = F::cst(0.0);
+                // Compute the Jacobian. After calling this function, calling
+                // `.deriv()` on the output will give us the second derivative.
+                let jac: Vec<_> = ImplicitSurface::face_jacobian_at(
+                    q,
+                    view,
+                    kernel,
+                    &tri_faces,
+                    &tri_verts,
+                    bg_field_type,
+                ).collect();
 
-    //        // Compute the local potential function. After calling this function, calling
-    //        // `.deriv()` on the potential output will give us the derivative with resepct to the
-    //        // preset variable.
-    //        ImplicitSurface::compute_local_potential_at(
-    //            q,
-    //            view,
-    //            kernel,
-    //            bg_field_type,
-    //            &mut p,
-    //        );
+                let vert_jac = consolidate_jacobian(&jac, &neighbours, &tri_faces, num_verts);
 
-    //        // Check the derivative of the autodiff with our previously computed Jacobian.
-    //        assert_relative_eq!(
-    //            jac[0][i].value(),
-    //            p.deriv(),
-    //            max_relative = 1e-6,
-    //            epsilon = 1e-12
-    //        );
+                // Consolidate the hessian to this particular vertex and component.
+                let mut hess_vtx = vec![Vector3::zeros(); num_verts];
+                for &(r,c,h) in hess.iter() {
+                    if r == vtx {
+                        hess_vtx[c] += h.transpose()[i];
+                    }
+                }
 
-    //        // Reset the variable back to being a constant.
-    //        samples.points[0][i] = F::cst(samples.points[0][i]);
-    //    }
-    //}
+                for (jac, hes) in vert_jac.iter().zip(hess_vtx) {
+                    for j in 0..3 {
+                        // Check the derivative of the autodiff with our previously computed Jacobian.
+                        assert_relative_eq!(
+                            hes[j].value(),
+                            jac[j].deriv(),
+                            max_relative = 1e-6,
+                            epsilon = 1e-12
+                        );
+                    }
+                }
 
-    //#[test]
-    //fn easy_potential_hessian_test() {
-    //    for i in 1..50 {
-    //        let radius = 0.1 * (i as f64);
-    //        easy_potential_hessian(radius, BackgroundFieldType::None);
-    //        easy_potential_hessian(radius, BackgroundFieldType::Zero);
-    //        easy_potential_hessian(radius, BackgroundFieldType::FromInput);
-    //        easy_potential_hessian(radius, BackgroundFieldType::DistanceBased);
-    //        easy_potential_hessian(radius, BackgroundFieldType::NormalBased);
-    //    }
-    //}
+                // Reset the variable back to being a constant.
+                tri_verts[vtx][i] = F::cst(tri_verts[vtx][i]);
+            }
+        }
+    }
+
+    #[test]
+    fn one_triangle_potential_hessian_test() {
+        let mut perturb = make_perturb_fn();
+        for i in 1..50 {
+            let radius = 0.1 * (i as f64);
+            one_triangle_potential_hessian(radius, BackgroundFieldType::None, &mut perturb);
+            one_triangle_potential_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
+            one_triangle_potential_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
+            one_triangle_potential_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
+            one_triangle_potential_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
+        }
+    }
 
     /// Test the second order derivatives of our normal computation method for face normals.
     #[test]

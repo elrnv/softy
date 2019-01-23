@@ -1,4 +1,4 @@
-use super::samples::Sample;
+use super::{SampleType, samples::Sample};
 use geo::Real;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
@@ -110,6 +110,7 @@ impl Neighbourhood {
         query_points: &[[T; 3]],
         tri_topo: &[[usize; 3]],
         dual_topo: &[Vec<usize>],
+        sample_type: SampleType,
     ) -> Option<&[Vec<usize>]>
     where
         T: Real + Send + Sync,
@@ -134,7 +135,7 @@ impl Neighbourhood {
                 .for_each(|(triv_pts, ext_pts)| {
                     ext_pts.clear();
                     let mut set: BTreeSet<_> = triv_pts.into_iter().collect();
-                    if !dual_topo.is_empty() {
+                    if sample_type == SampleType::Vertex && !dual_topo.is_empty() {
                         set.extend(triv_pts.iter().flat_map(|&pt| {
                             dual_topo[pt].iter().flat_map(|&tri| tri_topo[tri].iter())
                         }));
@@ -154,13 +155,14 @@ impl Neighbourhood {
         neigh: N,
         tri_topo: &[[usize; 3]],
         dual_topo: &[Vec<usize>],
+        sample_type: SampleType,
     ) where
         T: Real + Send + Sync,
         I: Iterator<Item = Sample<T>> + 'a,
         N: Fn([T; 3]) -> I + Sync + Send,
     {
         self.compute_trivial_set(query_points, neigh);
-        self.compute_extended_set(query_points, tri_topo, dual_topo)
+        self.compute_extended_set(query_points, tri_topo, dual_topo, sample_type)
             .unwrap();
     }
 

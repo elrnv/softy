@@ -266,14 +266,8 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             SamplesMesh::None => return None,
         };
 
-        // Build the dual topology. Only needed for vertex centric implicit surfaces.
-        let dual_topo = if let SampleType::Vertex = sample_type {
-            // Construct dual topology for a vertex centered implicit surface which we may
-            // need to differentiate.
-            ImplicitSurfaceBuilder::compute_dual_topo(vertices.len(), &triangles)
-        } else {
-            Vec::new()
-        };
+        // Build the dual topology.
+        let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(vertices.len(), &triangles);
 
         // Build the rtree.
         let rtree = build_rtree_from_samples(&samples);

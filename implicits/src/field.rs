@@ -197,6 +197,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ref surface_topo,
             ref dual_topo,
             max_step,
+            sample_type,
             ..
         } = *self;
 
@@ -214,13 +215,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .cloned()
                 };
                 let mut cache = self.query_neighbourhood.borrow_mut();
-                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo);
+                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo, sample_type);
             }
             KernelType::Global { .. } | KernelType::Hrbf => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
                 let mut cache = self.query_neighbourhood.borrow_mut();
-                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo);
+                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo, sample_type);
             }
         }
     }
@@ -930,12 +931,34 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         surface_vertices: &[Vector3<T>],
         surface_topo: &[[usize; 3]],
     ) -> impl Iterator<Item = Matrix3<T>> {
+        let nml_proj = Self::scaled_tangent_projection(sample);
         let tri_indices = &surface_topo[sample.index];
-        let norm_inv = T::one() / sample.nml.norm();
-        let nml = sample.nml * norm_inv;
-        let nml_proj = Matrix3::diag([norm_inv;3]) - (nml * norm_inv) * nml.transpose();
         let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
         (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
+    }
+
+    /// Compute the gradient of the face normal at the given sample with respect to
+    /// the given vertex.
+    pub(crate) fn face_unit_normal_gradient(
+        sample: Sample<T>,
+        vtx_idx: usize,
+        surface_vertices: &[Vector3<T>],
+        surface_topo: &[[usize; 3]],
+    ) -> Matrix3<T> {
+        let nml_proj = Self::scaled_tangent_projection(sample);
+        let tri_indices = &surface_topo[sample.index];
+        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+        tri.area_normal_gradient(vtx_idx) * nml_proj
+    }
+
+    /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
+    /// by the local area (normal norm reciprocal).
+    pub(crate) fn scaled_tangent_projection(
+        sample: Sample<T>,
+    ) -> Matrix3<T> {
+        let nml_norm_inv = T::one() / sample.nml.norm();
+        let nml = sample.nml * nml_norm_inv;
+        Matrix3::diag([nml_norm_inv;3]) - (nml * nml_norm_inv) * nml.transpose()
     }
 
     /// Compute the symmetric jacobian of the face normals with respect to

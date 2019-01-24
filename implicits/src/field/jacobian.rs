@@ -720,8 +720,7 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
 
 /// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
 #[cfg(test)]
-pub(crate) fn make_test_tri(perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
-    let h = 1.18032;
+pub(crate) fn make_test_tri(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
     vec![
         Vector3([0.5, h, 0.0]) + perturb(),
         Vector3([-0.25, h, 0.433013]) + perturb(),
@@ -883,7 +882,7 @@ mod tests {
     ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
-        let tri_verts = make_test_tri(perturb);
+        let tri_verts = make_test_tri(1.18032, perturb);
         let (tet_verts, tet_faces) = make_tet();
 
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(tet_verts.len(), &tet_faces);
@@ -1182,7 +1181,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_vert_vecs = make_test_tri(perturb);
+        let tri_vert_vecs = make_test_tri(1.18032, perturb);
 
         let tri_verts: Vec<[f64; 3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
 
@@ -1251,14 +1250,11 @@ mod tests {
                     .potential(&ad_tri_verts, &mut potential)
                     .expect("Failed to compute autodiff potential");
 
-                for idx in surf
-                    .surface_jacobian_indices_iter()
-                    .unwrap()
-                    .filter(|idx| idx.1 == 3 * pidx + i)
-                {
+                let col = 3 * pidx + i;
+                for row in 0..3 {
                     assert_relative_eq!(
-                        jac[idx.1][idx.0],
-                        potential[idx.0].deriv(),
+                        jac[col][row],
+                        potential[row].deriv(),
                         max_relative = 1e-5,
                         epsilon = 1e-10
                     );
@@ -1348,7 +1344,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_verts = make_test_tri(perturb);
+        let tri_verts = make_test_tri(1.18032, perturb);
 
         let (tet_verts, tet_faces) = make_tet();
 
@@ -1423,7 +1419,7 @@ mod tests {
         use geo::NumVertices;
         use utils::*;
 
-        let tri_vert_pos = make_test_tri(perturb);
+        let tri_vert_pos = make_test_tri(1.18032, perturb);
 
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
 

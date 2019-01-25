@@ -432,7 +432,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 mod tests {
     use geo::mesh::{TriMesh, VertexPositions};
     use super::*;
-    use jacobian::{make_test_tri, make_perturb_fn, consolidate_jacobian};
+    use jacobian::{new_test_samples, make_test_tri, make_perturb_fn, consolidate_face_jacobian};
     use autodiff::F;
 
     /// High level test of the Hessian as the derivative of the Jacobian.
@@ -453,9 +453,9 @@ mod tests {
             max_step,
         };
 
-        let surf = crate::surface_from_trimesh::<F>(&surf_mesh, params).expect("Failed to construct an implicit surface.");
+        let mut surf = crate::surface_from_trimesh::<F>(&surf_mesh, params).expect("Failed to construct an implicit surface.");
 
-        let mut ad_tri_verts: Vec<_> = surf_mesh.vertex_position_iter().map(|&x| Vector3(x).map(|x| F::cst(x))).collect();
+        let mut ad_tri_verts: Vec<_> = surf_mesh.vertex_position_iter().map(|&x| Vector3(x).map(|x| F::cst(x)).into_inner()).collect();
         let num_verts = ad_tri_verts.len();
         let ad_query_points: Vec<_> = query_points.iter().map(|&a| Vector3(a).map(|x| F::cst(x)).into_inner()).collect();
         let num_query_points = query_points.len();
@@ -496,6 +496,7 @@ mod tests {
                 for i in 0..3 {
                     // Set a variable to take the derivative with respect to, using autodiff.
                     ad_tri_verts[vtx][i] = F::var(ad_tri_verts[vtx][i]);
+                    surf.update(ad_tri_verts.iter().cloned());
 
                     surf.surface_jacobian_values(&ad_query_points, &mut jac_values).expect("Failed to compute Jacobian values.");
                     surf.surface_jacobian_indices(&mut jac_rows, &mut jac_cols).expect("Failed to compute Jacobian indices.");
@@ -519,7 +520,7 @@ mod tests {
 
                     for (jac, hes) in jac_q.iter().zip(hess_vtx) {
                         // Check the derivative of the autodiff with our previously computed Jacobian.
-                        println!("{} vs {}", hes.value(), jac.deriv());
+                        println!("{:.5} vs {:.5}", hes.value(), jac.deriv());
                         //assert_relative_eq!(
                         //    hes[j].value(),
                         //    jac[j].deriv(),
@@ -573,17 +574,18 @@ mod tests {
         let tri_verts: Vec<_> = make_test_tri(0.0, perturb).into_iter().map(|x| x.into_inner()).collect();
         let tri_indices = vec![0usize, 1, 2];
         let tri = TriMesh::new(tri_verts, tri_indices);
-        let qs = vec![Vector3([0.0, 0.4, 0.0]), Vector3([0.0, 0.0, 0.0]), Vector3([0.0, -0.4, 0.0])];
+        let qs = vec![Vector3([0.0, 0.2, 0.0])];//, Vector3([0.0, 0.0, 0.0]), Vector3([0.0, -0.4, 0.0])];
 
         for q in qs.into_iter() {
             face_hessian_tester(q, &tri, radius, 0.0, bg_field_type);
-            face_hessian_tester(q + perturb(), &tri, radius, 0.0, bg_field_type);
-            face_hessian_tester(q + perturb(), &tri, radius, 1.0, bg_field_type);
+            //face_hessian_tester(q + perturb(), &tri, radius, 0.0, bg_field_type);
+            //face_hessian_tester(q + perturb(), &tri, radius, 1.0, bg_field_type);
         }
     }
 
     /// Test the `face_hessian_at` function. This verifies that it indeed produces the derivative
-    /// of the `face_jacobian_at` function.
+    /// of the `face_jacobian_at` function. This function also tests that `face_jacobian_at` is the
+    /// derivative of `compute_potential_at` for good measure.
     fn face_hessian_tester(
         q: Vector3<f64>,
         mesh: &TriMesh<f64>,
@@ -591,17 +593,17 @@ mod tests {
         max_step: f64,
         bg_field_type: BackgroundFieldType,
     ) {
+        dbg!(q);
+
         let q = q.map(|x| F::cst(x)); // convert to autodiff
+        dbg!(mesh.vertex_positions());
         let mut tri_verts: Vec<_> = mesh.vertex_position_iter().map(|&x| Vector3(x).map(|x| F::cst(x))).collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
+        dbg!(&tri_faces);
+        dbg!(radius);
         let num_verts = tri_verts.len();
 
-        let samples = Samples {
-            points: vec![tri_verts.iter().cloned().sum::<Vector3<F>>() / F::cst(num_verts as f64)],
-            normals: vec![(tri_verts[2] - tri_verts[0]).cross(tri_verts[1] - tri_verts[0])],
-            velocities: vec![Vector3::<F>::zeros()],
-            values: vec![F::cst(0.0)],
-        };
+        let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
         let neighbours: Vec<_> = samples.iter()
             .filter(|s| (q - s.pos).norm() < F::cst(radius + max_step))
@@ -628,14 +630,41 @@ mod tests {
             F::cst(1.0),
         ).collect();
 
+        let mut hess_full = vec![vec![0.0; 3*num_verts]; 3*num_verts];
+        let mut hess_full2 = vec![vec![0.0; 3*num_verts]; 3*num_verts];
+
+        for &(r,c,h) in hess.iter() {
+            for j in 0..3 {
+                for i in 0..3 {
+                    hess_full[3*c + j][3*r + i] += h[j][i].value();
+                }
+            }
+        }
+
+        let print_full_hess = |hess: Vec<Vec<f64>>, name| {
+            println!("{} = ", name);
+            for r in 0..3*num_verts {
+                for c in 0..3*num_verts {
+                    print!("{:9.5} ", hess[c][r]);
+                }
+                println!("");
+            }
+            println!("");
+        };
+
+        let mut ad_hess_full = vec![vec![0.0; 3*num_verts]; 3*num_verts];
+
         // Test the accuracy of each component of the hessian against an autodiff version of the
         // second derivative.
         for vtx in 0..num_verts {
             for i in 0..3 {
                 // Set a variable to take the derivative with respect to, using autodiff.
                 tri_verts[vtx][i] = F::var(tri_verts[vtx][i]);
+                println!("vtx = {}; i = {}", vtx, i);
 
-                // Create a view of the samples for the potential function.
+                // We need to update samples to make sure the normals and centroids are recomputed
+                // using the correct wrt autodiff variable.
+                let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
                 let view = SamplesView::new(neighbours.as_ref(), &samples);
 
                 // Compute the Jacobian. After calling this function, calling
@@ -649,20 +678,44 @@ mod tests {
                     bg_field_type,
                 ).collect();
 
-                let vert_jac = consolidate_jacobian(&jac, &neighbours, tri_faces, num_verts);
+                let vert_jac = consolidate_face_jacobian(&jac, &neighbours, tri_faces, num_verts);
+
+                // Compute the potential and test the jacobian for good measure.
+                let mut p = F::cst(0.0);
+                ImplicitSurface::compute_potential_at(
+                    q,
+                    view,
+                    kernel,
+                    bg_field_type,
+                    &mut p
+                );
+
+                // Test the surface Jacobian against autodiff on the potential computation.
+                assert_relative_eq!(
+                    vert_jac[vtx][i].value(),
+                    p.deriv(),
+                    max_relative = 1e-5,
+                    epsilon = 1e-10
+                );
+                println!("jac {:9.5} vs {:9.5}", vert_jac[vtx][i].value(), p.deriv());
 
                 // Consolidate the hessian to this particular vertex and component.
                 let mut hess_vtx = vec![Vector3::zeros(); num_verts];
-                for &(r,c,h) in hess.iter() {
+                for &(r, c, h) in hess.iter() {
+                    assert!(r >= c, "Hessian is not block lower triangular.");
                     if r == vtx {
                         hess_vtx[c] += h.transpose()[i];
+                    } else if c == vtx {
+                        hess_vtx[r] += h[i];
                     }
                 }
 
-                for (jac, hes) in vert_jac.iter().zip(hess_vtx) {
+                for (vtx_idx, (jac, hes)) in vert_jac.iter().zip(hess_vtx).enumerate() {
                     for j in 0..3 {
                         // Check the derivative of the autodiff with our previously computed Jacobian.
-                        println!("{} vs {}", hes[j].value(), jac[j].deriv());
+                        println!("{:9.5} vs {:9.5}", hes[j].value(), jac[j].deriv());
+                        ad_hess_full[3*vtx_idx + j][3*vtx + i] += jac[j].deriv();
+                        hess_full2[3*vtx_idx + j][3*vtx + i] += hes[j].value();
                         //assert_relative_eq!(
                         //    hes[j].value(),
                         //    jac[j].deriv(),
@@ -671,17 +724,22 @@ mod tests {
                         //);
                     }
                 }
+                println!("");
 
                 // Reset the variable back to being a constant.
                 tri_verts[vtx][i] = F::cst(tri_verts[vtx][i]);
             }
         }
+
+        print_full_hess(hess_full, "Block Lower Triangular Hessian");
+        print_full_hess(hess_full2, "Full Hessian");
+        print_full_hess(ad_hess_full, "Full Autodiff Hessian");
     }
 
     #[test]
     fn one_triangle_face_hessian_test() {
-        let mut perturb = make_perturb_fn();
-        for i in 1..50 {
+        let mut perturb = || Vector3::zeros();//make_perturb_fn();
+        for i in 3..4 {
             let radius = 0.1 * (i as f64);
             one_triangle_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);

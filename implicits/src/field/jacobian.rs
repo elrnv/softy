@@ -739,7 +739,7 @@ pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
 
 /// Reduce the given Jacobian from face vertices to vertices.
 #[cfg(test)]
-pub(crate) fn consolidate_jacobian<T: Real>(
+pub(crate) fn consolidate_face_jacobian<T: Real>(
     jac: &[Vector3<T>],
     neighbours: &[usize],
     faces: &[[usize;3]],
@@ -757,6 +757,28 @@ pub(crate) fn consolidate_jacobian<T: Real>(
     }
 
     vert_jac
+}
+
+/// A utility function to generate a new set of samples. This is useful when changing which
+/// variable to take the auto-derivative with respect to.
+#[cfg(test)]
+pub(crate) fn new_test_samples<T, V3>(
+    sample_type: SampleType,
+    triangles: &[[usize; 3]],
+    verts: &[V3],
+    ) -> Samples<T>
+where
+T: Real + Send + Sync,
+V3: Into<Vector3<T>> + Clone,
+{
+    match sample_type {
+        SampleType::Face => {
+            Samples::new_triangle_samples(&triangles, &verts, vec![T::zero(); triangles.len()])
+        }
+        SampleType::Vertex => {
+            Samples::new_vertex_samples(&triangles, &verts, None, vec![T::zero(); verts.len()])
+        }
+    }
 }
 
 #[cfg(test)]
@@ -852,25 +874,6 @@ mod tests {
         }
     }
 
-    fn new_test_samples<T, V3>(
-        sample_type: SampleType,
-        triangles: &[[usize; 3]],
-        verts: &[V3],
-    ) -> Samples<T>
-    where
-        T: Real + Send + Sync,
-        V3: Into<Vector3<T>> + Clone,
-    {
-        match sample_type {
-            SampleType::Face => {
-                Samples::new_triangle_samples(&triangles, &verts, vec![T::zero(); triangles.len()])
-            }
-            SampleType::Vertex => {
-                Samples::new_vertex_samples(&triangles, &verts, None, vec![T::zero(); verts.len()])
-            }
-        }
-    }
-
     /// A more complex test parametrized by the background potential choice, sample type, radius
     /// and a perturbation function that is expected to generate a random perturbation at every
     /// consequent call.
@@ -916,7 +919,7 @@ mod tests {
 
                     assert_eq!(jac.len(), 3 * neighbours.len());
 
-                    consolidate_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
+                    consolidate_face_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
                 }
                 SampleType::Vertex => {
                     let jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(

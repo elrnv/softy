@@ -348,7 +348,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         };
 
         let sym =
-            Self::compute_face_unit_normals_symmetric_jacobian(samples, surface_vertex_positions, surface_topo, sym_mult);
+            Self::face_unit_normals_symmetric_jacobian(samples, surface_vertex_positions, surface_topo, dual_topo, sym_mult);
 
         let nml_hess_multiplier = move |Sample { pos, .. }| {
             let w = kernel.with_closest_dist(csd).eval(q, pos);
@@ -703,6 +703,13 @@ mod tests {
                 let mut hess_vtx = vec![Vector3::zeros(); num_verts];
                 for &(r, c, h) in hess.iter() {
                     assert!(r >= c, "Hessian is not block lower triangular.");
+                    if r == c {
+                        for x in 0..3 {
+                            for y in 0..3 {
+                                assert_relative_eq!(h[y][x].value(), h[x][y].value(), max_relative = 1e-6, epsilon = 1e-12);
+                            }
+                        }
+                    }
                     if r == vtx {
                         hess_vtx[c] += h.transpose()[i];
                     } else if c == vtx {

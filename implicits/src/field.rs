@@ -965,31 +965,33 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// surface vertices. This is the Jacobian plus its transpose.
     /// This function is needed to compute the Hessian, which means we are only interested in the
     /// lower triangular part.
-    pub(crate) fn compute_face_unit_normals_symmetric_jacobian<'a, F>(
+    pub(crate) fn face_unit_normals_symmetric_jacobian<'a, F>(
         samples: SamplesView<'a, 'a, T>,
         surface_vertices: &'a [Vector3<T>],
         surface_topo: &'a [[usize; 3]],
+        dual_topo: &'a [Vec<usize>],
         mut multiplier: F,
     ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
     where
         F: FnMut(Sample<T>) -> T + 'a,
     {
+        let third = T::one() / T::from(3.0).unwrap();
         samples.into_iter().flat_map(move |sample| {
-            let Sample { index, nml, .. } = sample;
-            let tri_indices = &surface_topo[index];
-            let norm_inv = T::one() / nml.norm();
-            let unit_nml = nml * norm_inv;
-            let nml_proj = Matrix3::identity() - unit_nml * unit_nml.transpose();
+            let tri_indices = &surface_topo[sample.index];
+            let nml_proj = Self::scaled_tangent_projection(sample);
             let lambda = multiplier(sample);
             (0..3).flat_map(move |k| {
                 let vtx_row = tri_indices[k];
+                let num_neighs = T::from(dual_topo[vtx_row].len()).unwrap();
                 let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 (0..3)
                     .filter(move |&l| tri_indices[l] <= vtx_row)
                     .map(move |l| {
                         let vtx_col = tri_indices[l];
-                        let mtx = tri.area_normal_gradient(k) + tri.area_normal_gradient(l);
-                        (vtx_row, vtx_col, mtx * nml_proj * (norm_inv * lambda))
+                        // TODO: The following matrix probably has a simpler form (possible
+                        // diagonal?) Rewrite in terms of this form.
+                        let mtx = tri.area_normal_gradient(k) - tri.area_normal_gradient(l);
+                        (vtx_row, vtx_col, mtx * nml_proj * (lambda * num_neighs * third))
                     })
             })
         })

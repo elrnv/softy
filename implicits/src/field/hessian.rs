@@ -247,7 +247,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let main_jac = Self::sample_hessian_at(q, view, kernel, bg.clone())
             .flat_map(move |jac| {
                 (0..3).flat_map(move |i| {
-                    (0..3).map(move |j| (surface_topo[jac.0][i], surface_topo[jac.1][j], jac.2 * ninth))
+                    (0..3).filter(move |&j| surface_topo[jac.0][i] >= surface_topo[jac.1][j])
+                        .map(move |j| (surface_topo[jac.0][i], surface_topo[jac.1][j], jac.2 * ninth))
                 })
             });
 

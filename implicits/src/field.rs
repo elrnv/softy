@@ -978,7 +978,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let third = T::one() / T::from(3.0).unwrap();
         samples.into_iter().flat_map(move |sample| {
             let tri_indices = &surface_topo[sample.index];
-            let nml_proj = Self::scaled_tangent_projection(sample);
+            let nml_proj = Self::scaled_tangent_projection(sample); // symmetric
             let lambda = multiplier(sample);
             (0..3).flat_map(move |k| {
                 let vtx_row = tri_indices[k];
@@ -990,8 +990,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         let vtx_col = tri_indices[l];
                         // TODO: The following matrix probably has a simpler form (possible
                         // diagonal?) Rewrite in terms of this form.
-                        let mtx = tri.area_normal_gradient(k) - tri.area_normal_gradient(l);
-                        (vtx_row, vtx_col, mtx * nml_proj * (lambda * num_neighs * third))
+                        let mtx = tri.area_normal_gradient(k) * nml_proj - nml_proj * tri.area_normal_gradient(l);
+                        (vtx_row, vtx_col, mtx * (lambda * num_neighs * third))
                     })
             })
         })

@@ -28,7 +28,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .flat_map(move |(sample, tri_indices)| {
                 let norm_inv = T::one() / sample.nml.norm();
                 let nml = sample.nml * norm_inv;
-                let nml_proj = Matrix3::identity() - nml * nml.transpose();
+                let nml_proj = Self::scaled_tangent_projection(sample);
                 let mult = multiplier(sample);
                 let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 let grad = [
@@ -45,9 +45,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .filter(move |&i| tri_indices[i] <= vtx_row)
                         .map(move |i| {
                             let vtx_col = tri_indices[i];
-                            let nml_dot_mult_div_norm = nml.dot(mult) * norm_inv;
-                            let proj_mult = nml_proj * (mult * norm_inv); // projected multiplier
-                            let nml_mult_prod = nml_proj * nml_dot_mult_div_norm
+                            let proj_mult = nml_proj * mult; // projected multiplier
+                            let nml_mult_prod = nml_proj * nml.dot(mult)
                                 + proj_mult * nml.transpose()
                                 + nml * proj_mult.transpose();
                             let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
@@ -194,7 +193,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 unimplemented!();
             }
             SampleType::Face => {
-                let face_jac = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
+                let face_hess = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
                     .filter(|(_, _, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, lambda, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -212,7 +211,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
                 values
                     .iter_mut()
-                    .zip(face_jac.flat_map(move |(row,col,mtx)| {
+                    .zip(face_hess.flat_map(move |(row,col,mtx)| {
                         (0..3).flat_map(move |r| {
                             (0..3).filter(move |c| 3*row + r >= 3*col + c)
                                 .map(move |c| mtx[c][r])
@@ -244,16 +243,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let ninth = T::one() / T::from(9.0).unwrap();
 
         // For each surface vertex contribution
-        let main_jac = Self::sample_hessian_at(q, view, kernel, bg.clone())
-            .flat_map(move |jac| {
+        let main_hess = Self::sample_hessian_at(q, view, kernel, bg.clone())
+            .flat_map(move |hess| {
                 (0..3).flat_map(move |i| {
-                    (0..3).filter(move |&j| surface_topo[jac.0][i] >= surface_topo[jac.1][j])
-                        .map(move |j| (surface_topo[jac.0][i], surface_topo[jac.1][j], jac.2 * ninth))
+                    (0..3).filter(move |&j| surface_topo[hess.0][i] >= surface_topo[hess.1][j])
+                        .map(move |j| (surface_topo[hess.0][i], surface_topo[hess.1][j], hess.2 * ninth))
                 })
             });
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
-        let nml_jac = Self::normal_hessian_at(
+        let nml_hess = Self::normal_hessian_at(
             q,
             view,
             kernel,
@@ -264,7 +263,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         );
 
         // There are 3 contributions from each sample to each vertex.
-        nml_jac.chain(main_jac).map(move |jac| (jac.0, jac.1, jac.2 * multiplier))
+        nml_hess
+            //.chain(
+            //    main_hess
+            //)
+            .map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
     }
 
     /// Hessian part with respect to samples.
@@ -279,6 +282,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let csd = bg.closest_sample_dist();
         let ws_inv = bg.weight_sum_inv();
+        let ws_inv2 = ws_inv * ws_inv;
 
         let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
 
@@ -292,7 +296,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }| {
                 let bg = bg.clone();
                 let psi_i = phi_i + (q - pos_i).dot(nml_i) * (T::one() / nml_i.norm());
-                let dw_i = kernel.with_closest_dist(csd).grad(q, pos_i);
+                let dw_i = -kernel.with_closest_dist(csd).grad(q, pos_i);
+                let dwb_i = bg.background_weight_gradient(Some(i));
+                let dws_i = dwb_i + dw_i;
                 samples.into_iter().map(
                     move |Sample {
                         index: j,
@@ -310,16 +316,18 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             let ddw = kernel.with_closest_dist(csd).hess(q, pos_i);
                             h += ddw * ws_inv * psi_i;
 
-                            h -= ddw * ws_inv * local_pot;
+                            let ddwb = bg.background_weight_hessian(Some(i));
+                            h -= (ddw + ddwb) * ws_inv * local_pot;
                         }
 
-                        let dw_j = kernel.with_closest_dist(csd).grad(q, pos_j);
+                        let dw_j = -kernel.with_closest_dist(csd).grad(q, pos_j);
                         let dwb_j = bg.background_weight_gradient(Some(j));
-                        let dws_j = dw_j - dwb_j;
+                        let dws_j = dwb_j + dw_j;
 
-                        h -= dw_i * (dws_j.transpose() * (psi_i * ws_inv));
+                        h -= dw_i * (dws_j.transpose() * (psi_i * ws_inv2));
 
-                        h -= dw_i * (dw_j.transpose() * (psi_j * ws_inv * ws_inv) - dws_j.transpose() * (T::from(2.0).unwrap() * local_pot * ws_inv * ws_inv));
+                        h -= dws_i * ((dw_j.transpose() * psi_j
+                            - dws_j.transpose() * (T::from(2.0).unwrap() * local_pot)) * ws_inv2);
 
                         (j, i, h)
                     },
@@ -424,8 +432,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         zip!(sym, nml_hess_iter).map(move |(s, n)| {
             assert_eq!(s.0, n.0);
             assert_eq!(s.1, n.1);
-            (s.0, s.1, n.2 - s.2)
-        }).chain(coupling_nml_hess_iter)
+            (s.0, s.1, n.2)// - s.2)
+        })//.chain(coupling_nml_hess_iter)
     }
 }
 
@@ -433,7 +441,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 mod tests {
     use geo::mesh::{TriMesh, VertexPositions};
     use super::*;
-    use jacobian::{new_test_samples, make_test_tri, make_perturb_fn, consolidate_face_jacobian};
+    use jacobian::{new_test_samples, make_test_triangle, make_two_test_triangles, make_perturb_fn, consolidate_face_jacobian};
     use autodiff::F;
 
     /// High level test of the Hessian as the derivative of the Jacobian.
@@ -522,12 +530,12 @@ mod tests {
                     for (jac, hes) in jac_q.iter().zip(hess_vtx) {
                         // Check the derivative of the autodiff with our previously computed Jacobian.
                         println!("{:.5} vs {:.5}", hes.value(), jac.deriv());
-                        //assert_relative_eq!(
-                        //    hes[j].value(),
-                        //    jac[j].deriv(),
-                        //    max_relative = 1e-6,
-                        //    epsilon = 1e-12
-                        //);
+                        assert_relative_eq!(
+                            hes.value(),
+                            jac.deriv(),
+                            max_relative = 1e-6,
+                            epsilon = 1e-12
+                        );
                     }
 
                     // Reset the variable back to being a constant.
@@ -543,7 +551,7 @@ mod tests {
     fn one_triangle_hessian_test() {
         let qs = vec![[0.0, 0.4, 0.0], [0.0, 0.0, 0.0], [0.0, -0.4, 0.0]];
         let mut perturb = make_perturb_fn();
-        let tri_verts = make_test_tri(0.0, &mut perturb).into_iter().map(|x| x.into_inner()).collect();
+        let tri_verts = make_test_triangle(0.0, &mut perturb).into_iter().map(|x| x.into_inner()).collect();
         let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
 
         for i in 1..50 {
@@ -567,20 +575,38 @@ mod tests {
         }
     }
 
-    fn one_triangle_face_hessian<P: FnMut() -> Vector3<f64>>(
+    fn two_triangle_face_hessian<P: FnMut() -> Vector3<f64>>(
         radius: f64,
         bg_field_type: BackgroundFieldType,
         perturb: &mut P,
     ) {
-        let tri_verts: Vec<_> = make_test_tri(0.0, perturb).into_iter().map(|x| x.into_inner()).collect();
-        let tri_indices = vec![0usize, 1, 2];
+        let (tri_verts, tri_indices) = make_two_test_triangles(0.0, perturb);
+        let tri_verts: Vec<[f64;3]> = reinterpret::reinterpret_vec(tri_verts);
+        let tri_indices: Vec<usize> = reinterpret::reinterpret_vec(tri_indices);
         let tri = TriMesh::new(tri_verts, tri_indices);
-        let qs = vec![Vector3([0.0, 0.2, 0.0])];//, Vector3([0.0, 0.0, 0.0]), Vector3([0.0, -0.4, 0.0])];
+        let qs = vec![Vector3([0.0, 0.2, 0.0])];//, Vector3([0.0, 0.0001, 0.0]), Vector3([0.0, -0.4, 0.0])];
 
         for q in qs.into_iter() {
             face_hessian_tester(q, &tri, radius, 0.0, bg_field_type);
             //face_hessian_tester(q + perturb(), &tri, radius, 0.0, bg_field_type);
             //face_hessian_tester(q + perturb(), &tri, radius, 1.0, bg_field_type);
+        }
+    }
+
+    fn one_triangle_face_hessian<P: FnMut() -> Vector3<f64>>(
+        radius: f64,
+        bg_field_type: BackgroundFieldType,
+        perturb: &mut P,
+    ) {
+        let tri_verts: Vec<_> = make_test_triangle(0.0, perturb).into_iter().map(|x| x.into_inner()).collect();
+        let tri_indices = vec![0usize, 1, 2];
+        let tri = TriMesh::new(tri_verts, tri_indices);
+        let qs = vec![Vector3([0.0, 0.2, 0.0]), Vector3([0.0, 0.0001, 0.0]), Vector3([0.0, -0.4, 0.0])];
+
+        for q in qs.into_iter() {
+            face_hessian_tester(q, &tri, radius, 0.0, bg_field_type);
+            face_hessian_tester(q + perturb(), &tri, radius, 0.0, bg_field_type);
+            face_hessian_tester(q + perturb(), &tri, radius, 1.0, bg_field_type);
         }
     }
 
@@ -614,10 +640,14 @@ mod tests {
             return;
         }
 
+        dbg!(&neighbours);
+
         // Radius is such that samples are captured by the query point.
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
         let view = SamplesView::new(neighbours.as_ref(), &samples);
+
+        let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(num_verts, &tri_faces);
 
         // Compute the complete hessian.
         let hess: Vec<(usize, usize, Matrix3<F>)> = ImplicitSurface::face_hessian_at(
@@ -626,7 +656,7 @@ mod tests {
             kernel,
             tri_faces,
             &tri_verts,
-            &vec![vec![0];3],
+            &dual_topo,
             bg_field_type,
             F::cst(1.0),
         ).collect();
@@ -661,7 +691,7 @@ mod tests {
             for i in 0..3 {
                 // Set a variable to take the derivative with respect to, using autodiff.
                 tri_verts[vtx][i] = F::var(tri_verts[vtx][i]);
-                println!("vtx = {}; i = {}", vtx, i);
+                println!("row_vtx = {}; i = {}", vtx, i);
 
                 // We need to update samples to make sure the normals and centroids are recomputed
                 // using the correct wrt autodiff variable.
@@ -692,12 +722,14 @@ mod tests {
                 );
 
                 // Test the surface Jacobian against autodiff on the potential computation.
-                assert_relative_eq!(
-                    vert_jac[vtx][i].value(),
-                    p.deriv(),
-                    max_relative = 1e-5,
-                    epsilon = 1e-10
-                );
+                if !p.deriv().is_nan() {
+                    assert_relative_eq!(
+                        vert_jac[vtx][i].value(),
+                        p.deriv(),
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    );
+                }
                 println!("jac {:9.5} vs {:9.5}", vert_jac[vtx][i].value(), p.deriv());
 
                 // Consolidate the hessian to this particular vertex and component.
@@ -721,7 +753,9 @@ mod tests {
                 for (vtx_idx, (jac, hes)) in vert_jac.iter().zip(hess_vtx).enumerate() {
                     for j in 0..3 {
                         // Check the derivative of the autodiff with our previously computed Jacobian.
-                        println!("{:9.5} vs {:9.5}", hes[j].value(), jac[j].deriv());
+                        if !relative_eq!(hes[j].value(), jac[j].deriv(), max_relative = 1e-6, epsilon = 1e-12) {
+                            println!("col_vtx = {}; j = {}; {:9.5} vs {:9.5}", vtx_idx, j, hes[j].value(), jac[j].deriv());
+                        }
                         ad_hess_full[3*vtx_idx + j][3*vtx + i] += jac[j].deriv();
                         hess_full2[3*vtx_idx + j][3*vtx + i] += hes[j].value();
                         //assert_relative_eq!(
@@ -745,10 +779,44 @@ mod tests {
     }
 
     #[test]
-    fn one_triangle_face_hessian_test() {
-        let mut perturb = || Vector3::zeros();//make_perturb_fn();
-        for i in 3..4 {
+    fn two_triangle_face_hessian_test() {
+        let mut no_perturb = || Vector3::zeros();
+        let mut perturb = make_perturb_fn();
+        //for i in 9..10
+        let i = 11;
+        {
             let radius = 0.1 * (i as f64);
+            // Simple test with no perturbation. This derivative is easier to interpret.
+            two_triangle_face_hessian(radius, BackgroundFieldType::None, &mut no_perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut no_perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut no_perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut no_perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut no_perturb);
+            
+            // Less trivial test with perturbation.
+            //two_triangle_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
+            //two_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
+        }
+    }
+
+    #[test]
+    fn one_triangle_face_hessian_test() {
+        let mut no_perturb = || Vector3::zeros();
+        let mut perturb = make_perturb_fn();
+        for i in 1..50 {
+            let radius = 0.1 * (i as f64);
+            // Unperturbed triangle. This test is easier to debug.
+            one_triangle_face_hessian(radius, BackgroundFieldType::None, &mut no_perturb);
+            //one_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut no_perturb);
+            //one_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut no_perturb);
+            //one_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut no_perturb);
+            //one_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut no_perturb);
+            
+            // Test with a perturbed triangle. This test verifies that the derivative is robust
+            // against perturbation. 
             one_triangle_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
@@ -773,16 +841,24 @@ mod tests {
     /// Test the second order derivatives of our normal computation method for face normals.
     #[test]
     fn face_normal_hessian_test() {
+        // Simple test with two triangles
+        let (tri_verts, tri_faces) = make_two_test_triangles(0.0, &mut || Vector3::zeros());
+        face_normal_hessian_tester(&tri_verts, &tri_faces);
+
+        // More complex test with a whole tet
+        let (tet_verts, tet_faces) = make_tet();
+        face_normal_hessian_tester(&tet_verts, &tet_faces);
+    }
+
+    fn face_normal_hessian_tester(verts: &[Vector3<f64>], faces: &[[usize;3]]) {
         use geo::math::Matrix12;
 
-        let (tet_verts, tet_faces) = make_tet();
+        let samples = Samples::new_triangle_samples(faces, verts, vec![0.0; faces.len()]);
 
-        let samples = Samples::new_triangle_samples(&tet_faces, &tet_verts, vec![0.0; 4]);
-
-        let indices = vec![0, 1, 2, 3]; // look at all the faces
+        let neighbours: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
 
         // Set a random product vector.
-        let multipliers = random_vectors(tet_faces.len());
+        let multipliers = random_vectors(faces.len());
         let ad_multipliers: Vec<_> = multipliers.iter().map(|&v| v.map(|x| F::cst(x))).collect();
 
         let multiplier = move |Sample { index, .. }| multipliers[index];
@@ -790,11 +866,11 @@ mod tests {
         let ad_multiplier = move |Sample { index, .. }| ad_multipliers[index];
 
         // Compute the normal hessian product.
-        let view = SamplesView::new(indices.as_ref(), &samples);
+        let view = SamplesView::new(neighbours.as_ref(), &samples);
         let hess_iter = ImplicitSurface::compute_face_unit_normals_hessian_products(
             view,
-            &tet_verts,
-            &tet_faces,
+            verts,
+            faces,
             multiplier.clone(),
         );
 
@@ -814,13 +890,13 @@ mod tests {
         }
 
         assert_eq!(
-            ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(samples.len()),
+            ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(neighbours.len()),
             num_hess_entries
         );
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> = tet_verts
+        let mut ad_verts: Vec<Vector3<F>> = verts
             .iter()
             .cloned()
             .map(|v| v.map(|x| F::cst(x)))
@@ -828,16 +904,16 @@ mod tests {
 
         for r in 0..4 {
             for i in 0..3 {
-                ad_tet_verts[r][i] = F::var(ad_tet_verts[r][i]);
+                ad_verts[r][i] = F::var(ad_verts[r][i]);
 
                 let ad_samples =
-                    Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F::cst(0.0); 4]);
-                let ad_view = SamplesView::new(indices.as_ref(), &ad_samples);
+                    Samples::new_triangle_samples(faces, &ad_verts, vec![F::cst(0.0); 4]);
+                let ad_view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 // Convert the samples to use autodiff constants.
                 let grad = super::jacobian::compute_face_unit_normal_derivative(
-                    &ad_tet_verts,
-                    &tet_faces,
+                    &ad_verts,
+                    faces,
                     ad_view,
                     ad_multiplier.clone(),
                 );
@@ -856,7 +932,7 @@ mod tests {
                     }
                 }
 
-                ad_tet_verts[r][i] = F::cst(ad_tet_verts[r][i]);
+                ad_verts[r][i] = F::cst(ad_verts[r][i]);
             }
         }
     }

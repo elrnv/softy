@@ -982,7 +982,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             let lambda = multiplier(sample);
             (0..3).flat_map(move |k| {
                 let vtx_row = tri_indices[k];
-                let num_neighs = T::from(dual_topo[vtx_row].len()).unwrap();
+                //let num_neighs = T::from(dual_topo[vtx_row].len()).unwrap();
                 let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
                 (0..3)
                     .filter(move |&l| tri_indices[l] <= vtx_row)
@@ -991,7 +991,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         // TODO: The following matrix probably has a simpler form (possible
                         // diagonal?) Rewrite in terms of this form.
                         let mtx = tri.area_normal_gradient(k) * nml_proj - nml_proj * tri.area_normal_gradient(l);
-                        (vtx_row, vtx_col, mtx * (lambda * num_neighs * third))
+                        (vtx_row, vtx_col, mtx * (lambda * third))
                     })
             })
         })

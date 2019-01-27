@@ -477,8 +477,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let mut dw_p = dw * weight_sum_inv;
         dw_p -= dw_neigh_normalized * (w * weight_sum_inv);
         dw_p *= T::from(sample_value).unwrap() + multiplier.dot(q - sample_pos);
-
-        // Compute the normal component of the derivative
         dw_p + multiplier * (w * weight_sum_inv)
     }
 
@@ -718,14 +716,37 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
     vert_grad
 }
 
-/// Make a query triangle in the x-z plane, perturbed by a 3D perturbation function.
+/// Make a query triangle in the x-z plane at the given height, perturbed by a 3D perturbation function.
 #[cfg(test)]
-pub(crate) fn make_test_tri(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
+pub(crate) fn make_test_triangle(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
     vec![
         Vector3([0.5, h, 0.0]) + perturb(),
         Vector3([-0.25, h, 0.433013]) + perturb(),
         Vector3([-0.25, h, -0.433013]) + perturb(),
     ]
+}
+
+/// Make two query triangles in the x-z plane at the given height, perturbed by a 3D perturbation function.
+#[cfg(test)]
+pub(crate) fn make_two_test_triangles(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> (Vec<Vector3<f64>>, Vec<[usize;3]>) {
+    (vec![
+        Vector3([0.0, h, 0.0]) + perturb(),
+        Vector3([0.0, h, 1.0]) + perturb(),
+        Vector3([1.0, h, 0.0]) + perturb(),
+        Vector3([1.0, h+0.5, 1.0]) + perturb(),
+    ], vec![[0, 1, 2], [1, 3, 2]])
+}
+
+/// Make htree query triangles in the x-z plane at the given height, perturbed by a 3D perturbation function.
+#[cfg(test)]
+pub(crate) fn make_three_test_triangles(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> (Vec<Vector3<f64>>, Vec<[usize;3]>) {
+    (vec![
+        Vector3([0.0, h, 0.0]) + perturb(),
+        Vector3([0.0, h, 1.0]) + perturb(),
+        Vector3([1.0, h, 0.0]) + perturb(),
+        Vector3([1.0, h+0.5, 1.0]) + perturb(),
+        Vector3([2.0, h, 0.0]) + perturb(),
+    ], vec![[0, 1, 2], [1, 3, 2], [2, 3, 4]])
 }
 
 #[cfg(test)]
@@ -885,7 +906,7 @@ mod tests {
     ) {
         // This is a similar test to the one above, but has a non-trivial surface topology for the
         // surface.
-        let tri_verts = make_test_tri(1.18032, perturb);
+        let tri_verts = make_test_triangle(1.18032, perturb);
         let (tet_verts, tet_faces) = make_tet();
 
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(tet_verts.len(), &tet_faces);
@@ -1184,7 +1205,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_vert_vecs = make_test_tri(1.18032, perturb);
+        let tri_vert_vecs = make_test_triangle(1.18032, perturb);
 
         let tri_verts: Vec<[f64; 3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
 
@@ -1347,7 +1368,7 @@ mod tests {
         radius: f64,
         perturb: &mut P,
     ) {
-        let tri_verts = make_test_tri(1.18032, perturb);
+        let tri_verts = make_test_triangle(1.18032, perturb);
 
         let (tet_verts, tet_faces) = make_tet();
 
@@ -1422,7 +1443,7 @@ mod tests {
         use geo::NumVertices;
         use utils::*;
 
-        let tri_vert_pos = make_test_tri(1.18032, perturb);
+        let tri_vert_pos = make_test_triangle(1.18032, perturb);
 
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
 

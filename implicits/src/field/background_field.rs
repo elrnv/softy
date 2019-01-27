@@ -1,6 +1,6 @@
 use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::{RadialKernel, SphericalKernel};
-use geo::math::Vector3;
+use geo::math::{Matrix3, Vector3};
 use geo::Real;
 
 /// Different types of background fields supported.
@@ -186,6 +186,31 @@ where
                 * (self.kernel.df(self.kernel.radius() - self.closest_sample_dist)
                     / self.closest_sample_dist)
         }
+    }
+
+    /// Unnormalized background wieght hessian with respect to the given sample point index.
+    /// If the given sample is not the closest sample, then the drivative is zero.
+    /// If the given index is `None`, then the derivative is with respect to the query point.
+    #[inline]
+    pub(crate) fn background_weight_hessian(&self, index: Option<usize>) -> Matrix3<T> {
+        if self.bg_field_value == BackgroundFieldValue::None {
+            return Matrix3::zeros();
+        }
+
+        if let Some(index) = index {
+            if index != self.closest_sample_index {
+                return Matrix3::zeros();
+            }
+        }
+
+        // Derivative with respect to the sample at the given index
+        // or Derivative with respect to the query position ( same thing )
+        let disp = self.closest_sample_disp / self.closest_sample_dist;
+        let dwb = self.kernel.df(self.kernel.radius() - self.closest_sample_dist);
+        let ddwb = self.kernel.ddf(self.kernel.radius() - self.closest_sample_dist);
+        disp * ddwb * disp.transpose()
+            - ((Matrix3::identity() - disp * disp.transpose())
+               * (dwb / self.closest_sample_dist))
     }
 }
 

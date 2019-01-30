@@ -4,12 +4,13 @@ members = [
     "utils",
     "hdkrs",
     "softy",
+    "softy-hdk",
     "implicits",
     "implicits-c",
-    "softy-hdk",
     "implicits-hdk",
     "vtkio-hdk",
 ]
 
 [profile.release]
 debug = false # Change this to true to enable debug symbols in release mode
+rpath = true

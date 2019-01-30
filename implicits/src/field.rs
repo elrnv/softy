@@ -939,17 +939,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute the gradient of the face normal at the given sample with respect to
     /// the given vertex.
-    pub(crate) fn face_unit_normal_gradient(
-        sample: Sample<T>,
-        vtx_idx: usize,
-        surface_vertices: &[Vector3<T>],
-        surface_topo: &[[usize; 3]],
-    ) -> Matrix3<T> {
-        let nml_proj = Self::scaled_tangent_projection(sample);
-        let tri_indices = &surface_topo[sample.index];
-        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-        tri.area_normal_gradient(vtx_idx) * nml_proj
-    }
+    //pub(crate) fn face_unit_normal_gradient(
+    //    sample: Sample<T>,
+    //    vtx_idx: usize,
+    //    surface_vertices: &[Vector3<T>],
+    //    surface_topo: &[[usize; 3]],
+    //) -> Matrix3<T> {
+    //    let nml_proj = Self::scaled_tangent_projection(sample);
+    //    let tri_indices = &surface_topo[sample.index];
+    //    let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+    //    tri.area_normal_gradient(vtx_idx) * nml_proj
+    //}
 
     /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
     /// by the local area (normal norm reciprocal).

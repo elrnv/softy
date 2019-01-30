@@ -733,7 +733,7 @@ pub(crate) fn make_two_test_triangles(h: f64, perturb: &mut impl FnMut() -> Vect
         Vector3([0.0, h, 0.0]) + perturb(),
         Vector3([0.0, h, 1.0]) + perturb(),
         Vector3([1.0, h, 0.0]) + perturb(),
-        Vector3([1.0, h+0.5, 1.0]) + perturb(),
+        Vector3([1.0, h, 1.0]) + perturb(),
     ], vec![[0, 1, 2], [1, 3, 2]])
 }
 

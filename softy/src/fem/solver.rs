@@ -659,7 +659,7 @@ impl Solver {
         let mut lower = vec![0.0; constraint.len()];
         let mut upper = vec![0.0; constraint.len()];
         problem.constraint_bounds(&mut lower, &mut upper);
-        assert!(problem.constraint(&vec![0.0; primal_variables.len()], constraint));
+        assert!(problem.constraint(primal_variables, constraint));
         for (c, (l, u)) in constraint
             .iter_mut()
             .zip(lower.into_iter().zip(upper.into_iter()))
@@ -711,7 +711,7 @@ impl Solver {
         } = self.solver.solver_data();
 
         assert_eq!(grad.len(), primal_variables.len());
-        assert!(problem.objective_grad(&vec![0.0; primal_variables.len()], grad));
+        assert!(problem.objective_grad(primal_variables, grad));
 
         // Erase fixed vert data. This doesn't contribute to the solve.
         let mesh = problem.tetmesh.borrow();
@@ -745,7 +745,7 @@ impl Solver {
         assert!(problem.constraint_jacobian_indices(&mut rows, &mut cols));
 
         let mut values = vec![0.0; jac_nnz];
-        assert!(problem.constraint_jacobian_values(&vec![0.0; primal_variables.len()], &mut values));
+        assert!(problem.constraint_jacobian_values(primal_variables, &mut values));
 
         // We don't consider values for fixed vertices.
         let mesh = problem.tetmesh.borrow();
@@ -914,6 +914,11 @@ impl Solver {
             let merit_model = f_k1 + mu * self.model_l1();
             let merit_value = f_k1 + mu * self.merit_l1();
 
+            // Since we are using linearized constraints, we compute the true
+            // residual and iterate until it vanishes. For unconstrained problems or problems with
+            // no linearized constraints, only one step is needed.
+            residual_norm = self.compute_residual(&mut residual);
+
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
             self.commit_solution();
@@ -947,10 +952,6 @@ impl Solver {
                     return Err(e);
                 }
             }
-
-            // Since we are using linearized constraints, we compute the true constraint violation
-            // residual and iterate until it vanishes.
-            residual_norm = self.compute_residual(&mut residual);
 
             if residual_norm <= f64::from(self.sim_params.outer_tolerance) {
                 break;
@@ -1008,7 +1009,7 @@ impl Solver {
             }
         }
 
-        if result.iterations >= self.sim_params.max_outer_iterations {
+        if result.iterations > self.sim_params.max_outer_iterations {
             eprintln!(
                 "WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
                 result.iterations, residual_norm
@@ -1067,7 +1068,7 @@ mod tests {
     // 300 steps.
     const SOLID_MATERIAL: Material = Material {
         elasticity: ElasticityParameters {
-            bulk_modulus: 1750e3,
+            bulk_modulus: 100e3,
             shear_modulus: 10e3,
         },
         incompressibility: false,
@@ -1138,7 +1139,7 @@ mod tests {
             .zip(expected.vertex_positions().iter())
         {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 1e-10);
             }
         }
     }
@@ -1164,7 +1165,6 @@ mod tests {
         let params = SimParams {
             gravity: [0.0f32, 0.0, 0.0],
             outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-            max_outer_iterations: 2,
             ..STATIC_PARAMS
         };
 
@@ -1190,7 +1190,6 @@ mod tests {
         let params = SimParams {
             gravity: [0.0f32, 0.0, 0.0],
             outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-            max_outer_iterations: 2,
             ..DYNAMIC_PARAMS
         };
 
@@ -1239,7 +1238,6 @@ mod tests {
     fn one_tet_outer_test() {
         let params = SimParams {
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-            max_outer_iterations: 2,
             ..STATIC_PARAMS
         };
 
@@ -1483,6 +1481,40 @@ mod tests {
     }
 
     #[test]
+    fn box_twist_dynamic_volume_constraint_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
+            incompressibility: true,
+            ..MEDIUM_SOLID_MATERIAL
+        };
+
+        // We use a large time step to get the simulation to settle to the static sim with less
+        // iterations.
+        let params = SimParams {
+            time_step: Some(2.0),
+            ..DYNAMIC_PARAMS
+        };
+
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mut solver = SolverBuilder::new(params)
+            .solid_material(material)
+            .add_solid(mesh)
+            .build()
+            .unwrap();
+
+        // The dynamic sim needs to settle
+        for _ in 1u32..15 {
+            let result = solver.step().expect("Dynamic box twist solve failed");
+            assert!(result.iterations <= params.max_outer_iterations, "Unconstrained solver ran out of outer iterations.");
+        }
+
+        let expected: TetMesh =
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+        let solution = solver.borrow_mesh();
+        compare_meshes(&solution, &expected, 1e-6);
+    }
+
+    #[test]
     fn box_twist_volume_constraint_test() {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
@@ -1514,7 +1546,6 @@ mod tests {
 
         let params = SimParams {
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-            max_outer_iterations: 2,
             ..STRETCH_PARAMS
         };
 
@@ -1599,20 +1630,11 @@ mod tests {
 
         let tri = vec![3, 0, 2, 1];
 
-        let tet_verts = vec![
-            [0.0, 1.0, 0.0],
-            [-0.94281, -0.33333, 0.0],
-            [0.471405, -0.33333, 0.816498],
-            [0.471405, -0.33333, -0.816498],
-        ];
+        let mut tetmesh = make_regular_tet();
 
-        let tet = vec![3, 1, 0, 2];
-
-        let fixed = vec![0, 1, 1, 1];
-
-        let mut tetmesh = TetMesh::new(tet_verts.clone(), tet);
+        // Set fixed vertices
         tetmesh
-            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)
+            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])
             .unwrap();
 
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
@@ -1648,7 +1670,7 @@ mod tests {
         for (pos, exp_pos) in solver
             .borrow_mesh()
             .vertex_position_iter()
-            .zip(tet_verts.iter())
+            .zip(tetmesh.vertex_positions().iter())
         {
             for i in 0..3 {
                 assert_relative_eq!(pos[i], exp_pos[i], max_relative = 1e-5, epsilon = 1e-6);
@@ -1666,7 +1688,7 @@ mod tests {
         let pts = PointCloud::new(tri_verts.clone());
         assert!(solver.update_kinematic_vertices(&pts).is_ok());
         let solve_result = solver.step().expect("Failed push solve.");
-        assert!(solve_result.iterations < params.max_outer_iterations);
+        assert!(solve_result.iterations <= params.max_outer_iterations);
 
         // Verify constraint, should be positive after push
         let constraint =
@@ -1676,9 +1698,9 @@ mod tests {
         // Expect only the top vertex to be pushed down.
         let offset_verts = vec![
             [0.0, 0.6266205, 0.0],
-            tet_verts[1],
-            tet_verts[2],
-            tet_verts[3],
+            tetmesh.vertex_position(1),
+            tetmesh.vertex_position(2),
+            tetmesh.vertex_position(3),
         ];
 
         for (pos, exp_pos) in solver
@@ -1723,7 +1745,7 @@ mod tests {
         let res = solver.step().expect("Failed push solve.");
         println!("res = {:?}", res);
         assert!(
-            res.iterations < params.max_outer_iterations,
+            res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
         );
     }
@@ -1767,14 +1789,14 @@ mod tests {
         let res = solver.step().expect("Failed bounce solve.");
         println!("res = {:?}", res);
         assert!(
-            res.iterations < params.max_outer_iterations,
+            res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
         );
 
         let res = solver.step().expect("Failed bounce solve.");
         println!("res = {:?}", res);
         assert!(
-            res.iterations < params.max_outer_iterations,
+            res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
         );
     }
@@ -1783,11 +1805,19 @@ mod tests {
      * More complex tests
      */
 
+    const STIFF_MATERIAL: Material = Material {
+        elasticity: ElasticityParameters {
+            bulk_modulus: 1750e6,
+            shear_modulus: 10e6,
+        },
+        ..SOLID_MATERIAL
+    };
+
     #[test]
     fn torus_medium_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOLID_MATERIAL)
+            .solid_material(STIFF_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
@@ -1799,7 +1829,7 @@ mod tests {
     fn torus_long_test() {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .solid_material(SOLID_MATERIAL)
+            .solid_material(STIFF_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();

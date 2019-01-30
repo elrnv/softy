@@ -1,17 +1,10 @@
 /**
  * This crate provides convenience functions for building common meshes.
  */
-
 pub mod transform;
 
 pub use crate::transform::*;
-use geometry::{
-    mesh::{
-        PolyMesh,
-        TriMesh,
-        TetMesh,
-    }
-};
+use geometry::mesh::{PolyMesh, TetMesh, TriMesh};
 
 /// Parameters that define a grid that lies in one of the 3 axis planes in 3D space.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -35,7 +28,7 @@ pub enum AxisPlaneOrientation {
 /// Generate a [-1,1]x[-1,1] mesh grid with the given cell resolution and grid orientation. The
 /// grid nodes are spcified in row major order.
 pub fn make_grid(grid_params: Grid) -> PolyMesh<f64> {
-    let Grid { 
+    let Grid {
         rows,
         cols,
         orientation,
@@ -91,17 +84,17 @@ pub fn make_sample_octahedron() -> TriMesh<f64> {
 }
 
 pub fn make_regular_tet() -> TetMesh<f64> {
-    let sqrt_8_by_9 = f64::sqrt(8.0/9.0);
-    let sqrt_2_by_9 = f64::sqrt(2.0/9.0);
-    let sqrt_2_by_3 = f64::sqrt(2.0/3.0);
+    let sqrt_8_by_9 = f64::sqrt(8.0 / 9.0);
+    let sqrt_2_by_9 = f64::sqrt(2.0 / 9.0);
+    let sqrt_2_by_3 = f64::sqrt(2.0 / 3.0);
     let vertices = vec![
         [0.0, 1.0, 0.0],
-        [-sqrt_8_by_9, -1.0/3.0, 0.0],
-        [sqrt_2_by_9, -1.0/3.0, sqrt_2_by_3],
-        [sqrt_2_by_9, -1.0/3.0, -sqrt_2_by_3],
+        [-sqrt_8_by_9, -1.0 / 3.0, 0.0],
+        [sqrt_2_by_9, -1.0 / 3.0, sqrt_2_by_3],
+        [sqrt_2_by_9, -1.0 / 3.0, -sqrt_2_by_3],
     ];
 
-    let indices = vec![1, 2, 3, 0];
+    let indices = vec![0, 1, 2, 3];
 
     TetMesh::new(vertices, indices)
 }

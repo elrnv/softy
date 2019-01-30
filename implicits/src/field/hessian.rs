@@ -653,7 +653,22 @@ mod tests {
         }
     }
 
-    /// Test the highest level surface Hessian functions.
+    /// Test the highest level surface Hessian functions with a tetrahedron.
+    #[test]
+    fn one_tet_hessian_test() {
+        let qs: Vec<_> = (0..4)
+            .map(|i| Vector3([0.0, -0.5 + 0.25 * i as f64, 0.0]).into_inner())
+            .collect();
+
+        let trimesh = TriMesh::from(utils::make_regular_tet());
+
+        for i in 1..10 {
+            let radius = 0.5 * (i as f64);
+            surface_hessian_tester(&qs, &trimesh, radius, 0.0, BackgroundFieldType::None);
+        }
+    }
+
+    /// Test the highest level surface Hessian functions with a single triangle
     #[test]
     fn one_triangle_hessian_test() {
         let qs = vec![[0.0, 0.4, 0.0], [0.0, 0.0, 0.0], [0.0, -0.4, 0.0]];

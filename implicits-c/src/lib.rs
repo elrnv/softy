@@ -165,7 +165,7 @@ pub unsafe extern "C" fn project_to_above(
 #[no_mangle]
 pub unsafe extern "C" fn num_surface_jacobian_non_zeros(implicit_surface: *const ImplicitSurface) -> c_int {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    surf.num_surface_jacobian_entries() as c_int
+    surf.num_surface_jacobian_entries().unwrap_or(0) as c_int
 }
 
 /// Compute the index structure of the surface Jacobian for the given implicit function.
@@ -234,4 +234,45 @@ pub unsafe extern "C" fn query_jacobian(
         Ok(()) => 0,
         Err(_) => 1,
     }
+}
+
+/// Invalidate neighbour cache. This must be done explicitly after we have completed a simulation
+/// step. This implies that the implicit surface may change.
+#[no_mangle]
+pub unsafe extern "C" fn invalidate_neighbour_cache(
+    implicit_surface: *const ImplicitSurface,
+) {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    surf.invalidate_query_neighbourhood();
+}
+
+/// Recompute the neighbour cache if invalidated. This is done automatically when computing
+/// potential or jacobian. But it needs to be done explicitly to generate the correct Jacobian
+/// sparsity pattern because query points are not typically passed when requesting Jacobian
+/// indices.
+#[no_mangle]
+pub unsafe extern "C" fn cache_neighbours(
+    implicit_surface: *const ImplicitSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+) {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
+    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    surf.cache_neighbours(query_points);
+}
+
+/// Update the implicit surface with new vertex positions for the underlying mesh.
+/// The `position_coords` array is expected to have size of 3 times `num_positions`.
+#[no_mangle]
+pub unsafe extern "C" fn update(
+    implicit_surface: *mut ImplicitSurface,
+    num_positions: c_int,
+    position_coords: *const f64,
+) -> c_int {
+    let coords= std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
+    let pos: &[[f64; 3]] = reinterpret_slice(coords);
+    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
+    surf.update(pos.iter().cloned()) as c_int
 }

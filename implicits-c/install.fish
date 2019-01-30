@@ -56,7 +56,7 @@ if [ $platform = "Darwin" ]
     # Create the import library from the generated dll (we know it exists because the previous line
     # passed)
     x86_64-w64-mingw32-dlltool -z implicits.def --export-all-symbol implicits.dll
-    x86_64-w64-mingw32-dlltool -A -d implicits.def -l libimplicits.a
+    x86_64-w64-mingw32-dlltool -A -d implicits.def -l implicits.lib
 
     cp implicits.lib ~/vmr/packages/implicits/lib/
 

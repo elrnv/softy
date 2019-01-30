@@ -961,40 +961,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         Matrix3::diag([nml_norm_inv;3]) - (nml * nml_norm_inv) * nml.transpose()
     }
 
-    /// Compute the symmetric jacobian of the face normals with respect to
-    /// surface vertices. This is the Jacobian plus its transpose.
-    /// This function is needed to compute the Hessian, which means we are only interested in the
-    /// lower triangular part.
-    pub(crate) fn face_unit_normals_symmetric_jacobian<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
-    where
-        F: FnMut(Sample<T>) -> T + 'a,
-    {
-        let third = T::one() / T::from(3.0).unwrap();
-        samples.into_iter().flat_map(move |sample| {
-            let tri_indices = &surface_topo[sample.index];
-            let nml_proj = Self::scaled_tangent_projection(sample); // symmetric
-            let lambda = multiplier(sample);
-            (0..3).flat_map(move |k| {
-                let vtx_row = tri_indices[k];
-                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-                (0..3)
-                    .filter(move |&l| tri_indices[l] <= vtx_row)
-                    .map(move |l| {
-                        let vtx_col = tri_indices[l];
-                        // TODO: The following matrix probably has a simpler form (possible
-                        // diagonal?) Rewrite in terms of this form.
-                        let mtx = tri.area_normal_gradient(k) * nml_proj - nml_proj * tri.area_normal_gradient(l);
-                        (vtx_row, vtx_col, mtx * (lambda * third))
-                    })
-            })
-        })
-    }
-
     /// Compute the background potential field. This function returns a struct that provides some
     /// useful quanitities for computing derivatives of the field.
     pub(crate) fn compute_background_potential<'a, K: 'a>(

@@ -55,17 +55,58 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         })
     }
 
+    /// Compute the symmetric jacobian of the face normals with respect to
+    /// surface vertices. This is the Jacobian plus its transpose.
+    /// This function is needed to compute the Hessian, which means we are only interested in the
+    /// lower triangular part.
+    pub(crate) fn face_unit_normals_symmetric_jacobian<'a, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_vertices: &'a [Vector3<T>],
+        surface_topo: &'a [[usize; 3]],
+        mut multiplier: F,
+    ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
+    where
+        F: FnMut(Sample<T>) -> T + 'a,
+    {
+        let third = T::one() / T::from(3.0).unwrap();
+        samples.into_iter().flat_map(move |sample| {
+            let tri_indices = &surface_topo[sample.index];
+            let nml_proj = Self::scaled_tangent_projection(sample); // symmetric
+            let lambda = multiplier(sample);
+            (0..3).flat_map(move |k| {
+                let vtx_row = tri_indices[k];
+                let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+                (0..3)
+                    .filter(move |&l| tri_indices[l] <= vtx_row)
+                    .map(move |l| {
+                        let vtx_col = tri_indices[l];
+                        // TODO: The following matrix probably has a simpler form (possible
+                        // diagonal?) Rewrite in terms of this form.
+                        let mtx = tri.area_normal_gradient(k) * nml_proj - nml_proj * tri.area_normal_gradient(l);
+                        (vtx_row, vtx_col, mtx * (lambda * third))
+                    })
+            })
+        })
+    }
+
+
     /// Get the total number of entries for the sparse Hessian non-zeros. The Hessian is taken with
     /// respect to sample points. This estimate is based on the current neighbour cache, which
     /// gives the number of query points, if the neighbourhood was not precomputed this function
     /// returns `None`.
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
         let neigh_points = self.trivial_neighbourhood_borrow().ok()?;
-        let num_pts_per_sample = match self.sample_type {
-            SampleType::Vertex => unimplemented!(),
-            SampleType::Face => 3,
-        };
-        Some(neigh_points.iter().map(|pts| pts.len()).sum::<usize>() * 3 * num_pts_per_sample)
+
+        let num_total_neighs = neigh_points.iter().map(|pts| pts.len()).sum::<usize>();
+        let num_total_neighs_squared = neigh_points.iter().map(|pts| pts.len() * pts.len()).sum::<usize>();
+        let nml_hess_entries = num_total_neighs * (3 * 9 // below diagonal ( all 9 components )
+                                                   + 3 * 6) // on diagonal ( just the 6 components )
+            + num_total_neighs * ( 9 * 9 )
+            + num_total_neighs_squared * ( 9 * 9 );
+
+        let main_hess_entries = num_total_neighs_squared * (3 * 9 + 3 * 6);
+
+        Some(nml_hess_entries + main_hess_entries)
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -539,12 +580,17 @@ mod tests {
         )
         .expect("Failed to compute hessian indices");
 
+        let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+        let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
+
         // We use the multipliers to isolate the hessian for each query point.
         for q_idx in 0..num_query_points {
             multipliers[q_idx] = F::cst(1.0);
 
             surf.surface_hessian_product_values(&ad_query_points, &multipliers, &mut hess_values)
                 .expect("Failed to compute hessian product");
+
+            let mut success = true;
 
             // Test the accuracy of each component of the hessian against an autodiff version of the
             // second derivative.
@@ -575,23 +621,33 @@ mod tests {
                     {
                         if r == 3 * vtx + i {
                             hess_vtx[c] += h;
+                        } else if c == 3 * vtx + i {
+                            hess_vtx[r] += h;
                         }
                     }
 
-                    for (jac, hes) in jac_q.iter().zip(hess_vtx) {
+                    for (linear_j, (jac, hes)) in jac_q.iter().zip(hess_vtx).enumerate() {
                         // Check the derivative of the autodiff with our previously computed Jacobian.
-                        println!("{:.5} vs {:.5}", hes.value(), jac.deriv());
-                        assert_relative_eq!(
+                        if !relative_eq!(
                             hes.value(),
                             jac.deriv(),
                             max_relative = 1e-6,
                             epsilon = 1e-12
-                        );
+                        ) {
+                            println!("{:.5} vs {:.5}", hes.value(), jac.deriv());
+                            success = false;
+                        }
+                        ad_hess_full[3 * vtx + i][linear_j] += jac.deriv();
+                        hess_full[3 * vtx + i][linear_j] += hes.value();
                     }
 
                     // Reset the variable back to being a constant.
                     ad_tri_verts[vtx][i] = F::cst(ad_tri_verts[vtx][i]);
                 }
+
+                print_full_hess(&hess_full, 3 * num_verts, "Full Hessian");
+                print_full_hess(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+                assert!(success, "Hessian does not match its AutoDiff counterpart");
             }
             multipliers[q_idx] = F::cst(0.0); // reset multiplier
         }
@@ -678,7 +734,7 @@ mod tests {
     }
 
     /// Helper function to print the dense hessian given by a vector of vectors.
-    fn print_full_hess(hess: Vec<Vec<f64>>, size: usize, name: &str) {
+    fn print_full_hess(hess: &[Vec<f64>], size: usize, name: &str) {
         println!("{} = ", name);
         for r in 0..size {
             for c in 0..size {
@@ -849,9 +905,9 @@ mod tests {
             }
         }
 
-        //print_full_hess(hess_full, "Block Lower Triangular Hessian");
-        print_full_hess(hess_full2, 3 * num_verts, "Full Hessian");
-        print_full_hess(ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+        //print_full_hess(&hess_full, "Block Lower Triangular Hessian");
+        print_full_hess(&hess_full2, 3 * num_verts, "Full Hessian");
+        print_full_hess(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
 
         assert!(success, "Hessian does not match its AutoDiff counterpart");
     }
@@ -1066,8 +1122,8 @@ mod tests {
             }
         }
 
-        print_full_hess(hess_full2, 3 * num_samples, "Full Hessian");
-        print_full_hess(ad_hess_full, 3 * num_samples, "Full Autodiff Hessian");
+        print_full_hess(&hess_full2, 3 * num_samples, "Full Hessian");
+        print_full_hess(&ad_hess_full, 3 * num_samples, "Full Autodiff Hessian");
         assert!(success, "Hessian does not match its AutoDiff counterpart");
     }
 

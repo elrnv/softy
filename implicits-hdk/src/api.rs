@@ -92,12 +92,14 @@ where
         if let Some(surface) = polymesh {
             match params.action {
                 0 => { // Compute potential
+                    surface.reverse(); // reverse polygons for compatibility with hdk
                     let res = implicits::compute_potential_debug(
                         samples,
                         surface,
                         params.into(),
                         check_interrupt,
                     );
+                    surface.reverse(); // reverse back
                     convert_to_cookresult(res)
                 },
                 _ => { // Project vertices
@@ -122,9 +124,13 @@ fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
         Err(implicits::Error::MissingNormals) => {
             CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
         }
+        Err(implicits::Error::MissingNeighbourData) => CookResult::Error("Missing neighbour data for derivative computations.".to_string()),
         Err(implicits::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
         Err(implicits::Error::UnsupportedKernel) => {
             CookResult::Error("Given kernel is not supported yet.".to_string())
+        }
+        Err(implicits::Error::UnsupportedSampleType) => {
+            CookResult::Error("Given sample type is not supported by the chosen configuration.".to_string())
         }
         Err(implicits::Error::IO(err)) => CookResult::Error(format!("IO Error: {:?}", err)),
     }

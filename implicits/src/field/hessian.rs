@@ -82,13 +82,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         let vtx_col = tri_indices[l];
                         // TODO: The following matrix probably has a simpler form (possible
                         // diagonal?) Rewrite in terms of this form.
-                        let mtx = tri.area_normal_gradient(k) * nml_proj - nml_proj * tri.area_normal_gradient(l);
+                        let mtx = tri.area_normal_gradient(k) * nml_proj
+                            - nml_proj * tri.area_normal_gradient(l);
                         (vtx_row, vtx_col, mtx * (lambda * third))
                     })
             })
         })
     }
-
 
     /// Get the total number of entries for the sparse Hessian non-zeros. The Hessian is taken with
     /// respect to sample points. This estimate is based on the current neighbour cache, which
@@ -97,87 +97,72 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
         let neigh_points = self.trivial_neighbourhood_borrow().ok()?;
 
-        let num_total_neighs = neigh_points.iter().map(|pts| pts.len()).sum::<usize>();
-        let num_total_neighs_squared = neigh_points.iter().map(|pts| pts.len() * pts.len()).sum::<usize>();
-        let nml_hess_entries = num_total_neighs * (3 * 9 // below diagonal ( all 9 components )
-                                                   + 3 * 6) // on diagonal ( just the 6 components )
-            + num_total_neighs * ( 9 * 9 )
-            + num_total_neighs_squared * ( 9 * 9 );
+        let ImplicitSurface {
+            ref surface_topo,
+            sample_type,
+            ..
+        } = *self;
 
-        let main_hess_entries = num_total_neighs_squared * (3 * 9 + 3 * 6);
-
-        Some(nml_hess_entries + main_hess_entries)
+        // TODO: Figure out how to do this more efficiently, or at least have better code reuse
+        // with the indices function.
+        match sample_type {
+            SampleType::Vertex => None,
+            SampleType::Face => Some(
+                neigh_points
+                    .iter()
+                    .filter(|nbrs| !nbrs.is_empty())
+                    .flat_map(move |nbr_points| {
+                        Self::face_hessian_indices_iter(nbr_points, surface_topo)
+                    })
+                    .flat_map(move |(row, col)| {
+                        (0..3).flat_map(move |r| {
+                            (0..3)
+                                .filter(move |c| 3 * row + r >= 3 * col + c)
+                                .map(move |c| (3 * row + r, 3 * col + c))
+                        })
+                    })
+                    .count(),
+            ),
+        }
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
     /// points.
     pub fn surface_hessian_product_indices(
         &self,
-        query_points: &[[T; 3]],
-        multipliers: &[T],
         rows: &mut [usize],
         cols: &mut [usize],
     ) -> Result<(), Error> {
         match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_hessian_product_indices(
-                    query_points,
-                    multipliers,
-                    kernel,
-                    rows,
-                    cols,
-                )
-            }
+            KernelType::Approximate { .. } => self.mls_surface_hessian_product_indices(rows, cols),
             _ => Err(Error::UnsupportedKernel),
         }
     }
 
-    pub(crate) fn mls_surface_hessian_product_indices<K>(
+    pub(crate) fn mls_surface_hessian_product_indices(
         &self,
-        query_points: &[[T; 3]],
-        multipliers: &[T],
-        kernel: K,
         rows: &mut [usize],
         cols: &mut [usize],
-    ) -> Result<(), Error>
-    where
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-    {
-        self.cache_neighbours(query_points);
+    ) -> Result<(), Error> {
         let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
-            ref samples,
             ref surface_topo,
-            ref surface_vertex_positions,
-            bg_field_type,
             sample_type,
             ..
         } = *self;
 
         match sample_type {
-            SampleType::Vertex => {
-                unimplemented!();
-            }
+            SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let face_hess = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
-                    .filter(|(_, _, nbrs)| !nbrs.is_empty())
-                    .flat_map(move |(q, lambda, nbr_points)| {
-                        let view = SamplesView::new(nbr_points, samples);
-                        Self::face_hessian_at(
-                            Vector3(*q),
-                            view,
-                            kernel,
-                            surface_topo,
-                            surface_vertex_positions,
-                            bg_field_type,
-                            *lambda,
-                        )
+                let face_hess = zip!(neigh_points.iter())
+                    .filter(|nbrs| !nbrs.is_empty())
+                    .flat_map(move |nbr_points| {
+                        Self::face_hessian_indices_iter(nbr_points, surface_topo)
                     });
 
                 for (i, (r, c)) in face_hess
-                    .flat_map(move |(row, col, _)| {
+                    .flat_map(move |(row, col)| {
                         (0..3).flat_map(move |r| {
                             (0..3)
                                 .filter(move |c| 3 * row + r >= 3 * col + c)
@@ -189,9 +174,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     rows[i] = r;
                     cols[i] = c;
                 }
+                Ok(())
             }
         }
-        Ok(())
     }
 
     /// Compute the Hessian of this implicit surface function with respect to surface
@@ -234,9 +219,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         match sample_type {
-            SampleType::Vertex => {
-                unimplemented!();
-            }
+            SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
                 let face_hess = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
                     .filter(|(_, _, nbrs)| !nbrs.is_empty())
@@ -265,9 +248,71 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     .for_each(|(val, new_val)| {
                         *val = new_val;
                     });
+                Ok(())
             }
         }
-        Ok(())
+    }
+
+    /// Indices for the surface Hessian product for a single face (meaning that samples are located
+    /// on faces). This code mimics what's generated in `face_hessian_at`.
+    pub(crate) fn face_hessian_indices_iter<'a>(
+        nbrs: &'a [usize],
+        surface_topo: &'a [[usize; 3]],
+    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+        // For each surface vertex contribution
+        let main_hess_indices = nbrs.iter().flat_map(move |&sample_i| {
+            nbrs.iter().flat_map(move |&sample_j| {
+                surface_topo[sample_j].iter().flat_map(move |&j| {
+                    surface_topo[sample_i]
+                        .iter()
+                        .filter(move |&&i| i <= j)
+                        .map(move |&i| (j, i))
+                })
+            })
+        });
+
+        // Add in the normal gradient multiplied by a vector of given Vector3 values.
+        let nml_hess_indices = nbrs
+            .iter()
+            .flat_map(move |&sample_i| {
+                surface_topo[sample_i].iter().flat_map(move |&i| {
+                    surface_topo[sample_i]
+                        .iter()
+                        .filter(move |&&j| j <= i)
+                        .map(move |&j| (i, j))
+                })
+            })
+            .chain(nbrs.iter().flat_map(move |&sample_i| {
+                surface_topo[sample_i]
+                    .iter()
+                    .flat_map(move |&i| {
+                        surface_topo[sample_i].iter().map(move |&j| {
+                            if i > j {
+                                (i, j)
+                            } else if i < j {
+                                (j, i)
+                            } else {
+                                (i, j)
+                            }
+                        })
+                    })
+                    .chain(nbrs.iter().flat_map(move |&sample_j| {
+                        surface_topo[sample_j].iter().flat_map(move |&j| {
+                            surface_topo[sample_i].iter().map(move |&i| {
+                                if j > i {
+                                    (j, i)
+                                } else if j < i {
+                                    (i, j)
+                                } else {
+                                    (j, i)
+                                }
+                            })
+                        })
+                    }))
+            }));
+
+        // There are 3 contributions from each sample to each vertex.
+        nml_hess_indices.chain(main_hess_indices)
     }
 
     pub(crate) fn face_hessian_at<'a, K: 'a>(
@@ -289,16 +334,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // For each surface vertex contribution
         let main_hess =
             Self::sample_hessian_at(q, view, kernel, bg.clone()).flat_map(move |hess| {
-                (0..3).flat_map(move |i| {
-                    (0..3)
-                        .filter(move |&j| surface_topo[hess.1][j] <= surface_topo[hess.0][i])
-                        .map(move |j| {
-                            (
-                                surface_topo[hess.0][i],
-                                surface_topo[hess.1][j],
-                                hess.2 * ninth,
-                            )
-                        })
+                surface_topo[hess.0].iter().flat_map(move |&i| {
+                    surface_topo[hess.1]
+                        .iter()
+                        .filter(move |&&j| j <= i)
+                        .map(move |&j| (i, j, hess.2 * ninth))
                 })
             });
 
@@ -572,13 +612,8 @@ mod tests {
         let mut jac_values = vec![F::cst(0.0); num_jac_entries];
 
         let mut multipliers = vec![F::cst(0.0); num_query_points];
-        surf.surface_hessian_product_indices(
-            &ad_query_points,
-            &multipliers,
-            &mut hess_rows,
-            &mut hess_cols,
-        )
-        .expect("Failed to compute hessian indices");
+        surf.surface_hessian_product_indices(&mut hess_rows, &mut hess_cols)
+            .expect("Failed to compute hessian indices");
 
         let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
         let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];

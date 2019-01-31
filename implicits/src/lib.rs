@@ -90,6 +90,7 @@ pub enum Error {
     Interrupted,
     MissingNormals,
     UnsupportedKernel,
+    UnsupportedSampleType,
     MissingNeighbourData,
     Failure,
     IO(geo::io::Error),

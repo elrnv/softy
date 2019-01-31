@@ -56,7 +56,10 @@ fn main() {
     let dst = cmake_target.join(&cmake_config_file);
     let src = PathBuf::from(crate_dir).join(&cmake_config_file);
     println!("copying {:?} to {:?}", src, dst);
-    fs::copy(&src, &dst).expect(&format!("Failed to copy cmake config {:?}", cmake_config_file));
+    fs::copy(&src, &dst).expect(&format!(
+        "Failed to copy cmake config {:?}",
+        cmake_config_file
+    ));
 }
 
 fn target_dir(package_name: &str) -> PathBuf {

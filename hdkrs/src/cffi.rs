@@ -5,8 +5,8 @@ use geo::io::{
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
 use geo::mesh::{
-    attrib, topology as topo, Attrib, VertexPositions, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
-    TetMesh as GeoTetMesh,
+    attrib, topology as topo, Attrib, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
+    TetMesh as GeoTetMesh, VertexPositions,
 };
 use geo::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};

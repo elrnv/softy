@@ -1,4 +1,4 @@
-use geometry::{math::Vector3, mesh::VertexPositions, Real};
+use geo::{math::Vector3, mesh::VertexPositions, Real};
 
 /// Translate a mesh by a given translation vector.
 /// This function modifies the vertex positions of the given vertex mesh.

@@ -4,7 +4,7 @@
 pub mod transform;
 
 pub use crate::transform::*;
-use geometry::mesh::{PolyMesh, TetMesh, TriMesh};
+use geo::mesh::{PolyMesh, TetMesh, TriMesh};
 
 /// Parameters that define a grid that lies in one of the 3 axis planes in 3D space.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -94,7 +94,8 @@ pub fn make_regular_tet() -> TetMesh<f64> {
         [sqrt_2_by_9, -1.0 / 3.0, -sqrt_2_by_3],
     ];
 
-    let indices = vec![0, 1, 2, 3];
+    let indices = vec![3, 1, 0, 2];
 
     TetMesh::new(vertices, indices)
 }
+

@@ -423,14 +423,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             * (unit_nml_i.transpose()
                                 * (kernel.with_closest_dist(csd).eval(q, pos_i) * ws_inv2));
 
-                        if i == j {
-                            for x in 0..3 {
-                                for y in 0..3 {
-                                    assert!((h[y][x] - h[x][y]).abs() < T::from(1e-8).unwrap());
-                                }
-                            }
-                        }
-
                         (j, i, h)
                     },
                 )
@@ -545,8 +537,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         zip!(sym, nml_hess_iter)
             .map(move |(s, n)| {
-                assert_eq!(s.0, n.0);
-                assert_eq!(s.1, n.1);
+                debug_assert_eq!(s.0, n.0);
+                debug_assert_eq!(s.1, n.1);
                 (s.0, s.1, n.2 - s.2)
             })
             .chain(coupling_nml_hess_iter)

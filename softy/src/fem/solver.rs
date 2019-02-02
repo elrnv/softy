@@ -269,7 +269,7 @@ impl SolverBuilder {
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
         let smooth_contact_constraint = kinematic_object.as_ref().map(|trimesh| {
-            LinearSmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())
+            SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())
         });
 
         let displacement_bound = smooth_contact_params.map(|scp| {
@@ -317,9 +317,9 @@ impl SolverBuilder {
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
-        ipopt.set_option("nlp_scaling_method", "none");
+        ipopt.set_option("nlp_scaling_method", "user-scaling");
         ipopt.set_option("warm_start_init_point", "yes");
-        ipopt.set_option("jac_d_constant", "yes");
+        //ipopt.set_option("jac_d_constant", "yes");
         //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
@@ -835,8 +835,9 @@ impl Solver {
         self.merit_l1_dx(self.solver.solver_data().solution.primal_variables)
     }
 
-    fn merit_l1_dx(&self, dx: &[f64]) -> f64 {
-        self.problem().linearized_constraint_violation_l1(dx)
+    fn merit_l1_dx(&self, _dx: &[f64]) -> f64 {
+        0.0
+        //self.problem().linearized_constraint_violation_l1(dx)
     }
 
     fn compute_residual(&self, residual: &mut Vec<f64>) -> f64 {
@@ -867,6 +868,55 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        println!("params = {:?}", self.sim_params);
+        println!("material = {:?}", self.solid_material);
+
+        // Initialize the result of this function.
+        let mut result = SolveResult {
+            max_inner_iterations: 0,
+            iterations: 0,
+            objective_value: 0.0,
+        };
+
+        let step_result = self.inner_step();
+        self.commit_solution();
+        self.output_meshes(0);
+
+        // Update output result with new data.
+        match step_result {
+            Ok(step_result) => {
+                result = result.combine_inner_result(step_result);
+            }
+            Err(Error::InnerSolveError(status, step_result)) => {
+                result = result.combine_inner_result(step_result);
+                return Err(Error::SolveError(status, result));
+            }
+            Err(e) => {
+                // Unknown error: Reset warm start and return.
+                self.solver.set_option("warm_start_init_point", "no");
+                return Err(e);
+            }
+        }
+
+        self.step_count += 1;
+
+        // On success, update the mesh with new positions and useful metrics.
+        let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
+
+        let mut mesh = self.borrow_mut_mesh();
+
+        // Write back elastic strain energy for visualization.
+        Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
+
+        // Write back elastic forces on each node.
+        Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
+
+        Ok(result)
+    }
+
+    /// Run the optimization solver on one time step. This method uses the trust region method to
+    /// resolve linearized constraints.
+    pub fn step_tr(&mut self) -> Result<SolveResult, Error> {
         use ipopt::BasicProblem;
 
         println!("params = {:?}", self.sim_params);
@@ -1580,7 +1630,7 @@ mod tests {
 
         // There are currently two different ways to compute the implicit function representing the
         // contact constraint. Since this is a test we do it both ways and make sure the result is
-        // the same. This douples as a test for the implicits crate.
+        // the same. This doubles as a test for the implicits package.
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
@@ -1640,7 +1690,7 @@ mod tests {
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
         // Set contact parameters
-        let radius = 1.1;
+        let radius = 1.5;
         let tolerance = 0.001;
 
         //compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
@@ -1680,10 +1730,10 @@ mod tests {
         // Verify constraint, should be positive before push
         let constraint =
             compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
-        assert!(constraint.iter().all(|&x| x > 0.0f32));
+        assert!(constraint.iter().all(|&x| x >= 0.0f32));
 
         // Simulate push
-        let offset = 0.5;
+        let offset = 0.34;
         tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
         let pts = PointCloud::new(tri_verts.clone());
         assert!(solver.update_kinematic_vertices(&pts).is_ok());
@@ -1697,7 +1747,7 @@ mod tests {
 
         // Expect only the top vertex to be pushed down.
         let offset_verts = vec![
-            [0.0, 0.6266205, 0.0],
+            [0.0, 0.629, 0.0],
             tetmesh.vertex_position(1),
             tetmesh.vertex_position(2),
             tetmesh.vertex_position(3),
@@ -1709,18 +1759,13 @@ mod tests {
             .zip(offset_verts.iter())
         {
             for i in 0..3 {
-                assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-4);
+                assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-3);
             }
         }
     }
 
-    #[test]
-    fn ball_tri_push_test() {
+    fn ball_tri_push_tester(material: Material, sc_params: SmoothContactParams) {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
-        let material = Material {
-            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
-            ..SOLID_MATERIAL
-        };
 
         let params = SimParams {
             max_iterations: 100,
@@ -1734,11 +1779,7 @@ mod tests {
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
-            .smooth_contact_params(SmoothContactParams {
-                radius: 1.1,
-                tolerance: 0.07,
-                max_step: 1.5,
-            })
+            .smooth_contact_params(sc_params)
             .build()
             .unwrap();
 
@@ -1748,6 +1789,37 @@ mod tests {
             res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
         );
+    }
+
+    #[test]
+    fn ball_tri_push_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            ..SOLID_MATERIAL
+        };
+        let sc_params = SmoothContactParams {
+            radius: 1.1,
+            tolerance: 0.07,
+            max_step: 1.5,
+        };
+
+        ball_tri_push_tester(material, sc_params);
+    }
+
+    #[test]
+    fn ball_tri_push_volume_constraint_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            incompressibility: true,
+            ..SOLID_MATERIAL
+        };
+        let sc_params = SmoothContactParams {
+            radius: 1.1,
+            tolerance: 0.07,
+            max_step: 1.5,
+        };
+
+        ball_tri_push_tester(material, sc_params);
     }
 
     #[test]

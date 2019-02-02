@@ -5,7 +5,7 @@ use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
 //use geo::io::save_tetmesh_ascii;
-use crate::constraints::{smooth_contact::LinearSmoothContactConstraint, volume::VolumeConstraint};
+use crate::constraints::{smooth_contact::SmoothContactConstraint, volume::VolumeConstraint};
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use crate::matrix::*;
@@ -107,7 +107,7 @@ pub(crate) struct NonLinearProblem {
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
     /// Contact constraint on the smooth solid representation against the kinematic object.
-    pub smooth_contact_constraint: Option<LinearSmoothContactConstraint>,
+    pub smooth_contact_constraint: Option<SmoothContactConstraint>,
     /// Displacement bounds. This controlls how big of a step we can take per vertex position
     /// component. In otherwords the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
@@ -190,43 +190,43 @@ impl NonLinearProblem {
     }
 
     /// Linearized constraint true violation measure.
-    pub fn linearized_constraint_violation_l1(&self, dx: &[f64]) -> f64 {
-        let mut value = 0.0;
+    //pub fn linearized_constraint_violation_l1(&self, dx: &[f64]) -> f64 {
+    //    let mut value = 0.0;
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let prev_pos = self.prev_pos.borrow();
-            let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+    //    if let Some(ref scc) = self.smooth_contact_constraint {
+    //        let prev_pos = self.prev_pos.borrow();
+    //        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
-            let n = scc.constraint_size();
+    //        let n = scc.constraint_size();
 
-            let mut g = vec![0.0; n];
-            scc.0.constraint(x, dx, &mut g);
+    //        let mut g = vec![0.0; n];
+    //        scc.0.constraint(x, dx, &mut g);
 
-            let (g_l, g_u) = scc.0.constraint_bounds();
-            assert_eq!(g_l.len(), n);
-            assert_eq!(g_u.len(), n);
+    //        let (g_l, g_u) = scc.0.constraint_bounds();
+    //        assert_eq!(g_l.len(), n);
+    //        assert_eq!(g_u.len(), n);
 
-            value += g
-                .into_iter()
-                .zip(g_l.into_iter().zip(g_u.into_iter()))
-                .map(|(c, (l, u))| {
-                    assert!(l <= u);
-                    if c < l {
-                        // below lower bound
-                        l - c
-                    } else if c > u {
-                        // above upper bound
-                        c - u
-                    } else {
-                        // Constraint not violated
-                        0.0
-                    }
-                })
-                .sum::<f64>();
-        }
+    //        value += g
+    //            .into_iter()
+    //            .zip(g_l.into_iter().zip(g_u.into_iter()))
+    //            .map(|(c, (l, u))| {
+    //                assert!(l <= u);
+    //                if c < l {
+    //                    // below lower bound
+    //                    l - c
+    //                } else if c > u {
+    //                    // above upper bound
+    //                    c - u
+    //                } else {
+    //                    // Constraint not violated
+    //                    0.0
+    //                }
+    //            })
+    //            .sum::<f64>();
+    //    }
 
-        value
-    }
+    //    value
+    //}
 
     /// Linearized constraint model violation measure.
     pub fn linearized_constraint_violation_model_l1(&self, dx: &[f64]) -> f64 {
@@ -348,6 +348,16 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         true
     }
+
+    fn objective_scaling(&self) -> f64 {
+        1.0
+    }
+
+    /// Scaling the variables: `x_scaling` is the pre-allocated slice of scales, one for
+    /// each constraint.
+    fn variable_scaling(&self, _x_scaling: &mut [Number]) -> bool {
+        false
+    }
 }
 
 impl ipopt::ConstrainedProblem for NonLinearProblem {
@@ -427,8 +437,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 rows[i] = row as Index;
                 cols[i] = col as Index;
                 i += 1;
+
+                row_offset = row_offset.max(row+1);
             }
-            row_offset += vc.constraint_jacobian_size();
+            assert_eq!(row_offset, 1); // volume constraint should be just one constraint
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
@@ -437,7 +449,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 cols[i] = col as Index;
                 i += 1;
             }
-            //row_offset += scc.constraint_jacobian_size();
         }
 
         true
@@ -473,9 +484,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             num += vc.constraint_hessian_size();
         }
-        //if let Some(ref scc) = self.smooth_contact_constraint {
-        //    num += scc.constraint_hessian_size();
-        //}
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            num += scc.constraint_hessian_size();
+        }
         num
     }
 
@@ -502,13 +513,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 i += 1;
             }
         }
-        //if let Some(ref scc) = self.smooth_contact_constraint {
-        //    for MatrixElementIndex { row, col } in scc.constraint_hessian_indices_iter() {
-        //        rows[i] = row as Index;
-        //        cols[i] = col as Index;
-        //        i += 1;
-        //    }
-        //}
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            for MatrixElementIndex { row, col } in scc.constraint_hessian_indices_iter() {
+                rows[i] = row as Index;
+                cols[i] = col as Index;
+                i += 1;
+            }
+        }
 
         true
     }
@@ -541,24 +552,40 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             *v *= obj_factor;
         }
 
-        let coff = 0;
+        let mut coff = 0;
 
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
             vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh]);
-            //i += nh;
-            //coff += nc
+            i += nh;
+            coff += nc;
         }
 
-        //if let Some(ref scc) = self.smooth_contact_constraint {
-        //    let nc = scc.constraint_size();
-        //    let nh = scc.constraint_hessian_size();
-        //    scc.constraint_hessian_values(x, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
-        //    //i += nh;
-        //    //coff += nc;
-        //}
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let nc = scc.constraint_size();
+            let nh = scc.constraint_hessian_size();
+            scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
+            //i += nh;
+            //coff += nc;
+        }
 
+        true
+    }
+
+    /// Scaling the constraint function: `g_scaling` is the pre-allocated slice of scales, one for
+    /// each constraint.
+    fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
+        // Here we scale down the constraint function to prevent the solver from aggressively
+        // avoiding the infeasible region. This has been observed only for the contact constraint
+        // so far.
+        // TODO: Figure out a more robust way to do this. From the Ipopt docs we are recommended:
+        //  "As a guideline, we suggest to scale the optimization problem (either directly in the
+        //  original formulation, or after using scaling factors) so that all sensitivities, i.e.,
+        //  all non-zero first partial derivatives, are typically of the order $ 0.1-10$."
+        for g in g_scaling.iter_mut() {
+            *g = 1e-4;
+        }
         true
     }
 }

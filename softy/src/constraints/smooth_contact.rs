@@ -183,6 +183,11 @@ pub struct SmoothContactConstraint {
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub collision_object: Rc<RefCell<TriMesh>>,
     pub iter_count: usize,
+
+    /// Store the indices to the Hessian here. These will be served through the constraint
+    /// interface.
+    surface_hessian_rows: RefCell<Vec<usize>>,
+    surface_hessian_cols: RefCell<Vec<usize>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -231,6 +236,8 @@ impl SmoothContactConstraint {
             implicit_surface: RefCell::new(surface),
             collision_object: Rc::clone(trimesh_rc),
             iter_count: 0,
+            surface_hessian_rows: RefCell::new(Vec::new()),
+            surface_hessian_cols: RefCell::new(Vec::new()),
         };
 
         let trimesh = trimesh_rc.borrow();
@@ -342,18 +349,51 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
     }
 }
 
-//impl ConstraintHessian<f64> for SmoothContactConstraint {
-//    #[inline]
-//    fn constraint_hessian_size(&self) -> usize {
-//        0
-//    }
-//    fn constraint_hessian_indices_iter<'a>(
-//        &'a self,
-//    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-//    {
-//        Box::new(std::iter::empty())
-//    }
-//    fn constraint_hessian_values(&self, _x: &[f64], _lambda: &[f64], _values: &mut [f64]) {
-//        debug_assert_eq!(_values.len(), self.constraint_hessian_size());
-//    }
-//}
+impl ConstraintHessian<f64> for SmoothContactConstraint {
+    #[inline]
+    fn constraint_hessian_size(&self) -> usize {
+        let num = self.implicit_surface
+            .borrow()
+            .num_surface_hessian_product_entries().unwrap_or(0);
+
+        // Allocate the space for the Hessian indices.
+        {
+            let mut hess_rows = self.surface_hessian_rows.borrow_mut();
+            hess_rows.clear();
+            hess_rows.resize(num, 0);
+        }
+
+        {
+            let mut hess_cols = self.surface_hessian_cols.borrow_mut();
+            hess_cols.clear();
+            hess_cols.resize(num, 0);
+        }
+
+        num
+    }
+
+    fn constraint_hessian_indices_iter<'a>(
+        &'a self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
+    {
+        self.constraint_hessian_size(); // allocate hessian index vectors.
+        let surf = self.implicit_surface.borrow();
+        let mut rows = self.surface_hessian_rows.borrow_mut();
+        let mut cols = self.surface_hessian_cols.borrow_mut();
+        surf.surface_hessian_product_indices(&mut rows, &mut cols).unwrap();
+
+        Box::new(rows.clone().into_iter().zip(cols.clone().into_iter()).map(move |(row, col)| MatrixElementIndex {
+            row: self.tetmesh_coordinate_index(row),
+            col: self.tetmesh_coordinate_index(col),
+        }))
+    }
+
+    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {
+        self.update_surface_with_displacement(x, dx);
+        let surf = self.implicit_surface.borrow();
+        let collider = self.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+        surf.surface_hessian_product_values(query_points, lambda, values)
+            .expect("Failed to compute surface Hessian values");
+    }
+}

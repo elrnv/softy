@@ -1,4 +1,4 @@
-use softy::{fem, SolveResult, Error, TetMesh, TriMesh, PointCloud};
+use softy::{fem, Error, PointCloud, SolveResult, TetMesh, TriMesh};
 use std::cell::Ref;
 
 // NOTE: We avoid using associated types here because of a compiler bug:

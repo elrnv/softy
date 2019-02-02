@@ -117,8 +117,8 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "YoungModulus"
                 label "Young Modulus"
                 type float
-                default { "1000" }
-                range { 0 10000 }
+                default { "3.24" }
+                range { 0 1000 }
             }
 
             parm {
@@ -126,7 +126,7 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "PoissonRatio"
                 label "Poisson Ratio"
                 type float
-                default { "0.45" }
+                default { "0.49" }
                 range { 0 0.5 }
             }
         }

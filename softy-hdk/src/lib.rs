@@ -54,16 +54,11 @@ pub unsafe extern "C" fn register_new_solver(
     sim_params: SimParams,
 ) -> RegistryResult {
     if let Some(tetmesh) = interop::into_box(tetmesh) {
-
         // Get an optional shell object (cloth or animated static object).
         let shell = interop::into_box(polymesh);
 
-        match api::register_new_solver(
-            *tetmesh,
-            shell,
-            sim_params,
-        ) {
-            Ok((id, _)) => RegistryResult { 
+        match api::register_new_solver(*tetmesh, shell, sim_params) {
+            Ok((id, _)) => RegistryResult {
                 solver_id: i64::from(id),
                 cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             },
@@ -75,7 +70,8 @@ pub unsafe extern "C" fn register_new_solver(
     } else {
         RegistryResult {
             solver_id: -1,
-            cook_result: hdkrs::interop::CookResult::Error("Given TetMesh is null.".to_owned()).into(),
+            cook_result: hdkrs::interop::CookResult::Error("Given TetMesh is null.".to_owned())
+                .into(),
         }
     }
 }
@@ -138,7 +134,7 @@ pub unsafe extern "C" fn get_solver(
                 solver: solver_ptr(solver),
                 cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             }
-        },
+        }
         Err(err) => SolverResult {
             id: -1,
             solver: ::std::ptr::null_mut(),
@@ -149,8 +145,7 @@ pub unsafe extern "C" fn get_solver(
 
 /// Delete all solvers in the registry.
 #[no_mangle]
-pub unsafe extern "C" fn clear_solver_registry(
-) {
+pub unsafe extern "C" fn clear_solver_registry() {
     api::clear_solver_registry()
 }
 

@@ -1,13 +1,10 @@
-use geo::mesh::{PolyMesh, TetMesh, PointCloud};
+use crate::{MaterialProperties, SimParams};
+use geo::mesh::{PointCloud, PolyMesh, TetMesh};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::{self, fem};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use crate::{
-    MaterialProperties,
-    SimParams,
-};
 
 mod solver;
 
@@ -122,7 +119,6 @@ impl Into<softy::Material> for SimParams {
     }
 }
 
-
 impl Into<softy::SmoothContactParams> for SimParams {
     fn into(self) -> softy::SmoothContactParams {
         let SimParams {
@@ -147,7 +143,6 @@ pub(crate) fn register_new_solver(
     shell: Option<Box<PolyMesh<f64>>>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
-
     // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
@@ -228,21 +223,42 @@ where
 
     if let Some(pts) = polymesh_points {
         match solver.update_shell_vertices(&pts) {
-            Err(softy::Error::SizeMismatch) =>
-                return (None, None, CookResult::Error(
-                        format!("Input points ({}) don't coincide with solver PolyMesh ({}).",
-                        (*pts).num_vertices(), solver.try_borrow_kinematic_mesh().map(|x| x.num_vertices() as isize).unwrap_or(-1)))),
-            Err(softy::Error::NoKinematicMesh) =>
-                return (None, None, CookResult::Warning("Missing kinematic mesh.".to_string())),
-            Err(err) => 
-                return (None, None, CookResult::Error(
-                        format!("Error updating polymesh vertices. ({:?})", err))),
+            Err(softy::Error::SizeMismatch) => {
+                return (
+                    None,
+                    None,
+                    CookResult::Error(format!(
+                        "Input points ({}) don't coincide with solver PolyMesh ({}).",
+                        (*pts).num_vertices(),
+                        solver
+                            .try_borrow_kinematic_mesh()
+                            .map(|x| x.num_vertices() as isize)
+                            .unwrap_or(-1)
+                    )),
+                )
+            }
+            Err(softy::Error::NoKinematicMesh) => {
+                return (
+                    None,
+                    None,
+                    CookResult::Warning("Missing kinematic mesh.".to_string()),
+                )
+            }
+            Err(err) => {
+                return (
+                    None,
+                    None,
+                    CookResult::Error(format!("Error updating polymesh vertices. ({:?})", err)),
+                )
+            }
             _ => {}
         }
     }
 
     let cook_result = convert_to_cookresult(solver.solve().into());
-    let solver_trimesh = solver.try_borrow_kinematic_mesh().map(|x| PolyMesh::from(x.clone()));
+    let solver_trimesh = solver
+        .try_borrow_kinematic_mesh()
+        .map(|x| PolyMesh::from(x.clone()));
     let solver_tetmesh = solver.borrow_mesh().clone();
     (Some(solver_tetmesh), solver_trimesh, cook_result)
 }

@@ -5,4 +5,4 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }

@@ -8,7 +8,6 @@ use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 use geo::Real;
-use nalgebra as na;
 use num_traits::cast;
 use rayon::prelude::*;
 use spade::rtree::RTree;

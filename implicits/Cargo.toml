@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 rayon = "1.0"
-nalgebra = "0.16"
+na = { package = "nalgebra", version = "0.17" }
 hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
 geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
 spade = "1.5"

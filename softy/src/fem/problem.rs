@@ -320,13 +320,15 @@ impl ipopt::BasicProblem for NonLinearProblem {
         true
     }
 
-    fn initial_point(&self, x: &mut [Number]) {
+    fn initial_point(&self, x: &mut [Number]) -> bool {
         x.copy_from_slice(self.solution.primal_variables.as_slice());
+        true
     }
 
-    fn initial_bounds_multipliers(&self, z_l: &mut [Number], z_u: &mut [Number]) {
+    fn initial_bounds_multipliers(&self, z_l: &mut [Number], z_u: &mut [Number]) -> bool {
         z_l.copy_from_slice(self.solution.lower_bound_multipliers.as_slice());
         z_u.copy_from_slice(self.solution.upper_bound_multipliers.as_slice());
+        true
     }
 
     fn objective(&self, dx: &[Number], obj: &mut Number) -> bool {
@@ -385,8 +387,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         num
     }
 
-    fn initial_constraint_multipliers(&self, lambda: &mut [Number]) {
+    fn initial_constraint_multipliers(&self, lambda: &mut [Number]) -> bool {
         lambda.copy_from_slice(self.solution.constraint_multipliers.as_slice());
+        true
     }
 
     fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {

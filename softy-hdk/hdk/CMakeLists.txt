@@ -32,7 +32,9 @@ find_package( Houdini REQUIRED )
 find_package( Softy REQUIRED )
 find_package( hdkrs REQUIRED )
 
-find_library( MACOS_SECURITY Security )
+if(APPLE)
+    find_library( MACOS_SECURITY Security )
+endif(APPLE)
 
 set( library_name sop_softy )
 

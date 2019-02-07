@@ -88,7 +88,7 @@ impl NeoHookeanTetEnergy {
         }
     }
 
-    /// Elasticity Hessian per element. This is represented by a 4x4 block matrix 3x3 matrices. The
+    /// Elasticity Hessian per element. This is represented by a 4x4 block matrix of 3x3 matrices. The
     /// total matrix is a lower triangular 12x12 matrix. The blocks are specified in column-major
     /// order to be consistent with the 3x3 Matrices.
     #[allow(non_snake_case)]
@@ -565,4 +565,14 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
             });
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geo;
+    use utils::*;
+
+
+
 }

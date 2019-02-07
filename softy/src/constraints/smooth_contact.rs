@@ -257,6 +257,10 @@ impl SmoothContactConstraint {
         self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
+    pub fn contact_radius(&self) -> f64 {
+        self.implicit_surface.borrow_mut().radius()
+    }
+
     /// Given an index into the surface point position coordinates, return the corresponding index
     /// into the original `TetMesh`.
     pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {

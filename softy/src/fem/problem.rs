@@ -109,7 +109,7 @@ pub(crate) struct NonLinearProblem {
     /// Contact constraint on the smooth solid representation against the kinematic object.
     pub smooth_contact_constraint: Option<SmoothContactConstraint>,
     /// Displacement bounds. This controlls how big of a step we can take per vertex position
-    /// component. In otherwords the bounds on the inf norm for each vertex displacement.
+    /// component. In other words the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
     /// The time step defines the amount of time elapsed between steps (calls to `advance`).
     pub time_step: f64,
@@ -135,7 +135,7 @@ impl fmt::Debug for NonLinearProblem {
 
 impl NonLinearProblem {
     /// Save Ipopt solution for warm starts.
-    pub fn save_solution(&mut self, solution: ipopt::Solution) {
+    pub fn update_warm_start(&mut self, solution: ipopt::Solution) {
         self.solution.update(solution);
     }
 
@@ -187,6 +187,47 @@ impl NonLinearProblem {
             let mesh = self.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
         }
+    }
+
+    fn compute_constraint_violation(&self, displacement: &[f64], constraint: &mut [f64]) {
+        use ipopt::ConstrainedProblem;
+        let mut lower = vec![0.0; constraint.len()];
+        let mut upper = vec![0.0; constraint.len()];
+        self.constraint_bounds(&mut lower, &mut upper);
+        assert!(self.constraint(displacement, constraint));
+        for (c, (l, u)) in constraint
+            .iter_mut()
+            .zip(lower.into_iter().zip(upper.into_iter()))
+        {
+            assert!(l <= u); // sanity check
+                             // Subtract the appropriate bound from the constraint function:
+                             // If the constraint is lower than the lower bound, then the multiplier will be
+                             // non-zero and the result of the constraint force must be balanced by the objective
+                             // gradient under convergence. The same goes for the upper bound.
+            if *c < l {
+                *c -= l;
+            } else if *c > u {
+                *c -= u;
+            } else {
+                *c = 0.0; // Otherwise the constraint is satisfied so we set it to zero.
+            }
+        }
+    }
+
+    fn constraint_violation_norm(&self, displacement: &[f64]) -> f64 {
+        use ipopt::ConstrainedProblem;
+        let mut g = vec![0.0; self.num_constraints()];
+        self.compute_constraint_violation(displacement, &mut g);
+        crate::inf_norm(&g)
+    }
+
+    pub fn probe_contact_constraint_violation(&mut self, displacement: &[f64]) -> f64 {
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
+            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+        }
+
+        self.constraint_violation_norm(displacement)
     }
 
     /// Linearized constraint true violation measure.
@@ -352,7 +393,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn objective_scaling(&self) -> f64 {
-        1.0
+        1.0//e-4
     }
 
     /// Scaling the variables: `x_scaling` is the pre-allocated slice of scales, one for

@@ -272,11 +272,12 @@ impl SolverBuilder {
             SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())
         });
 
-        let displacement_bound = smooth_contact_params.map(|scp| {
-            // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
-            // bound).
-            scp.max_step / 3.0f64.sqrt()
-        });
+        let displacement_bound = None;
+        //let displacement_bound = smooth_contact_params.map(|scp| {
+        //    // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
+        //    // bound).
+        //    scp.max_step / 3.0f64.sqrt()
+        //});
 
         let mut problem = NonLinearProblem {
             prev_pos,
@@ -317,10 +318,10 @@ impl SolverBuilder {
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
-        ipopt.set_option("nlp_scaling_method", "user-scaling");
+        //ipopt.set_option("nlp_scaling_method", "user-scaling");
         ipopt.set_option("warm_start_init_point", "yes");
         //ipopt.set_option("jac_d_constant", "yes");
-        //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -492,6 +493,11 @@ impl Solver {
         }
     }
 
+    /// Check the contact radius (valid in the presence of a contact constraint)
+    pub fn contact_radius(&mut self) -> Option<f64> {
+        self.problem_mut().smooth_contact_constraint.as_ref().map(|scc| scc.contact_radius())
+    }
+
     /// Update the solver mesh with the given points.
     pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
         let problem = self.problem_mut();
@@ -642,7 +648,7 @@ impl Solver {
     }
 
     /// Compute and add the value of the constraint function minus constraint bounds.
-    pub fn add_constraint_violation(&self, constraint: &mut [f64]) {
+    pub fn compute_constraint_violation(&self, constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
         let SolverData {
             problem,
@@ -775,7 +781,7 @@ impl Solver {
     //}
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self) {
+    fn commit_solution(&mut self, and_warm_start: bool) {
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
@@ -787,7 +793,9 @@ impl Solver {
         problem.advance(displacement.iter().cloned());
 
         // Update problem solution for warm starts.
-        problem.save_solution(solution);
+        if and_warm_start {
+            problem.update_warm_start(solution);
+        }
     }
 
     /// Revert previously committed solution. We just subtract step here.
@@ -853,7 +861,7 @@ impl Solver {
 
         self.compute_objective_gradient(objective_residual);
         self.add_constraint_jacobian_product(objective_residual);
-        self.add_constraint_violation(constraint_violation);
+        self.compute_constraint_violation(constraint_violation);
 
         let constraint_violation_norm = inf_norm(constraint_violation);
         let residual_norm = inf_norm(residual);
@@ -864,6 +872,14 @@ impl Solver {
         );
 
         residual_norm
+    }
+
+    pub fn probe_contact_constraint_violation(&mut self) -> f64 {
+        let SolverDataMut {
+            problem, solution, ..
+        } = self.solver.solver_data_mut();
+
+        problem.probe_contact_constraint_violation(solution.primal_variables)
     }
 
     /// Run the optimization solver on one time step.
@@ -878,25 +894,52 @@ impl Solver {
             objective_value: 0.0,
         };
 
-        let step_result = self.inner_step();
-        self.commit_solution();
-        self.output_meshes(0);
-
-        // Update output result with new data.
-        match step_result {
-            Ok(step_result) => {
-                result = result.combine_inner_result(step_result);
-            }
-            Err(Error::InnerSolveError(status, step_result)) => {
-                result = result.combine_inner_result(step_result);
-                return Err(Error::SolveError(status, result));
-            }
-            Err(e) => {
-                // Unknown error: Reset warm start and return.
-                self.solver.set_option("warm_start_init_point", "no");
-                return Err(e);
+        for _ in 0..self.sim_params.max_outer_iterations {
+            let step_result = self.inner_step();
+            match step_result {
+                Ok(step_result) => {
+                    result = result.combine_inner_result(step_result);
+                    if let Some(radius) = self.contact_radius() {
+                        if self.probe_contact_constraint_violation() > 1e-4 { // intersecting objects (allow leeway)
+                            let dx = self.dx();
+                            let step = inf_norm(dx);
+                            // Check that the reason we are in this mess is actually because of the step size
+                            if self.max_step + radius < step {
+                                println!("Increasing max step to {}", step - radius);
+                                self.update_max_step(step - radius);
+                            } else {
+                                println!("WHY IS CONSTRAINT VIOLATION POSITIVE!?!?");
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                Err(Error::InnerSolveError(status, step_result)) => {
+                    result = result.combine_inner_result(step_result);
+                    self.commit_solution(true);
+                    self.output_meshes(0);
+                    return Err(Error::SolveError(status, result));
+                }
+                Err(e) => {
+                    // Unknown error: Reset warm start and return.
+                    self.commit_solution(false);
+                    self.output_meshes(0);
+                    return Err(e);
+                }
             }
         }
+
+        if result.iterations > self.sim_params.max_outer_iterations {
+            eprintln!("WARNING: Reached max outer iterations: {:?}", result.iterations);
+        }
+
+        // Update output result with new data.
+        self.commit_solution(true);
+        self.output_meshes(0);
 
         self.step_count += 1;
 
@@ -971,7 +1014,7 @@ impl Solver {
 
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
-            self.commit_solution();
+            self.commit_solution(true);
 
             self.output_meshes(iter + 1);
 
@@ -1189,7 +1232,7 @@ mod tests {
             .zip(expected.vertex_positions().iter())
         {
             for j in 0..3 {
-                assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 1e-10);
+                assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 1e-7);
             }
         }
     }
@@ -1340,7 +1383,7 @@ mod tests {
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk")).unwrap();
-        compare_meshes(&solution, &expected, 1e-6);
+        compare_meshes(&solution, &expected, 1e-4);
     }
 
     #[test]
@@ -1377,7 +1420,7 @@ mod tests {
             "assets/three_tets_static_volume_constraint_expected.vtk",
         ))
         .unwrap();
-        compare_meshes(&solution, &exptected, 1e-6);
+        compare_meshes(&solution, &exptected, 1e-5);
     }
 
     #[test]
@@ -1561,7 +1604,7 @@ mod tests {
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected, 1e-6);
+        compare_meshes(&solution, &expected, 1e-4);
     }
 
     #[test]

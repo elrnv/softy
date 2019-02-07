@@ -1,6 +1,7 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
-use geo::math::Vector3;
+use geo::Real;
+use geo::math::{Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
 use crate::matrix::*;
@@ -76,9 +77,9 @@ impl Energy<f64> for MomentumPotential {
     }
 }
 
-impl EnergyGradient<f64> for MomentumPotential {
+impl<T: Real> EnergyGradient<T> for MomentumPotential {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v: &[f64], dx: &[f64], grad_f: &mut [f64]) {
+    fn add_energy_gradient(&self, v: &[T], dx: &[T], grad_f: &mut [T]) {
         let MomentumPotential {
             ref tetmesh,
             density,
@@ -86,16 +87,17 @@ impl EnergyGradient<f64> for MomentumPotential {
             ..
         } = *self;
 
-        let dt_inv = 1.0 / dt;
+        let density = T::from(density).unwrap();
+        let dt_inv = T::one() / T::from(dt).unwrap();
 
         let tetmesh = tetmesh.borrow();
 
-        let vel: &[Vector3<f64>] = reinterpret_slice(v);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let vel: &[Vector3<T>] = reinterpret_slice(v);
+        let disp: &[Vector3<T>] = reinterpret_slice(dx);
 
         debug_assert_eq!(grad_f.len(), dx.len());
 
-        let gradient: &mut [Vector3<f64>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (&vol, cell) in tetmesh
@@ -107,8 +109,10 @@ impl EnergyGradient<f64> for MomentumPotential {
             let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
             let tet_dv = (tet_dx * dt_inv - tet_v).into_array();
 
+            let vol = T::from(vol).unwrap();
+
             for i in 0..4 {
-                gradient[cell[i]] += dt_inv * 0.25 * vol * density * tet_dv[i];
+                gradient[cell[i]] += tet_dv[i] * (dt_inv * T::from(0.25).unwrap() * vol * density);
             }
         }
     }

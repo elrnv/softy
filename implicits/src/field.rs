@@ -90,6 +90,20 @@ where
 impl<T: Real + Send + Sync> ImplicitSurface<T> {
     const PARALLEL_CHUNK_SIZE: usize = 5000;
 
+    /// Radius of influence ( kernel radius ) for this implicit surface.
+    pub fn radius(&self) -> T {
+        match self.kernel {
+            KernelType::Interpolating { radius }
+            | KernelType::Approximate { radius, .. }
+            | KernelType::Cubic { radius } => {
+                T::from(radius).unwrap()
+            }
+            KernelType::Global { .. } | KernelType::Hrbf => {
+                T::infinity()
+            }
+        }
+    }
+
     /// Return the number of samples used by this implicit surface.
     pub fn samples(&self) -> &Samples<T> {
         &self.samples

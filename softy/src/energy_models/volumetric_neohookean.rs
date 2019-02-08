@@ -17,28 +17,26 @@ use std::{cell::RefCell, rc::Rc};
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
 #[allow(non_snake_case)]
-pub struct NeoHookeanTetEnergy {
-    Dx: Matrix3<f64>,
-    DX_inv: Matrix3<f64>,
-    volume: f64,
-    lambda: f64,
-    mu: f64,
+pub struct NeoHookeanTetEnergy<T: Real> {
+    Dx: Matrix3<T>,
+    DX_inv: Matrix3<T>,
+    volume: T,
+    lambda: T,
+    mu: T,
 }
 
-impl NeoHookeanTetEnergy {
-    pub const NUM_HESSIAN_TRIPLETS: usize = 78; // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
-
+impl<T: Real> NeoHookeanTetEnergy<T> {
     /// Compute the deformation gradient `F` for this tet.
     #[allow(non_snake_case)]
     #[inline]
-    pub fn deformation_gradient(&self) -> Matrix3<f64> {
+    pub fn deformation_gradient(&self) -> Matrix3<T> {
         self.Dx * self.DX_inv
     }
 
     /// Compute the deformation gradient differential `dF` for this tet.
     #[allow(non_snake_case)]
     #[inline]
-    fn deformation_gradient_differential(&self, tet_dx: &Tetrahedron<f64>) -> Matrix3<f64> {
+    fn deformation_gradient_differential(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
         // Build differential dDx
         let dDx = tet_dx.shape_matrix();
         dDx * self.DX_inv
@@ -49,18 +47,19 @@ impl NeoHookeanTetEnergy {
     /// be obtained from a tet and its reference configuration.
     #[allow(non_snake_case)]
     #[inline]
-    pub fn elastic_energy(&self) -> f64 {
+    pub fn elastic_energy(&self) -> T {
         let NeoHookeanTetEnergy {
             volume, mu, lambda, ..
         } = *self;
         let F = self.deformation_gradient();
         let I = F.norm_squared(); // tr(F^TF)
         let J = F.determinant();
-        if J <= 0.0 {
-            ::std::f64::INFINITY
+        if J <= T::zero() {
+            T::infinity()
         } else {
             let logJ = J.ln();
-            volume * (0.5 * mu * (I - 3.0) - mu * logJ + 0.5 * lambda * logJ * logJ)
+            let half = T::from(0.5).unwrap();
+            volume * (half * mu * (I - T::from(3.0).unwrap()) - mu * logJ + half * lambda * logJ * logJ)
         }
     }
 
@@ -69,7 +68,7 @@ impl NeoHookeanTetEnergy {
     /// be obtained from a tet and its reference configuration.
     #[allow(non_snake_case)]
     #[inline]
-    pub fn elastic_energy_gradient(&self) -> [Vector3<f64>; 4] {
+    pub fn elastic_energy_gradient(&self) -> [Vector3<T>; 4] {
         let NeoHookeanTetEnergy {
             DX_inv,
             volume,
@@ -79,12 +78,12 @@ impl NeoHookeanTetEnergy {
         } = *self;
         let F = self.deformation_gradient();
         let J = F.determinant();
-        if J <= 0.0 {
+        if J <= T::zero() {
             [Vector3::zeros(); 4]
         } else {
             let F_inv_tr = F.inverse_transpose().unwrap();
             let logJ = J.ln();
-            let H = volume * (mu * F + (lambda * logJ - mu) * F_inv_tr) * DX_inv.transpose();
+            let H = (F * mu + F_inv_tr * (lambda * logJ - mu)) * DX_inv.transpose() * volume;
             [H[0], H[1], H[2], -H[0] - H[1] - H[2]]
         }
     }
@@ -94,7 +93,7 @@ impl NeoHookeanTetEnergy {
     /// order to be consistent with the 3x3 Matrices.
     #[allow(non_snake_case)]
     #[inline]
-    fn elastic_energy_hessian(&self) -> [[Matrix3<f64>; 4]; 4] {
+    fn elastic_energy_hessian(&self) -> [[Matrix3<T>; 4]; 4] {
         let NeoHookeanTetEnergy {
             DX_inv,
             volume,
@@ -107,7 +106,7 @@ impl NeoHookeanTetEnergy {
 
         let F = self.deformation_gradient();
         let J = F.determinant();
-        if J <= 0.0 {
+        if J <= T::zero() {
             return local_hessians;
         }
 
@@ -125,10 +124,10 @@ impl NeoHookeanTetEnergy {
         // Off-diagonal elements
         for col in 0..3 {
             for row in 0..3 {
-                let mut last_hess = 0.0;
+                let mut last_hess = T::zero();
                 for k in 0..3 {
                     // which vertex
-                    let mut last_wrt_hess = 0.0;
+                    let mut last_wrt_hess = T::zero();
                     for n in 0..3 {
                         // with respect to which vertex
                         let c_lambda = lambda * Dx_inv_tr[n][row] * Dx_inv_tr[k][col];
@@ -161,9 +160,9 @@ impl NeoHookeanTetEnergy {
     }
 }
 
-impl TetEnergy<f64> for NeoHookeanTetEnergy {
+impl<T: Real> TetEnergy<T> for NeoHookeanTetEnergy<T> {
     #[allow(non_snake_case)]
-    fn new(Dx: Matrix3<f64>, DX_inv: Matrix3<f64>, volume: f64, lambda: f64, mu: f64) -> Self {
+    fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self {
         NeoHookeanTetEnergy {
             Dx,
             DX_inv,
@@ -178,7 +177,7 @@ impl TetEnergy<f64> for NeoHookeanTetEnergy {
     /// The contribution to the last vertex is given by the negative sum of all the columns.
     #[allow(non_snake_case)]
     #[inline]
-    fn elastic_energy_hessian_product(&self, tet_dx: &Tetrahedron<f64>) -> Matrix3<f64> {
+    fn elastic_energy_hessian_product(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
         let NeoHookeanTetEnergy {
             DX_inv,
             volume,
@@ -189,17 +188,17 @@ impl TetEnergy<f64> for NeoHookeanTetEnergy {
         let F = self.deformation_gradient();
         let dF = self.deformation_gradient_differential(tet_dx);
         let J = F.determinant();
-        if J > 0.0 {
+        if J > T::zero() {
             let alpha = mu - lambda * J.ln();
 
             let F_inv_tr = F.inverse_transpose().unwrap();
             let F_inv = F_inv_tr.transpose();
 
-            let dP = mu * dF
-                + alpha * F_inv_tr * dF.transpose() * F_inv_tr
-                + lambda * (F_inv * dF).trace() * F_inv_tr;
+            let dP = dF * mu
+                + F_inv_tr * dF.transpose() * F_inv_tr * alpha
+                + F_inv_tr * ((F_inv * dF).trace() * lambda);
 
-            volume * dP * DX_inv.transpose()
+            dP * DX_inv.transpose() * volume
         } else {
             Matrix3::zeros()
         }
@@ -282,6 +281,8 @@ impl ElasticTetMeshEnergyBuilder {
 }
 
 impl ElasticTetMeshEnergy {
+    pub const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 78; // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
+
     /// Helper for distributing local Hessian entries into the global Hessian matrix.
     /// This function provides the order of Hessian matrix non-zeros.
     /// `indices` is a map from the local tet vertex indices to their position in the global
@@ -313,14 +314,14 @@ impl ElasticTetMeshEnergy {
             }
         }
 
-        assert_eq!(i, NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS)
+        assert_eq!(i, Self::NUM_HESSIAN_TRIPLETS_PER_TET)
     }
 }
 
 /// Define energy for ElasticTetMeshEnergy materials.
-impl Energy<f64> for ElasticTetMeshEnergy {
+impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy(&self, x: &[f64], dx: &[f64]) -> f64 {
+    fn energy(&self, x: &[T], dx: &[T]) -> T {
         let ElasticTetMeshEnergy {
             ref tetmesh,
             material:
@@ -334,8 +335,8 @@ impl Energy<f64> for ElasticTetMeshEnergy {
 
         let tetmesh = tetmesh.borrow();
 
-        let prev_pos: &[Vector3<f64>] = reinterpret_slice(x);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
+        let disp: &[Vector3<T>] = reinterpret_slice(dx);
 
         tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -350,9 +351,15 @@ impl Energy<f64> for ElasticTetMeshEnergy {
                 let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
                 let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx.clone();
                 let Dx = tet.shape_matrix();
+                let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
+                let vol = T::from(vol).unwrap();
+                let lambda = T::from(lambda).unwrap();
+                let mu = T::from(mu).unwrap();
+                let half = T::from(0.5).unwrap();
+                let damping = T::from(damping).unwrap();
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
                 // elasticity
-                tet_energy.elastic_energy() + 0.5 * damping * {
+                tet_energy.elastic_energy() + half * damping * {
                     let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
                     // damping (viscosity)
                     (dH[0].dot(tet_dx.0) + dH[1].dot(tet_dx.1) + dH[2].dot(tet_dx.2)
@@ -363,9 +370,9 @@ impl Energy<f64> for ElasticTetMeshEnergy {
     }
 }
 
-impl EnergyGradient<f64> for ElasticTetMeshEnergy {
+impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, x: &[f64], dx: &[f64], grad_f: &mut [f64]) {
+    fn add_energy_gradient(&self, x: &[T], dx: &[T], grad_f: &mut [T]) {
         let ElasticTetMeshEnergy {
             ref tetmesh,
             material:
@@ -382,10 +389,10 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
         debug_assert_eq!(grad_f.len(), x.len());
         debug_assert_eq!(grad_f.len(), dx.len());
 
-        let prev_pos: &[Vector3<f64>] = reinterpret_slice(x);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
+        let disp: &[Vector3<T>] = reinterpret_slice(dx);
 
-        let gradient: &mut [Vector3<f64>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
         for ((&vol, &DX_inv), cell) in tetmesh
@@ -404,6 +411,12 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
             // Make deformed tet.
             let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx.clone();
 
+            let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
+            let vol = T::from(vol).unwrap();
+            let lambda = T::from(lambda).unwrap();
+            let mu = T::from(mu).unwrap();
+            let damping = T::from(damping).unwrap();
+
             let tet_energy = NeoHookeanTetEnergy::new(tet.shape_matrix(), DX_inv, vol, lambda, mu);
 
             let grad = tet_energy.elastic_energy_gradient();
@@ -416,8 +429,8 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
             let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
             for i in 0..3 {
                 // Damping
-                gradient[cell[i]] += damping * dH[i];
-                gradient[cell[3]] -= damping * dH[i];
+                gradient[cell[i]] += dH[i] * damping;
+                gradient[cell[3]] -= dH[i] * damping;
             }
         }
     }
@@ -425,7 +438,7 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
 
 impl EnergyHessian for ElasticTetMeshEnergy {
     fn energy_hessian_size(&self) -> usize {
-        NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS * self.tetmesh.borrow().num_cells()
+        Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.tetmesh.borrow().num_cells()
     }
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
         &self,
@@ -440,9 +453,9 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_row_chunks: &mut [[I; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
+            let hess_row_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
                 reinterpret_mut_slice(rows);
-            let hess_col_chunks: &mut [[I; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
+            let hess_col_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
                 reinterpret_mut_slice(cols);
 
             let hess_iter = hess_row_chunks
@@ -480,7 +493,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
         {
             // Break up the hessian indices into chunks of elements for each tet.
             let hess_chunks: &mut [[MatrixElementIndex;
-                      NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] = reinterpret_mut_slice(indices);
+                      Self::NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(indices);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 
@@ -505,7 +518,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + std::iter::Sum>(&self, x: &[T], dx: &[T], values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -525,7 +538,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[T; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
+            let hess_chunks: &mut [[T; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
                 reinterpret_mut_slice(values);
 
             let hess_iter = hess_chunks
@@ -553,6 +566,12 @@ impl EnergyHessian for ElasticTetMeshEnergy {
                 let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx;
 
                 let Dx = tet.shape_matrix();
+
+                let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
+                let vol = T::from(vol).unwrap();
+                let lambda = T::from(lambda).unwrap();
+                let mu = T::from(mu).unwrap();
+
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
 
                 let factor = T::from(1.0 + damping).unwrap();
@@ -560,7 +579,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
                 let local_hessians = tet_energy.elastic_energy_hessian();
 
                 Self::hessian_for_each(
-                    |n, k| factor * local_hessians[k][n],
+                    |n, k| local_hessians[k][n] * factor,
                     |i, _, (row, col), h| tet_hess[i] = h[col][row],
                 );
             });
@@ -571,9 +590,15 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo;
-    use utils::*;
+    use crate::energy_models::test_utils::*;
 
+    #[test]
+    fn gradient() {
+        gradient_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+    }
 
-
+    #[test]
+    fn hessian() {
+        hessian_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+    }
 }

@@ -13,6 +13,9 @@ pub mod fem;
 pub mod mask_iter;
 mod matrix;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;

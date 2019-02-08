@@ -371,7 +371,7 @@ impl SolverBuilder {
     }
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
-    fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
+    pub(crate) fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
         let verts = mesh.vertex_positions().to_vec();
 
         mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
@@ -1125,104 +1125,13 @@ impl Solver {
         Ok(result)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use geo;
     use std::path::PathBuf;
     use utils::*;
-
-    /*
-     * Setup code
-     */
-
-    const STATIC_PARAMS: SimParams = SimParams {
-        gravity: [0.0f32, -9.81, 0.0],
-        time_step: None,
-        tolerance: 1e-9,
-        max_iterations: 300,
-        max_outer_iterations: 1,
-        outer_tolerance: 0.001,
-        print_level: 0,
-        derivative_test: 0,
-    };
-
-    const DYNAMIC_PARAMS: SimParams = SimParams {
-        gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.01),
-        ..STATIC_PARAMS
-    };
-
-    // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus
-    // (mu) and density in the same range of magnitude. Higher stiffnesses compared to denisty will
-    // produce highly oscillatory configurations and keep the solver from converging fast.
-    // As an example if we increase the moduli below by 1000, the solver can't converge, even in
-    // 300 steps.
-    const SOLID_MATERIAL: Material = Material {
-        elasticity: ElasticityParameters {
-            bulk_modulus: 100e3,
-            shear_modulus: 10e3,
-        },
-        incompressibility: false,
-        density: 1000.0,
-        damping: 0.0,
-    };
-
-    fn make_one_tet_mesh() -> TetMesh {
-        let verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
-        let indices = vec![0, 2, 1, 3];
-        let mut mesh = TetMesh::new(verts.clone(), indices);
-        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
-            .unwrap();
-
-        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
-            .unwrap();
-        mesh
-    }
-
-    fn make_one_deformed_tet_mesh() -> TetMesh {
-        let mut mesh = make_one_tet_mesh();
-        mesh.vertex_positions_mut()[3][2] = 2.0;
-        mesh
-    }
-
-    fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
-        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
-        let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
-            .unwrap();
-
-        let ref_verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-        ];
-
-        mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
-            .unwrap();
-        mesh
-    }
-
-    fn make_three_tet_mesh() -> TetMesh {
-        let verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 0.0, 2.0],
-        ];
-        make_three_tet_mesh_with_verts(verts)
-    }
+    use crate::test_utils::*;
 
     /// Utility function to compare positions of two meshes.
     fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {

@@ -6,31 +6,32 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use geo::math::{Matrix3, Scalar};
+use geo::math::Matrix3;
 use geo::prim::Tetrahedron;
+use geo::Real;
 use num_traits::FromPrimitive;
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
 /// Tetrahedron energy interface. Abstracting over tet energies is useful for damping
 /// implementations like Rayleigh damping which depend on the elasticity model used.
-pub trait TetEnergy<T: Scalar> {
+pub trait TetEnergy<T: Real> {
     /// Constructor accepts:
     /// `Dx`: the deformed shape matrix
     /// `DX_inv`: the undeformed shape matrix
     /// `volume`: volume of the tetrahedron
     /// `lambda` and `mu`: Lamé parameters
     #[allow(non_snake_case)]
-    fn new(Dx: Matrix3<f64>, DX_inv: Matrix3<f64>, volume: f64, lambda: f64, mu: f64) -> Self;
+    fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self;
     /// Elasticity Hessian*displacement product per element. Represented by a 3x3 matrix where
     /// column `i` produces the hessian product contribution for the vertex `i` within the current
     /// element.
-    fn elastic_energy_hessian_product(&self, dx: &Tetrahedron<f64>) -> Matrix3<T>;
+    fn elastic_energy_hessian_product(&self, dx: &Tetrahedron<T>) -> Matrix3<T>;
 }
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
-pub trait Energy<T: Scalar> {
+pub trait Energy<T: Real> {
     /// Compute the energy of the current configuration.
     ///
     ///   - `x` is the variable expected by the specific energy for the previous configuration. For
@@ -42,7 +43,7 @@ pub trait Energy<T: Scalar> {
 
 /// The energy gradient is required for optimization methods that require first order derivative
 /// information, like Gradient Descent for instance.
-pub trait EnergyGradient<T: Scalar> {
+pub trait EnergyGradient<T: Real> {
     /// Compute the change in energy with respect to change in configuration and add it to the
     /// given slice of global gradient values.
     ///
@@ -79,7 +80,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_values<T: Scalar>(&self, x: &[T], dx: &[T], values: &mut [T]);
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], values: &mut [T]);
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
@@ -129,7 +130,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_offset<T: Scalar>(
+    fn energy_hessian_offset<T: Real + Send + Sync>(
         &self,
         x: &[T],
         dx: &[T],
@@ -154,7 +155,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian<T: Scalar>(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
+    fn energy_hessian<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), triplets)
     }
 }

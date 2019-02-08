@@ -19,6 +19,8 @@ jemallocator = "*"
 [dev-dependencies]
 criterion = { version = "0.2" }
 utils = { path = "../utils" }
+autodiff = "0.1"
+rand = "0.5"
 
 [features]
 unstable = ["criterion/real_blackbox"]

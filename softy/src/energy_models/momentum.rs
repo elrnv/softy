@@ -51,9 +51,7 @@ impl<T: Real> Energy<T> for MomentumPotential {
             ..
         } = *self;
 
-        let dt = T::from(dt).unwrap();
-        let density = T::from(density).unwrap();
-        let dt_inv = T::one() / dt;
+        let dt_inv = T::from(1.0 / dt).unwrap();
 
         let tetmesh = tetmesh.borrow();
 
@@ -69,10 +67,10 @@ impl<T: Real> Energy<T> for MomentumPotential {
                 let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
                 let tet_dv = tet_dx * dt_inv - tet_v;
 
-                T::from(0.5).unwrap() * dt_inv * {
+                T::from(0.5).unwrap() * {
                     let dvTdv: T = tet_dv.into_array().into_iter().map(|&dv| dv.dot(dv)).sum();
                     // momentum
-                    T::from(0.25).unwrap() * T::from(vol).unwrap() * density * dvTdv * dt
+                    T::from(0.25 * vol * density).unwrap() * dvTdv
                 }
             })
             .sum()
@@ -89,7 +87,6 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
             ..
         } = *self;
 
-        let density = T::from(density).unwrap();
         let dt_inv = T::one() / T::from(dt).unwrap();
 
         let tetmesh = tetmesh.borrow();
@@ -111,10 +108,8 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
             let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
             let tet_dv = (tet_dx * dt_inv - tet_v).into_array();
 
-            let vol = T::from(vol).unwrap();
-
             for i in 0..4 {
-                gradient[cell[i]] += tet_dv[i] * (dt_inv * T::from(0.25).unwrap() * vol * density);
+                gradient[cell[i]] += tet_dv[i] * (dt_inv * T::from(0.25 * vol * density).unwrap());
             }
         }
     }
@@ -193,7 +188,7 @@ impl EnergyHessian for MomentumPotential {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + std::iter::Sum>(&self, _x: &[T], _dx: &[T], values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, _x: &[T], _dx: &[T], values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let MomentumPotential {
@@ -203,7 +198,7 @@ impl EnergyHessian for MomentumPotential {
             ..
         } = *self;
 
-        let dt_inv = T::one() / T::from(dt).unwrap();
+        let dt_inv = T::from(1.0 / dt).unwrap();
 
         let tetmesh = &*tetmesh.borrow();
 
@@ -229,5 +224,23 @@ impl EnergyHessian for MomentumPotential {
                     }
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::energy_models::test_utils::*;
+
+    #[test]
+    fn gradient() {
+        let dt = 0.01;
+        gradient_tester(|mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt), EnergyType::Velocity(dt));
+    }
+
+    #[test]
+    fn hessian() {
+        let dt = 0.01;
+        hessian_tester(|mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt), EnergyType::Velocity(dt));
     }
 }

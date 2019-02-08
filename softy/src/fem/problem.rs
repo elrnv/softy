@@ -318,7 +318,7 @@ impl NonLinearProblem {
         obj += self.gravity.energy(x, dx);
 
         if let Some(ref mp) = self.momentum_potential {
-            let prev_vel = self.prev_pos.borrow();
+            let prev_vel = self.prev_vel.borrow();
             let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
             obj += mp.energy(v, dx);
         }
@@ -585,7 +585,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref mp) = self.momentum_potential {
             let n = mp.energy_hessian_size();
-            let prev_vel = self.prev_pos.borrow();
+            let prev_vel = self.prev_vel.borrow();
             let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
             mp.energy_hessian_values(v, dx, &mut vals[i..i + n]);
             i += n;

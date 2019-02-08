@@ -41,9 +41,9 @@ impl MomentumPotential {
     }
 }
 
-impl Energy<f64> for MomentumPotential {
+impl<T: Real> Energy<T> for MomentumPotential {
     #[allow(non_snake_case)]
-    fn energy(&self, v: &[f64], dx: &[f64]) -> f64 {
+    fn energy(&self, v: &[T], dx: &[T]) -> T {
         let MomentumPotential {
             ref tetmesh,
             density,
@@ -51,12 +51,14 @@ impl Energy<f64> for MomentumPotential {
             ..
         } = *self;
 
-        let dt_inv = 1.0 / dt;
+        let dt = T::from(dt).unwrap();
+        let density = T::from(density).unwrap();
+        let dt_inv = T::one() / dt;
 
         let tetmesh = tetmesh.borrow();
 
-        let vel: &[Vector3<f64>] = reinterpret_slice(v);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let vel: &[Vector3<T>] = reinterpret_slice(v);
+        let disp: &[Vector3<T>] = reinterpret_slice(dx);
 
         tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -67,10 +69,10 @@ impl Energy<f64> for MomentumPotential {
                 let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
                 let tet_dv = tet_dx * dt_inv - tet_v;
 
-                0.5 * dt_inv * {
-                    let dvTdv: f64 = tet_dv.into_array().into_iter().map(|&dv| dv.dot(dv)).sum();
+                T::from(0.5).unwrap() * dt_inv * {
+                    let dvTdv: T = tet_dv.into_array().into_iter().map(|&dv| dv.dot(dv)).sum();
                     // momentum
-                    0.25 * vol * density * dvTdv * dt
+                    T::from(0.25).unwrap() * T::from(vol).unwrap() * density * dvTdv * dt
                 }
             })
             .sum()
@@ -118,7 +120,7 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
     }
 }
 
-impl EnergyHessian<f64> for MomentumPotential {
+impl EnergyHessian for MomentumPotential {
     fn energy_hessian_size(&self) -> usize {
         self.tetmesh.borrow().num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
@@ -191,7 +193,7 @@ impl EnergyHessian<f64> for MomentumPotential {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, _x: &[f64], _dx: &[f64], values: &mut [f64]) {
+    fn energy_hessian_values<T: Real + std::iter::Sum>(&self, _x: &[T], _dx: &[T], values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let MomentumPotential {
@@ -201,12 +203,12 @@ impl EnergyHessian<f64> for MomentumPotential {
             ..
         } = *self;
 
-        let dt_inv = 1.0 / dt;
+        let dt_inv = T::one() / T::from(dt).unwrap();
 
         let tetmesh = &*tetmesh.borrow();
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[f64; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_chunks: &mut [[T; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(values);
 
         let vol_iter = tetmesh
@@ -223,7 +225,7 @@ impl EnergyHessian<f64> for MomentumPotential {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        tet_hess[3 * vi + j] = 0.25 * vol * density * dt_inv * dt_inv;
+                        tet_hess[3 * vi + j] = T::from(0.25 * vol * density).unwrap() * dt_inv * dt_inv;
                     }
                 }
             });

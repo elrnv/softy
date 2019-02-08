@@ -3,6 +3,7 @@ use crate::energy::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
+use geo::Real;
 use geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
@@ -75,10 +76,10 @@ impl EnergyGradient<f64> for Gravity {
     }
 }
 
-impl EnergyHessian<f64> for Gravity {
+impl EnergyHessian for Gravity {
     fn energy_hessian_size(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values(&self, _x: &[f64], _dx: &[f64], _: &mut [f64]) {}
+    fn energy_hessian_values<T: Real>(&self, _x: &[T], _dx: &[T], _: &mut [T]) {}
 }

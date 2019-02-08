@@ -5,6 +5,7 @@ use crate::energy::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
+use geo::Real;
 use geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
@@ -422,7 +423,7 @@ impl EnergyGradient<f64> for ElasticTetMeshEnergy {
     }
 }
 
-impl EnergyHessian<f64> for ElasticTetMeshEnergy {
+impl EnergyHessian for ElasticTetMeshEnergy {
     fn energy_hessian_size(&self) -> usize {
         NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS * self.tetmesh.borrow().num_cells()
     }
@@ -504,7 +505,7 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
+    fn energy_hessian_values<T: Real + std::iter::Sum>(&self, x: &[T], dx: &[T], values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -519,12 +520,12 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
 
         let tetmesh = &*tetmesh.borrow();
 
-        let prev_pos: &[Vector3<f64>] = reinterpret_slice(x);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
+        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
+        let disp: &[Vector3<T>] = reinterpret_slice(dx);
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[f64; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
+            let hess_chunks: &mut [[T; NeoHookeanTetEnergy::NUM_HESSIAN_TRIPLETS]] =
                 reinterpret_mut_slice(values);
 
             let hess_iter = hess_chunks
@@ -554,7 +555,7 @@ impl EnergyHessian<f64> for ElasticTetMeshEnergy {
                 let Dx = tet.shape_matrix();
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
 
-                let factor = 1.0 + damping;
+                let factor = T::from(1.0 + damping).unwrap();
 
                 let local_hessians = tet_energy.elastic_energy_hessian();
 

@@ -58,7 +58,7 @@ pub trait EnergyGradient<T: Scalar> {
 /// This trait provides an interface for retrieving the energy Hessian just like
 /// `EnergyHessianIndicesValues`, however the indices and values are combined together into
 /// the `MatrixElementTriplet` type.
-pub trait EnergyHessian<T: Scalar> {
+pub trait EnergyHessian {
     /// The number of non-zeros in the Hessian matrix of the energy.
     fn energy_hessian_size(&self) -> usize;
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
@@ -79,7 +79,7 @@ pub trait EnergyHessian<T: Scalar> {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_values(&self, x: &[T], dx: &[T], values: &mut [T]);
+    fn energy_hessian_values<T: Scalar>(&self, x: &[T], dx: &[T], values: &mut [T]);
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
@@ -129,7 +129,7 @@ pub trait EnergyHessian<T: Scalar> {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_offset(
+    fn energy_hessian_offset<T: Scalar>(
         &self,
         x: &[T],
         dx: &[T],
@@ -154,7 +154,7 @@ pub trait EnergyHessian<T: Scalar> {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
+    fn energy_hessian<T: Scalar>(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), triplets)
     }
 }

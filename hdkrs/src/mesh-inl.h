@@ -508,6 +508,7 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
 
 template<typename HandleType, typename ArrayType>
 void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
+    if (h.isInvalid()) return;
     std::size_t i = 0;
     auto n = startoff + (arr.size/arr.tuple_size);
     for ( GA_Offset off = startoff; off < n; ++off, ++i ) {
@@ -523,7 +524,8 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, 
     while ( it ) { // it could be null, but it doesn't change
         auto attrib = attrib_iter_next(it);
         if (!attrib) break;
-        auto name = attrib_name(attrib);
+        auto name = UT_String(attrib_name(attrib));
+        name.forceValidVariableName();
         auto type = attrib_data_type(attrib);
         if (type == DataType::I8 ) {
             auto arr = attrib_data_i8(attrib);
@@ -564,6 +566,7 @@ void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, 
 
 template<typename HandleType, typename ArrayType>
 void update_attrib(HandleType h, ArrayType arr) {
+    if (h.isInvalid()) return;
     int n = (arr.size/arr.tuple_size);
     for ( int j = 0; j < arr.tuple_size; ++j ) {
         h.setBlockFromIndices(GA_Index(0), GA_Size(n), arr.array, arr.tuple_size, j);
@@ -576,7 +579,8 @@ void update_attributes(GU_Detail *detail, AttribIter *it, GA_AttributeOwner owne
     while ( it ) { // it could be null, but it doesn't change
         auto attrib = attrib_iter_next(it);
         if (!attrib) break;
-        auto name = attrib_name(attrib);
+        auto name = UT_String(attrib_name(attrib));
+        name.forceValidVariableName();
         auto type = attrib_data_type(attrib);
         if (type == DataType::I8 ) {
             auto arr = attrib_data_i8(attrib);

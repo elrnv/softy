@@ -6,7 +6,6 @@ pub mod volumetric_neohookean;
 pub(crate) mod test_utils {
     use crate::TetMesh;
     use crate::energy::*;
-    use utils::*;
     use crate::test_utils::*;
     use autodiff::F;
     use reinterpret::*;
@@ -50,7 +49,7 @@ pub(crate) mod test_utils {
             let energy_model = build_energy(mesh);
 
             let mut dx = random_displacement(3*pos.len());
-            let mut x: Vec<F> = match ty {
+            let x: Vec<F> = match ty {
                 EnergyType::Position => reinterpret_vec(pos).into_iter().map(|x: f64| F::cst(x)).collect(),
                 EnergyType::Velocity(dt) => dx.iter().map(|&disp| disp / dt).collect(),
             };
@@ -77,7 +76,7 @@ pub(crate) mod test_utils {
             let energy_model = build_energy(mesh);
 
             let mut dx = random_displacement(3*pos.len());
-            let mut x: Vec<F> = match ty {
+            let x: Vec<F> = match ty {
                 EnergyType::Position => reinterpret_vec(pos).into_iter().map(|x: f64| F::cst(x)).collect(),
                 EnergyType::Velocity(dt) => dx.iter().map(|&disp| disp / dt).collect(),
             };

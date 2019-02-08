@@ -1292,7 +1292,7 @@ mod tests {
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk")).unwrap();
-        compare_meshes(&solution, &expected, 1e-4);
+        compare_meshes(&solution, &expected, 1e-3);
     }
 
     #[test]
@@ -1329,7 +1329,7 @@ mod tests {
             "assets/three_tets_static_volume_constraint_expected.vtk",
         ))
         .unwrap();
-        compare_meshes(&solution, &exptected, 1e-5);
+        compare_meshes(&solution, &exptected, 1e-4);
     }
 
     #[test]

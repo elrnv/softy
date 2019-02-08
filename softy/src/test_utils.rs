@@ -1,4 +1,3 @@
-use utils::*;
 use crate::TetMesh;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;

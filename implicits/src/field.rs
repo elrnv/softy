@@ -292,6 +292,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         })
     }
 
+    /// Return an iterator over query point indices, which have non-empty neighbourhoods.
+    pub fn cached_neighbourhoods(&self) -> Result<impl Iterator<Item = usize>, super::Error> {
+        let set = match self.sample_type {
+            SampleType::Vertex => self.extended_neighbourhood_borrow(),
+            SampleType::Face => self.trivial_neighbourhood_borrow(),
+        };
+
+        set.map(|neighbourhoods| {
+            let neighs: Vec<_> = neighbourhoods
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| !x.is_empty())
+                .map(|(i, _)| i)
+                .collect();
+            neighs.into_iter()
+        })
+    }
+
     /// The `max_step` parameter sets the maximum position change allowed between calls to
     /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
     /// derivative will be denser than then needed, which typically results in slower performance.

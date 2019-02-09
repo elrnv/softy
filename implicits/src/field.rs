@@ -293,20 +293,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Return an iterator over query point indices, which have non-empty neighbourhoods.
-    pub fn cached_neighbourhoods(&self) -> Result<impl Iterator<Item = usize>, super::Error> {
+    pub fn cached_neighbourhoods(&self) -> Result<Vec<usize>, super::Error> {
         let set = match self.sample_type {
             SampleType::Vertex => self.extended_neighbourhood_borrow(),
             SampleType::Face => self.trivial_neighbourhood_borrow(),
         };
 
         set.map(|neighbourhoods| {
-            let neighs: Vec<_> = neighbourhoods
+            neighbourhoods
                 .iter()
                 .enumerate()
                 .filter(|(_, x)| !x.is_empty())
                 .map(|(i, _)| i)
-                .collect();
-            neighs.into_iter()
+                .collect()
         })
     }
 
@@ -1175,13 +1174,11 @@ pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::*;
     use geo::mesh::*;
 
-    /// Test the projection.
-    #[test]
-    fn projection_test() -> Result<(), crate::Error> {
-        use crate::*;
-
+    // Helper function for testing.
+    fn make_octahedron_and_grid() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1204,7 +1201,15 @@ mod tests {
         )?;
 
         // Make a mesh to be projected.
-        let mut grid = make_grid(22, 22);
+        let grid = make_grid(22, 22);
+
+        Ok((surface, grid))
+    }
+
+    /// Test the projection.
+    #[test]
+    fn projection_test() -> Result<(), crate::Error> {
+        let (surface, mut grid) = make_octahedron_and_grid()?;
 
         // Get grid node positions to be projected.
         let pos = grid.vertex_positions_mut();
@@ -1230,6 +1235,17 @@ mod tests {
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn cached_neighbourhoods() -> Result<(), crate::Error> {
+        let (surface, grid) = make_octahedron_and_grid()?;
+        surface.cache_neighbours(grid.vertex_positions());
+        assert_eq!(
+            surface.num_cached_neighbourhoods(),
+            surface.cached_neighbourhoods()?.len()
+        );
         Ok(())
     }
 

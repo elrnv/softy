@@ -422,7 +422,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // sum from there.
         let weight_sum_inv = bg.weight_sum_inv();
 
-        let local_pot = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
+        let local_pot =
+            Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
 
         samples.into_iter().map(
             move |Sample {
@@ -718,7 +719,10 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
 
 /// Make a query triangle in the x-z plane at the given height, perturbed by a 3D perturbation function.
 #[cfg(test)]
-pub(crate) fn make_test_triangle(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> Vec<Vector3<f64>> {
+pub(crate) fn make_test_triangle(
+    h: f64,
+    perturb: &mut impl FnMut() -> Vector3<f64>,
+) -> Vec<Vector3<f64>> {
     vec![
         Vector3([0.5, h, 0.0]) + perturb(),
         Vector3([-0.25, h, 0.433013]) + perturb(),
@@ -728,25 +732,37 @@ pub(crate) fn make_test_triangle(h: f64, perturb: &mut impl FnMut() -> Vector3<f
 
 /// Make two query triangles in the x-z plane at the given height, perturbed by a 3D perturbation function.
 #[cfg(test)]
-pub(crate) fn make_two_test_triangles(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> (Vec<Vector3<f64>>, Vec<[usize;3]>) {
-    (vec![
-        Vector3([0.0, h, 0.0]) + perturb(),
-        Vector3([0.0, h, 1.0]) + perturb(),
-        Vector3([1.0, h, 0.0]) + perturb(),
-        Vector3([1.0, h, 1.0]) + perturb(),
-    ], vec![[0, 1, 2], [1, 3, 2]])
+pub(crate) fn make_two_test_triangles(
+    h: f64,
+    perturb: &mut impl FnMut() -> Vector3<f64>,
+) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+    (
+        vec![
+            Vector3([0.0, h, 0.0]) + perturb(),
+            Vector3([0.0, h, 1.0]) + perturb(),
+            Vector3([1.0, h, 0.0]) + perturb(),
+            Vector3([1.0, h, 1.0]) + perturb(),
+        ],
+        vec![[0, 1, 2], [1, 3, 2]],
+    )
 }
 
 /// Make htree query triangles in the x-z plane at the given height, perturbed by a 3D perturbation function.
 #[cfg(test)]
-pub(crate) fn make_three_test_triangles(h: f64, perturb: &mut impl FnMut() -> Vector3<f64>) -> (Vec<Vector3<f64>>, Vec<[usize;3]>) {
-    (vec![
-        Vector3([0.0, h, 0.0]) + perturb(),
-        Vector3([0.0, h, 1.0]) + perturb(),
-        Vector3([1.0, h, 0.0]) + perturb(),
-        Vector3([1.0, h+0.5, 1.0]) + perturb(),
-        Vector3([2.0, h, 0.0]) + perturb(),
-    ], vec![[0, 1, 2], [1, 3, 2], [2, 3, 4]])
+pub(crate) fn make_three_test_triangles(
+    h: f64,
+    perturb: &mut impl FnMut() -> Vector3<f64>,
+) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+    (
+        vec![
+            Vector3([0.0, h, 0.0]) + perturb(),
+            Vector3([0.0, h, 1.0]) + perturb(),
+            Vector3([1.0, h, 0.0]) + perturb(),
+            Vector3([1.0, h + 0.5, 1.0]) + perturb(),
+            Vector3([2.0, h, 0.0]) + perturb(),
+        ],
+        vec![[0, 1, 2], [1, 3, 2], [2, 3, 4]],
+    )
 }
 
 #[cfg(test)]
@@ -757,16 +773,14 @@ pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
     move || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)])
 }
 
-
 /// Reduce the given Jacobian from face vertices to vertices.
 #[cfg(test)]
 pub(crate) fn consolidate_face_jacobian<T: Real>(
     jac: &[Vector3<T>],
     neighbours: &[usize],
-    faces: &[[usize;3]],
-    num_verts: usize
+    faces: &[[usize; 3]],
+    num_verts: usize,
 ) -> Vec<Vector3<T>> {
-
     let tet_indices_iter = neighbours
         .iter()
         .flat_map(|&neigh| faces[neigh].iter().cloned());
@@ -787,10 +801,10 @@ pub(crate) fn new_test_samples<T, V3>(
     sample_type: SampleType,
     triangles: &[[usize; 3]],
     verts: &[V3],
-    ) -> Samples<T>
+) -> Samples<T>
 where
-T: Real + Send + Sync,
-V3: Into<Vector3<T>> + Clone,
+    T: Real + Send + Sync,
+    V3: Into<Vector3<T>> + Clone,
 {
     match sample_type {
         SampleType::Face => {
@@ -861,13 +875,7 @@ mod tests {
             // Compute the local potential function. After calling this function, calling
             // `.deriv()` on the potential output will give us the derivative with resepct to the
             // preset variable.
-            ImplicitSurface::compute_potential_at(
-                q,
-                view,
-                kernel,
-                bg_field_type,
-                &mut p,
-            );
+            ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
 
             // Check the derivative of the autodiff with our previously computed Jacobian.
             assert_relative_eq!(
@@ -970,20 +978,9 @@ mod tests {
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
-                    ImplicitSurface::compute_potential_at(
-                        q,
-                        view,
-                        kernel,
-                        bg_field_type,
-                        &mut p,
-                    );
+                    ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
 
-                    assert_relative_eq!(
-                        jac[i],
-                        p.deriv(),
-                        max_relative = 1e-5,
-                        epsilon = 1e-10
-                    );
+                    assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
                     ad_tet_verts[vtx][i] = F::cst(ad_tet_verts[vtx][i]);
                 }
@@ -1402,13 +1399,7 @@ mod tests {
                 let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_potential_at(
-                    q,
-                    view,
-                    kernel,
-                    bg_field_type,
-                    &mut p,
-                );
+                ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
 
                 assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
@@ -1503,11 +1494,7 @@ mod tests {
             let radius = 0.1 * (i as f64);
             contact_jacobian(BackgroundFieldType::None, radius, &mut perturb);
             contact_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
-            contact_jacobian(
-                BackgroundFieldType::FromInput,
-                radius,
-                &mut perturb,
-            );
+            contact_jacobian(BackgroundFieldType::FromInput, radius, &mut perturb);
             //contact_jacobian(
             //    BackgroundFieldType::DistanceBased,
             //    radius,

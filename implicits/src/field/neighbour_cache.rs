@@ -1,4 +1,4 @@
-use super::{SampleType, samples::Sample};
+use super::{samples::Sample, SampleType};
 use geo::Real;
 use rayon::prelude::*;
 use std::collections::BTreeSet;

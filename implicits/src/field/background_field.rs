@@ -158,7 +158,9 @@ where
     pub(crate) fn background_weight(&self) -> T {
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
-            _ => self.kernel.f(self.kernel.radius() - self.closest_sample_dist),
+            _ => self
+                .kernel
+                .f(self.kernel.radius() - self.closest_sample_dist),
         }
     }
 
@@ -175,7 +177,9 @@ where
             // Derivative with respect to the sample at the given index
             if index == self.closest_sample_index {
                 self.closest_sample_disp
-                    * (self.kernel.df(self.kernel.radius() - self.closest_sample_dist)
+                    * (self
+                        .kernel
+                        .df(self.kernel.radius() - self.closest_sample_dist)
                         / self.closest_sample_dist)
             } else {
                 Vector3::zeros()
@@ -183,7 +187,9 @@ where
         } else {
             // Derivative with respect to the query position
             -self.closest_sample_disp
-                * (self.kernel.df(self.kernel.radius() - self.closest_sample_dist)
+                * (self
+                    .kernel
+                    .df(self.kernel.radius() - self.closest_sample_dist)
                     / self.closest_sample_dist)
         }
     }
@@ -206,11 +212,14 @@ where
         // Derivative with respect to the sample at the given index
         // or Derivative with respect to the query position ( same thing )
         let disp = self.closest_sample_disp / self.closest_sample_dist;
-        let dwb = self.kernel.df(self.kernel.radius() - self.closest_sample_dist);
-        let ddwb = self.kernel.ddf(self.kernel.radius() - self.closest_sample_dist);
+        let dwb = self
+            .kernel
+            .df(self.kernel.radius() - self.closest_sample_dist);
+        let ddwb = self
+            .kernel
+            .ddf(self.kernel.radius() - self.closest_sample_dist);
         disp * ddwb * disp.transpose()
-            - ((Matrix3::identity() - disp * disp.transpose())
-               * (dwb / self.closest_sample_dist))
+            - ((Matrix3::identity() - disp * disp.transpose()) * (dwb / self.closest_sample_dist))
     }
 }
 

@@ -95,12 +95,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match self.kernel {
             KernelType::Interpolating { radius }
             | KernelType::Approximate { radius, .. }
-            | KernelType::Cubic { radius } => {
-                T::from(radius).unwrap()
-            }
-            KernelType::Global { .. } | KernelType::Hrbf => {
-                T::infinity()
-            }
+            | KernelType::Cubic { radius } => T::from(radius).unwrap(),
+            KernelType::Global { .. } | KernelType::Hrbf => T::infinity(),
         }
     }
 
@@ -228,13 +224,25 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .cloned()
                 };
                 let mut cache = self.query_neighbourhood.borrow_mut();
-                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo, sample_type);
+                cache.compute_neighbourhoods(
+                    query_points,
+                    neigh,
+                    surface_topo,
+                    dual_topo,
+                    sample_type,
+                );
             }
             KernelType::Global { .. } | KernelType::Hrbf => {
                 // Global kernel, all points are neighbours
                 let neigh = |_| samples.iter();
                 let mut cache = self.query_neighbourhood.borrow_mut();
-                cache.compute_neighbourhoods(query_points, neigh, surface_topo, dual_topo, sample_type);
+                cache.compute_neighbourhoods(
+                    query_points,
+                    neigh,
+                    surface_topo,
+                    dual_topo,
+                    sample_type,
+                );
             }
         }
     }
@@ -276,10 +284,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         cache.invalidate();
     }
 
-    /// The number of query points currently in the cache.
-    pub fn num_cached_query_points(&self) -> usize {
+    /// The number of query points with non-empty neighbourhoods in the cache.
+    pub fn num_cached_neighbourhoods(&self) -> usize {
         let cache = self.query_neighbourhood.borrow();
-        cache.trivial_set().map_or(0, |x| x.len())
+        cache.trivial_set().map_or(0, |neighbourhoods| {
+            neighbourhoods.iter().filter(|x| !x.is_empty()).count()
+        })
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -492,7 +502,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // in with the computed potentials for local methods.
         *potential = bg.compute_unnormalized_weighted_scalar_field() * weight_sum_inv;
 
-        let local_field = Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, bg.closest_sample_dist());
+        let local_field = Self::compute_local_potential_at(
+            q,
+            samples,
+            kernel,
+            weight_sum_inv,
+            bg.closest_sample_dist(),
+        );
 
         *potential += local_field;
     }
@@ -509,11 +525,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     where
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        samples.iter().map(|Sample { pos, nml, value, .. }| {
-            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-            let p = value + nml.dot(q - pos) / nml.norm();
-            w * p
-        }).sum::<T>() * weight_sum_inv
+        samples
+            .iter()
+            .map(
+                |Sample {
+                     pos, nml, value, ..
+                 }| {
+                    let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                    let p = value + nml.dot(q - pos) / nml.norm();
+                    w * p
+                },
+            )
+            .sum::<T>()
+            * weight_sum_inv
     }
 
     /*
@@ -966,12 +990,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
     /// by the local area (normal norm reciprocal).
-    pub(crate) fn scaled_tangent_projection(
-        sample: Sample<T>,
-    ) -> Matrix3<T> {
+    pub(crate) fn scaled_tangent_projection(sample: Sample<T>) -> Matrix3<T> {
         let nml_norm_inv = T::one() / sample.nml.norm();
         let nml = sample.nml * nml_norm_inv;
-        Matrix3::diag([nml_norm_inv;3]) - (nml * nml_norm_inv) * nml.transpose()
+        Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
     }
 
     /// Compute the background potential field. This function returns a struct that provides some
@@ -986,12 +1008,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         // Construct a background field for computing derivative contribution.
-        BackgroundField::new(
-            q,
-            samples,
-            kernel,
-            BackgroundFieldValue::jac(bg_type),
-        )
+        BackgroundField::new(q, samples, kernel, BackgroundFieldValue::jac(bg_type))
     }
 
     fn compute_hrbf(

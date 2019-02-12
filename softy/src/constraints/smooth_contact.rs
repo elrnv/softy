@@ -8,6 +8,7 @@ use crate::TriMesh;
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
+use crate::Index;
 
 ///// Linearization of a constraint given by `C`.
 //pub struct Linearized<C> {
@@ -188,6 +189,13 @@ pub struct SmoothContactConstraint {
     /// interface.
     surface_hessian_rows: RefCell<Vec<usize>>,
     surface_hessian_cols: RefCell<Vec<usize>>,
+
+    /// Internal constraint function buffer used to store temporary constraint computations.
+    constraint_buffer: RefCell<Vec<f64>>,
+
+    /// A mapping from the new constraints after the cache has been updated, to the old
+    /// constraint set.
+    new_to_old_constraint_mapping: Vec<Index>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -202,6 +210,8 @@ pub struct SmoothContactParams {
 }
 
 impl SmoothContactConstraint {
+    const SCALE: f64 = 1e-4;
+
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
@@ -231,6 +241,9 @@ impl SmoothContactConstraint {
             .build()
             .expect("No surface points detected.");
 
+        let trimesh = trimesh_rc.borrow();
+        let query_points = trimesh.vertex_positions();
+
         let constraint = SmoothContactConstraint {
             sample_verts,
             implicit_surface: RefCell::new(surface),
@@ -238,10 +251,10 @@ impl SmoothContactConstraint {
             iter_count: 0,
             surface_hessian_rows: RefCell::new(Vec::new()),
             surface_hessian_cols: RefCell::new(Vec::new()),
+            constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
+            new_to_old_constraint_mapping: Vec::new(),
         };
 
-        let trimesh = trimesh_rc.borrow();
-        let query_points = trimesh.vertex_positions();
         constraint
             .implicit_surface
             .borrow()
@@ -255,6 +268,10 @@ impl SmoothContactConstraint {
 
     pub fn update_max_step(&mut self, step: f64) {
         self.implicit_surface.borrow_mut().update_max_step(step);
+    }
+
+    pub fn update_radius(&mut self, rad: f64) {
+        self.implicit_surface.borrow_mut().update_radius(rad);
     }
 
     pub fn contact_radius(&self) -> f64 {
@@ -287,17 +304,57 @@ impl SmoothContactConstraint {
         self.implicit_surface.borrow_mut().update(points_iter);
     }
 
+    /// For each neighbourhood, return its index (+1) within a reduced set of non-empty
+    /// neighbourhoods. If there are no cached neighbourhoods, just return a Vector of zeros.
+    pub fn cached_neighbourhood_indices(&self) -> Vec<Index> {
+        let surf = self.implicit_surface.borrow();
+        let mut cached_neighbourhood_indices = vec![Index::INVALID; surf.num_cached_query_points()];
+        let cached_neighbourhood_sizes = match surf.cached_neighbourhood_sizes() {
+            Ok(c) => c,
+            Err(_) => return cached_neighbourhood_indices,
+        };
+
+        for (i, (idx, _))  in cached_neighbourhood_indices.iter_mut().zip(cached_neighbourhood_sizes.iter())
+            .filter(|&(_, &s)| s != 0)
+                .enumerate() {
+            *idx = Index::new(i);
+        }
+
+        cached_neighbourhood_indices
+    }
+
+    /// Update the cache of query point neighbourhoods and return a mapping from the new updated
+    /// positions to the old positions.
     pub fn update_cache(&mut self, query_points: &[[f64; 3]]) {
         let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_query_neighbourhood();
         surf.cache_neighbours(query_points);
+    }
+
+    pub fn build_constraint_mapping(&mut self, old_constrained_points: &[Index]) -> &[Index] {
+        let surf = self.implicit_surface.borrow_mut();
+        let neighbourhoods = surf.cached_neighbourhoods().expect("Failed to retrieve cached neighbourhoods");
+
+        self.new_to_old_constraint_mapping.clear();
+        self.new_to_old_constraint_mapping.resize(neighbourhoods.len(), Index::INVALID);
+
+        let remapped_neighbourhoods = neighbourhoods.into_iter().map(|i| old_constrained_points[i]);
+
+        for (mapping, neigh) in self.new_to_old_constraint_mapping.iter_mut()
+            .zip(remapped_neighbourhoods)
+            .filter(|(_, i)| i.is_valid())
+        {
+            *mapping = neigh;
+        }
+
+        &self.new_to_old_constraint_mapping
     }
 }
 
 impl Constraint<f64> for SmoothContactConstraint {
     #[inline]
     fn constraint_size(&self) -> usize {
-        self.implicit_surface.borrow().num_cached_query_points()
+        self.implicit_surface.borrow().num_cached_neighbourhoods()
     }
 
     #[inline]
@@ -312,13 +369,38 @@ impl Constraint<f64> for SmoothContactConstraint {
         self.update_surface_with_displacement(x, dx);
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
-        for val in value.iter_mut() {
+
+        let mut cbuf = self.constraint_buffer.borrow_mut();
+        let radius = self.contact_radius();
+        for val in cbuf.iter_mut() {
             *val = 0.0; // Clear potential value.
         }
+
         self.implicit_surface
             .borrow()
-            .potential(query_points, value)
+            .potential(query_points, &mut cbuf)
             .unwrap();
+
+        let cached_neighbourhood_sizes =
+            self.implicit_surface.borrow().cached_neighbourhood_sizes().unwrap();
+
+        //println!("cbuf = ");
+        //for c in cbuf.iter() {
+        //    print!("{:9.5} ", *c);
+        //}
+        //println!("");
+
+        // Because `value` tracks only the values for which the neighbourhood is not empty.
+        for ((_, new_v), v) in cached_neighbourhood_sizes.iter()
+            .zip(cbuf.iter())
+            .filter(|&(&c, _)| c != 0)
+            .zip(value.iter_mut())
+        {
+            *v = *new_v;
+        }
+        dbg!(&value);
+        
+        value.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }
 
@@ -336,11 +418,25 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
             let surf = self.implicit_surface.borrow();
             surf.surface_jacobian_indices_iter().unwrap()
         };
-        Box::new(idx_iter.map(move |(row, col)| MatrixElementIndex {
-            row,
-            col: self.tetmesh_coordinate_index(col),
+
+        // The returned Jacobian contains the full jacobian. We only need the parts of it with
+        // non-zero rows.
+        let mut cached_neighbourhood_indices = match self.implicit_surface.borrow().cached_neighbourhood_sizes() {
+            Ok(c) => c,
+            Err(_) => return Box::new(std::iter::empty()),
+        };
+        for (i, c)  in cached_neighbourhood_indices.iter_mut().filter(|&& mut c| c != 0).enumerate() {
+            *c = i + 1;
+        }
+        Box::new(idx_iter.map(move |(row, col)| {
+            assert_ne!(cached_neighbourhood_indices[row], 0);
+            MatrixElementIndex {
+                row: cached_neighbourhood_indices[row] - 1,
+                col: self.tetmesh_coordinate_index(col),
+            }
         }))
     }
+
     fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         self.update_surface_with_displacement(x, dx);
@@ -350,6 +446,8 @@ impl ConstraintJacobian<f64> for SmoothContactConstraint {
             .borrow()
             .surface_jacobian_values(query_points, values)
             .unwrap();
+
+        values.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }
 
@@ -399,5 +497,6 @@ impl ConstraintHessian<f64> for SmoothContactConstraint {
         let query_points = collider.vertex_positions();
         surf.surface_hessian_product_values(query_points, lambda, values)
             .expect("Failed to compute surface Hessian values");
+        values.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }

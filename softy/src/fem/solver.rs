@@ -30,14 +30,22 @@ use crate::PointCloud;
 use crate::PolyMesh;
 use crate::TetMesh;
 use crate::TriMesh;
+use crate::Index;
 
 /// Result from one inner simulation step.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InnerSolveResult {
     /// Number of inner iterations in one step.
     pub iterations: u32,
     /// The value of the objective at the end of the step.
     pub objective_value: f64,
+    /// A set of constrained points (If smooth contact is enabled). Because not all query points
+    /// (points on the kinematic object) are constrained, we need to keep track of which points
+    /// were actually present in the solve, so we can adjust our warm starts between solves.
+    /// In summary, this is a vector with size equal to the number of query points. Each index is
+    /// either `None` which indicates that it was not part of the solve, or `Some(i)` where `i` is
+    /// the index of the constraint this point represents.
+    pub constrained_points: Option<Vec<Index>>,
 }
 
 /// Result from one simulation step.
@@ -53,7 +61,7 @@ pub struct SolveResult {
 
 impl SolveResult {
     /// Add an inner solve result to this solve result.
-    fn combine_inner_result(self, inner: InnerSolveResult) -> SolveResult {
+    fn combine_inner_result(self, inner: &InnerSolveResult) -> SolveResult {
         SolveResult {
             // Aggregate max number of iterations.
             max_inner_iterations: inner.iterations.max(self.max_inner_iterations),
@@ -293,12 +301,13 @@ impl SolverBuilder {
             displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
-            solution: Solution::default(),
+            warm_start: Solution::default(),
+            iter_counter: RefCell::new(0),
         };
 
         // Note that we don't need the solution field to get the number of variables and
         // constraints. This means we can use these functions to initialize solution.
-        problem.reset_solution();
+        problem.reset_warm_start();
 
         let mut ipopt = Ipopt::new(problem)?;
 
@@ -319,9 +328,9 @@ impl SolverBuilder {
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("warm_start_init_point", "yes");
+        ipopt.set_option("warm_start_init_point", "no");
         //ipopt.set_option("jac_d_constant", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
+        //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -488,9 +497,10 @@ impl Solver {
     /// Update the maximal displacement allowed. If zero, no limit is applied.
     pub fn update_max_step(&mut self, step: f64) {
         self.max_step = step;
-        if let Some(ref mut scc) = self.problem_mut().smooth_contact_constraint {
-            scc.update_max_step(step);
-        }
+        self.problem_mut().update_max_step(step);
+    }
+    pub fn update_radius(&mut self, rad: f64) {
+        self.problem_mut().update_radius(rad);
     }
 
     /// Check the contact radius (valid in the presence of a contact constraint)
@@ -633,10 +643,13 @@ impl Solver {
         } = self.solver.solve();
 
         let iterations = solver_data.problem.pop_iteration_count() as u32;
+        let constrained_points =
+            solver_data.problem.smooth_contact_constraint.as_ref().map(|scc| scc.cached_neighbourhood_indices());
 
         let result = InnerSolveResult {
             iterations,
             objective_value,
+            constrained_points,
         };
 
         match status {
@@ -781,29 +794,19 @@ impl Solver {
     //}
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self, and_warm_start: bool) {
+    fn commit_solution(&mut self, and_warm_start: bool) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>){
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
 
-        // Reinterpret solver variables as positions in 3D space.
-        let displacement: &[Vector3<f64>] = reinterpret_slice(solution.primal_variables);
-
         // Advance internal state (positions and velocities) of the problem.
-        problem.advance(displacement.iter().cloned());
-
-        // Update problem solution for warm starts.
-        if and_warm_start {
-            problem.update_warm_start(solution);
-        }
+        problem.advance(solution, and_warm_start)
     }
 
     /// Revert previously committed solution. We just subtract step here.
-    fn revert_solution(problem: &mut NonLinearProblem, dx: &[f64]) {
-        // Reinterpret solver variables as positions in 3D space.
-        let displacement: &[Vector3<f64>] = reinterpret_slice(dx);
-        problem.advance(displacement.iter().map(|&x| -x));
-        problem.reset_solution();
+    fn revert_solution(problem: &mut NonLinearProblem, solution: Solution, old_prev_pos: Vec<Vector3<f64>>, old_prev_vel: Vec<Vector3<f64>>) {
+        problem.revert_to(solution, old_prev_pos, old_prev_vel);
+        //problem.reset_warm_start();
     }
 
     fn output_meshes(&self, iter: u32) {
@@ -896,38 +899,48 @@ impl Solver {
 
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
+            dbg!(self.solver.solver_data().solution.constraint_multipliers);
             match step_result {
                 Ok(step_result) => {
-                    result = result.combine_inner_result(step_result);
+                    result = result.combine_inner_result(&step_result);
                     if let Some(radius) = self.contact_radius() {
+                        let dx = self.dx();
+                        let step = inf_norm(dx);
+
                         if self.probe_contact_constraint_violation() > 1e-4 { // intersecting objects (allow leeway)
-                            let dx = self.dx();
-                            let step = inf_norm(dx);
                             // Check that the reason we are in this mess is actually because of the step size
                             if self.max_step + radius < step {
-                                println!("Increasing max step to {}", step - radius);
+                                println!("##### Increasing max step to {}", step - radius);
                                 self.update_max_step(step - radius);
+                                self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
                             } else {
                                 println!("WHY IS CONSTRAINT VIOLATION POSITIVE!?!?");
+                                self.commit_solution(false);
                                 break;
                             }
                         } else {
+                            println!("##### Decreasing max step to {}", (step - radius).max(0.0));
+                            self.update_max_step((step - radius).max(0.0));
+                            self.commit_solution(true);
+                            self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
                             break;
                         }
                     } else {
+                        self.commit_solution(true);
                         break;
                     }
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
-                    result = result.combine_inner_result(step_result);
+                    result = result.combine_inner_result(&step_result);
                     self.commit_solution(true);
-                    self.output_meshes(0);
+                    self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
+                    //self.output_meshes(0);
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
                     // Unknown error: Reset warm start and return.
                     self.commit_solution(false);
-                    self.output_meshes(0);
+                    //self.output_meshes(0);
                     return Err(e);
                 }
             }
@@ -937,9 +950,7 @@ impl Solver {
             eprintln!("WARNING: Reached max outer iterations: {:?}", result.iterations);
         }
 
-        // Update output result with new data.
-        self.commit_solution(true);
-        self.output_meshes(0);
+        //self.output_meshes(self.step_count as u32);
 
         self.step_count += 1;
 
@@ -1014,14 +1025,14 @@ impl Solver {
 
             // Commit the solution whether or not there is an error. In case of error we will be
             // able to investigate the result.
-            self.commit_solution(true);
+            let (old_sol, old_prev_pos, old_prev_vel) = self.commit_solution(true);
 
             self.output_meshes(iter + 1);
 
             // Update output result with new data.
             match step_result {
                 Ok(step_result) => {
-                    result = result.combine_inner_result(step_result);
+                    result = result.combine_inner_result(&step_result);
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
                     // If the problem is infeasible, it may be that our step size is too small,
@@ -1035,7 +1046,7 @@ impl Solver {
                         }
                     } else {
                         // Otherwise we don't know what else to do so return an error.
-                        result = result.combine_inner_result(step_result);
+                        result = result.combine_inner_result(&step_result);
                         return Err(Error::SolveError(status, result));
                     }
                 }
@@ -1095,7 +1106,7 @@ impl Solver {
                         }
                         if reduction < 0.15 {
                             // Otherwise constraint violation is not properly decreasing
-                            Self::revert_solution(problem, solution.primal_variables);
+                            Self::revert_solution(problem, old_sol, old_prev_pos, old_prev_vel);
                         }
                     }
                 }
@@ -1717,7 +1728,7 @@ mod tests {
     }
 
     fn ball_tri_push_tester(material: Material, sc_params: SmoothContactParams) {
-        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
 
         let params = SimParams {
             max_iterations: 100,
@@ -1783,20 +1794,21 @@ mod tests {
         };
 
         let params = SimParams {
-            max_iterations: 100,
+            max_iterations: 200,
             outer_tolerance: 0.1,
             max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
+            print_level: 5,
             ..DYNAMIC_PARAMS
         };
 
         let mut grid = make_grid(Grid {
-            rows: 10,
-            cols: 10,
+            rows: 20,
+            cols: 20,
             orientation: AxisPlaneOrientation::ZX,
         });
-        scale(&mut grid, [2.0, 1.0, 2.0].into());
-        translate(&mut grid, [0.0, -1.1, 0.0].into());
+        scale(&mut grid, [3.0, 1.0, 3.0].into());
+        translate(&mut grid, [0.0, -3.0, 0.0].into());
 
         let mut solver = SolverBuilder::new(params)
             .solid_material(material)
@@ -1805,24 +1817,19 @@ mod tests {
             .smooth_contact_params(SmoothContactParams {
                 radius: 0.4,
                 tolerance: 0.01,
-                max_step: 0.5,
+                max_step: 0.0,
             })
             .build()
             .unwrap();
 
-        let res = solver.step().expect("Failed bounce solve.");
-        println!("res = {:?}", res);
-        assert!(
-            res.iterations <= params.max_outer_iterations,
-            "Exceeded max outer iterations."
-        );
-
-        let res = solver.step().expect("Failed bounce solve.");
-        println!("res = {:?}", res);
-        assert!(
-            res.iterations <= params.max_outer_iterations,
-            "Exceeded max outer iterations."
-        );
+        for _ in 0..200 {
+            let res = solver.step().expect("Failed bounce solve.");
+            println!("res = {:?}", res);
+            assert!(
+                res.iterations <= params.max_outer_iterations,
+                "Exceeded max outer iterations."
+            );
+        }
     }
 
     /*

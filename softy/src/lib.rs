@@ -12,6 +12,7 @@ mod energy_models;
 pub mod fem;
 pub mod mask_iter;
 mod matrix;
+mod index;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -23,6 +24,7 @@ pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::constraints::SmoothContactParams;
 pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, SimParams, SolveResult};
+pub use index::Index;
 use geo::mesh::attrib;
 
 #[derive(Debug)]

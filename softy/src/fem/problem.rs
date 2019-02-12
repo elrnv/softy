@@ -9,14 +9,16 @@ use crate::constraints::{smooth_contact::SmoothContactConstraint, volume::Volume
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use crate::matrix::*;
-use ipopt::{self, Index, Number};
+use ipopt::{self, Number};
 use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::TetMesh;
 use crate::TriMesh;
+use crate::Index;
 
+#[derive(Clone)]
 pub struct Solution {
     /// This is the solution of the solve.
     pub primal_variables: Vec<f64>,
@@ -83,6 +85,25 @@ impl Solution {
             .extend_from_slice(sol.constraint_multipliers);
         self
     }
+
+    /// The number of constraints may change between saving the warm start solution and using it
+    /// for the next solve. For this reason we must remap the old solution to the new set of
+    /// constraints. Constraint multipliers that are new in the next solve will have a zero value.
+    /// The given `mapping` should produce the old constraint position given a new constraint
+    /// position. In other words the map is new to old. If the new position has no correspondence
+    /// the returned index is `None`.
+    pub fn remap_constraint_multipliers(&mut self, mapping: &[Index]) -> &mut Self {
+        let mut remapped_multipliers = vec![0.0; mapping.len()];
+
+        for (m, i) in remapped_multipliers.iter_mut().zip(mapping.iter()) {
+            if i.is_valid() {
+                *m = self.constraint_multipliers[i.unwrap()];
+            }
+        }
+
+        std::mem::replace(&mut self.constraint_multipliers, remapped_multipliers);
+        self
+    }
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
@@ -119,7 +140,8 @@ pub(crate) struct NonLinearProblem {
     /// Count the number of iterations.
     pub iterations: usize,
     /// Solution data. This is kept around for warm starts.
-    pub solution: Solution,
+    pub warm_start: Solution,
+    pub iter_counter: RefCell<usize>,
 }
 
 impl fmt::Debug for NonLinearProblem {
@@ -136,13 +158,13 @@ impl fmt::Debug for NonLinearProblem {
 impl NonLinearProblem {
     /// Save Ipopt solution for warm starts.
     pub fn update_warm_start(&mut self, solution: ipopt::Solution) {
-        self.solution.update(solution);
+        self.warm_start.update(solution);
     }
 
     /// Reset solution used for warm starts.
-    pub fn reset_solution(&mut self) {
+    pub fn reset_warm_start(&mut self) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        self.solution
+        self.warm_start
             .reset(self.num_variables(), self.num_constraints());
     }
 
@@ -165,21 +187,89 @@ impl NonLinearProblem {
     }
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
-    pub fn advance(&mut self, disp: impl Iterator<Item = Vector3<f64>>) {
-        let dt_inv = 1.0 / self.time_step;
+    pub fn advance(&mut self, solution: ipopt::Solution, and_warm_start: bool) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
+        let (old_warm_start, old_prev_pos, old_prev_vel) = {
+            // Reinterpret solver variables as positions in 3D space.
+            let disp: &[Vector3<f64>] = reinterpret_slice(&solution.primal_variables);
 
-        let mut prev_vel = self.prev_vel.borrow_mut();
+            let dt_inv = 1.0 / self.time_step;
+
+            let mut prev_pos = self.prev_pos.borrow_mut();
+            let mut prev_vel = self.prev_vel.borrow_mut();
+
+            let old_prev_pos = prev_pos.clone();
+            let old_prev_vel = prev_vel.clone();
+
+            disp.iter().zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
+                .for_each(|(&dp, (prev_p, prev_v))| {
+                    *prev_p += dp;
+                    *prev_v = dp * dt_inv;
+                });
+
+            let mut tetmesh = self.tetmesh.borrow_mut();
+            let verts = tetmesh.vertex_positions_mut();
+            verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
+
+            let old_warm_start = self.warm_start.clone();
+
+            // Since we transformed the mesh, we need to invalidate its neighbour data so it's
+            // recomputed at the next time step (if applicable).
+            if let Some(ref mut scc) = self.smooth_contact_constraint {
+                let mesh = self.kinematic_object.as_ref().unwrap().borrow();
+                scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+                dbg!(scc.constraint_size());
+            }
+
+            (old_warm_start, old_prev_pos, old_prev_vel)
+        };
+
+        if and_warm_start {
+            self.update_warm_start(solution);
+        } else {
+            self.reset_warm_start();
+        }
+
+        (old_warm_start, old_prev_pos, old_prev_vel)
+    }
+
+    pub fn update_max_step(&mut self, step: f64) {
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            scc.update_max_step(step);
+            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
+            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            dbg!(scc.constraint_size());
+        }
+    }
+    pub fn update_radius(&mut self, rad: f64) {
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            scc.update_radius(rad);
+            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
+            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            dbg!(scc.constraint_size());
+        }
+    }
+
+    pub fn remap_constraint_multipliers(&mut self, constrained_points: &[Index]) {
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            let mapping = scc.build_constraint_mapping(constrained_points);
+            self.warm_start.remap_constraint_multipliers(mapping);
+        }
+    }
+
+    /// Revert to the given old solution by the given displacement.
+    pub fn revert_to(&mut self, solution: Solution, old_prev_pos: Vec<Vector3<f64>>, old_prev_vel: Vec<Vector3<f64>>) {
+        // Reinterpret solver variables as positions in 3D space.
         let mut prev_pos = self.prev_pos.borrow_mut();
+        let mut prev_vel = self.prev_vel.borrow_mut();
 
-        disp.zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
-            .for_each(|(dp, (prev_p, prev_v))| {
-                *prev_p += dp;
-                *prev_v = dp * dt_inv;
-            });
+        std::mem::replace(&mut *prev_vel, old_prev_vel);
+        std::mem::replace(&mut *prev_pos, old_prev_pos);
 
         let mut tetmesh = self.tetmesh.borrow_mut();
         let verts = tetmesh.vertex_positions_mut();
         verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
+
+        std::mem::replace(&mut self.warm_start, solution);
 
         // Since we transformed the mesh, we need to invalidate its neighbour data so it's
         // recomputed at the next time step (if applicable).
@@ -187,6 +277,7 @@ impl NonLinearProblem {
             let mesh = self.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
         }
+        
     }
 
     fn compute_constraint_violation(&self, displacement: &[f64], constraint: &mut [f64]) {
@@ -225,8 +316,8 @@ impl NonLinearProblem {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let mesh = self.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            dbg!(scc.constraint_size());
         }
-
         self.constraint_violation_norm(displacement)
     }
 
@@ -325,6 +416,24 @@ impl NonLinearProblem {
         obj
     }
 
+    fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) {
+        let mut iter_counter = self.iter_counter.borrow_mut();
+        let mut mesh = self.tetmesh.borrow().clone();
+        let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
+        let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
+        mesh.vertex_positions_mut().iter_mut().zip(
+            all_displacements.iter()).zip(
+            all_positions.iter())
+            .for_each(|((mp, d), p)| *mp = (*p + *d).into());
+        *iter_counter += 1;
+        geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter))).unwrap();
+
+        let tri_mesh = self.kinematic_object.as_ref().unwrap().borrow();
+        let obj = geo::mesh::PolyMesh::from(tri_mesh.clone());
+        geo::io::save_polymesh(&obj, &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter))).unwrap();
+        dbg!(*iter_counter);
+    }
+
     //pub fn dot(a: &[f64], b: &[f64]) -> f64 {
     //    a.iter().zip(b.iter()).map(|(&a,&b)| a*b).sum()
     //}
@@ -362,13 +471,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn initial_point(&self, x: &mut [Number]) -> bool {
-        x.copy_from_slice(self.solution.primal_variables.as_slice());
+        x.copy_from_slice(self.warm_start.primal_variables.as_slice());
         true
     }
 
     fn initial_bounds_multipliers(&self, z_l: &mut [Number], z_u: &mut [Number]) -> bool {
-        z_l.copy_from_slice(self.solution.lower_bound_multipliers.as_slice());
-        z_u.copy_from_slice(self.solution.upper_bound_multipliers.as_slice());
+        z_l.copy_from_slice(self.warm_start.lower_bound_multipliers.as_slice());
+        z_u.copy_from_slice(self.warm_start.upper_bound_multipliers.as_slice());
         true
     }
 
@@ -429,13 +538,16 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn initial_constraint_multipliers(&self, lambda: &mut [Number]) -> bool {
-        lambda.copy_from_slice(self.solution.constraint_multipliers.as_slice());
+        // The constrained points may change between updating the warm start and using it here.
+        lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
         true
     }
 
     fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
+        self.output_mesh(x, dx, "mesh");
 
         let mut i = 0; // Counter.
 
@@ -472,14 +584,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+    fn constraint_jacobian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
         let mut i = 0; // counter
 
         let mut row_offset = 0;
         if let Some(ref vc) = self.volume_constraint {
             for MatrixElementIndex { row, col } in vc.constraint_jacobian_indices_iter() {
-                rows[i] = row as Index;
-                cols[i] = col as Index;
+                rows[i] = row as ipopt::Index;
+                cols[i] = col as ipopt::Index;
                 i += 1;
 
                 row_offset = row_offset.max(row+1);
@@ -488,11 +600,30 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
+            use ipopt::BasicProblem;
+            let nrows = scc.constraint_size();
+            let ncols = self.num_variables();
+            let mut jac = vec![vec![0; nrows]; ncols]; // col major
+
             for MatrixElementIndex { row, col } in scc.constraint_jacobian_indices_iter() {
-                rows[i] = (row + row_offset) as Index;
-                cols[i] = col as Index;
+                rows[i] = (row + row_offset) as ipopt::Index;
+                cols[i] = col as ipopt::Index;
+                jac[col][row] = 1;
                 i += 1;
             }
+
+            println!("jac = ");
+            for r in 0..nrows {
+                for c in 0..ncols {
+                    if jac[c][r] == 1 {
+                        print!(".");
+                    } else {
+                        print!(" ");
+                    }
+                }
+                println!("");
+            }
+            println!("");
         }
 
         true
@@ -534,7 +665,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         num
     }
 
-    fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+    fn hessian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
         let mut i = 0;
 
         // Add energy indices
@@ -552,15 +683,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Add volume constraint indices
         if let Some(ref vc) = self.volume_constraint {
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
-                rows[i] = row as Index;
-                cols[i] = col as Index;
+                rows[i] = row as ipopt::Index;
+                cols[i] = col as ipopt::Index;
                 i += 1;
             }
         }
         if let Some(ref scc) = self.smooth_contact_constraint {
             for MatrixElementIndex { row, col } in scc.constraint_hessian_indices_iter() {
-                rows[i] = row as Index;
-                cols[i] = col as Index;
+                rows[i] = row as ipopt::Index;
+                cols[i] = col as ipopt::Index;
                 i += 1;
             }
         }
@@ -627,9 +758,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //  "As a guideline, we suggest to scale the optimization problem (either directly in the
         //  original formulation, or after using scaling factors) so that all sensitivities, i.e.,
         //  all non-zero first partial derivatives, are typically of the order $ 0.1-10$."
-        for g in g_scaling.iter_mut() {
-            *g = 1e-4;
-        }
-        true
+        //for g in g_scaling.iter_mut() {
+        //    *g = 1e-4;
+        //}
+        //true
+        false
     }
 }

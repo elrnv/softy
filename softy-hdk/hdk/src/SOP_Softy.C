@@ -213,23 +213,36 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "MaxStep"
                 label "Max Step Size"
                 type float
-                default { "1.0" }
+                default { "0.0" }
                 range { 0.0 10.0 }
             }
         }
     }
 
     groupcollapsible {
-        name    "troubleshooting"
-        label   "Troubleshooting"
+        name    "ipoptoptions"
+        label   "Ipopt Options"
         grouptag { "group_type" "collapsible" }
 
         parm {
-            name "clearcache"
-            label "Clear Cache"
-            type button
-            default { "0" }
-            range { 0 1 }
+            name "mustrategy"
+            cppname "MuStrategy"
+            label "Mu Strategy"
+            type ordinal
+            default { "monotone" }
+            menu {
+                "monotone", "Monotone"
+                "adaptive", "Adaptive"
+            }
+        }
+
+        parm {
+            name "maxgradientscaling"
+            cppname "MaxGradientScaling"
+            label "Max Gradient Scaling"
+            type log
+            default { "100.0" }
+            range { 0.0 100.0 }
         }
 
         parm {
@@ -250,8 +263,19 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0! 2! }
         }
     }
+
+    parm {
+        name "clearcache"
+        label "Clear Cache"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
+
 }
 )THEDSFILE";
+
+
 
 int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
     hdkrs::clear_solver_registry();
@@ -348,6 +372,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.max_step = sopparms.getMaxStep();
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
+    sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());
+    sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

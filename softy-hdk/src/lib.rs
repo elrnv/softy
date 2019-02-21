@@ -35,6 +35,8 @@ pub struct SimParams {
     pub max_step: f32,
     pub print_level: u32,
     pub derivative_test: u32,
+    pub mu_strategy: i32,
+    pub max_gradient_scaling: f32,
 }
 
 /// Result reported from `register_new_solver` function.

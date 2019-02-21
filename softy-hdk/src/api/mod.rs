@@ -75,6 +75,8 @@ impl Into<softy::SimParams> for SimParams {
             max_outer_iterations,
             print_level,
             derivative_test,
+            mu_strategy,
+            max_gradient_scaling,
             ..
         } = self;
         softy::SimParams {
@@ -90,6 +92,11 @@ impl Into<softy::SimParams> for SimParams {
             max_outer_iterations,
             print_level,
             derivative_test,
+            mu_strategy: match mu_strategy {
+                0 => softy::MuStrategy::Monotone,
+                _ => softy::MuStrategy::Adaptive,
+            },
+            max_gradient_scaling,
         }
     }
 }

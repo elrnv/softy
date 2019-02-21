@@ -898,6 +898,7 @@ mod tests {
             one_point_potential_derivative_tester(radius, BackgroundFieldType::None);
             one_point_potential_derivative_tester(radius, BackgroundFieldType::Zero);
             one_point_potential_derivative_tester(radius, BackgroundFieldType::FromInput);
+            one_point_potential_derivative_tester(radius, BackgroundFieldType::FromInputUnweighted);
             one_point_potential_derivative_tester(radius, BackgroundFieldType::DistanceBased);
             one_point_potential_derivative_tester(radius, BackgroundFieldType::NormalBased);
         }
@@ -1014,6 +1015,12 @@ mod tests {
                 &mut perturb,
             );
             hard_potential_derivative(
+                BackgroundFieldType::FromInputUnweighted,
+                SampleType::Vertex,
+                radius,
+                &mut perturb,
+            );
+            hard_potential_derivative(
                 BackgroundFieldType::DistanceBased,
                 SampleType::Vertex,
                 radius,
@@ -1040,6 +1047,12 @@ mod tests {
             );
             hard_potential_derivative(
                 BackgroundFieldType::FromInput,
+                SampleType::Face,
+                radius,
+                &mut perturb,
+            );
+            hard_potential_derivative(
+                BackgroundFieldType::FromInputUnweighted,
                 SampleType::Face,
                 radius,
                 &mut perturb,
@@ -1312,6 +1325,12 @@ mod tests {
                 &mut perturb,
             );
             surface_jacobian(
+                BackgroundFieldType::FromInputUnweighted,
+                SampleType::Vertex,
+                radius,
+                &mut perturb,
+            );
+            surface_jacobian(
                 BackgroundFieldType::DistanceBased,
                 SampleType::Vertex,
                 radius,
@@ -1338,6 +1357,12 @@ mod tests {
             );
             surface_jacobian(
                 BackgroundFieldType::FromInput,
+                SampleType::Face,
+                radius,
+                &mut perturb,
+            );
+            surface_jacobian(
+                BackgroundFieldType::FromInputUnweighted,
                 SampleType::Face,
                 radius,
                 &mut perturb,
@@ -1418,6 +1443,7 @@ mod tests {
             query_jacobian(BackgroundFieldType::None, radius, &mut perturb);
             query_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
             query_jacobian(BackgroundFieldType::FromInput, radius, &mut perturb);
+            query_jacobian(BackgroundFieldType::FromInputUnweighted, radius, &mut perturb);
             query_jacobian(BackgroundFieldType::DistanceBased, radius, &mut perturb);
             query_jacobian(BackgroundFieldType::NormalBased, radius, &mut perturb);
         }
@@ -1495,6 +1521,7 @@ mod tests {
             contact_jacobian(BackgroundFieldType::None, radius, &mut perturb);
             contact_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
             contact_jacobian(BackgroundFieldType::FromInput, radius, &mut perturb);
+            contact_jacobian(BackgroundFieldType::FromInputUnweighted, radius, &mut perturb);
             //contact_jacobian(
             //    BackgroundFieldType::DistanceBased,
             //    radius,

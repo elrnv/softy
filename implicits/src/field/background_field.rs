@@ -12,6 +12,8 @@ pub enum BackgroundFieldType {
     Zero,
     /// Use the background field given in the input.
     FromInput,
+    /// Use the background field given in the input but don't mix it with local potentials.
+    FromInputUnweighted,
     /// Distance to the closest point.
     DistanceBased,
     /// Normal displacement dot product to the closest polygon.
@@ -25,6 +27,8 @@ pub(crate) enum BackgroundFieldValue<V> {
     None,
     /// The value of the background field at the query point.
     Constant(V),
+    /// The value of the background field at the query point, though unweighted like with `None`.
+    ConstantUnweighted(V),
     /// A Dynamic field is computed based on the distance to the closest sample point.
     ClosestSampleDistance,
     /// A Dynamic field is computed based on the normal displacement. In other words, this is
@@ -39,6 +43,7 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
             BackgroundFieldType::None => BackgroundFieldValue::None,
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
             BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(V::zero()),
+            BackgroundFieldType::FromInputUnweighted => BackgroundFieldValue::ConstantUnweighted(V::zero()),
             BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
             BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
         }
@@ -50,6 +55,7 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
             BackgroundFieldType::None => BackgroundFieldValue::None,
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
             BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(field_value),
+            BackgroundFieldType::FromInputUnweighted => BackgroundFieldValue::ConstantUnweighted(field_value),
             BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
             BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
         }
@@ -158,9 +164,10 @@ where
     pub(crate) fn background_weight(&self) -> T {
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
-            _ => self
-                .kernel
-                .f(self.kernel.radius() - self.closest_sample_dist),
+            BackgroundFieldValue::ConstantUnweighted(_) =>
+                if self.kernel.radius() < self.closest_sample_dist { T::one() } else { T::zero() },
+            _ => 
+                self.kernel.f(self.kernel.radius() - self.closest_sample_dist),
         }
     }
 
@@ -169,8 +176,10 @@ where
     /// If the given index is `None`, then the derivative is with respect to the query point.
     #[inline]
     pub(crate) fn background_weight_gradient(&self, index: Option<usize>) -> Vector3<T> {
-        if self.bg_field_value == BackgroundFieldValue::None {
-            return Vector3::zeros();
+        match self.bg_field_value {
+            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) =>
+                return Vector3::zeros(),
+            _ => {}
         }
 
         if let Some(index) = index {
@@ -199,8 +208,10 @@ where
     /// If the given index is `None`, then the derivative is with respect to the query point.
     #[inline]
     pub(crate) fn background_weight_hessian(&self, index: Option<usize>) -> Matrix3<T> {
-        if self.bg_field_value == BackgroundFieldValue::None {
-            return Matrix3::zeros();
+        match self.bg_field_value {
+            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) =>
+                return Matrix3::zeros(),
+            _ => {}
         }
 
         if let Some(index) = index {
@@ -239,6 +250,7 @@ where
         let field_val = match bg_field_value {
             BackgroundFieldValue::None => V::zero(),
             BackgroundFieldValue::Constant(val) => val,
+            BackgroundFieldValue::ConstantUnweighted(val) => val,
             BackgroundFieldValue::ClosestSampleDistance => V::zero(),
             BackgroundFieldValue::ClosestSampleNormalDisp => V::zero(),
         };
@@ -259,6 +271,7 @@ where
         match self.bg_field_value {
             BackgroundFieldValue::None => T::zero(),
             BackgroundFieldValue::Constant(val) => val,
+            BackgroundFieldValue::ConstantUnweighted(val) => val,
             BackgroundFieldValue::ClosestSampleDistance
             | BackgroundFieldValue::ClosestSampleNormalDisp => self.closest_sample_dist,
         }
@@ -275,7 +288,9 @@ where
         } = *self;
 
         match bg_field_value {
-            BackgroundFieldValue::None | BackgroundFieldValue::Constant(_) => Vector3::zeros(),
+            BackgroundFieldValue::None
+            | BackgroundFieldValue::Constant(_)
+            | BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
             BackgroundFieldValue::ClosestSampleDistance
             | BackgroundFieldValue::ClosestSampleNormalDisp => disp * (T::one() / dist),
         }
@@ -327,6 +342,7 @@ where
             match bg_field_value {
                 BackgroundFieldValue::None => Vector3::zeros(),
                 BackgroundFieldValue::Constant(field) => constant_term(T::from(field).unwrap()),
+                BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
                 BackgroundFieldValue::ClosestSampleNormalDisp
                 | BackgroundFieldValue::ClosestSampleDistance => {
                     let mut grad = constant_term(dist);
@@ -379,10 +395,91 @@ where
         let constant_term = (dwb - dw_total * wb) * (bg_val * weight_sum_inv);
 
         let grad = match bg_field_value {
-            BackgroundFieldValue::None => Vector3::zeros(),
+            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
             _ => constant_term,
         };
 
         grad + self.field_gradient() * wb
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geo::mesh::VertexPositions;
+    use crate::{surface_from_polymesh, make_grid, Error, Params, KernelType, SampleType};
+
+    #[test]
+    fn constant_unweighted_bg() -> Result<(), Error>{
+        // Create a surface sample mesh.
+        let octahedron_trimesh = utils::make_sample_octahedron();
+        let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
+
+        // Translate the mesh up
+        utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh(
+            &sphere,
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+                },
+                background_field: BackgroundFieldType::FromInputUnweighted,
+                sample_type: SampleType::Face,
+                max_step: 100.0,
+            },
+        )?;
+
+        // Make a grid mesh to be tested against.
+        let grid = make_grid(5, 5);
+
+        // Compute potential.
+        let mut potential = vec![-1.0; grid.vertex_positions().len()];
+        surface.potential(grid.vertex_positions(), &mut potential)?;
+
+        // Potential should be all -1 (unchanged) because the radius is too small.
+        for &pot in potential.iter() {
+            assert_eq!(pot, -1.0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn constant_bg() -> Result<(), Error>{
+        // Create a surface sample mesh.
+        let octahedron_trimesh = utils::make_sample_octahedron();
+        let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
+
+        // Translate the mesh up
+        utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh(
+            &sphere,
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+                },
+                background_field: BackgroundFieldType::FromInput,
+                sample_type: SampleType::Face,
+                max_step: 100.0,
+            },
+        )?;
+
+        // Make a grid mesh to be tested against.
+        let grid = make_grid(5, 5);
+
+        // Compute potential.
+        let mut potential = vec![-1.0; grid.vertex_positions().len()];
+        surface.potential(grid.vertex_positions(), &mut potential)?;
+
+        // Potential should be all -1 (unchanged) because the radius is too small.
+        for &pot in potential.iter() {
+            assert_relative_eq!(pot, -1.0);
+        }
+        Ok(())
     }
 }

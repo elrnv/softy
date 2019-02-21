@@ -221,9 +221,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let face_hess = zip!(query_points.iter(), multipliers.iter(), neigh_points.iter())
-                    .filter(|(_, _, nbrs)| !nbrs.is_empty())
-                    .flat_map(move |(q, lambda, nbr_points)| {
+                let face_hess = query_points.iter().zip(neigh_points.iter())
+                    .filter(|(_, nbrs)| !nbrs.is_empty())
+                    .zip(multipliers.iter())
+                    .flat_map(move |((q, nbr_points), lambda)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::face_hessian_at(
                             Vector3(*q),
@@ -346,7 +347,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let nml_hess =
             Self::normal_hessian_at(q, view, kernel, &surface_topo, surface_vertex_positions, bg);
 
-        // There are 3 contributions from each sample to each vertex.
         nml_hess
             .chain(main_hess)
             .map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
@@ -603,16 +603,19 @@ mod tests {
         let mut jac_cols = vec![0; num_jac_entries];
         let mut jac_values = vec![F::cst(0.0); num_jac_entries];
 
-        let mut multipliers = vec![F::cst(0.0); num_query_points];
+        let mut multipliers = vec![F::cst(0.0); surf.num_cached_neighbourhoods()];
         surf.surface_hessian_product_indices(&mut hess_rows, &mut hess_cols)
             .expect("Failed to compute hessian indices");
 
         let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
         let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
 
+        let query_neighbourhood_sizes = surf.cached_neighbourhood_sizes()
+            .expect("Failed to get query neighbourhoods");
+
         // We use the multipliers to isolate the hessian for each query point.
-        for q_idx in 0..num_query_points {
-            multipliers[q_idx] = F::cst(1.0);
+        for (mult_idx, q_idx) in (0..num_query_points).filter(|&q_idx| query_neighbourhood_sizes[q_idx] != 0).enumerate() {
+            multipliers[mult_idx] = F::cst(1.0);
 
             surf.surface_hessian_product_values(&ad_query_points, &multipliers, &mut hess_values)
                 .expect("Failed to compute hessian product");
@@ -676,7 +679,7 @@ mod tests {
                 print_full_hess(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
                 assert!(success, "Hessian does not match its AutoDiff counterpart");
             }
-            multipliers[q_idx] = F::cst(0.0); // reset multiplier
+            multipliers[mult_idx] = F::cst(0.0); // reset multiplier
         }
     }
 
@@ -964,6 +967,7 @@ mod tests {
             two_triangle_face_hessian(radius, BackgroundFieldType::None, &mut no_perturb);
             two_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut no_perturb);
             two_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut no_perturb);
+            two_triangle_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut no_perturb);
             //two_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut no_perturb);
             //two_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut no_perturb);
 
@@ -971,6 +975,7 @@ mod tests {
             two_triangle_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
             two_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
             two_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
+            two_triangle_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut perturb);
             //two_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
             //two_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
         }
@@ -986,6 +991,7 @@ mod tests {
             one_triangle_face_hessian(radius, BackgroundFieldType::None, &mut no_perturb);
             one_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut no_perturb);
             one_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut no_perturb);
+            one_triangle_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut no_perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut no_perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut no_perturb);
 
@@ -994,6 +1000,7 @@ mod tests {
             one_triangle_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
             one_triangle_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
             one_triangle_face_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
+            one_triangle_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
             //one_triangle_face_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
         }
@@ -1009,6 +1016,7 @@ mod tests {
             one_tet_face_hessian(radius, BackgroundFieldType::None, &mut no_perturb);
             one_tet_face_hessian(radius, BackgroundFieldType::Zero, &mut no_perturb);
             one_tet_face_hessian(radius, BackgroundFieldType::FromInput, &mut no_perturb);
+            one_tet_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut no_perturb);
             //one_tet_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
             //one_tet_face_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
 
@@ -1016,6 +1024,7 @@ mod tests {
             one_tet_face_hessian(radius, BackgroundFieldType::None, &mut perturb);
             one_tet_face_hessian(radius, BackgroundFieldType::Zero, &mut perturb);
             one_tet_face_hessian(radius, BackgroundFieldType::FromInput, &mut perturb);
+            one_tet_face_hessian(radius, BackgroundFieldType::FromInputUnweighted, &mut perturb);
             //one_tet_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
             //one_tet_face_hessian(radius, BackgroundFieldType::NormalBased, &mut perturb);
         }

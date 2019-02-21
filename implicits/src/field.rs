@@ -197,6 +197,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         num_updated
     }
 
+    pub fn nearest_neighbour_lookup(&self, q: [T;3]) -> Option<&Sample<T>> {
+        let q_pos = Vector3(q).cast::<f64>().unwrap().into();
+        self.spatial_tree.nearest_neighbor(&q_pos)
+    }
+
     /// Compute neighbour cache if it has been invalidated
     pub fn cache_neighbours(&self, query_points: &[[T; 3]]) {
         let ImplicitSurface {
@@ -284,6 +289,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         cache.invalidate();
     }
 
+    /// The number of query points in the cache (regardless if their neighbourhood is empty).
+    pub fn num_cached_query_points(&self) -> usize {
+        let cache = self.query_neighbourhood.borrow();
+        cache.trivial_set().map_or(0, |neighbourhoods| neighbourhoods.len())
+    }
+
     /// The number of query points with non-empty neighbourhoods in the cache.
     pub fn num_cached_neighbourhoods(&self) -> usize {
         let cache = self.query_neighbourhood.borrow();
@@ -292,7 +303,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         })
     }
 
-    /// Return an iterator over query point indices, which have non-empty neighbourhoods.
+    /// Return a vector over query points, which have non-empty neighbourhoods.
     pub fn cached_neighbourhoods(&self) -> Result<Vec<usize>, super::Error> {
         let set = match self.sample_type {
             SampleType::Vertex => self.extended_neighbourhood_borrow(),
@@ -309,6 +320,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         })
     }
 
+    /// Return a vector over query points, giving the sizes of each cached neighbourhood.
+    pub fn cached_neighbourhood_sizes(&self) -> Result<Vec<usize>, super::Error> {
+        let set = match self.sample_type {
+            SampleType::Vertex => self.extended_neighbourhood_borrow(),
+            SampleType::Face => self.trivial_neighbourhood_borrow(),
+        };
+
+        set.map(|neighbourhoods| {
+            neighbourhoods
+                .iter()
+                .map(|x| x.len())
+                .collect()
+        })
+    }
+
     /// The `max_step` parameter sets the maximum position change allowed between calls to
     /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
     /// derivative will be denser than then needed, which typically results in slower performance.
@@ -316,6 +342,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// responsibility to set this step accurately.
     pub fn update_max_step(&mut self, max_step: T) {
         self.max_step = max_step;
+    }
+
+    pub fn update_radius(&mut self, new_radius: f64) {
+        match self.kernel {
+            KernelType::Interpolating { ref mut radius }
+            | KernelType::Approximate { ref mut radius, .. }
+            | KernelType::Cubic { ref mut radius } => {
+                *radius = new_radius;
+            }
+            _ => {}
+        }
     }
 
     /// Project the given set of positions to be above the specified iso-value along the gradient.

@@ -2,7 +2,7 @@ use crate::TetMesh;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
-use crate::{Material, ElasticityParameters, SimParams};
+use crate::{Material, ElasticityParameters, SimParams, MuStrategy};
 use crate::attrib_defines::*;
 
 /*
@@ -18,6 +18,8 @@ pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     outer_tolerance: 0.001,
     print_level: 0,
     derivative_test: 0,
+    mu_strategy: MuStrategy::Adaptive,
+    max_gradient_scaling: 1e-5,
 };
 
 pub(crate) const DYNAMIC_PARAMS: SimParams = SimParams {

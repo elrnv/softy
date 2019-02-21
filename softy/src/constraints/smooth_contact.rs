@@ -46,6 +46,8 @@ use crate::Index;
 //    }
 //}
 
+/*
+
 /// A linearized version of the smooth contact constraint.
 #[derive(Clone, Debug)]
 pub struct LinearSmoothContactConstraint(pub SmoothContactConstraint);
@@ -171,6 +173,7 @@ impl ConstraintHessian<f64> for LinearSmoothContactConstraint {
         debug_assert_eq!(_values.len(), self.constraint_hessian_size());
     }
 }
+*/
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -210,13 +213,13 @@ pub struct SmoothContactParams {
 }
 
 impl SmoothContactConstraint {
-    const SCALE: f64 = 1e-4;
+    const SCALE: f64 = 1.0;
 
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
         params: SmoothContactParams,
-    ) -> Self {
+    ) -> Result<Self, crate::Error> {
         let tetmesh = tetmesh_rc.borrow();
         let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
         let sample_verts = surf_mesh
@@ -237,29 +240,30 @@ impl SmoothContactConstraint {
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldType::None);
 
-        let surface = surface_builder
-            .build()
-            .expect("No surface points detected.");
+        if let Some(surface) = surface_builder.build() {
 
-        let trimesh = trimesh_rc.borrow();
-        let query_points = trimesh.vertex_positions();
+            let trimesh = trimesh_rc.borrow();
+            let query_points = trimesh.vertex_positions();
 
-        let constraint = SmoothContactConstraint {
-            sample_verts,
-            implicit_surface: RefCell::new(surface),
-            collision_object: Rc::clone(trimesh_rc),
-            iter_count: 0,
-            surface_hessian_rows: RefCell::new(Vec::new()),
-            surface_hessian_cols: RefCell::new(Vec::new()),
-            constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
-            new_to_old_constraint_mapping: Vec::new(),
-        };
+            let constraint = SmoothContactConstraint {
+                sample_verts,
+                implicit_surface: RefCell::new(surface),
+                collision_object: Rc::clone(trimesh_rc),
+                iter_count: 0,
+                surface_hessian_rows: RefCell::new(Vec::new()),
+                surface_hessian_cols: RefCell::new(Vec::new()),
+                constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
+                new_to_old_constraint_mapping: Vec::new(),
+            };
 
-        constraint
-            .implicit_surface
-            .borrow()
-            .cache_neighbours(query_points);
-        constraint
+            constraint
+                .implicit_surface
+                .borrow()
+                .cache_neighbours(query_points);
+            Ok(constraint)
+        } else {
+            Err(crate::Error::InvalidImplicitSurface)
+        }
     }
 
     pub fn reset_iter_count(&mut self) {
@@ -296,6 +300,7 @@ impl SmoothContactConstraint {
         self.implicit_surface.borrow_mut().update(points_iter);
     }
 
+    /* Needed for the Linear constraint
     /// Update implicit surface using the given position data.
     pub fn update_surface(&self, x: &[f64]) {
         let all_positions: &[[f64; 3]] = reinterpret_slice(x);
@@ -303,6 +308,7 @@ impl SmoothContactConstraint {
 
         self.implicit_surface.borrow_mut().update(points_iter);
     }
+    */
 
     /// For each neighbourhood, return its index (+1) within a reduced set of non-empty
     /// neighbourhoods. If there are no cached neighbourhoods, just return a Vector of zeros.
@@ -349,6 +355,112 @@ impl SmoothContactConstraint {
 
         &self.new_to_old_constraint_mapping
     }
+
+    #[allow(dead_code)]
+    fn background_points(&self) -> Vec<bool> {
+        let cached_neighbourhood_sizes =
+            self.implicit_surface.borrow().cached_neighbourhood_sizes().unwrap();
+
+        let mut background_points = vec![true; cached_neighbourhood_sizes.len()];
+
+        for (_, bg) in cached_neighbourhood_sizes.iter()
+            .zip(background_points.iter_mut())
+            .filter(|&(&c, _)| c != 0)
+        {
+            *bg = false;
+        }
+
+        background_points
+    }
+
+    /// This function fills the non-local values of the constraint function with a constant signed
+    /// value (equal to the contact radius in magnitude) to help the optimization determine
+    /// feasible regions. This is done using a flood fill algorithm as follows.
+    /// 1. Identify non-local query poitns with `cached_neighbourhood_sizes`.
+    /// 2. Partition the primitives of the kinematic object (from which the points are from) into
+    ///    connected components of non-local points. This means that points with a valid local
+    ///    potential serve as boundaries.
+    /// 3. During the splitting above, record whether a component must be inside or outside
+    ///    depending on the sign of its boundary points (local points).
+    /// 4. It could happen that a connected component has no local points, in which case we do a
+    ///    ray cast in the x direction from any point and intersect it with our mesh to determine
+    ///    the winding number. (TODO)
+    /// 5. It could also happen that the local points don't separate the primitives into inside
+    ///    and outside partitions if the radius is not sufficiently large. This is a problem for
+    ///    the future (FIXME)
+    #[allow(dead_code)]
+    fn fill_background_potential(mesh: &TriMesh, background_points: &[bool], abs_fill_val: f64, values: &mut [f64]) {
+        debug_assert!(abs_fill_val >= 0.0);
+
+        let mut hedge_dest_indices = vec![Vec::new(); mesh.num_vertices()];
+        for f in mesh.face_iter() {
+            for vtx in 0..3 {
+                // Get an edge with vertices in sorted order.
+                let edge = [f[vtx], f[(vtx + 1)%3]];
+
+                let neighbourhood = &mut hedge_dest_indices[edge[0]];
+
+                if let Err(idx) = neighbourhood.binary_search_by(|x: &usize| x.cmp(&edge[1])) {
+                    neighbourhood.insert(idx, edge[1]);
+                }
+            }
+        }
+        //println!("edges:");
+        //for (i, v) in hedge_dest_indices.iter().enumerate() {
+        //    for &vtx in v.iter() {
+        //        println!("({}, {})", i, vtx);
+        //    }
+        //}
+        //dbg!(background_points);
+
+        let mut vertex_is_inside = vec![false; mesh.num_vertices()];
+        for vidx in (0..mesh.num_vertices()).filter(|&i| !background_points[i]) {
+            vertex_is_inside[vidx] = if values[vidx] < 0.0 { true } else { false };
+        }
+
+        let mut seen_vertices = vec![false; mesh.num_vertices()];
+
+        let mut queue = std::collections::VecDeque::new();
+
+        for vidx in (0..mesh.num_vertices()).filter(|&i| !background_points[i]) {
+            if seen_vertices[vidx] {
+                continue;
+            }
+
+            let is_inside = vertex_is_inside[vidx];
+
+            queue.push_back(vidx);
+
+            while let Some(vidx) = queue.pop_front() {
+
+                if background_points[vidx] {
+                    if seen_vertices[vidx] {
+                        continue;
+                    } else {
+                        vertex_is_inside[vidx] = is_inside;
+                    }
+                }
+
+                seen_vertices[vidx] = true;
+
+                queue.extend(
+                    hedge_dest_indices[vidx].iter()
+                        .filter(|&&i| background_points[i])
+                        .filter(|&&i| !seen_vertices[i])
+                );
+            }
+        }
+
+        for ((&is_inside, &bg), val) in vertex_is_inside.iter().zip(background_points.iter()).zip(values.iter_mut()) {
+            if bg {
+                if is_inside {
+                    *val = -abs_fill_val;
+                } else {
+                    *val = abs_fill_val;
+                }
+            }
+        }
+    }
 }
 
 impl Constraint<f64> for SmoothContactConstraint {
@@ -372,17 +484,27 @@ impl Constraint<f64> for SmoothContactConstraint {
 
         let mut cbuf = self.constraint_buffer.borrow_mut();
         let radius = self.contact_radius();
-        for val in cbuf.iter_mut() {
-            *val = 0.0; // Clear potential value.
+
+        let surf = self.implicit_surface.borrow();
+        for (val, q) in cbuf.iter_mut().zip(query_points.iter()) {
+            // Clear potential value.
+            let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
+            if closest_sample.nml.dot(Vector3(*q) - closest_sample.pos) > 0.0 {
+                *val = radius;
+            } else {
+                *val = -radius;
+            }
         }
 
-        self.implicit_surface
-            .borrow()
-            .potential(query_points, &mut cbuf)
+        surf.potential(query_points, &mut cbuf)
             .unwrap();
 
+        //let bg_pts = self.background_points();
+        //let collider_mesh = self.collision_object.borrow();
+        //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
+
         let cached_neighbourhood_sizes =
-            self.implicit_surface.borrow().cached_neighbourhood_sizes().unwrap();
+            surf.cached_neighbourhood_sizes().unwrap();
 
         //println!("cbuf = ");
         //for c in cbuf.iter() {
@@ -398,7 +520,7 @@ impl Constraint<f64> for SmoothContactConstraint {
         {
             *v = *new_v;
         }
-        dbg!(&value);
+        //dbg!(&value);
         
         value.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
@@ -499,4 +621,51 @@ impl ConstraintHessian<f64> for SmoothContactConstraint {
             .expect("Failed to compute surface Hessian values");
         values.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utils::*;
+
+    /// Test the `fill_background_potential` function on a small grid.
+    #[test]
+    fn background_fill_test() {
+        // Make a small grid.
+        let mut grid = TriMesh::from(make_grid(Grid {
+            rows: 4,
+            cols: 6,
+            orientation: AxisPlaneOrientation::ZX,
+        }));
+
+        let mut values = vec![0.0; grid.num_vertices()];
+        let mut bg_pts = vec![true; grid.num_vertices()];
+        let radius = 0.5;
+        for ((p, v), bg) in grid.vertex_position_iter().zip(values.iter_mut()).zip(bg_pts.iter_mut()) {
+            if p[0] == 0.0 {
+                *bg = false;
+            } else if p[0] < radius && p[0] > 0.0 {
+                *v = radius;
+                *bg = false;
+            } else if p[0] > -radius && p[0] < 0.0 {
+                *v = -radius;
+                *bg = false;
+            }
+        }
+
+        SmoothContactConstraint::fill_background_potential(&grid, &bg_pts, radius, &mut values);
+
+        grid.set_attrib_data::<_, VertexIndex>("potential", &values).expect("Failed to set potential field on grid");
+
+        //geo::io::save_polymesh(&geo::mesh::PolyMesh::from(grid.clone()), &std::path::PathBuf::from("out/background_test.vtk")).unwrap();
+
+        for (&p, &v) in grid.vertex_position_iter().zip(values.iter()) {
+            if p[0] > 0.0 {
+                assert!(v > 0.0);
+            } else {
+                assert!(v <= 0.0);
+            }
+        }
+    }
+
 }

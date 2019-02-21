@@ -4,7 +4,6 @@ use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
-//use geo::io::save_tetmesh_ascii;
 use crate::constraints::{smooth_contact::SmoothContactConstraint, volume::VolumeConstraint};
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
@@ -217,7 +216,6 @@ impl NonLinearProblem {
             if let Some(ref mut scc) = self.smooth_contact_constraint {
                 let mesh = self.kinematic_object.as_ref().unwrap().borrow();
                 scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
-                dbg!(scc.constraint_size());
             }
 
             (old_warm_start, old_prev_pos, old_prev_vel)
@@ -316,7 +314,6 @@ impl NonLinearProblem {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let mesh = self.kinematic_object.as_ref().unwrap().borrow();
             scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
-            dbg!(scc.constraint_size());
         }
         self.constraint_violation_norm(displacement)
     }
@@ -416,7 +413,7 @@ impl NonLinearProblem {
         obj
     }
 
-    fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) {
+    fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) -> Result<(), crate::Error> {
         let mut iter_counter = self.iter_counter.borrow_mut();
         let mut mesh = self.tetmesh.borrow().clone();
         let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
@@ -426,17 +423,68 @@ impl NonLinearProblem {
             all_positions.iter())
             .for_each(|((mp, d), p)| *mp = (*p + *d).into());
         *iter_counter += 1;
-        geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter))).unwrap();
+        geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter)))?;
 
-        let tri_mesh = self.kinematic_object.as_ref().unwrap().borrow();
-        let obj = geo::mesh::PolyMesh::from(tri_mesh.clone());
-        geo::io::save_polymesh(&obj, &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter))).unwrap();
-        dbg!(*iter_counter);
+        if let Some(tri_mesh_ref) = self.kinematic_object.as_ref() {
+            let obj = geo::mesh::PolyMesh::from(tri_mesh_ref.borrow().clone());
+            geo::io::save_polymesh(&obj, &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter)))?;
+        } else {
+            return Err(crate::Error::NoKinematicMesh);
+        }
+
+        //dbg!(*iter_counter);
+        Ok(())
     }
 
     //pub fn dot(a: &[f64], b: &[f64]) -> f64 {
     //    a.iter().zip(b.iter()).map(|(&a,&b)| a*b).sum()
     //}
+
+    pub fn print_jacobian_svd(&self, values: &[Number]) {
+        use ipopt::{BasicProblem, ConstrainedProblem};
+        use na::{DMatrix, base::storage::Storage};
+
+        if values.len() == 0 {
+            return;
+        }
+
+        let mut rows = vec![0; values.len()];
+        let mut cols = vec![0; values.len()];
+        assert!(self.constraint_jacobian_indices(&mut rows, &mut cols));
+
+        let mut jac = DMatrix::zeros(self.num_constraints(), self.num_variables());
+        for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
+            jac[(row as usize, col as usize)] += v;
+        }
+
+        let svd = na::SVD::new(jac, false, false);
+        let s: &[Number] = svd.singular_values.data.as_slice();
+        let cond = s.iter().max_by(|x,y| x.partial_cmp(y).unwrap()).unwrap() / s.iter().min_by(|x,y| x.partial_cmp(y).unwrap()).unwrap();
+        dbg!(cond);
+    }
+
+    pub fn print_hessian_svd(&self, values: &[Number]) {
+        use ipopt::{BasicProblem, ConstrainedProblem};
+        use na::{DMatrix, base::storage::Storage};
+
+        if values.len() == 0 {
+            return;
+        }
+
+        let mut rows = vec![0; values.len()];
+        let mut cols = vec![0; values.len()];
+        assert!(self.hessian_indices(&mut rows, &mut cols));
+
+        let mut hess = DMatrix::zeros(self.num_variables(), self.num_variables());
+        for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
+            hess[(row as usize, col as usize)] += v;
+        }
+
+        let svd = na::SVD::new(hess, false, false);
+        let s: &[Number] = svd.singular_values.data.as_slice();
+        let cond_hess = s.iter().max_by(|x,y| x.partial_cmp(y).unwrap()).unwrap() / s.iter().min_by(|x,y| x.partial_cmp(y).unwrap()).unwrap();
+        dbg!(cond_hess);
+    }
 }
 
 /// Prepare the problem for Newton iterations.
@@ -547,7 +595,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
-        self.output_mesh(x, dx, "mesh");
+        self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
         let mut i = 0; // Counter.
 
@@ -612,18 +660,18 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 i += 1;
             }
 
-            println!("jac = ");
-            for r in 0..nrows {
-                for c in 0..ncols {
-                    if jac[c][r] == 1 {
-                        print!(".");
-                    } else {
-                        print!(" ");
-                    }
-                }
-                println!("");
-            }
-            println!("");
+            //println!("jac = ");
+            //for r in 0..nrows {
+            //    for c in 0..ncols {
+            //        if jac[c][r] == 1 {
+            //            print!(".");
+            //        } else {
+            //            print!(" ");
+            //        }
+            //    }
+            //    println!("");
+            //}
+            //println!("");
         }
 
         true
@@ -632,6 +680,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint_jacobian_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
 
         let mut i = 0;
 
@@ -647,6 +696,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("jac g vals = {:?}", &vals[i..i+n]);
             //i += n;
         }
+
+        //self.print_jacobian_svd(vals);
 
         true
     }
@@ -708,6 +759,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
+        if cfg!(debug_assertions) {
+            // Initialize vals in debug builds.
+            for v in vals.iter_mut() {
+                *v = 0.0;
+            }
+        }
+
         let mut i = 0;
         let n = self.energy_model.energy_hessian_size();
         self.energy_model
@@ -744,13 +802,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //i += nh;
             //coff += nc;
         }
+        //self.print_hessian_svd(vals);
 
         true
     }
 
     /// Scaling the constraint function: `g_scaling` is the pre-allocated slice of scales, one for
     /// each constraint.
-    fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
+    fn constraint_scaling(&self, _g_scaling: &mut [Number]) -> bool {
         // Here we scale down the constraint function to prevent the solver from aggressively
         // avoiding the infeasible region. This has been observed only for the contact constraint
         // so far.

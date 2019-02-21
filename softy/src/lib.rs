@@ -23,7 +23,7 @@ pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::constraints::SmoothContactParams;
-pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, SimParams, SolveResult};
+pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult};
 pub use index::Index;
 use geo::mesh::attrib;
 
@@ -42,6 +42,15 @@ pub enum Error {
     MissingContactParams,
     NoSimulationMesh,
     NoKinematicMesh,
+    /// Error during mesh IO. Typically during debugging.
+    MeshIOError(geo::io::Error),
+    InvalidImplicitSurface,
+}
+
+impl From<geo::io::Error> for Error {
+    fn from(err: geo::io::Error) -> Error {
+        Error::MeshIOError(err)
+    }
 }
 
 impl From<ipopt::CreateError> for Error {
@@ -89,6 +98,12 @@ impl From<Error> for SimResult {
             }
             Error::InvalidParameter(err) => {
                 SimResult::Error(format!("Invalid parameter: {:?}", err))
+            }
+            Error::MeshIOError(err) => {
+                SimResult::Error(format!("Error during mesh I/O: {:?}", err))
+            }
+            Error::InvalidImplicitSurface => {
+                SimResult::Error("Error creating an implicit surface".to_string())
             }
         }
     }
@@ -141,26 +156,14 @@ pub(crate) fn inf_norm(vec: &[f64]) -> f64 {
 mod tests {
     use super::*;
     use geo::mesh::{topology::*, Attrib, TetMesh};
-
-    const STATIC_PARAMS: SimParams = SimParams {
-        gravity: [0.0f32, -9.81, 0.0],
-        time_step: None,
-        tolerance: 1e-9,
-        max_iterations: 800,
-        outer_tolerance: 0.001,
-        max_outer_iterations: 5,
-        print_level: 0,
-        derivative_test: 0,
-    };
+    use test_utils::*;
 
     const MATERIAL: Material = Material {
         elasticity: ElasticityParameters {
             bulk_modulus: 1750e6,
             shear_modulus: 10e6,
         },
-        incompressibility: false,
-        density: 1000.0,
-        damping: 0.0,
+        ..SOLID_MATERIAL
     };
 
     #[test]

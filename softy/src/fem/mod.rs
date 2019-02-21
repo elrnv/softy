@@ -5,6 +5,13 @@ pub mod solver;
 pub(crate) use self::problem::*;
 pub use self::solver::*;
 
+/// Barrier parameter reduction strategy for interior point methods.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MuStrategy {
+    Monotone,
+    Adaptive,
+}
+
 /// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SimParams {
@@ -16,4 +23,6 @@ pub struct SimParams {
     pub outer_tolerance: f32,
     pub print_level: u32,
     pub derivative_test: u32,
+    pub mu_strategy: MuStrategy,
+    pub max_gradient_scaling: f32,
 }

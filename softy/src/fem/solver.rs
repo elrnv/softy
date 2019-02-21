@@ -22,15 +22,8 @@ use approx::*;
 use crate::inf_norm;
 use crate::mask_iter::*;
 
-use super::NonLinearProblem;
-use super::SimParams;
-use super::Solution;
-use crate::Error;
-use crate::PointCloud;
-use crate::PolyMesh;
-use crate::TetMesh;
-use crate::TriMesh;
-use crate::Index;
+use super::{NonLinearProblem, MuStrategy, SimParams, Solution};
+use crate::{PointCloud, PolyMesh , TetMesh , TriMesh , Index, Error};
 
 /// Result from one inner simulation step.
 #[derive(Clone, Debug, PartialEq)]
@@ -276,9 +269,10 @@ impl SolverBuilder {
             .time_step
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
-        let smooth_contact_constraint = kinematic_object.as_ref().map(|trimesh| {
-            SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())
-        });
+        let smooth_contact_constraint = match kinematic_object.as_ref() {
+            Some(trimesh) => Some(SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())?),
+            None => None,
+        };
 
         let displacement_bound = None;
         //let displacement_bound = smooth_contact_params.map(|scp| {
@@ -324,13 +318,18 @@ impl SolverBuilder {
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", 10.0 * tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
-        ipopt.set_option("mu_strategy", "adaptive");
+
+        match params.mu_strategy {
+            MuStrategy::Monotone => ipopt.set_option("mu_strategy", "monotone"),
+            MuStrategy::Adaptive => ipopt.set_option("mu_strategy", "adaptive"),
+        };
+
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("warm_start_init_point", "no");
+        ipopt.set_option("warm_start_init_point", "yes");
         //ipopt.set_option("jac_d_constant", "yes");
-        //ipopt.set_option("nlp_scaling_max_gradient", 1e-5);
+        ipopt.set_option("nlp_scaling_max_gradient", params.max_gradient_scaling as f64);
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -815,14 +814,14 @@ impl Solver {
             &mesh,
             &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter + 1)),
         )
-        .unwrap();
+        .expect("Couldn't write to output tetrahedron mesh.");
         if let Some(mesh) = self.try_borrow_kinematic_mesh() {
             let polymesh = PolyMesh::from(mesh.clone());
             geo::io::save_polymesh(
                 &polymesh,
                 &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter + 1)),
             )
-            .unwrap();
+            .expect("Couldn't write to output triangle lmesh.");
         }
     }
 
@@ -899,7 +898,7 @@ impl Solver {
 
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
-            dbg!(self.solver.solver_data().solution.constraint_multipliers);
+            //dbg!(self.solver.solver_data().solution.constraint_multipliers);
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
@@ -907,16 +906,21 @@ impl Solver {
                         let dx = self.dx();
                         let step = inf_norm(dx);
 
-                        if self.probe_contact_constraint_violation() > 1e-4 { // intersecting objects (allow leeway)
+                        let constraint_violation = self.probe_contact_constraint_violation();
+                        if constraint_violation > 1e-4 { // intersecting objects (allow leeway)
                             // Check that the reason we are in this mess is actually because of the step size
                             if self.max_step + radius < step {
                                 println!("##### Increasing max step to {}", step - radius);
                                 self.update_max_step(step - radius);
                                 self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
                             } else {
-                                println!("WHY IS CONSTRAINT VIOLATION POSITIVE!?!?");
-                                self.commit_solution(false);
-                                break;
+                                println!("Sparsity has changed, constraint violation: {:?}", constraint_violation);
+                                // Sparsity pattern must have changed, simply update constraint
+                                // multipliers and repeat the step.
+                                self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
+                                // We don't commit the solution here because it may be far from the
+                                // true solution, just redo the whole solve with the right
+                                // neighbourhood information.
                             }
                         } else {
                             println!("##### Decreasing max step to {}", (step - radius).max(0.0));
@@ -1597,7 +1601,7 @@ mod tests {
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
-            background_field: BackgroundFieldType::None,
+            background_field: BackgroundFieldType::FromInput,
             sample_type: SampleType::Face,
             ..Default::default()
         };
@@ -1798,15 +1802,16 @@ mod tests {
             outer_tolerance: 0.1,
             max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
-            print_level: 5,
+            time_step: Some(0.0208333),
             ..DYNAMIC_PARAMS
         };
 
         let mut grid = make_grid(Grid {
-            rows: 20,
-            cols: 20,
+            rows: 4,
+            cols: 4,
             orientation: AxisPlaneOrientation::ZX,
         });
+
         scale(&mut grid, [3.0, 1.0, 3.0].into());
         translate(&mut grid, [0.0, -3.0, 0.0].into());
 
@@ -1822,7 +1827,7 @@ mod tests {
             .build()
             .unwrap();
 
-        for _ in 0..200 {
+        for _ in 0..29 {
             let res = solver.step().expect("Failed bounce solve.");
             println!("res = {:?}", res);
             assert!(

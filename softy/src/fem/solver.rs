@@ -37,7 +37,7 @@ pub struct InnerSolveResult {
     /// were actually present in the solve, so we can adjust our warm starts between solves.
     /// In summary, this is a vector with size equal to the number of query points. Each index is
     /// either `None` which indicates that it was not part of the solve, or `Some(i)` where `i` is
-    /// the index of the constraint this point represents.
+    /// the index of the contact constraint this point represents.
     pub constrained_points: Option<Vec<Index>>,
 }
 

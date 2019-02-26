@@ -258,9 +258,22 @@ impl NonLinearProblem {
     /// new constraints so we can use the warm start from the previous step even if the constraint
     /// set has changed.
     pub fn remap_constraint_multipliers(&mut self, constrained_points: &[Index]) {
+        use ipopt::ConstrainedProblem;
+        let mut mapping = (0..self.num_constraints()).map(|x| Index::new(x)).collect::<Vec<_>>();
+
+        // The volume constraint comes first
+        let offset = if let Some(ref vc) = self.volume_constraint {
+            vc.constraint_size()
+        } else {
+            0
+        };
+
         if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let mapping = scc.build_constraint_mapping(constrained_points);
-            self.warm_start.remap_constraint_multipliers(mapping);
+            scc.build_constraint_mapping(constrained_points, &mut mapping[offset..offset + scc.constraint_size()]);
+            for i in mapping[offset..offset + scc.constraint_size()].iter_mut() {
+                *i += offset;
+            }
+            self.warm_start.remap_constraint_multipliers(&mapping);
         }
     }
 

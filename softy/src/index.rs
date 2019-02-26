@@ -1,9 +1,11 @@
 use std::fmt;
-use std::ops::{Add, Div, Mul, Rem, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, Rem, Sub};
 
 /// A possibly invalid unsigned index.
 /// The maximum `usize` integer represents an invalid index.
 /// This index type is ideal for storage.
+/// Overflow is not handled by this type. Instead we rely on Rust's internal overflow panics during
+/// debug builds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Index(usize);
 
@@ -61,6 +63,14 @@ impl Index {
             Index::new(f(self.0 as usize))
         } else {
             self
+        }
+    }
+
+    /// Apply a function to the inner `usize` index. The index remains unchanged if invalid.
+    #[inline]
+    pub fn apply<F: FnOnce(&mut usize)>(&mut self, f: F) {
+        if self.is_valid() {
+            f(&mut self.0);
         }
     }
 
@@ -131,6 +141,13 @@ impl Add<usize> for Index {
     #[inline]
     fn add(self, rhs: usize) -> Index {
         self.map(|x| x + rhs)
+    }
+}
+
+impl AddAssign<usize> for Index {
+    #[inline]
+    fn add_assign(&mut self, rhs: usize) {
+        self.apply(|x| *x += rhs)
     }
 }
 

@@ -195,10 +195,6 @@ pub struct SmoothContactConstraint {
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
-
-    /// A mapping from the new constraints after the cache has been updated, to the old
-    /// constraint set.
-    new_to_old_constraint_mapping: Vec<Index>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -253,7 +249,6 @@ impl SmoothContactConstraint {
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
-                new_to_old_constraint_mapping: Vec::new(),
             };
 
             constraint
@@ -337,23 +332,27 @@ impl SmoothContactConstraint {
         surf.cache_neighbours(query_points);
     }
 
-    pub fn build_constraint_mapping(&mut self, old_constrained_points: &[Index]) -> &[Index] {
+    pub fn build_constraint_mapping(&mut self, old_constrained_points: &[Index], new_to_old_constraint_mapping: &mut [Index]) {
         let surf = self.implicit_surface.borrow_mut();
         let neighbourhoods = surf.cached_neighbourhoods().expect("Failed to retrieve cached neighbourhoods");
 
-        self.new_to_old_constraint_mapping.clear();
-        self.new_to_old_constraint_mapping.resize(neighbourhoods.len(), Index::INVALID);
+        assert_eq!(new_to_old_constraint_mapping.len(), neighbourhoods.len());
 
+        // Initialize all mapping indices to invalid.
+        for i in new_to_old_constraint_mapping.iter_mut() {
+            *i = Index::INVALID;
+        }
+
+        // Find the corresponding neighbourhoods of the old constraint points.
         let remapped_neighbourhoods = neighbourhoods.into_iter().map(|i| old_constrained_points[i]);
 
-        for (mapping, neigh) in self.new_to_old_constraint_mapping.iter_mut()
+        // Construct the new-to-told constraint mapping.
+        for (mapping, neigh) in new_to_old_constraint_mapping.iter_mut()
             .zip(remapped_neighbourhoods)
             .filter(|(_, i)| i.is_valid())
         {
             *mapping = neigh;
         }
-
-        &self.new_to_old_constraint_mapping
     }
 
     #[allow(dead_code)]

@@ -316,7 +316,7 @@ impl SolverBuilder {
         println!("outer_tol = {:?}", params.outer_tolerance);
 
         ipopt.set_option("tol", tol);
-        ipopt.set_option("acceptable_tol", 10.0 * tol);
+        ipopt.set_option("acceptable_tol", tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
 
         match params.mu_strategy {
@@ -799,7 +799,7 @@ impl Solver {
         } = self.solver.solver_data_mut();
 
         // Advance internal state (positions and velocities) of the problem.
-        problem.advance(solution, and_warm_start)
+        problem.advance(solution, false)//and_warm_start)
     }
 
     /// Revert previously committed solution. We just subtract step here.
@@ -907,7 +907,8 @@ impl Solver {
                         let step = inf_norm(dx);
 
                         let constraint_violation = self.probe_contact_constraint_violation();
-                        if constraint_violation > 1e-4 { // intersecting objects (allow leeway)
+                        let unscaled_tol = self.sim_params.tolerance as f64 / self.sim_params.max_gradient_scaling as f64;
+                        if constraint_violation > unscaled_tol { // intersecting objects (allow leeway)
                             // Check that the reason we are in this mess is actually because of the step size
                             if self.max_step + radius < step {
                                 println!("##### Increasing max step to {}", step - radius);
@@ -942,7 +943,7 @@ impl Solver {
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
-                    // Unknown error: Reset warm start and return.
+                    // Unknown error: Clear warm start and return.
                     self.commit_solution(false);
                     //self.output_meshes(0);
                     return Err(e);
@@ -1789,13 +1790,8 @@ mod tests {
         ball_tri_push_tester(material, sc_params);
     }
 
-    #[test]
-    fn ball_bounce_test() {
+    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams) {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
-        let material = Material {
-            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
-            ..SOLID_MATERIAL
-        };
 
         let params = SimParams {
             max_iterations: 200,
@@ -1819,11 +1815,7 @@ mod tests {
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(grid)
-            .smooth_contact_params(SmoothContactParams {
-                radius: 0.4,
-                tolerance: 0.01,
-                max_step: 0.0,
-            })
+            .smooth_contact_params(sc_params)
             .build()
             .unwrap();
 
@@ -1835,6 +1827,39 @@ mod tests {
                 "Exceeded max outer iterations."
             );
         }
+    }
+
+    #[test]
+    fn ball_bounce_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            radius: 0.4,
+            tolerance: 0.01,
+            max_step: 0.0,
+        };
+
+        ball_bounce_tester(material, sc_params);
+    }
+
+    #[test]
+    fn ball_bounce_volume_constraint_test() {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            incompressibility: true,
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            radius: 0.4,
+            tolerance: 0.01,
+            max_step: 0.0,
+        };
+
+        ball_bounce_tester(material, sc_params);
     }
 
     /*

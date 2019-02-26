@@ -160,7 +160,14 @@ impl NonLinearProblem {
         self.warm_start.update(solution);
     }
 
-    /// Reset solution used for warm starts.
+    /// Clear the warm start using the sizes in the given solution.
+    pub fn clear_warm_start(&mut self, solution: ipopt::Solution) {
+        self.warm_start
+            .reset(solution.primal_variables.len(), solution.constraint_multipliers.len());
+    }
+
+    /// Reset solution used for warm starts. Notet that if the number of constraints has changed,
+    /// then this method will set the warm start to have the new number of constraints.
     pub fn reset_warm_start(&mut self) {
         use ipopt::{BasicProblem, ConstrainedProblem};
         self.warm_start
@@ -224,7 +231,7 @@ impl NonLinearProblem {
         if and_warm_start {
             self.update_warm_start(solution);
         } else {
-            self.reset_warm_start();
+            self.clear_warm_start(solution);
         }
 
         (old_warm_start, old_prev_pos, old_prev_vel)
@@ -247,6 +254,9 @@ impl NonLinearProblem {
         }
     }
 
+    /// The contact constraints may have changedd. This method remaps the old constraints to the
+    /// new constraints so we can use the warm start from the previous step even if the constraint
+    /// set has changed.
     pub fn remap_constraint_multipliers(&mut self, constrained_points: &[Index]) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let mapping = scc.build_constraint_mapping(constrained_points);
@@ -432,13 +442,37 @@ impl NonLinearProblem {
             return Err(crate::Error::NoKinematicMesh);
         }
 
-        //dbg!(*iter_counter);
+        dbg!(*iter_counter);
         Ok(())
     }
 
     //pub fn dot(a: &[f64], b: &[f64]) -> f64 {
     //    a.iter().zip(b.iter()).map(|(&a,&b)| a*b).sum()
     //}
+
+    pub fn write_jacobian_img(&self, jac: &na::DMatrix<f64>) {
+        use image::{ImageBuffer};
+
+        let nrows = jac.nrows();
+        let ncols = jac.ncols();
+
+        let ciel = 1.0;//jac.max();
+        let floor = -1.0;//jac.min();
+
+        let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
+            let val = jac[(r as usize, c as usize)];
+            let color = if val > 0.0 {
+                [255, (255.0 * val / ciel) as u8, 0]
+            } else if val < 0.0 {
+                [0, (255.0 * (1.0 + val / floor)) as u8, 255]
+            } else {
+                [255, 0, 255]
+            };
+            image::Rgb(color)
+        });
+
+        img.save(format!("out/jac_{}.png", self.iter_counter.borrow())).expect("Failed to save Jacobian Image");
+    }
 
     pub fn print_jacobian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
@@ -452,10 +486,30 @@ impl NonLinearProblem {
         let mut cols = vec![0; values.len()];
         assert!(self.constraint_jacobian_indices(&mut rows, &mut cols));
 
-        let mut jac = DMatrix::zeros(self.num_constraints(), self.num_variables());
+        let nrows = self.num_constraints();
+        let ncols = self.num_variables();
+        let mut jac = DMatrix::<f64>::zeros(nrows, ncols);
         for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
             jac[(row as usize, col as usize)] += v;
         }
+
+        self.write_jacobian_img(&jac);
+
+        use std::io::Write;
+
+        let mut f = std::fs::File::create(format!("out/jac_{}.txt", self.iter_counter.borrow())).unwrap();
+        writeln!(&mut f, "jac = ").ok();
+        for r in 0..nrows {
+            for c in 0..ncols {
+                if jac[(r,c)] != 0.0 {
+                    write!(&mut f, "{:9.5}", jac[(r,c)]).ok();
+                } else {
+                    write!(&mut f, "    .    ", ).ok();
+                }
+            }
+            writeln!(&mut f, "").ok();
+        }
+        writeln!(&mut f, "").ok();
 
         let svd = na::SVD::new(jac, false, false);
         let s: &[Number] = svd.singular_values.data.as_slice();

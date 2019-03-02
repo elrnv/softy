@@ -25,7 +25,7 @@ pub use self::builder::*;
 pub use self::samples::*;
 pub use self::spatial_tree::*;
 
-pub use self::background_field::BackgroundFieldType;
+pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::background_field::*;
 pub(crate) use self::neighbour_cache::Neighbourhood;
 
@@ -45,11 +45,9 @@ where
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
 
-    /// Enum for choosing how to compute a background potential field that will be mixed in with
-    /// the local potentials. If `true`, this background potential will be automatically computed,
-    /// if `false`, the values in the input will be used as the background potential to be mixed
-    /// in.
-    bg_field_type: BackgroundFieldType,
+    /// Enum for choosing how to compute a background potential field that may be mixed in with
+    /// the local potentials.
+    bg_field_params: BackgroundFieldParams,
 
     /// Local search tree for fast proximity queries.
     spatial_tree: RTree<Sample<T>>,
@@ -232,6 +230,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 cache.compute_neighbourhoods(
                     query_points,
                     neigh,
+                    |q| spatial_tree.nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into()).expect("Empty spatial tree"),
                     surface_topo,
                     dual_topo,
                     sample_type,
@@ -244,6 +243,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 cache.compute_neighbourhoods(
                     query_points,
                     neigh,
+                    |q| spatial_tree.nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into()).expect("Empty spatial tree"),
                     surface_topo,
                     dual_topo,
                     sample_type,
@@ -261,6 +261,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         if valid {
             Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
                 c.trivial_set().unwrap()
+            }))
+        } else {
+            Err(super::Error::MissingNeighbourData)
+        }
+    }
+
+    /// This function returns previously cached closest samples if the neighbour cache is
+    /// valid, and `None` otherwise.
+    fn closest_samples_borrow<'a>(&'a self) -> Result<Ref<'a, [usize]>, super::Error> {
+        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+        // cache and actually retrieving the neighbour points is done separately
+        let valid = self.query_neighbourhood.borrow().closest_set().is_some();
+        if valid {
+            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
+                c.closest_set().unwrap()
             }))
         } else {
             Err(super::Error::MissingNeighbourData)
@@ -498,27 +513,29 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         assert_eq!(neigh_points.len(), out_field.len());
 
         let ImplicitSurface {
             ref samples,
-            bg_field_type,
+            bg_field_params,
             ..
         } = *self;
 
         zip!(
             query_points.par_iter(),
             neigh_points.par_iter(),
+            closest_points.par_iter(),
             out_field.par_iter_mut()
         )
-        .filter(|(_, nbrs, _)| !nbrs.is_empty())
-        .for_each(move |(q, neighbours, field)| {
+        .for_each(move |(q, neighbours, closest, field)| {
             Self::compute_potential_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
+                *closest,
                 kernel,
-                bg_field_type,
+                bg_field_params,
                 field,
             );
         });
@@ -533,21 +550,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn compute_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
+        closest: usize,
         kernel: K,
-        bg_potential: BackgroundFieldType,
+        bg_potential: BackgroundFieldParams,
         potential: &mut T,
     ) where
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        if samples.is_empty() {
-            return;
-        }
-
         let bg = BackgroundField::new(
             q,
             samples,
+            closest,
             kernel,
-            BackgroundFieldValue::val(bg_potential, *potential),
+            bg_potential,
+            Some(*potential),
         );
 
         let weight_sum_inv = bg.weight_sum_inv();
@@ -555,6 +571,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
         *potential = bg.compute_unnormalized_weighted_scalar_field() * weight_sum_inv;
+
+        if samples.is_empty() {
+            return;
+        }
 
         let local_field = Self::compute_local_potential_at(
             q,
@@ -641,27 +661,29 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         assert_eq!(neigh_points.len(), out_vectors.len());
 
         let ImplicitSurface {
             ref samples,
-            bg_field_type,
+            bg_field_params,
             ..
         } = *self;
 
         zip!(
             query_points.par_iter(),
             neigh_points.par_iter(),
+            closest_points.par_iter(),
             out_vectors.par_iter_mut()
         )
-        .filter(|(_, nbrs, _)| !nbrs.is_empty())
-        .for_each(move |(q, neighbours, vector)| {
+        .for_each(move |(q, neighbours, closest, vector)| {
             Self::compute_local_vector_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
+                *closest,
                 kernel,
-                bg_field_type,
+                bg_field_params,
                 vector,
             );
         });
@@ -672,29 +694,34 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn compute_local_vector_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
+        closest: usize,
         kernel: K,
-        bg_potential: BackgroundFieldType,
+        bg_potential: BackgroundFieldParams,
         vector: &mut [T; 3],
     ) where
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        if samples.is_empty() {
-            return;
-        }
-
         let bg = BackgroundField::new(
             q,
             samples,
+            closest,
             kernel,
-            BackgroundFieldValue::val(bg_potential, Vector3(*vector)),
+            bg_potential,
+            Some(Vector3(*vector)),
         );
-        let closest_dist = bg.closest_sample_dist();
-
-        let weight_sum_inv = bg.weight_sum_inv();
 
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
         let mut out_field = bg.compute_unnormalized_weighted_vector_field();
+
+        if samples.is_empty() {
+            *vector = out_field.into();
+            return;
+        }
+
+        let closest_dist = bg.closest_sample_dist();
+
+        let weight_sum_inv = bg.weight_sum_inv();
 
         let grad_w_sum_normalized =
             Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
@@ -773,7 +800,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let ImplicitSurface {
             ref samples,
-            bg_field_type,
+            bg_field_params,
             ..
         } = *self;
 
@@ -799,6 +826,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let query_points = mesh.vertex_positions();
         self.cache_neighbours(&query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
@@ -809,6 +837,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         for (
             q_chunk,
             neigh,
+            closest,
             num_neighs_chunk,
             neighs_chunk,
             bg_weight_chunk,
@@ -819,6 +848,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         ) in zip!(
             query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
+            closest_points.chunks(Self::PARALLEL_CHUNK_SIZE),
             num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
@@ -834,6 +864,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             zip!(
                 q_chunk.par_iter().map(|&v| Vector3(v)),
                 neigh.par_iter(),
+                closest.par_iter(),
                 num_neighs_chunk.par_iter_mut(),
                 neighs_chunk.par_iter_mut(),
                 bg_weight_chunk.par_iter_mut(),
@@ -846,6 +877,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 |(
                     q,
                     neighs,
+                    closest,
                     num_neighs,
                     out_neighs,
                     bg_weight,
@@ -864,23 +896,26 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         out_neighs[k] = neigh.index as i32;
                     }
 
+                    let bg = BackgroundField::new(
+                        q,
+                        view,
+                        *closest,
+                        kernel,
+                        bg_field_params,
+                        Some(T::from(*potential).unwrap()),
+                    );
+
+                    let closest_d = bg.closest_sample_dist();
+                    *bg_weight = bg.background_weight().to_f32().unwrap();
+                    *weight_sum = bg.weight_sum.to_f32().unwrap();
+                    let weight_sum_inv = bg.weight_sum_inv();
+
+                    *potential = bg
+                        .compute_unnormalized_weighted_scalar_field()
+                        .to_f32()
+                        .unwrap();
+
                     if !view.is_empty() {
-                        let bg = BackgroundField::new(
-                            q,
-                            view,
-                            kernel,
-                            BackgroundFieldValue::val(bg_field_type, T::from(*potential).unwrap()),
-                        );
-                        let closest_d = bg.closest_sample_dist();
-                        *bg_weight = bg.background_weight().to_f32().unwrap();
-                        *weight_sum = bg.weight_sum.to_f32().unwrap();
-                        let weight_sum_inv = bg.weight_sum_inv();
-
-                        *potential = bg
-                            .compute_unnormalized_weighted_scalar_field()
-                            .to_f32()
-                            .unwrap();
-
                         let mut grad_w_sum_normalized = Vector3::zeros();
                         for grad in samples.iter().map(|Sample { pos, .. }| {
                             kernel.with_closest_dist(closest_d).grad(q, pos)
@@ -967,7 +1002,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let tri_indices = &surface_topo[tri_idx];
                 // Pull contributions from all neighbours on the surface, not just ones part of the
                 // neighbourhood,
-                let tri = Triangle::from_indexed_slice(tri_indices, samples.points());
+                let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
                 let nml_grad = tri.area_normal_gradient(
                     tri_indices
                         .iter()
@@ -1050,20 +1085,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
     }
 
-    /// Compute the background potential field. This function returns a struct that provides some
-    /// useful quanitities for computing derivatives of the field.
-    pub(crate) fn compute_background_potential<'a, K: 'a>(
-        q: Vector3<T>,
-        samples: SamplesView<'a, 'a, T>,
-        kernel: K,
-        bg_type: BackgroundFieldType,
-    ) -> BackgroundField<'a, T, T, K>
-    where
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-    {
-        // Construct a background field for computing derivative contribution.
-        BackgroundField::new(q, samples, kernel, BackgroundFieldValue::jac(bg_type))
-    }
+    ///// Compute the background potential field. This function returns a struct that provides some
+    ///// useful quanitities for computing derivatives of the field.
+    //pub(crate) fn compute_background_potential<'a, K: 'a>(
+    //    q: Vector3<T>,
+    //    samples: SamplesView<'a, 'a, T>,
+    //    closest: usize,
+    //    kernel: K,
+    //    bg_type: BackgroundFieldType,
+    //) -> BackgroundField<'a, T, T, K>
+    //where
+    //    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    //{
+    //    // Construct a background field for computing derivative contribution.
+    //    BackgroundField::new(q, samples, closest, kernel, BackgroundFieldValue::jac(bg_type))
+    //}
 
     fn compute_hrbf(
         query_points: &[[T; 3]],
@@ -1231,7 +1267,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldType::DistanceBased,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },

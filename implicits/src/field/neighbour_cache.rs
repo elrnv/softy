@@ -3,19 +3,20 @@ use geo::Real;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 
-/// Cache neighbouring sample points for each query point.
-/// Note that this determines the entire sparsity structure of the query point neighbourhoods.
+/// Cache data structure that stores information about the neighbourhood of a query point.
+/// For radial neighbourhood sets, this determines the entire sparsity structure for each query
+/// point.
 #[derive(Clone, Debug, PartialEq)]
-pub struct NeighbourCache {
-    /// For each query point, record the neighbours' indices in this vector.
-    pub points: Vec<Vec<usize>>,
+pub struct NeighbourCache<T> {
+    /// For each query point, record the neighbour data in this vector.
+    pub points: Vec<T>,
 
     /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
     /// we can reuse the already allocated memory.
     pub valid: bool,
 }
 
-impl NeighbourCache {
+impl<T> NeighbourCache<T> {
     fn new() -> Self {
         NeighbourCache {
             points: Vec::new(),
@@ -29,26 +30,73 @@ impl NeighbourCache {
     }
 }
 
-/// There are two types of neighbourhoods for each query point:
+/// There are three types of neighbourhoods for each query point:
+///   1. closest samples to each query point, which we call the *closest set*,
 ///   1. the set of samples within a distance of the query point, which we call the *trivial
 ///      set* and
 ///   2. an extended set of samples reachable via triangles adjacent to the trivial set, which we
 ///      dub the *extended set*.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Neighbourhood {
+    /// The closest sample to each query point.
+    closest_set: NeighbourCache<usize>,
     /// The trivial neighbourhood of a set of query points. These are simply the set of samples that
     /// are within a certain distance from each query point.
-    trivial_set: NeighbourCache,
+    trivial_set: NeighbourCache<Vec<usize>>,
     /// The extended neighbourhood of a set of query points. This is a superset of the trivial
     /// neighbourhood that includes samples that are topologically adjacent to the trivial set.
-    extended_set: NeighbourCache,
+    extended_set: NeighbourCache<Vec<usize>>,
 }
 
 impl Neighbourhood {
     pub(crate) fn new() -> Self {
         Neighbourhood {
+            closest_set: NeighbourCache::new(),
             trivial_set: NeighbourCache::new(),
             extended_set: NeighbourCache::new(),
+        }
+    }
+
+    /// Compute closest point set if it is empty (e.g. hasn't been created yet). Return the 
+    /// closest sample to each query point.
+    ///
+    /// Note that this set must be invalidated explicitly, there is no real way to automatically
+    /// cache results because both: query points and sample points may change slightly, but we
+    /// expect the neighbourhood information to remain the same.
+    pub(crate) fn compute_closest_set<'a, T, C>(
+        &mut self,
+        query_points: &[[T; 3]],
+        closest: C,
+    ) -> &[usize]
+    where
+        T: Real + Send + Sync + 'a,
+        C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
+    {
+        let set = &mut self.closest_set;
+
+        if !set.is_valid() {
+            // Allocate additional neighbourhoods to match the size of query_points.
+            set.points.resize(query_points.len(), 0);
+
+            query_points
+                .par_iter()
+                .zip(set.points.par_iter_mut())
+                .for_each(|(q, sample_idx)| {
+                    *sample_idx = closest(*q).index;
+                });
+
+            set.valid = true;
+        }
+
+        &set.points
+    }
+
+    /// Getter for the closest set of samples.
+    pub(crate) fn closest_set(&self) -> Option<&[usize]> {
+        if self.closest_set.valid {
+            Some(&self.closest_set.points)
+        } else {
+            None
         }
     }
 
@@ -118,6 +166,7 @@ impl Neighbourhood {
         let Neighbourhood {
             trivial_set,
             extended_set,
+            ..
         } = self;
 
         if !trivial_set.is_valid() {
@@ -149,18 +198,21 @@ impl Neighbourhood {
         Some(&extended_set.points)
     }
 
-    pub(crate) fn compute_neighbourhoods<'a, T, I, N>(
+    pub(crate) fn compute_neighbourhoods<'a, T, I, N, C>(
         &mut self,
         query_points: &[[T; 3]],
         neigh: N,
+        closest: C,
         tri_topo: &[[usize; 3]],
         dual_topo: &[Vec<usize>],
         sample_type: SampleType,
     ) where
-        T: Real + Send + Sync,
+        T: Real + Send + Sync + 'a,
         I: Iterator<Item = Sample<T>> + 'a,
         N: Fn([T; 3]) -> I + Sync + Send,
+        C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
     {
+        self.compute_closest_set(query_points, closest);
         self.compute_trivial_set(query_points, neigh);
         self.compute_extended_set(query_points, tri_topo, dual_topo, sample_type)
             .unwrap();
@@ -175,6 +227,7 @@ impl Neighbourhood {
     }
 
     pub(crate) fn invalidate(&mut self) {
+        self.closest_set.valid = false;
         self.trivial_set.valid = false;
         self.extended_set.valid = false;
     }

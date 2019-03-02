@@ -14,7 +14,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
-        Some(neigh_points.iter().map(|pts| pts.len()).sum::<usize>() * 3 * num_pts_per_sample)
+        Some((neigh_points.iter().map(|pts| pts.len() + 1).sum::<usize>()) * 3 * num_pts_per_sample)
     }
 
     /// Compute the indices for the implicit surface potential Jacobian with respect to surface
@@ -64,35 +64,40 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
         match self.sample_type {
             SampleType::Vertex => {
-                let cached_pts = {
+                let (cached_pts, closest_pts) = {
                     let neigh_points = self.extended_neighbourhood_borrow()?;
-                    neigh_points.to_vec()
+                    let closest_points = self.closest_samples_borrow()?;
+                    (neigh_points.to_vec(), closest_points.to_vec())
                 };
                 Ok(Box::new(
                     cached_pts
-                        .into_iter()
+                        .into_iter().zip(closest_pts.into_iter())
                         .enumerate()
-                        .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                        .flat_map(move |(row, nbr_points)| {
+                        //.filter(|(_, nbr_points)| !nbr_points.is_empty())
+                        .flat_map(move |(row, (nbr_points, closest))| {
                             nbr_points
                                 .into_iter()
                                 .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
+                                .chain((0..3).map(move |i| (row, 3*closest + i)))
                         }),
                 ))
             }
             SampleType::Face => {
                 let cached: Vec<_> = {
                     let neigh_points = self.trivial_neighbourhood_borrow()?;
+                    let closest_points = self.closest_samples_borrow()?;
                     neigh_points
-                        .iter()
+                        .iter().zip(closest_points.iter())
                         .enumerate()
-                        .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                        .flat_map(|(row, nbr_points)| {
+                        //.filter(|(_, nbr_points)| !nbr_points.is_empty())
+                        .flat_map(|(row, (nbr_points, closest))| {
                             nbr_points.iter().flat_map(move |&pidx| {
                                 self.surface_topo[pidx]
                                     .iter()
                                     .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
                             })
+                            .chain(self.surface_topo[*closest]
+                                   .iter().flat_map(move |&col| (0..3).map(move |i| (row, 3*col + i))))
                         })
                         .collect()
                 };
@@ -113,14 +118,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match self.sample_type {
             SampleType::Vertex => {
                 let neigh_points = self.extended_neighbourhood_borrow()?;
+                let closest_points = self.closest_samples_borrow()?;
                 let row_col_iter = neigh_points
-                    .iter()
+                    .iter().zip(closest_points.iter())
                     .enumerate()
-                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                    .flat_map(move |(row, nbr_points)| {
+                    //.filter(|(_, nbr_points)| !nbr_points.is_empty())
+                    .flat_map(move |(row, (nbr_points, closest))| {
                         nbr_points
                             .iter()
                             .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
+                            .chain((0..3).map(move |i| (row, 3*closest + i)))
                     });
                 for ((row, col), out_row, out_col) in
                     zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())
@@ -131,16 +138,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
             SampleType::Face => {
                 let neigh_points = self.trivial_neighbourhood_borrow()?;
+                let closest_points = self.closest_samples_borrow()?;
                 let row_col_iter = neigh_points
-                    .iter()
+                    .iter().zip(closest_points.iter())
                     .enumerate()
-                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                    .flat_map(move |(row, nbr_points)| {
+                    //.filter(|(_, nbr_points)| !nbr_points.is_empty())
+                    .flat_map(move |(row, (nbr_points, closest))| {
                         nbr_points.iter().flat_map(move |&pidx| {
                             self.surface_topo[pidx]
                                 .iter()
                                 .flat_map(move |&col| (0..3).map(move |i| (row, 3 * col + i)))
                         })
+                        .chain(self.surface_topo[*closest]
+                               .iter().flat_map(move |&col| (0..3).map(move |i| (row, 3*col + i))))
                     });
                 for ((row, col), out_row, out_col) in
                     zip!(row_col_iter, rows.iter_mut(), cols.iter_mut())
@@ -171,7 +181,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ref surface_topo,
             ref dual_topo,
             ref surface_vertex_positions,
-            bg_field_type,
+            bg_field_params,
             sample_type,
             ..
         } = *self;
@@ -179,18 +189,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match sample_type {
             SampleType::Vertex => {
                 let neigh_points = self.extended_neighbourhood_borrow()?;
+                let closest_points = self.closest_samples_borrow()?;
                 // For each row (query point)
-                let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
-                    .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .flat_map(move |(q, nbr_points)| {
+                let vtx_jac = zip!(
+                        query_points.iter(),
+                        neigh_points.iter(),
+                        closest_points.iter()
+                    )
+                    //.filter(|(_, nbrs, _)| !nbrs.is_empty())
+                    .flat_map(move |(q, nbr_points, closest)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::vertex_jacobian_at(
                             Vector3(*q),
                             view,
+                            *closest,
                             kernel,
                             surface_topo,
                             dual_topo,
-                            bg_field_type,
+                            bg_field_params,
                         )
                     });
 
@@ -203,18 +219,23 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
             SampleType::Face => {
                 let neigh_points = self.trivial_neighbourhood_borrow()?;
-                let face_jac = zip!(query_points.iter(), neigh_points.iter())
-                    .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .flat_map(move |(q, nbr_points)| {
+                let closest_points = self.closest_samples_borrow()?;
+                let face_jac = zip!(
+                        query_points.iter(),
+                        neigh_points.iter(),
+                        closest_points.iter()
+                    )
+                    //.filter(|(_, nbrs, _)| !nbrs.is_empty())
+                    .flat_map(move |(q, nbr_points, closest)| {
                         let view = SamplesView::new(nbr_points, samples);
-
                         Self::face_jacobian_at(
                             Vector3(*q),
                             view,
+                            *closest,
                             kernel,
                             surface_topo,
                             surface_vertex_positions,
-                            bg_field_type,
+                            bg_field_params,
                         )
                     });
 
@@ -232,18 +253,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn vertex_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         view: SamplesView<'a, 'a, T>,
+        closest: usize,
         kernel: K,
         surface_topo: &'a [[usize; 3]],
         dual_topo: &'a [Vec<usize>],
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
+        let bg = BackgroundField::new(q, view, closest, kernel, bg_field_params, None);
 
         // Background potential Jacobian.
-        let bg_jac = bg.compute_jacobian();
+        let bg_jac = bg.compute_local_jacobian();
+        let bg_global = std::iter::once(bg.compute_global_jacobian());
 
         let closest_d = bg.closest_sample_dist();
         let weight_sum_inv = bg.weight_sum_inv();
@@ -262,33 +285,34 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             },
         );
 
-        zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n)
+        zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n).chain(bg_global)
     }
 
     /// Jacobian of the face based local potential with respect to surface vertex positions.
     pub(crate) fn face_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         view: SamplesView<'a, 'a, T>,
+        closest: usize,
         kernel: K,
         surface_topo: &'a [[usize; 3]],
         surface_vertex_positions: &'a [Vector3<T>],
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
     ) -> impl Iterator<Item = Vector3<T>> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
+        let bg = BackgroundField::new(q, view, closest, kernel, bg_field_params, None);
+        let third = T::one() / T::from(3.0).unwrap();
 
         // Background potential Jacobian.
-        let bg_jac = bg.compute_jacobian();
+        let bg_jac = bg.compute_local_jacobian();
+        let bg_global = std::iter::repeat(bg.compute_global_jacobian() * third).take(3);
 
         let closest_d = bg.closest_sample_dist();
         let weight_sum_inv = bg.weight_sum_inv();
 
         // For each surface vertex contribution
         let main_jac = Self::sample_jacobian_at(q, view, kernel, bg);
-
-        let third = T::one() / T::from(3.0).unwrap();
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_jac = Self::compute_face_unit_normals_gradient_products(
@@ -305,7 +329,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         zip!(bg_jac, main_jac)
             .flat_map(move |(b, m)| std::iter::repeat(b + m).take(3))
             .zip(nml_jac)
-            .map(move |(m, n)| m * third + n)
+            .map(move |(m, n)| m * third + n).chain(bg_global)
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points,
@@ -336,19 +360,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         let ImplicitSurface {
             ref samples,
-            bg_field_type,
+            bg_field_params,
             ..
         } = *self;
 
         // For each row (query point)
-        let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
-            .filter(|(_, nbrs)| !nbrs.is_empty())
-            .map(move |(q, nbr_points)| {
+        let vtx_jac = zip!(
+                query_points.iter(),
+                neigh_points.iter(),
+                closest_points.iter()
+            )
+            .filter(|(_, nbrs, _)| !nbrs.is_empty())
+            .map(move |(q, nbr_points, closest)| {
                 let view = SamplesView::new(nbr_points, samples);
-                Self::query_jacobian_at(Vector3(*q), view, kernel, bg_field_type)
+                Self::query_jacobian_at(Vector3(*q), view, *closest, kernel, bg_field_params)
             });
 
         value_vecs
@@ -364,13 +393,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn query_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         view: SamplesView<'a, 'a, T>,
+        closest: usize,
         kernel: K,
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
     ) -> Vector3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = Self::compute_background_potential(q, view, kernel, bg_field_type);
+        let bg = BackgroundField::new(q, view, closest, kernel, bg_field_params, None);
 
         // Background potential Jacobian.
         let bg_jac = bg.compute_query_jacobian();
@@ -490,7 +520,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     ) -> Vector3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
-        V: Copy + Clone + std::fmt::Debug + PartialEq,
+        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
     {
         let closest_d = bg.closest_sample_dist();
 
@@ -539,10 +569,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         let ImplicitSurface {
             ref samples,
-            bg_field_type,
+            bg_field_params,
             sample_type,
             ref surface_topo,
             ..
@@ -551,16 +582,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match sample_type {
             SampleType::Vertex => {
                 // For each row (query point)
-                let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
-                    .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .map(move |(q, nbr_points)| {
+                let vtx_jac = zip!(query_points.iter(), neigh_points.iter(), closest_points.iter())
+                    .filter(|(_, nbrs, _)| !nbrs.is_empty())
+                    .map(move |(q, nbr_points, closest)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::vertex_contact_jacobian_product_at(
                             Vector3(*q),
                             view,
+                            *closest,
                             multiplier,
                             kernel,
-                            bg_field_type,
+                            bg_field_params,
                         )
                     });
 
@@ -572,16 +604,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     });
             }
             SampleType::Face => {
-                let face_jac = zip!(query_points.iter(), neigh_points.iter())
-                    .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .map(move |(q, nbr_points)| {
+                let face_jac = zip!(query_points.iter(), neigh_points.iter(), closest_points.iter())
+                    .filter(|(_, nbrs, _)| !nbrs.is_empty())
+                    .map(move |(q, nbr_points, closest)| {
                         let view = SamplesView::new(nbr_points, samples);
                         Self::face_contact_jacobian_product_at(
                             Vector3(*q),
                             view,
+                            *closest,
                             multiplier,
                             kernel,
-                            bg_field_type,
+                            bg_field_params,
                             surface_topo,
                         )
                     });
@@ -604,14 +637,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn vertex_contact_jacobian_product_at<'a, K: 'a>(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
+        closest: usize,
         sample_multipliers: &'a [[T; 3]],
         kernel: K,
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
     ) -> Vector3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = Self::compute_background_potential(q, samples, kernel, bg_field_type);
+        let bg = BackgroundField::new(q, samples, closest, kernel, bg_field_params, None);
 
         let weight_sum_inv = bg.weight_sum_inv();
         let closest_d = bg.closest_sample_dist();
@@ -651,15 +685,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn face_contact_jacobian_product_at<'a, K: 'a>(
         q: Vector3<T>,
         samples: SamplesView<'a, 'a, T>,
+        closest: usize,
         vertex_multipliers: &'a [[T; 3]],
         kernel: K,
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
         triangles: &'a [[usize; 3]],
     ) -> Vector3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = Self::compute_background_potential(q, samples, kernel, bg_field_type);
+        let bg = BackgroundField::new(q, samples, closest, kernel, bg_field_params, None);
 
         let weight_sum_inv = bg.weight_sum_inv();
         let closest_d = bg.closest_sample_dist();
@@ -778,12 +813,13 @@ pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
 pub(crate) fn consolidate_face_jacobian<T: Real>(
     jac: &[Vector3<T>],
     neighbours: &[usize],
+    closest: usize,
     faces: &[[usize; 3]],
     num_verts: usize,
 ) -> Vec<Vector3<T>> {
     let tet_indices_iter = neighbours
         .iter()
-        .flat_map(|&neigh| faces[neigh].iter().cloned());
+        .flat_map(|&neigh| faces[neigh].iter().cloned()).chain(faces[closest].iter().cloned());
 
     let mut vert_jac = vec![Vector3::zeros(); num_verts];
 
@@ -816,13 +852,22 @@ where
     }
 }
 
+/// Linear search for the closest sample to the given query point `q`.
+#[cfg(test)]
+pub(crate) fn find_closest_sample_index<T: Real + Send + Sync>(q: Vector3<T>, samples: &Samples<T>) -> usize {
+    samples.iter()
+        .min_by(|s,t| (q - s.pos).norm().partial_cmp(&(q - t.pos).norm()).unwrap())
+        .expect("Failed to find closest sample.").index
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use autodiff::F;
 
     /// Tester for the Jacobian at a single position with respect to a surface defined by a single point.
-    fn one_point_potential_derivative_tester(radius: f64, bg_field_type: BackgroundFieldType) {
+    fn one_point_potential_derivative_tester(radius: f64, bg_field_params: BackgroundFieldParams) {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
@@ -849,14 +894,18 @@ mod tests {
         // Create a view of the samples for the Jacobian computation.
         let view = SamplesView::new(neighbours.as_ref(), &samples);
 
+        // Index of the closest sample point to the query point.
+        let closest = 0;
+
         // Compute the complete jacobian.
         let jac: Vec<Vector3<F>> = ImplicitSurface::vertex_jacobian_at(
             q,
             view,
+            closest,
             kernel,
             &surf_topo,
             &dual_topo,
-            bg_field_type,
+            bg_field_params,
         )
         .collect();
 
@@ -875,7 +924,7 @@ mod tests {
             // Compute the local potential function. After calling this function, calling
             // `.deriv()` on the potential output will give us the derivative with resepct to the
             // preset variable.
-            ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
+            ImplicitSurface::compute_potential_at(q, view, closest, kernel, bg_field_params, &mut p);
 
             // Check the derivative of the autodiff with our previously computed Jacobian.
             assert_relative_eq!(
@@ -895,12 +944,12 @@ mod tests {
     fn one_point_potential_derivative_test() {
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::None);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::Zero);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::FromInput);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::FromInputUnweighted);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::DistanceBased);
-            one_point_potential_derivative_tester(radius, BackgroundFieldType::NormalBased);
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false });
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: true });
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false });
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true });
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false });
+            one_point_potential_derivative_tester(radius, BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true });
         }
     }
 
@@ -908,7 +957,7 @@ mod tests {
     /// and a perturbation function that is expected to generate a random perturbation at every
     /// consequent call.
     fn hard_potential_derivative<P: FnMut() -> Vector3<f64>>(
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
         sample_type: SampleType,
         radius: f64,
         perturb: &mut P,
@@ -935,37 +984,45 @@ mod tests {
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
+            let closest = find_closest_sample_index(q, &samples);
+
             let vert_jac = match sample_type {
                 SampleType::Face => {
                     let jac: Vec<_> = ImplicitSurface::face_jacobian_at(
                         q,
                         view,
+                        closest,
                         kernel,
                         &tet_faces,
                         &tet_verts,
-                        bg_field_type,
+                        bg_field_params,
                     )
                     .collect();
 
-                    assert_eq!(jac.len(), 3 * neighbours.len());
+                    assert_eq!(jac.len(), 3 * neighbours.len() + 3);
 
-                    consolidate_face_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
+                    consolidate_face_jacobian(&jac, &neighbours, closest, &tet_faces, tet_verts.len())
                 }
                 SampleType::Vertex => {
                     let jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(
                         q,
                         view,
+                        closest,
                         kernel,
                         &tet_faces,
                         &dual_topo,
-                        bg_field_type,
+                        bg_field_params,
                     )
                     .collect();
 
-                    assert_eq!(jac.len(), neighbours.len());
+                    assert_eq!(jac.len(), neighbours.len() + 1);
 
-                    // Sample Jacobian coincides with vertex jacobian, nothing else to do here.
-                    jac
+                    let mut vert_jac = vec![Vector3::zeros(); tet_verts.len()];
+                    for (&jac_val, vert_jac) in jac.iter().zip(vert_jac.iter_mut()) {
+                        *vert_jac = jac_val;
+                    }
+                    vert_jac[closest] += *jac.last().unwrap();
+                    vert_jac
                 }
             };
 
@@ -979,7 +1036,7 @@ mod tests {
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
-                    ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
+                    ImplicitSurface::compute_potential_at(q, view, closest, kernel, bg_field_params, &mut p);
 
                     assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
@@ -996,79 +1053,28 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            hard_potential_derivative(
-                BackgroundFieldType::None,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::Zero,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::FromInput,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::FromInputUnweighted,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::DistanceBased,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::NormalBased,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
+            let mut run_test = |field_type, weighted, sample_type| {
+                hard_potential_derivative(
+                    BackgroundFieldParams { field_type, weighted },
+                    sample_type,
+                    radius,
+                    &mut perturb,
+                );
+            };
 
-            hard_potential_derivative(
-                BackgroundFieldType::None,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::Zero,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::FromInput,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::FromInputUnweighted,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::DistanceBased,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            hard_potential_derivative(
-                BackgroundFieldType::NormalBased,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
+            run_test(BackgroundFieldType::Zero, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::Zero, true, SampleType::Vertex);
+            run_test(BackgroundFieldType::FromInput, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::FromInput, true, SampleType::Vertex);
+            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::DistanceBased, true, SampleType::Vertex);
+
+            run_test(BackgroundFieldType::Zero, false, SampleType::Face);
+            run_test(BackgroundFieldType::Zero, true, SampleType::Face);
+            run_test(BackgroundFieldType::FromInput, false, SampleType::Face);
+            run_test(BackgroundFieldType::FromInput, true, SampleType::Face);
+            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Face);
+            run_test(BackgroundFieldType::DistanceBased, true, SampleType::Face);
         }
     }
 
@@ -1159,6 +1165,8 @@ mod tests {
 
         let radius = 2.0;
 
+        let closest = find_closest_sample_index(q, &samples);
+
         // Initialize kernel.
         let kernel = kernel::LocalApproximate::new(radius, 1e-5);
 
@@ -1169,12 +1177,14 @@ mod tests {
         let bg = BackgroundField::new(
             q,
             view,
+            closest,
             kernel,
-            BackgroundFieldValue::jac(BackgroundFieldType::DistanceBased),
+            BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+            None
         );
 
         // Compute manual Jacobian. This is the function being tested for correctness.
-        let jac: Vec<_> = bg.compute_jacobian().collect();
+        let jac: Vec<_> = bg.compute_local_jacobian().collect();
 
         // Prepare autodiff variables.
         let mut ad_samples =
@@ -1194,8 +1204,10 @@ mod tests {
                 let ad_bg = BackgroundField::new(
                     q,
                     view,
+                    closest,
                     kernel,
-                    BackgroundFieldValue::val(BackgroundFieldType::DistanceBased, F::cst(0.0)),
+                    BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                    Some(F::cst(0.0)),
                 );
 
                 let p = ad_bg.compute_unnormalized_weighted_scalar_field() * ad_bg.weight_sum_inv();
@@ -1210,7 +1222,7 @@ mod tests {
     /// perturbation function that is expected to generate a random perturbation at every
     /// consequent call.  This function tests the surface Jacobian of the implicit function.
     pub fn surface_jacobian<P: FnMut() -> Vector3<f64>>(
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
         sample_type: SampleType,
         radius: f64,
         perturb: &mut P,
@@ -1224,7 +1236,7 @@ mod tests {
                 tolerance: 0.00001,
                 radius,
             },
-            background_field: bg_field_type,
+            background_field: bg_field_params,
             sample_type,
             ..Default::default()
         };
@@ -1286,6 +1298,14 @@ mod tests {
 
                 let col = 3 * pidx + i;
                 for row in 0..3 {
+                    //if !relative_eq!(
+                    //    jac[col][row],
+                    //    potential[row].deriv(),
+                    //    max_relative = 1e-5,
+                    //    epsilon = 1e-10
+                    //) {
+                    //    println!("({:?}, {:?}) => {:?} vs {:?}", row, col, jac[col][row], potential[row].deriv());
+                    //}
                     assert_relative_eq!(
                         jac[col][row],
                         potential[row].deriv(),
@@ -1306,79 +1326,29 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            surface_jacobian(
-                BackgroundFieldType::None,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::Zero,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::FromInput,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::FromInputUnweighted,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::DistanceBased,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::NormalBased,
-                SampleType::Vertex,
-                radius,
-                &mut perturb,
-            );
 
-            surface_jacobian(
-                BackgroundFieldType::None,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::Zero,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::FromInput,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::FromInputUnweighted,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::DistanceBased,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
-            surface_jacobian(
-                BackgroundFieldType::NormalBased,
-                SampleType::Face,
-                radius,
-                &mut perturb,
-            );
+            let mut run_test = |field_type, weighted, sample_type| {
+                surface_jacobian(
+                    BackgroundFieldParams { field_type, weighted },
+                    sample_type,
+                    radius,
+                    &mut perturb,
+                );
+            };
+
+            run_test(BackgroundFieldType::Zero, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::Zero, true, SampleType::Vertex);
+            run_test(BackgroundFieldType::FromInput, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::FromInput, true, SampleType::Vertex);
+            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Vertex);
+            run_test(BackgroundFieldType::DistanceBased, true, SampleType::Vertex);
+
+            run_test(BackgroundFieldType::Zero, false, SampleType::Face);
+            run_test(BackgroundFieldType::Zero, true, SampleType::Face);
+            run_test(BackgroundFieldType::FromInput, false, SampleType::Face);
+            run_test(BackgroundFieldType::FromInput, true, SampleType::Face);
+            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Face);
+            run_test(BackgroundFieldType::DistanceBased, true, SampleType::Face);
         }
     }
 
@@ -1386,7 +1356,7 @@ mod tests {
     /// function that is expected to generate a random perturbation at every consequent call.
     /// This function tests the query Jacobian of the implicit function.
     pub fn query_jacobian<P: FnMut() -> Vector3<f64>>(
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
         radius: f64,
         perturb: &mut P,
     ) {
@@ -1411,7 +1381,10 @@ mod tests {
         for &q in tri_verts.iter() {
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
-            let jac = ImplicitSurface::query_jacobian_at(q, view, kernel, bg_field_type);
+
+            let closest = find_closest_sample_index(q, &samples);
+
+            let jac = ImplicitSurface::query_jacobian_at(q, view, closest, kernel, bg_field_params);
 
             let mut q = q.map(|x| F::cst(x));
 
@@ -1424,7 +1397,7 @@ mod tests {
                 let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_type, &mut p);
+                ImplicitSurface::compute_potential_at(q, view, closest, kernel, bg_field_params, &mut p);
 
                 assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
@@ -1438,21 +1411,21 @@ mod tests {
         let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
-        for i in 1..50 {
+        for i in 0..50 {
             let radius = 0.1 * (i as f64);
-            query_jacobian(BackgroundFieldType::None, radius, &mut perturb);
-            query_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
-            query_jacobian(BackgroundFieldType::FromInput, radius, &mut perturb);
-            query_jacobian(BackgroundFieldType::FromInputUnweighted, radius, &mut perturb);
-            query_jacobian(BackgroundFieldType::DistanceBased, radius, &mut perturb);
-            query_jacobian(BackgroundFieldType::NormalBased, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false }, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: true }, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false }, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true }, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false }, radius, &mut perturb);
+            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true }, radius, &mut perturb);
         }
     }
 
     /// Tester for the contact jacobian. This tester is parameterized by background field type,
     /// radius and a perturb function.
     fn contact_jacobian<P: FnMut() -> Vector3<f64>>(
-        bg_field_type: BackgroundFieldType,
+        bg_field_params: BackgroundFieldParams,
         radius: f64,
         perturb: &mut P,
     ) {
@@ -1480,7 +1453,7 @@ mod tests {
                 radius,
                 tolerance: 1e-5,
             },
-            background_field: bg_field_type,
+            background_field: bg_field_params,
             sample_type: SampleType::Face,
             max_step: 100.0 * radius, // essentially unlimited
         };
@@ -1518,20 +1491,10 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            contact_jacobian(BackgroundFieldType::None, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldType::Zero, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldType::FromInput, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldType::FromInputUnweighted, radius, &mut perturb);
-            //contact_jacobian(
-            //    BackgroundFieldType::DistanceBased,
-            //    radius,
-            //    &mut perturb,
-            //);
-            //contact_jacobian(
-            //    BackgroundFieldType::NormalBased,
-            //    radius,
-            //    &mut perturb,
-            //);
+            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false }, radius, &mut perturb);
+            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: true }, radius, &mut perturb);
+            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false }, radius, &mut perturb);
+            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true }, radius, &mut perturb);
         }
     }
 }

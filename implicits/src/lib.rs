@@ -19,7 +19,7 @@ use geo::Real;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub kernel: KernelType,
-    pub background_field: BackgroundFieldType,
+    pub background_field: BackgroundFieldParams,
     pub sample_type: SampleType,
     pub max_step: f64,
 }
@@ -32,7 +32,7 @@ impl Default for Params {
                 tolerance: 0.00001,
                 radius: 1.0,
             },
-            background_field: BackgroundFieldType::None,
+            background_field: BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false },
             sample_type: SampleType::Face,
             max_step: 0.0,
         }
@@ -154,7 +154,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldType::DistanceBased,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -192,7 +192,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldType::DistanceBased,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
                 sample_type: SampleType::Face,
                 ..Default::default()
             },
@@ -225,7 +225,7 @@ mod tests {
             &mut sphere,
             Params {
                 kernel: KernelType::Hrbf,
-                background_field: BackgroundFieldType::DistanceBased,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -263,7 +263,7 @@ mod tests {
                 tolerance: 1e-5,
                 radius: 1.5,
             })
-            .background_field(BackgroundFieldType::DistanceBased)
+            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
             .sample_type(SampleType::Vertex)
             .trimesh(&trimesh);
 

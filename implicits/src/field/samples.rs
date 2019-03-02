@@ -316,6 +316,8 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
         }
     }
 
+    /// Construct a new view from this view using the same underlying data, but with a new set of
+    /// indices (which need not be a subset of indices from this view).
     #[inline]
     pub fn from_view(self, indices: &'i [usize]) -> Self {
         SamplesView { indices, ..self }
@@ -331,50 +333,50 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
         self.indices.len()
     }
 
+    /// Function to get a sample at a specified index within the global arrays (not
+    /// relative to the view).
     #[inline]
-    pub fn iter(&'i self) -> impl Iterator<Item = Sample<T>> + 'i {
+    pub fn at_index(&self, idx: usize) -> Sample<T> {
         let SamplesView {
-            ref indices,
             ref points,
             ref normals,
             ref velocities,
             ref values,
+            ..
         } = self;
-        indices.iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            vel: velocities[i],
-            value: values[i],
-        })
+        Sample {
+            index: idx,
+            pos: points[idx],
+            nml: normals[idx],
+            vel: velocities[idx],
+            value: values[idx],
+        }
+    }
+
+    /// Get the sample at the given index within this view.
+    #[inline]
+    pub fn get(&self, index: usize) -> Sample<T> {
+        self.at_index(self.indices[index])
+    }
+
+    #[inline]
+    pub fn iter(&'i self) -> impl Iterator<Item = Sample<T>> + 'i {
+        self.indices.iter().map(move |&i| self.at_index(i))
     }
 
     /// Consuming iterator.
     #[allow(clippy::should_implement_trait)] // waiting for impl trait on associated types
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + 'i {
-        let SamplesView {
-            indices,
-            points,
-            normals,
-            velocities,
-            values,
-        } = self;
-        indices.into_iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            vel: velocities[i],
-            value: values[i],
-        })
+        self.indices.into_iter().map(move |&i| self.at_index(i))
     }
     #[inline]
-    pub fn points(&'d self) -> &'d [Vector3<T>] {
+    pub fn all_points(&'d self) -> &'d [Vector3<T>] {
         self.points
     }
 
     #[inline]
-    pub fn normals(&'d self) -> &'d [Vector3<T>] {
+    pub fn all_normals(&'d self) -> &'d [Vector3<T>] {
         self.normals
     }
 }
@@ -382,38 +384,12 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
 impl<'i, 'd: 'i, T: Real + Send + Sync> SamplesView<'i, 'd, T> {
     #[inline]
     pub fn par_iter(&'i self) -> impl IndexedParallelIterator<Item = Sample<T>> + 'i {
-        let SamplesView {
-            ref indices,
-            ref points,
-            ref normals,
-            ref velocities,
-            ref values,
-        } = self;
-        indices.par_iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            vel: velocities[i],
-            value: values[i],
-        })
+        self.indices.par_iter().map(move |&i| self.at_index(i))
     }
 
     /// Consuming iterator.
     #[inline]
     pub fn into_par_iter(self) -> impl IndexedParallelIterator<Item = Sample<T>> + 'i {
-        let SamplesView {
-            indices,
-            points,
-            normals,
-            velocities,
-            values,
-        } = self;
-        indices.into_par_iter().map(move |&i| Sample {
-            index: i,
-            pos: points[i],
-            nml: normals[i],
-            vel: velocities[i],
-            value: values[i],
-        })
+        self.indices.into_par_iter().map(move |&i| self.at_index(i))
     }
 }

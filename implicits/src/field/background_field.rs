@@ -6,58 +6,60 @@ use geo::Real;
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BackgroundFieldType {
-    /// Don't use a background field at all, no weights are included for that.
-    None,
     /// Use a zero background field.
     Zero,
     /// Use the background field given in the input.
     FromInput,
-    /// Use the background field given in the input but don't mix it with local potentials.
-    FromInputUnweighted,
-    /// Distance to the closest point.
+    /// Signed distance to the closest sample.
     DistanceBased,
-    /// Normal displacement dot product to the closest polygon.
-    NormalBased,
+}
+
+/// Parameters used to pick which type of background field should be used.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BackgroundFieldParams {
+    pub field_type: BackgroundFieldType,
+    pub weighted: bool,
 }
 
 /// Precomputed data used for background field computation.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum BackgroundFieldValue<V> {
-    /// No value, nothing to mix in, background weight is always zero.
-    None,
     /// The value of the background field at the query point.
     Constant(V),
-    /// The value of the background field at the query point, though unweighted like with `None`.
-    ConstantUnweighted(V),
-    /// A Dynamic field is computed based on the distance to the closest sample point.
-    ClosestSampleDistance,
-    /// A Dynamic field is computed based on the normal displacement. In other words, this is
-    /// determined by the dot product of the sample displacement and a normal.
-    ClosestSampleNormalDisp,
+    /// A Dynamic field is computed based on the signed distance to the closest sample point. The
+    /// sign is determined by the orienatation with respect to sample normals.
+    ClosestSampleSignedDistance,
 }
 
 impl<V: num_traits::Zero> BackgroundFieldValue<V> {
-    /// Use this constructor for computing the Jacobian of the field.
-    pub fn jac(ty: BackgroundFieldType) -> Self {
-        match ty {
-            BackgroundFieldType::None => BackgroundFieldValue::None,
-            BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
-            BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(V::zero()),
-            BackgroundFieldType::FromInputUnweighted => BackgroundFieldValue::ConstantUnweighted(V::zero()),
-            BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
-            BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
-        }
-    }
-
-    /// Use this constructor for computing the field.
-    pub fn val(ty: BackgroundFieldType, field_value: V) -> Self {
-        match ty {
-            BackgroundFieldType::None => BackgroundFieldValue::None,
+    /// Use this constructor for computing the field or its derivatives.
+    /// For computing derivatives, the field value is not actually needed, so we default it to zero
+    /// if it's not provided.
+    pub fn new(field_type: BackgroundFieldType, field_value: Option<V>) -> Self {
+        let field_value = field_value.unwrap_or(V::zero());
+        match field_type {
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
             BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(field_value),
-            BackgroundFieldType::FromInputUnweighted => BackgroundFieldValue::ConstantUnweighted(field_value),
-            BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleDistance,
-            BackgroundFieldType::NormalBased => BackgroundFieldValue::ClosestSampleNormalDisp,
+            BackgroundFieldType::DistanceBased => BackgroundFieldValue::ClosestSampleSignedDistance,
+        }
+    }
+}
+
+/// An enum identifying the index of the closest sample to a given query point. A local index
+/// indicates that the closest point is within some radius (e.g. kernel radius) of the query point.
+/// A `Global` index is outside this radius, which indicates that the query point is outside the
+/// local radius of the samples, and the field is purely a background field.
+#[derive(Copy, Clone, Debug)]
+pub enum ClosestIndex {
+    Local(usize),
+    Global(usize),
+}
+
+impl ClosestIndex {
+    /// Get the index ignoring whether it is local or global.
+    pub fn get(self) -> usize {
+        match self {
+            ClosestIndex::Local(index) | ClosestIndex::Global(index) => index
         }
     }
 }
@@ -77,6 +79,8 @@ where
     pub samples: SamplesView<'a, 'a, T>,
     /// Data needed to compute the background field value and its derivative.
     pub bg_field_value: BackgroundFieldValue<V>,
+    /// Determines if this background field should be mixed in with the local field.
+    pub weighted: bool,
     /// The sum of all the weights in the neighbourhood of the query point.
     pub weight_sum: T,
     /// The radial kernel used to compute the weights.
@@ -85,45 +89,42 @@ where
     pub closest_sample_dist: T,
     /// Displacement vector to the query point from the closest sample point.
     pub closest_sample_disp: Vector3<T>,
-    /// The index of the closest sample point.
-    pub closest_sample_index: usize,
+    /// The index of the closest sample point in the samples neighbourhood.
+    pub closest_sample_index: ClosestIndex,
 }
 
 impl<'a, T, V, K> BackgroundField<'a, T, V, K>
 where
     T: Real,
-    V: Copy + Clone + std::fmt::Debug + PartialEq,
+    V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
     pub(crate) fn new(
         q: Vector3<T>,
-        samples: SamplesView<'a, 'a, T>,
+        local_samples_view: SamplesView<'a, 'a, T>,
+        global_closest: usize,
         kernel: K,
-        bg_value: BackgroundFieldValue<V>,
+        bg_params: BackgroundFieldParams,
+        bg_value: Option<V>,
     ) -> Self {
-        // Precompute data about the closest sample point (displacement, index and distance).
-        let min_sample = samples
-            .iter()
-            .map(|Sample { index, pos, .. }| {
-                let disp = q - pos;
-                (index, disp, disp.norm_squared())
-            })
-            .min_by(|(_, _, d0), (_, _, d1)| {
-                d0.partial_cmp(d1)
-                    .expect("Detected NaN. Please report this bug.")
-            });
 
-        if min_sample.is_none() {
-            panic!("No surface samples found. Please report this bug.");
-        }
+        // Determine if the closest sample is in our neighbourhood of samples.
+        let closest_sample_index = 
+            if let Some(sample) = local_samples_view.iter().find(|&sample| sample.index == global_closest) {
+                ClosestIndex::Local(sample.index)
+            } else {
+                ClosestIndex::Global(global_closest)
+            };
 
-        let (closest_sample_index, closest_sample_disp, mut closest_sample_dist) =
-            min_sample.unwrap();
-        closest_sample_dist = closest_sample_dist.sqrt();
-
+        let (closest_sample_disp, closest_sample_dist) = {
+            let Sample { pos, .. } = local_samples_view.at_index(global_closest);
+            let disp = q - pos;
+            (disp, disp.norm())
+        };
+        
         // Compute the weight sum here. This will be available to the usesr of bg data.
         let mut weight_sum = T::zero();
-        for Sample { pos, .. } in samples.iter() {
+        for Sample { pos, .. } in local_samples_view.iter() {
             let w = kernel.with_closest_dist(closest_sample_dist).eval(q, pos);
             weight_sum += w;
         }
@@ -131,8 +132,9 @@ where
         // Initialize the background field struct.
         let mut bg = BackgroundField {
             query_pos: q,
-            samples,
-            bg_field_value: bg_value,
+            samples: local_samples_view,
+            bg_field_value: BackgroundFieldValue::new(bg_params.field_type, bg_value),
+            weighted: bg_params.weighted,
             weight_sum,
             kernel,
             closest_sample_dist,
@@ -162,12 +164,15 @@ where
     /// `b = r - |q - p|` is the distance from the closest point to the edge of the kernel
     /// boundary. Note that this weight is unnormalized.
     pub(crate) fn background_weight(&self) -> T {
-        match self.bg_field_value {
-            BackgroundFieldValue::None => T::zero(),
-            BackgroundFieldValue::ConstantUnweighted(_) =>
-                if self.kernel.radius() < self.closest_sample_dist { T::one() } else { T::zero() },
-            _ => 
-                self.kernel.f(self.kernel.radius() - self.closest_sample_dist),
+        if self.kernel.radius() < self.closest_sample_dist {
+            // Closest point is not inside the local neighbourhood.
+            T::one()
+        } else {
+            if self.weighted {
+                self.kernel.f(self.kernel.radius() - self.closest_sample_dist)
+            } else {
+                T::zero()
+            }
         }
     }
 
@@ -176,23 +181,22 @@ where
     /// If the given index is `None`, then the derivative is with respect to the query point.
     #[inline]
     pub(crate) fn background_weight_gradient(&self, index: Option<usize>) -> Vector3<T> {
-        match self.bg_field_value {
-            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) =>
-                return Vector3::zeros(),
-            _ => {}
+        if self.kernel.radius() < self.closest_sample_dist || !self.weighted {
+            return Vector3::zeros();
         }
 
         if let Some(index) = index {
             // Derivative with respect to the sample at the given index
-            if index == self.closest_sample_index {
-                self.closest_sample_disp
-                    * (self
-                        .kernel
-                        .df(self.kernel.radius() - self.closest_sample_dist)
-                        / self.closest_sample_dist)
-            } else {
-                Vector3::zeros()
+            if let ClosestIndex::Local(local_sample_index) = self.closest_sample_index {
+                if index == local_sample_index {
+                    return self.closest_sample_disp
+                        * (self
+                            .kernel
+                            .df(self.kernel.radius() - self.closest_sample_dist)
+                            / self.closest_sample_dist);
+                }
             }
+            Vector3::zeros()
         } else {
             // Derivative with respect to the query position
             -self.closest_sample_disp
@@ -208,15 +212,20 @@ where
     /// If the given index is `None`, then the derivative is with respect to the query point.
     #[inline]
     pub(crate) fn background_weight_hessian(&self, index: Option<usize>) -> Matrix3<T> {
-        match self.bg_field_value {
-            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) =>
-                return Matrix3::zeros(),
-            _ => {}
+        if self.kernel.radius() < self.closest_sample_dist || !self.weighted {
+            return Matrix3::zeros();
         }
 
         if let Some(index) = index {
-            if index != self.closest_sample_index {
-                return Matrix3::zeros();
+            match self.closest_sample_index {
+                ClosestIndex::Local(local_sample_index) =>
+                    if index != local_sample_index {
+                        // requested point is not the closest one, but it's in the local neighbourhood.
+                        return Matrix3::zeros();
+                    },
+                ClosestIndex::Global(_) =>
+                    // No local neighbourhood, this hessian is for background only.
+                    return Matrix3::zeros(),
             }
         }
 
@@ -244,15 +253,9 @@ where
     /// simple, but the caller must remember to multiply it by the `weight_sum_inv` to get the true
     /// background field contribution.
     pub(crate) fn compute_unnormalized_weighted_vector_field(&self) -> V {
-        // Unpack background data.
-        let BackgroundField { bg_field_value, .. } = *self;
-
-        let field_val = match bg_field_value {
-            BackgroundFieldValue::None => V::zero(),
+        let field_val = match self.bg_field_value {
             BackgroundFieldValue::Constant(val) => val,
-            BackgroundFieldValue::ConstantUnweighted(val) => val,
-            BackgroundFieldValue::ClosestSampleDistance => V::zero(),
-            BackgroundFieldValue::ClosestSampleNormalDisp => V::zero(),
+            BackgroundFieldValue::ClosestSampleSignedDistance => V::zero(), // This is non sensical for vector fields
         };
 
         field_val * self.background_weight()
@@ -265,15 +268,19 @@ where
     T: Real,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
+    /// Return `1.0` if the query point is outside and `-1.0` if it's inside.
+    fn orientation(&self) -> T {
+        let nml = self.samples.all_normals()[self.closest_sample_index.get()];
+        nml.dot(self.closest_sample_disp).signum()
+    }
+
     /// Return the background field value.
     pub(crate) fn field_value(&self) -> T {
         // Unpack background data.
         match self.bg_field_value {
-            BackgroundFieldValue::None => T::zero(),
             BackgroundFieldValue::Constant(val) => val,
-            BackgroundFieldValue::ConstantUnweighted(val) => val,
-            BackgroundFieldValue::ClosestSampleDistance
-            | BackgroundFieldValue::ClosestSampleNormalDisp => self.closest_sample_dist,
+            BackgroundFieldValue::ClosestSampleSignedDistance =>
+                self.closest_sample_dist * self.orientation(),
         }
     }
 
@@ -288,11 +295,9 @@ where
         } = *self;
 
         match bg_field_value {
-            BackgroundFieldValue::None
-            | BackgroundFieldValue::Constant(_)
-            | BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
-            BackgroundFieldValue::ClosestSampleDistance
-            | BackgroundFieldValue::ClosestSampleNormalDisp => disp * (T::one() / dist),
+            BackgroundFieldValue::Constant(_) => Vector3::zeros(),
+            BackgroundFieldValue::ClosestSampleSignedDistance =>
+                disp * (self.orientation() / dist),
         }
     }
 
@@ -307,12 +312,13 @@ where
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
     /// assume the background field is constant. This Jacobian is taken with respect to the
     /// sample points.
-    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
+    pub(crate) fn compute_local_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         // Unpack background data.
         let BackgroundField {
             query_pos: q,
             samples,
             bg_field_value,
+            weighted,
             kernel,
             closest_sample_dist: dist,
             closest_sample_index,
@@ -327,34 +333,45 @@ where
 
         // Gradient of the unnormalized weight evaluated at the distance to the
         // boundary of the neighbourhood.
-        let dwbdp = self.background_weight_gradient(Some(closest_sample_index));
+        let dwbdp = self.background_weight_gradient(Some(closest_sample_index.get()));
 
         let bg_grad = self.field_gradient();
 
+        let field = self.field_value();
+
         samples.into_iter().map(move |Sample { index, pos, .. }| {
+            if !weighted { 
+                return Vector3::zeros();
+            }
+
             // This term is valid for constant or dynamic background potentials.
-            let constant_term = |field: T| {
+            let mut grad = {
                 // Gradient of the unnormalized weight for the current sample point.
                 let dwdp = kernel.with_closest_dist(dist).grad(q, pos);
                 dwdp * (field * wb * weight_sum_inv)
             };
 
-            match bg_field_value {
-                BackgroundFieldValue::None => Vector3::zeros(),
-                BackgroundFieldValue::Constant(field) => constant_term(T::from(field).unwrap()),
-                BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
-                BackgroundFieldValue::ClosestSampleNormalDisp
-                | BackgroundFieldValue::ClosestSampleDistance => {
-                    let mut grad = constant_term(dist);
-
-                    if index == closest_sample_index {
-                        grad += dwbdp * (dist * weight_sum_inv * (T::one() - wb)) - bg_grad * wb
-                    }
-
-                    grad
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
+                if index == closest_sample_index.get() {
+                    grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))// - bg_grad * wb
                 }
             }
+
+            grad
         })
+    }
+
+    /// Outside the local region.
+    pub(crate) fn compute_global_jacobian(&self) -> Vector3<T> {
+        let weight_sum_inv = self.weight_sum_inv();
+
+        // The normalized weight evaluated at the distance to the boundary of the
+        // neighbourhood.
+        let wb = self.background_weight() * weight_sum_inv;
+
+        let bg_grad = self.field_gradient();
+
+        bg_grad * (-wb)
     }
 
     /// Compute background field derivative contribution.
@@ -367,7 +384,7 @@ where
             query_pos: q,
             samples,
             kernel,
-            bg_field_value,
+            weighted,
             closest_sample_dist: dist,
             ..
         } = *self;
@@ -392,11 +409,10 @@ where
         let bg_val = self.field_value();
 
         // The term without the background field derivative.
-        let constant_term = (dwb - dw_total * wb) * (bg_val * weight_sum_inv);
-
-        let grad = match bg_field_value {
-            BackgroundFieldValue::None | BackgroundFieldValue::ConstantUnweighted(_) => Vector3::zeros(),
-            _ => constant_term,
+        let grad = if weighted {
+            (dwb - dw_total * wb) * (bg_val * weight_sum_inv)
+        } else {
+            Vector3::zeros()
         };
 
         grad + self.field_gradient() * wb
@@ -426,7 +442,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.0,
                 },
-                background_field: BackgroundFieldType::FromInputUnweighted,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
             },
@@ -463,7 +479,7 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.0,
                 },
-                background_field: BackgroundFieldType::FromInput,
+                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
             },

@@ -455,20 +455,20 @@ mod tests {
 
                 let col = 3 * cur_pt_idx + i;
                 for row in 0..grid_pos.len() {
-                    if !relative_eq!(
-                        jac[col][row],
-                        potential[row].deriv(),
-                        max_relative = 1e-5,
-                        epsilon = 1e-10
-                    ) {
-                        println!(
-                            "({:?}, {:?}) => {:?} vs {:?}",
-                            row,
-                            col,
-                            jac[col][row],
-                            potential[row].deriv()
-                        );
-                    }
+                    //if !relative_eq!(
+                    //    jac[col][row],
+                    //    potential[row].deriv(),
+                    //    max_relative = 1e-5,
+                    //    epsilon = 1e-10
+                    //) {
+                    //    println!(
+                    //        "({:?}, {:?}) => {:?} vs {:?}",
+                    //        row,
+                    //        col,
+                    //        jac[col][row],
+                    //        potential[row].deriv()
+                    //    );
+                    //}
                     assert_relative_eq!(
                         jac[col][row],
                         potential[row].deriv(),

@@ -99,7 +99,38 @@ where
     V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
-    pub(crate) fn new(
+    /// Build a local background field that is valid only when `local_samples_view` is non empty.
+    /// This function returns the `InvalidBackgroundConstruction` error when `local_samples_view`
+    /// is empty. This means that there is not enough information in the input to actually build
+    /// the desired background field.
+    pub(crate) fn local(
+        q: Vector3<T>,
+        local_samples_view: SamplesView<'a, 'a, T>,
+        kernel: K,
+        bg_params: BackgroundFieldParams,
+        bg_value: Option<V>,
+    ) -> Result<Self, crate::Error> {
+        let closest_sample_index = {
+            let min_sample = local_samples_view.iter()
+                .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
+                .min_by(|(_, d0), (_, d1)| {
+                    d0.partial_cmp(d1)
+                        .expect("Detected NaN. Please report this bug.")
+                });
+            if let Some((index, _)) = min_sample {
+                ClosestIndex::Local(index)
+            } else {
+                return Err(crate::Error::InvalidBackgroundConstruction);
+            }
+        };
+
+        Ok(Self::new(q, local_samples_view, closest_sample_index, kernel, bg_params, bg_value))
+    }
+
+    /// Build a global background field that is valid even when `local_samples_view` is empty. This
+    /// is useful for visualization, but ultimately in simulation we wouldn't do this to avoid
+    /// unnecessary computations. This function doesn't fail.
+    pub(crate) fn global(
         q: Vector3<T>,
         local_samples_view: SamplesView<'a, 'a, T>,
         global_closest: usize,
@@ -116,8 +147,22 @@ where
                 ClosestIndex::Global(global_closest)
             };
 
+        Self::new(q, local_samples_view, closest_sample_index, kernel, bg_params, bg_value)
+    }
+
+    /// Internal constructor that is guaranteed to build a background field from the given
+    /// parameters where the give `closest_sample_index` is already determined.
+    fn new(
+        q: Vector3<T>,
+        local_samples_view: SamplesView<'a, 'a, T>,
+        closest_sample_index: ClosestIndex,
+        kernel: K,
+        bg_params: BackgroundFieldParams,
+        bg_value: Option<V>,
+    ) -> Self
+    {
         let (closest_sample_disp, closest_sample_dist) = {
-            let Sample { pos, .. } = local_samples_view.at_index(global_closest);
+            let Sample { pos, .. } = local_samples_view.at_index(closest_sample_index.get());
             let disp = q - pos;
             (disp, disp.norm())
         };
@@ -312,7 +357,7 @@ where
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
     /// assume the background field is constant. This Jacobian is taken with respect to the
     /// sample points.
-    pub(crate) fn compute_local_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
+    pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         // Unpack background data.
         let BackgroundField {
             query_pos: q,
@@ -335,17 +380,25 @@ where
         // boundary of the neighbourhood.
         let dwbdp = self.background_weight_gradient(Some(closest_sample_index.get()));
 
-        let bg_grad = self.field_gradient();
-
         let field = self.field_value();
 
+        let bg_grad = self.field_gradient();
+
         samples.into_iter().map(move |Sample { index, pos, .. }| {
+            let mut grad = Vector3::zeros();
+
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
+                if index == closest_sample_index.get() {
+                    grad -= bg_grad * wb;
+                }
+            }
+
             if !weighted { 
-                return Vector3::zeros();
+                return grad;
             }
 
             // This term is valid for constant or dynamic background potentials.
-            let mut grad = {
+            grad += {
                 // Gradient of the unnormalized weight for the current sample point.
                 let dwdp = kernel.with_closest_dist(dist).grad(q, pos);
                 dwdp * (field * wb * weight_sum_inv)
@@ -353,7 +406,7 @@ where
 
             if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
                 if index == closest_sample_index.get() {
-                    grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))// - bg_grad * wb
+                    grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
                 }
             }
 
@@ -361,18 +414,18 @@ where
         })
     }
 
-    /// Outside the local region.
-    pub(crate) fn compute_global_jacobian(&self) -> Vector3<T> {
-        let weight_sum_inv = self.weight_sum_inv();
+    ///// Outside the local region.
+    //pub(crate) fn compute_global_jacobian(&self) -> Vector3<T> {
+    //    let weight_sum_inv = self.weight_sum_inv();
 
-        // The normalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
-        let wb = self.background_weight() * weight_sum_inv;
+    //    // The normalized weight evaluated at the distance to the boundary of the
+    //    // neighbourhood.
+    //    let wb = self.background_weight() * weight_sum_inv;
 
-        let bg_grad = self.field_gradient();
+    //    let bg_grad = self.field_gradient();
 
-        bg_grad * (-wb)
-    }
+    //    bg_grad * (-wb)
+    //}
 
     /// Compute background field derivative contribution.
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we

@@ -92,6 +92,7 @@ pub enum Error {
     UnsupportedKernel,
     UnsupportedSampleType,
     MissingNeighbourData,
+    InvalidBackgroundConstruction,
     Failure,
     IO(geo::io::Error),
 }
@@ -161,7 +162,7 @@ mod tests {
             || false,
         )?;
 
-        //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+        //geo::io::save_polymesh(&grid, &PathBuf::from("out/octahedron_vertex_grid_expected.vtk")).unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =
@@ -198,6 +199,8 @@ mod tests {
             },
             || false,
         )?;
+
+        geo::io::save_polymesh(&grid, &PathBuf::from("out/octahedron_face_grid_expected.vtk")).unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =
@@ -270,13 +273,11 @@ mod tests {
         let surf = builder.build().expect("Failed to create implicit surface.");
 
         let mut potential = vec![0.0f64; grid.num_vertices()];
-        surf.potential(grid.vertex_positions(), &mut potential)
-            .expect("Failed to compute potential.");
-
-        //geo::io::save_polymesh(&grid, &PathBuf::from("mesh.vtk")).unwrap();
+        surf.potential(grid.vertex_positions(), &mut potential)?;
 
         let expected_grid: PolyMesh<f64> =
             load_polymesh(&PathBuf::from("assets/octahedron_vertex_grid_expected.vtk"))?;
+
         let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
 
         for (sol_pot, &exp_pot) in potential.into_iter().zip(expected_potential_iter) {
@@ -286,60 +287,135 @@ mod tests {
         Ok(())
     }
 
-    // TODO: Make this work. Need to generalize potential computation to type T: Real
-    /*
-    /// Test the derivatives of the dynamic API.
+    /// Test the surface jacobian of the implicit surface.
     #[test]
-    fn meshless_approximate_kernel_derivatives_test() -> Result<(), Error> {
+    fn surface_jacobian_test() -> Result<(), Error> {
         use autodiff::F;
+        use geo::math::Vector3;
 
-        let mut grid = make_grid(22, 22);
+        let grid = make_grid(22, 22);
+        let grid_pos: Vec<_> = grid.vertex_position_iter().map(|&p| Vector3(p).map(|x| F::cst(x)).into()).collect();
 
         let trimesh = utils::make_sample_octahedron();
-        let triangles: Vec<[usize;3]> = trimesh.face_iter().cloned().map(|x| x.into_inner()).collect();
+
+        let mut implicit_surface = ImplicitSurfaceBuilder::new()
+            .kernel(
+                KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+                }
+            )
+            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
+            .sample_type(SampleType::Face)
+            .trimesh(&trimesh)
+            .build::<F>().expect("Failed to create implicit surface.");
+
+        implicit_surface.cache_neighbours(&grid_pos);
+        let nnz = implicit_surface.num_surface_jacobian_entries()
+            .expect("Invalid neighbour cache.");
+        let mut vals = vec![F::cst(0.0); nnz];
+        implicit_surface.surface_jacobian_values(&grid_pos, &mut vals)?;
+
+        // This is the full jacobian (including all zeros).
+        let mut jac = vec![vec![0.0; grid_pos.len()]; implicit_surface.surface_vertex_positions().len()*3];
+
+        for (idx, &val) in implicit_surface.surface_jacobian_indices_iter()
+            .unwrap().zip(vals.iter()) {
+            jac[idx.1][idx.0] += val.value();
+        }
+
         for cur_pt_idx in 0..trimesh.num_vertices() { // for each vertex
             for i in 0..3 { // for each component
-
-                // Initialize autodiff variable to differentiate with respect to.
-                let points: Vec<[F;3]> = trimesh.vertex_position_iter().enumerate().map(|(vtx_idx, pos)| {
-                    let mut pos = [F::cst(pos[0]), F::cst(pos[1]), F::cst(pos[2])];
-                    if vtx_idx == cur_pt_idx {
-                        pos[i] = F::var(pos[i]);
-                    }
-                    pos
-                }).collect();
-
-                let implicit_surface = ImplicitSurfaceBuilder::new()
-                    .kernel(
-                        KernelType::Approximate {
-                            tolerance: 0.00001,
-                            radius: 1.5,
+                let verts: Vec<_> = implicit_surface.surface_vertex_positions().iter().cloned().enumerate()
+                    .map(|(j, mut v)| {
+                        v = v.map(|x| F::cst(x)); // reset variables to constants
+                        if j == cur_pt_idx {
+                            v[i] = F::var(v[i]); // set the current tested variable
                         }
-                    )
-                    .background_potential(true)
-                    .triangles(triangles)
-                    .points(points)
-                    .build();
+                        v.into()
+                    }).collect();
 
-                let potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
+                implicit_surface.update(verts.into_iter());
 
-                implicit_surface.potential(grid.vertex_positions(), &potential)?;
+                let mut potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
 
-                println!("{:?}", potential);
+                implicit_surface.potential(&grid_pos, &mut potential)?;
 
-                //let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
-                //let expected_grid: PolyMesh<f64> = load_polymesh(&PathBuf::from(
-                //    "assets/approximate_sphere_test_grid_expected.vtk",
-                //))?;
-                //let expected_potential_iter = expected_grid.attrib_iter::<f32, VertexIndex>("potential")?;
-
-                //for (sol_pot, exp_pot) in solution_potential_iter.zip(expected_potential_iter) {
-                //    assert_relative_eq!(sol_pot, exp_pot, max_relative = 1e-6);
-                //}
+                let col = 3 * cur_pt_idx + i;
+                for row in 0..grid_pos.len(){
+                    assert_relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                }
             }
         }
 
         Ok(())
     }
-    */
+
+    /// Test the query jacobian of the implicit surface.
+    #[test]
+    fn query_jacobian_test() -> Result<(), Error> {
+        use autodiff::F;
+        use geo::math::Vector3;
+
+        let mut grid = make_grid(22, 22);
+        let mut grid_pos: Vec<_> = grid.vertex_position_iter().map(|&p| Vector3(p).map(|x| F::cst(x)).into()).collect();
+
+        let trimesh = utils::make_sample_octahedron();
+
+        let implicit_surface = ImplicitSurfaceBuilder::new()
+            .kernel(
+                KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+                }
+            )
+            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
+            .sample_type(SampleType::Face)
+            .trimesh(&trimesh)
+            .build::<F>().expect("Failed to create implicit surface.");
+
+        implicit_surface.cache_neighbours(&grid_pos);
+        let nnz = implicit_surface.num_query_jacobian_entries()?;
+        let mut vals = vec![F::cst(0.0); nnz];
+        implicit_surface.query_jacobian_values(&grid_pos, &mut vals)?;
+
+        // This is the full jacobian (including all zeros).
+        let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len()*3];
+        let mut flat_jac = vec![0.0; grid_pos.len()*3];
+
+        for (idx, &val) in implicit_surface.query_jacobian_indices_iter()?.zip(vals.iter()) {
+            jac[idx.1][idx.0] += val.value();
+            flat_jac[idx.1] = val.value();
+        }
+
+        grid.set_attrib_data::<[f64;3], VertexIndex>("gradient", reinterpret::reinterpret_slice(&flat_jac))?;
+
+        let mut exp_flat_jac = vec![0.0; grid_pos.len()*3];
+
+        for cur_pt_idx in 0..grid_pos.len() { // for each vertex
+            for i in 0..3 { // for each component
+                grid_pos[cur_pt_idx][i] = F::var(grid_pos[cur_pt_idx][i]);
+
+                let mut potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
+                implicit_surface.potential(&grid_pos, &mut potential)?;
+
+                let col = 3 * cur_pt_idx + i;
+                for row in 0..grid_pos.len() {
+                    if !relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10) {
+                        println!("({:?}, {:?}) => {:?} vs {:?}", row, col, jac[col][row], potential[row].deriv());
+
+                    }
+                    assert_relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                }
+                exp_flat_jac[col] = potential[cur_pt_idx].deriv();
+                grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
+            }
+        }
+       
+        grid.set_attrib_data::<[f64;3], VertexIndex>("exp_gradient", reinterpret::reinterpret_slice(&exp_flat_jac))?;
+
+        geo::io::save_polymesh(&grid, &PathBuf::from("out/gradient.vtk"))?;
+
+        Ok(())
+    }
 }

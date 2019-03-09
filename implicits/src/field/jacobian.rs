@@ -180,10 +180,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Vertex => {
                 let neigh_points = self.extended_neighbourhood_borrow()?;
                 // For each row (query point)
-                let vtx_jac = zip!(
-                        query_points.iter(),
-                        neigh_points.iter()
-                    )
+                let vtx_jac = zip!(query_points.iter(), neigh_points.iter())
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -206,10 +203,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
             SampleType::Face => {
                 let neigh_points = self.trivial_neighbourhood_borrow()?;
-                let face_jac = zip!(
-                        query_points.iter(),
-                        neigh_points.iter()
-                    )
+                let face_jac = zip!(query_points.iter(), neigh_points.iter())
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -313,21 +307,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     pub fn num_query_jacobian_entries(&self) -> Result<usize, Error> {
-        self.num_cached_neighbourhoods().map(|n| 3*n)
+        self.num_cached_neighbourhoods().map(|n| 3 * n)
     }
 
     pub fn query_jacobian_indices_iter<'a>(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        let indices: Result<Vec<_>, Error> =
-            self.trivial_neighbourhood_borrow().map(move |s| s.into_iter()
-           .enumerate()
-           .filter(move |(_, nbrs)| !nbrs.is_empty())
-           .flat_map(move |(i, _)| {
-               (0..3).map(move |j| {
-                   (i, 3*i + j)
-               })
-           }).collect());
+        let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
+            s.into_iter()
+                .enumerate()
+                .filter(move |(_, nbrs)| !nbrs.is_empty())
+                .flat_map(move |(i, _)| (0..3).map(move |j| (i, 3 * i + j)))
+                .collect()
+        });
         indices.map(|i| i.into_iter())
     }
 
@@ -337,7 +329,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn query_jacobian(
         &self,
         query_points: &[[T; 3]],
-        values: &mut [[T;3]],
+        values: &mut [[T; 3]],
     ) -> Result<(), Error> {
         match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
@@ -376,10 +368,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         // For each row (query point)
-        zip!(
-                query_points.iter(),
-                neigh_points.iter()
-            )
+        zip!(query_points.iter(), neigh_points.iter())
             .filter(|(_, nbrs)| !nbrs.is_empty())
             .zip(value_vecs.iter_mut())
             .for_each(move |((q, nbr_points), vec)| {
@@ -853,7 +842,6 @@ where
 //        .expect("Failed to find closest sample.").index
 //}
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -895,7 +883,8 @@ mod tests {
             &surf_topo,
             &dual_topo,
             bg_field_params,
-        ).collect();
+        )
+        .collect();
 
         // Test the accuracy of each component of the jacobian against an autodiff version of the
         // derivative.
@@ -934,8 +923,11 @@ mod tests {
             let radius = 0.1 * (i as f64);
             let run_test = |field_type, weighted| {
                 one_point_potential_derivative_tester(
-                    radius, 
-                    BackgroundFieldParams { field_type, weighted }
+                    radius,
+                    BackgroundFieldParams {
+                        field_type,
+                        weighted,
+                    },
                 );
             };
             run_test(BackgroundFieldType::Zero, false);
@@ -1040,7 +1032,10 @@ mod tests {
             let radius = 0.1 * (i as f64);
             let mut run_test = |field_type, weighted, sample_type| {
                 hard_potential_derivative(
-                    BackgroundFieldParams { field_type, weighted },
+                    BackgroundFieldParams {
+                        field_type,
+                        weighted,
+                    },
                     sample_type,
                     radius,
                     &mut perturb,
@@ -1051,7 +1046,11 @@ mod tests {
             run_test(BackgroundFieldType::Zero, true, SampleType::Vertex);
             run_test(BackgroundFieldType::FromInput, false, SampleType::Vertex);
             run_test(BackgroundFieldType::FromInput, true, SampleType::Vertex);
-            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Vertex);
+            run_test(
+                BackgroundFieldType::DistanceBased,
+                false,
+                SampleType::Vertex,
+            );
             run_test(BackgroundFieldType::DistanceBased, true, SampleType::Vertex);
 
             run_test(BackgroundFieldType::Zero, false, SampleType::Face);
@@ -1161,9 +1160,13 @@ mod tests {
             q,
             view,
             kernel,
-            BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
-            None
-        ).unwrap();
+            BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            },
+            None,
+        )
+        .unwrap();
 
         // Compute manual Jacobian. This is the function being tested for correctness.
         let jac: Vec<_> = bg.compute_jacobian().collect();
@@ -1187,9 +1190,13 @@ mod tests {
                     q,
                     view,
                     kernel,
-                    BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                    BackgroundFieldParams {
+                        field_type: BackgroundFieldType::DistanceBased,
+                        weighted: true,
+                    },
                     Some(F::cst(0.0)),
-                ).unwrap();
+                )
+                .unwrap();
 
                 let p = ad_bg.compute_unnormalized_weighted_scalar_field() * ad_bg.weight_sum_inv();
 
@@ -1310,7 +1317,10 @@ mod tests {
 
             let mut run_test = |field_type, weighted, sample_type| {
                 surface_jacobian(
-                    BackgroundFieldParams { field_type, weighted },
+                    BackgroundFieldParams {
+                        field_type,
+                        weighted,
+                    },
                     sample_type,
                     radius,
                     &mut perturb,
@@ -1321,7 +1331,11 @@ mod tests {
             run_test(BackgroundFieldType::Zero, true, SampleType::Vertex);
             run_test(BackgroundFieldType::FromInput, false, SampleType::Vertex);
             run_test(BackgroundFieldType::FromInput, true, SampleType::Vertex);
-            run_test(BackgroundFieldType::DistanceBased, false, SampleType::Vertex);
+            run_test(
+                BackgroundFieldType::DistanceBased,
+                false,
+                SampleType::Vertex,
+            );
             run_test(BackgroundFieldType::DistanceBased, true, SampleType::Vertex);
 
             run_test(BackgroundFieldType::Zero, false, SampleType::Face);
@@ -1392,12 +1406,54 @@ mod tests {
         // Run for some number of perturbations
         for i in 0..50 {
             let radius = 0.1 * (i as f64);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false }, radius, &mut perturb);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: true }, radius, &mut perturb);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false }, radius, &mut perturb);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true }, radius, &mut perturb);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false }, radius, &mut perturb);
-            query_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true }, radius, &mut perturb);
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::Zero,
+                    weighted: false,
+                },
+                radius,
+                &mut perturb,
+            );
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::Zero,
+                    weighted: true,
+                },
+                radius,
+                &mut perturb,
+            );
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: false,
+                },
+                radius,
+                &mut perturb,
+            );
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: true,
+                },
+                radius,
+                &mut perturb,
+            );
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+                radius,
+                &mut perturb,
+            );
+            query_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
+                radius,
+                &mut perturb,
+            );
         }
     }
 
@@ -1470,10 +1526,38 @@ mod tests {
         // Run for some number of perturbations
         for i in 1..50 {
             let radius = 0.1 * (i as f64);
-            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false }, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: true }, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false }, radius, &mut perturb);
-            contact_jacobian(BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true }, radius, &mut perturb);
+            contact_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::Zero,
+                    weighted: false,
+                },
+                radius,
+                &mut perturb,
+            );
+            contact_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::Zero,
+                    weighted: true,
+                },
+                radius,
+                &mut perturb,
+            );
+            contact_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: false,
+                },
+                radius,
+                &mut perturb,
+            );
+            contact_jacobian(
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: true,
+                },
+                radius,
+                &mut perturb,
+            );
         }
     }
 }

@@ -59,7 +59,7 @@ impl ClosestIndex {
     /// Get the index ignoring whether it is local or global.
     pub fn get(self) -> usize {
         match self {
-            ClosestIndex::Local(index) | ClosestIndex::Global(index) => index
+            ClosestIndex::Local(index) | ClosestIndex::Global(index) => index,
         }
     }
 }
@@ -111,7 +111,8 @@ where
         bg_value: Option<V>,
     ) -> Result<Self, crate::Error> {
         let closest_sample_index = {
-            let min_sample = local_samples_view.iter()
+            let min_sample = local_samples_view
+                .iter()
                 .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
                 .min_by(|(_, d0), (_, d1)| {
                     d0.partial_cmp(d1)
@@ -124,7 +125,14 @@ where
             }
         };
 
-        Ok(Self::new(q, local_samples_view, closest_sample_index, kernel, bg_params, bg_value))
+        Ok(Self::new(
+            q,
+            local_samples_view,
+            closest_sample_index,
+            kernel,
+            bg_params,
+            bg_value,
+        ))
     }
 
     /// Build a global background field that is valid even when `local_samples_view` is empty. This
@@ -138,16 +146,24 @@ where
         bg_params: BackgroundFieldParams,
         bg_value: Option<V>,
     ) -> Self {
-
         // Determine if the closest sample is in our neighbourhood of samples.
-        let closest_sample_index = 
-            if let Some(sample) = local_samples_view.iter().find(|&sample| sample.index == global_closest) {
-                ClosestIndex::Local(sample.index)
-            } else {
-                ClosestIndex::Global(global_closest)
-            };
+        let closest_sample_index = if let Some(sample) = local_samples_view
+            .iter()
+            .find(|&sample| sample.index == global_closest)
+        {
+            ClosestIndex::Local(sample.index)
+        } else {
+            ClosestIndex::Global(global_closest)
+        };
 
-        Self::new(q, local_samples_view, closest_sample_index, kernel, bg_params, bg_value)
+        Self::new(
+            q,
+            local_samples_view,
+            closest_sample_index,
+            kernel,
+            bg_params,
+            bg_value,
+        )
     }
 
     /// Internal constructor that is guaranteed to build a background field from the given
@@ -159,14 +175,13 @@ where
         kernel: K,
         bg_params: BackgroundFieldParams,
         bg_value: Option<V>,
-    ) -> Self
-    {
+    ) -> Self {
         let (closest_sample_disp, closest_sample_dist) = {
             let Sample { pos, .. } = local_samples_view.at_index(closest_sample_index.get());
             let disp = q - pos;
             (disp, disp.norm())
         };
-        
+
         // Compute the weight sum here. This will be available to the usesr of bg data.
         let mut weight_sum = T::zero();
         for Sample { pos, .. } in local_samples_view.iter() {
@@ -214,7 +229,8 @@ where
             T::one()
         } else {
             if self.weighted {
-                self.kernel.f(self.kernel.radius() - self.closest_sample_dist)
+                self.kernel
+                    .f(self.kernel.radius() - self.closest_sample_dist)
             } else {
                 T::zero()
             }
@@ -263,14 +279,17 @@ where
 
         if let Some(index) = index {
             match self.closest_sample_index {
-                ClosestIndex::Local(local_sample_index) =>
+                ClosestIndex::Local(local_sample_index) => {
                     if index != local_sample_index {
                         // requested point is not the closest one, but it's in the local neighbourhood.
                         return Matrix3::zeros();
-                    },
+                    }
+                }
                 ClosestIndex::Global(_) =>
-                    // No local neighbourhood, this hessian is for background only.
-                    return Matrix3::zeros(),
+                // No local neighbourhood, this hessian is for background only.
+                {
+                    return Matrix3::zeros();
+                }
             }
         }
 
@@ -324,8 +343,9 @@ where
         // Unpack background data.
         match self.bg_field_value {
             BackgroundFieldValue::Constant(val) => val,
-            BackgroundFieldValue::ClosestSampleSignedDistance =>
-                self.closest_sample_dist * self.orientation(),
+            BackgroundFieldValue::ClosestSampleSignedDistance => {
+                self.closest_sample_dist * self.orientation()
+            }
         }
     }
 
@@ -341,8 +361,7 @@ where
 
         match bg_field_value {
             BackgroundFieldValue::Constant(_) => Vector3::zeros(),
-            BackgroundFieldValue::ClosestSampleSignedDistance =>
-                disp * (self.orientation() / dist),
+            BackgroundFieldValue::ClosestSampleSignedDistance => disp * (self.orientation() / dist),
         }
     }
 
@@ -393,7 +412,7 @@ where
                 }
             }
 
-            if !weighted { 
+            if !weighted {
                 return grad;
             }
 
@@ -475,11 +494,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{make_grid, surface_from_polymesh, Error, KernelType, Params, SampleType};
     use geo::mesh::VertexPositions;
-    use crate::{surface_from_polymesh, make_grid, Error, Params, KernelType, SampleType};
 
     #[test]
-    fn constant_unweighted_bg() -> Result<(), Error>{
+    fn constant_unweighted_bg() -> Result<(), Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
@@ -495,7 +514,10 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.0,
                 },
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: false },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: false,
+                },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
             },
@@ -516,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn constant_bg() -> Result<(), Error>{
+    fn constant_bg() -> Result<(), Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = geo::mesh::PolyMesh::from(octahedron_trimesh);
@@ -532,7 +554,10 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.0,
                 },
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::FromInput, weighted: true },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::FromInput,
+                    weighted: true,
+                },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
             },

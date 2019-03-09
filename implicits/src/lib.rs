@@ -32,7 +32,10 @@ impl Default for Params {
                 tolerance: 0.00001,
                 radius: 1.0,
             },
-            background_field: BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false },
+            background_field: BackgroundFieldParams {
+                field_type: BackgroundFieldType::Zero,
+                weighted: false,
+            },
             sample_type: SampleType::Face,
             max_step: 0.0,
         }
@@ -155,7 +158,10 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -193,14 +199,21 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
                 sample_type: SampleType::Face,
                 ..Default::default()
             },
             || false,
         )?;
 
-        geo::io::save_polymesh(&grid, &PathBuf::from("out/octahedron_face_grid_expected.vtk")).unwrap();
+        geo::io::save_polymesh(
+            &grid,
+            &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
+        )
+        .unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =
@@ -228,7 +241,10 @@ mod tests {
             &mut sphere,
             Params {
                 kernel: KernelType::Hrbf,
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },
@@ -266,7 +282,10 @@ mod tests {
                 tolerance: 1e-5,
                 radius: 1.5,
             })
-            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            })
             .sample_type(SampleType::Vertex)
             .trimesh(&trimesh);
 
@@ -294,46 +313,63 @@ mod tests {
         use geo::math::Vector3;
 
         let grid = make_grid(22, 22);
-        let grid_pos: Vec<_> = grid.vertex_position_iter().map(|&p| Vector3(p).map(|x| F::cst(x)).into()).collect();
+        let grid_pos: Vec<_> = grid
+            .vertex_position_iter()
+            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .collect();
 
         let trimesh = utils::make_sample_octahedron();
 
         let mut implicit_surface = ImplicitSurfaceBuilder::new()
-            .kernel(
-                KernelType::Approximate {
-                    tolerance: 0.00001,
-                    radius: 1.0,
-                }
-            )
-            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
+            .kernel(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius: 1.0,
+            })
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build::<F>().expect("Failed to create implicit surface.");
+            .build::<F>()
+            .expect("Failed to create implicit surface.");
 
         implicit_surface.cache_neighbours(&grid_pos);
-        let nnz = implicit_surface.num_surface_jacobian_entries()
+        let nnz = implicit_surface
+            .num_surface_jacobian_entries()
             .expect("Invalid neighbour cache.");
         let mut vals = vec![F::cst(0.0); nnz];
         implicit_surface.surface_jacobian_values(&grid_pos, &mut vals)?;
 
         // This is the full jacobian (including all zeros).
-        let mut jac = vec![vec![0.0; grid_pos.len()]; implicit_surface.surface_vertex_positions().len()*3];
+        let mut jac =
+            vec![vec![0.0; grid_pos.len()]; implicit_surface.surface_vertex_positions().len() * 3];
 
-        for (idx, &val) in implicit_surface.surface_jacobian_indices_iter()
-            .unwrap().zip(vals.iter()) {
+        for (idx, &val) in implicit_surface
+            .surface_jacobian_indices_iter()
+            .unwrap()
+            .zip(vals.iter())
+        {
             jac[idx.1][idx.0] += val.value();
         }
 
-        for cur_pt_idx in 0..trimesh.num_vertices() { // for each vertex
-            for i in 0..3 { // for each component
-                let verts: Vec<_> = implicit_surface.surface_vertex_positions().iter().cloned().enumerate()
+        for cur_pt_idx in 0..trimesh.num_vertices() {
+            // for each vertex
+            for i in 0..3 {
+                // for each component
+                let verts: Vec<_> = implicit_surface
+                    .surface_vertex_positions()
+                    .iter()
+                    .cloned()
+                    .enumerate()
                     .map(|(j, mut v)| {
                         v = v.map(|x| F::cst(x)); // reset variables to constants
                         if j == cur_pt_idx {
                             v[i] = F::var(v[i]); // set the current tested variable
                         }
                         v.into()
-                    }).collect();
+                    })
+                    .collect();
 
                 implicit_surface.update(verts.into_iter());
 
@@ -342,8 +378,13 @@ mod tests {
                 implicit_surface.potential(&grid_pos, &mut potential)?;
 
                 let col = 3 * cur_pt_idx + i;
-                for row in 0..grid_pos.len(){
-                    assert_relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                for row in 0..grid_pos.len() {
+                    assert_relative_eq!(
+                        jac[col][row],
+                        potential[row].deriv(),
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    );
                 }
             }
         }
@@ -358,21 +399,26 @@ mod tests {
         use geo::math::Vector3;
 
         let mut grid = make_grid(22, 22);
-        let mut grid_pos: Vec<_> = grid.vertex_position_iter().map(|&p| Vector3(p).map(|x| F::cst(x)).into()).collect();
+        let mut grid_pos: Vec<_> = grid
+            .vertex_position_iter()
+            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .collect();
 
         let trimesh = utils::make_sample_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
-            .kernel(
-                KernelType::Approximate {
-                    tolerance: 0.00001,
-                    radius: 1.0,
-                }
-            )
-            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true })
+            .kernel(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius: 1.0,
+            })
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build::<F>().expect("Failed to create implicit surface.");
+            .build::<F>()
+            .expect("Failed to create implicit surface.");
 
         implicit_surface.cache_neighbours(&grid_pos);
         let nnz = implicit_surface.num_query_jacobian_entries()?;
@@ -380,20 +426,28 @@ mod tests {
         implicit_surface.query_jacobian_values(&grid_pos, &mut vals)?;
 
         // This is the full jacobian (including all zeros).
-        let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len()*3];
-        let mut flat_jac = vec![0.0; grid_pos.len()*3];
+        let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len() * 3];
+        let mut flat_jac = vec![0.0; grid_pos.len() * 3];
 
-        for (idx, &val) in implicit_surface.query_jacobian_indices_iter()?.zip(vals.iter()) {
+        for (idx, &val) in implicit_surface
+            .query_jacobian_indices_iter()?
+            .zip(vals.iter())
+        {
             jac[idx.1][idx.0] += val.value();
             flat_jac[idx.1] = val.value();
         }
 
-        grid.set_attrib_data::<[f64;3], VertexIndex>("gradient", reinterpret::reinterpret_slice(&flat_jac))?;
+        grid.set_attrib_data::<[f64; 3], VertexIndex>(
+            "gradient",
+            reinterpret::reinterpret_slice(&flat_jac),
+        )?;
 
-        let mut exp_flat_jac = vec![0.0; grid_pos.len()*3];
+        let mut exp_flat_jac = vec![0.0; grid_pos.len() * 3];
 
-        for cur_pt_idx in 0..grid_pos.len() { // for each vertex
-            for i in 0..3 { // for each component
+        for cur_pt_idx in 0..grid_pos.len() {
+            // for each vertex
+            for i in 0..3 {
+                // for each component
                 grid_pos[cur_pt_idx][i] = F::var(grid_pos[cur_pt_idx][i]);
 
                 let mut potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
@@ -401,18 +455,36 @@ mod tests {
 
                 let col = 3 * cur_pt_idx + i;
                 for row in 0..grid_pos.len() {
-                    if !relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10) {
-                        println!("({:?}, {:?}) => {:?} vs {:?}", row, col, jac[col][row], potential[row].deriv());
-
+                    if !relative_eq!(
+                        jac[col][row],
+                        potential[row].deriv(),
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    ) {
+                        println!(
+                            "({:?}, {:?}) => {:?} vs {:?}",
+                            row,
+                            col,
+                            jac[col][row],
+                            potential[row].deriv()
+                        );
                     }
-                    assert_relative_eq!(jac[col][row], potential[row].deriv(), max_relative = 1e-5, epsilon = 1e-10);
+                    assert_relative_eq!(
+                        jac[col][row],
+                        potential[row].deriv(),
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    );
                 }
                 exp_flat_jac[col] = potential[cur_pt_idx].deriv();
                 grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
             }
         }
-       
-        grid.set_attrib_data::<[f64;3], VertexIndex>("exp_gradient", reinterpret::reinterpret_slice(&exp_flat_jac))?;
+
+        grid.set_attrib_data::<[f64; 3], VertexIndex>(
+            "exp_gradient",
+            reinterpret::reinterpret_slice(&exp_flat_jac),
+        )?;
 
         geo::io::save_polymesh(&grid, &PathBuf::from("out/gradient.vtk"))?;
 

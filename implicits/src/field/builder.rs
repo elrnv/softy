@@ -35,7 +35,10 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                 radius: 1.0,
                 tolerance: 1e-5,
             },
-            bg_field: BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false },
+            bg_field: BackgroundFieldParams {
+                field_type: BackgroundFieldType::Zero,
+                weighted: false,
+            },
             mesh: SamplesMesh::None,
             max_step: 0.0, // This is a sane default for static implicit surfaces.
             sample_type: SampleType::Vertex,

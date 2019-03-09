@@ -25,8 +25,8 @@ pub use self::builder::*;
 pub use self::samples::*;
 pub use self::spatial_tree::*;
 
-pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::background_field::*;
+pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::neighbour_cache::Neighbourhood;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -200,7 +200,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         num_updated
     }
 
-    pub fn nearest_neighbour_lookup(&self, q: [T;3]) -> Option<&Sample<T>> {
+    pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
         let q_pos = Vector3(q).cast::<f64>().unwrap().into();
         self.spatial_tree.nearest_neighbor(&q_pos)
     }
@@ -236,7 +236,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 cache.compute_neighbourhoods(
                     query_points,
                     neigh,
-                    |q| spatial_tree.nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into()).expect("Empty spatial tree"),
+                    |q| {
+                        spatial_tree
+                            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                            .expect("Empty spatial tree")
+                    },
                     surface_topo,
                     dual_topo,
                     sample_type,
@@ -249,7 +253,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 cache.compute_neighbourhoods(
                     query_points,
                     neigh,
-                    |q| spatial_tree.nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into()).expect("Empty spatial tree"),
+                    |q| {
+                        spatial_tree
+                            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                            .expect("Empty spatial tree")
+                    },
                     surface_topo,
                     dual_topo,
                     sample_type,
@@ -313,15 +321,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// The number of query points in the cache (regardless if their neighbourhood is empty).
     /// This function returns `None` if the cache is invalid.
     pub fn num_cached_query_points(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_borrow().map(|neighbourhoods| neighbourhoods.len())
+        self.trivial_neighbourhood_borrow()
+            .map(|neighbourhoods| neighbourhoods.len())
     }
 
     /// The number of query points with non-empty neighbourhoods in the cache.
     /// This function returns `None` if the cache is invalid.
     pub fn num_cached_neighbourhoods(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_borrow().map(|neighbourhoods| {
-            neighbourhoods.iter().filter(|x| !x.is_empty()).count()
-        })
+        self.trivial_neighbourhood_borrow()
+            .map(|neighbourhoods| neighbourhoods.iter().filter(|x| !x.is_empty()).count())
     }
 
     /// Return a vector over query points, which have non-empty neighbourhoods.
@@ -348,12 +356,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Face => self.trivial_neighbourhood_borrow(),
         };
 
-        set.map(|neighbourhoods| {
-            neighbourhoods
-                .iter()
-                .map(|x| x.len())
-                .collect()
-        })
+        set.map(|neighbourhoods| neighbourhoods.iter().map(|x| x.len()).collect())
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -564,13 +567,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             return;
         }
 
-        let bg = BackgroundField::local(
-            q,
-            samples,
-            kernel,
-            bg_potential,
-            Some(*potential),
-        ).unwrap();
+        let bg =
+            BackgroundField::local(q, samples, kernel, bg_potential, Some(*potential)).unwrap();
 
         let weight_sum_inv = bg.weight_sum_inv();
 
@@ -704,13 +702,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             return;
         }
 
-        let bg = BackgroundField::local(
-            q,
-            samples,
-            kernel,
-            bg_potential,
-            Some(Vector3(*vector)),
-        ).unwrap();
+        let bg = BackgroundField::local(q, samples, kernel, bg_potential, Some(Vector3(*vector)))
+            .unwrap();
 
         // Generate a background potential field for every query point. This will be mixed
         // in with the computed potentials for local methods.
@@ -1264,7 +1257,10 @@ mod tests {
                     tolerance: 0.00001,
                     radius: 1.5,
                 },
-                background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: true },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
             },

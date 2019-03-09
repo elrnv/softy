@@ -67,7 +67,7 @@ impl Neighbourhood {
         &mut self,
         query_points: &[[T; 3]],
         closest: C,
-    ) -> bool 
+    ) -> bool
     where
         T: Real + Send + Sync + 'a,
         C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
@@ -88,7 +88,8 @@ impl Neighbourhood {
                     let changed = *sample_idx != closest_index;
                     *sample_idx = closest_index;
                     changed
-                }).reduce(|| false, |a, b| a || b);
+                })
+                .reduce(|| false, |a, b| a || b);
 
             set.valid = true;
         }
@@ -152,7 +153,8 @@ impl Neighbourhood {
                     // simulation, this should affect a negligible number of frames.
                     // TODO: find percentage of false positives
                     init_hash != Self::compute_hash(&pts)
-                }).reduce(|| false, |a, b| a || b);
+                })
+                .reduce(|| false, |a, b| a || b);
 
             cache.valid = true;
         }
@@ -222,7 +224,8 @@ impl Neighbourhood {
 
                     // TODO: check for rate of false positives.
                     init_hash != Self::compute_hash(&ext_pts)
-                }).reduce(|| false, |a, b| a || b);
+                })
+                .reduce(|| false, |a, b| a || b);
 
             extended_set.valid = true;
         }
@@ -247,10 +250,11 @@ impl Neighbourhood {
         N: Fn([T; 3]) -> I + Sync + Send,
         C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
     {
-        self.compute_closest_set(query_points, closest) |
-        self.compute_trivial_set(query_points, neigh) |
-        self.compute_extended_set(query_points, tri_topo, dual_topo, sample_type)
-            .unwrap()
+        self.compute_closest_set(query_points, closest)
+            | self.compute_trivial_set(query_points, neigh)
+            | self
+                .compute_extended_set(query_points, tri_topo, dual_topo, sample_type)
+                .unwrap()
     }
 
     pub(crate) fn extended_set(&self) -> Option<&[Vec<usize>]> {

@@ -64,9 +64,9 @@ impl ClosestIndex {
     }
 }
 
-/// This struct represents the data needed to compute a background field at a local query
-/// point. This struct also conviently computes useful information about the neighbourhood (like
-/// closest distance to a sample point) that can be reused elsewhere.
+/// This `struct` represents the data needed to compute a background field at a local query
+/// point. This `struct` also conveniently computes useful information about the neighbourhood
+/// (like closest distance to a sample point) that can be reused elsewhere.
 #[derive(Clone, Debug)]
 pub(crate) struct BackgroundField<'a, T, V, K>
 where
@@ -326,6 +326,26 @@ where
     }
 }
 
+/// Free function to compute the indices corresponding to the [`hessian_block`] function.
+pub(crate) fn hessian_block_indices<'a>(
+    weighted: bool,
+    nbrs: &'a [usize],
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    let diag_iter = nbrs.into_iter().map(move |&i| (i, i));
+
+    let off_diag_iter = if weighted {
+        Some(nbrs.into_iter().flat_map(move |&i| {
+            nbrs.into_iter()
+                .filter(move |&&j| i < j)
+                .map(move |&j| (j, i))
+        }))
+    } else {
+        None
+    };
+
+    diag_iter.chain(off_diag_iter.into_iter().flatten())
+}
+
 // The following functions are value for scalar fields of type T only.
 impl<'a, T, K> BackgroundField<'a, T, T, K>
 where
@@ -349,7 +369,7 @@ where
         }
     }
 
-    /// Return the background field gradient.
+    /// Return the background field gradient. With respect to the query position.
     pub(crate) fn field_gradient(&self) -> Vector3<T> {
         // Unpack background data.
         let BackgroundField {
@@ -362,6 +382,28 @@ where
         match bg_field_value {
             BackgroundFieldValue::Constant(_) => Vector3::zeros(),
             BackgroundFieldValue::ClosestSampleSignedDistance => disp * (self.orientation() / dist),
+        }
+    }
+
+    /// Return the background field Hessian. Note that the Hessian is the same regardless of
+    /// whether the independent variable considered is sample point position or query point
+    /// position.
+    pub(crate) fn field_hessian(&self) -> Matrix3<T> {
+        // Unpack background data.
+        let BackgroundField {
+            bg_field_value,
+            closest_sample_dist: dist,
+            closest_sample_disp: disp,
+            ..
+        } = *self;
+
+        match bg_field_value {
+            BackgroundFieldValue::Constant(_) => Matrix3::zeros(),
+            BackgroundFieldValue::ClosestSampleSignedDistance => {
+                let dist_inv = self.orientation() / dist;
+                let dir = disp * dist_inv;
+                Matrix3::diag([dist_inv; 3]) - dir * (dir.transpose() * dist_inv)
+            }
         }
     }
 
@@ -489,11 +531,111 @@ where
 
         grad + self.field_gradient() * wb
     }
+
+    /// Compute background field second derivative contribution.
+    /// Compute Hessian if the closest point is in the neighbourhood. Otherwise we
+    /// assume the background field is constant. This Hessian is taken with respect to the
+    /// sample points.
+    pub(crate) fn hessian_blocks(&self) -> impl Iterator<Item = Matrix3<T>> + 'a {
+        // Unpack background data.
+        let BackgroundField {
+            query_pos: q,
+            samples,
+            bg_field_value,
+            weighted,
+            kernel,
+            closest_sample_dist: dist,
+            closest_sample_index,
+            ..
+        } = *self;
+
+        let weight_sum_inv = self.weight_sum_inv();
+
+        let wb = self.background_weight();
+        let dwb = self.background_weight_gradient(Some(closest_sample_index.get()));
+        let ddwb = self.background_weight_hessian(Some(closest_sample_index.get()));
+        let f = self.field_value();
+        let df = -self.field_gradient(); // negative since it's wrt sample points.
+        let ddf = self.field_hessian();
+
+        use crate::hessian::sym_outer;
+
+        // Diagonal entries.
+        let diag_iter = samples.into_iter().map(move |Sample { index, pos, .. }| {
+            let mut hess = Matrix3::zeros();
+
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
+                if index == closest_sample_index.get() {
+                    hess += ddf * wb;
+                }
+            }
+
+            if !weighted {
+                return hess * weight_sum_inv;
+            }
+
+            let dw = kernel.with_closest_dist(dist).grad(q, pos);
+            let _2 = T::from(2.0).unwrap();
+
+            hess += {
+                let ddw = kernel.with_closest_dist(dist).hess(q, pos);
+                (dw * (dw.transpose() * (_2 * weight_sum_inv)) - ddw) * (f * wb * weight_sum_inv)
+            };
+
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
+                if index == closest_sample_index.get() {
+                    let factor = T::one() - wb * weight_sum_inv;
+                    hess += ddwb * (factor * f)
+                        - dwb * dwb.transpose() * (factor * _2 * f * weight_sum_inv)
+                        + sym_outer(dwb, dw)
+                            * ((T::one() - _2 * wb * weight_sum_inv) * f * weight_sum_inv)
+                        + sym_outer(df, dwb) * factor
+                        + sym_outer(df, dw) * wb * weight_sum_inv
+                }
+            }
+
+            hess * weight_sum_inv
+        });
+
+        // Off-diagonal entries. These are only present when the background is weighted in the
+        // local region.
+        let off_diag_iter = if weighted {
+            Some(samples.into_iter().flat_map(move |sample_i| {
+                let dw_i = kernel.with_closest_dist(dist).grad(q, sample_i.pos);
+                samples
+                    .into_iter()
+                    .filter(move |sample_j| sample_i.index < sample_j.index)
+                    .map(move |sample_j| {
+                        let _2 = T::from(2.0).unwrap();
+                        let dw_j = kernel.with_closest_dist(dist).grad(q, sample_j.pos);
+
+                        let dwdw_factor = _2 * f * weight_sum_inv;
+                        let dwdwb_factor =
+                            f * (T::one() - _2 * wb * weight_sum_inv);
+
+                        let hess = if sample_i.index == closest_sample_index.get() {
+                            dw_j * ((dw_i * dwdw_factor + df) * wb + dwb * dwdwb_factor).transpose()
+                        } else if sample_j.index == closest_sample_index.get() {
+                            ((df + dw_j * dwdw_factor) * wb + dwb * dwdwb_factor) * dw_i.transpose()
+                        } else {
+                            (dw_j * dw_i.transpose()) * (dwdw_factor * wb)
+                        };
+
+                        hess * weight_sum_inv * weight_sum_inv
+                    })
+            }))
+        } else {
+            None
+        };
+
+        diag_iter.chain(off_diag_iter.into_iter().flatten())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hessian::print_full_hessian;
     use crate::{make_grid, surface_from_polymesh, Error, KernelType, Params, SampleType};
     use geo::mesh::VertexPositions;
 
@@ -573,6 +715,158 @@ mod tests {
         // Potential should be all -1 (unchanged) because the radius is too small.
         for &pot in potential.iter() {
             assert_relative_eq!(pot, -1.0);
+        }
+        Ok(())
+    }
+
+    fn distance_based_bg_tester(radius: f64, mesh: &geo::mesh::TriMesh<f64>, qs: &[Vector3<f64>]) -> Result<(), Error> {
+        use autodiff::F;
+
+        // Create a surface sample mesh.
+        let sphere = geo::mesh::PolyMesh::from(mesh.clone());
+
+        let bg_field_params = BackgroundFieldParams {
+            field_type: BackgroundFieldType::DistanceBased,
+            weighted: true,
+        };
+
+        let tolerance = 0.00001;
+        let kernel_type = KernelType::Approximate { tolerance, radius };
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh::<F>(
+            &sphere,
+            Params {
+                kernel: kernel_type,
+                background_field: bg_field_params,
+                sample_type: SampleType::Face,
+                max_step: 0.0,
+            },
+        )?;
+
+        let query_points: Vec<_> = qs.iter()
+            .map(|&q| q.map(|x| F::cst(x)).into_inner())
+            .collect();
+
+        surface.cache_neighbours(&query_points);
+        let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
+        let mut samples = surface.samples().clone();
+
+        let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
+
+        // Compute potential.
+        for (&q, n) in query_points.iter().zip(neighs.iter()) {
+            let mut hess = vec![vec![0.0; samples.len() * 3]; samples.len() * 3];
+
+            {
+                let view = SamplesView::new(n, &samples);
+                if view.is_empty() {
+                    continue;
+                }
+                let bg = BackgroundField::<F, F, _>::local(
+                    Vector3(q),
+                    view,
+                    kernel,
+                    bg_field_params,
+                    None,
+                )
+                .unwrap();
+                let hess_iter =
+                    bg.hessian_blocks()
+                        .zip(crate::background_field::hessian_block_indices(
+                            bg.weighted,
+                            n,
+                        ));
+
+                for (h, (j, i)) in hess_iter {
+                    for r in 0..3 {
+                        for c in 0..3 {
+                            hess[3 * i + c][3 * j + r] = h[c][r].value();
+                            if i != j {
+                                hess[3 * j + r][3 * i + c] = h[c][r].value();
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut ad_hess = vec![vec![0.0; samples.len() * 3]; samples.len() * 3];
+
+            let mut success = true;
+
+            for wrt_sample in 0..samples.len() {
+                for wrt in 0..3 {
+                    samples.points[wrt_sample][wrt] = F::var(samples.points[wrt_sample][wrt]);
+                    let jac: Vec<_> = {
+                        let view = SamplesView::new(n, &samples);
+                        let bg =
+                            BackgroundField::local(Vector3(q), view, kernel, bg_field_params, None)
+                                .unwrap();
+                        let mut jac = vec![Vector3::zeros(); samples.len()];
+                        for (sample, j) in view.iter().zip(bg.compute_jacobian()) {
+                            jac[sample.index] = j;
+                        }
+                        jac
+                    };
+                    for sample in 0..samples.len() {
+                        for k in 0..3 {
+                            if !relative_eq!(
+                                hess[3 * sample + k][3 * wrt_sample + wrt],
+                                jac[sample][k].deriv(),
+                                max_relative = 1e-5
+                            ) {
+                                println!(
+                                    "{:.5} vs {:.5}",
+                                    hess[3 * sample + k][3 * wrt_sample + wrt],
+                                    jac[sample][k].deriv()
+                                );
+                                success = false;
+                            }
+                            ad_hess[3 * sample + k][3 * wrt_sample + wrt] += jac[sample][k].deriv();
+                        }
+                    }
+                    samples.points[wrt_sample][wrt] = F::cst(samples.points[wrt_sample][wrt]);
+                }
+            }
+
+            if !success {
+                print_full_hessian(&hess, surface.num_samples() * 3, "BG Hess");
+                print_full_hessian(&ad_hess, surface.num_samples() * 3, "BG AD Hess");
+            }
+            assert!(success);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn two_triangles_distance_based_bg() -> Result<(), Error> {
+        let (verts, indices) = crate::jacobian::make_two_test_triangles(0.0, &mut || Vector3::zeros());
+        let mesh = geo::mesh::TriMesh::new(reinterpret::reinterpret_vec(verts), reinterpret::reinterpret_vec(indices));
+
+        let query_points = vec![
+            Vector3([0.0, 0.2, 0.0]),
+            Vector3([0.0, 0.0001, 0.0]),
+            Vector3([0.0, -0.4, 0.0]),
+        ];
+
+        for i in 1..50 {
+            let radius = 0.1 * i as f64;
+            distance_based_bg_tester(radius, &mesh, &query_points)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn octahedron_distance_based_bg() -> Result<(), Error> {
+        let mesh = utils::make_sample_octahedron();
+        let grid = make_grid(5, 5);
+
+        let query_points: Vec<_> =
+            grid.vertex_position_iter().map(|&q| Vector3(q)).collect();
+
+        for i in 1..50 {
+            let radius = 0.1 * i as f64;
+            distance_based_bg_tester(radius, &mesh, &query_points)?;
         }
         Ok(())
     }

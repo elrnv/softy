@@ -1,6 +1,11 @@
 use super::*;
 use crate::Error;
 
+/// Symmetric outer product of two vectors: a*b' + b*a'
+pub(crate) fn sym_outer<T: Real>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
+    a * b.transpose() + b * a.transpose()
+}
+
 impl<T: Real> ImplicitSurface<T> {
     /// Get the number of Hessian non-zeros for the face unit normal Hessian.
     /// This is essentially the number of items returned by
@@ -95,35 +100,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// gives the number of query points, if the neighbourhood was not precomputed this function
     /// returns `None`.
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
-        let neigh_points = self.trivial_neighbourhood_borrow().ok()?;
-
-        let ImplicitSurface {
-            ref surface_topo,
-            sample_type,
-            ..
-        } = *self;
-
-        // TODO: Figure out how to do this more efficiently, or at least have better code reuse
-        // with the indices function.
-        match sample_type {
-            SampleType::Vertex => None,
-            SampleType::Face => Some(
-                neigh_points
-                    .iter()
-                    .filter(|nbrs| !nbrs.is_empty())
-                    .flat_map(move |nbr_points| {
-                        Self::face_hessian_indices_iter(nbr_points, surface_topo)
-                    })
-                    .flat_map(move |(row, col)| {
-                        (0..3).flat_map(move |r| {
-                            (0..3)
-                                .filter(move |c| 3 * row + r >= 3 * col + c)
-                                .map(move |c| (3 * row + r, 3 * col + c))
-                        })
-                    })
-                    .count(),
-            ),
-        }
+        // TODO: Figure out how to do this more efficiently.
+        self.surface_hessian_product_indices_iter().ok().map(|x| x.count())
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -139,44 +117,60 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         }
     }
 
-    pub(crate) fn mls_surface_hessian_product_indices(
-        &self,
-        rows: &mut [usize],
-        cols: &mut [usize],
-    ) -> Result<(), Error> {
+    /// Compute the indices for the implicit surface potential Hessian with respect to surface
+    /// points. This returns an iterator over all the hessian product indices.
+    pub fn surface_hessian_product_indices_iter<'a>(
+        &'a self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
+        match self.kernel {
+            KernelType::Approximate { .. } => self.mls_surface_hessian_product_indices_iter(),
+            _ => Err(Error::UnsupportedKernel),
+        }
+    }
+
+    /// Compute the indices for the implicit surface potential Hessian with respect to surface
+    /// points. This returns an iterator over all the hessian product indices.
+    fn mls_surface_hessian_product_indices_iter<'a>(&'a self) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
         let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
             ref surface_topo,
             sample_type,
+            bg_field_params,
             ..
         } = *self;
 
         match sample_type {
             SampleType::Vertex => Err(Error::UnsupportedSampleType),
             SampleType::Face => {
-                let face_hess = zip!(neigh_points.iter())
+                let indices: Vec<_> = neigh_points
+                    .iter()
                     .filter(|nbrs| !nbrs.is_empty())
                     .flat_map(move |nbr_points| {
-                        Self::face_hessian_indices_iter(nbr_points, surface_topo)
-                    });
-
-                for (i, (r, c)) in face_hess
+                        Self::face_hessian_indices_iter(nbr_points, surface_topo, bg_field_params.weighted)
+                    })
                     .flat_map(move |(row, col)| {
                         (0..3).flat_map(move |r| {
-                            (0..3)
-                                .filter(move |c| 3 * row + r >= 3 * col + c)
-                                .map(move |c| (3 * row + r, 3 * col + c))
+                            (0..3).map(move |c| (3 * row + r, 3 * col + c))
                         })
                     })
-                    .enumerate()
-                {
-                    rows[i] = r;
-                    cols[i] = c;
-                }
-                Ok(())
+                    .filter(move |(row, col)| row >= col)
+                    .collect();
+                Ok(indices.into_iter())
             }
         }
+    }
+
+    pub(crate) fn mls_surface_hessian_product_indices(
+        &self,
+        rows: &mut [usize],
+        cols: &mut [usize],
+    ) -> Result<(), Error> {
+        for (i, (r, c)) in self.mls_surface_hessian_product_indices_iter()?.enumerate() {
+            rows[i] = r;
+            cols[i] = c;
+        }
+        Ok(())
     }
 
     /// Compute the Hessian of this implicit surface function with respect to surface
@@ -259,18 +253,32 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn face_hessian_indices_iter<'a>(
         nbrs: &'a [usize],
         surface_topo: &'a [[usize; 3]],
-    ) -> impl Iterator<Item = (usize, usize)> + 'a {
-        // For each surface vertex contribution
-        let main_hess_indices = nbrs.iter().flat_map(move |&sample_i| {
-            nbrs.iter().flat_map(move |&sample_j| {
-                surface_topo[sample_j].iter().flat_map(move |&j| {
-                    surface_topo[sample_i]
-                        .iter()
-                        .filter(move |&&i| i <= j)
-                        .map(move |&i| (j, i))
-                })
+        weighted: bool,
+    ) -> impl Iterator<Item = (usize, usize)> + 'a
+        where T: 'a, // this was required by the compiler for some reason
+    {
+
+        let samples_to_vertices = move |row: usize, col: usize| {
+            surface_topo[row].iter().flat_map(move |&r| {
+                surface_topo[col]
+                    .iter()
+                    .filter(move |&&c| c <= r)
+                    .map(move |&c| (r, c))
             })
-        });
+        };
+
+        // For each surface vertex contribution
+        let main_hess_indices = Self::sample_hessian_indices(nbrs)
+            .chain(background_field::hessian_block_indices(weighted, nbrs))
+            .flat_map(move |(row, col)| {
+                let upper_triangular_entries = if row > col {
+                    Some(samples_to_vertices(col, row))
+                } else {
+                    None
+                };
+                samples_to_vertices(row, col)
+                    .chain(upper_triangular_entries.into_iter().flatten())
+            });
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_hess_indices = nbrs
@@ -332,24 +340,49 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let ninth = T::one() / T::from(9.0).unwrap();
 
+        let samples_to_vertices = move |row: usize, col: usize, hess: Matrix3<T>| {
+            surface_topo[row].iter().flat_map(move |&i| {
+                surface_topo[col]
+                    .iter()
+                    .filter(move |&&j| j <= i)
+                    .map(move |&j| (i, j, hess * ninth))
+            })
+        };
+
         // For each surface vertex contribution
         let main_hess =
             Self::sample_hessian_at(q, view, kernel, bg.clone()).flat_map(move |hess| {
-                surface_topo[hess.0].iter().flat_map(move |&i| {
-                    surface_topo[hess.1]
-                        .iter()
-                        .filter(move |&&j| j <= i)
-                        .map(move |&j| (i, j, hess.2 * ninth))
-                })
+                let upper_triangular_entries = if hess.0 > hess.1 {
+                    Some(samples_to_vertices(hess.1, hess.0, hess.2.transpose()))
+                } else {
+                    None
+                };
+                samples_to_vertices(hess.0, hess.1, hess.2)
+                    .chain(upper_triangular_entries.into_iter().flatten())
             });
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
         let nml_hess =
             Self::normal_hessian_at(q, view, kernel, &surface_topo, surface_vertex_positions, bg);
 
-        nml_hess
-            .chain(main_hess)
-            .map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
+        nml_hess.chain(main_hess).map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
+    }
+
+    /// Hessian indices with respect to samples.
+    pub(crate) fn sample_hessian_indices<'a>(
+        nbrs: &'a [usize],
+    ) -> impl Iterator<Item = (usize, usize)> + 'a
+    {
+        nbrs.into_iter().map(
+            move |&i| (i, i)
+        ).chain(
+            nbrs.into_iter().flat_map(
+                move |&i| {
+                    nbrs.into_iter()
+                        .filter(move |&&j| i < j)
+                        .map(move |&j| (j, i))
+                })
+        )
     }
 
     /// Hessian part with respect to samples.
@@ -368,7 +401,42 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
 
-        samples.into_iter().flat_map(
+        let bg_hess = bg.hessian_blocks().zip(background_field::hessian_block_indices(bg.weighted, samples.indices()))
+            .map(|(h, (j, i))| (j, i, h));
+
+        let _2 = T::from(2.0).unwrap();
+
+        let bg_diag = bg.clone();
+        let diag_iter = samples.into_iter().map(
+            move |Sample {
+                      index: i,
+                      pos,
+                      nml,
+                      value: phi,
+                      ..
+                  }| {
+                      let unit_nml = nml * (T::one() / nml.norm());
+                      let psi = phi + (q - pos).dot(unit_nml);
+                      let w = kernel.with_closest_dist(csd).eval(q, pos);
+                      let dw = -kernel.with_closest_dist(csd).grad(q, pos);
+                      let ddw = kernel.with_closest_dist(csd).hess(q, pos);
+                      let dwb = bg_diag.background_weight_gradient(Some(i));
+                      let ddwb = bg_diag.background_weight_hessian(Some(i));
+                      let dws = dwb + dw;
+
+                      let mut h = Matrix3::zeros();
+
+                      h += ddw * psi;
+                      h -= (ddw + ddwb) * local_pot;
+                      h -= sym_outer(dw, unit_nml);
+                      h -= sym_outer(dws, dw) * (psi * ws_inv);
+                      h += dws * (dws.transpose() * (_2 * local_pot * ws_inv));
+                      h += sym_outer(unit_nml, dws) * (w * ws_inv);
+
+                      (i, i, h * ws_inv)
+                  });
+
+        let off_diag_iter = samples.into_iter().flat_map(
             move |Sample {
                       index: i,
                       pos: pos_i,
@@ -376,58 +444,46 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                       value: phi_i,
                       ..
                   }| {
-                let bg = bg.clone();
-                let unit_nml_i = nml_i * (T::one() / nml_i.norm());
-                let psi_i = phi_i + (q - pos_i).dot(unit_nml_i);
-                let dw_i = -kernel.with_closest_dist(csd).grad(q, pos_i);
-                let dwb_i = bg.background_weight_gradient(Some(i));
-                let dws_i = dwb_i + dw_i;
-                samples.into_iter().map(
-                    move |Sample {
-                              index: j,
-                              pos: pos_j,
-                              nml: nml_j,
-                              value: phi_j,
-                              ..
-                          }| {
-                        let unit_nml_j = nml_j * (T::one() / nml_j.norm());
-                        let psi_j = phi_j + (q - pos_j).dot(unit_nml_j);
+                      let bg = bg.clone();
+                      let unit_nml_i = nml_i * (T::one() / nml_i.norm());
+                      let psi_i = phi_i + (q - pos_i).dot(unit_nml_i);
+                      let w_i = kernel.with_closest_dist(csd).eval(q, pos_i);
+                      let dw_i = -kernel.with_closest_dist(csd).grad(q, pos_i);
+                      let dwb_i = bg.background_weight_gradient(Some(i));
+                      let dws_i = dwb_i + dw_i;
+                      samples.into_iter()
+                          .filter(move |sample_j| i < sample_j.index)
+                          .map(
+                              move |Sample {
+                                  index: j,
+                                  pos: pos_j,
+                                  nml: nml_j,
+                                  value: phi_j,
+                                  ..
+                              }| {
+                                  let unit_nml_j = nml_j * (T::one() / nml_j.norm());
+                                  let psi_j = phi_j + (q - pos_j).dot(unit_nml_j);
 
-                        let mut h = Matrix3::zeros();
+                                  let mut h = Matrix3::zeros();
 
-                        if i == j {
-                            // Diagonal entries
-                            let ddw = kernel.with_closest_dist(csd).hess(q, pos_i);
-                            h += ddw * ws_inv * psi_i;
+                                  let w_j = kernel.with_closest_dist(csd).eval(q, pos_j);
+                                  let dw_j = -kernel.with_closest_dist(csd).grad(q, pos_j);
+                                  let dwb_j = bg.background_weight_gradient(Some(j));
+                                  let dws_j = dwb_j + dw_j;
 
-                            let ddwb = bg.background_weight_hessian(Some(i));
-                            h -= (ddw + ddwb) * (ws_inv * local_pot);
+                                  h -= dws_j * (dw_i.transpose() * psi_i);
+                                  h -= dw_j * (dws_i.transpose() * psi_j);
+                                  h += dws_j * (dws_i.transpose() * (_2 * local_pot));
 
-                            h -= dw_i * (unit_nml_i.transpose() * ws_inv);
-                            h -= unit_nml_i * (dw_i.transpose() * ws_inv);
-                        }
+                                  h += unit_nml_j * (dws_i.transpose() * w_j);
+                                  h += dws_j * (unit_nml_i.transpose() * w_i);
 
-                        let dw_j = -kernel.with_closest_dist(csd).grad(q, pos_j);
-                        let dwb_j = bg.background_weight_gradient(Some(j));
-                        let dws_j = dwb_j + dw_j;
+                                  (j, i, h * ws_inv2)
+                              })
+                  }
+        );
 
-                        h -= dws_j * (dw_i.transpose() * (psi_i * ws_inv2));
-                        h -= dw_j * (dws_i.transpose() * (psi_j * ws_inv2));
-                        h += dws_j
-                            * (dws_i.transpose() * (T::from(2.0).unwrap() * local_pot * ws_inv2));
-
-                        h += unit_nml_j
-                            * (dws_i.transpose()
-                                * (kernel.with_closest_dist(csd).eval(q, pos_j) * ws_inv2));
-                        h += dws_j
-                            * (unit_nml_i.transpose()
-                                * (kernel.with_closest_dist(csd).eval(q, pos_i) * ws_inv2));
-
-                        (j, i, h)
-                    },
-                )
-            },
-        )
+        diag_iter.chain(off_diag_iter).chain(bg_hess)
     }
 
     /// A helper function to compute the normal part of the hessian for this field.
@@ -562,11 +618,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn mls_query_hessian_product_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        self.num_cached_neighbourhoods().map(|num| {
-            (0..num).flat_map(move |i| {
-                (0..3).flat_map(move |c| (c..3).map(move |r| (3 * i + r, 3 * i + c)))
-            })
-        })
+        let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
+            s.into_iter()
+                .enumerate()
+                .filter(move |(_, nbrs)| !nbrs.is_empty())
+                .flat_map(move |(i, _)| {
+                    (0..3).flat_map(move |c| {
+                        (c..3).map(move |r| {
+                            (3 * i + r, 3 * i + c)
+                        })
+                    })
+                })
+            .collect()
+        });
+        indices.map(|i| i.into_iter())
     }
 
     /// Compute the normalized sum of all sample weight gradients.
@@ -688,25 +753,38 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                           pos, nml, value, ..
                       }| {
                     let unit_nml = nml * (T::one() / nml.norm());
-
                     let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-
                     let dw = kernel.with_closest_dist(closest_d).grad(q, pos);
-
                     let ddw = kernel.with_closest_dist(closest_d).hess(q, pos);
-
                     let psi = T::from(value).unwrap() + unit_nml.dot(q - pos);
-                    (sym_outer(unit_nml, dw)
+                    sym_outer(unit_nml, dw)
                         - sym_outer(unit_nml, dw_neigh) * w
                         - sym_outer(dw_neigh, dw) * psi
-                        - ddw_neigh * psi * w)
-                        * weight_sum_inv
-                        + (dw_neigh * (dw_neigh.transpose() * (T::from(2.0).unwrap() * w)) + ddw)
-                            * psi
+                        - ddw_neigh * psi * w
+                        + (dw_neigh * (dw_neigh.transpose() * (T::from(2.0).unwrap() * w)) + ddw) * psi
                 },
             )
-            .sum()
+            .sum::<Matrix3<T>>() * weight_sum_inv
     }
+}
+
+/// Helper function to print the dense hessian given by a vector of vectors.
+/// This can also be used elsewhere for testing that involves hessians (e.g. background field).
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn print_full_hessian(hess: &[Vec<f64>], size: usize, name: &str) {
+    println!("{} = ", name);
+    for r in 0..size {
+        for c in 0..size {
+            if relative_eq!(hess[c][r], 0.0, max_relative = 1e-6, epsilon = 1e-12) {
+                print!("     .    ",);
+            } else {
+                print!("{:9.5} ", hess[c][r]);
+            }
+        }
+        println!("");
+    }
+    println!("");
 }
 
 #[cfg(test)]
@@ -844,8 +922,10 @@ mod tests {
                     ad_tri_verts[vtx][i] = F::cst(ad_tri_verts[vtx][i]);
                 }
 
-                //print_full_hess(&hess_full, 3 * num_verts, "Full Hessian");
-                //print_full_hess(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+                if !success {
+                    print_full_hessian(&hess_full, 3 * num_verts, "Full Hessian");
+                    print_full_hessian(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+                }
                 assert!(success, "Hessian does not match its AutoDiff counterpart");
             }
             multipliers[mult_idx] = F::cst(0.0); // reset multiplier
@@ -956,23 +1036,6 @@ mod tests {
             face_hessian_tester(q + perturb(), &tri, radius, 0.0, bg_field_params);
             face_hessian_tester(q + perturb(), &tri, radius, 1.0, bg_field_params);
         }
-    }
-
-    /// Helper function to print the dense hessian given by a vector of vectors.
-    #[allow(dead_code)]
-    fn print_full_hess(hess: &[Vec<f64>], size: usize, name: &str) {
-        println!("{} = ", name);
-        for r in 0..size {
-            for c in 0..size {
-                if relative_eq!(hess[c][r], 0.0, max_relative = 1e-6, epsilon = 1e-12) {
-                    print!("     .    ",);
-                } else {
-                    print!("{:9.5} ", hess[c][r]);
-                }
-            }
-            println!("");
-        }
-        println!("");
     }
 
     /// Test the `face_hessian_at` function. This verifies that it indeed produces the derivative
@@ -1105,7 +1168,7 @@ mod tests {
                             epsilon = 1e-12
                         ) {
                             println!(
-                                "col_vtx = {}; j = {}; {:9.5} vs {:9.5}",
+                                "col_vtx = {}; j = {}; {:14.10} vs {:14.10}",
                                 vtx_idx,
                                 j,
                                 hes[j].value(),
@@ -1123,9 +1186,11 @@ mod tests {
             }
         }
 
-        //print_full_hess(&hess_full, "Block Lower Triangular Hessian");
-        //print_full_hess(&hess_full2, 3 * num_verts, "Full Hessian");
-        //print_full_hess(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+        if !success {
+            print_full_hessian(&hess_full, 3 * num_verts, "Block Lower Triangular Hessian");
+            print_full_hessian(&hess_full2, 3 * num_verts, "Full Hessian");
+            print_full_hessian(&ad_hess_full, 3 * num_verts, "Full Autodiff Hessian");
+        }
 
         assert!(success, "Hessian does not match its AutoDiff counterpart");
     }
@@ -1136,73 +1201,24 @@ mod tests {
         let mut perturb = make_perturb_fn();
         for i in 1..25 {
             let radius = 0.2 * (i as f64);
-            // Simple test with no perturbation. This derivative is easier to interpret.
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut no_perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: true,
-                },
-                &mut no_perturb,
-            );
 
-            // Less trivial test with perturbation.
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            two_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: true,
-                },
-                &mut perturb,
-            );
+            let mut run_test = |field_type, weighted| {
+                let bg_params = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
+                // Simple test with no perturbation. This derivative is easier to interpret.
+                two_triangle_face_hessian(radius, bg_params, &mut no_perturb);
+                // Less trivial test with perturbation.
+                two_triangle_face_hessian(radius, bg_params, &mut perturb);
+            };
+
+            run_test(BackgroundFieldType::Zero, false);
+            run_test(BackgroundFieldType::Zero, true);
+            run_test(BackgroundFieldType::FromInput, false);
+            run_test(BackgroundFieldType::FromInput, true);
+            run_test(BackgroundFieldType::DistanceBased, false);
+            run_test(BackgroundFieldType::DistanceBased, true);
         }
     }
 
@@ -1212,74 +1228,25 @@ mod tests {
         let mut perturb = make_perturb_fn();
         for i in 1..25 {
             let radius = 0.2 * (i as f64);
-            // Unperturbed triangle. This test is easier to debug.
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut no_perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
 
-            // Test with a perturbed triangle. This test verifies that the derivative is robust
-            // against perturbation.
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            one_triangle_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
+            let mut run_test = |field_type, weighted| {
+                let bg_params = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
+                // Unperturbed triangle. This test is easier to debug.
+                one_triangle_face_hessian(radius, bg_params, &mut no_perturb);
+                // Test with a perturbed triangle. This test verifies that the derivative is robust
+                // against perturbation.
+                one_triangle_face_hessian(radius, bg_params, &mut perturb);
+            };
+
+            run_test(BackgroundFieldType::Zero, false);
+            run_test(BackgroundFieldType::Zero, true);
+            run_test(BackgroundFieldType::FromInput, false);
+            run_test(BackgroundFieldType::FromInput, true);
+            run_test(BackgroundFieldType::DistanceBased, false);
+            run_test(BackgroundFieldType::DistanceBased, true);
         }
     }
 
@@ -1289,75 +1256,23 @@ mod tests {
         let mut perturb = make_perturb_fn();
         for i in 1..10 {
             let radius = 0.5 * (i as f64);
-            // Unperturbed tet
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut no_perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut no_perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: true,
-                },
-                &mut no_perturb,
-            );
-            //one_tet_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
+            let mut run_test = |field_type, weighted| {
+                let bg_params = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
+                // Unperturbed tet
+                one_tet_face_hessian(radius, bg_params, &mut no_perturb);
+                // Perturbed tet
+                one_tet_face_hessian(radius, bg_params, &mut perturb);
+            };
 
-            // Perturbed tet
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::Zero,
-                    weighted: true,
-                },
-                &mut perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: false,
-                },
-                &mut perturb,
-            );
-            one_tet_face_hessian(
-                radius,
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::FromInput,
-                    weighted: true,
-                },
-                &mut perturb,
-            );
-            //one_tet_face_hessian(radius, BackgroundFieldType::DistanceBased, &mut perturb);
+            run_test(BackgroundFieldType::Zero, false);
+            run_test(BackgroundFieldType::Zero, true);
+            run_test(BackgroundFieldType::FromInput, false);
+            run_test(BackgroundFieldType::FromInput, true);
+            run_test(BackgroundFieldType::DistanceBased, false);
+            run_test(BackgroundFieldType::DistanceBased, true);
         }
     }
 
@@ -1467,8 +1382,14 @@ mod tests {
                             }
                         }
                     }
+
                     if r == sample_idx {
                         hess_sample[c] += h.transpose()[i];
+                    }
+
+                    // Add upper triangular part to hess_sample.
+                    if r > c && c == sample_idx {
+                        hess_sample[r] += h[i];
                     }
                 }
 
@@ -1500,8 +1421,10 @@ mod tests {
             }
         }
 
-        print_full_hess(&hess_full2, 3 * num_samples, "Full Hessian");
-        print_full_hess(&ad_hess_full, 3 * num_samples, "Full Autodiff Hessian");
+        if !success {
+            print_full_hessian(&hess_full2, 3 * num_samples, "Full Hessian");
+            print_full_hessian(&ad_hess_full, 3 * num_samples, "Full Autodiff Hessian");
+        }
         assert!(success, "Hessian does not match its AutoDiff counterpart");
     }
 
@@ -1519,32 +1442,23 @@ mod tests {
             Vector3([0.0, -0.4, 0.0]),
         ];
 
-        let run_tester_on_mesh = |tri| {
+        let run_tester = |tri, field_type, weighted| {
             for i in 1..50 {
                 let radius = 0.1 * (i as f64);
+                let bg = BackgroundFieldParams { field_type, weighted };
                 for &q in qs.iter() {
-                    sample_hessian_tester(
-                        q,
-                        &tri,
-                        radius,
-                        0.0,
-                        BackgroundFieldParams {
-                            field_type: BackgroundFieldType::Zero,
-                            weighted: false,
-                        },
-                    );
-                    sample_hessian_tester(
-                        q,
-                        &tri,
-                        radius,
-                        0.0,
-                        BackgroundFieldParams {
-                            field_type: BackgroundFieldType::Zero,
-                            weighted: true,
-                        },
-                    );
+                    sample_hessian_tester(q, &tri, radius, 0.0, bg);
                 }
             }
+        };
+
+        let run_tester_on_mesh = |tri: TriMesh<f64>| {
+            run_tester(tri.clone(), BackgroundFieldType::Zero, false);
+            run_tester(tri.clone(), BackgroundFieldType::Zero, true);
+            run_tester(tri.clone(), BackgroundFieldType::FromInput, false);
+            run_tester(tri.clone(), BackgroundFieldType::FromInput, true);
+            run_tester(tri.clone(), BackgroundFieldType::DistanceBased, false);
+            run_tester(tri.clone(), BackgroundFieldType::DistanceBased, true);
         };
 
         let build_mesh_and_run_test = |(tri_verts, tri_indices)| {
@@ -1555,7 +1469,7 @@ mod tests {
         // One flat triangle test
         build_mesh_and_run_test((make_test_triangle(0.0, &mut no_perturb), vec![[0, 1, 2]]));
 
-        //// One perturbed triangle test
+        // One perturbed triangle test
         build_mesh_and_run_test((make_test_triangle(0.0, &mut perturb), vec![[0, 1, 2]]));
 
         // Two flat triangles test
@@ -1564,10 +1478,10 @@ mod tests {
         // Two perturbed triangles test
         build_mesh_and_run_test(make_two_test_triangles(0.0, &mut perturb));
 
-        //// Three perturbed triangles test
+        // Three perturbed triangles test
         build_mesh_and_run_test(make_three_test_triangles(0.0, &mut perturb));
 
-        //// Regular tetrahedron test
+        // Regular tetrahedron test
         run_tester_on_mesh(TriMesh::from(utils::make_regular_tet()));
     }
 

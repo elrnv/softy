@@ -379,6 +379,12 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     pub fn all_normals(&'d self) -> &'d [Vector3<T>] {
         self.normals
     }
+
+    /// Get all the indices in this view.
+    #[inline]
+    pub fn indices(self) -> &'i [usize] {
+        self.indices
+    }
 }
 
 impl<'i, 'd: 'i, T: Real + Send + Sync> SamplesView<'i, 'd, T> {

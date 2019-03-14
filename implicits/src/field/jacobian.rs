@@ -241,9 +241,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
-        // Background potential Jacobian.
-        let bg_jac = bg.compute_jacobian();
-
         let closest_d = bg.closest_sample_dist();
         let weight_sum_inv = bg.weight_sum_inv();
 
@@ -261,7 +258,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             },
         );
 
-        zip!(bg_jac, main_jac, nml_jac).map(|(b, m, n)| b + m + n)
+        zip!(main_jac, nml_jac).map(|(m, n)|  m + n)
     }
 
     /// Jacobian of the face based local potential with respect to surface vertex positions.
@@ -278,9 +275,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
         let third = T::one() / T::from(3.0).unwrap();
-
-        // Background potential Jacobian.
-        let bg_jac = bg.compute_jacobian();
 
         let closest_d = bg.closest_sample_dist();
         let weight_sum_inv = bg.weight_sum_inv();
@@ -300,8 +294,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         );
 
         // There are 3 contributions from each sample to each vertex.
-        zip!(bg_jac, main_jac)
-            .flat_map(move |(b, m)| std::iter::repeat(b + m).take(3))
+        main_jac
+            .flat_map(move |m| std::iter::repeat(m).take(3))
             .zip(nml_jac)
             .map(move |(m, n)| m * third + n)
     }
@@ -434,6 +428,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
+        // Background potential Jacobian.
+        let bg_jac = bg.compute_jacobian();
+
         let closest_d = bg.closest_sample_dist();
 
         // Background potential adds to the total weight sum, so we should get the updated weight
@@ -443,7 +440,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let local_pot =
             Self::compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
 
-        samples.into_iter().map(
+        let main_jac = samples.into_iter().map(
             move |Sample {
                       index,
                       pos,
@@ -468,7 +465,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let nml_deriv = unit_nml * (w * weight_sum_inv);
                 dwdp - nml_deriv
             },
-        )
+        );
+        zip!(bg_jac, main_jac).map(|(b, m)| b + m)
     }
 
     /// Compute the Jacobian for the implicit surface potential for the given sample with the
@@ -493,10 +491,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
         let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
-        let mut dw_p = dw * weight_sum_inv;
-        dw_p -= dw_neigh_normalized * (w * weight_sum_inv);
-        dw_p *= T::from(sample_value).unwrap() + multiplier.dot(q - sample_pos);
-        dw_p + multiplier * (w * weight_sum_inv)
+        let psi = T::from(sample_value).unwrap() + multiplier.dot(q - sample_pos);
+        ((dw - dw_neigh_normalized * w) * psi + (multiplier * w)) * weight_sum_inv
     }
 
     /// Compute the normalized sum of all sample weight gradients.

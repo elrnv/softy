@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "unstable", feature(test))]
+#![type_length_limit="4194304"]
 
 #[cfg(test)]
 #[macro_use]
@@ -80,12 +81,12 @@ pub fn surface_from_trimesh<T: Real + Send + Sync>(
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `PolyMesh`.
-pub fn surface_from_polymesh(
+pub fn surface_from_polymesh<T: Real + Send + Sync>(
     surface: &PolyMesh<f64>,
     params: Params,
-) -> Result<ImplicitSurface, Error> {
+) -> Result<ImplicitSurface<T>, Error> {
     let surf_trimesh = TriMesh::from(surface.clone());
-    surface_from_trimesh(&surf_trimesh, params)
+    surface_from_trimesh::<T>(&surf_trimesh, params)
 }
 
 #[derive(Debug)]
@@ -398,7 +399,7 @@ mod tests {
         use autodiff::F;
         use geo::math::Vector3;
 
-        let mut grid = make_grid(22, 22);
+        let grid = make_grid(22, 22);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
             .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
@@ -427,22 +428,22 @@ mod tests {
 
         // This is the full jacobian (including all zeros).
         let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len() * 3];
-        let mut flat_jac = vec![0.0; grid_pos.len() * 3];
+        //let mut flat_jac = vec![0.0; grid_pos.len() * 3];
 
         for (idx, &val) in implicit_surface
             .query_jacobian_indices_iter()?
             .zip(vals.iter())
         {
             jac[idx.1][idx.0] += val.value();
-            flat_jac[idx.1] = val.value();
+            //flat_jac[idx.1] = val.value();
         }
 
-        grid.set_attrib_data::<[f64; 3], VertexIndex>(
-            "gradient",
-            reinterpret::reinterpret_slice(&flat_jac),
-        )?;
+        //grid.set_attrib_data::<[f64; 3], VertexIndex>(
+        //    "gradient",
+        //    reinterpret::reinterpret_slice(&flat_jac),
+        //)?;
 
-        let mut exp_flat_jac = vec![0.0; grid_pos.len() * 3];
+        //let mut exp_flat_jac = vec![0.0; grid_pos.len() * 3];
 
         for cur_pt_idx in 0..grid_pos.len() {
             // for each vertex
@@ -476,17 +477,111 @@ mod tests {
                         epsilon = 1e-10
                     );
                 }
-                exp_flat_jac[col] = potential[cur_pt_idx].deriv();
+                //exp_flat_jac[col] = potential[cur_pt_idx].deriv();
                 grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
             }
         }
 
-        grid.set_attrib_data::<[f64; 3], VertexIndex>(
-            "exp_gradient",
-            reinterpret::reinterpret_slice(&exp_flat_jac),
-        )?;
+        //grid.set_attrib_data::<[f64; 3], VertexIndex>(
+        //    "exp_gradient",
+        //    reinterpret::reinterpret_slice(&exp_flat_jac),
+        //)?;
 
-        geo::io::save_polymesh(&grid, &PathBuf::from("out/gradient.vtk"))?;
+        //geo::io::save_polymesh(&grid, &PathBuf::from("out/gradient.vtk"))?;
+
+        Ok(())
+    }
+
+    /// Test the query Hessian of the implicit surface.
+    #[test]
+    fn query_hessian_test() -> Result<(), Error> {
+        use autodiff::F;
+        use geo::math::Vector3;
+
+        let grid = make_grid(11, 11);
+        let mut grid_pos: Vec<_> = grid
+            .vertex_position_iter()
+            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .collect();
+
+        let trimesh = utils::make_sample_octahedron();
+
+        let implicit_surface = ImplicitSurfaceBuilder::new()
+            .kernel(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius: 1.0,
+            })
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            })
+            .sample_type(SampleType::Face)
+            .trimesh(&trimesh)
+            .build::<F>()
+            .expect("Failed to create implicit surface.");
+
+        implicit_surface.cache_neighbours(&grid_pos);
+        let nnz = implicit_surface.num_query_hessian_product_entries()?;
+        let mut vals = vec![F::cst(0.0); nnz];
+        let multipliers = vec![F::cst(1.0); nnz]; // all at once
+        implicit_surface.query_hessian_product_values(&grid_pos, &multipliers, &mut vals)?;
+
+        // This is the full jacobian (including all zeros).
+        let mut hess = vec![vec![0.0; grid_pos.len() * 3]; grid_pos.len() * 3];
+
+        for (idx, &val) in implicit_surface
+            .query_hessian_product_indices_iter()?
+            .zip(vals.iter())
+        {
+            hess[idx.1][idx.0] += val.value();
+            if idx.1 != idx.0 {
+                hess[idx.0][idx.1] += val.value();
+            }
+        }
+
+        for cur_pt_idx in 0..grid_pos.len() {
+            // for each vertex
+            for i in 0..3 {
+                // for each component
+                grid_pos[cur_pt_idx][i] = F::var(grid_pos[cur_pt_idx][i]);
+
+                let nnz = implicit_surface.num_query_jacobian_entries()?;
+                let mut vals = vec![F::cst(0.0); nnz];
+                implicit_surface.query_jacobian_values(&grid_pos, &mut vals)?;
+
+                // This is the full jacobian (including all zeros).
+                let mut flat_jac_deriv = vec![0.0; grid_pos.len() * 3];
+
+                for (idx, &val) in implicit_surface.query_jacobian_indices_iter()?.zip(vals.iter()) {
+                    flat_jac_deriv[idx.1] += val.deriv();
+                }
+
+                let row = 3 * cur_pt_idx + i;
+                for col in 0..grid_pos.len()*3 {
+                    if !relative_eq!(
+                        hess[col][row],
+                        flat_jac_deriv[col],
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    ) {
+                        println!(
+                            "({:?}, {:?}) => {:?} vs {:?}",
+                            row,
+                            col,
+                            hess[col][row],
+                            flat_jac_deriv[col]
+                        );
+                    }
+                    assert_relative_eq!(
+                        hess[col][row],
+                        flat_jac_deriv[col],
+                        max_relative = 1e-5,
+                        epsilon = 1e-10
+                    );
+                }
+                grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
+            }
+        }
 
         Ok(())
     }

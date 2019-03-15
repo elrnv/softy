@@ -1,5 +1,5 @@
 #![cfg_attr(feature = "unstable", feature(test))]
-#![type_length_limit="4194304"]
+#![type_length_limit = "4194304"]
 
 #[cfg(test)]
 #[macro_use]
@@ -552,12 +552,15 @@ mod tests {
                 // This is the full jacobian (including all zeros).
                 let mut flat_jac_deriv = vec![0.0; grid_pos.len() * 3];
 
-                for (idx, &val) in implicit_surface.query_jacobian_indices_iter()?.zip(vals.iter()) {
+                for (idx, &val) in implicit_surface
+                    .query_jacobian_indices_iter()?
+                    .zip(vals.iter())
+                {
                     flat_jac_deriv[idx.1] += val.deriv();
                 }
 
                 let row = 3 * cur_pt_idx + i;
-                for col in 0..grid_pos.len()*3 {
+                for col in 0..grid_pos.len() * 3 {
                     if !relative_eq!(
                         hess[col][row],
                         flat_jac_deriv[col],
@@ -566,10 +569,7 @@ mod tests {
                     ) {
                         println!(
                             "({:?}, {:?}) => {:?} vs {:?}",
-                            row,
-                            col,
-                            hess[col][row],
-                            flat_jac_deriv[col]
+                            row, col, hess[col][row], flat_jac_deriv[col]
                         );
                     }
                     assert_relative_eq!(

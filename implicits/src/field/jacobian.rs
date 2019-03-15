@@ -258,7 +258,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             },
         );
 
-        zip!(main_jac, nml_jac).map(|(m, n)|  m + n)
+        zip!(main_jac, nml_jac).map(|(m, n)| m + n)
     }
 
     /// Jacobian of the face based local potential with respect to surface vertex positions.

@@ -610,8 +610,7 @@ where
                         let dw_j = kernel.with_closest_dist(dist).grad(q, sample_j.pos);
 
                         let dwdw_factor = _2 * f * weight_sum_inv;
-                        let dwdwb_factor =
-                            f * (T::one() - _2 * wb * weight_sum_inv);
+                        let dwdwb_factor = f * (T::one() - _2 * wb * weight_sum_inv);
 
                         let hess = if sample_i.index == closest_sample_index.get() {
                             dw_j * ((dw_i * dwdw_factor + df) * wb + dwb * dwdwb_factor).transpose()
@@ -719,7 +718,11 @@ mod tests {
         Ok(())
     }
 
-    fn distance_based_bg_tester(radius: f64, mesh: &geo::mesh::TriMesh<f64>, qs: &[Vector3<f64>]) -> Result<(), Error> {
+    fn distance_based_bg_tester(
+        radius: f64,
+        mesh: &geo::mesh::TriMesh<f64>,
+        qs: &[Vector3<f64>],
+    ) -> Result<(), Error> {
         use autodiff::F;
 
         // Create a surface sample mesh.
@@ -744,7 +747,8 @@ mod tests {
             },
         )?;
 
-        let query_points: Vec<_> = qs.iter()
+        let query_points: Vec<_> = qs
+            .iter()
             .map(|&q| q.map(|x| F::cst(x)).into_inner())
             .collect();
 
@@ -840,8 +844,12 @@ mod tests {
 
     #[test]
     fn two_triangles_distance_based_bg() -> Result<(), Error> {
-        let (verts, indices) = crate::jacobian::make_two_test_triangles(0.0, &mut || Vector3::zeros());
-        let mesh = geo::mesh::TriMesh::new(reinterpret::reinterpret_vec(verts), reinterpret::reinterpret_vec(indices));
+        let (verts, indices) =
+            crate::jacobian::make_two_test_triangles(0.0, &mut || Vector3::zeros());
+        let mesh = geo::mesh::TriMesh::new(
+            reinterpret::reinterpret_vec(verts),
+            reinterpret::reinterpret_vec(indices),
+        );
 
         let query_points = vec![
             Vector3([0.0, 0.2, 0.0]),
@@ -861,8 +869,7 @@ mod tests {
         let mesh = utils::make_sample_octahedron();
         let grid = make_grid(5, 5);
 
-        let query_points: Vec<_> =
-            grid.vertex_position_iter().map(|&q| Vector3(q)).collect();
+        let query_points: Vec<_> = grid.vertex_position_iter().map(|&q| Vector3(q)).collect();
 
         for i in 1..50 {
             let radius = 0.1 * i as f64;

@@ -101,7 +101,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// returns `None`.
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
         // TODO: Figure out how to do this more efficiently.
-        self.surface_hessian_product_indices_iter().ok().map(|x| x.count())
+        self.surface_hessian_product_indices_iter()
+            .ok()
+            .map(|x| x.count())
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -130,7 +132,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
     /// points. This returns an iterator over all the hessian product indices.
-    fn mls_surface_hessian_product_indices_iter<'a>(&'a self) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
+    fn mls_surface_hessian_product_indices_iter<'a>(
+        &'a self,
+    ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
         let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {
@@ -147,12 +151,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     .iter()
                     .filter(|nbrs| !nbrs.is_empty())
                     .flat_map(move |nbr_points| {
-                        Self::face_hessian_indices_iter(nbr_points, surface_topo, bg_field_params.weighted)
+                        Self::face_hessian_indices_iter(
+                            nbr_points,
+                            surface_topo,
+                            bg_field_params.weighted,
+                        )
                     })
                     .flat_map(move |(row, col)| {
-                        (0..3).flat_map(move |r| {
-                            (0..3).map(move |c| (3 * row + r, 3 * col + c))
-                        })
+                        (0..3).flat_map(move |r| (0..3).map(move |c| (3 * row + r, 3 * col + c)))
                     })
                     .filter(move |(row, col)| row >= col)
                     .collect();
@@ -255,9 +261,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         surface_topo: &'a [[usize; 3]],
         weighted: bool,
     ) -> impl Iterator<Item = (usize, usize)> + 'a
-        where T: 'a, // this was required by the compiler for some reason
+    where
+        T: 'a, // this was required by the compiler for some reason
     {
-
         let samples_to_vertices = move |row: usize, col: usize| {
             surface_topo[row].iter().flat_map(move |&r| {
                 surface_topo[col]
@@ -276,8 +282,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 } else {
                     None
                 };
-                samples_to_vertices(row, col)
-                    .chain(upper_triangular_entries.into_iter().flatten())
+                samples_to_vertices(row, col).chain(upper_triangular_entries.into_iter().flatten())
             });
 
         // Add in the normal gradient multiplied by a vector of given Vector3 values.
@@ -365,24 +370,22 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let nml_hess =
             Self::normal_hessian_at(q, view, kernel, &surface_topo, surface_vertex_positions, bg);
 
-        nml_hess.chain(main_hess).map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
+        nml_hess
+            .chain(main_hess)
+            .map(move |hess| (hess.0, hess.1, hess.2 * multiplier))
     }
 
     /// Hessian indices with respect to samples.
     pub(crate) fn sample_hessian_indices<'a>(
         nbrs: &'a [usize],
-    ) -> impl Iterator<Item = (usize, usize)> + 'a
-    {
-        nbrs.into_iter().map(
-            move |&i| (i, i)
-        ).chain(
-            nbrs.into_iter().flat_map(
-                move |&i| {
-                    nbrs.into_iter()
-                        .filter(move |&&j| i < j)
-                        .map(move |&j| (j, i))
-                })
-        )
+    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+        nbrs.into_iter()
+            .map(move |&i| (i, i))
+            .chain(nbrs.into_iter().flat_map(move |&i| {
+                nbrs.into_iter()
+                    .filter(move |&&j| i < j)
+                    .map(move |&j| (j, i))
+            }))
     }
 
     /// Hessian part with respect to samples.
@@ -401,7 +404,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let local_pot = Self::compute_local_potential_at(q, samples, kernel, ws_inv, csd);
 
-        let bg_hess = bg.hessian_blocks().zip(background_field::hessian_block_indices(bg.weighted, samples.indices()))
+        let bg_hess = bg
+            .hessian_blocks()
+            .zip(background_field::hessian_block_indices(
+                bg.weighted,
+                samples.indices(),
+            ))
             .map(|(h, (j, i))| (j, i, h));
 
         let _2 = T::from(2.0).unwrap();
@@ -415,26 +423,27 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                       value: phi,
                       ..
                   }| {
-                      let unit_nml = nml * (T::one() / nml.norm());
-                      let psi = phi + (q - pos).dot(unit_nml);
-                      let w = kernel.with_closest_dist(csd).eval(q, pos);
-                      let dw = -kernel.with_closest_dist(csd).grad(q, pos);
-                      let ddw = kernel.with_closest_dist(csd).hess(q, pos);
-                      let dwb = bg_diag.background_weight_gradient(Some(i));
-                      let ddwb = bg_diag.background_weight_hessian(Some(i));
-                      let dws = dwb + dw;
+                let unit_nml = nml * (T::one() / nml.norm());
+                let psi = phi + (q - pos).dot(unit_nml);
+                let w = kernel.with_closest_dist(csd).eval(q, pos);
+                let dw = -kernel.with_closest_dist(csd).grad(q, pos);
+                let ddw = kernel.with_closest_dist(csd).hess(q, pos);
+                let dwb = bg_diag.background_weight_gradient(Some(i));
+                let ddwb = bg_diag.background_weight_hessian(Some(i));
+                let dws = dwb + dw;
 
-                      let mut h = Matrix3::zeros();
+                let mut h = Matrix3::zeros();
 
-                      h += ddw * psi;
-                      h -= (ddw + ddwb) * local_pot;
-                      h -= sym_outer(dw, unit_nml);
-                      h -= sym_outer(dws, dw) * (psi * ws_inv);
-                      h += dws * (dws.transpose() * (_2 * local_pot * ws_inv));
-                      h += sym_outer(unit_nml, dws) * (w * ws_inv);
+                h += ddw * psi;
+                h -= (ddw + ddwb) * local_pot;
+                h -= sym_outer(dw, unit_nml);
+                h -= sym_outer(dws, dw) * (psi * ws_inv);
+                h += dws * (dws.transpose() * (_2 * local_pot * ws_inv));
+                h += sym_outer(unit_nml, dws) * (w * ws_inv);
 
-                      (i, i, h * ws_inv)
-                  });
+                (i, i, h * ws_inv)
+            },
+        );
 
         let off_diag_iter = samples.into_iter().flat_map(
             move |Sample {
@@ -444,43 +453,45 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                       value: phi_i,
                       ..
                   }| {
-                      let bg = bg.clone();
-                      let unit_nml_i = nml_i * (T::one() / nml_i.norm());
-                      let psi_i = phi_i + (q - pos_i).dot(unit_nml_i);
-                      let w_i = kernel.with_closest_dist(csd).eval(q, pos_i);
-                      let dw_i = -kernel.with_closest_dist(csd).grad(q, pos_i);
-                      let dwb_i = bg.background_weight_gradient(Some(i));
-                      let dws_i = dwb_i + dw_i;
-                      samples.into_iter()
-                          .filter(move |sample_j| i < sample_j.index)
-                          .map(
-                              move |Sample {
+                let bg = bg.clone();
+                let unit_nml_i = nml_i * (T::one() / nml_i.norm());
+                let psi_i = phi_i + (q - pos_i).dot(unit_nml_i);
+                let w_i = kernel.with_closest_dist(csd).eval(q, pos_i);
+                let dw_i = -kernel.with_closest_dist(csd).grad(q, pos_i);
+                let dwb_i = bg.background_weight_gradient(Some(i));
+                let dws_i = dwb_i + dw_i;
+                samples
+                    .into_iter()
+                    .filter(move |sample_j| i < sample_j.index)
+                    .map(
+                        move |Sample {
                                   index: j,
                                   pos: pos_j,
                                   nml: nml_j,
                                   value: phi_j,
                                   ..
                               }| {
-                                  let unit_nml_j = nml_j * (T::one() / nml_j.norm());
-                                  let psi_j = phi_j + (q - pos_j).dot(unit_nml_j);
+                            let unit_nml_j = nml_j * (T::one() / nml_j.norm());
+                            let psi_j = phi_j + (q - pos_j).dot(unit_nml_j);
 
-                                  let mut h = Matrix3::zeros();
+                            let mut h = Matrix3::zeros();
 
-                                  let w_j = kernel.with_closest_dist(csd).eval(q, pos_j);
-                                  let dw_j = -kernel.with_closest_dist(csd).grad(q, pos_j);
-                                  let dwb_j = bg.background_weight_gradient(Some(j));
-                                  let dws_j = dwb_j + dw_j;
+                            let w_j = kernel.with_closest_dist(csd).eval(q, pos_j);
+                            let dw_j = -kernel.with_closest_dist(csd).grad(q, pos_j);
+                            let dwb_j = bg.background_weight_gradient(Some(j));
+                            let dws_j = dwb_j + dw_j;
 
-                                  h -= dws_j * (dw_i.transpose() * psi_i);
-                                  h -= dw_j * (dws_i.transpose() * psi_j);
-                                  h += dws_j * (dws_i.transpose() * (_2 * local_pot));
+                            h -= dws_j * (dw_i.transpose() * psi_i);
+                            h -= dw_j * (dws_i.transpose() * psi_j);
+                            h += dws_j * (dws_i.transpose() * (_2 * local_pot));
 
-                                  h += unit_nml_j * (dws_i.transpose() * w_j);
-                                  h += dws_j * (unit_nml_i.transpose() * w_i);
+                            h += unit_nml_j * (dws_i.transpose() * w_j);
+                            h += dws_j * (unit_nml_i.transpose() * w_i);
 
-                                  (j, i, h * ws_inv2)
-                              })
-                  }
+                            (j, i, h * ws_inv2)
+                        },
+                    )
+            },
         );
 
         diag_iter.chain(off_diag_iter).chain(bg_hess)
@@ -623,13 +634,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 .enumerate()
                 .filter(move |(_, nbrs)| !nbrs.is_empty())
                 .flat_map(move |(i, _)| {
-                    (0..3).flat_map(move |c| {
-                        (c..3).map(move |r| {
-                            (3 * i + r, 3 * i + c)
-                        })
-                    })
+                    (0..3).flat_map(move |c| (c..3).map(move |r| (3 * i + r, 3 * i + c)))
                 })
-            .collect()
+                .collect()
         });
         indices.map(|i| i.into_iter())
     }
@@ -761,10 +768,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         - sym_outer(unit_nml, dw_neigh) * w
                         - sym_outer(dw_neigh, dw) * psi
                         - ddw_neigh * psi * w
-                        + (dw_neigh * (dw_neigh.transpose() * (T::from(2.0).unwrap() * w)) + ddw) * psi
+                        + (dw_neigh * (dw_neigh.transpose() * (T::from(2.0).unwrap() * w)) + ddw)
+                            * psi
                 },
             )
-            .sum::<Matrix3<T>>() * weight_sum_inv
+            .sum::<Matrix3<T>>()
+            * weight_sum_inv
     }
 }
 
@@ -1445,7 +1454,10 @@ mod tests {
         let run_tester = |tri, field_type, weighted| {
             for i in 1..50 {
                 let radius = 0.1 * (i as f64);
-                let bg = BackgroundFieldParams { field_type, weighted };
+                let bg = BackgroundFieldParams {
+                    field_type,
+                    weighted,
+                };
                 for &q in qs.iter() {
                     sample_hessian_tester(q, &tri, radius, 0.0, bg);
                 }

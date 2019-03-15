@@ -747,6 +747,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let closest_d = bg.closest_sample_dist();
         let weight_sum_inv = bg.weight_sum_inv();
 
+        let bg_hess = bg.compute_query_hessian();
+
         // For each surface vertex contribution
         let dw_neigh = Self::normalized_neighbour_weight_gradient(q, view, kernel, bg.clone());
         let ddw_neigh = Self::normalized_neighbour_weight_hessian(q, view, kernel, bg);
@@ -773,7 +775,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 },
             )
             .sum::<Matrix3<T>>()
-            * weight_sum_inv
+            * weight_sum_inv + bg_hess
     }
 }
 

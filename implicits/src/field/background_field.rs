@@ -488,50 +488,6 @@ where
     //    bg_grad * (-wb)
     //}
 
-    /// Compute background field derivative contribution.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
-    /// assume the background field is constant. This Jacobian is taken with respect to the
-    /// query position.
-    pub(crate) fn compute_query_jacobian(&self) -> Vector3<T> {
-        // Unpack background data.
-        let BackgroundField {
-            query_pos: q,
-            samples,
-            kernel,
-            weighted,
-            closest_sample_dist: dist,
-            ..
-        } = *self;
-
-        let weight_sum_inv = self.weight_sum_inv();
-
-        // The normalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
-        let wb = self.background_weight() * weight_sum_inv;
-
-        let mut dw_total = Vector3::zeros();
-        for grad in samples
-            .into_iter()
-            .map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos))
-        {
-            dw_total += grad;
-        }
-
-        let dwb = self.background_weight_gradient(None);
-        dw_total += dwb;
-
-        let bg_val = self.field_value();
-
-        // The term without the background field derivative.
-        let grad = if weighted {
-            (dwb - dw_total * wb) * (bg_val * weight_sum_inv)
-        } else {
-            Vector3::zeros()
-        };
-
-        grad + self.field_gradient() * wb
-    }
-
     /// Compute background field second derivative contribution.
     /// Compute Hessian if the closest point is in the neighbourhood. Otherwise we
     /// assume the background field is constant. This Hessian is taken with respect to the
@@ -629,6 +585,91 @@ where
 
         diag_iter.chain(off_diag_iter.into_iter().flatten())
     }
+
+
+    /// Compute background field derivative contribution.
+    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// assume the background field is constant. This Jacobian is taken with respect to the
+    /// query position.
+    pub(crate) fn compute_query_jacobian(&self) -> Vector3<T> {
+        // Unpack background data.
+        let BackgroundField {
+            query_pos: q,
+            samples,
+            kernel,
+            weighted,
+            closest_sample_dist: dist,
+            ..
+        } = *self;
+
+        let weight_sum_inv = self.weight_sum_inv();
+
+        // The normalized weight evaluated at the distance to the boundary of the
+        // neighbourhood.
+        let wb = self.background_weight() * weight_sum_inv;
+
+        let grad = if weighted {
+            let mut dw_total: Vector3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)).sum();
+
+            let dwb = self.background_weight_gradient(None);
+            dw_total += dwb;
+
+            let bg_val = self.field_value();
+
+            (dwb - dw_total * wb) * (bg_val * weight_sum_inv)
+        } else {
+            Vector3::zeros()
+        };
+
+        grad + self.field_gradient() * wb
+    }
+
+    /// Compute background field query Hessian contribution.
+    /// Compute second derivative if the closest point is in the neighbourhood. Otherwise we
+    /// assume the background field is constant. This Hessian is taken with respect to the
+    /// query position.
+    pub(crate) fn compute_query_hessian(&self) -> Matrix3<T> {
+        use crate::hessian::sym_outer;
+
+        // Unpack background data.
+        let BackgroundField {
+            query_pos: q,
+            samples,
+            kernel,
+            weighted,
+            closest_sample_dist: dist,
+            ..
+        } = *self;
+
+        let weight_sum_inv = self.weight_sum_inv();
+
+        // The unnormalized weight evaluated at the distance to the boundary of the neighbourhood.
+        let wb = self.background_weight();
+
+        let mut hess = self.field_hessian() * wb;
+        if weighted {
+            let mut dw_total: Vector3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)).sum();
+            let dwb = self.background_weight_gradient(None);
+            dw_total += dwb;
+
+            let mut ddw_total: Matrix3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).hess(q, pos)).sum();
+            let ddwb = self.background_weight_hessian(None);
+            ddw_total += ddwb;
+
+            let f = self.field_value();
+            let df = self.field_gradient();
+            let _2 = T::from(2.0).unwrap();
+
+            hess += sym_outer(df, dwb)
+                - sym_outer(dw_total, df) * (wb * weight_sum_inv)
+                - sym_outer(dw_total, dwb) * (f * weight_sum_inv)
+                + dw_total * (dw_total.transpose() * (_2 * f * wb * weight_sum_inv * weight_sum_inv))
+                + ddwb * f
+                - ddw_total * f * wb * weight_sum_inv
+        }
+
+        hess * weight_sum_inv
+    }
 }
 
 #[cfg(test)]
@@ -718,7 +759,7 @@ mod tests {
         Ok(())
     }
 
-    fn distance_based_bg_tester(
+    fn distance_based_bg_sample_hessian_tester(
         radius: f64,
         mesh: &geo::mesh::TriMesh<f64>,
         qs: &[Vector3<f64>],
@@ -842,6 +883,99 @@ mod tests {
         Ok(())
     }
 
+    fn distance_based_bg_query_hessian_tester(
+        radius: f64,
+        mesh: &geo::mesh::TriMesh<f64>,
+        qs: &[Vector3<f64>],
+    ) -> Result<(), Error> {
+        use autodiff::F;
+
+        // Create a surface sample mesh.
+        let sphere = geo::mesh::PolyMesh::from(mesh.clone());
+
+        let bg_field_params = BackgroundFieldParams {
+            field_type: BackgroundFieldType::DistanceBased,
+            weighted: true,
+        };
+
+        let tolerance = 0.00001;
+        let kernel_type = KernelType::Approximate { tolerance, radius };
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh::<F>(
+            &sphere,
+            Params {
+                kernel: kernel_type,
+                background_field: bg_field_params,
+                sample_type: SampleType::Face,
+                max_step: 0.0,
+            },
+        )?;
+
+        let mut query_points: Vec<_> = qs
+            .iter()
+            .map(|&q| q.map(|x| F::cst(x)).into_inner())
+            .collect();
+
+        surface.cache_neighbours(&query_points);
+        let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
+        let samples = surface.samples().clone();
+
+        let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
+
+        // Compute potential.
+        for (q, n) in query_points.iter_mut().zip(neighs.iter()) {
+            let view = SamplesView::new(n, &samples);
+            if view.is_empty() {
+                continue;
+            }
+
+            let hess = {
+                let bg = BackgroundField::<F, F, _>::local(
+                    Vector3(*q),
+                    view,
+                    kernel,
+                    bg_field_params,
+                    None,
+                )
+                .unwrap();
+                bg.compute_query_hessian()
+            };
+
+            let mut success = true;
+
+            for wrt in 0..3 {
+                q[wrt] = F::var(q[wrt]);
+                let jac = {
+                    let bg =
+                        BackgroundField::local(Vector3(*q), view, kernel, bg_field_params, None)
+                            .unwrap();
+                    bg.compute_query_jacobian()
+                };
+
+                for k in 0..3 {
+                    if !relative_eq!(
+                        hess[k][wrt].value(),
+                        jac[k].deriv(),
+                        max_relative = 1e-5
+                    ) {
+                        println!(
+                            "{:.5} vs {:.5}",
+                            hess[k][wrt].value(),
+                            jac[k].deriv()
+                        );
+                        success = false;
+                    }
+                }
+                q[wrt] = F::cst(q[wrt]);
+            }
+
+            assert!(success);
+        }
+        Ok(())
+    }
+
+
     #[test]
     fn two_triangles_distance_based_bg() -> Result<(), Error> {
         let (verts, indices) =
@@ -859,7 +993,8 @@ mod tests {
 
         for i in 1..50 {
             let radius = 0.1 * i as f64;
-            distance_based_bg_tester(radius, &mesh, &query_points)?;
+            distance_based_bg_sample_hessian_tester(radius, &mesh, &query_points)?;
+            distance_based_bg_query_hessian_tester(radius, &mesh, &query_points)?;
         }
         Ok(())
     }
@@ -873,7 +1008,8 @@ mod tests {
 
         for i in 1..50 {
             let radius = 0.1 * i as f64;
-            distance_based_bg_tester(radius, &mesh, &query_points)?;
+            distance_based_bg_sample_hessian_tester(radius, &mesh, &query_points)?;
+            distance_based_bg_query_hessian_tester(radius, &mesh, &query_points)?;
         }
         Ok(())
     }

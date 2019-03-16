@@ -4,7 +4,7 @@ use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
-use crate::constraints::{smooth_contact::SmoothContactConstraint, volume::VolumeConstraint};
+use crate::constraints::{ContactConstraint, volume::VolumeConstraint};
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use crate::matrix::*;
@@ -127,7 +127,7 @@ pub(crate) struct NonLinearProblem {
     /// Constraint on the total volume.
     pub volume_constraint: Option<VolumeConstraint>,
     /// Contact constraint on the smooth solid representation against the kinematic object.
-    pub smooth_contact_constraint: Option<SmoothContactConstraint>,
+    pub smooth_contact_constraint: Option<Box<dyn ContactConstraint>>,
     /// Displacement bounds. This controlls how big of a step we can take per vertex position
     /// component. In other words the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
@@ -140,6 +140,7 @@ pub(crate) struct NonLinearProblem {
     pub iterations: usize,
     /// Solution data. This is kept around for warm starts.
     pub warm_start: Solution,
+    pub initial_residual_error: f64,
     pub iter_counter: RefCell<usize>,
 }
 
@@ -179,15 +180,17 @@ impl NonLinearProblem {
         let iter = self.iterations;
         // Reset caunt
         self.iterations = 0;
-        if let Some(ref mut scc) = self.smooth_contact_constraint.as_mut() {
-            scc.reset_iter_count();
-        }
         iter
     }
 
     /// Intermediate callback for `Ipopt`.
     #[allow(clippy::too_many_arguments)] // TODO: Improve on the ipopt interface
-    pub fn intermediate_cb(&mut self, _data: ipopt::IntermediateCallbackData) -> bool {
+    pub fn intermediate_cb(&mut self, data: ipopt::IntermediateCallbackData) -> bool {
+        if data.iter_count == 0 {
+            // Record the initial max of dual and primal infeasibility.
+            self.initial_residual_error = data.inf_pr.max(data.inf_du);
+        }
+
         self.iterations += 1;
         !(self.interrupt_checker)()
     }
@@ -221,8 +224,7 @@ impl NonLinearProblem {
             // Since we transformed the mesh, we need to invalidate its neighbour data so it's
             // recomputed at the next time step (if applicable).
             if let Some(ref mut scc) = self.smooth_contact_constraint {
-                let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-                scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+                scc.update_cache();
             }
 
             (old_warm_start, old_prev_pos, old_prev_vel)
@@ -240,16 +242,14 @@ impl NonLinearProblem {
     pub fn update_max_step(&mut self, step: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_max_step(step);
-            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            scc.update_cache();
             dbg!(scc.constraint_size());
         }
     }
     pub fn update_radius(&mut self, rad: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_radius(rad);
-            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            scc.update_cache();
             dbg!(scc.constraint_size());
         }
     }
@@ -295,8 +295,7 @@ impl NonLinearProblem {
         // Since we transformed the mesh, we need to invalidate its neighbour data so it's
         // recomputed at the next time step (if applicable).
         if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
+            scc.update_cache();
         }
         
     }
@@ -333,12 +332,14 @@ impl NonLinearProblem {
         crate::inf_norm(&g)
     }
 
-    pub fn probe_contact_constraint_violation(&mut self, displacement: &[f64]) -> f64 {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let mesh = self.kinematic_object.as_ref().unwrap().borrow();
-            scc.update_cache(reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions()));
-        }
-        self.constraint_violation_norm(displacement)
+    /// Return the constraint violation and whether the neighbourhood data (sparsity) has changed.
+    pub fn probe_contact_constraint_violation(&mut self, displacement: &[f64]) -> (f64, bool) {
+        let changed = if let Some(ref mut scc) = self.smooth_contact_constraint {
+            scc.update_cache()
+        } else {
+            false
+        };
+        (self.constraint_violation_norm(displacement), changed)
     }
 
     /// Linearized constraint true violation measure.
@@ -747,7 +748,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint_jacobian_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
-
 
         let mut i = 0;
 

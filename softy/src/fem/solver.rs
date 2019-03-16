@@ -270,7 +270,10 @@ impl SolverBuilder {
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
         let smooth_contact_constraint = match kinematic_object.as_ref() {
-            Some(trimesh) => Some(SmoothContactConstraint::new(&mesh, &trimesh, smooth_contact_params.unwrap())?),
+            Some(trimesh) => {
+                let params = smooth_contact_params.unwrap(); // already verified above.
+                Some(crate::constraints::build_contact_constraint(&mesh, &trimesh, params)?)
+            }
             None => None,
         };
 
@@ -296,6 +299,7 @@ impl SolverBuilder {
             interrupt_checker: Box::new(|| false),
             iterations: 0,
             warm_start: Solution::default(),
+            initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
         };
 
@@ -350,7 +354,7 @@ impl SolverBuilder {
             step_count: 0,
             sim_params: params,
             solid_material: Some(solid_material),
-            max_step: smooth_contact_params.map_or(0.0, |x| x.max_step),
+            max_step: 0.0,
         })
     }
 
@@ -876,7 +880,12 @@ impl Solver {
         residual_norm
     }
 
-    pub fn probe_contact_constraint_violation(&mut self) -> f64 {
+    fn initial_residual_error(&self) -> f64 {
+        self.problem().initial_residual_error
+    }
+
+    /// Second output is whether the sparsity pattern has changed after we updated it.
+    pub fn probe_contact_constraint_violation(&mut self) -> (f64, bool) {
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
@@ -906,15 +915,20 @@ impl Solver {
                         let dx = self.dx();
                         let step = inf_norm(dx);
 
-                        let constraint_violation = self.probe_contact_constraint_violation();
-                        let unscaled_tol = self.sim_params.tolerance as f64 / self.sim_params.max_gradient_scaling as f64;
-                        if constraint_violation > unscaled_tol { // intersecting objects (allow leeway)
+                        // Note: at the time of this writing, the sparsity_changed indicator can
+                        // have false negatives (no change detected, but really there was a
+                        // change). In which case we would be skipping an opportunity to do a more
+                        // accurate step.
+                        let (constraint_violation, sparsity_changed) = self.probe_contact_constraint_violation();
+                        let initial_error = self.initial_residual_error();
+                        let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
+                        if constraint_violation > relative_tolerance { // intersecting objects (allow leeway)
                             // Check that the reason we are in this mess is actually because of the step size
                             if self.max_step + radius < step {
                                 println!("##### Increasing max step to {}", step - radius);
                                 self.update_max_step(step - radius);
                                 self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
-                            } else {
+                            } else if sparsity_changed {
                                 println!("Sparsity has changed, constraint violation: {:?}", constraint_violation);
                                 // Sparsity pattern must have changed, simply update constraint
                                 // multipliers and repeat the step.
@@ -922,6 +936,11 @@ impl Solver {
                                 // We don't commit the solution here because it may be far from the
                                 // true solution, just redo the whole solve with the right
                                 // neighbourhood information.
+                            } else {
+                                // Sparsity hasn't changed but constraint is still violated.
+                                // Nothing else we can do, just accept the solution and move on.
+                                self.commit_solution(true);
+                                break;
                             }
                         } else {
                             println!("##### Decreasing max step to {}", (step - radius).max(0.0));
@@ -1253,7 +1272,7 @@ mod tests {
     /// Test that subsequent outer iterations don't change the solution when Ipopt has converged.
     /// This is not the case with linearized constraints.
     #[test]
-    fn one_tet_outer_test() {
+    fn one_tet_outer_test() -> Result<(), Error> {
         let params = SimParams {
             outer_tolerance: 1e-5, // This is a fairly strict tolerance.
             ..STATIC_PARAMS
@@ -1264,19 +1283,19 @@ mod tests {
         let mut solver = SolverBuilder::new(params)
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh.clone())
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
 
         let solution = solver.borrow_mesh();
         let mut expected_solver = one_tet_solver();
-        expected_solver.step().unwrap();
+        expected_solver.step()?;
         let expected = expected_solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     #[test]
-    fn one_tet_volume_constraint_test() {
+    fn one_tet_volume_constraint_test() -> Result<(), Error> {
         let mesh = make_one_deformed_tet_mesh();
 
         let material = Material {
@@ -1287,9 +1306,9 @@ mod tests {
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
+        Ok(())
     }
 
     /*
@@ -1297,38 +1316,37 @@ mod tests {
      */
 
     #[test]
-    fn three_tets_static_test() {
+    fn three_tets_static_test() -> Result<(), Error> {
         let mesh = make_three_tet_mesh();
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk"))?;
         compare_meshes(&solution, &expected, 1e-3);
+        Ok(())
     }
 
     #[test]
-    fn three_tets_dynamic_test() {
+    fn three_tets_dynamic_test() -> Result<(), Error> {
         let mesh = make_three_tet_mesh();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let solution = solver.borrow_mesh();
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk"))
-                .unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk"))?;
         compare_meshes(&solution, &expected, 1e-2);
+        Ok(())
     }
 
     #[test]
-    fn three_tets_static_volume_constraint_test() {
+    fn three_tets_static_volume_constraint_test() -> Result<(), Error> {
         let mesh = make_three_tet_mesh();
         let material = Material {
             incompressibility: true,
@@ -1337,19 +1355,18 @@ mod tests {
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let solution = solver.borrow_mesh();
         let exptected = geo::io::load_tetmesh(&PathBuf::from(
             "assets/three_tets_static_volume_constraint_expected.vtk",
-        ))
-        .unwrap();
+        ))?;
         compare_meshes(&solution, &exptected, 1e-4);
+        Ok(())
     }
 
     #[test]
-    fn three_tets_dynamic_volume_constraint_test() {
+    fn three_tets_dynamic_volume_constraint_test() -> Result<(), Error> {
         let mesh = make_three_tet_mesh();
         let material = Material {
             incompressibility: true,
@@ -1358,19 +1375,18 @@ mod tests {
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let solution = solver.borrow_mesh();
         let expected = geo::io::load_tetmesh(&PathBuf::from(
             "assets/three_tets_dynamic_volume_constraint_expected.vtk",
-        ))
-        .unwrap();
+        ))?;
         compare_meshes(&solution, &expected, 1e-2);
+        Ok(())
     }
 
     #[test]
-    fn animation_test() {
+    fn animation_test() -> Result<(), Error> {
         let mut verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -1384,20 +1400,20 @@ mod tests {
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
-            .build()
-            .unwrap();
+            .build()?;
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
-            assert!(solver.update_mesh_vertices(&pts).is_ok());
-            assert!(solver.step().is_ok());
+            solver.update_mesh_vertices(&pts)?;
+            solver.step()?;
         }
+        Ok(())
     }
 
     #[test]
-    fn animation_volume_constraint_test() {
+    fn animation_volume_constraint_test() -> Result<(), Error> {
         let mut verts = vec![
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -1416,8 +1432,7 @@ mod tests {
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(incompressible_material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
+            .build()?;
 
         for frame in 1u32..100 {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
@@ -1427,9 +1442,10 @@ mod tests {
             //    solver.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", frame)),
             //);
-            assert!(solver.update_mesh_vertices(&pts).is_ok());
-            assert!(solver.step().is_ok());
+            solver.update_mesh_vertices(&pts)?;
+            solver.step()?;
         }
+        Ok(())
     }
 
     const STRETCH_PARAMS: SimParams = SimParams {
@@ -1446,60 +1462,60 @@ mod tests {
     };
 
     #[test]
-    fn box_stretch_test() {
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
+    fn box_stretch_test() -> Result<(), Error> {
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     #[test]
-    fn box_stretch_volume_constraint_test() {
+    fn box_stretch_volume_constraint_test() -> Result<(), Error> {
         let incompressible_material = Material {
             incompressibility: true,
             ..MEDIUM_SOLID_MATERIAL
         };
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(incompressible_material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     #[test]
-    fn box_twist_test() {
+    fn box_twist_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
             ..MEDIUM_SOLID_MATERIAL
         };
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     #[test]
-    fn box_twist_dynamic_volume_constraint_test() {
+    fn box_twist_dynamic_volume_constraint_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
             incompressibility: true,
@@ -1513,27 +1529,27 @@ mod tests {
             ..DYNAMIC_PARAMS
         };
 
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
         let mut solver = SolverBuilder::new(params)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
+            .build()?;
 
         // The dynamic sim needs to settle
         for _ in 1u32..15 {
-            let result = solver.step().expect("Dynamic box twist solve failed");
+            let result = solver.step()?;
             assert!(result.iterations <= params.max_outer_iterations, "Unconstrained solver ran out of outer iterations.");
         }
 
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-4);
+        Ok(())
     }
 
     #[test]
-    fn box_twist_volume_constraint_test() {
+    fn box_twist_volume_constraint_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
             incompressibility: true,
@@ -1543,19 +1559,19 @@ mod tests {
         let mut solver = SolverBuilder::new(STRETCH_PARAMS)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        assert!(solver.step().is_ok());
+            .build()?;
+        solver.step()?;
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     /// This test insures that a non-linearized constraint like volume doesn't cause multiple outer
     /// iterations, and converges after the first solve.
     #[test]
-    fn box_twist_volume_constraint_outer_test() {
+    fn box_twist_volume_constraint_outer_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(1000.0, 0.0),
             incompressibility: true,
@@ -1567,21 +1583,21 @@ mod tests {
             ..STRETCH_PARAMS
         };
 
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
         let mut solver = SolverBuilder::new(params)
             .solid_material(material)
             .add_solid(mesh)
-            .build()
-            .unwrap();
-        let solve_result = solver.step().expect("Solve failed");
+            .build()?;
+        let solve_result = solver.step()?;
         assert_eq!(solve_result.iterations, 1);
 
         // This test should produce the exact same mesh as the original
         // box_twist_volume_constraint_test
         let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk")).unwrap();
+            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
+        Ok(())
     }
 
     /*
@@ -1602,7 +1618,7 @@ mod tests {
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
-            background_field: BackgroundFieldType::FromInput,
+            background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false },
             sample_type: SampleType::Face,
             ..Default::default()
         };
@@ -1637,7 +1653,7 @@ mod tests {
     }
 
     #[test]
-    fn tet_push_test() {
+    fn tet_push_test() -> Result<(), Error> {
         // A triangle is being pushed on top of a tet.
         let height = 1.18032;
         let mut tri_verts = vec![
@@ -1652,8 +1668,7 @@ mod tests {
 
         // Set fixed vertices
         tetmesh
-            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])
-            .unwrap();
+            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
 
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
@@ -1674,14 +1689,13 @@ mod tests {
             .add_solid(tetmesh.clone())
             .add_shell(trimesh.clone())
             .smooth_contact_params(SmoothContactParams {
+                contact_type: ContactType::Point,
                 radius,
                 tolerance,
-                max_step: 2.0,
             })
-            .build()
-            .unwrap();
+            .build()?;
 
-        let solve_result = solver.step().expect("Failed equilibrium solve.");
+        let solve_result = solver.step()?;
         assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
 
         // Expect no push since the triangle is outside the surface.
@@ -1705,7 +1719,7 @@ mod tests {
         tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
         let pts = PointCloud::new(tri_verts.clone());
         assert!(solver.update_kinematic_vertices(&pts).is_ok());
-        let solve_result = solver.step().expect("Failed push solve.");
+        let solve_result = solver.step()?;
         assert!(solve_result.iterations <= params.max_outer_iterations);
 
         // Verify constraint, should be positive after push
@@ -1730,9 +1744,11 @@ mod tests {
                 assert_relative_eq!(pos[i], exp_pos[i], epsilon = 1e-3);
             }
         }
+
+        Ok(())
     }
 
-    fn ball_tri_push_tester(material: Material, sc_params: SmoothContactParams) {
+    fn ball_tri_push_tester(material: Material, sc_params: SmoothContactParams) -> Result<(), Error> {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
 
         let params = SimParams {
@@ -1742,55 +1758,55 @@ mod tests {
             ..DYNAMIC_PARAMS
         };
 
-        let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk")).unwrap();
+        let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
         let mut solver = SolverBuilder::new(params)
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
             .smooth_contact_params(sc_params)
-            .build()
-            .unwrap();
+            .build()?;
 
-        let res = solver.step().expect("Failed push solve.");
+        let res = solver.step()?;
         println!("res = {:?}", res);
         assert!(
             res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
         );
+        Ok(())
     }
 
     #[test]
-    fn ball_tri_push_test() {
+    fn ball_tri_push_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             ..SOLID_MATERIAL
         };
         let sc_params = SmoothContactParams {
+            contact_type: ContactType::Point,
             radius: 1.1,
             tolerance: 0.07,
-            max_step: 1.5,
         };
 
-        ball_tri_push_tester(material, sc_params);
+        ball_tri_push_tester(material, sc_params)
     }
 
     #[test]
-    fn ball_tri_push_volume_constraint_test() {
+    fn ball_tri_push_volume_constraint_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             incompressibility: true,
             ..SOLID_MATERIAL
         };
         let sc_params = SmoothContactParams {
+            contact_type: ContactType::Point,
             radius: 1.1,
             tolerance: 0.07,
-            max_step: 1.5,
         };
 
-        ball_tri_push_tester(material, sc_params);
+        ball_tri_push_tester(material, sc_params)
     }
 
-    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams) {
+    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams) -> Result<(), Error> {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
 
         let params = SimParams {
@@ -1816,37 +1832,38 @@ mod tests {
             .add_solid(tetmesh)
             .add_shell(grid)
             .smooth_contact_params(sc_params)
-            .build()
-            .unwrap();
+            .build()?;
 
         for _ in 0..29 {
-            let res = solver.step().expect("Failed bounce solve.");
+            let res = solver.step()?;
             println!("res = {:?}", res);
             assert!(
                 res.iterations <= params.max_outer_iterations,
                 "Exceeded max outer iterations."
             );
         }
+
+        Ok(())
     }
 
     #[test]
-    fn ball_bounce_test() {
+    fn ball_bounce_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             ..SOLID_MATERIAL
         };
 
         let sc_params = SmoothContactParams {
+            contact_type: ContactType::Point,
             radius: 0.4,
             tolerance: 0.01,
-            max_step: 0.0,
         };
 
-        ball_bounce_tester(material, sc_params);
+        ball_bounce_tester(material, sc_params)
     }
 
     #[test]
-    fn ball_bounce_volume_constraint_test() {
+    fn ball_bounce_volume_constraint_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             incompressibility: true,
@@ -1854,12 +1871,12 @@ mod tests {
         };
 
         let sc_params = SmoothContactParams {
+            contact_type: ContactType::Point,
             radius: 0.4,
             tolerance: 0.01,
-            max_step: 0.0,
         };
 
-        ball_bounce_tester(material, sc_params);
+        ball_bounce_tester(material, sc_params)
     }
 
     /*
@@ -1875,33 +1892,33 @@ mod tests {
     };
 
     #[test]
-    fn torus_medium_test() {
+    fn torus_medium_test() -> Result<(), Error> {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(STIFF_MATERIAL)
             .add_solid(mesh)
             .build()
             .unwrap();
-        assert!(solver.step().is_ok());
+        solver.step()?;
+        Ok(())
     }
 
     #[cfg(not(debug_assertions))]
     #[test]
-    fn torus_long_test() {
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+    fn torus_long_test() -> Result<(), Error> {
+        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .solid_material(STIFF_MATERIAL)
             .add_solid(mesh)
-            .build()
-            .unwrap();
+            .build()?;
 
         for _i in 0..10 {
             //geo::io::save_tetmesh_ascii(
             //    &solver.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
             //    ).unwrap();
-            let res = solver.step();
-            assert!(res.is_ok());
+            solver.step()?;
         }
+        Ok(())
     }
 }

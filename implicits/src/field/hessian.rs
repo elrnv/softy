@@ -706,14 +706,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         // For each row (query point)
-        let hess_iter = zip!(query_points.iter(), neigh_points.iter(), multipliers.iter())
-            .filter(|(_, nbrs, _)| !nbrs.is_empty())
-            .map(move |(q, nbr_points, &mult)| {
+        let hess_iter = zip!(query_points.iter(), neigh_points.iter())
+            .filter(|(_, nbrs)| !nbrs.is_empty())
+            .zip(multipliers.iter())
+            .map(move |((q, nbr_points), &mult)| {
                 let view = SamplesView::new(nbr_points, samples);
                 Self::query_hessian_at(Vector3(*q), view, kernel, bg_field_params) * mult
             });
 
         let value_mtxs: &mut [[T; 6]] = reinterpret::reinterpret_mut_slice(values);
+        debug_assert_eq!(hess_iter.clone().count(), value_mtxs.len());
 
         value_mtxs
             .iter_mut()

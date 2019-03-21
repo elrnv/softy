@@ -525,19 +525,11 @@ impl ConstraintJacobian<f64> for PointContactConstraint {
             surf.surface_jacobian_indices_iter().unwrap()
         };
 
-        // The returned Jacobian contains the full jacobian. We only need the parts of it with
-        // non-zero rows.
-        let mut cached_neighbourhood_indices = match self.implicit_surface.borrow().cached_neighbourhood_sizes() {
-            Ok(c) => c,
-            Err(_) => return Box::new(std::iter::empty()),
-        };
-        for (i, c)  in cached_neighbourhood_indices.iter_mut().filter(|&& mut c| c != 0).enumerate() {
-            *c = i + 1;
-        }
+        let cached_neighbourhood_indices = self.cached_neighbourhood_indices();
         Box::new(idx_iter.map(move |(row, col)| {
-            assert_ne!(cached_neighbourhood_indices[row], 0);
+            assert!(cached_neighbourhood_indices[row].is_valid());
             MatrixElementIndex {
-                row: cached_neighbourhood_indices[row] - 1,
+                row: cached_neighbourhood_indices[row].unwrap(),
                 col: self.tetmesh_coordinate_index(col),
             }
         }))

@@ -215,9 +215,11 @@ impl NonLinearProblem {
                     *prev_v = dp * dt_inv;
                 });
 
-            let mut tetmesh = self.tetmesh.borrow_mut();
-            let verts = tetmesh.vertex_positions_mut();
-            verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
+            {
+                let mut tetmesh = self.tetmesh.borrow_mut();
+                let verts = tetmesh.vertex_positions_mut();
+                verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
+            }
 
             let old_warm_start = self.warm_start.clone();
 
@@ -254,7 +256,7 @@ impl NonLinearProblem {
         }
     }
 
-    /// The contact constraints may have changedd. This method remaps the old constraints to the
+    /// The contact constraints may have changed. This method remaps the old constraints to the
     /// new constraints so we can use the warm start from the previous step even if the constraint
     /// set has changed.
     pub fn remap_constraint_multipliers(&mut self, constrained_points: &[Index]) {
@@ -456,7 +458,7 @@ impl NonLinearProblem {
             return Err(crate::Error::NoKinematicMesh);
         }
 
-        dbg!(*iter_counter);
+        //dbg!(*iter_counter);
         Ok(())
     }
 
@@ -663,7 +665,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let prev_pos = self.prev_pos.borrow();
         let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
-        self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
+        //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
         let mut i = 0; // Counter.
 
@@ -761,9 +763,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = scc.constraint_jacobian_size();
             scc.constraint_jacobian_values(x, dx, &mut vals[i..i + n]);
             //println!("jac g vals = {:?}", &vals[i..i+n]);
-            //i += n;
         }
 
+        //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
         //self.print_jacobian_svd(vals);
 
         true
@@ -865,10 +867,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint {
             let nc = scc.constraint_size();
             let nh = scc.constraint_hessian_size();
-            scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i+nh]);
-            //i += nh;
-            //coff += nc;
+            scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh]);
+            i += nh;
+            coff += nc;
         }
+
+        assert_eq!(i, vals.len());
+        assert_eq!(coff, lambda.len());
         //self.print_hessian_svd(vals);
 
         true

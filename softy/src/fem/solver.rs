@@ -331,7 +331,7 @@ impl SolverBuilder {
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("warm_start_init_point", "yes");
+        ipopt.set_option("warm_start_init_point", "no");
         //ipopt.set_option("jac_d_constant", "yes");
         ipopt.set_option("nlp_scaling_max_gradient", params.max_gradient_scaling as f64);
         //ipopt.set_option("print_timing_statistics", "yes");
@@ -1806,9 +1806,7 @@ mod tests {
         ball_tri_push_tester(material, sc_params)
     }
 
-    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams) -> Result<(), Error> {
-        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk")).unwrap();
-
+    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams, tetmesh: TetMesh) -> Result<(), Error> {
         let params = SimParams {
             max_iterations: 200,
             outer_tolerance: 0.1,
@@ -1834,7 +1832,7 @@ mod tests {
             .smooth_contact_params(sc_params)
             .build()?;
 
-        for _ in 0..29 {
+        for _ in 0..50 {
             let res = solver.step()?;
             println!("res = {:?}", res);
             assert!(
@@ -1847,7 +1845,7 @@ mod tests {
     }
 
     #[test]
-    fn ball_bounce_test() -> Result<(), Error> {
+    fn ball_bounce_on_points_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             ..SOLID_MATERIAL
@@ -1859,11 +1857,13 @@ mod tests {
             tolerance: 0.01,
         };
 
-        ball_bounce_tester(material, sc_params)
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
+
+        ball_bounce_tester(material, sc_params, tetmesh)
     }
 
     #[test]
-    fn ball_bounce_volume_constraint_test() -> Result<(), Error> {
+    fn ball_bounce_on_points_volume_constraint_test() -> Result<(), Error> {
         let material = Material {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             incompressibility: true,
@@ -1876,7 +1876,68 @@ mod tests {
             tolerance: 0.01,
         };
 
-        ball_bounce_tester(material, sc_params)
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
+
+        ball_bounce_tester(material, sc_params, tetmesh)
+    }
+
+    /// Tet bouncing on an implicit surface. This is an easy test where the tet sees the entire
+    /// local implicit surface.
+    #[test]
+    fn tet_bounce_on_implicit_test() -> Result<(), Error> {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e5, 0.4),
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            contact_type: ContactType::Implicit,
+            radius: 20.0, // deliberately large radius
+            tolerance: 0.0001,
+        };
+
+        let tetmesh = make_regular_tet();
+
+        ball_bounce_tester(material, sc_params, tetmesh)
+    }
+
+    /// Ball bouncing on an implicit surface.
+    #[test]
+    fn ball_bounce_on_implicit_test() -> Result<(), Error> {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e5, 0.4),
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            contact_type: ContactType::Implicit,
+            radius: 2.0,
+            tolerance: 0.0001,
+        };
+
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
+
+        ball_bounce_tester(material, sc_params, tetmesh)
+    }
+
+    /// Ball with constant volume bouncing on an implicit surface.
+    #[test]
+    fn ball_bounce_on_implicit_volume_constraint_test() -> Result<(), Error> {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
+            incompressibility: true,
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            contact_type: ContactType::Implicit,
+            radius: 2.0,
+            tolerance: 0.0001,
+        };
+
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
+
+        ball_bounce_tester(material, sc_params, tetmesh)
     }
 
     /*

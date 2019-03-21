@@ -22,7 +22,7 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
-pub use self::constraints::SmoothContactParams;
+pub use self::constraints::{ContactType, SmoothContactParams};
 pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult};
 pub use index::Index;
 use geo::mesh::attrib;

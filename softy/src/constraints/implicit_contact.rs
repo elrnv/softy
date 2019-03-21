@@ -18,6 +18,7 @@ pub struct ImplicitContactConstraint {
     /// Implicit surface that represents the collision object.
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub simulation_mesh: Rc<RefCell<TetMesh>>,
+    pub collision_object: Rc<RefCell<TriMesh>>,
     /// Mapping from constrained points on the surface of the simulation mesh to the actual
     /// vertices on the tetrahedron mesh.
     pub simulation_surf_verts: Vec<usize>,
@@ -48,7 +49,7 @@ impl ImplicitContactConstraint {
                 tolerance,
             })
             .sample_type(SampleType::Face)
-            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::Zero, weighted: false });
+            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false });
 
         if let Some(surface) = surface_builder.build() {
             let tetmesh = tetmesh_rc.borrow();
@@ -59,11 +60,12 @@ impl ImplicitContactConstraint {
                 .into_vec::<usize>()
                 .expect("Incorrect index type: not usize");
 
-            let query_points = trimesh.vertex_positions();
+            let query_points = surf_mesh.vertex_positions();
 
             let constraint = ImplicitContactConstraint {
                 implicit_surface: RefCell::new(surface),
                 simulation_mesh: Rc::clone(tetmesh_rc),
+                collision_object: Rc::clone(trimesh_rc),
                 simulation_surf_verts: surf_verts,
                 query_points: RefCell::new(query_points.to_vec()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -89,20 +91,19 @@ impl ImplicitContactConstraint {
     pub fn update_query_points_with_displacement(&self, x: &[f64], dx: &[f64]) {
         let pos: &[Vector3<f64>] = reinterpret_slice(x);
         let disp: &[Vector3<f64>] = reinterpret_slice(dx);
-        self.update_query_points(pos.iter().zip(disp.iter()).map(|(&p, &d)| (p + d).into()));
+        self.update_query_points(self.simulation_surf_verts.iter().map(|&i| (pos[i] + disp[i]).into()));
     }
 
     pub fn update_query_points(&self, q_iter: impl Iterator<Item = [f64;3]>) {
         let mut query_points = self.query_points.borrow_mut();
-        for (q, new_q) in query_points.iter_mut().zip(q_iter) {
-            *q = new_q;
-        }
+        query_points.clear();
+        query_points.extend(q_iter);
     }
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
     fn contact_radius(&self) -> f64 {
-        self.implicit_surface.borrow_mut().radius()
+        self.implicit_surface.borrow().radius()
     }
 
     fn update_radius(&mut self, rad: f64) {
@@ -117,7 +118,13 @@ impl ContactConstraint for ImplicitContactConstraint {
         let sim_mesh = self.simulation_mesh.borrow();
         let vert_pos = sim_mesh.vertex_positions();
         self.update_query_points(self.simulation_surf_verts.iter().map(|&i| vert_pos[i]));
-        let surf = self.implicit_surface.borrow_mut();
+
+        let collision_mesh = self.collision_object.borrow();
+        let mut surf = self.implicit_surface.borrow_mut();
+
+        let num_vertices_updated = surf.update(collision_mesh.vertex_position_iter().cloned());
+        assert_eq!(num_vertices_updated, surf.surface_vertex_positions().len());
+
         surf.invalidate_query_neighbourhood();
         surf.cache_neighbours(&self.query_points.borrow())
     }
@@ -147,7 +154,6 @@ impl ContactConstraint for ImplicitContactConstraint {
         cached_neighbourhood_indices
     }
 
-
     fn build_constraint_mapping(&self, old_constrained_points: &[Index], new_to_old_constraint_mapping: &mut [Index]) {
         let surf = self.implicit_surface.borrow();
         let neighbourhoods = surf.cached_neighbourhoods().expect("Failed to retrieve cached neighbourhoods");
@@ -162,7 +168,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         // Find the corresponding neighbourhoods of the old constraint points.
         let remapped_neighbourhoods = neighbourhoods.into_iter().map(|i| old_constrained_points[i]);
 
-        // Construct the new-to-told constraint mapping.
+        // Construct the new-to-old constraint mapping.
         for (mapping, neigh) in new_to_old_constraint_mapping.iter_mut()
             .zip(remapped_neighbourhoods)
             .filter(|(_, i)| i.is_valid())
@@ -243,10 +249,18 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        let n = self.constraint_jacobian_size();
-        Box::new((0..n).map(move |i| MatrixElementIndex {
-            row: i/3,
-            col: self.tetmesh_coordinate_index(i),
+        let idx_iter = {
+            let surf = self.implicit_surface.borrow();
+            surf.query_jacobian_indices_iter().unwrap()
+        };
+
+        let cached_neighbourhood_indices = self.cached_neighbourhood_indices();
+        Box::new(idx_iter.map(move |(row, col)| {
+            assert!(cached_neighbourhood_indices[row].is_valid());
+            MatrixElementIndex {
+                row: cached_neighbourhood_indices[row].unwrap(),
+                col: self.tetmesh_coordinate_index(col),
+            }
         }))
     }
 
@@ -257,7 +271,7 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
 
         self.implicit_surface
             .borrow()
-            .query_jacobian(&query_points, reinterpret_mut_slice(values))
+            .query_jacobian_values(&query_points, values)
             .unwrap();
     }
 }
@@ -290,7 +304,7 @@ impl ConstraintHessian<f64> for ImplicitContactConstraint {
 
         self.implicit_surface
             .borrow()
-            .surface_hessian_product_values(&query_points, lambda, values)
+            .query_hessian_product_values(&query_points, lambda, values)
             .expect("Failed to compute query Hessian values");
     }
 }

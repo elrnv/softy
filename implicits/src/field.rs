@@ -333,15 +333,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Return a vector over query points, which have non-empty neighbourhoods.
-    pub fn cached_neighbourhoods(&self) -> Result<Vec<usize>, super::Error> {
+    pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
         let set = match self.sample_type {
             SampleType::Vertex => self.extended_neighbourhood_borrow(),
             SampleType::Face => self.trivial_neighbourhood_borrow(),
         };
 
         set.map(|neighbourhoods| {
-            neighbourhoods
-                .iter()
+            neighbourhoods.iter()
                 .enumerate()
                 .filter(|(_, x)| !x.is_empty())
                 .map(|(i, _)| i)
@@ -1310,7 +1309,7 @@ mod tests {
         surface.cache_neighbours(grid.vertex_positions());
         assert_eq!(
             surface.num_cached_neighbourhoods()?,
-            surface.cached_neighbourhoods()?.len()
+            surface.nonempty_neighbourhood_indices()?.len()
         );
         Ok(())
     }

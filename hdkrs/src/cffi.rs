@@ -385,7 +385,7 @@ macro_rules! cast_to_vec {
 }
 
 pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
-    match attrib.type_id() {
+    match attrib.element_type_id() {
         x if impl_supported_types!(
             x, i8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
@@ -427,7 +427,7 @@ pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
 }
 
 pub fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
-    let tuple_size = match attrib.type_id() {
+    let tuple_size = match attrib.element_type_id() {
         x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, String) => 1,
         x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64, String) => 1,
         x if impl_supported_sizes!(x, 2, i8, i32, i64, f32, f64, String) => 2,

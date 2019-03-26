@@ -17,6 +17,7 @@ pub struct Params {
     pub radius: f32,
     pub kernel: i32,
     pub background_potential: i32,
+    pub background_potential_weighted: bool,
     pub sample_type: i32,
 }
 
@@ -27,6 +28,7 @@ impl Into<implicits::Params> for Params {
             radius,
             kernel,
             background_potential,
+            background_potential_weighted,
             sample_type,
             ..
         } = self;
@@ -47,12 +49,13 @@ impl Into<implicits::Params> for Params {
                 },
                 _ => implicits::KernelType::Hrbf,
             },
-            background_field: match background_potential {
-                0 => implicits::BackgroundFieldType::None,
-                1 => implicits::BackgroundFieldType::Zero,
-                2 => implicits::BackgroundFieldType::FromInput,
-                3 => implicits::BackgroundFieldType::DistanceBased,
-                _ => implicits::BackgroundFieldType::NormalBased,
+            background_field: implicits::BackgroundFieldParams {
+                field_type: match background_potential {
+                    0 => implicits::BackgroundFieldType::Zero,
+                    1 => implicits::BackgroundFieldType::FromInput,
+                    _ => implicits::BackgroundFieldType::DistanceBased,
+                },
+                weighted: background_potential_weighted,
             },
             sample_type: match sample_type {
                 0 => implicits::SampleType::Vertex,

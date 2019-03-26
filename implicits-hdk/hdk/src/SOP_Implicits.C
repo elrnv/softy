@@ -93,20 +93,32 @@ static const char *theDsFile = R"THEDSFILE(
         hidewhen "{ kernel == cubic } { kernel == hrbf } { kernel == interpolating }"
     }
 
-    parm {
-        name "bgpotential"
-        cppname "BgPotential"
-        label "Background Potential"
-        type ordinal
-        default { "none" }
-        menu {
-            "none"       "None"
-            "zero"       "Zero"
-            "input"      "From Input"
-            "distance"   "Distance to Closest"
-            "normaldisp" "Normal Displacement"
+    groupsimple {
+        name "bgfield"
+        label "Background Field"
+
+        parm {
+            name "bgpotential"
+            cppname "BgPotential"
+            label "Source"
+            type ordinal
+            default { "zero" }
+            menu {
+                "zero"       "Zero"
+                "input"      "From Input"
+                "distance"   "Signed Distance to Closest"
+            }
+            hidewhen "{ kernel == global } { kernel == hrbf }"
         }
-        hidewhen "{ kernel == global } { kernel == hrbf }"
+
+        parm {
+            name "bgweighted"
+            cppname "BgWeighted"
+            label "Weighted"
+            type toggle
+            default { "off" }
+        }
+
     }
 }
 )THEDSFILE";
@@ -173,6 +185,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());
     params.background_potential = static_cast<int>(sopparms.getBgPotential());
+    params.background_potential_weighted = sopparms.getBgWeighted();
     params.sample_type = static_cast<int>(sopparms.getSampleType());
 
     CookResult res = hdkrs::cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );

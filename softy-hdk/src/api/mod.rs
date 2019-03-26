@@ -129,15 +129,18 @@ impl Into<softy::Material> for SimParams {
 impl Into<softy::SmoothContactParams> for SimParams {
     fn into(self) -> softy::SmoothContactParams {
         let SimParams {
+            contact_type,
             contact_radius,
             smoothness_tolerance,
-            max_step,
             ..
         } = self;
         softy::SmoothContactParams {
+            contact_type: match contact_type {
+                0 => softy::ContactType::Implicit,
+                _ => softy::ContactType::Point,
+            },
             radius: f64::from(contact_radius),
             tolerance: f64::from(smoothness_tolerance),
-            max_step: f64::from(max_step),
         }
     }
 }

@@ -191,6 +191,18 @@ static const char *theDsFile = R"THEDSFILE(
             disablewhen "{ hasinput(1) == 0 }"
 
             parm {
+                name "contacttype"
+                cppname "ContactType"
+                label "Contact Type"
+                type ordinal
+                default { "implicit" }
+                menu {
+                    "implicit", "Implicit"
+                    "point", "Point"
+                }
+            }
+
+            parm {
                 name "contactradius"
                 cppname "ContactRadius"
                 label "Contact Radius"
@@ -206,15 +218,6 @@ static const char *theDsFile = R"THEDSFILE(
                 type log
                 default { "1e-5" }
                 range { 0.0 1.0 }
-            }
-
-            parm {
-                name "maxstep"
-                cppname "MaxStep"
-                label "Max Step Size"
-                type float
-                default { "0.0" }
-                range { 0.0 10.0 }
             }
         }
     }
@@ -367,9 +370,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.outer_tolerance = sopparms.getOuterTolerance();
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
+    sim_params.contact_type = static_cast<int>(sopparms.getContactType());
     sim_params.contact_radius = sopparms.getContactRadius();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
-    sim_params.max_step = sopparms.getMaxStep();
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());

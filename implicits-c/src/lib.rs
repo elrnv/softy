@@ -43,11 +43,9 @@ impl Into<implicits::Params> for Params {
                 _ => implicits::KernelType::Hrbf,
             },
             background_field: match background_potential {
-                0 => implicits::BackgroundFieldType::None,
-                1 => implicits::BackgroundFieldType::Zero,
-                2 => implicits::BackgroundFieldType::FromInput,
-                3 => implicits::BackgroundFieldType::DistanceBased,
-                _ => implicits::BackgroundFieldType::NormalBased,
+                0 => implicits::BackgroundFieldType::Zero,
+                1 => implicits::BackgroundFieldType::FromInput,
+                2 => implicits::BackgroundFieldType::DistanceBased,
             },
             sample_type: match sample_type {
                 0 => implicits::SampleType::Vertex,

@@ -57,9 +57,9 @@ pub fn make_grid(grid_params: Grid) -> PolyMesh<f64> {
         for j in 0..cols {
             indices.push(4);
             indices.push((rows + 1) * j + i);
-            indices.push((rows + 1) * (j + 1) + i);
-            indices.push((rows + 1) * (j + 1) + i + 1);
             indices.push((rows + 1) * j + i + 1);
+            indices.push((rows + 1) * (j + 1) + i + 1);
+            indices.push((rows + 1) * (j + 1) + i);
         }
     }
 

@@ -636,6 +636,8 @@ impl Solver {
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
     pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
+        self.problem_mut().update_constraints();
+
         // Solve non-linear problem
         let ipopt::SolveResult {
             // unpack ipopt result
@@ -907,7 +909,8 @@ impl Solver {
 
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
-            //dbg!(self.solver.solver_data().solution.constraint_multipliers);
+            dbg!(self.solver.solver_data().solution.constraint_multipliers.len());
+
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
@@ -920,33 +923,39 @@ impl Solver {
                         // change). In which case we would be skipping an opportunity to do a more
                         // accurate step.
                         let (constraint_violation, sparsity_changed) = self.probe_contact_constraint_violation();
+
+                        dbg!(self.solver.solver_data().solution.constraint_multipliers.len());
+
                         let initial_error = self.initial_residual_error();
                         let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
                         if constraint_violation > relative_tolerance { // intersecting objects (allow leeway)
-                            // Check that the reason we are in this mess is actually because of the step size
-                            if self.max_step + radius < step {
-                                println!("##### Increasing max step to {}", step - radius);
-                                self.update_max_step(step - radius);
-                                self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
-                            } else if sparsity_changed {
-                                println!("Sparsity has changed, constraint violation: {:?}", constraint_violation);
-                                // Sparsity pattern must have changed, simply update constraint
-                                // multipliers and repeat the step.
-                                self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
-                                // We don't commit the solution here because it may be far from the
-                                // true solution, just redo the whole solve with the right
-                                // neighbourhood information.
-                            } else {
+                            if self.max_step + radius >= step && !sparsity_changed {
                                 // Sparsity hasn't changed but constraint is still violated.
                                 // Nothing else we can do, just accept the solution and move on.
                                 self.commit_solution(true);
                                 break;
                             }
+
+                            // Check that the reason we are in this mess is actually because of the step size
+                            if self.max_step + radius < step {
+                                println!("##### Increasing max step to {}", step - radius);
+                                self.update_max_step(step - radius);
+                            } else { // sparsity_chagned
+                                // Sparsity pattern must have changed, simply update constraint
+                                // multipliers and repeat the step.
+                                println!("Sparsity has changed, constraint violation: {:?}", constraint_violation);
+                            }
+
+                            // We don't commit the solution here because it may be far from the
+                            // true solution, just redo the whole solve with the right
+                            // neighbourhood information.
+
                         } else {
+                            // The solution is good, commit the solution, reset the max_step,  and
+                            // continue.
+                            self.commit_solution(true);
                             println!("##### Decreasing max step to {}", (step - radius).max(0.0));
                             self.update_max_step((step - radius).max(0.0));
-                            self.commit_solution(true);
-                            self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
                             break;
                         }
                     } else {
@@ -957,7 +966,6 @@ impl Solver {
                 Err(Error::InnerSolveError(status, step_result)) => {
                     result = result.combine_inner_result(&step_result);
                     self.commit_solution(true);
-                    self.problem_mut().remap_constraint_multipliers(&step_result.constrained_points.unwrap());
                     //self.output_meshes(0);
                     return Err(Error::SolveError(status, result));
                 }

@@ -114,6 +114,10 @@ impl ContactConstraint for ImplicitContactConstraint {
         self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
+    fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error> {
+        self.implicit_surface.borrow().nonempty_neighbourhood_indices().map_err(|_| crate::Error::InvalidImplicitSurface)
+    }
+
     fn update_cache(&mut self) -> bool {
         let sim_mesh = self.simulation_mesh.borrow();
         let vert_pos = sim_mesh.vertex_positions();
@@ -152,29 +156,6 @@ impl ContactConstraint for ImplicitContactConstraint {
         }
 
         cached_neighbourhood_indices
-    }
-
-    fn build_constraint_mapping(&self, old_constrained_points: &[Index], new_to_old_constraint_mapping: &mut [Index]) {
-        let surf = self.implicit_surface.borrow();
-        let neighbourhoods = surf.cached_neighbourhoods().expect("Failed to retrieve cached neighbourhoods");
-
-        assert_eq!(new_to_old_constraint_mapping.len(), neighbourhoods.len());
-
-        // Initialize all mapping indices to invalid.
-        for i in new_to_old_constraint_mapping.iter_mut() {
-            *i = Index::INVALID;
-        }
-
-        // Find the corresponding neighbourhoods of the old constraint points.
-        let remapped_neighbourhoods = neighbourhoods.into_iter().map(|i| old_constrained_points[i]);
-
-        // Construct the new-to-old constraint mapping.
-        for (mapping, neigh) in new_to_old_constraint_mapping.iter_mut()
-            .zip(remapped_neighbourhoods)
-            .filter(|(_, i)| i.is_valid())
-        {
-            *mapping = neigh;
-        }
     }
 }
 

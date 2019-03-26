@@ -194,8 +194,6 @@ pub struct PointContactConstraint {
 }
 
 impl PointContactConstraint {
-    const SCALE: f64 = 1.0;
-
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
@@ -393,6 +391,10 @@ impl ContactConstraint for PointContactConstraint {
         self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
+    fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error> {
+        self.implicit_surface.borrow().nonempty_neighbourhood_indices().map_err(|_| crate::Error::InvalidImplicitSurface)
+    }
+
     fn update_cache(&mut self) -> bool {
         let mesh = self.collision_object.borrow();
         let query_points = reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions());
@@ -421,29 +423,6 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         cached_neighbourhood_indices
-    }
-
-    fn build_constraint_mapping(&self, old_constrained_points: &[Index], new_to_old_constraint_mapping: &mut [Index]) {
-        let surf = self.implicit_surface.borrow();
-        let neighbourhoods = surf.cached_neighbourhoods().expect("Failed to retrieve cached neighbourhoods");
-
-        assert_eq!(new_to_old_constraint_mapping.len(), neighbourhoods.len());
-
-        // Initialize all mapping indices to invalid.
-        for i in new_to_old_constraint_mapping.iter_mut() {
-            *i = Index::INVALID;
-        }
-
-        // Find the corresponding neighbourhoods of the old constraint points.
-        let remapped_neighbourhoods = neighbourhoods.into_iter().map(|i| old_constrained_points[i]);
-
-        // Construct the new-to-told constraint mapping.
-        for (mapping, neigh) in new_to_old_constraint_mapping.iter_mut()
-            .zip(remapped_neighbourhoods)
-            .filter(|(_, i)| i.is_valid())
-        {
-            *mapping = neigh;
-        }
     }
 }
 
@@ -505,8 +484,6 @@ impl Constraint<f64> for PointContactConstraint {
             *v = *new_v;
         }
         //dbg!(&value);
-        
-        value.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }
 
@@ -544,8 +521,6 @@ impl ConstraintJacobian<f64> for PointContactConstraint {
             .borrow()
             .surface_jacobian_values(query_points, values)
             .unwrap();
-
-        values.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }
 
@@ -595,7 +570,6 @@ impl ConstraintHessian<f64> for PointContactConstraint {
         let query_points = collider.vertex_positions();
         surf.surface_hessian_product_values(query_points, lambda, values)
             .expect("Failed to compute surface Hessian values");
-        values.iter_mut().for_each(|v| *v *= Self::SCALE);
     }
 }
 

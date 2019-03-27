@@ -210,11 +210,11 @@ mod tests {
             || false,
         )?;
 
-        geo::io::save_polymesh(
-            &grid,
-            &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
-        )
-        .unwrap();
+        //geo::io::save_polymesh(
+        //    &grid,
+        //    &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
+        //)
+        //.unwrap();
 
         let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
         let expected_grid: PolyMesh<f64> =

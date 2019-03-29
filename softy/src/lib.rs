@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 
-#[global_allocator]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+//#[global_allocator]
+//static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 mod attrib_defines;
 mod bench;

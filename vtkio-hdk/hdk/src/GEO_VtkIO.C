@@ -47,12 +47,12 @@ GEO_VtkIO::checkMagicNumber(unsigned magic)
 struct AddMesh : public boost::static_visitor<bool>
 {
     AddMesh(GEO_Detail* detail) : detail(static_cast<GU_Detail*>(detail)) {}
-    bool operator()( OwnedPtr<TetMesh> tetmesh ) const
+    bool operator()( OwnedPtr<HR_TetMesh> tetmesh ) const
     {
         mesh::add_tetmesh(detail, std::move(tetmesh));
         return true;
     }
-    bool operator()( OwnedPtr<PolyMesh> polymesh ) const
+    bool operator()( OwnedPtr<HR_PolyMesh> polymesh ) const
     {
         mesh::add_polymesh(detail, std::move(polymesh));
         return true;
@@ -90,7 +90,7 @@ GEO_VtkIO::fileSave(const GEO_Detail *detail, std::ostream &os)
         return GA_Detail::IOStatus(true);
 
     // Try to save the tetmesh first
-    OwnedPtr<TetMesh> tetmesh = mesh::build_tetmesh(static_cast<const GU_Detail*>(detail));
+    OwnedPtr<HR_TetMesh> tetmesh = mesh::build_tetmesh(static_cast<const GU_Detail*>(detail));
     if (tetmesh) {
         auto buf = io::ByteBuffer::write_vtk_mesh(std::move(tetmesh));
         os.write(buf.data(), buf.size());
@@ -98,7 +98,7 @@ GEO_VtkIO::fileSave(const GEO_Detail *detail, std::ostream &os)
     }
 
     // If no tets are found we try to save the polymesh
-    OwnedPtr<PolyMesh> polymesh = mesh::build_polymesh(static_cast<const GU_Detail*>(detail));
+    OwnedPtr<HR_PolyMesh> polymesh = mesh::build_polymesh(static_cast<const GU_Detail*>(detail));
     if (polymesh) {
         auto buf = io::ByteBuffer::write_vtk_mesh(std::move(polymesh));
         os.write(buf.data(), buf.size());

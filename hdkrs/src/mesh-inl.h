@@ -14,29 +14,29 @@ namespace hdkrs {
 // Implement OwnedPtr specializations
 
 template<>
-inline OwnedPtr<PolyMesh>::~OwnedPtr() {
-    free_polymesh(_ptr);
+inline OwnedPtr<HR_PolyMesh>::~OwnedPtr() {
+    hr_free_polymesh(_ptr);
 }
 
 template<>
-inline OwnedPtr<TetMesh>::~OwnedPtr() {
-    free_tetmesh(_ptr);
+inline OwnedPtr<HR_TetMesh>::~OwnedPtr() {
+    hr_free_tetmesh(_ptr);
 }
 
 template<>
-inline OwnedPtr<PointCloud>::~OwnedPtr() {
-    free_pointcloud(_ptr);
+inline OwnedPtr<HR_PointCloud>::~OwnedPtr() {
+    hr_free_pointcloud(_ptr);
 }
 
 namespace mesh {
 
-inline std::ostream& operator<<(std::ostream& out, AttribLocation where) {
+inline std::ostream& operator<<(std::ostream& out, HRAttribLocation where) {
     switch (where) {
-        case AttribLocation::Vertex: out << "Vertex"; break;
-        case AttribLocation::Face: out << "Face"; break;
-        case AttribLocation::Cell: out << "Cell"; break;
-        case AttribLocation::FaceVertex: out << "FaceVertex"; break;
-        case AttribLocation::CellVertex: out << "CellVertex"; break;
+        case HRAttribLocation::HR_VERTEX: out << "Vertex"; break;
+        case HRAttribLocation::HR_FACE: out << "Face"; break;
+        case HRAttribLocation::HR_CELL: out << "Cell"; break;
+        case HRAttribLocation::HR_FACEVERTEX: out << "FaceVertex"; break;
+        case HRAttribLocation::HR_CELLVERTEX: out << "CellVertex"; break;
         default: break;
     }
     return out;
@@ -44,10 +44,10 @@ inline std::ostream& operator<<(std::ostream& out, AttribLocation where) {
 
 namespace { // Implementation details
 
-#define ADD_NUM_ATTRIB_IMPL(MTYPE, TYPE, FN) \
+#define HR_ADD_NUM_ATTRIB_IMPL(MTYPE, TYPE, FN) \
     void add_attrib( \
             MTYPE *m, \
-            AttribLocation where, \
+            HRAttribLocation where, \
             const char *name, \
             std::size_t tuple_size, \
             const std::vector<TYPE> &data) \
@@ -55,62 +55,62 @@ namespace { // Implementation details
         FN( m, where, name, tuple_size, data.size(), data.data() ); \
     }
 
-ADD_NUM_ATTRIB_IMPL(PointCloud, int8, add_pointcloud_attrib_i8)
-ADD_NUM_ATTRIB_IMPL(PointCloud, int32, add_pointcloud_attrib_i32)
-ADD_NUM_ATTRIB_IMPL(PointCloud, int64_t, add_pointcloud_attrib_i64)
-ADD_NUM_ATTRIB_IMPL(PointCloud, fpreal32, add_pointcloud_attrib_f32)
-ADD_NUM_ATTRIB_IMPL(PointCloud, fpreal64, add_pointcloud_attrib_f64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PointCloud, int8, hr_add_pointcloud_attrib_i8)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PointCloud, int32, hr_add_pointcloud_attrib_i32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PointCloud, int64_t, hr_add_pointcloud_attrib_i64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PointCloud, fpreal32, hr_add_pointcloud_attrib_f32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PointCloud, fpreal64, hr_add_pointcloud_attrib_f64)
 
-ADD_NUM_ATTRIB_IMPL(PolyMesh, int8, add_polymesh_attrib_i8)
-ADD_NUM_ATTRIB_IMPL(PolyMesh, int32, add_polymesh_attrib_i32)
-ADD_NUM_ATTRIB_IMPL(PolyMesh, int64_t, add_polymesh_attrib_i64)
-ADD_NUM_ATTRIB_IMPL(PolyMesh, fpreal32, add_polymesh_attrib_f32)
-ADD_NUM_ATTRIB_IMPL(PolyMesh, fpreal64, add_polymesh_attrib_f64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PolyMesh, int8, hr_add_polymesh_attrib_i8)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PolyMesh, int32, hr_add_polymesh_attrib_i32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PolyMesh, int64_t, hr_add_polymesh_attrib_i64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PolyMesh, fpreal32, hr_add_polymesh_attrib_f32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_PolyMesh, fpreal64, hr_add_polymesh_attrib_f64)
 
-ADD_NUM_ATTRIB_IMPL(TetMesh, int8, add_tetmesh_attrib_i8)
-ADD_NUM_ATTRIB_IMPL(TetMesh, int32, add_tetmesh_attrib_i32)
-ADD_NUM_ATTRIB_IMPL(TetMesh, int64_t, add_tetmesh_attrib_i64)
-ADD_NUM_ATTRIB_IMPL(TetMesh, fpreal32, add_tetmesh_attrib_f32)
-ADD_NUM_ATTRIB_IMPL(TetMesh, fpreal64, add_tetmesh_attrib_f64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_TetMesh, int8, hr_add_tetmesh_attrib_i8)
+HR_ADD_NUM_ATTRIB_IMPL(HR_TetMesh, int32, hr_add_tetmesh_attrib_i32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_TetMesh, int64_t, hr_add_tetmesh_attrib_i64)
+HR_ADD_NUM_ATTRIB_IMPL(HR_TetMesh, fpreal32, hr_add_tetmesh_attrib_f32)
+HR_ADD_NUM_ATTRIB_IMPL(HR_TetMesh, fpreal64, hr_add_tetmesh_attrib_f64)
 
 #undef ADD_NUM_ATTRIB_IMPL
 
 void add_attrib(
-        PointCloud *ptcloud,
-        AttribLocation where,
+        HR_PointCloud *ptcloud,
+        HRAttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64_t> &indices)
 {
-    add_pointcloud_attrib_str(
+    hr_add_pointcloud_attrib_str(
             ptcloud, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
 
 
 void add_attrib(
-        PolyMesh *polymesh,
-        AttribLocation where,
+        HR_PolyMesh *polymesh,
+        HRAttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64_t> &indices)
 {
-    add_polymesh_attrib_str(
+    hr_add_polymesh_attrib_str(
             polymesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
 
 void add_attrib(
-        TetMesh *tetmesh,
-        AttribLocation where,
+        HR_TetMesh *tetmesh,
+        HRAttribLocation where,
         const char *name,
         std::size_t tuple_size,
         const std::vector<const char *> &strings,
         const std::vector<int64_t> &indices)
 {
-    add_tetmesh_attrib_str(
+    hr_add_tetmesh_attrib_str(
             tetmesh, where, name, tuple_size, strings.size(),
             strings.data(), indices.size(), indices.data());
 }
@@ -119,28 +119,28 @@ template<typename T>
 GA_PrimitiveTypeId mesh_prim_type_id();
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<PolyMesh>() { return GA_PRIMPOLY; }
+GA_PrimitiveTypeId mesh_prim_type_id<HR_PolyMesh>() { return GA_PRIMPOLY; }
 
 template<>
-GA_PrimitiveTypeId mesh_prim_type_id<TetMesh>() { return GA_PRIMTETRAHEDRON; }
+GA_PrimitiveTypeId mesh_prim_type_id<HR_TetMesh>() { return GA_PRIMTETRAHEDRON; }
 
 template<typename T>
-AttribLocation mesh_prim_attrib_location();
+HRAttribLocation mesh_prim_attrib_location();
 
 template<>
-AttribLocation mesh_prim_attrib_location<PolyMesh>() { return AttribLocation::Face; }
+HRAttribLocation mesh_prim_attrib_location<HR_PolyMesh>() { return HRAttribLocation::HR_FACE; }
 
 template<>
-AttribLocation mesh_prim_attrib_location<TetMesh>() { return AttribLocation::Cell; }
+HRAttribLocation mesh_prim_attrib_location<HR_TetMesh>() { return HRAttribLocation::HR_CELL; }
 
 template<typename T>
-AttribLocation mesh_vertex_attrib_location();
+HRAttribLocation mesh_vertex_attrib_location();
 
 template<>
-AttribLocation mesh_vertex_attrib_location<PolyMesh>() { return AttribLocation::FaceVertex; }
+HRAttribLocation mesh_vertex_attrib_location<HR_PolyMesh>() { return HRAttribLocation::HR_FACEVERTEX; }
 
 template<>
-AttribLocation mesh_vertex_attrib_location<TetMesh>() { return AttribLocation::CellVertex; }
+HRAttribLocation mesh_vertex_attrib_location<HR_TetMesh>() { return HRAttribLocation::HR_CELLVERTEX; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
 std::pair<std::vector<bool>, std::vector<bool>>
@@ -220,7 +220,7 @@ void fill_point_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, AttribLocation::Vertex, name, tuple_size, data);
+    add_attrib(mesh, HRAttribLocation::HR_VERTEX, name, tuple_size, data);
 }
 
 template<typename T, typename M, typename S = T>
@@ -319,7 +319,7 @@ void fill_point_str_attrib(
     }
 
     auto name = attrib->getName().c_str();
-    add_attrib(mesh, AttribLocation::Vertex, name, tuple_size, strings, indices);
+    add_attrib(mesh, HRAttribLocation::HR_VERTEX, name, tuple_size, strings, indices);
 }
 
 template<typename M>
@@ -520,47 +520,47 @@ void fill_attrib(HandleType h, ArrayType arr, GA_Offset startoff) {
 
 /** Retrieve attributes from the mesh using the given iterator.
  */
-void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, AttribIter *it, GA_AttributeOwner owner) {
+void retrieve_attributes(GU_Detail *detail, GA_Offset startoff, HR_AttribIter *it, GA_AttributeOwner owner) {
     while ( it ) { // it could be null, but it doesn't change
-        auto attrib = attrib_iter_next(it);
+        auto attrib = hr_attrib_iter_next(it);
         if (!attrib) break;
-        auto name = UT_String(attrib_name(attrib));
+        auto name = UT_String(hr_attrib_name(attrib));
         name.forceValidVariableName();
-        auto type = attrib_data_type(attrib);
-        if (type == DataType::I8 ) {
-            auto arr = attrib_data_i8(attrib);
+        auto type = hr_attrib_data_type(attrib);
+        if (type == HRDataType::HR_I8 ) {
+            auto arr = hr_attrib_data_i8(attrib);
             auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_i8(arr);
-        } else if (type == DataType::I32 ) {
-            auto arr = attrib_data_i32(attrib);
+            hr_free_attrib_data_i8(arr);
+        } else if (type == HRDataType::HR_I32 ) {
+            auto arr = hr_attrib_data_i32(attrib);
             auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_i32(arr);
-        } else if (type == DataType::I64 ) {
-            auto arr = attrib_data_i64(attrib);
+            hr_free_attrib_data_i32(arr);
+        } else if (type == HRDataType::HR_I64 ) {
+            auto arr = hr_attrib_data_i64(attrib);
             auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_i64(arr);
-        } else if (type == DataType::F32 ) {
-            auto arr = attrib_data_f32(attrib);
+            hr_free_attrib_data_i64(arr);
+        } else if (type == HRDataType::HR_F32 ) {
+            auto arr = hr_attrib_data_f32(attrib);
             auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL32, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_f32(arr);
-        } else if (type == DataType::F64 ) {
-            auto arr = attrib_data_f64(attrib);
+            hr_free_attrib_data_f32(arr);
+        } else if (type == HRDataType::HR_F64 ) {
+            auto arr = hr_attrib_data_f64(attrib);
             auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_f64(arr);
-        } else if (type == DataType::Str ) {
-            auto arr = attrib_data_str(attrib);
+            hr_free_attrib_data_f64(arr);
+        } else if (type == HRDataType::HR_STR ) {
+            auto arr = hr_attrib_data_str(attrib);
             auto h = GA_RWHandleS(detail->addTuple(GA_STORE_STRING, owner, name, arr.tuple_size));
             fill_attrib(h, arr, startoff);
-            free_attrib_data_str(arr);
+            hr_free_attrib_data_str(arr);
         }
-        free_attribute(attrib);
+        hr_free_attribute(attrib);
     }
-    free_attrib_iter(it);
+    hr_free_attrib_iter(it);
 }
 
 
@@ -575,42 +575,42 @@ void update_attrib(HandleType h, ArrayType arr) {
 
 /** Update attributes of the mesh using the given iterator.
  */
-void update_attributes(GU_Detail *detail, AttribIter *it, GA_AttributeOwner owner) {
+void update_attributes(GU_Detail *detail, HR_AttribIter *it, GA_AttributeOwner owner) {
     while ( it ) { // it could be null, but it doesn't change
-        auto attrib = attrib_iter_next(it);
+        auto attrib = hr_attrib_iter_next(it);
         if (!attrib) break;
-        auto name = UT_String(attrib_name(attrib));
+        auto name = UT_String(hr_attrib_name(attrib));
         name.forceValidVariableName();
-        auto type = attrib_data_type(attrib);
-        if (type == DataType::I8 ) {
-            auto arr = attrib_data_i8(attrib);
+        auto type = hr_attrib_data_type(attrib);
+        if (type == HRDataType::HR_I8 ) {
+            auto arr = hr_attrib_data_i8(attrib);
             auto h = GA_RWHandleC(detail->addTuple(GA_STORE_INT8, owner, name, arr.tuple_size));
             update_attrib(h, arr);
-            free_attrib_data_i8(arr);
-        } else if (type == DataType::I32 ) {
-            auto arr = attrib_data_i32(attrib);
+            hr_free_attrib_data_i8(arr);
+        } else if (type == HRDataType::HR_I32 ) {
+            auto arr = hr_attrib_data_i32(attrib);
             auto h = GA_RWHandleI(detail->addTuple(GA_STORE_INT32, owner, name, arr.tuple_size));
             update_attrib(h, arr);
-            free_attrib_data_i32(arr);
-        } else if (type == DataType::I64 ) {
-            auto arr = attrib_data_i64(attrib);
+            hr_free_attrib_data_i32(arr);
+        } else if (type == HRDataType::HR_I64 ) {
+            auto arr = hr_attrib_data_i64(attrib);
             auto h = GA_RWHandleID(detail->addTuple(GA_STORE_INT64, owner, name, arr.tuple_size));
             update_attrib(h, arr);
-            free_attrib_data_i64(arr);
-        } else if (type == DataType::F32 ) {
-            auto arr = attrib_data_f32(attrib);
+            hr_free_attrib_data_i64(arr);
+        } else if (type == HRDataType::HR_F32 ) {
+            auto arr = hr_attrib_data_f32(attrib);
             auto h = GA_RWHandleF(detail->addTuple(GA_STORE_REAL32, owner, name, arr.tuple_size));
             update_attrib(h, arr);
-            free_attrib_data_f32(arr);
-        } else if (type == DataType::F64 ) {
-            auto arr = attrib_data_f64(attrib);
+            hr_free_attrib_data_f32(arr);
+        } else if (type == HRDataType::HR_F64 ) {
+            auto arr = hr_attrib_data_f64(attrib);
             auto h = GA_RWHandleD(detail->addTuple(GA_STORE_REAL64, owner, name, arr.tuple_size));
             update_attrib(h, arr);
-            free_attrib_data_f64(arr);
+            hr_free_attrib_data_f64(arr);
         } // String attributes are not yet supported by updates
-        free_attribute(attrib);
+        hr_free_attribute(attrib);
     }
-    free_attrib_iter(it);
+    hr_free_attrib_iter(it);
 }
 
 } // namespace (static)
@@ -619,16 +619,16 @@ void update_attributes(GU_Detail *detail, AttribIter *it, GA_AttributeOwner owne
  * Add a tetmesh to the current detail
  */
 __attribute__((unused))
-void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
+void add_tetmesh(GU_Detail* detail, OwnedPtr<HR_TetMesh> tetmesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     auto tetmesh = tetmesh_ptr.get();
 
     // add tets.
     if (tetmesh) {
-        auto points = get_tetmesh_points(tetmesh);
+        auto points = hr_get_tetmesh_points(tetmesh);
 
-        auto test_indices = get_tetmesh_indices(tetmesh);
+        auto test_indices = hr_get_tetmesh_indices(tetmesh);
         if (test_indices.size > 0) {
             std::vector<int> indices;
             for (std::size_t i = 0; i < test_indices.size; ++i) {
@@ -645,12 +645,12 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
                     detail, startptoff, detail->getNumPointOffsets(),
                     indices.size()/4, indices.data());
 
-            retrieve_attributes(detail, startptoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-            retrieve_attributes(detail, startprimoff, tetmesh_attrib_iter(tetmesh, AttribLocation::Cell, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, tetmesh_attrib_iter(tetmesh, AttribLocation::CellVertex, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, hr_tetmesh_attrib_iter(tetmesh, HRAttribLocation::HR_VERTEX, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, hr_tetmesh_attrib_iter(tetmesh, HRAttribLocation::HR_CELL, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, hr_tetmesh_attrib_iter(tetmesh, HRAttribLocation::HR_CELLVERTEX, 0), GA_ATTRIB_VERTEX);
         }
-        free_point_array(points);
-        free_index_array(test_indices);
+        hr_free_point_array(points);
+        hr_free_index_array(test_indices);
     }
 }
 
@@ -658,16 +658,16 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<TetMesh> tetmesh_ptr) {
  * Add a polymesh to the current detail
  */
 __attribute__((unused))
-void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
+void add_polymesh(GU_Detail* detail, OwnedPtr<HR_PolyMesh> polymesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
     auto polymesh = polymesh_ptr.get();
 
     // add polygons
     if (polymesh) {
-        auto points = get_polymesh_points(polymesh);
+        auto points = hr_get_polymesh_points(polymesh);
 
-        auto test_indices = get_polymesh_indices(polymesh);
+        auto test_indices = hr_get_polymesh_indices(polymesh);
         if (test_indices.size > 0) {
             GA_Offset startptoff = detail->appendPointBlock(points.size);
             for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
@@ -697,13 +697,13 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
                     detail, startptoff, detail->getNumPointOffsets(),
                     polycounts, poly_pt_numbers.data());
 
-            retrieve_attributes(detail, startprimoff, polymesh_attrib_iter(polymesh, AttribLocation::Face, 0), GA_ATTRIB_PRIMITIVE);
-            retrieve_attributes(detail, startvtxoff, polymesh_attrib_iter(polymesh, AttribLocation::FaceVertex, 0), GA_ATTRIB_VERTEX);
-            retrieve_attributes(detail, startptoff, polymesh_attrib_iter(polymesh, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
+            retrieve_attributes(detail, startprimoff, hr_polymesh_attrib_iter(polymesh, HRAttribLocation::HR_FACE, 0), GA_ATTRIB_PRIMITIVE);
+            retrieve_attributes(detail, startvtxoff, hr_polymesh_attrib_iter(polymesh, HRAttribLocation::HR_FACEVERTEX, 0), GA_ATTRIB_VERTEX);
+            retrieve_attributes(detail, startptoff, hr_polymesh_attrib_iter(polymesh, HRAttribLocation::HR_VERTEX, 0), GA_ATTRIB_POINT);
         }
 
-        free_point_array(points);
-        free_index_array(test_indices);
+        hr_free_point_array(points);
+        hr_free_index_array(test_indices);
     }
 }
 
@@ -711,11 +711,11 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<PolyMesh> polymesh_ptr) {
  * Add a ptcloud to the current detail
  */
 __attribute__((unused))
-void add_pointcloud(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
+void add_pointcloud(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
     auto ptcloud = ptcloud_ptr.get();
 
     if (ptcloud) {
-        auto points = get_pointcloud_points(ptcloud);
+        auto points = hr_get_pointcloud_points(ptcloud);
 
         GA_Offset startptoff = detail->appendPointBlock(points.size);
 
@@ -724,8 +724,8 @@ void add_pointcloud(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
             detail->setPos3(ptoff, UT_Vector3(points.array[pt_idx]));
         }
 
-        retrieve_attributes(detail, startptoff, pointcloud_attrib_iter(ptcloud, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-        free_point_array(points);
+        retrieve_attributes(detail, startptoff, hr_pointcloud_attrib_iter(ptcloud, HRAttribLocation::HR_VERTEX, 0), GA_ATTRIB_POINT);
+        hr_free_point_array(points);
     }
 }
 
@@ -733,24 +733,24 @@ void add_pointcloud(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
  * Update points in the detail according to what's in the ptcloud
  */
 __attribute__((unused))
-void update_points(GU_Detail* detail, OwnedPtr<PointCloud> ptcloud_ptr) {
+void update_points(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
     auto ptcloud = ptcloud_ptr.get();
 
     if (ptcloud) {
-        auto points = get_pointcloud_points(ptcloud);
+        auto points = hr_get_pointcloud_points(ptcloud);
 
         for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
             GA_Offset ptoff = detail->pointOffset(pt_idx);
             detail->setPos3(ptoff, UT_Vector3(points.array[pt_idx]));
         }
 
-        update_attributes(detail, pointcloud_attrib_iter(ptcloud, AttribLocation::Vertex, 0), GA_ATTRIB_POINT);
-        free_point_array(points);
+        update_attributes(detail, hr_pointcloud_attrib_iter(ptcloud, HRAttribLocation::HR_VERTEX, 0), GA_ATTRIB_POINT);
+        hr_free_point_array(points);
     }
 }
 
 __attribute__((unused))
-OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
+OwnedPtr<HR_TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
     tet_vertices.reserve(3*detail->getNumPointOffsets());
@@ -781,18 +781,18 @@ OwnedPtr<TetMesh> build_tetmesh(const GU_Detail *detail) {
 
     // Only creating a mesh if there are tets.
     if (num_tets > 0) {
-        TetMesh *tetmesh = make_tetmesh(tet_vertices.size(), tet_vertices.data(),
+        HR_TetMesh *tetmesh = hr_make_tetmesh(tet_vertices.size(), tet_vertices.data(),
                                         tet_indices.size(), tet_indices.data());
         assert(tetmesh);
 
         transfer_attributes(detail, tetmesh, num_tets);
-        return OwnedPtr<TetMesh>(tetmesh);
+        return OwnedPtr<HR_TetMesh>(tetmesh);
     }
-    return OwnedPtr<TetMesh>(nullptr);
+    return OwnedPtr<HR_TetMesh>(nullptr);
 }
 
 __attribute__((unused))
-OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
+OwnedPtr<HR_PolyMesh> build_polymesh(const GU_Detail* detail) {
     std::vector<double> poly_vertices;
     poly_vertices.reserve(3*detail->getNumPointOffsets());
     std::vector<std::size_t> poly_indices;
@@ -825,18 +825,18 @@ OwnedPtr<PolyMesh> build_polymesh(const GU_Detail* detail) {
 
     // Only creating a mesh if there are polys.
     if (num_polys > 0) {
-        PolyMesh *polymesh = make_polymesh(poly_vertices.size(), poly_vertices.data(),
+        HR_PolyMesh *polymesh = hr_make_polymesh(poly_vertices.size(), poly_vertices.data(),
                                            poly_indices.size(), poly_indices.data());
         assert(polymesh);
 
         transfer_attributes(detail, polymesh, num_polys);
-        return OwnedPtr<PolyMesh>(polymesh);
+        return OwnedPtr<HR_PolyMesh>(polymesh);
     }
-    return OwnedPtr<PolyMesh>(nullptr);
+    return OwnedPtr<HR_PolyMesh>(nullptr);
 }
 
 __attribute__((unused))
-OwnedPtr<PointCloud> build_pointcloud(const GU_Detail* detail) {
+OwnedPtr<HR_PointCloud> build_pointcloud(const GU_Detail* detail) {
     std::vector<double> vertex_coords(3*detail->getNumPoints());
     std::vector<bool> pt_grp(detail->getNumPointOffsets(), false);
 
@@ -857,11 +857,11 @@ OwnedPtr<PointCloud> build_pointcloud(const GU_Detail* detail) {
         }
     }
 
-    PointCloud *ptcloud = make_pointcloud(vertex_coords.size(), vertex_coords.data());
+    HR_PointCloud *ptcloud = hr_make_pointcloud(vertex_coords.size(), vertex_coords.data());
     assert(ptcloud);
 
     transfer_point_attributes(detail, ptcloud, pt_grp);
-    return OwnedPtr<PointCloud>(ptcloud);
+    return OwnedPtr<HR_PointCloud>(ptcloud);
 }
 
 } // namespace mesh

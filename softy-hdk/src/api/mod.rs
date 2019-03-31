@@ -1,4 +1,4 @@
-use crate::{MaterialProperties, SimParams};
+use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams};
 use geo::mesh::{PointCloud, PolyMesh, TetMesh};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
@@ -41,7 +41,7 @@ pub(crate) fn get_solver(
     solver_id: Option<u32>,
     tetmesh: Option<Box<TetMesh<f64>>>,
     polymesh: Option<Box<PolyMesh<f64>>>,
-    params: SimParams,
+    params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     // Verify that the given id points to a valid solver.
     let reg_solver = solver_id.and_then(|id| {
@@ -64,9 +64,9 @@ pub(crate) fn get_solver(
     }
 }
 
-impl Into<softy::SimParams> for SimParams {
+impl Into<softy::SimParams> for EL_SoftySimParams {
     fn into(self) -> softy::SimParams {
-        let SimParams {
+        let EL_SoftySimParams {
             time_step,
             gravity,
             tolerance,
@@ -101,11 +101,11 @@ impl Into<softy::SimParams> for SimParams {
     }
 }
 
-impl Into<softy::Material> for SimParams {
+impl Into<softy::Material> for EL_SoftySimParams {
     fn into(self) -> softy::Material {
-        let SimParams {
+        let EL_SoftySimParams {
             material:
-                MaterialProperties {
+                EL_SoftyMaterialProperties {
                     bulk_modulus,
                     shear_modulus,
                     density,
@@ -126,9 +126,9 @@ impl Into<softy::Material> for SimParams {
     }
 }
 
-impl Into<softy::SmoothContactParams> for SimParams {
+impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
     fn into(self) -> softy::SmoothContactParams {
-        let SimParams {
+        let EL_SoftySimParams {
             contact_type,
             contact_radius,
             smoothness_tolerance,
@@ -151,7 +151,7 @@ impl Into<softy::SmoothContactParams> for SimParams {
 pub(crate) fn register_new_solver(
     tetmesh: TetMesh<f64>,
     shell: Option<Box<PolyMesh<f64>>>,
-    params: SimParams,
+    params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
@@ -290,7 +290,7 @@ pub(crate) fn cook<F>(
     solver_id: Option<u32>,
     tetmesh: Option<Box<TetMesh<f64>>>,
     polymesh: Option<Box<PolyMesh<f64>>>,
-    params: SimParams,
+    params: EL_SoftySimParams,
     check_interrupt: F,
 ) -> (Option<(u32, TetMesh<f64>)>, CookResult)
 where

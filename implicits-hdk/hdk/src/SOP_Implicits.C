@@ -165,13 +165,13 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     auto &&sopparms = cookparms.parms<SOP_ImplicitsParms>();
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    OwnedPtr<PolyMesh> samplemesh(nullptr);
+    OwnedPtr<HR_PolyMesh> samplemesh(nullptr);
     if (input0) {
         samplemesh = build_polymesh(input0);
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
-    OwnedPtr<PolyMesh> polymesh(nullptr);
+    OwnedPtr<HR_PolyMesh> polymesh(nullptr);
     if (input1) {
         polymesh = build_polymesh(input1);
     }
@@ -188,15 +188,15 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     params.background_potential_weighted = sopparms.getBgWeighted();
     params.sample_type = static_cast<int>(sopparms.getSampleType());
 
-    CookResult res = hdkrs::cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
+    HR_CookResult res = el_iso_cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
 
     switch (res.tag) {
-        case CookResultTag::Success: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case CookResultTag::Warning: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case CookResultTag::Error: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
+        case HRCookResultTag::HR_SUCCESS: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
+        case HRCookResultTag::HR_WARNING: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
+        case HRCookResultTag::HR_ERROR: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
     }
 
-    free_result(res);
+    hr_free_result(res);
 
     GU_Detail *detail = cookparms.gdh().gdpNC();
 

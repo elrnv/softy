@@ -281,7 +281,7 @@ static const char *theDsFile = R"THEDSFILE(
 
 
 int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
-    hdkrs::clear_solver_registry();
+    el_softy_clear_solver_registry();
     return 0;
 }
 
@@ -319,7 +319,7 @@ SOP_Softy::cookVerb() const
 }
 
 void
-write_solver_data(GU_Detail *detail, hdkrs::StepResult res, int64 solver_id) {
+write_solver_data(GU_Detail *detail, EL_SoftyStepResult res, int64 solver_id) {
     using namespace hdkrs;
     using namespace hdkrs::mesh;
 
@@ -330,7 +330,7 @@ write_solver_data(GU_Detail *detail, hdkrs::StepResult res, int64 solver_id) {
     attrib.set(GA_Offset(0), solver_id);
 
     // Add the simulation meshes into the current detail
-    OwnedPtr<TetMesh> tetmesh = res.tetmesh;
+    OwnedPtr<HR_TetMesh> tetmesh = res.tetmesh;
     //OwnedPtr<PolyMesh> polymesh = res.polymesh;
 
     add_tetmesh(detail, std::move(tetmesh));
@@ -347,7 +347,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     auto &&sopparms = cookparms.parms<SOP_SoftyParms>();
 
     // Gather simulation parameters
-    SimParams sim_params;
+    EL_SoftySimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
 
     if (sopparms.getStiffness_type() == 0) { 
@@ -392,8 +392,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         solver_id = attrib.get(GA_Offset(0));
     }
 
-    OwnedPtr<TetMesh> tetmesh = nullptr;
-    OwnedPtr<PolyMesh> polymesh = nullptr;
+    OwnedPtr<HR_TetMesh> tetmesh = nullptr;
+    OwnedPtr<HR_PolyMesh> polymesh = nullptr;
 
     if (solver_id < 0) {
         // If there is no previously allocated solver we can use, we need to extract the geometry
@@ -408,10 +408,10 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         }
     }
 
-    SolverResult solver_res = hdkrs::get_solver(solver_id, tetmesh.release(), polymesh.release(), sim_params);
+    EL_SoftySolverResult solver_res = el_softy_get_solver(solver_id, tetmesh.release(), polymesh.release(), sim_params);
 
     if (solver_res.id < 0) {
-        assert(solver_res.cook_result.tag == CookResultTag::Error);
+        assert(solver_res.cook_result.tag == HRCookResultTag::HR_ERROR);
         std::stringstream ss;
         ss << "Failed to create or retrieve a solver. ";
         ss << solver_res.cook_result.message;
@@ -423,8 +423,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Check that we either have a new solver or we found a valid old one.
     UT_ASSERT(solver_id < 0 || solver_id == solver_res.id);
 
-    OwnedPtr<PointCloud> tetmesh_ptcloud = nullptr;
-    OwnedPtr<PointCloud> polymesh_ptcloud = nullptr;
+    OwnedPtr<HR_PointCloud> tetmesh_ptcloud = nullptr;
+    OwnedPtr<HR_PointCloud> polymesh_ptcloud = nullptr;
 
     if (solver_id >= 0) {
         std::cerr << "Updating meshes of old solver" << std::endl;
@@ -437,7 +437,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     }
 
     std::cerr << "Stepping for solver " << solver_res.id << std::endl;
-    StepResult res = hdkrs::step(
+    EL_SoftyStepResult res = el_softy_step(
             solver_res.solver,
             tetmesh_ptcloud.release(),
             polymesh_ptcloud.release(),
@@ -445,11 +445,11 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
             interrupt::check_interrupt);
 
     switch (res.cook_result.tag) {
-        case CookResultTag::Success:
+        case HRCookResultTag::HR_SUCCESS:
             cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
-        case CookResultTag::Warning:
+        case HRCookResultTag::HR_WARNING:
             cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.cook_result.message); break;
-        case CookResultTag::Error:
+        case HRCookResultTag::HR_ERROR:
             cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message);
             std::cerr << res.cook_result.message << std::endl;
             break;
@@ -459,5 +459,5 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     write_solver_data(detail, res, solver_res.id);
 
-    free_result(res.cook_result);
+    hr_free_result(res.cook_result);
 }

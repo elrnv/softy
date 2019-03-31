@@ -9,16 +9,16 @@ namespace io {
 
 class ByteBuffer {
 public:
-    ByteBuffer(hdkrs::ByteBuffer buf) : _data(buf.data), _size(buf.size) {}
+    ByteBuffer(HR_ByteBuffer buf) : _data(buf.data), _size(buf.size) {}
     ByteBuffer(ByteBuffer&& buf) : _data(buf._data), _size(buf._size) {
         buf._data = nullptr;
         buf._size = 0;
     }
     ~ByteBuffer() {
-        hdkrs::ByteBuffer buf;
+        HR_ByteBuffer buf;
         buf.data = _data;
         buf.size = _size;
-        free_byte_buffer(buf);
+        hr_free_byte_buffer(buf);
     }
 
     ByteBuffer& operator=(ByteBuffer && other) {
@@ -42,8 +42,8 @@ public:
     /**
      * Read the given meshes into an owned buffer.
      */
-    static ByteBuffer write_vtk_mesh(OwnedPtr<PolyMesh> polymesh);
-    static ByteBuffer write_vtk_mesh(OwnedPtr<TetMesh> tetmesh);
+    static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PolyMesh> polymesh);
+    static ByteBuffer write_vtk_mesh(OwnedPtr<HR_TetMesh> tetmesh);
 
 private:
     ByteBuffer(const ByteBuffer&) = delete; // Byte buffer is move only
@@ -52,7 +52,7 @@ private:
     std::size_t  _size;
 };
 
-using MeshVariant = boost::variant<boost::blank, OwnedPtr<PolyMesh>, OwnedPtr<TetMesh>>;
+using MeshVariant = boost::variant<boost::blank, OwnedPtr<HR_PolyMesh>, OwnedPtr<HR_TetMesh>>;
 
 MeshVariant parse_vtk_mesh(const char * data, std::size_t size);
 

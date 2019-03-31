@@ -1,12 +1,13 @@
 #![allow(clippy::cyclomatic_complexity)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
 
 use geo::io::{
     convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
 use geo::mesh::{
-    attrib, topology as topo, Attrib, PointCloud as GeoPointCloud, PolyMesh as GeoPolyMesh,
-    TetMesh as GeoTetMesh, VertexPositions,
+    attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions,
 };
 use geo::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
@@ -17,48 +18,54 @@ use std::ffi::{CStr, CString};
 use std::slice;
 
 /// A Rust polygon mesh struct.
-pub type PolyMesh = GeoPolyMesh<f64>;
+pub struct HR_PolyMesh {
+    pub mesh: PolyMesh<f64>,
+}
 
 /// A Rust tetmesh struct.
-pub type TetMesh = GeoTetMesh<f64>;
+pub struct HR_TetMesh {
+    pub mesh: TetMesh<f64>,
+}
 
 /// A Rust pointcloud struct.
-pub type PointCloud = GeoPointCloud<f64>;
+pub struct HR_PointCloud {
+    pub mesh: PointCloud<f64>,
+}
 
 #[repr(C)]
-pub enum CookResultTag {
-    Success,
-    Warning,
-    Error,
+pub enum HRCookResultTag {
+    HR_SUCCESS,
+    HR_WARNING,
+    HR_ERROR,
 }
 
 /// Result for C interop.
 #[repr(C)]
-pub struct CookResult {
+pub struct HR_CookResult {
     pub message: *mut c_char,
-    pub tag: CookResultTag,
+    pub tag: HRCookResultTag,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_result(res: CookResult) {
+pub unsafe extern "C" fn hr_free_result(res: HR_CookResult) {
     let _ = CString::from_raw(res.message);
 }
 
-pub enum VertexIndex {}
-pub enum FaceIndex {}
-pub enum CellIndex {}
-pub enum FaceVertexIndex {}
-pub enum CellVertexIndex {}
+pub enum HR_VertexIndex {}
+pub enum HR_FaceIndex {}
+pub enum HR_CellIndex {}
+pub enum HR_FaceVertexIndex {}
+pub enum HR_CellVertexIndex {}
 
 #[repr(C)]
-pub struct PointArray {
+pub struct HR_PointArray {
     capacity: size_t,
     size: size_t,
     array: *mut [f64; 3],
 }
 
 #[repr(C)]
-pub struct IndexArray {
+pub struct HR_IndexArray {
     capacity: size_t,
     size: size_t,
     array: *mut size_t,
@@ -67,9 +74,9 @@ pub struct IndexArray {
 macro_rules! get_points_impl {
     ($mesh:ident) => {{
         assert!(!$mesh.is_null());
-        let mut pts: Vec<[f64; 3]> = (*$mesh).vertex_positions().to_vec();
+        let mut pts: Vec<[f64; 3]> = (*$mesh).mesh.vertex_positions().to_vec();
 
-        let arr = PointArray {
+        let arr = HR_PointArray {
             capacity: pts.capacity(),
             size: pts.len(),
             array: pts.as_mut_slice().as_mut_ptr(),
@@ -82,32 +89,32 @@ macro_rules! get_points_impl {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn get_pointcloud_points(ptcloud: *const PointCloud) -> PointArray {
+pub unsafe extern "C" fn hr_get_pointcloud_points(ptcloud: *const HR_PointCloud) -> HR_PointArray {
     get_points_impl!(ptcloud)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn get_tetmesh_points(mesh: *const TetMesh) -> PointArray {
+pub unsafe extern "C" fn hr_get_tetmesh_points(mesh: *const HR_TetMesh) -> HR_PointArray {
     get_points_impl!(mesh)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn get_polymesh_points(mesh: *const PolyMesh) -> PointArray {
+pub unsafe extern "C" fn hr_get_polymesh_points(mesh: *const HR_PolyMesh) -> HR_PointArray {
     get_points_impl!(mesh)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray {
+pub unsafe extern "C" fn hr_get_tetmesh_indices(mesh: *const HR_TetMesh) -> HR_IndexArray {
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for cell in (*mesh).cell_iter() {
+    for cell in (*mesh).mesh.cell_iter() {
         for &idx in cell.get().iter() {
             indices.push(idx);
         }
     }
 
-    let arr = IndexArray {
+    let arr = HR_IndexArray {
         capacity: indices.capacity(),
         size: indices.len(),
         array: indices.as_mut_slice().as_mut_ptr(),
@@ -121,18 +128,18 @@ pub unsafe extern "C" fn get_tetmesh_indices(mesh: *const TetMesh) -> IndexArray
 /// Polygon mesh indices is a contiguous set of polygon indices, each in the form:
 /// `n, i_1, i_2, ..., i_n` where `n` is the number of sides on a polygon.
 #[no_mangle]
-pub unsafe extern "C" fn get_polymesh_indices(mesh: *const PolyMesh) -> IndexArray {
+pub unsafe extern "C" fn hr_get_polymesh_indices(mesh: *const HR_PolyMesh) -> HR_IndexArray {
     assert!(!mesh.is_null());
     let mut indices = Vec::new();
 
-    for poly in (*mesh).face_iter() {
+    for poly in (*mesh).mesh.face_iter() {
         indices.push(poly.len());
         for &idx in poly.iter() {
             indices.push(idx);
         }
     }
 
-    let arr = IndexArray {
+    let arr = HR_IndexArray {
         capacity: indices.capacity(),
         size: indices.len(),
         array: indices.as_mut_slice().as_mut_ptr(),
@@ -144,40 +151,25 @@ pub unsafe extern "C" fn get_polymesh_indices(mesh: *const PolyMesh) -> IndexArr
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_point_array(arr: PointArray) {
+pub unsafe extern "C" fn hr_free_point_array(arr: HR_PointArray) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_index_array(arr: IndexArray) {
+pub unsafe extern "C" fn hr_free_index_array(arr: HR_IndexArray) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 // Required for cbindgen to produce these opaque structs.
 mod missing_structs {
     #[allow(dead_code)]
-    struct AttribIter;
+    struct HR_AttribIter;
 
     #[allow(dead_code)]
     struct CString;
-
-    #[allow(dead_code)]
-    struct GeoPolyMesh<T> {
-        _p: ::std::marker::PhantomData<T>,
-    }
-
-    #[allow(dead_code)]
-    struct GeoTetMesh<T> {
-        _p: ::std::marker::PhantomData<T>,
-    }
-
-    #[allow(dead_code)]
-    struct GeoPointCloud<T> {
-        _p: ::std::marker::PhantomData<T>,
-    }
 }
 
-pub enum AttribIter<'a> {
+pub enum HR_AttribIter<'a> {
     Vertex(Iter<'a, String, attrib::Attribute<topo::VertexIndex>>),
     Face(Iter<'a, String, attrib::Attribute<topo::FaceIndex>>),
     Cell(Iter<'a, String, attrib::Attribute<topo::CellIndex>>),
@@ -186,91 +178,91 @@ pub enum AttribIter<'a> {
     None,
 }
 
-// Another workaround for ffi. To ensure the lifetime can be elided in AttribIter in the return
+// Another workaround for ffi. To ensure the lifetime can be elided in HR_AttribIter in the return
 // results for the two functions below, we need to pass a parameter with a lifetime parameter.
 // Otherwise cbindgen doesn't know how to ignore lifetime parameters on returned types for some
 // reason.
-pub struct Dummy<'a> {
+pub struct HR_Dummy<'a> {
     p: ::std::marker::PhantomData<&'a u32>,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pointcloud_attrib_iter(
-    mesh_ptr: *const PointCloud,
-    loc: AttribLocation,
-    _d: *const Dummy,
-) -> *mut AttribIter {
+pub unsafe extern "C" fn hr_pointcloud_attrib_iter(
+    mesh_ptr: *const HR_PointCloud,
+    loc: HRAttribLocation,
+    _d: *const HR_Dummy,
+) -> *mut HR_AttribIter {
     assert!(!mesh_ptr.is_null());
 
     let mesh = &(*mesh_ptr);
 
     let iter = Box::new(match loc {
-        AttribLocation::Vertex => {
-            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        HRAttribLocation::HR_VERTEX => {
+            HR_AttribIter::Vertex(mesh.mesh.attrib_dict::<topo::VertexIndex>().iter())
         }
-        _ => return ::std::ptr::null_mut::<AttribIter>(),
+        _ => return ::std::ptr::null_mut::<HR_AttribIter>(),
     });
 
     Box::into_raw(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tetmesh_attrib_iter(
-    mesh_ptr: *const TetMesh,
-    loc: AttribLocation,
-    _d: *const Dummy,
-) -> *mut AttribIter {
+pub unsafe extern "C" fn hr_tetmesh_attrib_iter(
+    mesh_ptr: *const HR_TetMesh,
+    loc: HRAttribLocation,
+    _d: *const HR_Dummy,
+) -> *mut HR_AttribIter {
     assert!(!mesh_ptr.is_null());
 
     let mesh = &(*mesh_ptr);
 
     let iter = Box::new(match loc {
-        AttribLocation::Vertex => {
-            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        HRAttribLocation::HR_VERTEX => {
+            HR_AttribIter::Vertex(mesh.mesh.attrib_dict::<topo::VertexIndex>().iter())
         }
-        AttribLocation::Cell => AttribIter::Cell(mesh.attrib_dict::<topo::CellIndex>().iter()),
-        AttribLocation::CellVertex => {
-            AttribIter::CellVertex(mesh.attrib_dict::<topo::CellVertexIndex>().iter())
+        HRAttribLocation::HR_CELL => HR_AttribIter::Cell(mesh.mesh.attrib_dict::<topo::CellIndex>().iter()),
+        HRAttribLocation::HR_CELLVERTEX => {
+            HR_AttribIter::CellVertex(mesh.mesh.attrib_dict::<topo::CellVertexIndex>().iter())
         }
-        _ => return ::std::ptr::null_mut::<AttribIter>(),
+        _ => return ::std::ptr::null_mut::<HR_AttribIter>(),
     });
 
     Box::into_raw(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn polymesh_attrib_iter(
-    mesh_ptr: *const PolyMesh,
-    loc: AttribLocation,
-    _d: *const Dummy,
-) -> *mut AttribIter {
+pub unsafe extern "C" fn hr_polymesh_attrib_iter(
+    mesh_ptr: *const HR_PolyMesh,
+    loc: HRAttribLocation,
+    _d: *const HR_Dummy,
+) -> *mut HR_AttribIter {
     assert!(!mesh_ptr.is_null());
 
     let mesh = &(*mesh_ptr);
 
     let iter = Box::new(match loc {
-        AttribLocation::Vertex => {
-            AttribIter::Vertex(mesh.attrib_dict::<topo::VertexIndex>().iter())
+        HRAttribLocation::HR_VERTEX => {
+            HR_AttribIter::Vertex(mesh.mesh.attrib_dict::<topo::VertexIndex>().iter())
         }
-        AttribLocation::Face => AttribIter::Face(mesh.attrib_dict::<topo::FaceIndex>().iter()),
-        AttribLocation::FaceVertex => {
-            AttribIter::FaceVertex(mesh.attrib_dict::<topo::FaceVertexIndex>().iter())
+        HRAttribLocation::HR_FACE => HR_AttribIter::Face(mesh.mesh.attrib_dict::<topo::FaceIndex>().iter()),
+        HRAttribLocation::HR_FACEVERTEX => {
+            HR_AttribIter::FaceVertex(mesh.mesh.attrib_dict::<topo::FaceVertexIndex>().iter())
         }
-        _ => return ::std::ptr::null_mut::<AttribIter>(),
+        _ => return ::std::ptr::null_mut::<HR_AttribIter>(),
     });
 
     Box::into_raw(iter)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_iter(data: *mut AttribIter) {
+pub unsafe extern "C" fn hr_free_attrib_iter(data: *mut HR_AttribIter) {
     let _ = Box::from_raw(data);
 }
 
-/// Wrapper around the `attrib::Attribute` struct to eliminate generics for ffi.
+/// Wrapper around the `attrib::HR_Attribute` struct to eliminate generics for ffi.
 #[derive(Debug)]
 #[repr(C)]
-pub enum AttribData<'a> {
+pub enum HR_AttribData<'a> {
     Vertex(&'a attrib::Attribute<topo::VertexIndex>),
     Face(&'a attrib::Attribute<topo::FaceIndex>),
     Cell(&'a attrib::Attribute<topo::CellIndex>),
@@ -282,60 +274,60 @@ pub enum AttribData<'a> {
 /// Opaque type to store data about a particular attribute. This struct owns the string it
 /// contains thus it must be freed when done.
 #[derive(Debug)]
-pub struct Attribute<'a> {
+pub struct HR_Attribute<'a> {
     name: CString,
-    data: AttribData<'a>,
+    data: HR_AttribData<'a>,
 }
 
-/// Produces an `Attribute` struct that references the next available attribute data.
+/// Produces an `HR_Attribute` struct that references the next available attribute data.
 #[no_mangle]
-pub unsafe extern "C" fn attrib_iter_next(iter_ptr: *mut AttribIter) -> *mut Attribute {
+pub unsafe extern "C" fn hr_attrib_iter_next(iter_ptr: *mut HR_AttribIter) -> *mut HR_Attribute {
     assert!(!iter_ptr.is_null());
 
-    let null = ::std::ptr::null::<Attribute>() as *mut Attribute;
+    let null = ::std::ptr::null::<HR_Attribute>() as *mut HR_Attribute;
 
     match *iter_ptr {
-        AttribIter::Vertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
-            Box::into_raw(Box::new(Attribute {
+        HR_AttribIter::Vertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(HR_Attribute {
                 name: CString::new(k.as_str()).unwrap(),
-                data: AttribData::Vertex(v),
+                data: HR_AttribData::Vertex(v),
             }))
         }),
-        AttribIter::Face(ref mut iter) => iter.next().map_or(null, |(k, v)| {
-            Box::into_raw(Box::new(Attribute {
+        HR_AttribIter::Face(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(HR_Attribute {
                 name: CString::new(k.as_str()).unwrap(),
-                data: AttribData::Face(v),
+                data: HR_AttribData::Face(v),
             }))
         }),
-        AttribIter::Cell(ref mut iter) => iter.next().map_or(null, |(k, v)| {
-            Box::into_raw(Box::new(Attribute {
+        HR_AttribIter::Cell(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(HR_Attribute {
                 name: CString::new(k.as_str()).unwrap(),
-                data: AttribData::Cell(v),
+                data: HR_AttribData::Cell(v),
             }))
         }),
-        AttribIter::FaceVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
-            Box::into_raw(Box::new(Attribute {
+        HR_AttribIter::FaceVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(HR_Attribute {
                 name: CString::new(k.as_str()).unwrap(),
-                data: AttribData::FaceVertex(v),
+                data: HR_AttribData::FaceVertex(v),
             }))
         }),
-        AttribIter::CellVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
-            Box::into_raw(Box::new(Attribute {
+        HR_AttribIter::CellVertex(ref mut iter) => iter.next().map_or(null, |(k, v)| {
+            Box::into_raw(Box::new(HR_Attribute {
                 name: CString::new(k.as_str()).unwrap(),
-                data: AttribData::CellVertex(v),
+                data: HR_AttribData::CellVertex(v),
             }))
         }),
-        AttribIter::None => null,
+        HR_AttribIter::None => null,
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attribute(attrib: *mut Attribute) {
+pub unsafe extern "C" fn hr_free_attribute(attrib: *mut HR_Attribute) {
     let _ = Box::from_raw(attrib);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn attrib_name(data: *const Attribute) -> *const c_char {
+pub unsafe extern "C" fn hr_attrib_name(data: *const HR_Attribute) -> *const c_char {
     if data.is_null() {
         std::ptr::null()
     } else {
@@ -344,14 +336,14 @@ pub unsafe extern "C" fn attrib_name(data: *const Attribute) -> *const c_char {
 }
 
 #[repr(C)]
-pub enum DataType {
-    I8,
-    I32,
-    I64,
-    F32,
-    F64,
-    Str,
-    Unsupported,
+pub enum HRDataType {
+    HR_I8,
+    HR_I32,
+    HR_I64,
+    HR_F32,
+    HR_F64,
+    HR_STR,
+    HR_UNSUPPORTED,
 }
 
 macro_rules! impl_supported_types {
@@ -384,49 +376,49 @@ macro_rules! cast_to_vec {
     };
 }
 
-pub fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> DataType {
+fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> HRDataType {
     match attrib.element_type_id() {
         x if impl_supported_types!(
             x, i8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::I8
+            HRDataType::HR_I8
         }
         x if impl_supported_types!(
             x, i32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::I32
+            HRDataType::HR_I32
         }
         x if impl_supported_types!(
             x, i64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::I64
+            HRDataType::HR_I64
         }
         x if impl_supported_types!(
             x, f32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::F32
+            HRDataType::HR_F32
         }
         x if impl_supported_types!(
             x, f64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::F64
+            HRDataType::HR_F64
         }
         x if impl_supported_types!(
             x, String, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
         {
-            DataType::Str
+            HRDataType::HR_STR
         }
-        _ => DataType::Unsupported,
+        _ => HRDataType::HR_UNSUPPORTED,
     }
 }
 
-pub fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
+fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
     let tuple_size = match attrib.element_type_id() {
         x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, String) => 1,
         x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64, String) => 1,
@@ -471,51 +463,51 @@ pub fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_type(attrib: *const Attribute) -> DataType {
+pub unsafe extern "C" fn hr_attrib_data_type(attrib: *const HR_Attribute) -> HRDataType {
     if attrib.is_null() {
-        DataType::Unsupported
+        HRDataType::HR_UNSUPPORTED
     } else {
         match (*attrib).data {
-            AttribData::Vertex(a) => attrib_type_id(a),
-            AttribData::Face(a) => attrib_type_id(a),
-            AttribData::Cell(a) => attrib_type_id(a),
-            AttribData::FaceVertex(a) => attrib_type_id(a),
-            AttribData::CellVertex(a) => attrib_type_id(a),
-            AttribData::None => DataType::Unsupported,
+            HR_AttribData::Vertex(a) => attrib_type_id(a),
+            HR_AttribData::Face(a) => attrib_type_id(a),
+            HR_AttribData::Cell(a) => attrib_type_id(a),
+            HR_AttribData::FaceVertex(a) => attrib_type_id(a),
+            HR_AttribData::CellVertex(a) => attrib_type_id(a),
+            HR_AttribData::None => HRDataType::HR_UNSUPPORTED,
         }
     }
 }
 
 #[repr(C)]
-pub struct AttribArrayI8 {
+pub struct HR_AttribArrayI8 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i8,
 }
 #[repr(C)]
-pub struct AttribArrayI32 {
+pub struct HR_AttribArrayI32 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i32,
 }
 #[repr(C)]
-pub struct AttribArrayI64 {
+pub struct HR_AttribArrayI64 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut i64,
 }
 #[repr(C)]
-pub struct AttribArrayF32 {
+pub struct HR_AttribArrayF32 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut f32,
 }
 #[repr(C)]
-pub struct AttribArrayF64 {
+pub struct HR_AttribArrayF64 {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
@@ -523,20 +515,20 @@ pub struct AttribArrayF64 {
 }
 
 #[repr(C)]
-pub struct AttribArrayStr {
+pub struct HR_AttribArrayStr {
     capacity: size_t,
     size: size_t,
     tuple_size: size_t,
     array: *mut *mut c_char,
 }
 macro_rules! impl_get_attrib_data {
-    (_impl_make_array AttribArrayStr, $vec:ident, $tuple_size:ident) => {{
+    (_impl_make_array HR_AttribArrayStr, $vec:ident, $tuple_size:ident) => {{
         let mut vec: Vec<*mut c_char> = $vec
             .iter()
             .map(|x: &String| CString::new(x.as_str()).unwrap().into_raw())
             .collect();
 
-        let arr = AttribArrayStr {
+        let arr = HR_AttribArrayStr {
             capacity: vec.capacity(),
             size: vec.len(),
             tuple_size: $tuple_size,
@@ -565,12 +557,12 @@ macro_rules! impl_get_attrib_data {
             (Vec::new(), 0)
         } else {
             match (*$attrib_data).data {
-                AttribData::Vertex(data) => attrib_flat_array(data),
-                AttribData::Face(data) => attrib_flat_array(data),
-                AttribData::Cell(data) => attrib_flat_array(data),
-                AttribData::FaceVertex(data) => attrib_flat_array(data),
-                AttribData::CellVertex(data) => attrib_flat_array(data),
-                AttribData::None => (Vec::new(), 0),
+                HR_AttribData::Vertex(data) => attrib_flat_array(data),
+                HR_AttribData::Face(data) => attrib_flat_array(data),
+                HR_AttribData::Cell(data) => attrib_flat_array(data),
+                HR_AttribData::FaceVertex(data) => attrib_flat_array(data),
+                HR_AttribData::CellVertex(data) => attrib_flat_array(data),
+                HR_AttribData::None => (Vec::new(), 0),
             }
         };
 
@@ -579,57 +571,57 @@ macro_rules! impl_get_attrib_data {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_i8(attrib: *mut Attribute) -> AttribArrayI8 {
-    impl_get_attrib_data!(AttribArrayI8, attrib)
+pub unsafe extern "C" fn hr_attrib_data_i8(attrib: *mut HR_Attribute) -> HR_AttribArrayI8 {
+    impl_get_attrib_data!(HR_AttribArrayI8, attrib)
 }
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_i32(attrib: *mut Attribute) -> AttribArrayI32 {
-    impl_get_attrib_data!(AttribArrayI32, attrib)
+pub unsafe extern "C" fn hr_attrib_data_i32(attrib: *mut HR_Attribute) -> HR_AttribArrayI32 {
+    impl_get_attrib_data!(HR_AttribArrayI32, attrib)
 }
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_i64(attrib: *mut Attribute) -> AttribArrayI64 {
-    impl_get_attrib_data!(AttribArrayI64, attrib)
+pub unsafe extern "C" fn hr_attrib_data_i64(attrib: *mut HR_Attribute) -> HR_AttribArrayI64 {
+    impl_get_attrib_data!(HR_AttribArrayI64, attrib)
 }
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_f32(attrib: *mut Attribute) -> AttribArrayF32 {
-    impl_get_attrib_data!(AttribArrayF32, attrib)
+pub unsafe extern "C" fn hr_attrib_data_f32(attrib: *mut HR_Attribute) -> HR_AttribArrayF32 {
+    impl_get_attrib_data!(HR_AttribArrayF32, attrib)
 }
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_f64(attrib: *mut Attribute) -> AttribArrayF64 {
-    impl_get_attrib_data!(AttribArrayF64, attrib)
+pub unsafe extern "C" fn hr_attrib_data_f64(attrib: *mut HR_Attribute) -> HR_AttribArrayF64 {
+    impl_get_attrib_data!(HR_AttribArrayF64, attrib)
 }
 #[no_mangle]
-pub unsafe extern "C" fn attrib_data_str(attrib: *mut Attribute) -> AttribArrayStr {
-    impl_get_attrib_data!(AttribArrayStr, attrib)
+pub unsafe extern "C" fn hr_attrib_data_str(attrib: *mut HR_Attribute) -> HR_AttribArrayStr {
+    impl_get_attrib_data!(HR_AttribArrayStr, attrib)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_i8(arr: AttribArrayI8) {
+pub unsafe extern "C" fn hr_free_attrib_data_i8(arr: HR_AttribArrayI8) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_i32(arr: AttribArrayI32) {
+pub unsafe extern "C" fn hr_free_attrib_data_i32(arr: HR_AttribArrayI32) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_i64(arr: AttribArrayI64) {
+pub unsafe extern "C" fn hr_free_attrib_data_i64(arr: HR_AttribArrayI64) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_f32(arr: AttribArrayF32) {
+pub unsafe extern "C" fn hr_free_attrib_data_f32(arr: HR_AttribArrayF32) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_f64(arr: AttribArrayF64) {
+pub unsafe extern "C" fn hr_free_attrib_data_f64(arr: HR_AttribArrayF64) {
     let _ = Vec::from_raw_parts(arr.array, arr.size, arr.capacity);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_attrib_data_str(arr: AttribArrayStr) {
+pub unsafe extern "C" fn hr_free_attrib_data_str(arr: HR_AttribArrayStr) {
     for i in 0..arr.size as isize {
         let _ = CString::from_raw(*arr.array.offset(i));
     }
@@ -638,7 +630,7 @@ pub unsafe extern "C" fn free_attrib_data_str(arr: AttribArrayStr) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_iter(iter: *mut AttribIter) {
+pub unsafe extern "C" fn hr_free_iter(iter: *mut HR_AttribIter) {
     if !iter.is_null() {
         let _ = Box::from_raw(iter);
     }
@@ -646,31 +638,31 @@ pub unsafe extern "C" fn free_iter(iter: *mut AttribIter) {
 
 #[repr(C)]
 #[derive(Debug)]
-pub enum AttribLocation {
-    Vertex,
-    Face,
-    Cell,
-    FaceVertex,
-    CellVertex,
+pub enum HRAttribLocation {
+    HR_VERTEX,
+    HR_FACE,
+    HR_CELL,
+    HR_FACEVERTEX,
+    HR_CELLVERTEX,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn make_pointcloud(
+pub unsafe extern "C" fn hr_make_pointcloud(
     ncoords: size_t,
     coords: *const c_double,
-) -> *mut PointCloud {
+) -> *mut HR_PointCloud {
     // check invariants
     assert!(
         ncoords % 3 == 0,
         "Given coordinate array size is not a multiple of 3."
     );
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
-    let ptcloud = Box::new(geo::mesh::PointCloud::new(verts));
+    let ptcloud = Box::new(HR_PointCloud { mesh: geo::mesh::PointCloud::new(verts) });
     Box::into_raw(ptcloud)
 }
 
 macro_rules! make_mesh_impl {
-    ($mesh_ty:ident, $ncoords:ident, $coords:ident, $convert:expr) => {{
+    ($hr_mesh:ident, $mesh_ty:ident, $ncoords:ident, $coords:ident, $convert:expr) => {{
         // check invariants
         assert!(
             $ncoords % 3 == 0,
@@ -680,20 +672,21 @@ macro_rules! make_mesh_impl {
         let indices = $convert;
         let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
 
-        let mesh = Box::new(geo::mesh::$mesh_ty::new(verts, indices));
+        let mesh = Box::new($hr_mesh { mesh: geo::mesh::$mesh_ty::new(verts, indices) });
 
         Box::into_raw(mesh)
     }};
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn make_polymesh(
+pub unsafe extern "C" fn hr_make_polymesh(
     ncoords: size_t,
     coords: *const c_double,
     nindices: size_t,
     indices: *const size_t,
-) -> *mut PolyMesh {
+) -> *mut HR_PolyMesh {
     make_mesh_impl!(
+        HR_PolyMesh,
         PolyMesh,
         ncoords,
         coords,
@@ -702,13 +695,14 @@ pub unsafe extern "C" fn make_polymesh(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn make_tetmesh(
+pub unsafe extern "C" fn hr_make_tetmesh(
     ncoords: size_t,
     coords: *const c_double,
     nindices: size_t,
     indices: *const size_t,
-) -> *mut TetMesh {
+) -> *mut HR_TetMesh {
     make_mesh_impl!(
+        HR_TetMesh,
         TetMesh,
         ncoords,
         coords,
@@ -717,21 +711,21 @@ pub unsafe extern "C" fn make_tetmesh(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_pointcloud(mesh: *mut PointCloud) {
+pub unsafe extern "C" fn hr_free_pointcloud(mesh: *mut HR_PointCloud) {
     if !mesh.is_null() {
         let _ = Box::from_raw(mesh);
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_tetmesh(mesh: *mut TetMesh) {
+pub unsafe extern "C" fn hr_free_tetmesh(mesh: *mut HR_TetMesh) {
     if !mesh.is_null() {
         let _ = Box::from_raw(mesh);
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_polymesh(mesh: *mut PolyMesh) {
+pub unsafe extern "C" fn hr_free_polymesh(mesh: *mut HR_PolyMesh) {
     if !mesh.is_null() {
         let _ = Box::from_raw(mesh);
     }
@@ -763,32 +757,32 @@ macro_rules! ptr_to_vec_of_arrays {
 }
 
 macro_rules! impl_add_attrib {
-    (_impl PointCloud, $data_type:ty, $mesh:ident,
+    (_impl HR_PointCloud, $data_type:ty, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
         impl_add_attrib!(_impl_points $mesh, $loc, $name, vec);
     };
-    (_impl PolyMesh, $data_type:ty, $mesh:ident,
+    (_impl HR_PolyMesh, $data_type:ty, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
         impl_add_attrib!(_impl_surface $mesh, $loc, $name, vec);
     };
-    (_impl TetMesh, $data_type:ty, $mesh:ident,
+    (_impl HR_TetMesh, $data_type:ty, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type);
         impl_add_attrib!(_impl_volume $mesh, $loc, $name, vec);
     };
-    (_impl PointCloud, $data_type:ty, $tuple_size:expr, $mesh:ident,
+    (_impl HR_PointCloud, $data_type:ty, $tuple_size:expr, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
         impl_add_attrib!(_impl_points $mesh, $loc, $name, vec);
     };
-    (_impl PolyMesh, $data_type:ty, $tuple_size:expr, $mesh:ident,
+    (_impl HR_PolyMesh, $data_type:ty, $tuple_size:expr, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
         impl_add_attrib!(_impl_surface $mesh, $loc, $name, vec);
     };
-    (_impl TetMesh, $data_type:ty, $tuple_size:expr, $mesh:ident,
+    (_impl HR_TetMesh, $data_type:ty, $tuple_size:expr, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
         let vec = ptr_to_vec_of_arrays!($len, $data, $data_type, $tuple_size);
         impl_add_attrib!(_impl_volume $mesh, $loc, $name, vec);
@@ -796,8 +790,8 @@ macro_rules! impl_add_attrib {
     // Points only attributes
     (_impl_points $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         {
-            if let AttribLocation::Vertex = $loc {
-                if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+            if let HRAttribLocation::HR_VERTEX = $loc {
+                if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
                     println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                 }
             }
@@ -808,18 +802,18 @@ macro_rules! impl_add_attrib {
     (_impl_surface $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         {
             match $loc {
-                AttribLocation::Vertex => {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                HRAttribLocation::HR_VERTEX => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
-                AttribLocation::Face => {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
+                HRAttribLocation::HR_FACE => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::FaceIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
-                AttribLocation::FaceVertex => {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
+                HRAttribLocation::HR_FACEVERTEX => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::FaceVertexIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
@@ -831,18 +825,18 @@ macro_rules! impl_add_attrib {
     (_impl_volume $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         {
             match $loc {
-                AttribLocation::Vertex => {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
+                HRAttribLocation::HR_VERTEX => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::VertexIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
-                AttribLocation::Cell=> {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::CellIndex>($name, $vec) {
+                HRAttribLocation::HR_CELL => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::CellIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
-                AttribLocation::CellVertex => {
-                    if let Err(error) = (*$mesh).add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
+                HRAttribLocation::HR_CELLVERTEX => {
+                    if let Err(error) = (*$mesh).mesh.add_attrib_data::<_,topo::CellVertexIndex>($name, $vec) {
                         println!("Warning: failed to add attribute \"{}\" at {:?}, with error: {:?}", $name, $loc, error);
                     }
                 },
@@ -879,13 +873,13 @@ macro_rules! impl_add_attrib {
         }
     };
     // Helpers for the implementation for string attributes below.
-    (_impl_str PointCloud, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
+    (_impl_str HR_PointCloud, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         impl_add_attrib!(_impl_points $mesh, $loc, $name, $vec);
     };
-    (_impl_str PolyMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
+    (_impl_str HR_PolyMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         impl_add_attrib!(_impl_surface $mesh, $loc, $name, $vec);
     };
-    (_impl_str TetMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
+    (_impl_str HR_TetMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
         impl_add_attrib!(_impl_volume $mesh, $loc, $name, $vec);
     };
     // Implementation for string attributes
@@ -925,204 +919,204 @@ macro_rules! impl_add_attrib {
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_f32(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_f32(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_float,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_float);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_float);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_f64(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_f64(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_double,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_double);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_double);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_i8(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_i8(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_schar,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_schar);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_schar);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_i32(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_i32(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_int,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: c_int);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_int);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_i64(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_i64(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, len, data: i64);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: i64);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_f32(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_f32(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_float,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: c_float);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: c_float);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_f64(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_f64(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_double,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: c_double);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: c_double);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_i8(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_i8(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_schar,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: c_schar);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: c_schar);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_i32(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_i32(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_int,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: c_int);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: c_int);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_i64(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_i64(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, len, data: i64);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_f32(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_f32(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_float,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: c_float);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, len, data: c_float);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_f64(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_f64(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_double,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: c_double);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, len, data: c_double);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_i8(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_i8(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_schar,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: c_schar);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, len, data: c_schar);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_i32(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_i32(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const c_int,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: c_int);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, len, data: c_int);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_i64(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_i64(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, len, data: i64);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, len, data: i64);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_pointcloud_attrib_str(
-    mesh: *mut PointCloud,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_pointcloud_attrib_str(
+    mesh: *mut HR_PointCloud,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     nstrings: size_t,
@@ -1130,14 +1124,14 @@ pub unsafe extern "C" fn add_pointcloud_attrib_str(
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(PointCloud, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_polymesh_attrib_str(
-    mesh: *mut PolyMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_polymesh_attrib_str(
+    mesh: *mut HR_PolyMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     nstrings: size_t,
@@ -1145,14 +1139,14 @@ pub unsafe extern "C" fn add_polymesh_attrib_str(
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(PolyMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
 /// If the given mesh is null, this function will panic.
 #[no_mangle]
-pub unsafe extern "C" fn add_tetmesh_attrib_str(
-    mesh: *mut TetMesh,
-    loc: AttribLocation,
+pub unsafe extern "C" fn hr_add_tetmesh_attrib_str(
+    mesh: *mut HR_TetMesh,
+    loc: HRAttribLocation,
     name: *const c_char,
     tuple_size: size_t,
     nstrings: size_t,
@@ -1160,7 +1154,7 @@ pub unsafe extern "C" fn add_tetmesh_attrib_str(
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+    impl_add_attrib!(HR_TetMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
 }
 
 /// Helper routine for converting C-style data to `[T;3]`s.
@@ -1182,65 +1176,67 @@ unsafe fn ptr_to_vec_of_triples<T: Copy>(num_elem: usize, data_ptr: *const T) ->
  * Buffer stuff
  */
 #[repr(C)]
-pub struct ByteBuffer {
+pub struct HR_ByteBuffer {
     data: *const c_char,
     size: usize,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_byte_buffer(buf: ByteBuffer) {
+pub unsafe extern "C" fn hr_free_byte_buffer(buf: HR_ByteBuffer) {
     if !buf.data.is_null() && buf.size > 0 {
         let slice = slice::from_raw_parts_mut(buf.data as *mut u8, buf.size);
         let _: Box<[u8]> = Box::from_raw(slice as *mut [u8]);
     }
 }
 
-/// Write the given TetMesh into a binary VTK format returned through an appropriately sized
-/// `ByteBuffer`.
+/// Write the given HR_TetMesh into a binary VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn make_tetmesh_vtk_buffer(mesh: *const TetMesh) -> ByteBuffer {
+pub unsafe extern "C" fn hr_make_tetmesh_vtk_buffer(mesh: *const HR_TetMesh) -> HR_ByteBuffer {
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_tetmesh_to_vtk_format(&(*mesh)) {
+    match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk_be(vtk);
+            vec_data.write_vtk_be(vtk)
+                .expect("Failed to write Vtk data to byte buffer");
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();
 
-            ByteBuffer {
+            HR_ByteBuffer {
                 data: Box::into_raw(boxed_data) as *const c_char,
                 size,
             }
         }
-        Err(_) => ByteBuffer {
+        Err(_) => HR_ByteBuffer {
             data: ::std::ptr::null(),
             size: 0,
         },
     }
 }
 
-/// Write the given PolyMesh into a binary VTK format returned through an appropriately sized
-/// `ByteBuffer`.
+/// Write the given HR_PolyMesh into a binary VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn make_polymesh_vtk_buffer(mesh: *const PolyMesh) -> ByteBuffer {
+pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -> HR_ByteBuffer {
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_polymesh_to_vtk_format(&(*mesh)) {
+    match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk_be(vtk);
+            vec_data.write_vtk_be(vtk)
+                .expect("Failed to write Vtk data to byte buffer");
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();
 
-            ByteBuffer {
+            HR_ByteBuffer {
                 data: Box::into_raw(boxed_data) as *const c_char,
                 size,
             }
         }
-        Err(_) => ByteBuffer {
+        Err(_) => HR_ByteBuffer {
             data: ::std::ptr::null(),
             size: 0,
         },
@@ -1249,36 +1245,36 @@ pub unsafe extern "C" fn make_polymesh_vtk_buffer(mesh: *const PolyMesh) -> Byte
 
 #[derive(Debug)]
 #[repr(C)]
-pub enum MeshType {
-    TetMesh,
-    PolyMesh,
-    None,
+pub enum HRMeshType {
+    HR_TETMESH,
+    HR_POLYMESH,
+    HR_NONE,
 }
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Mesh {
-    tetmesh: *mut TetMesh,
-    polymesh: *mut PolyMesh,
-    tag: MeshType,
+pub struct HR_Mesh {
+    tetmesh: *mut HR_TetMesh,
+    polymesh: *mut HR_PolyMesh,
+    tag: HRMeshType,
 }
 
-impl Default for Mesh {
+impl Default for HR_Mesh {
     fn default() -> Self {
-        Mesh {
+        HR_Mesh {
             tetmesh: ::std::ptr::null_mut(),
             polymesh: ::std::ptr::null_mut(),
-            tag: MeshType::None,
+            tag: HRMeshType::HR_NONE,
         }
     }
 }
 
-/// Parse a given byte array into a TetMesh or a PolyMesh depending on what is stored in the
+/// Parse a given byte array into a HR_TetMesh or a HR_PolyMesh depending on what is stored in the
 /// buffer assuming VTK format.
 #[no_mangle]
-pub unsafe extern "C" fn parse_vtk_mesh(data: *const c_char, size: size_t) -> Mesh {
+pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
     if data.is_null() || size == 0 {
-        return Mesh::default();
+        return HR_Mesh::default();
     }
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
@@ -1288,25 +1284,25 @@ pub unsafe extern "C" fn parse_vtk_mesh(data: *const c_char, size: size_t) -> Me
         let vtk_data = vtk_data_result.unwrap().1.data;
         if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
             if mesh.num_cells() > 0 {
-                let tetmesh = Box::new(mesh);
-                return Mesh {
-                    tag: MeshType::TetMesh,
+                let tetmesh = Box::new(HR_TetMesh { mesh });
+                return HR_Mesh {
+                    tag: HRMeshType::HR_TETMESH,
                     tetmesh: Box::into_raw(tetmesh),
-                    ..Mesh::default()
+                    ..HR_Mesh::default()
                 };
             }
         }
 
         if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
             if mesh.num_faces() > 0 {
-                let polymesh = Box::new(mesh);
-                return Mesh {
-                    tag: MeshType::PolyMesh,
+                let polymesh = Box::new(HR_PolyMesh { mesh });
+                return HR_Mesh {
+                    tag: HRMeshType::HR_POLYMESH,
                     polymesh: Box::into_raw(polymesh),
-                    ..Mesh::default()
+                    ..HR_Mesh::default()
                 };
             }
         }
     }
-    Mesh::default()
+    HR_Mesh::default()
 }

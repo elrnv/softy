@@ -6,22 +6,24 @@ pub use implicits::{BackgroundFieldType, KernelType, SampleType};
 /// A C interface for passing parameters from SOP parameters to the Rust code.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Params {
+pub struct EL_IsoParams {
     pub tolerance: f32,
     pub radius: f32,
     pub kernel: i32,
     pub background_potential: i32,
+    pub weighted: i32,
     pub sample_type: i32,
     pub max_step: f32,
 }
 
-impl Into<implicits::Params> for Params {
+impl Into<implicits::Params> for EL_IsoParams {
     fn into(self) -> implicits::Params {
-        let Params {
+        let EL_IsoParams {
             tolerance,
             radius,
             kernel,
             background_potential,
+            weighted,
             sample_type,
             max_step,
         } = self;
@@ -42,10 +44,13 @@ impl Into<implicits::Params> for Params {
                 },
                 _ => implicits::KernelType::Hrbf,
             },
-            background_field: match background_potential {
-                0 => implicits::BackgroundFieldType::Zero,
-                1 => implicits::BackgroundFieldType::FromInput,
-                2 => implicits::BackgroundFieldType::DistanceBased,
+            background_field: implicits::BackgroundFieldParams {
+                field_type: match background_potential {
+                    0 => implicits::BackgroundFieldType::Zero,
+                    1 => implicits::BackgroundFieldType::FromInput,
+                    _ => implicits::BackgroundFieldType::DistanceBased,
+                },
+                weighted: weighted != 0,
             },
             sample_type: match sample_type {
                 0 => implicits::SampleType::Vertex,
@@ -64,7 +69,7 @@ pub struct ImplicitSurface;
 
 /// Create a triangle mesh from the given arrays of data.
 #[no_mangle]
-pub unsafe extern "C" fn create_trimesh(
+pub unsafe extern "C" fn el_iso_create_trimesh(
     num_coords: c_int,
     coords: *const c_double,
     num_indices: c_int,
@@ -88,7 +93,7 @@ pub unsafe extern "C" fn create_trimesh(
 
 /// Free memory allocated for the trimesh.
 #[no_mangle]
-pub unsafe extern "C" fn free_trimesh(trimesh: *mut TriMesh) {
+pub unsafe extern "C" fn el_iso_free_trimesh(trimesh: *mut TriMesh) {
     if !trimesh.is_null() {
         let _ = Box::from_raw(trimesh);
     }
@@ -96,9 +101,9 @@ pub unsafe extern "C" fn free_trimesh(trimesh: *mut TriMesh) {
 
 /// Create a new implicit surface. If creation fails, a null pointer is returned.
 #[no_mangle]
-pub unsafe extern "C" fn create_implicit_surface(
+pub unsafe extern "C" fn el_iso_create_implicit_surface(
     trimesh: *const TriMesh,
-    params: Params,
+    params: EL_IsoParams,
 ) -> *mut ImplicitSurface {
     match implicits::surface_from_trimesh::<f64>(
         &*(trimesh as *const geometry::mesh::TriMesh<f64>),
@@ -111,7 +116,7 @@ pub unsafe extern "C" fn create_implicit_surface(
 
 /// Free memory allocated for the implicit surface.
 #[no_mangle]
-pub unsafe extern "C" fn free_implicit_surface(implicit_surface: *mut ImplicitSurface) {
+pub unsafe extern "C" fn el_iso_free_implicit_surface(implicit_surface: *mut ImplicitSurface) {
     if !implicit_surface.is_null() {
         let _ = Box::from_raw(implicit_surface);
     }
@@ -119,7 +124,7 @@ pub unsafe extern "C" fn free_implicit_surface(implicit_surface: *mut ImplicitSu
 
 /// Compute potential. Return 0 on success.
 #[no_mangle]
-pub unsafe extern "C" fn compute_potential(
+pub unsafe extern "C" fn el_iso_compute_potential(
     implicit_surface: *const ImplicitSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
@@ -140,7 +145,7 @@ pub unsafe extern "C" fn compute_potential(
 /// Project the given positions to the given iso value of the potential field represented by this
 /// implicit surface.
 #[no_mangle]
-pub unsafe extern "C" fn project_to_above(
+pub unsafe extern "C" fn el_iso_project_to_above(
     implicit_surface: *const ImplicitSurface,
     iso_value: f64,
     tolerance: f64,
@@ -158,23 +163,31 @@ pub unsafe extern "C" fn project_to_above(
     }
 }
 
-/// Get the number of non zeros in the Jacobian of the implicit function with respect to surface
+/// Get the number of entries in the sparse Jacobian of the implicit function with respect to surface
 /// vertices.
+///
+/// These typically corresond to non-zero entries of the Jacobian, however they can
+/// actually be zero and multiple entries can correspond to the same position in the matrix,
+/// in which case the corresponding values will be summed.
+///
+/// This function determines the sizes of the mutable arrays expected in
+/// `el_iso_surface_jacobian_indices` and `el_iso_surface_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn num_surface_jacobian_non_zeros(implicit_surface: *const ImplicitSurface) -> c_int {
+pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(implicit_surface: *const ImplicitSurface) -> c_int {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
     surf.num_surface_jacobian_entries().unwrap_or(0) as c_int
 }
 
-/// Compute the index structure of the surface Jacobian for the given implicit function.
+/// Compute the index structure of the sparse surface Jacobian for the given implicit function.
+/// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
-pub unsafe extern "C" fn surface_jacobian_indices(
+pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
     implicit_surface: *const ImplicitSurface,
-    num_non_zeros: c_int,
+    num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
-    let n = num_non_zeros as usize;
+    let n = num_entries as usize;
     let rows = std::slice::from_raw_parts_mut(rows, n);
     let cols = std::slice::from_raw_parts_mut(cols, n);
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
@@ -191,19 +204,19 @@ pub unsafe extern "C" fn surface_jacobian_indices(
     }
 }
 
-/// Compute surface Jacobian values for the given implicit function. The values correspond to the indices
-/// provided by `surface_jacobian_indices`.
+/// Compute surface Jacobian values for the given implicit function. The values correspond to the
+/// indices provided by `el_iso_surface_jacobian_indices`.
 #[no_mangle]
-pub unsafe extern "C" fn surface_jacobian_values(
+pub unsafe extern "C" fn el_iso_surface_jacobian_values(
     implicit_surface: *const ImplicitSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
-    num_non_zeros: c_int,
+    num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
-    let vals = std::slice::from_raw_parts_mut(values, num_non_zeros as usize);
+    let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
 
     match surf.surface_jacobian_values(query_points, vals) {
@@ -216,7 +229,7 @@ pub unsafe extern "C" fn surface_jacobian_values(
 /// to the Jacobian at each query point with respect to the query position. This means that
 /// `values` has size `num_query_points*3`, just like `query_point_coords`.
 #[no_mangle]
-pub unsafe extern "C" fn query_jacobian(
+pub unsafe extern "C" fn el_iso_query_jacobian(
     implicit_surface: *const ImplicitSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
@@ -234,10 +247,90 @@ pub unsafe extern "C" fn query_jacobian(
     }
 }
 
+/// Get the number of entries in the sparse Hessian product of the implicit function with respect
+/// to surface vertices.
+/// These typically corresond to non-zero entries of the Hessian product, however they can
+/// actually be zero and multiple entries can correspond to the same position in the matrix,
+/// in which case the corresponding values will be summed.
+///
+/// The Hessian product refers to the product of the full Hessian of the implicit
+/// function contracted against a vector multipliers in the number of query points. Thus this
+/// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
+/// This function will return 0 if no query points were previously cached.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(implicit_surface: *const ImplicitSurface) -> c_int {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    surf.num_surface_hessian_product_entries().unwrap_or(0) as c_int
+}
+
+/// Compute the index structure of the surface Hessian product for the given implicit function.
+///
+/// The Hessian product refers to the product of the full Hessian of the implicit
+/// function contracted against a vector multipliers in the number of query points. Thus this
+/// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
+    implicit_surface: *const ImplicitSurface,
+    num_entries: c_int,
+    rows: *mut c_int,
+    cols: *mut c_int,
+) -> c_int {
+    let n = num_entries as usize;
+    let rows = std::slice::from_raw_parts_mut(rows, n);
+    let cols = std::slice::from_raw_parts_mut(cols, n);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.surface_hessian_product_indices_iter() {
+        Ok(iter) => {
+            for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
+                *out_row = r as c_int;
+                *out_col = c as c_int;
+            }
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
+/// Compute surface Hessian product values for the given implicit function.
+///
+/// The Hessian product refers to the product of the full Hessian of the implicit
+/// function contracted against a vector multipliers in the number of query points. Thus this
+/// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
+///
+/// `num_query_points`   - number of triplets provided in `query_point_coords`.
+/// `query_point_coords` - triplets of coordinates (x,y,z) of the query points.
+/// `multipliers` - vector of multiplers of size equal to `num_query_points` that is to be
+///                 multiplied by the full Hessian to get the Hessian product.
+/// `num_entries` - size of the `values` array, which should be equal to
+///                 `el_iso_num_surface_hessian_product_entries`.
+/// `values` - matrix entries corresponding to the indices provided by
+///            `el_iso_surface_hessian_product_indices`.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
+    implicit_surface: *const ImplicitSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+    multipliers: *const f64,
+    num_entries: c_int,
+    values: *mut f64,
+) -> c_int {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
+    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let multipliers = std::slice::from_raw_parts(multipliers, num_query_points as usize);
+    let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.surface_hessian_product_values(query_points, multipliers, vals) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
 /// Invalidate neighbour cache. This must be done explicitly after we have completed a simulation
 /// step. This implies that the implicit surface may change.
 #[no_mangle]
-pub unsafe extern "C" fn invalidate_neighbour_cache(
+pub unsafe extern "C" fn el_iso_invalidate_neighbour_cache(
     implicit_surface: *const ImplicitSurface,
 ) {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
@@ -249,7 +342,7 @@ pub unsafe extern "C" fn invalidate_neighbour_cache(
 /// sparsity pattern because query points are not typically passed when requesting Jacobian
 /// indices.
 #[no_mangle]
-pub unsafe extern "C" fn cache_neighbours(
+pub unsafe extern "C" fn el_iso_cache_neighbours(
     implicit_surface: *const ImplicitSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
@@ -264,7 +357,7 @@ pub unsafe extern "C" fn cache_neighbours(
 /// Update the implicit surface with new vertex positions for the underlying mesh.
 /// The `position_coords` array is expected to have size of 3 times `num_positions`.
 #[no_mangle]
-pub unsafe extern "C" fn update(
+pub unsafe extern "C" fn el_iso_update(
     implicit_surface: *mut ImplicitSurface,
     num_positions: c_int,
     position_coords: *const f64,

@@ -331,7 +331,7 @@ impl SolverBuilder {
         ipopt.set_option("sb", "yes"); // removes the Ipopt welcome message
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("warm_start_init_point", "no");
+        ipopt.set_option("warm_start_init_point", "yes");
         //ipopt.set_option("jac_d_constant", "yes");
         ipopt.set_option("nlp_scaling_max_gradient", params.max_gradient_scaling as f64);
         //ipopt.set_option("print_timing_statistics", "yes");
@@ -805,7 +805,7 @@ impl Solver {
         } = self.solver.solver_data_mut();
 
         // Advance internal state (positions and velocities) of the problem.
-        problem.advance(solution, false)//and_warm_start)
+        problem.advance(solution, and_warm_start)
     }
 
     /// Revert previously committed solution. We just subtract step here.

@@ -897,8 +897,8 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        println!("params = {:?}", self.sim_params);
-        println!("material = {:?}", self.solid_material);
+        println!("##### Params = {:?}", self.sim_params);
+        println!("##### Material = {:?}", self.solid_material);
 
         // Initialize the result of this function.
         let mut result = SolveResult {
@@ -909,7 +909,6 @@ impl Solver {
 
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
-            dbg!(self.solver.solver_data().solution.constraint_multipliers.len());
 
             match step_result {
                 Ok(step_result) => {
@@ -923,8 +922,6 @@ impl Solver {
                         // change). In which case we would be skipping an opportunity to do a more
                         // accurate step.
                         let (constraint_violation, sparsity_changed) = self.probe_contact_constraint_violation();
-
-                        dbg!(self.solver.solver_data().solution.constraint_multipliers.len());
 
                         let initial_error = self.initial_residual_error();
                         let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
@@ -943,7 +940,7 @@ impl Solver {
                             } else { // sparsity_chagned
                                 // Sparsity pattern must have changed, simply update constraint
                                 // multipliers and repeat the step.
-                                println!("Sparsity has changed, constraint violation: {:?}", constraint_violation);
+                                println!("##### Sparsity has changed, constraint violation: {:?}", constraint_violation);
                             }
 
                             // We don't commit the solution here because it may be far from the
@@ -966,13 +963,11 @@ impl Solver {
                 Err(Error::InnerSolveError(status, step_result)) => {
                     result = result.combine_inner_result(&step_result);
                     self.commit_solution(true);
-                    //self.output_meshes(0);
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
                     self.commit_solution(false);
-                    //self.output_meshes(0);
                     return Err(e);
                 }
             }

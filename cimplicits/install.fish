@@ -4,7 +4,7 @@ set target_dir (dirname (status --current-filename))/../target
 
 set build_type release
 
-set vmr_dir $HOME/vmr/packages/implicits
+set vmr_dir $HOME/vmr/packages/cimplicits
 
 set implicits_lib cimplicits
 

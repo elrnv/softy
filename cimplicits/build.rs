@@ -7,13 +7,12 @@ use std::path::PathBuf;
 fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
-    let header_file = "implicits.h";
+    let header_file = "cimplicits.h";
     let output_file = target_dir().join(header_file.clone()).display().to_string();
 
     let mut config: cbindgen::Config = Default::default();
 
     config.include_guard = Some(String::from("IMPLICITS_CAPI_H"));
-    config.namespace = Some(String::from("implicits"));
     config.line_length = 80;
     config.tab_width = 4;
     config.language = cbindgen::Language::Cxx;

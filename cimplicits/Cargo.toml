@@ -1,11 +1,11 @@
 [package]
-name = "implicits-c"
+name = "cimplicits"
 version = "0.1.1"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [lib]
-name = "implicits"
+name = "cimplicits"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

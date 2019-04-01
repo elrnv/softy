@@ -12,7 +12,7 @@ fn main() {
 
     let mut config: cbindgen::Config = Default::default();
 
-    config.include_guard = Some(String::from("IMPLICITS_CAPI_H"));
+    config.include_guard = Some(String::from("CIMPLICITS_H"));
     config.line_length = 80;
     config.tab_width = 4;
     config.language = cbindgen::Language::Cxx;

@@ -910,6 +910,9 @@ impl Solver {
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
 
+            // The following block determines if after the inner step there were any changes
+            // in the constraints where new points may have violated the constraint. If so we
+            // update the constraint neighbourhoods and rerun the inner step. 
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);

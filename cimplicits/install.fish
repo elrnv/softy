@@ -1,4 +1,4 @@
-#!/usr/bin/fish
+#!/usr/bin/env fish
 
 set target_dir (dirname (status --current-filename))/../target
 
@@ -75,6 +75,27 @@ if [ $platform = "Darwin" ]
 
     cp lib$implicits_lib.dylib $vmr_dir/lib/
 
+    if [ $status -ne 0 ]
+        echo "Error copying library for mac."
+        exit 2
+    end
+
+    # Strip all installed rpaths since they reveal directory unrelated structures and are basically
+    # useless
+    set rpaths (otool -l $vmr_dir/lib/lib$implicits_lib.dylib | grep RPATH -A2 | grep path | sed "s/.*path\ \(.*\) (.*).*/\1/g")
+    if [ $status -ne 0 ]
+        echo "Error getting rust rpaths in lib$implicits_lib.dylib"
+        exit 2
+    end
+
+    for rpath in $rpaths
+        install_name_tool -delete_rpath $rpath $vmr_dir/lib/lib$implicits_lib.dylib
+        if [ $status -ne 0 ]
+            echo "Error removing rpath $rpath from lib$implicits_lib.dylib"
+            exit 2
+end
+    end
+
     if [ $status -eq 0 ]
         echo "Implicits library successfully installed for mac."
     else
@@ -84,20 +105,18 @@ if [ $platform = "Darwin" ]
 
     popd
 
-    install_for_windows
-
     # finish linux installation by copying from the vm-share folder
-    pushd $HOME/vm-share
-    cp lib$implicits_lib.so $vmr_dir/lib/
+    #pushd $HOME/vm-share
+    #cp lib$implicits_lib.so $vmr_dir/lib/
 
-    if [ $status -eq 0 ]
-        echo "Implicits library successfully installed for linux."
-    else
-        echo "Error installing library for linux."
-        exit 5
-    end
+    #if [ $status -eq 0 ]
+    #    echo "Implicits library successfully installed for linux."
+    #else
+    #    echo "Error installing library for linux."
+    #    exit 5
+    #end
 
-    popd
+    #popd
 
 else if [ $platform = "Linux" ]
     # Check if we are in a vm, then we need to copy to vm folder

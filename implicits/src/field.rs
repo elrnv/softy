@@ -1245,8 +1245,9 @@ mod tests {
     use crate::*;
     use geo::mesh::*;
 
-    // Helper function for testing.
-    fn make_octahedron_and_grid() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    // Helper function for testing. This is an implicit surface and grid mesh pair where each
+    // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
+    fn make_octahedron_and_grid_local() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1277,11 +1278,42 @@ mod tests {
         Ok((surface, grid))
     }
 
-    /// Test the projection.
-    #[test]
-    fn projection_test() -> Result<(), crate::Error> {
-        let (surface, mut grid) = make_octahedron_and_grid()?;
+    // Helper function for testing. This is an implicit surface and grid mesh pair where each
+    // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
+    fn make_octahedron_and_grid() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+        // Create a surface sample mesh.
+        let octahedron_trimesh = utils::make_sample_octahedron();
+        let mut sphere = PolyMesh::from(octahedron_trimesh);
 
+        // Translate the mesh slightly in z.
+        utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh(
+            &sphere,
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.00001,
+                    radius: 1.0,
+                },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: true,
+                },
+                sample_type: SampleType::Vertex,
+                ..Default::default()
+            },
+        )?;
+
+        // Make a mesh to be projected.
+        let mut grid = make_grid(22, 22);
+
+        utils::uniform_scale(&mut grid, 2.0);
+
+        Ok((surface, grid))
+    }
+
+    fn projection_tester(surface: ImplicitSurface, mut grid: PolyMesh<f64>) -> Result<(), crate::Error> {
         // Get grid node positions to be projected.
         let pos = grid.vertex_positions_mut();
 
@@ -1309,8 +1341,33 @@ mod tests {
         Ok(())
     }
 
+    /// Test projection where each projected vertex has a non-empty local neighbourhood of the
+    /// implicit surface.
+    #[test]
+    fn local_projection_test() -> Result<(), crate::Error> {
+        let (surface, grid) = make_octahedron_and_grid_local()?;
+        projection_tester(surface, grid)
+    }
+
+    /// Test projection where some projected vertices may not have a local neighbourhood at all.
+    /// This is a more complex test than the local_projection_test
+    #[test]
+    fn projection_test() -> Result<(), crate::Error> {
+        let (surface, grid) = make_octahedron_and_grid()?;
+        projection_tester(surface, grid)
+    }
+
     #[test]
     fn cached_neighbourhoods() -> Result<(), crate::Error> {
+        // Local test
+        let (surface, grid) = make_octahedron_and_grid_local()?;
+        surface.cache_neighbours(grid.vertex_positions());
+        assert_eq!(
+            surface.num_cached_neighbourhoods()?,
+            surface.nonempty_neighbourhood_indices()?.len()
+        );
+
+        // Non-local test
         let (surface, grid) = make_octahedron_and_grid()?;
         surface.cache_neighbours(grid.vertex_positions());
         assert_eq!(

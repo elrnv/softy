@@ -777,7 +777,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 },
             )
             .sum::<Matrix3<T>>()
-            * weight_sum_inv + bg_hess
+            * weight_sum_inv
+            + bg_hess
     }
 }
 

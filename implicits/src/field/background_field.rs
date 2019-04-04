@@ -116,7 +116,7 @@ where
                 .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
                 .min_by(|(_, d0), (_, d1)| {
                     d0.partial_cmp(d1)
-                        .expect("Detected NaN. Please report this bug.")
+                        .expect(&format!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
                 });
             if let Some((index, _)) = min_sample {
                 ClosestIndex::Local(index)
@@ -586,7 +586,6 @@ where
         diag_iter.chain(off_diag_iter.into_iter().flatten())
     }
 
-
     /// Compute background field derivative contribution.
     /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
     /// assume the background field is constant. This Jacobian is taken with respect to the
@@ -609,7 +608,10 @@ where
         let wb = self.background_weight() * weight_sum_inv;
 
         let grad = if weighted {
-            let mut dw_total: Vector3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)).sum();
+            let mut dw_total: Vector3<T> = samples
+                .into_iter()
+                .map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos))
+                .sum();
 
             let dwb = self.background_weight_gradient(None);
             dw_total += dwb;
@@ -648,11 +650,17 @@ where
 
         let mut hess = self.field_hessian() * wb;
         if weighted {
-            let mut dw_total: Vector3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos)).sum();
+            let mut dw_total: Vector3<T> = samples
+                .into_iter()
+                .map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).grad(q, pos))
+                .sum();
             let dwb = self.background_weight_gradient(None);
             dw_total += dwb;
 
-            let mut ddw_total: Matrix3<T> = samples.into_iter().map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).hess(q, pos)).sum();
+            let mut ddw_total: Matrix3<T> = samples
+                .into_iter()
+                .map(move |Sample { pos, .. }| kernel.with_closest_dist(dist).hess(q, pos))
+                .sum();
             let ddwb = self.background_weight_hessian(None);
             ddw_total += ddwb;
 
@@ -663,7 +671,8 @@ where
             hess += sym_outer(df, dwb)
                 - sym_outer(dw_total, df) * (wb * weight_sum_inv)
                 - sym_outer(dw_total, dwb) * (f * weight_sum_inv)
-                + dw_total * (dw_total.transpose() * (_2 * f * wb * weight_sum_inv * weight_sum_inv))
+                + dw_total
+                    * (dw_total.transpose() * (_2 * f * wb * weight_sum_inv * weight_sum_inv))
                 + ddwb * f
                 - ddw_total * f * wb * weight_sum_inv
         }
@@ -954,16 +963,8 @@ mod tests {
                 };
 
                 for k in 0..3 {
-                    if !relative_eq!(
-                        hess[k][wrt].value(),
-                        jac[k].deriv(),
-                        max_relative = 1e-5
-                    ) {
-                        println!(
-                            "{:.5} vs {:.5}",
-                            hess[k][wrt].value(),
-                            jac[k].deriv()
-                        );
+                    if !relative_eq!(hess[k][wrt].value(), jac[k].deriv(), max_relative = 1e-5) {
+                        println!("{:.5} vs {:.5}", hess[k][wrt].value(), jac[k].deriv());
                         success = false;
                     }
                 }
@@ -974,7 +975,6 @@ mod tests {
         }
         Ok(())
     }
-
 
     #[test]
     fn two_triangles_distance_based_bg() -> Result<(), Error> {

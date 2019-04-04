@@ -340,7 +340,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         };
 
         set.map(|neighbourhoods| {
-            neighbourhoods.iter()
+            neighbourhoods
+                .iter()
                 .enumerate()
                 .filter(|(_, x)| !x.is_empty())
                 .map(|(i, _)| i)
@@ -478,6 +479,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         out_field: &mut [T],
     ) -> Result<(), super::Error> {
+        debug_assert!(
+            query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
+            "Detected NaNs in query points. Please report this bug."
+        );
+
         let ImplicitSurface {
             ref kernel,
             ref samples,

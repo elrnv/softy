@@ -243,7 +243,7 @@ pub unsafe extern "C" fn el_iso_query_jacobian(
     let value_vecs: &mut [[f64; 3]] = reinterpret_mut_slice(vals);
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
 
-    match surf.query_jacobian(query_points, value_vecs) {
+    match surf.query_jacobian_full(query_points, value_vecs) {
         Ok(()) => 0,
         Err(_) => 1,
     }

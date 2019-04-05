@@ -227,23 +227,58 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
     }
 }
 
-/// Compute query Jacobian for the given implicit function. Each triplet of coordinates corresponds
-/// to the Jacobian at each query point with respect to the query position. This means that
-/// `values` has size `num_query_points*3`, just like `query_point_coords`.
+/// Get the number of entries in the sparse Jacobian of the implicit function with respect to
+/// query points.
+///
+/// This function determines the sizes of the mutable arrays expected in
+/// `el_iso_query_jacobian_indices` and `el_iso_query_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_query_jacobian(
+pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    surf.num_query_jacobian_entries().unwrap_or(0) as c_int
+}
+
+/// Compute the index structure of the sparse query Jacobian for the given implicit function.
+/// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_query_jacobian_indices(
+    implicit_surface: *const EL_IsoSurface,
+    num_entries: c_int,
+    rows: *mut c_int,
+    cols: *mut c_int,
+) -> c_int {
+    let n = num_entries as usize;
+    let rows = std::slice::from_raw_parts_mut(rows, n);
+    let cols = std::slice::from_raw_parts_mut(cols, n);
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.query_jacobian_indices_iter() {
+        Ok(iter) => {
+            for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
+                *out_row = r as c_int;
+                *out_col = c as c_int;
+            }
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
+/// Compute query Jacobian for the given implicit function. 
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_query_jacobian_values(
     implicit_surface: *const EL_IsoSurface,
     num_query_points: c_int,
     query_point_coords: *const f64,
+    num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
-    let vals = std::slice::from_raw_parts_mut(values, num_query_points as usize * 3);
-    let value_vecs: &mut [[f64; 3]] = reinterpret_mut_slice(vals);
+    let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
 
-    match surf.query_jacobian_full(query_points, value_vecs) {
+    match surf.query_jacobian_values(query_points, vals) {
         Ok(()) => 0,
         Err(_) => 1,
     }

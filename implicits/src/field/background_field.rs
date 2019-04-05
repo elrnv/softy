@@ -99,6 +99,28 @@ where
     V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Send + Sync + 'a,
 {
+    /// Build a background field.
+    /// This function returns the `InvalidBackgroundConstruction` error when `local_samples_view`
+    /// is empty and `global_closest` is not given. This means that there is not enough information
+    /// in the input to actually build the desired background field.
+    /// This function is the most general for constructing Background fields. It is useful in code
+    /// that may optionally build local and global fields. In other words, passing in the
+    /// `global_closest` index guarantees that this function wont fail.
+    pub(crate) fn new(
+        q: Vector3<T>,
+        local_samples_view: SamplesView<'a, 'a, T>,
+        global_closest: Option<usize>,
+        kernel: K,
+        bg_params: BackgroundFieldParams,
+        bg_value: Option<V>,
+    ) -> Result<Self, crate::Error> {
+        if let Some(closest) = global_closest {
+            Ok(Self::global(q, local_samples_view, closest, kernel, bg_params, bg_value))
+        } else {
+            Self::local(q, local_samples_view, kernel, bg_params, bg_value)
+        }
+    }
+
     /// Build a local background field that is valid only when `local_samples_view` is non empty.
     /// This function returns the `InvalidBackgroundConstruction` error when `local_samples_view`
     /// is empty. This means that there is not enough information in the input to actually build
@@ -125,7 +147,7 @@ where
             }
         };
 
-        Ok(Self::new(
+        Ok(Self::new_impl(
             q,
             local_samples_view,
             closest_sample_index,
@@ -137,7 +159,8 @@ where
 
     /// Build a global background field that is valid even when `local_samples_view` is empty. This
     /// is useful for visualization, but ultimately in simulation we wouldn't do this to avoid
-    /// unnecessary computations. This function doesn't fail.
+    /// unnecessary computations. This function requires the index of the closest sample to be
+    /// passed in as `global_closest`. This function doesn't fail.
     pub(crate) fn global(
         q: Vector3<T>,
         local_samples_view: SamplesView<'a, 'a, T>,
@@ -156,7 +179,7 @@ where
             ClosestIndex::Global(global_closest)
         };
 
-        Self::new(
+        Self::new_impl(
             q,
             local_samples_view,
             closest_sample_index,
@@ -167,8 +190,8 @@ where
     }
 
     /// Internal constructor that is guaranteed to build a background field from the given
-    /// parameters where the give `closest_sample_index` is already determined.
-    fn new(
+    /// parameters where the given `closest_sample_index` is already determined.
+    fn new_impl(
         q: Vector3<T>,
         local_samples_view: SamplesView<'a, 'a, T>,
         closest_sample_index: ClosestIndex,

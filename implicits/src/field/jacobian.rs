@@ -319,7 +319,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
     /// This is a more convenient version of the `query_jacobian_values` function where the values
-    /// are already epxected to be packed into triplets.
+    /// are already expected to be packed into triplets.
     pub fn query_jacobian(
         &self,
         query_points: &[[T; 3]],
@@ -328,7 +328,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match self.kernel {
             KernelType::Approximate { tolerance, radius } => {
                 let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_query_jacobian_values(query_points, kernel, values)
+                self.mls_query_jacobian_values(query_points, kernel, values, false)
             }
             _ => Err(Error::UnsupportedKernel),
         }
@@ -343,17 +343,39 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         self.query_jacobian(query_points, reinterpret::reinterpret_mut_slice(values))
     }
 
+    /// Compute the Jacobian of this implicit surface function with respect to query points.
+    /// This version of the query Jacobian returns all diagonal values of the Jacobian, including
+    /// values for points with empty neighbourhoods. This is especially valuable for projection
+    /// where the background potential can help. The other Jacobian functions ignore these values
+    /// altogether. This also means we don't need to worry about the size of `values` since it will
+    /// always be the same as the size of `query_points`.
+    pub fn query_jacobian_full(
+        &self,
+        query_points: &[[T; 3]],
+        values: &mut [[T; 3]],
+    ) -> Result<(), Error> {
+        match self.kernel {
+            KernelType::Approximate { tolerance, radius } => {
+                let kernel = kernel::LocalApproximate::new(radius, tolerance);
+                self.mls_query_jacobian_values(query_points, kernel, values, true)
+            }
+            _ => Err(Error::UnsupportedKernel),
+        }
+    }
+
     pub(crate) fn mls_query_jacobian_values<'a, K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
         value_vecs: &mut [[T; 3]],
+        full: bool,
     ) -> Result<(), Error>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
+        let closest_points = self.closest_samples_borrow()?;
 
         let ImplicitSurface {
             ref samples,
@@ -362,12 +384,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         // For each row (query point)
-        zip!(query_points.iter(), neigh_points.iter())
-            .filter(|(_, nbrs)| !nbrs.is_empty())
+        zip!(query_points.iter(), neigh_points.iter(), closest_points.iter())
+            .filter(|(_, nbrs, _)| full || !nbrs.is_empty())
             .zip(value_vecs.iter_mut())
-            .for_each(move |((q, nbr_points), vec)| {
+            .for_each(move |((q, nbr_points, &closest), vec)| {
                 let view = SamplesView::new(nbr_points, samples);
-                *vec = Self::query_jacobian_at(Vector3(*q), view, kernel, bg_field_params).into();
+                *vec = Self::query_jacobian_at(Vector3(*q), view, Some(closest), kernel, bg_field_params).into();
             });
         Ok(())
     }
@@ -376,13 +398,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn query_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         view: SamplesView<'a, 'a, T>,
+        closest: Option<usize>,
         kernel: K,
         bg_field_params: BackgroundFieldParams,
     ) -> Vector3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+        let bg = BackgroundField::new(q, view, closest, kernel, bg_field_params, None).unwrap();
 
         // Background potential Jacobian.
         let bg_jac = bg.compute_query_jacobian();
@@ -1373,7 +1396,7 @@ mod tests {
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
-            let jac = ImplicitSurface::query_jacobian_at(q, view, kernel, bg_field_params);
+            let jac = ImplicitSurface::query_jacobian_at(q, view, None, kernel, bg_field_params);
 
             let mut q = q.map(|x| F::cst(x));
 

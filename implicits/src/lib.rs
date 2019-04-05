@@ -399,7 +399,7 @@ mod tests {
         use autodiff::F;
         use geo::math::Vector3;
 
-        let grid = make_grid(22, 22);
+        let grid = make_grid(23, 23);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
             .map(|&p| Vector3(p).map(|x| F::cst(x)).into())

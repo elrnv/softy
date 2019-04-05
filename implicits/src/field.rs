@@ -396,7 +396,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let mut candidate_potential = vec![T::zero(); query_points.len()];
         let mut steps = vec![[T::zero(); 3]; query_points.len()];
 
-        let max_steps = 10;
+        let max_steps = 20;
         let max_binary_search_iters = 10;
 
         let mut convergence = true;
@@ -412,7 +412,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
 
             // The transpose of the potential gradient at each of the query points.
-            self.query_jacobian(query_points, &mut steps)?;
+            self.query_jacobian_full(query_points, &mut steps)?;
 
             // Compute initial step directions
             for (step, &value) in
@@ -1273,7 +1273,7 @@ mod tests {
         )?;
 
         // Make a mesh to be projected.
-        let grid = make_grid(22, 22);
+        let grid = make_grid(23, 23);
 
         Ok((surface, grid))
     }
@@ -1298,7 +1298,7 @@ mod tests {
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,
-                    weighted: true,
+                    weighted: false,
                 },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
@@ -1314,15 +1314,22 @@ mod tests {
     }
 
     fn projection_tester(surface: ImplicitSurface, mut grid: PolyMesh<f64>) -> Result<(), crate::Error> {
-        // Get grid node positions to be projected.
-        let pos = grid.vertex_positions_mut();
+        let init_potential = {
+            // Get grid node positions to be projected.
+            let pos = grid.vertex_positions_mut();
 
-        // Compute potential before projection.
-        let mut init_potential = vec![0.0; pos.len()];
-        surface.potential(pos, &mut init_potential)?;
+            // Compute potential before projection.
+            let mut init_potential = vec![0.0; pos.len()];
+            surface.potential(pos, &mut init_potential)?;
 
-        // Project grid outside the implicit surface.
-        assert!(surface.project_to_above(0.0, 1e-4, pos)?);
+            // Project grid outside the implicit surface.
+            assert!(surface.project_to_above(0.0, 1e-4, pos)?);
+            init_potential
+        };
+
+        //geo::io::save_polymesh(&grid, &std::path::PathBuf::from("out/mesh.vtk"))?;
+
+        let pos = grid.vertex_positions();
 
         // Compute potential after projection.
         let mut final_potential = vec![0.0; pos.len()];
@@ -1352,7 +1359,7 @@ mod tests {
     /// Test projection where some projected vertices may not have a local neighbourhood at all.
     /// This is a more complex test than the local_projection_test
     #[test]
-    fn projection_test() -> Result<(), crate::Error> {
+    fn global_projection_test() -> Result<(), crate::Error> {
         let (surface, grid) = make_octahedron_and_grid()?;
         projection_tester(surface, grid)
     }

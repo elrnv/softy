@@ -332,7 +332,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .map(|neighbourhoods| neighbourhoods.iter().filter(|x| !x.is_empty()).count())
     }
 
-    /// Return a vector over query points, which have non-empty neighbourhoods.
+    /// Return a vector of indices for query points with non-empty neighbourhoods.
     pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
         let set = match self.sample_type {
             SampleType::Vertex => self.extended_neighbourhood_borrow(),

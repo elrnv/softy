@@ -85,16 +85,21 @@ impl Solution {
     }
 
     /// The number of constraints may change between saving the warm start solution and using it
-    /// for the next solve. For this reason we must remap the old solution to the new set of
+    /// for the next solve. For this reason we must remap the old multipliers to the new set of
     /// constraints. Constraint multipliers that are new in the next solve will have a zero value.
-    pub fn remap_constraint_multipliers(&mut self, old_indices: &[usize], new_indices: &[usize]) -> &mut Self {
+    /// This function works on a subset of all multipliers. The caller gives a slice of the
+    /// multipliers for which this function produces a new Vec of multipliers correspnding to the
+    /// new constraints, where the old multipliers are copied as available.
+    /// The values in the new and old indices slices are required to be sorted.
+    /// 
+    /// NOTE: Most efficient to replace the entire constraint_multipliers vector in the warm start.
+    pub fn remap_constraint_multipliers(constraint_multipliers: &[f64], old_indices: &[usize], new_indices: &[usize]) -> Vec<f64> {
         // Check that both input slices are sorted.
         debug_assert!(old_indices.windows(2).all(|w| w[0] <= w[1]));
         debug_assert!(new_indices.windows(2).all(|w| w[0] <= w[1]));
         let mut remapped_multipliers = vec![0.0; new_indices.len()];
-        dbg!(&self.constraint_multipliers.len());
 
-        let mut old_iter = self.constraint_multipliers.iter().zip(old_indices.iter());
+        let mut old_iter = constraint_multipliers.iter().zip(old_indices.iter());
         for (m, &new_idx) in remapped_multipliers.iter_mut().zip(new_indices.iter()) {
             for (&old_mult, &old_idx) in &mut old_iter {
                 if old_idx < new_idx {
@@ -108,9 +113,7 @@ impl Solution {
                 break;
             }
         }
-
-        std::mem::replace(&mut self.constraint_multipliers, remapped_multipliers);
-        self
+        remapped_multipliers
     }
 }
 
@@ -208,18 +211,34 @@ impl NonLinearProblem {
     /// multipliers that may have changed.
     /// Return an estimate if any constraints have changed. This estimate may have false negatives.
     pub fn update_constraints(&mut self) -> bool {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let old_indices = scc.active_constraint_indices();
-            let changed = scc.update_cache();
-            if let Ok(old_indices) = old_indices {
-                let new_indices = scc.active_constraint_indices().expect("Failed to retrieve cached neighbourhoods");
-                self.warm_start.remap_constraint_multipliers(&old_indices, &new_indices);
-            }
+        let mut changed = false; // Report if anything has changed to the caller.
 
-            changed
-        } else {
-            false
+        let mut old_indices = Vec::new();
+        let mut new_indices = Vec::new();
+
+        if let Some(_) = self.volume_constraint {
+            // Nothing to be done here, volume constraints don't change between outer iterations.
+            old_indices.push(0);
+            new_indices.push(0);
         }
+
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            // Note that for `remap_constraint_multipliers`, indices need to only be sorted. Their
+            // actual values are only meaningful in relation to eachother. Thus we don't bother to
+            // offset the indices here by 1 since duplicates (two zero indices) are allowed.
+            // For other constraints, this may no longer be true!
+            changed |= scc.update_cache();
+            let old_scc_indices = scc.active_constraint_indices();
+            if let Ok(mut old_scc_indices) = old_scc_indices {
+                old_indices.append(&mut old_scc_indices);
+                new_indices.append(&mut scc.active_constraint_indices().expect("Failed to retrieve cached neighbourhoods"));
+            }
+        }
+
+        let new_multipliers = Solution::remap_constraint_multipliers(&self.warm_start.constraint_multipliers, &old_indices, &new_indices);
+        std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+
+        changed
     }
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
@@ -269,14 +288,12 @@ impl NonLinearProblem {
     pub fn update_max_step(&mut self, step: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_max_step(step);
-            dbg!(scc.constraint_size());
         }
         self.update_constraints();
     }
     pub fn update_radius(&mut self, rad: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_radius(rad);
-            dbg!(scc.constraint_size());
         }
         self.update_constraints();
     }
@@ -436,6 +453,11 @@ impl NonLinearProblem {
         obj
     }
 
+    /*
+     * The followin functions are there for debugging jacobians and hessians
+     */
+
+    #[allow(dead_code)]
     fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) -> Result<(), crate::Error> {
         let mut iter_counter = self.iter_counter.borrow_mut();
         let mut mesh = self.tetmesh.borrow().clone();
@@ -455,14 +477,11 @@ impl NonLinearProblem {
             return Err(crate::Error::NoKinematicMesh);
         }
 
-        //dbg!(*iter_counter);
+        dbg!(*iter_counter);
         Ok(())
     }
 
-    //pub fn dot(a: &[f64], b: &[f64]) -> f64 {
-    //    a.iter().zip(b.iter()).map(|(&a,&b)| a*b).sum()
-    //}
-
+    #[allow(dead_code)]
     pub fn write_jacobian_img(&self, jac: &na::DMatrix<f64>) {
         use image::{ImageBuffer};
 
@@ -487,6 +506,7 @@ impl NonLinearProblem {
         img.save(format!("out/jac_{}.png", self.iter_counter.borrow())).expect("Failed to save Jacobian Image");
     }
 
+    #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
         use na::{DMatrix, base::storage::Storage};
@@ -530,6 +550,7 @@ impl NonLinearProblem {
         dbg!(cond);
     }
 
+    #[allow(dead_code)]
     pub fn print_hessian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
         use na::{DMatrix, base::storage::Storage};
@@ -552,6 +573,10 @@ impl NonLinearProblem {
         let cond_hess = s.iter().max_by(|x,y| x.partial_cmp(y).unwrap()).unwrap() / s.iter().min_by(|x,y| x.partial_cmp(y).unwrap()).unwrap();
         dbg!(cond_hess);
     }
+
+    /*
+     * End of debugging functions
+     */
 }
 
 /// Prepare the problem for Newton iterations.

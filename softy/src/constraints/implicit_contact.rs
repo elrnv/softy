@@ -138,6 +138,7 @@ impl ContactConstraint for ImplicitContactConstraint {
     /// not the actual simulation mesh vertices.
     fn cached_neighbourhood_indices(&self) -> Vec<Index> {
         let surf = self.implicit_surface.borrow();
+
         let mut cached_neighbourhood_indices = if let Ok(n) = surf.num_cached_query_points() {
             vec![Index::INVALID; n]
         } else {

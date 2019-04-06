@@ -23,7 +23,7 @@ use crate::inf_norm;
 use crate::mask_iter::*;
 
 use super::{NonLinearProblem, MuStrategy, SimParams, Solution};
-use crate::{PointCloud, PolyMesh , TetMesh , TriMesh , Index, Error};
+use crate::{PointCloud, PolyMesh , TetMesh , TriMesh , Error};
 
 /// Result from one inner simulation step.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,13 +32,6 @@ pub struct InnerSolveResult {
     pub iterations: u32,
     /// The value of the objective at the end of the step.
     pub objective_value: f64,
-    /// A set of constrained points (If smooth contact is enabled). Because not all query points
-    /// (points on the kinematic object) are constrained, we need to keep track of which points
-    /// were actually present in the solve, so we can adjust our warm starts between solves.
-    /// In summary, this is a vector with size equal to the number of query points. Each index is
-    /// either `None` which indicates that it was not part of the solve, or `Some(i)` where `i` is
-    /// the index of the contact constraint this point represents.
-    pub constrained_points: Option<Vec<Index>>,
 }
 
 /// Result from one simulation step.
@@ -648,13 +641,10 @@ impl Solver {
         } = self.solver.solve();
 
         let iterations = solver_data.problem.pop_iteration_count() as u32;
-        let constrained_points =
-            solver_data.problem.smooth_contact_constraint.as_ref().map(|scc| scc.cached_neighbourhood_indices());
 
         let result = InnerSolveResult {
             iterations,
             objective_value,
-            constrained_points,
         };
 
         match status {

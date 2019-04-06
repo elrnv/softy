@@ -155,7 +155,12 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) {
+    fn energy_hessian<T: Real + Send + Sync>(
+        &self,
+        x: &[T],
+        dx: &[T],
+        triplets: &mut [MatrixElementTriplet<T>],
+    ) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), triplets)
     }
 }

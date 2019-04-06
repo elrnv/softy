@@ -1,13 +1,13 @@
 use crate::attrib_defines::*;
 use crate::constraint::*;
+use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
 use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
-use crate::constraints::{ContactConstraint, volume::VolumeConstraint};
+use crate::matrix::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
-use crate::matrix::*;
 use ipopt::{self, Number};
 use reinterpret::*;
 use std::fmt;
@@ -91,9 +91,13 @@ impl Solution {
     /// multipliers for which this function produces a new Vec of multipliers correspnding to the
     /// new constraints, where the old multipliers are copied as available.
     /// The values in the new and old indices slices are required to be sorted.
-    /// 
+    ///
     /// NOTE: Most efficient to replace the entire constraint_multipliers vector in the warm start.
-    pub fn remap_constraint_multipliers(constraint_multipliers: &[f64], old_indices: &[usize], new_indices: &[usize]) -> Vec<f64> {
+    pub fn remap_constraint_multipliers(
+        constraint_multipliers: &[f64],
+        old_indices: &[usize],
+        new_indices: &[usize],
+    ) -> Vec<f64> {
         // Check that both input slices are sorted.
         debug_assert!(old_indices.windows(2).all(|w| w[0] <= w[1]));
         debug_assert!(new_indices.windows(2).all(|w| w[0] <= w[1]));
@@ -175,8 +179,10 @@ impl NonLinearProblem {
 
     /// Clear the warm start using the sizes in the given solution.
     pub fn clear_warm_start(&mut self, solution: ipopt::Solution) {
-        self.warm_start
-            .reset(solution.primal_variables.len(), solution.constraint_multipliers.len());
+        self.warm_start.reset(
+            solution.primal_variables.len(),
+            solution.constraint_multipliers.len(),
+        );
     }
 
     /// Reset solution used for warm starts. Notet that if the number of constraints has changed,
@@ -231,18 +237,30 @@ impl NonLinearProblem {
             let old_scc_indices = scc.active_constraint_indices();
             if let Ok(mut old_scc_indices) = old_scc_indices {
                 old_indices.append(&mut old_scc_indices);
-                new_indices.append(&mut scc.active_constraint_indices().expect("Failed to retrieve cached neighbourhoods"));
+                new_indices.append(
+                    &mut scc
+                        .active_constraint_indices()
+                        .expect("Failed to retrieve cached neighbourhoods"),
+                );
             }
         }
 
-        let new_multipliers = Solution::remap_constraint_multipliers(&self.warm_start.constraint_multipliers, &old_indices, &new_indices);
+        let new_multipliers = Solution::remap_constraint_multipliers(
+            &self.warm_start.constraint_multipliers,
+            &old_indices,
+            &new_indices,
+        );
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
 
         changed
     }
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
-    pub fn advance(&mut self, solution: ipopt::Solution, and_warm_start: bool) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
+    pub fn advance(
+        &mut self,
+        solution: ipopt::Solution,
+        and_warm_start: bool,
+    ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
             // Reinterpret solver variables as positions in 3D space.
             let disp: &[Vector3<f64>] = reinterpret_slice(&solution.primal_variables);
@@ -255,7 +273,8 @@ impl NonLinearProblem {
             let old_prev_pos = prev_pos.clone();
             let old_prev_vel = prev_vel.clone();
 
-            disp.iter().zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
+            disp.iter()
+                .zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
                 .for_each(|(&dp, (prev_p, prev_v))| {
                     *prev_p += dp;
                     *prev_v = dp * dt_inv;
@@ -299,7 +318,12 @@ impl NonLinearProblem {
     }
 
     /// Revert to the given old solution by the given displacement.
-    pub fn revert_to(&mut self, solution: Solution, old_prev_pos: Vec<Vector3<f64>>, old_prev_vel: Vec<Vector3<f64>>) {
+    pub fn revert_to(
+        &mut self,
+        solution: Solution,
+        old_prev_pos: Vec<Vector3<f64>>,
+        old_prev_vel: Vec<Vector3<f64>>,
+    ) {
         {
             // Reinterpret solver variables as positions in 3D space.
             let mut prev_pos = self.prev_pos.borrow_mut();
@@ -463,16 +487,23 @@ impl NonLinearProblem {
         let mut mesh = self.tetmesh.borrow().clone();
         let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
         let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
-        mesh.vertex_positions_mut().iter_mut().zip(
-            all_displacements.iter()).zip(
-            all_positions.iter())
+        mesh.vertex_positions_mut()
+            .iter_mut()
+            .zip(all_displacements.iter())
+            .zip(all_positions.iter())
             .for_each(|((mp, d), p)| *mp = (*p + *d).into());
         *iter_counter += 1;
-        geo::io::save_tetmesh(&mesh, &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter)))?;
+        geo::io::save_tetmesh(
+            &mesh,
+            &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter)),
+        )?;
 
         if let Some(tri_mesh_ref) = self.kinematic_object.as_ref() {
             let obj = geo::mesh::PolyMesh::from(tri_mesh_ref.borrow().clone());
-            geo::io::save_polymesh(&obj, &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter)))?;
+            geo::io::save_polymesh(
+                &obj,
+                &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter)),
+            )?;
         } else {
             return Err(crate::Error::NoKinematicMesh);
         }
@@ -483,13 +514,13 @@ impl NonLinearProblem {
 
     #[allow(dead_code)]
     pub fn write_jacobian_img(&self, jac: &na::DMatrix<f64>) {
-        use image::{ImageBuffer};
+        use image::ImageBuffer;
 
         let nrows = jac.nrows();
         let ncols = jac.ncols();
 
-        let ciel = 1.0;//jac.max();
-        let floor = -1.0;//jac.min();
+        let ciel = 1.0; //jac.max();
+        let floor = -1.0; //jac.min();
 
         let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
             let val = jac[(r as usize, c as usize)];
@@ -503,13 +534,14 @@ impl NonLinearProblem {
             image::Rgb(color)
         });
 
-        img.save(format!("out/jac_{}.png", self.iter_counter.borrow())).expect("Failed to save Jacobian Image");
+        img.save(format!("out/jac_{}.png", self.iter_counter.borrow()))
+            .expect("Failed to save Jacobian Image");
     }
 
     #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        use na::{DMatrix, base::storage::Storage};
+        use na::{base::storage::Storage, DMatrix};
 
         if values.len() == 0 {
             return;
@@ -530,14 +562,15 @@ impl NonLinearProblem {
 
         use std::io::Write;
 
-        let mut f = std::fs::File::create(format!("out/jac_{}.txt", self.iter_counter.borrow())).unwrap();
+        let mut f =
+            std::fs::File::create(format!("out/jac_{}.txt", self.iter_counter.borrow())).unwrap();
         writeln!(&mut f, "jac = ").ok();
         for r in 0..nrows {
             for c in 0..ncols {
-                if jac[(r,c)] != 0.0 {
-                    write!(&mut f, "{:9.5}", jac[(r,c)]).ok();
+                if jac[(r, c)] != 0.0 {
+                    write!(&mut f, "{:9.5}", jac[(r, c)]).ok();
                 } else {
-                    write!(&mut f, "    .    ", ).ok();
+                    write!(&mut f, "    .    ",).ok();
                 }
             }
             writeln!(&mut f, "").ok();
@@ -546,14 +579,15 @@ impl NonLinearProblem {
 
         let svd = na::SVD::new(jac, false, false);
         let s: &[Number] = svd.singular_values.data.as_slice();
-        let cond = s.iter().max_by(|x,y| x.partial_cmp(y).unwrap()).unwrap() / s.iter().min_by(|x,y| x.partial_cmp(y).unwrap()).unwrap();
+        let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
+            / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         dbg!(cond);
     }
 
     #[allow(dead_code)]
     pub fn print_hessian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        use na::{DMatrix, base::storage::Storage};
+        use na::{base::storage::Storage, DMatrix};
 
         if values.len() == 0 {
             return;
@@ -570,7 +604,8 @@ impl NonLinearProblem {
 
         let svd = na::SVD::new(hess, false, false);
         let s: &[Number] = svd.singular_values.data.as_slice();
-        let cond_hess = s.iter().max_by(|x,y| x.partial_cmp(y).unwrap()).unwrap() / s.iter().min_by(|x,y| x.partial_cmp(y).unwrap()).unwrap();
+        let cond_hess = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
+            / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         dbg!(cond_hess);
     }
 
@@ -642,7 +677,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn objective_scaling(&self) -> f64 {
-        1.0//e-4
+        1.0 //e-4
     }
 
     /// Scaling the variables: `x_scaling` is the pre-allocated slice of scales, one for
@@ -724,7 +759,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_jacobian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
+    fn constraint_jacobian_indices(
+        &self,
+        rows: &mut [ipopt::Index],
+        cols: &mut [ipopt::Index],
+    ) -> bool {
         let mut i = 0; // counter
 
         let mut row_offset = 0;
@@ -734,7 +773,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 cols[i] = col as ipopt::Index;
                 i += 1;
 
-                row_offset = row_offset.max(row+1);
+                row_offset = row_offset.max(row + 1);
             }
             assert_eq!(row_offset, 1); // volume constraint should be just one constraint
         }

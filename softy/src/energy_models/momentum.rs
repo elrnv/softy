@@ -1,11 +1,11 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
-use geo::Real;
-use geo::math::{Vector3};
-use geo::mesh::{topology::*, Attrib};
-use geo::prim::Tetrahedron;
 use crate::matrix::*;
 use crate::TetMesh;
+use geo::math::Vector3;
+use geo::mesh::{topology::*, Attrib};
+use geo::prim::Tetrahedron;
+use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
@@ -220,7 +220,8 @@ impl EnergyHessian for MomentumPotential {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        tet_hess[3 * vi + j] = T::from(0.25 * vol * density).unwrap() * dt_inv * dt_inv;
+                        tet_hess[3 * vi + j] =
+                            T::from(0.25 * vol * density).unwrap() * dt_inv * dt_inv;
                     }
                 }
             });
@@ -235,12 +236,18 @@ mod tests {
     #[test]
     fn gradient() {
         let dt = 0.01;
-        gradient_tester(|mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt), EnergyType::Velocity(dt));
+        gradient_tester(
+            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt),
+            EnergyType::Velocity(dt),
+        );
     }
 
     #[test]
     fn hessian() {
         let dt = 0.01;
-        hessian_tester(|mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt), EnergyType::Velocity(dt));
+        hessian_tester(
+            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt),
+            EnergyType::Velocity(dt),
+        );
     }
 }

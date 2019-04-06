@@ -2,13 +2,13 @@
 //use geo::io::save_tetmesh;
 use crate::attrib_defines::*;
 use crate::energy::*;
+use crate::matrix::*;
+use crate::TetMesh;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
-use geo::Real;
 use geo::prim::Tetrahedron;
-use crate::matrix::*;
-use crate::TetMesh;
+use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
@@ -59,7 +59,9 @@ impl<T: Real> NeoHookeanTetEnergy<T> {
         } else {
             let logJ = J.ln();
             let half = T::from(0.5).unwrap();
-            volume * (half * mu * (I - T::from(3.0).unwrap()) - mu * logJ + half * lambda * logJ * logJ)
+            volume
+                * (half * mu * (I - T::from(3.0).unwrap()) - mu * logJ
+                    + half * lambda * logJ * logJ)
         }
     }
 
@@ -492,8 +494,8 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex;
-                      Self::NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(indices);
+            let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+                reinterpret_mut_slice(indices);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 
@@ -594,11 +596,17 @@ mod tests {
 
     #[test]
     fn gradient() {
-        gradient_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        gradient_tester(
+            |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
+            EnergyType::Position,
+        );
     }
 
     #[test]
     fn hessian() {
-        hessian_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        hessian_tester(
+            |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
+            EnergyType::Position,
+        );
     }
 }

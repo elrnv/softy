@@ -1,12 +1,12 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
+use crate::matrix::*;
+use crate::TetMesh;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
-use geo::Real;
 use geo::prim::Tetrahedron;
-use crate::matrix::*;
-use crate::TetMesh;
+use geo::Real;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 
@@ -95,11 +95,17 @@ mod tests {
 
     #[test]
     fn gradient() {
-        gradient_tester(|mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]), EnergyType::Position);
+        gradient_tester(
+            |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
+            EnergyType::Position,
+        );
     }
 
     #[test]
     fn hessian() {
-        hessian_tester(|mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]), EnergyType::Position);
+        hessian_tester(
+            |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
+            EnergyType::Position,
+        );
     }
 }

@@ -1,8 +1,8 @@
 use crate::constraint::*;
-use geo::math::{Matrix3, Vector3};
-use geo::ops::Volume;
 use crate::matrix::*;
 use crate::TetMesh;
+use geo::math::{Matrix3, Vector3};
+use geo::ops::Volume;
 use reinterpret::*;
 
 #[derive(Clone, Debug, PartialEq)]

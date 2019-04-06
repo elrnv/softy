@@ -1,9 +1,9 @@
+use crate::attrib_defines::*;
 use crate::TetMesh;
+use crate::{ElasticityParameters, Material, MuStrategy, SimParams};
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
-use crate::{Material, ElasticityParameters, SimParams, MuStrategy};
-use crate::attrib_defines::*;
 
 /*
  * Setup code

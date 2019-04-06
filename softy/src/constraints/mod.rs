@@ -1,17 +1,17 @@
-pub mod point_contact;
 pub mod implicit_contact;
+pub mod point_contact;
 pub mod volume;
 
 use crate::constraint::*;
-use std::{cell::RefCell, rc::Rc};
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
     Implicit,
-    Point
+    Point,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -24,18 +24,30 @@ pub struct SmoothContactParams {
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
-pub fn build_contact_constraint(tetmesh_rc: &Rc<RefCell<TetMesh>>,
-                                trimesh_rc: &Rc<RefCell<TriMesh>>,
-                                params: SmoothContactParams) -> Result<Box<dyn ContactConstraint>, crate::Error> {
+pub fn build_contact_constraint(
+    tetmesh_rc: &Rc<RefCell<TetMesh>>,
+    trimesh_rc: &Rc<RefCell<TriMesh>>,
+    params: SmoothContactParams,
+) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::Implicit =>
-            Box::new(ImplicitContactConstraint::new(tetmesh_rc, trimesh_rc, params.radius, params.tolerance)?),
-        ContactType::Point =>
-            Box::new(PointContactConstraint::new(tetmesh_rc, trimesh_rc, params.radius, params.tolerance)?),
+        ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
+            tetmesh_rc,
+            trimesh_rc,
+            params.radius,
+            params.tolerance,
+        )?),
+        ContactType::Point => Box::new(PointContactConstraint::new(
+            tetmesh_rc,
+            trimesh_rc,
+            params.radius,
+            params.tolerance,
+        )?),
     })
 }
 
-pub trait ContactConstraint: Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64> {
+pub trait ContactConstraint:
+    Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
+{
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the radius of influence.
@@ -54,6 +66,6 @@ pub trait ContactConstraint: Constraint<f64> + ConstraintJacobian<f64> + Constra
     fn update_max_step(&mut self, max_step: f64);
 }
 
-pub use self::point_contact::*;
 pub use self::implicit_contact::*;
+pub use self::point_contact::*;
 pub use self::volume::*;

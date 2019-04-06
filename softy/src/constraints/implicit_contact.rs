@@ -1,15 +1,15 @@
+use super::ContactConstraint;
 use crate::constraint::*;
+use crate::matrix::*;
+use crate::Index;
+use crate::TetMesh;
+use crate::TriMesh;
 use geo::math::Vector3;
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
-use crate::matrix::*;
-use crate::TetMesh;
-use crate::TriMesh;
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use crate::Index;
-use super::ContactConstraint;
 
 /// Enforce a contact constraint on a mesh against an animated implicit surface. This constraint prevents
 /// vertices of the simulation mesh from penetrating through the implicit surface.
@@ -24,7 +24,7 @@ pub struct ImplicitContactConstraint {
     pub simulation_surf_verts: Vec<usize>,
     /// A buffer of vertex positions on the simulation mesh. This is used to avoid reallocating
     /// contiguous space for these positions every time the constraint is evaluated.
-    pub query_points: RefCell<Vec<[f64;3]>>,
+    pub query_points: RefCell<Vec<[f64; 3]>>,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -44,17 +44,18 @@ impl ImplicitContactConstraint {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&trimesh)
-            .kernel(KernelType::Approximate {
-                radius,
-                tolerance,
-            })
+            .kernel(KernelType::Approximate { radius, tolerance })
             .sample_type(SampleType::Face)
-            .background_field(BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false });
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: false,
+            });
 
         if let Some(surface) = surface_builder.build() {
             let tetmesh = tetmesh_rc.borrow();
             let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
-            let surf_verts = surf_mesh.remove_attrib::<VertexIndex>("i")
+            let surf_verts = surf_mesh
+                .remove_attrib::<VertexIndex>("i")
                 .expect("Failed to map indices.")
                 .into_buffer()
                 .into_vec::<usize>()
@@ -91,10 +92,14 @@ impl ImplicitContactConstraint {
     pub fn update_query_points_with_displacement(&self, x: &[f64], dx: &[f64]) {
         let pos: &[Vector3<f64>] = reinterpret_slice(x);
         let disp: &[Vector3<f64>] = reinterpret_slice(dx);
-        self.update_query_points(self.simulation_surf_verts.iter().map(|&i| (pos[i] + disp[i]).into()));
+        self.update_query_points(
+            self.simulation_surf_verts
+                .iter()
+                .map(|&i| (pos[i] + disp[i]).into()),
+        );
     }
 
-    pub fn update_query_points(&self, q_iter: impl Iterator<Item = [f64;3]>) {
+    pub fn update_query_points(&self, q_iter: impl Iterator<Item = [f64; 3]>) {
         let mut query_points = self.query_points.borrow_mut();
         query_points.clear();
         query_points.extend(q_iter);
@@ -115,7 +120,10 @@ impl ContactConstraint for ImplicitContactConstraint {
     }
 
     fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error> {
-        self.implicit_surface.borrow().nonempty_neighbourhood_indices().map_err(|_| crate::Error::InvalidImplicitSurface)
+        self.implicit_surface
+            .borrow()
+            .nonempty_neighbourhood_indices()
+            .map_err(|_| crate::Error::InvalidImplicitSurface)
     }
 
     fn update_cache(&mut self) -> bool {
@@ -150,9 +158,12 @@ impl ContactConstraint for ImplicitContactConstraint {
             Err(_) => return cached_neighbourhood_indices,
         };
 
-        for (i, (idx, _))  in cached_neighbourhood_indices.iter_mut().zip(cached_neighbourhood_sizes.iter())
+        for (i, (idx, _)) in cached_neighbourhood_indices
+            .iter_mut()
+            .zip(cached_neighbourhood_sizes.iter())
             .filter(|&(_, &s)| s != 0)
-                .enumerate() {
+            .enumerate()
+        {
             *idx = Index::new(i);
         }
 
@@ -163,7 +174,10 @@ impl ContactConstraint for ImplicitContactConstraint {
 impl Constraint<f64> for ImplicitContactConstraint {
     #[inline]
     fn constraint_size(&self) -> usize {
-        self.implicit_surface.borrow().num_cached_neighbourhoods().unwrap_or(0)
+        self.implicit_surface
+            .borrow()
+            .num_cached_neighbourhoods()
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -192,15 +206,13 @@ impl Constraint<f64> for ImplicitContactConstraint {
             }
         }
 
-        surf.potential(&query_points, &mut cbuf)
-            .unwrap();
+        surf.potential(&query_points, &mut cbuf).unwrap();
 
         //let bg_pts = self.background_points();
         //let collider_mesh = self.collision_object.borrow();
         //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
 
-        let cached_neighbourhood_sizes =
-            surf.cached_neighbourhood_sizes().unwrap();
+        let cached_neighbourhood_sizes = surf.cached_neighbourhood_sizes().unwrap();
 
         //println!("cbuf = ");
         //for c in cbuf.iter() {
@@ -209,7 +221,8 @@ impl Constraint<f64> for ImplicitContactConstraint {
         //println!("");
 
         // Because `value` tracks only the values for which the neighbourhood is not empty.
-        for ((_, new_v), v) in cached_neighbourhood_sizes.iter()
+        for ((_, new_v), v) in cached_neighbourhood_sizes
+            .iter()
             .zip(cbuf.iter())
             .filter(|&(&c, _)| c != 0)
             .zip(value.iter_mut())
@@ -225,7 +238,8 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
     fn constraint_jacobian_size(&self) -> usize {
         self.implicit_surface
             .borrow()
-            .num_query_jacobian_entries().unwrap_or(0)
+            .num_query_jacobian_entries()
+            .unwrap_or(0)
     }
 
     fn constraint_jacobian_indices_iter<'a>(
@@ -263,20 +277,21 @@ impl ConstraintHessian<f64> for ImplicitContactConstraint {
     fn constraint_hessian_size(&self) -> usize {
         self.implicit_surface
             .borrow()
-            .num_query_hessian_product_entries().unwrap_or(0)
+            .num_query_hessian_product_entries()
+            .unwrap_or(0)
     }
 
     fn constraint_hessian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a>
-    {
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         let surf = self.implicit_surface.borrow();
         Box::new(
-            surf.query_hessian_product_indices_iter().unwrap()
-            .map(move |(row, col)| MatrixElementIndex {
-                row: self.tetmesh_coordinate_index(row),
-                col: self.tetmesh_coordinate_index(col),
-            })
+            surf.query_hessian_product_indices_iter()
+                .unwrap()
+                .map(move |(row, col)| MatrixElementIndex {
+                    row: self.tetmesh_coordinate_index(row),
+                    col: self.tetmesh_coordinate_index(col),
+                }),
         )
     }
 

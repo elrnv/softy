@@ -22,8 +22,8 @@ use approx::*;
 use crate::inf_norm;
 use crate::mask_iter::*;
 
-use super::{NonLinearProblem, MuStrategy, SimParams, Solution};
-use crate::{PointCloud, PolyMesh , TetMesh , TriMesh , Error};
+use super::{MuStrategy, NonLinearProblem, SimParams, Solution};
+use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 /// Result from one inner simulation step.
 #[derive(Clone, Debug, PartialEq)]
@@ -265,7 +265,9 @@ impl SolverBuilder {
         let smooth_contact_constraint = match kinematic_object.as_ref() {
             Some(trimesh) => {
                 let params = smooth_contact_params.unwrap(); // already verified above.
-                Some(crate::constraints::build_contact_constraint(&mesh, &trimesh, params)?)
+                Some(crate::constraints::build_contact_constraint(
+                    &mesh, &trimesh, params,
+                )?)
             }
             None => None,
         };
@@ -326,7 +328,10 @@ impl SolverBuilder {
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
         ipopt.set_option("warm_start_init_point", "yes");
         //ipopt.set_option("jac_d_constant", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", params.max_gradient_scaling as f64);
+        ipopt.set_option(
+            "nlp_scaling_max_gradient",
+            params.max_gradient_scaling as f64,
+        );
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
@@ -501,7 +506,10 @@ impl Solver {
 
     /// Check the contact radius (valid in the presence of a contact constraint)
     pub fn contact_radius(&mut self) -> Option<f64> {
-        self.problem_mut().smooth_contact_constraint.as_ref().map(|scc| scc.contact_radius())
+        self.problem_mut()
+            .smooth_contact_constraint
+            .as_ref()
+            .map(|scc| scc.contact_radius())
     }
 
     /// Update the solver mesh with the given points.
@@ -789,7 +797,10 @@ impl Solver {
     //}
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self, and_warm_start: bool) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>){
+    fn commit_solution(
+        &mut self,
+        and_warm_start: bool,
+    ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
@@ -799,7 +810,12 @@ impl Solver {
     }
 
     /// Revert previously committed solution. We just subtract step here.
-    fn revert_solution(problem: &mut NonLinearProblem, solution: Solution, old_prev_pos: Vec<Vector3<f64>>, old_prev_vel: Vec<Vector3<f64>>) {
+    fn revert_solution(
+        problem: &mut NonLinearProblem,
+        solution: Solution,
+        old_prev_pos: Vec<Vector3<f64>>,
+        old_prev_vel: Vec<Vector3<f64>>,
+    ) {
         problem.revert_to(solution, old_prev_pos, old_prev_vel);
         //problem.reset_warm_start();
     }
@@ -902,7 +918,7 @@ impl Solver {
 
             // The following block determines if after the inner step there were any changes
             // in the constraints where new points may have violated the constraint. If so we
-            // update the constraint neighbourhoods and rerun the inner step. 
+            // update the constraint neighbourhoods and rerun the inner step.
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
@@ -914,11 +930,13 @@ impl Solver {
                         // have false negatives (no change detected, but really there was a
                         // change). In which case we would be skipping an opportunity to do a more
                         // accurate step.
-                        let (constraint_violation, sparsity_changed) = self.probe_contact_constraint_violation();
+                        let (constraint_violation, sparsity_changed) =
+                            self.probe_contact_constraint_violation();
 
                         let initial_error = self.initial_residual_error();
                         let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
-                        if constraint_violation > relative_tolerance { // intersecting objects (allow leeway)
+                        if constraint_violation > relative_tolerance {
+                            // intersecting objects (allow leeway)
                             if self.max_step + radius >= step && !sparsity_changed {
                                 // Sparsity hasn't changed but constraint is still violated.
                                 // Nothing else we can do, just accept the solution and move on.
@@ -930,16 +948,19 @@ impl Solver {
                             if self.max_step + radius < step {
                                 println!("##### Increasing max step to {}", step - radius);
                                 self.update_max_step(step - radius);
-                            } else { // sparsity_chagned
+                            } else {
+                                // sparsity_chagned
                                 // Sparsity pattern must have changed, simply update constraint
                                 // multipliers and repeat the step.
-                                println!("##### Sparsity has changed, constraint violation: {:?}", constraint_violation);
+                                println!(
+                                    "##### Sparsity has changed, constraint violation: {:?}",
+                                    constraint_violation
+                                );
                             }
 
-                            // We don't commit the solution here because it may be far from the
-                            // true solution, just redo the whole solve with the right
-                            // neighbourhood information.
-
+                        // We don't commit the solution here because it may be far from the
+                        // true solution, just redo the whole solve with the right
+                        // neighbourhood information.
                         } else {
                             // The solution is good, commit the solution, reset the max_step,  and
                             // continue.
@@ -967,7 +988,10 @@ impl Solver {
         }
 
         if result.iterations > self.sim_params.max_outer_iterations {
-            eprintln!("WARNING: Reached max outer iterations: {:?}", result.iterations);
+            eprintln!(
+                "WARNING: Reached max outer iterations: {:?}",
+                result.iterations
+            );
         }
 
         //self.output_meshes(self.step_count as u32);
@@ -1159,10 +1183,10 @@ impl Solver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::*;
     use geo;
     use std::path::PathBuf;
     use utils::*;
-    use crate::test_utils::*;
 
     /// Utility function to compare positions of two meshes.
     fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
@@ -1465,8 +1489,7 @@ mod tests {
             .add_solid(mesh)
             .build()?;
         solver.step()?;
-        let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
         Ok(())
@@ -1503,8 +1526,7 @@ mod tests {
             .add_solid(mesh)
             .build()?;
         solver.step()?;
-        let expected: TetMesh =
-            geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
+        let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
         let solution = solver.borrow_mesh();
         compare_meshes(&solution, &expected, 1e-6);
         Ok(())
@@ -1534,7 +1556,10 @@ mod tests {
         // The dynamic sim needs to settle
         for _ in 1u32..15 {
             let result = solver.step()?;
-            assert!(result.iterations <= params.max_outer_iterations, "Unconstrained solver ran out of outer iterations.");
+            assert!(
+                result.iterations <= params.max_outer_iterations,
+                "Unconstrained solver ran out of outer iterations."
+            );
         }
 
         let expected: TetMesh =
@@ -1614,7 +1639,10 @@ mod tests {
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
-            background_field: BackgroundFieldParams { field_type: BackgroundFieldType::DistanceBased, weighted: false },
+            background_field: BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: false,
+            },
             sample_type: SampleType::Face,
             ..Default::default()
         };
@@ -1663,8 +1691,7 @@ mod tests {
         let mut tetmesh = make_regular_tet();
 
         // Set fixed vertices
-        tetmesh
-            .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
+        tetmesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
 
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
@@ -1744,7 +1771,10 @@ mod tests {
         Ok(())
     }
 
-    fn ball_tri_push_tester(material: Material, sc_params: SmoothContactParams) -> Result<(), Error> {
+    fn ball_tri_push_tester(
+        material: Material,
+        sc_params: SmoothContactParams,
+    ) -> Result<(), Error> {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
 
         let params = SimParams {
@@ -1802,7 +1832,11 @@ mod tests {
         ball_tri_push_tester(material, sc_params)
     }
 
-    fn ball_bounce_tester(material: Material, sc_params: SmoothContactParams, tetmesh: TetMesh) -> Result<(), Error> {
+    fn ball_bounce_tester(
+        material: Material,
+        sc_params: SmoothContactParams,
+        tetmesh: TetMesh,
+    ) -> Result<(), Error> {
         let params = SimParams {
             max_iterations: 200,
             outer_tolerance: 0.1,

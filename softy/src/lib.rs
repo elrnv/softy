@@ -10,9 +10,9 @@ mod constraints;
 mod energy;
 mod energy_models;
 pub mod fem;
+mod index;
 pub mod mask_iter;
 mod matrix;
-mod index;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -23,9 +23,11 @@ pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::constraints::{ContactType, SmoothContactParams};
-pub use self::fem::{ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult};
-pub use index::Index;
+pub use self::fem::{
+    ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
+};
 use geo::mesh::attrib;
+pub use index::Index;
 
 #[derive(Debug)]
 pub enum Error {

@@ -43,7 +43,7 @@ function install_header
 end
 
 function install_for_windows
-    pushd $target_dir/x86_64-pc-windows-gnu/$build_type
+    pushd $target_dir/x86_64-pc-windows-msvc/$build_type
     cp $implicits_lib.dll $vmr_dir/lib/
 
     if [ $status -ne 0 ]
@@ -51,18 +51,27 @@ function install_for_windows
         exit 3
     end
 
-    # Create the import library from the generated dll (we know it exists because the previous line
-    # passed)
-    x86_64-w64-mingw32-dlltool -z $implicits_lib.def --export-all-symbol $implicits_lib.dll
-    x86_64-w64-mingw32-dlltool -A -d $implicits_lib.def -l $implicits_lib.lib
-
-    cp $implicits_lib.lib $vmr_dir/lib/
+    cp $implicits_lib.dll.lib $vmr_dir/lib/$implicits_lib.lib
 
     if [ $status -eq 0 ]
-        echo "Implicits library successfully installed for windows."
+        echo "Implicits library successfully added to conan package for windows."
     else
-        echo "Error installing import library for windows."
+        echo "Error adding import library for windows."
         exit 4
+    end
+
+    popd
+end
+
+function conan_install
+    pushd $vmr_dir
+    conan create . VitalMechanics/stable
+
+    if [ $status -eq 0 ]
+        echo "Implicits library successfully installed for $platform."
+    else
+        echo "Error installing library for $platform."
+        exit 8
     end
 
     popd
@@ -93,8 +102,10 @@ if [ $platform = "Darwin" ]
         if [ $status -ne 0 ]
             echo "Error removing rpath $rpath from lib$implicits_lib.dylib"
             exit 2
-end
     end
+    end
+
+    conan_install
 
     if [ $status -eq 0 ]
         echo "Implicits library successfully installed for mac."
@@ -146,11 +157,13 @@ else if [ $platform = "Linux" ]
         cp lib$implicits_lib.so $vmr_dir/lib/
 
         if [ $status -eq 0 ]
-            echo "Implicits library successfully installed for Linux."
+            echo "Implicits library successfully exported for $platform."
         else
-            echo "Error staging library Linux."
-            exit 8
+            echo "Error exporting library for $platform."
+            exit 7
         end
+
+        conan_install
 
         popd
 

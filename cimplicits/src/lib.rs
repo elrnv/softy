@@ -364,6 +364,54 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
     }
 }
 
+/// Return the number of cached query points. 0 will be returned if the cache hasn't yet been
+/// updated or there are zero cached query points.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_num_cached_query_points(
+    implicit_surface: *const EL_IsoSurface) -> c_int {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    surf.num_cached_query_points().unwrap_or(0) as c_int
+}
+
+/// Populate an array of indices enumerating all query points with non-empty neighbourhoods. The
+/// indices for query points with empty neighbourhoods are set to -1. If the query points haven't
+/// been cached yet, this function return false to indicate an error.
+/// This function is convenient for mapping from query point indices to constraint indices.
+/// The `cached_neighbourhood_indices` array is expected be the same size as the number of cached
+/// query points.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_cached_neighbourhood_indices(
+    implicit_surface: *const EL_IsoSurface,
+    num_query_points: c_int,
+    cached_neighbourhood_indices: *mut c_int,
+) -> bool {
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let cached_neighbourhood_indices = std::slice::from_raw_parts_mut(cached_neighbourhood_indices, num_query_points as usize);
+
+    if let Ok(sizes) = surf.cached_neighbourhood_sizes() {
+        assert_eq!(num_query_points as usize, sizes.len());
+
+        // Initialize indices to -1.
+        for idx in cached_neighbourhood_indices.iter_mut() {
+            *idx = -1;
+        }
+
+        // Index nonempty neighbourhoods
+        for (i, (idx, _)) in cached_neighbourhood_indices
+            .iter_mut()
+            .zip(sizes.iter())
+            .filter(|&(_, &s)| s != 0)
+            .enumerate()
+        {
+            *idx = i as c_int;
+        }
+
+        true
+    } else {
+        false
+    }
+}
+
 /// Invalidate neighbour cache. This must be done explicitly after we have completed a simulation
 /// step. This implies that the implicit surface may change.
 #[no_mangle]
@@ -403,4 +451,27 @@ pub unsafe extern "C" fn el_iso_update(
     let pos: &[[f64; 3]] = reinterpret_slice(coords);
     let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
     surf.update(pos.iter().cloned()) as c_int
+}
+
+/// Update the implicit surface with an updated maximum allowed additional step size on top of what
+/// the radius already allows. In other words, the predetermined radius (determined at
+/// initialization) plus this given step is the distance that the underlying implicit surface
+/// expects the surface mesh and query points to move, while still maintaining validity of all
+/// Jacobians.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_update_max_step(
+    implicit_surface: *mut EL_IsoSurface,
+    max_step: f32,
+) {
+    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
+    surf.update_max_step(f64::from(max_step));
+}
+
+/// Get the current MLS radius.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_get_radius(
+    implicit_surface: *mut EL_IsoSurface,
+) -> f32 {
+    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
+    surf.radius() as f32
 }

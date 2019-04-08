@@ -50,6 +50,16 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     parm {
+        name "isovalue"
+        cppname "IsoValue"
+        label "Iso Value"
+        type float
+        default { "0.0" }
+        range { 0.0 10.0 }
+        hidewhen "{ action == potential }"
+    }
+
+    parm {
         name "kernel"
         label "Kernel"
         type ordinal
@@ -181,6 +191,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Gather parameters
     Params params;
     params.action = static_cast<int>(sopparms.getAction());
+    params.iso_value = sopparms.getIsoValue();
     params.tolerance = sopparms.getTolerance();
     params.radius = sopparms.getRadius();
     params.kernel = static_cast<int>(sopparms.getKernel());

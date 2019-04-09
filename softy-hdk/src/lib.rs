@@ -33,6 +33,7 @@ pub struct EL_SoftySimParams {
     pub derivative_test: u32,
     pub mu_strategy: i32,
     pub max_gradient_scaling: f32,
+    pub log_file: *const std::os::raw::c_char,
 }
 
 /// Result reported from `register_new_solver` function.

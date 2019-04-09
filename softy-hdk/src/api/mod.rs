@@ -77,6 +77,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
             derivative_test,
             mu_strategy,
             max_gradient_scaling,
+            log_file,
             ..
         } = self;
         softy::SimParams {
@@ -97,6 +98,8 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
                 _ => softy::MuStrategy::Adaptive,
             },
             max_gradient_scaling,
+            log_file: unsafe { std::ffi::CStr::from_ptr(log_file).to_str().ok().map(|path|
+                std::path::PathBuf::from(path.to_string())) }
         }
     }
 }

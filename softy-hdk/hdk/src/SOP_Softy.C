@@ -63,6 +63,14 @@ static const char *theDsFile = R"THEDSFILE(
         range { 0 20 }
     }
 
+    parm {
+        name "logfile"
+        cppname "LogFile"
+        label "Log File"
+        type file
+        default { "" }
+    }
+
     groupsimple {
         name "material"
         label "Material"
@@ -377,6 +385,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());
     sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
+    sim_params.log_file = sopparms.getLogFile().c_str();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

@@ -181,7 +181,7 @@ impl SolverBuilder {
             shells,
             smooth_contact_params,
             ..
-        } = self;
+        } = self.clone();
 
         // Get kinematic shell
         let kinematic_object = if !shells.is_empty() {
@@ -345,6 +345,11 @@ impl SolverBuilder {
                 return Err(Error::InvalidParameter("derivative_test".to_string()));
             }
         }
+        if let Some(ref log_file) = params.log_file {
+            ipopt.set_option("output_file", log_file.as_os_str()
+                             .to_str()
+                             .expect("Invalid log file path."));
+        }
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
         Ok(Solver {
@@ -487,7 +492,7 @@ impl Solver {
 
     /// Get simulation parameters.
     pub fn params(&self) -> SimParams {
-        self.sim_params
+        self.sim_params.clone()
     }
 
     /// Get the solid material model (if any).
@@ -903,8 +908,16 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        println!("##### Params = {:?}", self.sim_params);
-        println!("##### Material = {:?}", self.solid_material);
+        if let Some(ref log) = self.sim_params.log_file {
+            if let Ok(ref mut file) = std::fs::OpenOptions::new().write(true).append(true).open(log) {
+                use std::io::Write;
+                write!(file, "Params = {:#?}\n", self.sim_params)?;
+                write!(file, "Material = {:#?}\n", self.solid_material)?;
+            }
+        }
+
+        println!("Params = {:#?}", self.sim_params);
+        println!("Material = {:#?}", self.solid_material);
 
         // Initialize the result of this function.
         let mut result = SolveResult {
@@ -1548,7 +1561,7 @@ mod tests {
         };
 
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
-        let mut solver = SolverBuilder::new(params)
+        let mut solver = SolverBuilder::new(params.clone())
             .solid_material(material)
             .add_solid(mesh)
             .build()?;
@@ -1707,7 +1720,7 @@ mod tests {
             ..STRETCH_PARAMS
         };
 
-        let mut solver = SolverBuilder::new(params)
+        let mut solver = SolverBuilder::new(params.clone())
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh.clone())
             .add_shell(trimesh.clone())
@@ -1785,7 +1798,7 @@ mod tests {
         };
 
         let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
-        let mut solver = SolverBuilder::new(params)
+        let mut solver = SolverBuilder::new(params.clone())
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(polymesh)
@@ -1855,7 +1868,7 @@ mod tests {
         scale(&mut grid, [3.0, 1.0, 3.0].into());
         translate(&mut grid, [0.0, -3.0, 0.0].into());
 
-        let mut solver = SolverBuilder::new(params)
+        let mut solver = SolverBuilder::new(params.clone())
             .solid_material(material)
             .add_solid(tetmesh)
             .add_shell(grid)

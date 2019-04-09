@@ -46,7 +46,14 @@ pub enum Error {
     NoKinematicMesh,
     /// Error during mesh IO. Typically during debugging.
     MeshIOError(geo::io::Error),
+    FileIOError(std::io::ErrorKind),
     InvalidImplicitSurface,
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Error {
+        Error::FileIOError(err.kind())
+    }
 }
 
 impl From<geo::io::Error> for Error {
@@ -103,6 +110,9 @@ impl From<Error> for SimResult {
             }
             Error::MeshIOError(err) => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", err))
+            }
+            Error::FileIOError(err) => {
+                SimResult::Error(format!("File I/O error: {:?}", err))
             }
             Error::InvalidImplicitSurface => {
                 SimResult::Error("Error creating an implicit surface".to_string())

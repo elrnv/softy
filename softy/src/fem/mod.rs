@@ -13,7 +13,7 @@ pub enum MuStrategy {
 }
 
 /// Simulation parameters.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
@@ -25,4 +25,5 @@ pub struct SimParams {
     pub derivative_test: u32,
     pub mu_strategy: MuStrategy,
     pub max_gradient_scaling: f32,
+    pub log_file: Option<std::path::PathBuf>,
 }

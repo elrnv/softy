@@ -20,6 +20,7 @@ pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     derivative_test: 0,
     mu_strategy: MuStrategy::Adaptive,
     max_gradient_scaling: 1e-5,
+    log_file: None,
 };
 
 pub(crate) const DYNAMIC_PARAMS: SimParams = SimParams {

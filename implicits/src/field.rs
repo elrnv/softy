@@ -725,7 +725,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             pos, vel, value, ..
         } in samples.iter()
         {
-            out_field += Self::sample_contact_jacobian_at(
+            out_field += Self::sample_contact_jacobian_product_at(
                 q,
                 pos,
                 value,

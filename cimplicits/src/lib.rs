@@ -165,6 +165,48 @@ pub unsafe extern "C" fn el_iso_project_to_above(
     }
 }
 
+// The following macros provide a generic implementation of the C functions computing jacobians
+// below.
+macro_rules! impl_num_jac_entries {
+    ($iso:ident.$fn:ident ()) => {
+        (&*($iso as *const implicits::ImplicitSurface)).$fn().unwrap_or(0) as c_int
+    }
+}
+
+macro_rules! impl_jac_indices {
+    (($rows:ident, $cols:ident)[$num:ident] <- $iso:ident.$fn:ident ()) => {
+        let n = $num as usize;
+        let rows = std::slice::from_raw_parts_mut($rows, n);
+        let cols = std::slice::from_raw_parts_mut($cols, n);
+        let surf = &*($iso as *const implicits::ImplicitSurface);
+
+        match surf.$fn() {
+            Ok(iter) => {
+                for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
+                    *out_row = r as c_int;
+                    *out_col = c as c_int;
+                }
+                0
+            }
+            Err(_) => 1,
+        }
+    }
+}
+
+macro_rules! impl_jac_values {
+    ($vals:ident[$num_vals:ident] <- $iso:ident.$fn:ident ($coords:ident[$num_coords:expr])) => {
+        let coords = std::slice::from_raw_parts($coords, $num_coords as usize);
+        let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+        let vals = std::slice::from_raw_parts_mut($vals, $num_vals as usize);
+        let surf = &*($iso as *const implicits::ImplicitSurface);
+
+        match surf.$fn(query_points, vals) {
+            Ok(()) => 0,
+            Err(_) => 1,
+        }
+    }
+}
+
 /// Get the number of entries in the sparse Jacobian of the implicit function with respect to surface
 /// vertices.
 ///
@@ -176,8 +218,9 @@ pub unsafe extern "C" fn el_iso_project_to_above(
 /// `el_iso_surface_jacobian_indices` and `el_iso_surface_jacobian_values` functions.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    surf.num_surface_jacobian_entries().unwrap_or(0) as c_int
+    impl_num_jac_entries! {
+        implicit_surface.num_surface_jacobian_entries()
+    }
 }
 
 /// Compute the index structure of the sparse surface Jacobian for the given implicit function.
@@ -189,20 +232,8 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
-    let n = num_entries as usize;
-    let rows = std::slice::from_raw_parts_mut(rows, n);
-    let cols = std::slice::from_raw_parts_mut(cols, n);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-
-    match surf.surface_jacobian_indices_iter() {
-        Ok(iter) => {
-            for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
-                *out_row = r as c_int;
-                *out_col = c as c_int;
-            }
-            0
-        }
-        Err(_) => 1,
+    impl_jac_indices! {
+        (rows, cols)[num_entries] <- implicit_surface.surface_jacobian_indices_iter()
     }
 }
 
@@ -216,14 +247,8 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
     num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
-    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
-    let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-
-    match surf.surface_jacobian_values(query_points, vals) {
-        Ok(()) => 0,
-        Err(_) => 1,
+    impl_jac_values! {
+        values[num_entries] <- implicit_surface.surface_jacobian_values(query_point_coords[num_query_points*3])
     }
 }
 
@@ -234,8 +259,9 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
 /// `el_iso_query_jacobian_indices` and `el_iso_query_jacobian_values` functions.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    surf.num_query_jacobian_entries().unwrap_or(0) as c_int
+    impl_num_jac_entries! {
+        implicit_surface.num_query_jacobian_entries()
+    }
 }
 
 /// Compute the index structure of the sparse query Jacobian for the given implicit function.
@@ -247,20 +273,8 @@ pub unsafe extern "C" fn el_iso_query_jacobian_indices(
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
-    let n = num_entries as usize;
-    let rows = std::slice::from_raw_parts_mut(rows, n);
-    let cols = std::slice::from_raw_parts_mut(cols, n);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-
-    match surf.query_jacobian_indices_iter() {
-        Ok(iter) => {
-            for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
-                *out_row = r as c_int;
-                *out_col = c as c_int;
-            }
-            0
-        }
-        Err(_) => 1,
+    impl_jac_indices! {
+        (rows, cols)[num_entries] <- implicit_surface.query_jacobian_indices_iter()
     }
 }
 
@@ -273,14 +287,48 @@ pub unsafe extern "C" fn el_iso_query_jacobian_values(
     num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
-    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
-    let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    impl_jac_values! {
+        values[num_entries] <- implicit_surface.query_jacobian_values(query_point_coords[num_query_points*3])
+    }
+}
 
-    match surf.query_jacobian_values(query_points, vals) {
-        Ok(()) => 0,
-        Err(_) => 1,
+/// Get the number of entries in the sparse Jacobian of the query positions with respect to
+/// sample points.
+///
+/// This function determines the sizes of the mutable arrays expected in
+/// `el_iso_contact_jacobian_indices` and `el_iso_contact_jacobian_values` functions.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+    impl_num_jac_entries! {
+        implicit_surface.num_contact_jacobian_entries()
+    }
+}
+
+/// Compute the index structure of the sparse contact Jacobian for the given implicit function.
+/// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_contact_jacobian_indices(
+    implicit_surface: *const EL_IsoSurface,
+    num_entries: c_int,
+    rows: *mut c_int,
+    cols: *mut c_int,
+) -> c_int {
+    impl_jac_indices! {
+        (rows, cols)[num_entries] <- implicit_surface.contact_jacobian_indices_iter()
+    }
+}
+
+/// Compute contact Jacobian for the given implicit function. 
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_contact_jacobian_values(
+    implicit_surface: *const EL_IsoSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+    num_entries: c_int,
+    values: *mut f64,
+) -> c_int {
+    impl_jac_values! {
+        values[num_entries] <- implicit_surface.contact_jacobian_values(query_point_coords[num_query_points*3])
     }
 }
 

@@ -1641,7 +1641,7 @@ mod tests {
     fn compute_contact_constraint(
         sample_mesh: &PolyMesh,
         tetmesh: &TetMesh,
-        radius: f64,
+        radius_multiplier: f64,
         tolerance: f64,
     ) -> Vec<f32> {
         use implicits::*;
@@ -1649,6 +1649,11 @@ mod tests {
         // There are currently two different ways to compute the implicit function representing the
         // contact constraint. Since this is a test we do it both ways and make sure the result is
         // the same. This doubles as a test for the implicits package.
+
+        let mut trimesh_copy = sample_mesh.clone();
+        let surface_trimesh = tetmesh.surface_trimesh();
+
+        let radius = crate::constraints::compute_minimum_radius(&surface_trimesh) * radius_multiplier;
 
         let params = implicits::Params {
             kernel: KernelType::Approximate { tolerance, radius },
@@ -1660,8 +1665,6 @@ mod tests {
             ..Default::default()
         };
 
-        let mut trimesh_copy = sample_mesh.clone();
-        let surface_trimesh = tetmesh.surface_trimesh();
         let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
         compute_potential_debug(&mut trimesh_copy, &mut surface_polymesh, params, || false)
             .expect("Failed to compute constraint value");
@@ -1709,7 +1712,7 @@ mod tests {
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
         // Set contact parameters
-        let radius = 1.5;
+        let radius_multiplier = 1.5;
         let tolerance = 0.001;
 
         //compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
@@ -1726,7 +1729,7 @@ mod tests {
             .add_shell(trimesh.clone())
             .smooth_contact_params(SmoothContactParams {
                 contact_type: ContactType::Point,
-                radius,
+                radius_multiplier,
                 tolerance,
             })
             .build()?;
@@ -1747,7 +1750,7 @@ mod tests {
 
         // Verify constraint, should be positive before push
         let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius_multiplier, tolerance);
         assert!(constraint.iter().all(|&x| x >= 0.0f32));
 
         // Simulate push
@@ -1760,7 +1763,7 @@ mod tests {
 
         // Verify constraint, should be positive after push
         let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius, tolerance);
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius_multiplier, tolerance);
         assert!(constraint.iter().all(|&x| x >= -params.outer_tolerance));
 
         // Expect only the top vertex to be pushed down.
@@ -1806,7 +1809,7 @@ mod tests {
             .build()?;
 
         let res = solver.step()?;
-        println!("res = {:?}", res);
+        //println!("res = {:?}", res);
         assert!(
             res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."
@@ -1822,7 +1825,7 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius: 1.1,
+            radius_multiplier: 1.1,
             tolerance: 0.07,
         };
 
@@ -1838,7 +1841,7 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius: 1.1,
+            radius_multiplier: 1.1,
             tolerance: 0.07,
         };
 
@@ -1896,7 +1899,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius: 0.4,
+            radius_multiplier: 0.4,
             tolerance: 0.01,
         };
 
@@ -1915,7 +1918,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius: 0.4,
+            radius_multiplier: 0.4,
             tolerance: 0.01,
         };
 
@@ -1935,7 +1938,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius: 20.0, // deliberately large radius
+            radius_multiplier: 20.0, // deliberately large radius
             tolerance: 0.0001,
         };
 
@@ -1954,7 +1957,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius: 2.0,
+            radius_multiplier: 2.0,
             tolerance: 0.0001,
         };
 
@@ -1974,7 +1977,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius: 2.0,
+            radius_multiplier: 2.0,
             tolerance: 0.0001,
         };
 

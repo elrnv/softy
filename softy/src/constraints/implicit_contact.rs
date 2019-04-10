@@ -36,10 +36,12 @@ impl ImplicitContactConstraint {
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
-        radius: f64,
+        radius_multiplier: f64,
         tolerance: f64,
     ) -> Result<Self, crate::Error> {
         let trimesh = trimesh_rc.borrow();
+
+        let radius = crate::constraints::compute_minimum_radius(&trimesh) * radius_multiplier;
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder

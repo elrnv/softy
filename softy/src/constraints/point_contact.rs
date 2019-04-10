@@ -197,7 +197,7 @@ impl PointContactConstraint {
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
-        radius: f64,
+        radius_multiplier: f64,
         tolerance: f64,
     ) -> Result<Self, crate::Error> {
         let tetmesh = tetmesh_rc.borrow();
@@ -208,6 +208,8 @@ impl PointContactConstraint {
             .into_buffer()
             .into_vec::<usize>()
             .expect("Incorrect index type: not usize");
+
+        let radius = crate::constraints::compute_minimum_radius(&surf_mesh) * radius_multiplier;
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder

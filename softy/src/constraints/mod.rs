@@ -17,7 +17,7 @@ pub enum ContactType {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SmoothContactParams {
     pub contact_type: ContactType,
-    pub radius: f64,
+    pub radius_multiplier: f64,
     pub tolerance: f64,
 }
 
@@ -33,16 +33,36 @@ pub fn build_contact_constraint(
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
-            params.radius,
+            params.radius_multiplier,
             params.tolerance,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
-            params.radius,
+            params.radius_multiplier,
             params.tolerance,
         )?),
     })
+}
+
+/// Given a triangle mesh, determine the smallest radius that will contain each triangle in the
+/// mesh. More precisely, find `r` such that `|x_t - c_t| <= r` for all vertices `x_t` and all triangles
+/// `t`, where `c_t` is the centroid of triangle `t`.
+pub(crate) fn compute_minimum_radius(trimesh: &TriMesh) -> f64 {
+    use geo::ops::Centroid;
+    use geo::prim::Triangle;
+    use geo::mesh::VertexPositions;
+    let pos = trimesh.vertex_positions();
+    trimesh.face_iter().map(|f| {
+        let tri = Triangle::from_indexed_slice(f.get(), pos);
+        let c = tri.centroid();
+        let verts = [tri.0, tri.1, tri.2];
+        verts.into_iter().map(|&x| (x - c).norm_squared())
+            .max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
+            .unwrap() // we know there are 3 vertices.
+    }).max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
+    .expect("Empty triangle mesh.")
+    .sqrt()
 }
 
 pub trait ContactConstraint:

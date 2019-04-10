@@ -311,8 +311,6 @@ impl SolverBuilder {
         let tol = f64::from(params.tolerance) * max_vol * lambda.max(mu);
         params.tolerance = tol as f32;
         params.outer_tolerance *= (max_vol * lambda.max(mu)) as f32;
-        println!("tol = {:?}", params.tolerance);
-        println!("outer_tol = {:?}", params.outer_tolerance);
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
@@ -959,14 +957,14 @@ impl Solver {
 
                             // Check that the reason we are in this mess is actually because of the step size
                             if self.max_step + radius < step {
-                                println!("##### Increasing max step to {}", step - radius);
+                                println!("[softy] Increasing max step to {}", step - radius);
                                 self.update_max_step(step - radius);
                             } else {
                                 // sparsity_chagned
                                 // Sparsity pattern must have changed, simply update constraint
                                 // multipliers and repeat the step.
                                 println!(
-                                    "##### Sparsity has changed, constraint violation: {:?}",
+                                    "[softy] Sparsity has changed, constraint violation: {:?}",
                                     constraint_violation
                                 );
                             }
@@ -978,7 +976,7 @@ impl Solver {
                             // The solution is good, commit the solution, reset the max_step,  and
                             // continue.
                             self.commit_solution(true);
-                            println!("##### Decreasing max step to {}", (step - radius).max(0.0));
+                            println!("[softy] Decreasing max step to {}", (step - radius).max(0.0));
                             self.update_max_step((step - radius).max(0.0));
                             break;
                         }
@@ -1712,7 +1710,7 @@ mod tests {
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
         // Set contact parameters
-        let radius_multiplier = 1.5;
+        let radius_multiplier = 1.59;
         let tolerance = 0.001;
 
         //compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
@@ -1825,7 +1823,7 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.1,
+            radius_multiplier: 1.812,
             tolerance: 0.07,
         };
 
@@ -1841,7 +1839,7 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.1,
+            radius_multiplier: 1.812,
             tolerance: 0.07,
         };
 
@@ -1880,7 +1878,7 @@ mod tests {
 
         for _ in 0..50 {
             let res = solver.step()?;
-            println!("res = {:?}", res);
+            //println!("res = {:?}", res);
             assert!(
                 res.iterations <= params.max_outer_iterations,
                 "Exceeded max outer iterations."
@@ -1899,7 +1897,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 0.4,
+            radius_multiplier: 1.1,
             tolerance: 0.01,
         };
 
@@ -1918,7 +1916,7 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 0.4,
+            radius_multiplier: 1.1,
             tolerance: 0.01,
         };
 

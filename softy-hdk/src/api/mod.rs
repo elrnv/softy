@@ -133,7 +133,7 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
     fn into(self) -> softy::SmoothContactParams {
         let EL_SoftySimParams {
             contact_type,
-            contact_radius,
+            contact_radius_multiplier,
             smoothness_tolerance,
             ..
         } = self;
@@ -142,8 +142,20 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
                 0 => softy::ContactType::Implicit,
                 _ => softy::ContactType::Point,
             },
-            radius: f64::from(contact_radius),
+            radius_multiplier: f64::from(contact_radius_multiplier),
             tolerance: f64::from(smoothness_tolerance),
+        }
+    }
+}
+
+impl Into<softy::FrictionParams> for EL_SoftySimParams {
+    fn into(self) -> softy::FrictionParams {
+        let EL_SoftySimParams {
+            dynamic_friction,
+            ..
+        } = self;
+        softy::FrictionParams {
+            dynamic_friction: f64::from(dynamic_friction),
         }
     }
 }

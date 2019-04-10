@@ -72,6 +72,21 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     groupsimple {
+        name "friction"
+        label "Friction"
+        grouptag { "group_type" "simple" }
+
+        parm {
+            name "dynamicfriction"
+            cppname "DynamicFriction"
+            label "Dynamic"
+            type float
+            default { "0.5" }
+            range { 0 2 }
+        }
+    }
+
+    groupsimple {
         name "material"
         label "Material"
         grouptag { "group_type" "simple" }
@@ -211,9 +226,9 @@ static const char *theDsFile = R"THEDSFILE(
             }
 
             parm {
-                name "contactradius"
-                cppname "ContactRadius"
-                label "Contact Radius"
+                name "contactradiusmult"
+                cppname "ContactRadiusMultiplier"
+                label "Contact Radius Multiplier"
                 type float
                 default { "1" }
                 range { 0.0 10.0 }
@@ -379,8 +394,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
     sim_params.contact_type = static_cast<int>(sopparms.getContactType());
-    sim_params.contact_radius = sopparms.getContactRadius();
+    sim_params.contact_radius_multiplier = sopparms.getContactRadiusMultiplier();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
+    sim_params.dynamic_friction = static_cast<int>(sopparms.getDynamicFriction());
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());

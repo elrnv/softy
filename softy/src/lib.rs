@@ -9,6 +9,7 @@ mod constraint;
 mod constraints;
 mod energy;
 mod energy_models;
+mod friction;
 pub mod fem;
 mod index;
 pub mod mask_iter;
@@ -26,6 +27,7 @@ pub use self::constraints::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };
+pub use self::friction::*;
 use geo::mesh::attrib;
 pub use index::Index;
 

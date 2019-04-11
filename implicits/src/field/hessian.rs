@@ -187,13 +187,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multipliers: &[T],
         values: &mut [T],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_hessian_product_values(query_points, multipliers, kernel, values)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+            |kern| self.mls_surface_hessian_product_values(query_points, multipliers, kern, values),
+            || Err(Error::UnsupportedKernel))
     }
 
     pub(crate) fn mls_surface_hessian_product_values<K>(
@@ -675,13 +671,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multipliers: &[T],
         values: &mut [T],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_query_hessian_product_values(query_points, multipliers, kernel, values)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+            |kern| self.mls_query_hessian_product_values(query_points, multipliers, kern, values),
+            || Err(Error::UnsupportedKernel))
     }
 
     /// This function populates the values of the hessian product matrix with 6 (lower trianglar)
@@ -806,6 +798,7 @@ mod tests {
     use super::*;
     use autodiff::F;
     use geo::mesh::{TriMesh, VertexPositions};
+    use crate::kernel;
     use jacobian::{
         consolidate_face_jacobian, make_perturb_fn, make_test_triangle, make_three_test_triangles,
         make_two_test_triangles, new_test_samples,
@@ -815,14 +808,14 @@ mod tests {
     fn surface_hessian_tester(
         query_points: &[[f64; 3]],
         surf_mesh: &TriMesh<f64>,
-        radius: f64,
+        radius_multiplier: f64,
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) -> Result<(), Error> {
         let params = crate::Params {
             kernel: KernelType::Approximate {
                 tolerance: 0.00001,
-                radius,
+                radius_multiplier,
             },
             background_field: bg_field_params,
             sample_type: SampleType::Face,
@@ -957,12 +950,12 @@ mod tests {
         let trimesh = TriMesh::from(utils::make_regular_tet());
 
         for i in 1..10 {
-            let radius = 0.5 * (i as f64);
+            let radius_mult = 1.0 + 0.5 * (i as f64);
             let bg_params = BackgroundFieldParams {
                 field_type: BackgroundFieldType::Zero,
                 weighted: false,
             };
-            surface_hessian_tester(&qs, &trimesh, radius, 0.0, bg_params)?;
+            surface_hessian_tester(&qs, &trimesh, radius_mult, 0.0, bg_params)?;
         }
         Ok(())
     }
@@ -979,12 +972,12 @@ mod tests {
         let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
 
         for i in 1..50 {
-            let radius = 0.1 * (i as f64);
+            let radius_mult = 1.0 + 0.1 * (i as f64);
             let bg_params = BackgroundFieldParams {
                 field_type: BackgroundFieldType::Zero,
                 weighted: false,
             };
-            surface_hessian_tester(&qs, &tri, radius, 0.0, bg_params)?;
+            surface_hessian_tester(&qs, &tri, radius_mult, 0.0, bg_params)?;
         }
         Ok(())
     }

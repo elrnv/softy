@@ -19,6 +19,7 @@ pub struct ImplicitSurfaceBuilder<'mesh> {
     bg_field: BackgroundFieldParams,
     mesh: SamplesMesh<'mesh>,
     max_step: f64,
+    base_radius: Option<f64>,
     sample_type: SampleType,
 }
 
@@ -32,7 +33,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     pub fn new() -> Self {
         ImplicitSurfaceBuilder {
             kernel: KernelType::Approximate {
-                radius: 1.0,
+                radius_multiplier: 1.0,
                 tolerance: 1e-5,
             },
             bg_field: BackgroundFieldParams {
@@ -41,12 +42,18 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             },
             mesh: SamplesMesh::None,
             max_step: 0.0, // This is a sane default for static implicit surfaces.
+            base_radius: None,
             sample_type: SampleType::Vertex,
         }
     }
 
     pub fn kernel(&mut self, kernel: KernelType) -> &mut Self {
         self.kernel = kernel;
+        self
+    }
+
+    pub fn base_radius(&mut self, base_radius: f64) -> &mut Self {
+        self.base_radius = Some(base_radius);
         self
     }
 
@@ -150,6 +157,26 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         dual_topo
     }
 
+    /// Given a triangle mesh, determine the smallest radius that will contain each triangle in the
+    /// mesh. More precisely, find `r` such that `|x_t - c_t| <= r` for all vertices `x_t` and all triangles
+    /// `t`, where `c_t` is the centroid of triangle `t`.
+    pub(crate) fn compute_base_radius(trimesh: &TriMesh<f64>) -> f64 {
+        use geo::ops::Centroid;
+        use geo::prim::Triangle;
+        use geo::mesh::VertexPositions;
+        let pos = trimesh.vertex_positions();
+        trimesh.face_iter().map(|f| {
+            let tri = Triangle::from_indexed_slice(f.get(), pos);
+            let c = tri.centroid();
+            let verts = [tri.0, tri.1, tri.2];
+            verts.into_iter().map(|&x| (x - c).norm_squared())
+                .max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
+                .unwrap() // we know there are 3 vertices.
+        }).max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
+        .expect("Empty triangle mesh.")
+        .sqrt()
+    }
+
     /// Builds the implicit surface. This function returns `None` when theres is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
@@ -162,23 +189,30 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             bg_field,
             mesh,
             max_step,
+            base_radius,
             sample_type,
         } = self.clone();
         // Cannot build an implicit surface when the radius is 0.0.
         match kernel {
-            KernelType::Interpolating { radius }
-            | KernelType::Approximate { radius, .. }
-            | KernelType::Cubic { radius } => {
-                if radius == 0.0 {
+            KernelType::Interpolating { radius_multiplier }
+            | KernelType::Approximate { radius_multiplier, .. }
+            | KernelType::Cubic { radius_multiplier } => {
+                if radius_multiplier == 0.0 {
                     return None;
                 }
             }
-            _ => {} // Nothing to be done for global support kernels.
+            _ => {} // Radius is not used in global support kernels
         }
 
-        let (samples, vertices, triangles) = match mesh {
+        let (base_radius, samples, vertices, triangles) = match mesh {
             SamplesMesh::PointCloud(ptcloud) => {
                 let vertices = Self::vertex_positions_from_mesh(&ptcloud);
+
+                let base_radius = if base_radius.is_none() {
+                    return None; // Can't automatically determine the base radius.
+                } else {
+                    base_radius.unwrap()
+                };
 
                 if sample_type == SampleType::Face {
                     return None; // Given an incompatible sample type.
@@ -202,9 +236,11 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     values: sample_values,
                 };
 
-                (samples, vertices, Vec::new())
+                (base_radius, samples, vertices, Vec::new())
             }
             SamplesMesh::TriMesh(mesh) => {
+                let base_radius = base_radius.unwrap_or_else(|| Self::compute_base_radius(mesh));
+
                 let vertices = Self::vertex_positions_from_mesh(mesh);
                 let triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
 
@@ -262,7 +298,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     }
                 };
 
-                (samples, vertices, triangles)
+                (base_radius, samples, vertices, triangles)
             }
 
             // Cannot build an implicit surface without sample points. This is an error.
@@ -277,6 +313,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
         Some(ImplicitSurface {
             kernel,
+            base_radius,
             bg_field_params: bg_field,
             spatial_tree: rtree,
             surface_topo: triangles,

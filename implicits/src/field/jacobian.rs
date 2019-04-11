@@ -22,10 +22,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn surface_jacobian_indices_iter(
         &self,
     ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices_iter(),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(|| self.mls_surface_jacobian_indices_iter(),
+                              || Err(Error::UnsupportedKernel))
     }
 
     /// Compute the indices for the implicit surface potential Jacobian with respect to surface
@@ -35,10 +33,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         rows: &mut [usize],
         cols: &mut [usize],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_surface_jacobian_indices(rows, cols),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(|| self.mls_surface_jacobian_indices(rows, cols),
+                              || Err(Error::UnsupportedKernel))
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to surface
@@ -48,13 +44,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [T],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_surface_jacobian_values(query_points, kernel, values)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                   |kernel| self.mls_surface_jacobian_values(query_points, kernel, values),
+                                   || Err(Error::UnsupportedKernel))
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
@@ -325,13 +317,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_query_jacobian_values(query_points, kernel, values, false)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                   |kernel| self.mls_query_jacobian_values(query_points, kernel, values, false),
+                                   || Err(Error::UnsupportedKernel))
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
@@ -354,13 +342,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_query_jacobian_values(query_points, kernel, values, true)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                   |kernel| self.mls_query_jacobian_values(query_points, kernel, values, true),
+                                   || Err(Error::UnsupportedKernel))
     }
 
     pub(crate) fn mls_query_jacobian_values<'a, K>(
@@ -575,13 +559,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multiplier: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_contact_jacobian_product_values(query_points, multiplier, kernel, values)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                       |kernel| self.mls_contact_jacobian_product_values(query_points, multiplier, kernel, values),
+                                       || Err(Error::UnsupportedKernel))
     }
 
     /// Multiplier is a stacked velocity stored at samples.
@@ -703,22 +683,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         matrices: &mut [[[T; 3]; 3]],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { tolerance, radius } => {
-                let kernel = kernel::LocalApproximate::new(radius, tolerance);
-                self.mls_contact_jacobian_matrices(query_points, kernel, matrices)
-            }
-            _ => Err(Error::UnsupportedKernel),
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                   |kernel| self.mls_contact_jacobian_matrices(query_points, kernel, matrices),
+                                   || Err(Error::UnsupportedKernel))
     }
 
     pub fn contact_jacobian_matrix_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_contact_jacobian_matrix_indices_iter(),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(|| self.mls_contact_jacobian_matrix_indices_iter(),
+                              || Err(Error::UnsupportedKernel))
     }
 
     /*
@@ -1087,6 +1061,7 @@ where
 mod tests {
     use super::*;
     use autodiff::F;
+    use crate::kernel;
 
     /// Tester for the Jacobian at a single position with respect to a surface defined by a single point.
     fn one_point_potential_derivative_tester(radius: f64, bg_field_params: BackgroundFieldParams) {
@@ -1453,7 +1428,7 @@ mod tests {
     pub fn surface_jacobian<P: FnMut() -> Vector3<f64>>(
         bg_field_params: BackgroundFieldParams,
         sample_type: SampleType,
-        radius: f64,
+        radius_multiplier: f64,
         perturb: &mut P,
     ) {
         let tri_vert_vecs = make_test_triangle(1.18032, perturb);
@@ -1463,7 +1438,7 @@ mod tests {
         let params = crate::Params {
             kernel: KernelType::Approximate {
                 tolerance: 0.00001,
-                radius,
+                radius_multiplier,
             },
             background_field: bg_field_params,
             sample_type,
@@ -1553,8 +1528,8 @@ mod tests {
         let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
-        for i in 1..50 {
-            let radius = 0.1 * (i as f64);
+        for i in 0..50 {
+            let radius_multiplier = 1.0 + 0.1 * (i as f64);
 
             let mut run_test = |field_type, weighted, sample_type| {
                 surface_jacobian(
@@ -1563,7 +1538,7 @@ mod tests {
                         weighted,
                     },
                     sample_type,
-                    radius,
+                    radius_multiplier,
                     &mut perturb,
                 );
             };
@@ -1702,7 +1677,7 @@ mod tests {
     /// radius and a perturb function.
     fn contact_jacobian<P: FnMut() -> Vector3<f64>>(
         bg_field_params: BackgroundFieldParams,
-        radius: f64,
+        radius_multiplier: f64,
         perturb: &mut P,
     ) -> Result<(), Error> {
         use crate::*;
@@ -1726,12 +1701,12 @@ mod tests {
 
         let surf_params = Params {
             kernel: kernel::KernelType::Approximate {
-                radius,
+                radius_multiplier,
                 tolerance: 1e-5,
             },
             background_field: bg_field_params,
             sample_type: SampleType::Face,
-            max_step: 100.0 * radius, // essentially unlimited
+            max_step: 100.0 * radius_multiplier, // essentially unlimited
         };
 
         let trimesh = geo::mesh::TriMesh::from(tet);
@@ -1786,14 +1761,14 @@ mod tests {
         let mut perturb = make_perturb_fn();
 
         // Run for some number of perturbations
-        for i in 1..50 {
-            let radius = 0.1 * (i as f64);
+        for i in 0..50 {
+            let radius_multiplier = 1.0 + 0.1 * (i as f64);
             contact_jacobian(
                 BackgroundFieldParams {
                     field_type: BackgroundFieldType::Zero,
                     weighted: false,
                 },
-                radius,
+                radius_multiplier,
                 &mut perturb,
             )?;
             contact_jacobian(
@@ -1801,7 +1776,7 @@ mod tests {
                     field_type: BackgroundFieldType::Zero,
                     weighted: true,
                 },
-                radius,
+                radius_multiplier,
                 &mut perturb,
             )?;
             contact_jacobian(
@@ -1809,7 +1784,7 @@ mod tests {
                     field_type: BackgroundFieldType::FromInput,
                     weighted: false,
                 },
-                radius,
+                radius_multiplier,
                 &mut perturb,
             )?;
             contact_jacobian(
@@ -1817,7 +1792,7 @@ mod tests {
                     field_type: BackgroundFieldType::FromInput,
                     weighted: true,
                 },
-                radius,
+                radius_multiplier,
                 &mut perturb,
             )?;
         }

@@ -10,8 +10,9 @@ use geo::mesh::{attrib, PolyMesh, TriMesh};
 #[macro_use]
 pub mod zip;
 
-pub mod field;
+#[macro_use]
 mod kernel;
+pub mod field;
 
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
@@ -31,7 +32,7 @@ impl Default for Params {
             // Note that this is not a good default and should always be set explicitly.
             kernel: KernelType::Approximate {
                 tolerance: 0.00001,
-                radius: 1.0,
+                radius_multiplier: 1.1,
             },
             background_field: BackgroundFieldParams {
                 field_type: BackgroundFieldType::Zero,
@@ -157,7 +158,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.5,
+                    radius_multiplier: 3.6742346141747673,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,
@@ -198,7 +199,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.5,
+                    radius_multiplier: 3.6742346141747673,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,
@@ -281,7 +282,7 @@ mod tests {
         builder
             .kernel(KernelType::Approximate {
                 tolerance: 1e-5,
-                radius: 1.5,
+                radius_multiplier: 3.6742346141747673,
             })
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -324,7 +325,7 @@ mod tests {
         let mut implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
                 tolerance: 0.00001,
-                radius: 1.0,
+                radius_multiplier: 2.45,
             })
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -410,7 +411,7 @@ mod tests {
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
                 tolerance: 0.00001,
-                radius: 1.0,
+                radius_multiplier: 2.45,
             })
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -509,7 +510,7 @@ mod tests {
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
                 tolerance: 0.00001,
-                radius: 1.0,
+                radius_multiplier: 2.45,
             })
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,

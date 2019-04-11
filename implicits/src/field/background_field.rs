@@ -726,7 +726,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.0,
+                    radius_multiplier: 2.45,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::FromInput,
@@ -766,7 +766,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.0,
+                    radius_multiplier: 2.45,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::FromInput,
@@ -792,7 +792,7 @@ mod tests {
     }
 
     fn distance_based_bg_sample_hessian_tester(
-        radius: f64,
+        radius_multiplier: f64,
         mesh: &geo::mesh::TriMesh<f64>,
         qs: &[Vector3<f64>],
     ) -> Result<(), Error> {
@@ -807,7 +807,7 @@ mod tests {
         };
 
         let tolerance = 0.00001;
-        let kernel_type = KernelType::Approximate { tolerance, radius };
+        let kernel_type = KernelType::Approximate { tolerance, radius_multiplier };
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh::<F>(
@@ -828,6 +828,8 @@ mod tests {
         surface.cache_neighbours(&query_points);
         let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
         let mut samples = surface.samples().clone();
+
+        let radius = surface.radius();
 
         let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
 
@@ -916,7 +918,7 @@ mod tests {
     }
 
     fn distance_based_bg_query_hessian_tester(
-        radius: f64,
+        radius_multiplier: f64,
         mesh: &geo::mesh::TriMesh<f64>,
         qs: &[Vector3<f64>],
     ) -> Result<(), Error> {
@@ -931,7 +933,7 @@ mod tests {
         };
 
         let tolerance = 0.00001;
-        let kernel_type = KernelType::Approximate { tolerance, radius };
+        let kernel_type = KernelType::Approximate { tolerance, radius_multiplier };
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh::<F>(
@@ -952,6 +954,8 @@ mod tests {
         surface.cache_neighbours(&query_points);
         let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
         let samples = surface.samples().clone();
+
+        let radius = surface.radius();
 
         let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
 
@@ -1015,9 +1019,9 @@ mod tests {
         ];
 
         for i in 1..50 {
-            let radius = 0.1 * i as f64;
-            distance_based_bg_sample_hessian_tester(radius, &mesh, &query_points)?;
-            distance_based_bg_query_hessian_tester(radius, &mesh, &query_points)?;
+            let radius_mult = 1.0 + 0.1 * i as f64;
+            distance_based_bg_sample_hessian_tester(radius_mult, &mesh, &query_points)?;
+            distance_based_bg_query_hessian_tester(radius_mult, &mesh, &query_points)?;
         }
         Ok(())
     }
@@ -1030,9 +1034,9 @@ mod tests {
         let query_points: Vec<_> = grid.vertex_position_iter().map(|&q| Vector3(q)).collect();
 
         for i in 1..50 {
-            let radius = 0.1 * i as f64;
-            distance_based_bg_sample_hessian_tester(radius, &mesh, &query_points)?;
-            distance_based_bg_query_hessian_tester(radius, &mesh, &query_points)?;
+            let radius_mult = 1.0 + 0.1 * i as f64;
+            distance_based_bg_sample_hessian_tester(radius_mult, &mesh, &query_points)?;
+            distance_based_bg_query_hessian_tester(radius_mult, &mesh, &query_points)?;
         }
         Ok(())
     }

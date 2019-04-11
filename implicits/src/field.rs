@@ -3,7 +3,7 @@
 //! potential and its derivatives.
 //!
 
-use crate::kernel::{self, KernelType, SphericalKernel};
+use crate::kernel::{KernelType, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
@@ -44,6 +44,9 @@ where
 {
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
+
+    /// The base radius or local feature size used to 
+    base_radius: f64,
 
     /// Enum for choosing how to compute a background potential field that may be mixed in with
     /// the local potentials.
@@ -89,12 +92,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     const PARALLEL_CHUNK_SIZE: usize = 5000;
 
     /// Radius of influence ( kernel radius ) for this implicit surface.
-    pub fn radius(&self) -> T {
-        match self.kernel {
-            KernelType::Interpolating { radius }
-            | KernelType::Approximate { radius, .. }
-            | KernelType::Cubic { radius } => T::from(radius).unwrap(),
-            KernelType::Global { .. } | KernelType::Hrbf => T::infinity(),
+    pub fn radius(&self) -> f64 {
+         self.base_radius * match self.kernel {
+            KernelType::Interpolating { radius_multiplier }
+            | KernelType::Approximate { radius_multiplier, .. }
+            | KernelType::Cubic { radius_multiplier } =>
+                radius_multiplier,
+            KernelType::Global { .. }
+            | KernelType::Hrbf =>
+                std::f64::INFINITY,
         }
     }
 
@@ -210,6 +216,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn cache_neighbours(&self, query_points: &[[T; 3]]) -> bool {
         let ImplicitSurface {
             ref kernel,
+            base_radius,
             ref spatial_tree,
             ref samples,
             ref surface_topo,
@@ -220,9 +227,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         match *kernel {
-            KernelType::Interpolating { radius }
-            | KernelType::Approximate { radius, .. }
-            | KernelType::Cubic { radius } => {
+            KernelType::Interpolating { radius_multiplier }
+            | KernelType::Approximate { radius_multiplier, .. }
+            | KernelType::Cubic { radius_multiplier } => {
+                let radius = base_radius * radius_multiplier;
                 let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neigh = |q| {
@@ -368,12 +376,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         self.max_step = max_step;
     }
 
-    pub fn update_radius(&mut self, new_radius: f64) {
+    pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
         match self.kernel {
-            KernelType::Interpolating { ref mut radius }
-            | KernelType::Approximate { ref mut radius, .. }
-            | KernelType::Cubic { ref mut radius } => {
-                *radius = new_radius;
+            KernelType::Interpolating { ref mut radius_multiplier }
+            | KernelType::Approximate { ref mut radius_multiplier, .. }
+            | KernelType::Cubic { ref mut radius_multiplier } => {
+                *radius_multiplier = new_radius_multiplier;
             }
             _ => {}
         }
@@ -485,34 +493,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         );
 
         let ImplicitSurface {
-            ref kernel,
+            kernel,
+            base_radius,
             ref samples,
             ..
         } = *self;
 
-        match *kernel {
-            KernelType::Interpolating { radius } => {
-                let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls(query_points, kern, out_field)
-            }
-            KernelType::Approximate { tolerance, radius } => {
-                let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls(query_points, kern, out_field)
-            }
-            KernelType::Cubic { radius } => {
-                let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls(query_points, kern, out_field)
-            }
-            KernelType::Global { tolerance } => {
-                // Global kernel, all points are neighbours
-                let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls(query_points, kern, out_field)
-            }
-            KernelType::Hrbf => {
-                // Global kernel, all points are neighbours.
-                Self::compute_hrbf(query_points, samples, out_field)
-            }
-        }
+        match_kernel_as_spherical!(kernel, base_radius,
+                                   |kern| self.compute_mls(query_points, kern, out_field),
+                                   || Self::compute_hrbf(query_points, samples, out_field))
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
@@ -629,29 +618,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         out_vectors: &mut [[T; 3]],
     ) -> Result<(), super::Error> {
-        match self.kernel {
-            KernelType::Interpolating { radius } => {
-                let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_vector_field(query_points, kern, out_vectors)
-            }
-            KernelType::Approximate { tolerance, radius } => {
-                let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_vector_field(query_points, kern, out_vectors)
-            }
-            KernelType::Cubic { radius } => {
-                let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_vector_field(query_points, kern, out_vectors)
-            }
-            KernelType::Global { tolerance } => {
-                // Global kernel, all points are neighbours
-                let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_vector_field(query_points, kern, out_vectors)
-            }
-            _ => {
-                // unimplemented ( do nothing )
-                Err(super::Error::UnsupportedKernel)
-            }
-        }
+        match_kernel_as_spherical!(self.kernel, self.base_radius,
+                                  |kern| self.compute_mls_vector_field(query_points, kern, out_vectors),
+                                  || Err(super::Error::UnsupportedKernel))
     }
 
     /// Interpolate the given vector field at the given query points.
@@ -755,30 +724,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         M: VertexMesh<T>,
     {
         let ImplicitSurface {
-            ref kernel,
+            kernel,
             ref samples,
             ..
         } = *self;
 
-        match *kernel {
-            KernelType::Interpolating { radius } => {
-                let kern = kernel::LocalInterpolating::new(radius);
-                self.compute_mls_on_mesh(mesh, kern, interrupt)
-            }
-            KernelType::Approximate { tolerance, radius } => {
-                let kern = kernel::LocalApproximate::new(radius, tolerance);
-                self.compute_mls_on_mesh(mesh, kern, interrupt)
-            }
-            KernelType::Cubic { radius } => {
-                let kern = kernel::LocalCubic::new(radius);
-                self.compute_mls_on_mesh(mesh, kern, interrupt)
-            }
-            KernelType::Global { tolerance } => {
-                let kern = kernel::GlobalInvDistance2::new(tolerance);
-                self.compute_mls_on_mesh(mesh, kern, interrupt)
-            }
-            KernelType::Hrbf => Self::compute_hrbf_on_mesh(mesh, samples, interrupt),
-        }
+        match_kernel_as_spherical!(kernel, self.base_radius,
+                                   |kern| self.compute_mls_on_mesh(mesh, kern, interrupt),
+                                   || Self::compute_hrbf_on_mesh(mesh, samples, interrupt))
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
@@ -1261,11 +1214,14 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.5,
+                    radius_multiplier: 2.45,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,
-                    weighted: true,
+                    // Distance based background is discontinuous, this is bad for projection, so
+                    // we always opt for an unweighted background to make sure that local
+                    // potentials are always high quality
+                    weighted: false,
                 },
                 sample_type: SampleType::Vertex,
                 ..Default::default()
@@ -1294,7 +1250,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius: 1.0,
+                    radius_multiplier: 2.45,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,

@@ -15,7 +15,7 @@ pub struct Params {
     pub action: i32,
     pub iso_value: f32, // Only used for projection
     pub tolerance: f32,
-    pub radius: f32,
+    pub radius_multiplier: f32,
     pub kernel: i32,
     pub background_potential: i32,
     pub background_potential_weighted: bool,
@@ -26,7 +26,7 @@ impl Into<implicits::Params> for Params {
     fn into(self) -> implicits::Params {
         let Params {
             tolerance,
-            radius,
+            radius_multiplier,
             kernel,
             background_potential,
             background_potential_weighted,
@@ -36,14 +36,14 @@ impl Into<implicits::Params> for Params {
         implicits::Params {
             kernel: match kernel {
                 0 => implicits::KernelType::Interpolating {
-                    radius: radius as f64,
+                    radius_multiplier: radius_multiplier as f64,
                 },
                 1 => implicits::KernelType::Approximate {
-                    radius: radius as f64,
+                    radius_multiplier: radius_multiplier as f64,
                     tolerance: tolerance as f64,
                 },
                 2 => implicits::KernelType::Cubic {
-                    radius: radius as f64,
+                    radius_multiplier: radius_multiplier as f64,
                 },
                 3 => implicits::KernelType::Global {
                     tolerance: tolerance as f64,

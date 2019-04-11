@@ -86,11 +86,12 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     parm {
-        name "radius"
-        label "Radius"
+        name "radiusmultiplier"
+        cppname "RadiusMultiplier"
+        label "Radius Multiplier"
         type float
-        default { "20" }
-        range { 0.0 100.0 }
+        default { "1.1" }
+        range { 0.0 10.0 }
         hidewhen "{ kernel == global } { kernel == hrbf }"
     }
 
@@ -193,7 +194,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     params.action = static_cast<int>(sopparms.getAction());
     params.iso_value = sopparms.getIsoValue();
     params.tolerance = sopparms.getTolerance();
-    params.radius = sopparms.getRadius();
+    params.radius_multiplier = sopparms.getRadiusMultiplier();
     params.kernel = static_cast<int>(sopparms.getKernel());
     params.background_potential = static_cast<int>(sopparms.getBgPotential());
     params.background_potential_weighted = sopparms.getBgWeighted();

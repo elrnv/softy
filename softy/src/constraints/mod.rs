@@ -45,33 +45,13 @@ pub fn build_contact_constraint(
     })
 }
 
-/// Given a triangle mesh, determine the smallest radius that will contain each triangle in the
-/// mesh. More precisely, find `r` such that `|x_t - c_t| <= r` for all vertices `x_t` and all triangles
-/// `t`, where `c_t` is the centroid of triangle `t`.
-pub(crate) fn compute_minimum_radius(trimesh: &TriMesh) -> f64 {
-    use geo::ops::Centroid;
-    use geo::prim::Triangle;
-    use geo::mesh::VertexPositions;
-    let pos = trimesh.vertex_positions();
-    trimesh.face_iter().map(|f| {
-        let tri = Triangle::from_indexed_slice(f.get(), pos);
-        let c = tri.centroid();
-        let verts = [tri.0, tri.1, tri.2];
-        verts.into_iter().map(|&x| (x - c).norm_squared())
-            .max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
-            .unwrap() // we know there are 3 vertices.
-    }).max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
-    .expect("Empty triangle mesh.")
-    .sqrt()
-}
-
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
-    /// Update the radius of influence.
-    fn update_radius(&mut self, radius: f64);
+    /// Update the multiplier for the radius of influence.
+    fn update_radius_multiplier(&mut self, radius_multiplier: f64);
     /// A `Vec` of active constraint indices. This will return an error if there were no
     /// query points cached.
     fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error>;

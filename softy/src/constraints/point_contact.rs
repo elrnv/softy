@@ -209,12 +209,10 @@ impl PointContactConstraint {
             .into_vec::<usize>()
             .expect("Incorrect index type: not usize");
 
-        let radius = crate::constraints::compute_minimum_radius(&surf_mesh) * radius_multiplier;
-
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&surf_mesh)
-            .kernel(KernelType::Approximate { radius, tolerance })
+            .kernel(KernelType::Approximate { radius_multiplier, tolerance })
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -397,8 +395,8 @@ impl ContactConstraint for PointContactConstraint {
         self.implicit_surface.borrow_mut().radius()
     }
 
-    fn update_radius(&mut self, rad: f64) {
-        self.implicit_surface.borrow_mut().update_radius(rad);
+    fn update_radius_multiplier(&mut self, rad: f64) {
+        self.implicit_surface.borrow_mut().update_radius_multiplier(rad);
     }
 
     fn update_max_step(&mut self, step: f64) {

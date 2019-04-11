@@ -503,8 +503,8 @@ impl Solver {
         self.max_step = step;
         self.problem_mut().update_max_step(step);
     }
-    pub fn update_radius(&mut self, rad: f64) {
-        self.problem_mut().update_radius(rad);
+    pub fn update_radius_multiplier(&mut self, rad: f64) {
+        self.problem_mut().update_radius_multiplier(rad);
     }
 
     /// Check the contact radius (valid in the presence of a contact constraint)
@@ -1651,10 +1651,8 @@ mod tests {
         let mut trimesh_copy = sample_mesh.clone();
         let surface_trimesh = tetmesh.surface_trimesh();
 
-        let radius = crate::constraints::compute_minimum_radius(&surface_trimesh) * radius_multiplier;
-
         let params = implicits::Params {
-            kernel: KernelType::Approximate { tolerance, radius },
+            kernel: KernelType::Approximate { tolerance, radius_multiplier },
             background_field: BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
                 weighted: false,

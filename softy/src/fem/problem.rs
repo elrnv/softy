@@ -310,9 +310,9 @@ impl NonLinearProblem {
         }
         self.update_constraints();
     }
-    pub fn update_radius(&mut self, rad: f64) {
+    pub fn update_radius_multiplier(&mut self, rad_mult: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.update_radius(rad);
+            scc.update_radius_multiplier(rad_mult);
         }
         self.update_constraints();
     }

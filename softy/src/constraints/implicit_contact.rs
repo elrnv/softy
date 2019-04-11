@@ -41,12 +41,10 @@ impl ImplicitContactConstraint {
     ) -> Result<Self, crate::Error> {
         let trimesh = trimesh_rc.borrow();
 
-        let radius = crate::constraints::compute_minimum_radius(&trimesh) * radius_multiplier;
-
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&trimesh)
-            .kernel(KernelType::Approximate { radius, tolerance })
+            .kernel(KernelType::Approximate { radius_multiplier, tolerance })
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -113,8 +111,8 @@ impl ContactConstraint for ImplicitContactConstraint {
         self.implicit_surface.borrow().radius()
     }
 
-    fn update_radius(&mut self, rad: f64) {
-        self.implicit_surface.borrow_mut().update_radius(rad);
+    fn update_radius_multiplier(&mut self, rad_mult: f64) {
+        self.implicit_surface.borrow_mut().update_radius_multiplier(rad_mult);
     }
 
     fn update_max_step(&mut self, step: f64) {

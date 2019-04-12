@@ -113,10 +113,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         rows: &mut [usize],
         cols: &mut [usize],
     ) -> Result<(), Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_surface_hessian_product_indices(rows, cols),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(
+            || self.mls_surface_hessian_product_indices(rows, cols),
+            || Err(Error::UnsupportedKernel))
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -124,10 +123,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn surface_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_surface_hessian_product_indices_iter(),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(
+            || self.mls_surface_hessian_product_indices_iter(),
+            || Err(Error::UnsupportedKernel))
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -616,10 +614,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn query_hessian_product_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        match self.kernel {
-            KernelType::Approximate { .. } => self.mls_query_hessian_product_indices_iter(),
-            _ => Err(Error::UnsupportedKernel),
-        }
+        self.kernel.apply_fns(
+            || self.mls_query_hessian_product_indices_iter(),
+            || Err(Error::UnsupportedKernel))
     }
 
     pub fn mls_query_hessian_product_indices_iter(
@@ -808,15 +805,12 @@ mod tests {
     fn surface_hessian_tester(
         query_points: &[[f64; 3]],
         surf_mesh: &TriMesh<f64>,
-        radius_multiplier: f64,
+        kernel: KernelType,
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) -> Result<(), Error> {
         let params = crate::Params {
-            kernel: KernelType::Approximate {
-                tolerance: 0.00001,
-                radius_multiplier,
-            },
+            kernel,
             background_field: bg_field_params,
             sample_type: SampleType::Face,
             max_step,
@@ -950,12 +944,17 @@ mod tests {
         let trimesh = TriMesh::from(utils::make_regular_tet());
 
         for i in 1..10 {
-            let radius_mult = 1.0 + 0.5 * (i as f64);
+            let radius_multiplier = 1.0 + 0.5 * (i as f64);
             let bg_params = BackgroundFieldParams {
                 field_type: BackgroundFieldType::Zero,
                 weighted: false,
             };
-            surface_hessian_tester(&qs, &trimesh, radius_mult, 0.0, bg_params)?;
+            let run = |kernel| surface_hessian_tester(&qs, &trimesh, kernel, 0.0, bg_params);
+                
+            run(KernelType::Interpolating{ radius_multiplier })?;
+            run(KernelType::Approximate { tolerance: 0.00001, radius_multiplier })?;
+            run(KernelType::Cubic { radius_multiplier })?;
+            run(KernelType::Global { tolerance: 0.00001 })?;
         }
         Ok(())
     }
@@ -972,12 +971,17 @@ mod tests {
         let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
 
         for i in 1..50 {
-            let radius_mult = 1.0 + 0.1 * (i as f64);
+            let radius_multiplier = 1.0 + 0.1 * (i as f64);
             let bg_params = BackgroundFieldParams {
                 field_type: BackgroundFieldType::Zero,
                 weighted: false,
             };
-            surface_hessian_tester(&qs, &tri, radius_mult, 0.0, bg_params)?;
+            let run = |kernel| surface_hessian_tester(&qs, &tri, kernel, 0.0, bg_params);
+
+            run(KernelType::Interpolating{ radius_multiplier })?;
+            run(KernelType::Approximate { tolerance: 0.00001, radius_multiplier })?;
+            run(KernelType::Cubic { radius_multiplier })?;
+            run(KernelType::Global { tolerance: 0.00001 })?;
         }
         Ok(())
     }

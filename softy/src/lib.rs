@@ -31,6 +31,8 @@ pub use self::friction::*;
 use geo::mesh::attrib;
 pub use index::Index;
 
+pub use implicits::KernelType;
+
 #[derive(Debug)]
 pub enum Error {
     SizeMismatch,
@@ -50,6 +52,7 @@ pub enum Error {
     MeshIOError(geo::io::Error),
     FileIOError(std::io::ErrorKind),
     InvalidImplicitSurface,
+    ImplicitsError(implicits::Error)
 }
 
 impl From<std::io::Error> for Error {
@@ -73,6 +76,12 @@ impl From<ipopt::CreateError> for Error {
 impl From<attrib::Error> for Error {
     fn from(err: attrib::Error) -> Error {
         Error::AttribError(err)
+    }
+}
+
+impl From<implicits::Error> for Error {
+    fn from(err: implicits::Error) -> Error {
+        Error::ImplicitsError(err)
     }
 }
 
@@ -118,6 +127,9 @@ impl From<Error> for SimResult {
             }
             Error::InvalidImplicitSurface => {
                 SimResult::Error("Error creating an implicit surface".to_string())
+            }
+            Error::ImplicitsError(err) => {
+                SimResult::Error(format!("Error computing implicit surface: {:?}", err))
             }
         }
     }

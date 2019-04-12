@@ -1193,6 +1193,7 @@ impl Solver {
 }
 #[cfg(test)]
 mod tests {
+    use crate::KernelType;
     use super::*;
     use crate::test_utils::*;
     use geo;
@@ -1639,8 +1640,7 @@ mod tests {
     fn compute_contact_constraint(
         sample_mesh: &PolyMesh,
         tetmesh: &TetMesh,
-        radius_multiplier: f64,
-        tolerance: f64,
+        kernel: KernelType,
     ) -> Vec<f32> {
         use implicits::*;
 
@@ -1652,7 +1652,7 @@ mod tests {
         let surface_trimesh = tetmesh.surface_trimesh();
 
         let params = implicits::Params {
-            kernel: KernelType::Approximate { tolerance, radius_multiplier },
+            kernel,
             background_field: BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
                 weighted: false,
@@ -1708,8 +1708,10 @@ mod tests {
         let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
         // Set contact parameters
-        let radius_multiplier = 1.59;
-        let tolerance = 0.001;
+        let kernel = KernelType::Approximate {
+            radius_multiplier: 1.59,
+            tolerance: 0.001,
+        };
 
         //compute_contact_constraint(&trimesh, &tetmesh, radius, tolerance);
 
@@ -1725,8 +1727,7 @@ mod tests {
             .add_shell(trimesh.clone())
             .smooth_contact_params(SmoothContactParams {
                 contact_type: ContactType::Point,
-                radius_multiplier,
-                tolerance,
+                kernel,
             })
             .build()?;
 
@@ -1746,7 +1747,7 @@ mod tests {
 
         // Verify constraint, should be positive before push
         let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius_multiplier, tolerance);
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
         assert!(constraint.iter().all(|&x| x >= 0.0f32));
 
         // Simulate push
@@ -1759,7 +1760,7 @@ mod tests {
 
         // Verify constraint, should be positive after push
         let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), radius_multiplier, tolerance);
+            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
         assert!(constraint.iter().all(|&x| x >= -params.outer_tolerance));
 
         // Expect only the top vertex to be pushed down.
@@ -1821,8 +1822,10 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.812,
-            tolerance: 0.07,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 1.812,
+                tolerance: 0.07,
+            }
         };
 
         ball_tri_push_tester(material, sc_params)
@@ -1837,8 +1840,10 @@ mod tests {
         };
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.812,
-            tolerance: 0.07,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 1.812,
+                tolerance: 0.07,
+            }
         };
 
         ball_tri_push_tester(material, sc_params)
@@ -1895,8 +1900,10 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.1,
-            tolerance: 0.01,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 1.1,
+                tolerance: 0.01,
+            }
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -1914,8 +1921,10 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,
-            radius_multiplier: 1.1,
-            tolerance: 0.01,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 1.1,
+                tolerance: 0.01,
+            }
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -1934,8 +1943,10 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius_multiplier: 20.0, // deliberately large radius
-            tolerance: 0.0001,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 20.0, // deliberately large radius
+                tolerance: 0.0001,
+            }
         };
 
         let tetmesh = make_regular_tet();
@@ -1953,8 +1964,10 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius_multiplier: 2.0,
-            tolerance: 0.0001,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 0.0001,
+            }
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -1973,8 +1986,10 @@ mod tests {
 
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Implicit,
-            radius_multiplier: 2.0,
-            tolerance: 0.0001,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 0.0001,
+            }
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;

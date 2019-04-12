@@ -4,6 +4,7 @@ use crate::TetMesh;
 use geo::math::{Matrix3, Vector3};
 use geo::ops::Volume;
 use reinterpret::*;
+use crate::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {
@@ -104,10 +105,10 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
     }
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self))
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+        Ok(Box::new(VolumeConstraint::constraint_jacobian_indices_iter(self)))
     }
-    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
+    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         for (out, val) in values
             .iter_mut()
@@ -115,6 +116,7 @@ impl ConstraintJacobian<f64> for VolumeConstraint {
         {
             *out = val;
         }
+        Ok(())
     }
 }
 
@@ -193,10 +195,10 @@ impl ConstraintHessian<f64> for VolumeConstraint {
     }
     fn constraint_hessian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        Box::new(VolumeConstraint::constraint_hessian_indices_iter(self))
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+        Ok(Box::new(VolumeConstraint::constraint_hessian_indices_iter(self)))
     }
-    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {
+    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_hessian_size());
         for (out, val) in values
             .iter_mut()
@@ -204,5 +206,6 @@ impl ConstraintHessian<f64> for VolumeConstraint {
         {
             *out = val;
         }
+        Ok(())
     }
 }

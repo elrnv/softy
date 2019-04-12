@@ -10,6 +10,7 @@ use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
+use crate::Error;
 
 /// Enforce a contact constraint on a mesh against an animated implicit surface. This constraint prevents
 /// vertices of the simulation mesh from penetrating through the implicit surface.
@@ -36,15 +37,14 @@ impl ImplicitContactConstraint {
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
-        radius_multiplier: f64,
-        tolerance: f64,
-    ) -> Result<Self, crate::Error> {
+        kernel: KernelType,
+    ) -> Result<Self, Error> {
         let trimesh = trimesh_rc.borrow();
 
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&trimesh)
-            .kernel(KernelType::Approximate { radius_multiplier, tolerance })
+            .kernel(kernel)
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -79,7 +79,7 @@ impl ImplicitContactConstraint {
 
             Ok(constraint)
         } else {
-            Err(crate::Error::InvalidImplicitSurface)
+            Err(Error::InvalidImplicitSurface)
         }
     }
 
@@ -119,11 +119,11 @@ impl ContactConstraint for ImplicitContactConstraint {
         self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
-    fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error> {
+    fn active_constraint_indices(&self) -> Result<Vec<usize>, Error> {
         self.implicit_surface
             .borrow()
             .nonempty_neighbourhood_indices()
-            .map_err(|_| crate::Error::InvalidImplicitSurface)
+            .map_err(|_| Error::InvalidImplicitSurface)
     }
 
     fn update_cache(&mut self) -> bool {
@@ -244,31 +244,30 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
 
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
-            surf.query_jacobian_indices_iter().unwrap()
+            surf.query_jacobian_indices_iter()?
         };
 
         let cached_neighbourhood_indices = self.cached_neighbourhood_indices();
-        Box::new(idx_iter.map(move |(row, col)| {
+        Ok(Box::new(idx_iter.map(move |(row, col)| {
             assert!(cached_neighbourhood_indices[row].is_valid());
             MatrixElementIndex {
                 row: cached_neighbourhood_indices[row].unwrap(),
                 col: self.tetmesh_coordinate_index(col),
             }
-        }))
+        })))
     }
 
-    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
+    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         self.update_query_points_with_displacement(x, dx);
         let query_points = self.query_points.borrow();
 
-        self.implicit_surface
+        Ok(self.implicit_surface
             .borrow()
-            .query_jacobian_values(&query_points, values)
-            .unwrap();
+            .query_jacobian_values(&query_points, values)?)
     }
 }
 
@@ -283,25 +282,23 @@ impl ConstraintHessian<f64> for ImplicitContactConstraint {
 
     fn constraint_hessian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
         let surf = self.implicit_surface.borrow();
-        Box::new(
-            surf.query_hessian_product_indices_iter()
-                .unwrap()
+        Ok(Box::new(
+            surf.query_hessian_product_indices_iter()?
                 .map(move |(row, col)| MatrixElementIndex {
                     row: self.tetmesh_coordinate_index(row),
                     col: self.tetmesh_coordinate_index(col),
                 }),
-        )
+        ))
     }
 
-    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {
+    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) -> Result<(), Error> {
         self.update_query_points_with_displacement(x, dx);
         let query_points = self.query_points.borrow();
 
-        self.implicit_surface
+        Ok(self.implicit_surface
             .borrow()
-            .query_hessian_product_values(&query_points, lambda, values)
-            .expect("Failed to compute query Hessian values");
+            .query_hessian_product_values(&query_points, lambda, values)?)
     }
 }

@@ -10,6 +10,7 @@ use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
+use crate::Error;
 
 ///// Linearization of a constraint given by `C`.
 //pub struct Linearized<C> {
@@ -197,9 +198,8 @@ impl PointContactConstraint {
     pub fn new(
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
-        radius_multiplier: f64,
-        tolerance: f64,
-    ) -> Result<Self, crate::Error> {
+        kernel: KernelType,
+    ) -> Result<Self, Error> {
         let tetmesh = tetmesh_rc.borrow();
         let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
         let sample_verts = surf_mesh
@@ -212,7 +212,7 @@ impl PointContactConstraint {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
             .trimesh(&surf_mesh)
-            .kernel(KernelType::Approximate { radius_multiplier, tolerance })
+            .kernel(kernel)
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
                 field_type: BackgroundFieldType::DistanceBased,
@@ -238,7 +238,7 @@ impl PointContactConstraint {
                 .cache_neighbours(query_points);
             Ok(constraint)
         } else {
-            Err(crate::Error::InvalidImplicitSurface)
+            Err(Error::InvalidImplicitSurface)
         }
     }
 
@@ -403,11 +403,11 @@ impl ContactConstraint for PointContactConstraint {
         self.implicit_surface.borrow_mut().update_max_step(step);
     }
 
-    fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error> {
+    fn active_constraint_indices(&self) -> Result<Vec<usize>, Error> {
         self.implicit_surface
             .borrow()
             .nonempty_neighbourhood_indices()
-            .map_err(|_| crate::Error::InvalidImplicitSurface)
+            .map_err(|_| Error::InvalidImplicitSurface)
     }
 
     fn update_cache(&mut self) -> bool {
@@ -517,31 +517,30 @@ impl ConstraintJacobian<f64> for PointContactConstraint {
     }
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
-            surf.surface_jacobian_indices_iter().unwrap()
+            surf.surface_jacobian_indices_iter()?
         };
 
         let cached_neighbourhood_indices = self.cached_neighbourhood_indices();
-        Box::new(idx_iter.map(move |(row, col)| {
+        Ok(Box::new(idx_iter.map(move |(row, col)| {
             assert!(cached_neighbourhood_indices[row].is_valid());
             MatrixElementIndex {
                 row: cached_neighbourhood_indices[row].unwrap(),
                 col: self.tetmesh_coordinate_index(col),
             }
-        }))
+        })))
     }
 
-    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) {
+    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         self.update_surface_with_displacement(x, dx);
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
-        self.implicit_surface
+        Ok(self.implicit_surface
             .borrow()
-            .surface_jacobian_values(query_points, values)
-            .unwrap();
+            .surface_jacobian_values(query_points, values)?)
     }
 }
 
@@ -572,15 +571,14 @@ impl ConstraintHessian<f64> for PointContactConstraint {
 
     fn constraint_hessian_indices_iter<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
         self.constraint_hessian_size(); // allocate hessian index vectors.
         let surf = self.implicit_surface.borrow();
         let mut rows = self.surface_hessian_rows.borrow_mut();
         let mut cols = self.surface_hessian_cols.borrow_mut();
-        surf.surface_hessian_product_indices(&mut rows, &mut cols)
-            .unwrap();
+        surf.surface_hessian_product_indices(&mut rows, &mut cols)?;
 
-        Box::new(
+        Ok(Box::new(
             rows.clone()
                 .into_iter()
                 .zip(cols.clone().into_iter())
@@ -588,16 +586,15 @@ impl ConstraintHessian<f64> for PointContactConstraint {
                     row: self.tetmesh_coordinate_index(row),
                     col: self.tetmesh_coordinate_index(col),
                 }),
-        )
+        ))
     }
 
-    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) {
+    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) -> Result<(), Error> {
         self.update_surface_with_displacement(x, dx);
         let surf = self.implicit_surface.borrow();
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
-        surf.surface_hessian_product_values(query_points, lambda, values)
-            .expect("Failed to compute surface Hessian values");
+        Ok(surf.surface_hessian_product_values(query_points, lambda, values)?)
     }
 }
 

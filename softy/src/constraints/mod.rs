@@ -16,9 +16,8 @@ pub enum ContactType {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SmoothContactParams {
+    pub kernel: implicits::KernelType,
     pub contact_type: ContactType,
-    pub radius_multiplier: f64,
-    pub tolerance: f64,
 }
 
 /// Construct a new contact constraint based on the given parameters. There are more than
@@ -33,14 +32,12 @@ pub fn build_contact_constraint(
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
-            params.radius_multiplier,
-            params.tolerance,
+            params.kernel,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
-            params.radius_multiplier,
-            params.tolerance,
+            params.kernel,
         )?),
     })
 }

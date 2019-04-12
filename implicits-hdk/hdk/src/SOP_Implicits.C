@@ -42,7 +42,7 @@ static const char *theDsFile = R"THEDSFILE(
         name "action"
         label "Action"
         type ordinal
-        default { "potential" }
+        default { "0" }
         menu {
             "potential"   "Compute Potential"
             "project"     "Project Out"
@@ -63,7 +63,7 @@ static const char *theDsFile = R"THEDSFILE(
         name "kernel"
         label "Kernel"
         type ordinal
-        default { "interpolating" }
+        default { "1" }
         menu {
             "interpolating" "Local interpolating"
             "approximate" "Local approximately interpolating"
@@ -78,7 +78,7 @@ static const char *theDsFile = R"THEDSFILE(
         cppname "SampleType"
         label "Sample Type"
         type ordinal
-        default { "vertex" }
+        default { "0" }
         menu {
             "vertex"   "Vertex"
             "face"     "Face"
@@ -113,7 +113,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "BgPotential"
             label "Source"
             type ordinal
-            default { "zero" }
+            default { "0" }
             menu {
                 "zero"       "Zero"
                 "input"      "From Input"

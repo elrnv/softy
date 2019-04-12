@@ -214,11 +214,24 @@ static const char *theDsFile = R"THEDSFILE(
             disablewhen "{ hasinput(1) == 0 }"
 
             parm {
+                name "kernel"
+                label "Kernel"
+                type ordinal
+                default { "1" }
+                menu {
+                    "interpolating", "Local Interpolating"
+                    "approximate", "Local approximately interpolating"
+                    "cubic", "Local cubic"
+                    "global", "Global inverse squared distance"
+                }
+            }
+
+            parm {
                 name "contacttype"
                 cppname "ContactType"
                 label "Contact Type"
                 type ordinal
-                default { "implicit" }
+                default { "0" }
                 menu {
                     "implicit", "Implicit"
                     "point", "Point"
@@ -255,7 +268,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "MuStrategy"
             label "Mu Strategy"
             type ordinal
-            default { "monotone" }
+            default { "0" }
             menu {
                 "monotone", "Monotone"
                 "adaptive", "Adaptive"
@@ -393,6 +406,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.outer_tolerance = sopparms.getOuterTolerance();
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
+    sim_params.contact_kernel = static_cast<int>(sopparms.getKernel());
     sim_params.contact_type = static_cast<int>(sopparms.getContactType());
     sim_params.contact_radius_multiplier = sopparms.getContactRadiusMultiplier();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();

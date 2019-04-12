@@ -132,18 +132,32 @@ impl Into<softy::Material> for EL_SoftySimParams {
 impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
     fn into(self) -> softy::SmoothContactParams {
         let EL_SoftySimParams {
+            contact_kernel,
             contact_type,
             contact_radius_multiplier,
             smoothness_tolerance,
             ..
         } = self;
+        let radius_multiplier = f64::from(contact_radius_multiplier);
+        let tolerance = f64::from(smoothness_tolerance);
         softy::SmoothContactParams {
+            kernel: match contact_kernel {
+                0 => softy::KernelType::Interpolating { radius_multiplier },
+                1 => softy::KernelType::Approximate {
+                    tolerance,
+                    radius_multiplier,
+                },
+                2 => softy::KernelType::Cubic {
+                    radius_multiplier,
+                },
+                _ => softy::KernelType::Global {
+                    tolerance,
+                },
+            },
             contact_type: match contact_type {
                 0 => softy::ContactType::Implicit,
                 _ => softy::ContactType::Point,
             },
-            radius_multiplier: f64::from(contact_radius_multiplier),
-            tolerance: f64::from(smoothness_tolerance),
         }
     }
 }

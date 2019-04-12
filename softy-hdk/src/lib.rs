@@ -26,6 +26,7 @@ pub struct EL_SoftySimParams {
     pub outer_tolerance: f32,
     pub max_outer_iterations: u32,
     pub volume_constraint: bool,
+    pub contact_kernel: i32,
     pub contact_type: i32,
     pub contact_radius_multiplier: f32,
     pub smoothness_tolerance: f32,

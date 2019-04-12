@@ -904,6 +904,61 @@ impl Solver {
         problem.probe_contact_constraint_violation(solution.primal_variables)
     }
 
+    /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
+    /// return false to indicate that the same step should be taken again.
+    fn check_inner_step(&mut self) -> bool {
+        if let Some(radius) = self.contact_radius() {
+            let dx = self.dx();
+            let step = inf_norm(dx);
+
+            // Note: at the time of this writing, the sparsity_changed indicator can
+            // have false negatives (no change detected, but really there was a
+            // change). In which case we would be skipping an opportunity to do a more
+            // accurate step.
+            let (constraint_violation, sparsity_changed) =
+                self.probe_contact_constraint_violation();
+
+            let initial_error = self.initial_residual_error();
+            let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
+            if constraint_violation > relative_tolerance {
+                // intersecting objects (allow leeway)
+                if self.max_step + radius >= step && !sparsity_changed {
+                    // Sparsity hasn't changed but constraint is still violated.
+                    // Nothing else we can do, just accept the solution and move on.
+                    return true;
+                }
+
+                // Check that the reason we are in this mess is actually because of the step size
+                if self.max_step + radius < step {
+                    println!("[softy] Increasing max step to {}", step - radius);
+                    self.update_max_step(step - radius);
+                } else {
+                    // sparsity_chagned
+                    // Sparsity pattern must have changed, simply update constraint
+                    // multipliers and repeat the step.
+                    println!(
+                        "[softy] Sparsity has changed, constraint violation: {:?}",
+                        constraint_violation
+                    );
+                }
+
+                // We don't commit the solution here because it may be far from the
+                // true solution, just redo the whole solve with the right
+                // neighbourhood information.
+                false
+            } else {
+                // The solution is good, commit the solution, reset the max_step,  and
+                // continue.
+                println!("[softy] Decreasing max step to {}", (step - radius).max(0.0));
+                self.update_max_step((step - radius).max(0.0));
+                true
+            }
+        } else {
+            // No contact constraints, all solutions are good.
+            true
+        }
+    }
+
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         if let Some(ref log) = self.sim_params.log_file {
@@ -933,54 +988,7 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
-                    if let Some(radius) = self.contact_radius() {
-                        let dx = self.dx();
-                        let step = inf_norm(dx);
-
-                        // Note: at the time of this writing, the sparsity_changed indicator can
-                        // have false negatives (no change detected, but really there was a
-                        // change). In which case we would be skipping an opportunity to do a more
-                        // accurate step.
-                        let (constraint_violation, sparsity_changed) =
-                            self.probe_contact_constraint_violation();
-
-                        let initial_error = self.initial_residual_error();
-                        let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
-                        if constraint_violation > relative_tolerance {
-                            // intersecting objects (allow leeway)
-                            if self.max_step + radius >= step && !sparsity_changed {
-                                // Sparsity hasn't changed but constraint is still violated.
-                                // Nothing else we can do, just accept the solution and move on.
-                                self.commit_solution(true);
-                                break;
-                            }
-
-                            // Check that the reason we are in this mess is actually because of the step size
-                            if self.max_step + radius < step {
-                                println!("[softy] Increasing max step to {}", step - radius);
-                                self.update_max_step(step - radius);
-                            } else {
-                                // sparsity_chagned
-                                // Sparsity pattern must have changed, simply update constraint
-                                // multipliers and repeat the step.
-                                println!(
-                                    "[softy] Sparsity has changed, constraint violation: {:?}",
-                                    constraint_violation
-                                );
-                            }
-
-                        // We don't commit the solution here because it may be far from the
-                        // true solution, just redo the whole solve with the right
-                        // neighbourhood information.
-                        } else {
-                            // The solution is good, commit the solution, reset the max_step,  and
-                            // continue.
-                            self.commit_solution(true);
-                            println!("[softy] Decreasing max step to {}", (step - radius).max(0.0));
-                            self.update_max_step((step - radius).max(0.0));
-                            break;
-                        }
-                    } else {
+                    if self.check_inner_step() {
                         self.commit_solution(true);
                         break;
                     }

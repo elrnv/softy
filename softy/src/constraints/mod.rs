@@ -2,23 +2,16 @@ pub mod implicit_contact;
 pub mod point_contact;
 pub mod volume;
 
+use crate::contact::*;
 use crate::constraint::*;
+use std::{cell::RefCell, rc::Rc};
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use std::{cell::RefCell, rc::Rc};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ContactType {
-    Implicit,
-    Point,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SmoothContactParams {
-    pub kernel: implicits::KernelType,
-    pub contact_type: ContactType,
-}
+pub use self::implicit_contact::*;
+pub use self::point_contact::*;
+pub use self::volume::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.
@@ -62,7 +55,3 @@ pub trait ContactConstraint:
     /// accurately.
     fn update_max_step(&mut self, max_step: f64);
 }
-
-pub use self::implicit_contact::*;
-pub use self::point_contact::*;
-pub use self::volume::*;

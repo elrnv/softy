@@ -9,7 +9,7 @@ mod constraint;
 mod constraints;
 mod energy;
 mod energy_models;
-mod friction;
+mod contact;
 pub mod fem;
 mod index;
 pub mod mask_iter;
@@ -23,11 +23,11 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
-pub use self::constraints::{ContactType, SmoothContactParams};
+pub use self::contact::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };
-pub use self::friction::*;
+pub use self::contact::*;
 use geo::mesh::attrib;
 pub use index::Index;
 

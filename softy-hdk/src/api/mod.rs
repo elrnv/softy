@@ -193,7 +193,8 @@ pub(crate) fn register_new_solver(
     if let Some(polymesh) = shell {
         solver_builder
             .add_shell(*polymesh)
-            .smooth_contact_params(params.into());
+            .smooth_contact_params(params.into())
+            .friction(params.into())
     }
 
     let solver = match solver_builder.build() {

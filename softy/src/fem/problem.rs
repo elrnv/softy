@@ -355,10 +355,11 @@ impl NonLinearProblem {
             .zip(lower.into_iter().zip(upper.into_iter()))
         {
             assert!(l <= u); // sanity check
-                             // Subtract the appropriate bound from the constraint function:
-                             // If the constraint is lower than the lower bound, then the multiplier will be
-                             // non-zero and the result of the constraint force must be balanced by the objective
-                             // gradient under convergence. The same goes for the upper bound.
+
+            // Subtract the appropriate bound from the constraint function:
+            // If the constraint is lower than the lower bound, then the multiplier will be
+            // non-zero and the result of the constraint force must be balanced by the objective
+            // gradient under convergence. The same goes for the upper bound.
             if *c < l {
                 *c -= l;
             } else if *c > u {

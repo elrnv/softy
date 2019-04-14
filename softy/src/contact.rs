@@ -1,3 +1,4 @@
+use na::{Matrix3, Vector3};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -19,5 +20,81 @@ pub struct FrictionParams {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Friction {
     pub params: FrictionParams,
+    pub contact_type: ContactType,
     pub impulse: Vec<f64>,
+    contact_normals: Vec<Vector3<f64>>,
+    contact_tangents: Vec<Vector3<f64>>,
+}
+
+impl Friction {
+    pub fn new(params: FrictionParams, contact_type: ContactType) -> Friction {
+        Friction {
+            params,
+            contact_type,
+            impulse: Vec::new(),
+            contact_normals: Vec::new(),
+            contact_tangents: Vec::new(),
+        }
+    }
+
+    /// Transform a vector at the given contact point index to contact coordinates. The index
+    /// determines which local contact coordinates to use.
+    pub fn to_contact_coordinates(&self, v: Vector3<f64>, contact_index: usize) -> Vector3<f64> {
+        let n = self.contact_normals[contact_index];
+        let t = self.contact_tangents[contact_index];
+        let b = n.cross(&t);
+        //b = b/b.norm(); // b may need to be renormalized here.
+        Matrix3::from_columns(&[n, t, b]).transpose() * v
+    }
+
+    /// Transform a vector at the given contact point index to physical coordinates. The index
+    /// determines which local contact coordinates to use.
+    pub fn to_physical_coordinates(&self, v: Vector3<f64>, contact_index: usize) -> Vector3<f64> {
+        let n = self.contact_normals[contact_index];
+        let t = self.contact_tangents[contact_index];
+        let b = n.cross(&t);
+        //b = b/b.norm(); // b may need to be renormalized here.
+        Matrix3::from_columns(&[n, t, b]) * v
+    }
+
+    /// Transform a given stacked vector of vectors in physical space to values in normal direction
+    /// to each contact point and stacked 2D vectors in the tangent space of the contact point.
+    pub fn to_contact_space(&self, physical: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        physical.iter().enumerate().map(|(i, &v)| self.to_contact_coordinates(v.into(), i).into()).collect()
+    }
+
+    /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
+    pub fn to_physical_space(&self, contact: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        contact.iter().enumerate().map(|(i, &v)| self.to_physical_coordinates(v.into(), i).into()).collect()
+    }
+
+    pub fn update_contact_basis_from_mesh(&mut self, mesh: &geo::mesh::TriMesh<f64>) {
+        use geo::mesh::VertexPositions;
+        self.update_contact_basis_from_topo(mesh.vertex_positions(), reinterpret::reinterpret_slice(mesh.indices.as_slice()));
+    }
+
+    pub fn update_contact_basis_from_topo(&mut self, vertex_pos: &[[f64; 3]], topo: &[[usize; 3]]) {
+        self.contact_normals.resize(vertex_pos.len(), Vector3::zeros());
+        geo::algo::compute_vertex_area_normals(vertex_pos, topo, &self.contact_normals);
+    }
+
+    /// Update the basis for the contact space at each contact point given the specified set of
+    /// normals. The tangent space is chosen arbitrarily
+    pub fn update_contact_basis_from_normals(&mut self, normals: Vec<[f64; 3]>) {
+        self.contact_normals = reinterpret::reinterpret_vec(normals);
+        self.contact_tangents.resize(normals.len(), Vector3::zeros());
+
+        for (&n, t) in self.contact_normals.iter().zip(self.contact_tangents.iter_mut()) {
+            // Find the axis that is most aligned with the normal, then use the next axis for the
+            // tangent.
+            let tangent_axis = (n.imax() + 1) % 3;
+            t[tangent_axis] = 1.0;
+
+            // Project out the normal component.
+            *t -= n * n[tangent_axis];
+
+            // Normalize in-place.
+            t.normalize_mut();
+        }
+    }
 }

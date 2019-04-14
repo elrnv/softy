@@ -269,7 +269,7 @@ mod tests {
     }
 
     /// Test the dynamic API (I.e. one which provides derivatives). We don't test the derivatives
-    /// themselves here.
+    /// themselves here, but we do verify that both APIs produce the same result.
     #[test]
     fn vertex_samples_dynamic_test() -> Result<(), Error> {
         use geo::mesh::VertexPositions;

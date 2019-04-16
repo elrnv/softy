@@ -12,6 +12,7 @@ use num_traits::cast;
 use rayon::prelude::*;
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
+use utils::zip;
 
 pub mod background_field;
 pub mod builder;
@@ -107,6 +108,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// Return the surface vertex positions used by this implicit surface.
     pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
         &self.surface_vertex_positions
+    }
+
+    /// Return the surface topology used by this implicit surface.
+    pub fn surface_topology(&self) -> &[[usize; 3]] {
+        &self.surface_topo
     }
 
     /// Return the number of samples used by this implicit surface.

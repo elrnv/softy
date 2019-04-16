@@ -13,9 +13,9 @@ spade = "1.5"
 autodiff = { git = "ssh://git@github.com/elrnv/autodiff.git" }
 reinterpret = "0.1"
 num-traits = "0.2"
+utils = { path = "../utils" }
 
 [dev-dependencies]
-utils = { path = "../utils" }
 approx = "0.3"
 rand = "0.5"
 

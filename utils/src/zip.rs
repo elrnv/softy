@@ -1,4 +1,5 @@
 /// Zip multiple iterators
+#[macro_export]
 macro_rules! zip {
     // Implementation calls
     (@flatten |$in:pat| $out:expr ) => { // base case for flatten

@@ -2,8 +2,10 @@
  * This crate provides convenience functions for building common meshes.
  */
 pub mod transform;
+pub mod zip;
 
 pub use crate::transform::*;
+pub use crate::zip::*;
 use geo::mesh::{PolyMesh, TetMesh, TriMesh};
 
 /// Parameters that define a grid that lies in one of the 3 axis planes in 3D space.

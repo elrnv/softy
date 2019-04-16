@@ -8,9 +8,6 @@ extern crate approx;
 use geo::mesh::{attrib, PolyMesh, TriMesh};
 
 #[macro_use]
-pub mod zip;
-
-#[macro_use]
 mod kernel;
 pub mod field;
 

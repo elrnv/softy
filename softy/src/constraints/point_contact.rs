@@ -391,6 +391,10 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
+    fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
+        Err(Error::MissingContactConstraint)
+    }
+
     fn contact_radius(&self) -> f64 {
         self.implicit_surface.borrow_mut().radius()
     }

@@ -38,6 +38,11 @@ pub fn build_contact_constraint(
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
+    /// Retrieve a vector of contact normals. These are unit vectors pointing
+    /// away from the surface. These normals are returned for each query point
+    /// even if it is not touching the surface. This function returns an error if
+    /// there are no cached query points.
+    fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.

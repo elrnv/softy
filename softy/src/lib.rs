@@ -46,6 +46,7 @@ pub enum Error {
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
     MissingContactParams,
+    MissingContactConstraint,
     NoSimulationMesh,
     NoKinematicMesh,
     /// Error during mesh IO. Typically during debugging.
@@ -110,6 +111,9 @@ impl From<Error> for SimResult {
             }
             Error::MissingContactParams => {
                 SimResult::Error("Missing smooth contact parameters.".to_string())
+            }
+            Error::MissingContactConstraint => {
+                SimResult::Error("Missing smooth contact constraint.".to_string())
             }
             Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh.".to_string()),
             Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh.".to_string()),

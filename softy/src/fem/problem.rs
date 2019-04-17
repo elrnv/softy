@@ -6,7 +6,8 @@ use crate::energy_models::{
     gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
 };
 use crate::matrix::*;
-use geo::math::Vector3;
+use crate::contact::*;
+use geo::math::{Vector3, Vector2};
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
 use reinterpret::*;
@@ -15,6 +16,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::TetMesh;
 use crate::TriMesh;
+use utils::zip;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -144,6 +146,8 @@ pub(crate) struct NonLinearProblem {
     pub volume_constraint: Option<VolumeConstraint>,
     /// Contact constraint on the smooth solid representation against the kinematic object.
     pub smooth_contact_constraint: Option<Box<dyn ContactConstraint>>,
+    /// Friction impulses applied during contact. This only makes sense in the presence of contact.
+    pub friction: Option<Friction>,
     /// Displacement bounds. This controlls how big of a step we can take per vertex position
     /// component. In other words the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
@@ -476,6 +480,60 @@ impl NonLinearProblem {
             obj += mp.energy(v, dx);
         }
         obj
+    }
+
+    pub fn contact_normals(&self, dx: &[[f64;3]]) -> Result<(Vec<[f64; 3]>, Vec<usize>), crate::Error> {
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let prev_pos = self.prev_pos.borrow();
+            let x: &[f64] = reinterpret::reinterpret_slice(prev_pos.as_slice());
+
+            let normals = scc.contact_normals(x, reinterpret::reinterpret_slice(dx))?;
+            let indices = scc.active_constraint_indices()?;
+            Ok((normals, indices))
+        } else {
+            Err(crate::Error::MissingContactConstraint)
+        }
+    }
+
+    /// Return true if the friction impulse was successfully updated, and false otherwise.
+    pub fn update_friction_impulse(&mut self, contact_force: &[f64], displacement: &[[f64; 3]]) -> bool {
+        if let Some(ref mut friction) = self.friction {
+            let mu = friction.params.dynamic_friction;
+
+            // Compute r_t = -mu r_n * v_t/|v_t|
+            match friction.contact_type {
+                ContactType::Implicit => {
+                    // The easy case: contacts occur at vertex positions of the deforming mesh.
+                    // This may become the hard case if the kinematic mesh was deforming as
+                    // well.
+
+                    let (normals, indices) = self.contact_normals(displacement)
+                        .expect("Failed to collect contact normals from the query Jacobian.");
+                    friction.update_contact_basis_from_normals(normals);
+                    friction.impulse.clear();
+
+                    for (contact_idx, (vtx_idx, &cf)) in zip!(indices.into_iter(), contact_force.iter()).enumerate() {
+                        let v = friction.to_contact_coordinates(displacement[vtx_idx], contact_idx);
+                        let f = if v[0] <= 0.0 {
+                            let v_t = Vector2([v[1], v[2]]); // Tangential component
+                            let mag = v_t.norm();
+                            let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
+                            let f_t = dir * (-mu * cf);
+                            Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into())
+                        } else {
+                            Vector3::zeros()
+                        };
+                        friction.impulse.push(f.into());
+                    }
+                }
+                ContactType::Point => {
+                    // The hard case: contacts occur at vertex positions of the kinematic mesh.
+                    // This means that forces must be remapped to the deforming mesh.
+                }
+            }
+            return true;
+        }
+        false
     }
 
     /*

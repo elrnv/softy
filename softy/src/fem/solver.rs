@@ -133,7 +133,7 @@ pub struct SolverBuilder {
     solids: Vec<TetMesh>,
     shells: Vec<PolyMesh>,
     smooth_contact_params: Option<SmoothContactParams>,
-    friction: Option<FrictionParams>,
+    friction_params: Option<FrictionParams>,
 }
 
 impl SolverBuilder {
@@ -146,7 +146,7 @@ impl SolverBuilder {
             solids: Vec::new(),
             shells: Vec::new(),
             smooth_contact_params: None,
-            friction: None,
+            friction_params: None,
         }
     }
 
@@ -176,8 +176,8 @@ impl SolverBuilder {
     }
 
     /// Set parameters for smooth contact problems. This is necessary when a shell is provided.
-    pub fn friction(&mut self, params: FrictionParams) -> &mut Self {
-        self.friction = Some(params);
+    pub fn friction_params(&mut self, params: FrictionParams) -> &mut Self {
+        self.friction_params = Some(params);
         self
     }
 
@@ -189,7 +189,7 @@ impl SolverBuilder {
             solids,
             shells,
             smooth_contact_params,
-            friction,
+            friction_params,
         } = self.clone();
 
         // Get kinematic shell
@@ -277,7 +277,7 @@ impl SolverBuilder {
                 let constraint = Some(crate::constraints::build_contact_constraint(
                     &mesh, &trimesh, cparams,
                 )?);
-                (constraint, friction.map(|fparams| Friction::new(fparams, cparams.contact_type)))
+                (constraint, friction_params.map(|fparams| Friction::new(fparams, cparams.contact_type)))
             }
             None => (None, None),
         };
@@ -300,6 +300,7 @@ impl SolverBuilder {
             momentum_potential,
             volume_constraint,
             smooth_contact_constraint,
+            friction,
             displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
@@ -366,7 +367,6 @@ impl SolverBuilder {
             sim_params: params,
             solid_material: Some(solid_material),
             max_step: 0.0,
-            friction,
         })
     }
 
@@ -462,8 +462,6 @@ pub struct Solver {
     /// sparsity pattern changes. If zero, then no limit is applied but constraint Jacobian is kept
     /// sparse.
     max_step: f64,
-    /// Friction parameters that determine how objects interact with eachother.
-    friction: Option<Friction>,
 }
 
 impl Solver {
@@ -974,51 +972,21 @@ impl Solver {
     }
 
     fn compute_friction_impulse(&mut self) {
-        if let Some(ref mut friction) = self.friction {
-            // Select constraint multipliers responsible for the contact force.
-            let SolverData {
-                solution:
-                    ipopt::Solution {
-                        primal_variables,
-                        constraint_multipliers,
-                        ..
-                    },
+        // Select constraint multipliers responsible for the contact force.
+        let SolverData {
+            problem,
+            solution:
+                ipopt::Solution {
+                    primal_variables,
+                    constraint_multipliers,
                     ..
-            } = self.solver.solver_data();
+                },
+                ..
+        } = self.solver.solver_data();
 
-            let contact_force = constraint_multipliers;
-            let displacement = primal_variables;
-            let mu = friction.params.dynamic_friction;
-
-            // Compute r_t = -mu r_n * v_t/|v_t|
-            match friction.contact_type {
-                ContactType::Implicit => {
-                    // The easy case: contacts occur at vertex positions of the deforming mesh.
-                    // This may become the hard case if the kinematic mesh was deforming as
-                    // well.
-
-                    assert_eq!(contact_force.len(), displacement.len());
-
-                    let mesh = self.borrow_mesh();
-                    friction.update_contact_basis_from_mesh(&mesh);
-                    friction.impulse.clear();
-
-                    for (&r_n, &disp) in contact_force.iter().zip(displacement.iter()) {
-                        let disp = Vector3(disp);
-                        let mag = disp.norm();
-                        let dir = if mag > 0.0 { disp / mag } else { Vector3::zero() };
-                        friction.impulse.push(dir * (-mu * r_n))
-                    }
-                }
-                ContactType::Point => {
-                    // The hard case: contacts occur at vertex positions of the kinematic mesh.
-                    // This means that forces must be remapped to the deforming mesh.
-
-                }
-            }
-            
-            // Redo the inner_step
-        }
+        let contact_force = constraint_multipliers;
+        let displacement = reinterpret::reinterpret_slice::<_, [f64;3]>(primal_variables);
+        problem.compute_friction_impulse(contact_force, displacement);
     }
 
     /// Run the optimization solver on one time step.
@@ -1041,6 +1009,8 @@ impl Solver {
             objective_value: 0.0,
         };
 
+        // The number of friction solves to do.
+        let mut friction_steps = 1i8;
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
 
@@ -1051,6 +1021,11 @@ impl Solver {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
                     if self.check_inner_step() {
+                        if friction_steps > 0 {
+                            self.compute_friction_impulse();
+                            friction_steps -= 1;
+                            continue;
+                        }
                         self.commit_solution(true);
                         break;
                     }

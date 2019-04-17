@@ -107,6 +107,27 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
+    fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
+        // Contacts occur at vertex positions of the deforming volume mesh.
+        let surf = self.implicit_surface.borrow();
+        self.update_query_points_with_displacement(x, dx);
+        let query_points = self.query_points.borrow();
+
+        let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
+        surf.query_jacobian_values(&query_points, &mut normal_coords)?;
+        let mut normals: Vec<Vector3<f64>> = reinterpret::reinterpret_vec(normal_coords);
+
+        // Normalize normals
+        for n in normals.iter_mut() {
+            let len = n.norm();
+            if len > 0.0 {
+                *n /= len;
+            }
+        }
+
+        Ok(reinterpret::reinterpret_vec(normals))
+    }
+
     fn contact_radius(&self) -> f64 {
         self.implicit_surface.borrow().radius()
     }

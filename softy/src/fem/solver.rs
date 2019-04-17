@@ -973,7 +973,7 @@ impl Solver {
 
     fn compute_friction_impulse(&mut self) {
         // Select constraint multipliers responsible for the contact force.
-        let SolverData {
+        let SolverDataMut {
             problem,
             solution:
                 ipopt::Solution {
@@ -982,11 +982,11 @@ impl Solver {
                     ..
                 },
                 ..
-        } = self.solver.solver_data();
+        } = self.solver.solver_data_mut();
 
         let contact_force = constraint_multipliers;
-        let displacement = reinterpret::reinterpret_slice::<_, [f64;3]>(primal_variables);
-        problem.compute_friction_impulse(contact_force, displacement);
+        let displacement = reinterpret::reinterpret_slice::<_, [f64; 3]>(primal_variables);
+        problem.update_friction_impulse(contact_force, displacement);
     }
 
     /// Run the optimization solver on one time step.

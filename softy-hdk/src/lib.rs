@@ -31,6 +31,7 @@ pub struct EL_SoftySimParams {
     pub contact_radius_multiplier: f32,
     pub smoothness_tolerance: f32,
     pub dynamic_friction: f32,
+    pub friction_iterations: u32,
     pub print_level: u32,
     pub derivative_test: u32,
     pub mu_strategy: i32,

@@ -73,6 +73,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
             max_iterations,
             outer_tolerance,
             max_outer_iterations,
+            friction_iterations,
             print_level,
             derivative_test,
             mu_strategy,
@@ -91,6 +92,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
             max_iterations,
             outer_tolerance,
             max_outer_iterations,
+            friction_iterations,
             print_level,
             derivative_test,
             mu_strategy: match mu_strategy {
@@ -136,6 +138,7 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             contact_type,
             contact_radius_multiplier,
             smoothness_tolerance,
+            dynamic_friction,
             ..
         } = self;
         let radius_multiplier = f64::from(contact_radius_multiplier);
@@ -158,18 +161,9 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
                 0 => softy::ContactType::Implicit,
                 _ => softy::ContactType::Point,
             },
-        }
-    }
-}
-
-impl Into<softy::FrictionParams> for EL_SoftySimParams {
-    fn into(self) -> softy::FrictionParams {
-        let EL_SoftySimParams {
-            dynamic_friction,
-            ..
-        } = self;
-        softy::FrictionParams {
-            dynamic_friction: f64::from(dynamic_friction),
+            friction_params: Some(softy::FrictionParams {
+                dynamic_friction: f64::from(dynamic_friction),
+            })
         }
     }
 }
@@ -193,8 +187,7 @@ pub(crate) fn register_new_solver(
     if let Some(polymesh) = shell {
         solver_builder
             .add_shell(*polymesh)
-            .smooth_contact_params(params.into())
-            .friction(params.into())
+            .smooth_contact_params(params.into());
     }
 
     let solver = match solver_builder.build() {

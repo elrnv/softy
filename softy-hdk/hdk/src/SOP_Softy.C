@@ -84,6 +84,14 @@ static const char *theDsFile = R"THEDSFILE(
             default { "0.5" }
             range { 0 2 }
         }
+        parm {
+            name "frictioniterations"
+            cppname "FrictionIterations"
+            label "Iterations"
+            type integer
+            default { "1" }
+            range { 0 10 }
+        }
     }
 
     groupsimple {
@@ -410,7 +418,8 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.contact_type = static_cast<int>(sopparms.getContactType());
     sim_params.contact_radius_multiplier = sopparms.getContactRadiusMultiplier();
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
-    sim_params.dynamic_friction = static_cast<int>(sopparms.getDynamicFriction());
+    sim_params.dynamic_friction = sopparms.getDynamicFriction();
+    sim_params.friction_iterations = sopparms.getFrictionIterations();
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());

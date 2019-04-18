@@ -10,6 +10,7 @@ pub enum ContactType {
 pub struct SmoothContactParams {
     pub kernel: implicits::KernelType,
     pub contact_type: ContactType,
+    pub friction_params: Option<FrictionParams>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -20,18 +21,16 @@ pub struct FrictionParams {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Friction {
     pub params: FrictionParams,
-    pub contact_type: ContactType,
-    pub impulse: Vec<[f64;3]>,
+    pub force: Vec<[f64;3]>,
     contact_normals: Vec<Vector3<f64>>,
     contact_tangents: Vec<Vector3<f64>>,
 }
 
 impl Friction {
-    pub fn new(params: FrictionParams, contact_type: ContactType) -> Friction {
+    pub fn new(params: FrictionParams) -> Friction {
         Friction {
             params,
-            contact_type,
-            impulse: Vec::new(),
+            force: Vec::new(),
             contact_normals: Vec::new(),
             contact_tangents: Vec::new(),
         }

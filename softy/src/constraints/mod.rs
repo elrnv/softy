@@ -26,6 +26,7 @@ pub fn build_contact_constraint(
             tetmesh_rc,
             trimesh_rc,
             params.kernel,
+            params.friction_params,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             tetmesh_rc,
@@ -38,6 +39,13 @@ pub fn build_contact_constraint(
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
+    /// Update the underlying friction impulse based on the given predictive step.
+    fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool;
+    /// Subtract the frictional impulse from the given gradient vector.
+    fn subtract_friction_force(&self, grad: &mut [f64]);
+    /// Compute the frictional energy dissipation.
+    fn frictional_dissipation(&self, dx: &[f64]) -> f64;
+    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]);
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if

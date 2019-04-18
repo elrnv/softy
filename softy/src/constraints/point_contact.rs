@@ -391,6 +391,16 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
+    fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool {
+        false
+    }
+    fn subtract_friction_force(&self, grad: &mut [f64]) {
+    }
+    fn frictional_dissipation(&self, dx: &[f64]) -> f64 {
+        0.0
+    }
+    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]) {
+    }
     fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
         Err(Error::MissingContactConstraint)
     }

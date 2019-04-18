@@ -20,6 +20,7 @@ pub struct SimParams {
     pub tolerance: f32,
     pub max_iterations: u32,
     pub max_outer_iterations: u32,
+    pub friction_iterations: u32,
     pub outer_tolerance: f32,
     pub print_level: u32,
     pub derivative_test: u32,

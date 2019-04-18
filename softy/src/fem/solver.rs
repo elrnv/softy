@@ -133,7 +133,6 @@ pub struct SolverBuilder {
     solids: Vec<TetMesh>,
     shells: Vec<PolyMesh>,
     smooth_contact_params: Option<SmoothContactParams>,
-    friction_params: Option<FrictionParams>,
 }
 
 impl SolverBuilder {
@@ -146,7 +145,6 @@ impl SolverBuilder {
             solids: Vec::new(),
             shells: Vec::new(),
             smooth_contact_params: None,
-            friction_params: None,
         }
     }
 
@@ -175,12 +173,6 @@ impl SolverBuilder {
         self
     }
 
-    /// Set parameters for smooth contact problems. This is necessary when a shell is provided.
-    pub fn friction_params(&mut self, params: FrictionParams) -> &mut Self {
-        self.friction_params = Some(params);
-        self
-    }
-
     /// Build the simulation solver.
     pub fn build(&self) -> Result<Solver, Error> {
         let SolverBuilder {
@@ -189,7 +181,6 @@ impl SolverBuilder {
             solids,
             shells,
             smooth_contact_params,
-            friction_params,
         } = self.clone();
 
         // Get kinematic shell
@@ -271,16 +262,10 @@ impl SolverBuilder {
             .time_step
             .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
 
-        let (smooth_contact_constraint, friction) = match kinematic_object.as_ref() {
-            Some(trimesh) => {
-                let cparams = smooth_contact_params.unwrap(); // already verified above.
-                let constraint = Some(crate::constraints::build_contact_constraint(
-                    &mesh, &trimesh, cparams,
-                )?);
-                (constraint, friction_params.map(|fparams| Friction::new(fparams, cparams.contact_type)))
-            }
-            None => (None, None),
-        };
+        let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
+            let cparams = smooth_contact_params.unwrap(); // already verified above.
+            crate::constraints::build_contact_constraint( &mesh, &trimesh, cparams).ok()
+        });
 
         let displacement_bound = None;
         //let displacement_bound = smooth_contact_params.map(|scp| {
@@ -300,7 +285,6 @@ impl SolverBuilder {
             momentum_potential,
             volume_constraint,
             smooth_contact_constraint,
-            friction,
             displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
@@ -648,6 +632,18 @@ impl Solver {
             .unwrap();
     }
 
+    fn add_friction_impulses_attrib(&mut self) {
+        let impulses = self.problem().friction_impulse();
+        let mut mesh = self.borrow_mut_mesh();
+        mesh.set_attrib_data::<FrictionImpulseType, VertexIndex>(FRICTION_ATTRIB, &impulses).ok();
+    }
+
+    fn add_contact_impulses_attrib(&mut self) {
+        let impulses = self.problem().contact_impulse();
+        let mut mesh = self.borrow_mut_mesh();
+        mesh.set_attrib_data::<ContactImpulseType, VertexIndex>(CONTACT_ATTRIB, &impulses).ok();
+    }
+
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
     pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
@@ -971,7 +967,9 @@ impl Solver {
         }
     }
 
-    fn compute_friction_impulse(&mut self) {
+    /// Compute the friction impulse in the problem and return `true` if it has been updated and
+    /// `false` otherwise. If friction is disabled, this function will return `false`.
+    fn compute_friction_impulse(&mut self) -> bool {
         // Select constraint multipliers responsible for the contact force.
         let SolverDataMut {
             problem,
@@ -986,7 +984,7 @@ impl Solver {
 
         let contact_force = constraint_multipliers;
         let displacement = reinterpret::reinterpret_slice::<_, [f64; 3]>(primal_variables);
-        problem.update_friction_impulse(contact_force, displacement);
+        problem.update_friction_impulse(contact_force, displacement)
     }
 
     /// Run the optimization solver on one time step.
@@ -1010,7 +1008,7 @@ impl Solver {
         };
 
         // The number of friction solves to do.
-        let mut friction_steps = 1i8;
+        let mut friction_steps = self.sim_params.friction_iterations;
         for _ in 0..self.sim_params.max_outer_iterations {
             let step_result = self.inner_step();
 
@@ -1022,9 +1020,10 @@ impl Solver {
                     result = result.combine_inner_result(&step_result);
                     if self.check_inner_step() {
                         if friction_steps > 0 {
-                            self.compute_friction_impulse();
-                            friction_steps -= 1;
-                            continue;
+                            if self.compute_friction_impulse() {
+                                friction_steps -= 1;
+                                continue;
+                            }
                         }
                         self.commit_solution(true);
                         break;
@@ -1056,6 +1055,10 @@ impl Solver {
 
         // On success, update the mesh with new positions and useful metrics.
         let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
+
+        // Write back friction impulses
+        self.add_friction_impulses_attrib();
+        self.add_contact_impulses_attrib();
 
         let mut mesh = self.borrow_mut_mesh();
 
@@ -1773,6 +1776,7 @@ mod tests {
             .smooth_contact_params(SmoothContactParams {
                 contact_type: ContactType::Point,
                 kernel,
+                friction_params: None
             })
             .build()?;
 
@@ -1870,7 +1874,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.812,
                 tolerance: 0.07,
-            }
+            },
+            friction_params: None,
         };
 
         ball_tri_push_tester(material, sc_params)
@@ -1888,7 +1893,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.812,
                 tolerance: 0.07,
-            }
+            },
+            friction_params: None,
         };
 
         ball_tri_push_tester(material, sc_params)
@@ -1948,7 +1954,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.1,
                 tolerance: 0.01,
-            }
+            },
+            friction_params: None,
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -1969,7 +1976,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.1,
                 tolerance: 0.01,
-            }
+            },
+            friction_params: None,
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -1991,7 +1999,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 20.0, // deliberately large radius
                 tolerance: 0.0001,
-            }
+            },
+            friction_params: None,
         };
 
         let tetmesh = make_regular_tet();
@@ -2012,7 +2021,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 2.0,
                 tolerance: 0.0001,
-            }
+            },
+            friction_params: None,
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
@@ -2034,7 +2044,8 @@ mod tests {
             kernel: KernelType::Approximate {
                 radius_multiplier: 2.0,
                 tolerance: 0.0001,
-            }
+            },
+            friction_params: None,
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;

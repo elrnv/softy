@@ -15,6 +15,7 @@ pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     tolerance: 1e-9,
     max_iterations: 300,
     max_outer_iterations: 1,
+    friction_iterations: 0,
     outer_tolerance: 0.001,
     print_level: 0,
     derivative_test: 0,

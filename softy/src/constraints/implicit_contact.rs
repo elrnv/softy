@@ -4,13 +4,15 @@ use crate::matrix::*;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::Vector3;
+use geo::math::{Vector3, Vector2};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 use crate::Error;
+use utils::zip;
+use crate::contact::*;
 
 /// Enforce a contact constraint on a mesh against an animated implicit surface. This constraint prevents
 /// vertices of the simulation mesh from penetrating through the implicit surface.
@@ -26,6 +28,8 @@ pub struct ImplicitContactConstraint {
     /// A buffer of vertex positions on the simulation mesh. This is used to avoid reallocating
     /// contiguous space for these positions every time the constraint is evaluated.
     pub query_points: RefCell<Vec<[f64; 3]>>,
+    /// Friction impulses applied during contact.
+    pub friction: Option<Friction>,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -38,6 +42,7 @@ impl ImplicitContactConstraint {
         tetmesh_rc: &Rc<RefCell<TetMesh>>,
         trimesh_rc: &Rc<RefCell<TriMesh>>,
         kernel: KernelType,
+        friction_params: Option<FrictionParams>,
     ) -> Result<Self, Error> {
         let trimesh = trimesh_rc.borrow();
 
@@ -69,6 +74,12 @@ impl ImplicitContactConstraint {
                 collision_object: Rc::clone(trimesh_rc),
                 simulation_surf_verts: surf_verts,
                 query_points: RefCell::new(query_points.to_vec()),
+                friction: friction_params.and_then(|fparams|
+                    if fparams.dynamic_friction > 0.0 {
+                        Some(Friction::new(fparams))
+                    } else {
+                        None
+                    }),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
             };
 
@@ -107,6 +118,76 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
+    fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool {
+        if self.friction.is_none() {
+            return false;
+        }
+
+        let normals = self.contact_normals(reinterpret::reinterpret_slice(x), reinterpret::reinterpret_slice(dx))
+            .expect("Failed to compute contact normals.");
+        let surf_indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+
+        let friction = self.friction.as_mut().unwrap(); // Must be checked above.
+
+        let mu = friction.params.dynamic_friction;
+
+        friction.update_contact_basis_from_normals(normals);
+        friction.force.clear();
+        assert_eq!(contact_force.len(), surf_indices.len());
+
+        for (contact_idx, (surf_idx, &cf)) in zip!(surf_indices.into_iter(), contact_force.iter()).enumerate() {
+            let vtx_idx = self.simulation_surf_verts[surf_idx];
+            let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
+            let f = if v[0] <= 0.0 {
+                let v_t = Vector2([v[1], v[2]]); // Tangential component
+                let mag = v_t.norm();
+                let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
+                let f_t = dir * (mu * cf);
+                Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into())
+            } else {
+                Vector3::zeros()
+            };
+            friction.force.push(f.into());
+        }
+        true
+    }
+
+    fn subtract_friction_force(&self, grad: &mut [f64]) {
+        if let Some(ref friction) = self.friction {
+            let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+
+            for (&i, f) in indices.iter().zip(friction.force.iter()) {
+                for j in 0..3 {
+                    let idx = 3*self.simulation_surf_verts[i] + j;
+                    grad[idx] -= f[j];
+                }
+            }
+        }
+    }
+    fn frictional_dissipation(&self, dx: &[f64]) -> f64 {
+        let mut dissipation = 0.0;
+        if let Some(ref friction) = self.friction {
+            let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+
+            for (&i, f) in indices.iter().zip(friction.force.iter()) {
+                for j in 0..3 {
+                    dissipation += dx[3*self.simulation_surf_verts[i] + j] * f[j];
+                }
+            }
+        }
+        dissipation
+    }
+
+    /// For visualization purposes.
+    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]) {
+        let normals = self.contact_normals(x, &vec![0.0; x.len()])
+            .expect("Failed to retrieve contact normals.");
+        assert_eq!(contact_force.len(), normals.len());
+        for (i, (n, &f)) in normals.into_iter().zip(contact_force.iter()).enumerate() {
+            impulse[self.simulation_surf_verts[i]] = (Vector3(n) * f * dt).into();
+        }
+    }
+
     fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();

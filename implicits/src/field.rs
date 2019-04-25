@@ -125,29 +125,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         self.samples.len()
     }
 
-    /// Compute unnormalized area weighted vertex normals given a triangle topology.
-    /// Having this function be static and generic helps us test the normal derivatives.
-    pub(crate) fn compute_vertex_area_normals<V3>(
-        surf_topo: &[[usize; 3]],
-        points: &[V3],
-        normals: &mut [Vector3<T>],
-    ) where
-        V3: Into<Vector3<T>> + Clone,
-    {
-        // Clear the normals.
-        for nml in normals.iter_mut() {
-            *nml = Vector3::zeros();
-        }
-
-        for tri_indices in surf_topo.iter() {
-            let tri = Triangle::from_indexed_slice(tri_indices, points);
-            let area_nml = tri.area_normal();
-            normals[tri_indices[0]] += area_nml;
-            normals[tri_indices[1]] += area_nml;
-            normals[tri_indices[2]] += area_nml;
-        }
-    }
-
     /// Update the stored samples. This assumes that vertex positions have been updated.
     fn update_samples(&mut self) {
         let ImplicitSurface {
@@ -173,7 +150,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     *sample_pos = *vertex_pos;
                 }
 
-                Self::compute_vertex_area_normals(surface_topo, points, normals);
+                // Compute unnormalized area weighted vertex normals given a triangle topology.
+                geo::algo::compute_vertex_area_weighted_normals(points, surface_topo, normals);
             }
             SampleType::Face => {
                 samples.update_triangle_samples(surface_topo, &surface_vertex_positions);
@@ -1186,17 +1164,6 @@ pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
     let tet_faces = reinterpret::reinterpret_vec(indices.into_vec());
 
     (tet_verts, tet_faces)
-}
-
-/// Generate a random vector of `Vector3` multipliers.
-#[cfg(test)]
-pub(crate) fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
-    use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
-    let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-    let range = Uniform::new(-1.0, 1.0);
-    (0..n)
-        .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
-        .collect()
 }
 
 #[cfg(test)]

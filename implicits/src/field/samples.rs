@@ -105,7 +105,7 @@ impl<T: Real + Send + Sync> Samples<T> {
                 *nml = new_nml.clone().into();
             }
         } else {
-            ImplicitSurface::compute_vertex_area_normals(triangles, new_vertices, normals);
+            geo::algo::compute_vertex_area_weighted_normals(new_vertices, triangles, normals);
         }
     }
 }

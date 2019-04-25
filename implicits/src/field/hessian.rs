@@ -1519,7 +1519,7 @@ mod tests {
         let neighbours: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
 
         // Set a random product vector.
-        let multipliers = random_vectors(faces.len());
+        let multipliers = utils::random_vectors(faces.len());
         let ad_multipliers: Vec<_> = multipliers.iter().map(|&v| v.map(|x| F::cst(x))).collect();
 
         let multiplier = move |Sample { index, .. }| multipliers[index];

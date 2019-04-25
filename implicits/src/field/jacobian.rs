@@ -640,7 +640,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Compute the contact Jacobian of this implicit surface function with respect to surface
-    /// points. The returned 2D arrays are column major 3x3 matrices.
+    /// points.
     pub fn contact_jacobian_values(
         &self,
         query_points: &[[T; 3]],
@@ -1290,7 +1290,7 @@ mod tests {
         let indices = vec![0, 1, 2, 3]; // look at all the vertices
 
         // Set a random product vector.
-        let dxs = random_vectors(tet_verts.len());
+        let dxs = utils::random_vectors(tet_verts.len());
         let dx = move |Sample { index, .. }| dxs[index];
 
         // Compute the normal gradient product.
@@ -1690,7 +1690,7 @@ mod tests {
 
         let mut tet = make_regular_tet();
 
-        let multiplier_vecs = random_vectors(tet.num_vertices());
+        let multiplier_vecs = utils::random_vectors(tet.num_vertices());
         let multipliers_f32: Vec<_> = multiplier_vecs
             .iter()
             .cloned()

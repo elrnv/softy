@@ -32,6 +32,7 @@ pub fn build_contact_constraint(
             tetmesh_rc,
             trimesh_rc,
             params.kernel,
+            params.friction_params,
         )?),
     })
 }

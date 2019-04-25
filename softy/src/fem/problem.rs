@@ -203,7 +203,6 @@ impl NonLinearProblem {
     }
 
     /// Intermediate callback for `Ipopt`.
-    #[allow(clippy::too_many_arguments)] // TODO: Improve on the ipopt interface
     pub fn intermediate_cb(&mut self, data: ipopt::IntermediateCallbackData) -> bool {
         if data.iter_count == 0 {
             // Record the initial max of dual and primal infeasibility.
@@ -487,10 +486,12 @@ impl NonLinearProblem {
     }
 
     /// Return true if the friction impulse was successfully updated, and false otherwise.
-    pub fn update_friction_impulse(&mut self, contact_force: &[f64], displacement: &[[f64; 3]]) -> bool {
+    pub fn update_friction_impulse(&mut self, displacement: &[[f64; 3]]) -> bool {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
+            let offset = if self.volume_constraint.is_some() { 1 } else { 0 };
+            let contact_force = &self.warm_start.constraint_multipliers[offset..];
             scc.update_friction_force(contact_force, position, displacement)
         } else {
             false
@@ -518,9 +519,9 @@ impl NonLinearProblem {
             let prev_pos = self.prev_pos.borrow();
             let position: &[f64] = reinterpret::reinterpret_slice(prev_pos.as_slice());
             // Get contact force from the warm start.
-            let contact_force = self.warm_start.constraint_multipliers.as_slice();
             let offset = if self.volume_constraint.is_some() { 1 } else { 0 };
-            scc.compute_contact_impulse(position, &contact_force[offset..], self.time_step, &mut impulse);
+            let contact_force = &self.warm_start.constraint_multipliers[offset..];
+            scc.compute_contact_impulse(position, contact_force, self.time_step, &mut impulse);
         }
         reinterpret::reinterpret_vec(impulse)
     }

@@ -22,7 +22,7 @@ pub struct ImplicitContactConstraint {
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub simulation_mesh: Rc<RefCell<TetMesh>>,
     pub collision_object: Rc<RefCell<TriMesh>>,
-    /// Mapping from constrained points on the surface of the simulation mesh to the actual
+    /// Mapping from points on the surface of the simulation mesh to the actual
     /// vertices on the tetrahedron mesh.
     pub simulation_surf_verts: Vec<usize>,
     /// A buffer of vertex positions on the simulation mesh. This is used to avoid reallocating
@@ -182,8 +182,11 @@ impl ContactConstraint for ImplicitContactConstraint {
     fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]) {
         let normals = self.contact_normals(x, &vec![0.0; x.len()])
             .expect("Failed to retrieve contact normals.");
+        let indices = self.active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
         assert_eq!(contact_force.len(), normals.len());
-        for (i, (n, &f)) in normals.into_iter().zip(contact_force.iter()).enumerate() {
+        assert_eq!(indices.len(), normals.len());
+        for (i, (n, &f)) in indices.into_iter().zip(normals.into_iter().zip(contact_force.iter())) {
             impulse[self.simulation_surf_verts[i]] = (Vector3(n) * f * dt).into();
         }
     }
@@ -198,11 +201,12 @@ impl ContactConstraint for ImplicitContactConstraint {
         surf.query_jacobian_values(&query_points, &mut normal_coords)?;
         let mut normals: Vec<Vector3<f64>> = reinterpret::reinterpret_vec(normal_coords);
 
-        // Normalize normals
+        // Normalize normals and reverse direction so that normals are pointing away from the
+        // deforming mesh.
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= len;
+                *n /= -len;
             }
         }
 

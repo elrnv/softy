@@ -14,6 +14,7 @@ pub mod fem;
 mod index;
 pub mod mask_iter;
 mod matrix;
+mod friction;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -27,6 +28,7 @@ pub use self::contact::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };
+use self::friction::FrictionSolveResult;
 pub use self::contact::*;
 use geo::mesh::attrib;
 pub use index::Index;
@@ -43,6 +45,7 @@ pub enum Error {
     SolveError(ipopt::SolveStatus, SolveResult),
     /// Error during an inner solve step. This reports iterations and objective value.
     InnerSolveError(ipopt::SolveStatus, InnerSolveResult),
+    FrictionSolveError(ipopt::SolveStatus, FrictionSolveResult),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
     MissingContactParams,
@@ -105,9 +108,12 @@ impl From<Error> for SimResult {
                     SimResult::Warning(format!("Maximum iterations exceeded. \n{}", solve_result))
                 }
                 e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
-            },
+            }
             Error::InnerSolveError(e, solve_result) => {
                 SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result))
+            }
+            Error::FrictionSolveError(e, solve_result) => {
+                SimResult::Error(format!("Friction Solve failed: {:?}\n{:?}", e, solve_result))
             }
             Error::MissingContactParams => {
                 SimResult::Error("Missing smooth contact parameters.".to_string())

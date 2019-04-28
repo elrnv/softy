@@ -85,41 +85,22 @@ impl Solution {
         self
     }
 
-    /// The number of constraints may change between saving the warm start solution and using it
-    /// for the next solve. For this reason we must remap the old multipliers to the new set of
-    /// constraints. Constraint multipliers that are new in the next solve will have a zero value.
-    /// This function works on a subset of all multipliers. The caller gives a slice of the
-    /// multipliers for which this function produces a new Vec of multipliers correspnding to the
-    /// new constraints, where the old multipliers are copied as available.
-    /// The values in the new and old indices slices are required to be sorted.
-    ///
-    /// NOTE: Most efficient to replace the entire constraint_multipliers vector in the warm start.
-    pub fn remap_constraint_multipliers(
-        constraint_multipliers: &[f64],
-        old_indices: &[usize],
-        new_indices: &[usize],
-    ) -> Vec<f64> {
-        // Check that both input slices are sorted.
-        debug_assert!(old_indices.windows(2).all(|w| w[0] <= w[1]));
-        debug_assert!(new_indices.windows(2).all(|w| w[0] <= w[1]));
-        let mut remapped_multipliers = vec![0.0; new_indices.len()];
-
-        let mut old_iter = constraint_multipliers.iter().zip(old_indices.iter());
-        for (m, &new_idx) in remapped_multipliers.iter_mut().zip(new_indices.iter()) {
-            for (&old_mult, &old_idx) in &mut old_iter {
-                if old_idx < new_idx {
-                    continue;
-                }
-
-                if old_idx == new_idx {
-                    *m = old_mult;
-                }
-
-                break;
-            }
-        }
-        remapped_multipliers
-    }
+    ///// The number of constraints may change between saving the warm start solution and using it
+    ///// for the next solve. For this reason we must remap the old multipliers to the new set of
+    ///// constraints. Constraint multipliers that are new in the next solve will have a zero value.
+    ///// This function works on a subset of all multipliers. The caller gives a slice of the
+    ///// multipliers for which this function produces a new Vec of multipliers correspnding to the
+    ///// new constraints, where the old multipliers are copied as available.
+    ///// The values in `new_indices` and `old_indices` are required to be sorted.
+    /////
+    ///// NOTE: Most efficient to replace the entire constraint_multipliers vector in the warm start.
+    //pub fn remap_constraint_multipliers(
+    //    constraint_multipliers: &[f64],
+    //    old_indices: &[usize],
+    //    new_indices: &[usize],
+    //) -> Vec<f64> {
+    //    remap_values(constraint_multipliers, 0.0, old_indices, new_indices)
+    //}
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
@@ -186,7 +167,7 @@ impl NonLinearProblem {
         );
     }
 
-    /// Reset solution used for warm starts. Notet that if the number of constraints has changed,
+    /// Reset solution used for warm starts. Note that if the number of constraints has changed,
     /// then this method will set the warm start to have the new number of constraints.
     pub fn reset_warm_start(&mut self) {
         use ipopt::{BasicProblem, ConstrainedProblem};
@@ -213,47 +194,90 @@ impl NonLinearProblem {
         !(self.interrupt_checker)()
     }
 
-    /// Update all stateful constraints with the most recent data. This also involves remapping any
-    /// multipliers that may have changed.
-    /// Return an estimate if any constraints have changed. This estimate may have false negatives.
-    pub fn update_constraints(&mut self) -> bool {
-        let mut changed = false; // Report if anything has changed to the caller.
+    /// Get the set of currently active constraints.
+    pub fn active_constraint_set(&self) -> Vec<usize> {
+        let mut active_set = Vec::new();
 
-        let mut old_indices = Vec::new();
-        let mut new_indices = Vec::new();
-
-        if let Some(_) = self.volume_constraint {
-            // Nothing to be done here, volume constraints don't change between outer iterations.
-            old_indices.push(0);
-            new_indices.push(0);
+        if let Some(ref vc) = self.volume_constraint {
+            active_set.push(0);
         }
 
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            // Note that for `remap_constraint_multipliers`, indices need to only be sorted. Their
-            // actual values are only meaningful in relation to eachother. Thus we don't bother to
-            // offset the indices here by 1 since duplicates (two zero indices) are allowed.
-            // For other constraints, this may no longer be true!
-            let old_scc_indices = scc.active_constraint_indices();
-            changed |= scc.update_cache();
-            if let Ok(mut old_scc_indices) = old_scc_indices {
-                old_indices.append(&mut old_scc_indices);
-                new_indices.append(
-                    &mut scc
-                        .active_constraint_indices()
-                        .expect("Failed to retrieve cached neighbourhoods"),
-                );
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            let scc_active_constraints = scc.active_constraint_indices().unwrap_or_default();
+            let offset = active_set.len();
+            for c in scc_active_constraints.into_iter() {
+                active_set.push(c + offset);
             }
         }
 
-        let new_multipliers = Solution::remap_constraint_multipliers(
-            &self.warm_start.constraint_multipliers,
-            &old_indices,
-            &new_indices,
-        );
-        std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+        active_set
+    }
+
+    /// Restore the constraint set.
+    pub fn reset_constraint_set(&mut self) -> bool {
+        self.update_constraint_set(None)
+    }
+
+    /// Update all stateful constraints with the most recent data.
+    /// Return an estimate if any constraints have changed. This estimate may have false negatives.
+    /// Also return the mapping from new constraint indices to old constraint indices via a `Vec`
+    /// of possibly invalid indices.
+    pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
+        let mut changed = false; // Report if anything has changed to the caller.
+
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            let prev_pos = self.prev_pos.borrow_mut();
+            let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+            changed |= scc.update_cache(Some(x), solution.map(|sol| sol.primal_variables));
+        }
 
         changed
     }
+
+    /// Build a new set of multipliers from the old set and replace warm start multipliers with the
+    /// new set.
+    pub fn remap_multipliers(&mut self, old_constraint_set: impl Iterator<Item = usize> + Clone) {
+        use crate::constraints::remap_values;
+        let new_constraint_set = self.active_constraint_set();
+        let new_multipliers = remap_values(self.warm_start.constraint_multipliers.iter().cloned(), 0.0, old_constraint_set, new_constraint_set.into_iter());
+        std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+    }
+
+    ///// Update all stateful constraints with the most recent data. This also involves remapping any
+    ///// multipliers that may have changed.
+    ///// Return an estimate if any constraints have changed. This estimate may have false negatives.
+    //pub fn update_constraints_and_remap(&mut self, solution: ipopt::Solution) -> bool {
+    //    let mut changed = false; // Report if anything has changed to the caller.
+
+    //    let offset = if self.volume_constraint.is_some() {
+    //        1
+    //    } else {
+    //        0
+    //    };
+
+    //    // Build a new set of multipliers from the old set.
+    //    let mut new_multipliers = self.warm_start.constraint_multipliers.clone();
+
+    //    if let Some(ref mut scc) = self.smooth_contact_constraint {
+    //        let (cache_changed, mapping) = scc.update_cache_with_mapping()
+    //            .expect("Failed to update cached neighbourhoods");
+    //        changed |= cache_changed;
+    //        new_multipliers.resize(offset + mapping.len(), 0.0);
+    //        dbg!(&new_multipliers);
+    //        dbg!(&self.warm_start.constraint_multipliers);
+    //        for (old_idx, new_mult) in zip!(mapping.into_iter(), new_multipliers.iter_mut())
+    //            .filter_map(|(idx, mult)| idx.into_option().map(|i| (i, mult)))
+    //        {
+    //            *new_mult = self.warm_start.constraint_multipliers[offset + old_idx];
+    //        }
+    //        dbg!(&new_multipliers);
+    //    }
+
+    //    std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+    //    dbg!(&self.warm_start.constraint_multipliers);
+
+    //    changed
+    //}
 
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
     pub fn advance(
@@ -292,15 +316,15 @@ impl NonLinearProblem {
             (old_warm_start, old_prev_pos, old_prev_vel)
         };
 
-        if and_warm_start {
-            self.update_warm_start(solution);
-        } else {
-            self.clear_warm_start(solution);
-        }
+        //if and_warm_start {
+        //    self.update_warm_start(solution);
+        //} else {
+        //    self.clear_warm_start(solution);
+        //}
 
-        // Since we transformed the mesh, we need to invalidate its neighbour data so it's
-        // recomputed at the next time step (if applicable).
-        self.update_constraints();
+        //// Since we transformed the mesh, we need to invalidate its neighbour data so it's
+        //// recomputed at the next time step (if applicable).
+        //self.update_constraints();
 
         (old_warm_start, old_prev_pos, old_prev_vel)
     }
@@ -309,13 +333,11 @@ impl NonLinearProblem {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_max_step(step);
         }
-        self.update_constraints();
     }
     pub fn update_radius_multiplier(&mut self, rad_mult: f64) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             scc.update_radius_multiplier(rad_mult);
         }
-        self.update_constraints();
     }
 
     /// Revert to the given old solution by the given displacement.
@@ -342,7 +364,7 @@ impl NonLinearProblem {
 
         // Since we transformed the mesh, we need to invalidate its neighbour data so it's
         // recomputed at the next time step (if applicable).
-        self.update_constraints();
+        //self.update_constraints();
     }
 
     fn compute_constraint_violation(&self, displacement: &[f64], constraint: &mut [f64]) {
@@ -378,10 +400,10 @@ impl NonLinearProblem {
         crate::inf_norm(&g)
     }
 
-    /// Return the constraint violation and whether the neighbourhood data (sparsity) has changed.
-    pub fn probe_contact_constraint_violation(&mut self, displacement: &[f64]) -> (f64, bool) {
-        let changed = self.update_constraints();
-        (self.constraint_violation_norm(displacement), changed)
+    /// Return the constraint violation and whether the neighbourhood data (sparsity) would be
+    /// changed if we took this step.
+    pub fn probe_contact_constraint_violation(&mut self, solution: ipopt::Solution) -> f64 {
+        self.constraint_violation_norm(solution.primal_variables)
     }
 
     /// Linearized constraint true violation measure.

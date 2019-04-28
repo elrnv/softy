@@ -37,6 +37,45 @@ pub fn build_contact_constraint(
     })
 }
 
+
+/// A common pattern occuring with contact constraints becoming active and inactive is remapping
+/// values computed in a simulation step to the values available in the next step with a different
+/// set of active constraints. This is necessary for pure contact warm starts as well as friction
+/// impulses being carried over to the next step.
+///
+/// `values` is a set of values that need to be remapped to the new active set.
+/// `old_indices` is a set of indices corresponding to the old active set.
+/// `new_indices` is a set of indices corresponding to the new active set.
+/// It is assumed that `old_indices` and `new_indices` are given in a sorted order.
+/// It is assumed that old_indices return the same number of elements as `values`.
+pub fn remap_values<T: Copy>(
+    values: impl Iterator<Item = T>,
+    default: T,
+    old_indices: impl Iterator<Item = usize> + Clone,
+    new_indices: impl Iterator<Item = usize> + Clone,
+) -> Vec<T> {
+    // Check that both input slices are sorted.
+    debug_assert!(is_sorted::IsSorted::is_sorted(&mut old_indices.clone()));
+    debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
+    let mut old_iter = values.zip(old_indices);
+
+    new_indices.map(move |new_idx| {
+        let mut new_val = default;
+        for (val, old_idx) in &mut old_iter {
+            if old_idx < new_idx {
+                continue;
+            }
+
+            if old_idx == new_idx {
+                new_val = val;
+            }
+
+            break;
+        }
+        new_val
+    }).collect()
+}
+
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
@@ -46,6 +85,11 @@ pub trait ContactConstraint:
     fn subtract_friction_force(&self, grad: &mut [f64]);
     /// Compute the frictional energy dissipation.
     fn frictional_dissipation(&self, dx: &[f64]) -> f64;
+    /// Remap existing friction forces to an updated neighbourhood set. This function will be
+    /// called when neighbourhood information changes to ensure correct correspondence of friction
+    /// forces to vertices. It may be not necessary to implement this function if friction forces are
+    /// stored on the entire mesh.
+    fn remap_friction(&mut self, old_indices: &[Index]) {}
     fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]);
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
@@ -60,7 +104,10 @@ pub trait ContactConstraint:
     /// query points cached.
     fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error>;
     /// Update the cache of query point neighbourhoods and return `true` if cache has changed.
-    fn update_cache(&mut self) -> bool;
+    /// Note that this function doesn't remap any data corresponding to the old neighbourhood
+    /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
+    /// old data needed to perform the remapping of any user data.
+    fn update_cache(&mut self, pos: Option<&[f64]>, disp: Option<&[f64]>) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser
@@ -68,4 +115,19 @@ pub trait ContactConstraint:
     /// will be errors in the derivative. It is the callers responsibility to set this step
     /// accurately.
     fn update_max_step(&mut self, max_step: f64);
+
+    ///// Update cache, return true if changed along with the mapping to original constraints.
+    ///// For constraints with no mapping to an old constraint, the corresponding index will be
+    ///// invalid.
+    //fn update_cache_with_mapping(&mut self, pos: &[f64], disp: &[f64]) -> Result<(bool, Vec<Index>), crate::Error> {
+    //    let old_indices = self.active_constraint_indices()?;
+    //    let seq = (0..).map(|i| Index::new(i));
+    //    if self.update_cache(Some(pos), Some(disp)) {
+    //        let new_indices = self.active_constraint_indices()?;
+    //        let mapping = remap_values(seq, Index::invalid(), &old_indices, &new_indices);
+    //        Ok((true, mapping))
+    //    } else {
+    //        Ok((false, seq.take(old_indices.len()).collect::<Vec<_>>()))
+    //    }
+    //}
 }

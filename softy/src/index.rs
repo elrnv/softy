@@ -27,6 +27,12 @@ impl Index {
         Index(i)
     }
 
+    /// Convert this `Index` into `Option<usize>`, which is a larger struct.
+    #[inline]
+    pub fn into_option(self) -> Option<usize> {
+        self.into()
+    }
+
     /// Return true if stored index is valid and false otherwise.
     #[inline]
     pub fn is_valid(self) -> bool {

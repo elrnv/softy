@@ -467,6 +467,9 @@ impl ContactConstraint for PointContactConstraint {
 
     fn subtract_friction_force(&self, grad: &mut [f64]) {
         if let Some(ref friction) = self.friction {
+            if friction.force.is_empty() {
+                return;
+            }
             assert_eq!(grad.len(), friction.force.len() * 3);
             for (&i, f) in self.sample_verts.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
@@ -570,10 +573,29 @@ impl ContactConstraint for PointContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self) -> bool {
+    fn update_cache(&mut self, pos: Option<&[f64]>, disp: Option<&[f64]>) -> bool {
+        use reinterpret::*;
         let mesh = self.collision_object.borrow();
         let query_points = reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions());
         let surf = self.implicit_surface.borrow_mut();
+        if let Some(pos) = pos {
+            if let Some(disp) = disp {
+                self.update_surface_with_displacement(pos, disp);
+            } else {
+                let pos: &[[f64;3]] = reinterpret_slice(pos);
+                let points_iter = self.sample_verts.iter().map(|&i| pos[i]);
+                self.implicit_surface.borrow_mut().update(points_iter);
+            }
+        } else { // no positions given
+            if let Some(disp) = disp {
+                let mut surf = self.implicit_surface.borrow_mut();
+                let pos = surf.surface_vertex_positions().to_vec();
+                let disp: &[Vector3<f64>] = reinterpret_slice(disp);
+                let points_iter = self.sample_verts.iter().map(|&i| (pos[i] + disp[i]).into());
+                surf.update(points_iter);
+            }
+            // Else don't update the surface at all.
+        }
         surf.invalidate_query_neighbourhood();
         surf.cache_neighbours(query_points)
     }

@@ -647,8 +647,6 @@ impl Solver {
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
     pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
-        self.problem_mut().update_constraints();
-
         // Solve non-linear problem
         let ipopt::SolveResult {
             // unpack ipopt result
@@ -902,65 +900,56 @@ impl Solver {
         self.problem().initial_residual_error
     }
 
-    /// Second output is whether the sparsity pattern has changed after we updated it.
-    pub fn probe_contact_constraint_violation(&mut self) -> (f64, bool) {
-        let SolverDataMut {
-            problem, solution, ..
-        } = self.solver.solver_data_mut();
-
-        problem.probe_contact_constraint_violation(solution.primal_variables)
-    }
-
     /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
     /// return false to indicate that the same step should be taken again.
     fn check_inner_step(&mut self) -> bool {
         if let Some(radius) = self.contact_radius() {
-            let dx = self.dx();
-            let step = inf_norm(dx);
+            let step = inf_norm(self.dx());
 
-            // Note: at the time of this writing, the sparsity_changed indicator can
-            // have false negatives (no change detected, but really there was a
-            // change). In which case we would be skipping an opportunity to do a more
-            // accurate step.
-            let (constraint_violation, sparsity_changed) =
-                self.probe_contact_constraint_violation();
+            let old_active_set = self.problem().active_constraint_set();
+            let constraint_violation = {
+                let SolverDataMut {
+                    problem, solution, ..
+                } = self.solver.solver_data_mut();
+                // Note: at the time of this writing, the sparsity_changed indicator can
+                // have false negatives (no change detected, but really there was a
+                // change). In which case we would be skipping an opportunity to do a more
+                // accurate step.
+                let _ = problem.update_constraint_set(Some(solution.clone()));
+
+                problem.probe_contact_constraint_violation(solution)
+            };
 
             let initial_error = self.initial_residual_error();
             let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
             dbg!(constraint_violation);
-            if constraint_violation > relative_tolerance {
-                // intersecting objects (allow leeway)
-                if self.max_step + radius >= step && !sparsity_changed {
-                    // Sparsity hasn't changed but constraint is still violated.
-                    // Nothing else we can do, just accept the solution and move on.
-                    return true;
-                }
+            let step_acceptable = if constraint_violation > relative_tolerance {
+                // intersecting objects detected (allow leeway via relative_tolerance)
+                if self.max_step < step {
+                    println!("[softy] Increasing max step to {}", step);
+                    self.update_max_step(step);
+                    self.problem_mut().reset_constraint_set(); // Reset constraints back to original config
 
-                // Check that the reason we are in this mess is actually because of the step size
-                if self.max_step + radius < step {
-                    println!("[softy] Increasing max step to {}", step - radius);
-                    self.update_max_step(step - radius);
+                    // We don't commit the solution here because it may be far from the
+                    // true solution, just redo the whole solve with the right
+                    // neighbourhood information.
+                    false
                 } else {
-                    // sparsity_chagned
-                    // Sparsity pattern must have changed, simply update constraint
-                    // multipliers and repeat the step.
-                    println!(
-                        "[softy] Sparsity has changed, constraint violation: {:?}",
-                        constraint_violation
-                    );
+                    // The step is smaller than max_step and the constraint is still violated.
+                    // Nothing else we can do, just accept the solution and move on.
+                    true
                 }
-
-                // We don't commit the solution here because it may be far from the
-                // true solution, just redo the whole solve with the right
-                // neighbourhood information.
-                false
             } else {
                 // The solution is good, commit the solution, reset the max_step,  and
                 // continue.
                 println!("[softy] Decreasing max step to {}", (step - radius).max(0.0));
                 self.update_max_step((step - radius).max(0.0));
                 true
-            }
+            };
+
+            // Remap multipliers for warm start.
+            self.problem_mut().remap_multipliers(old_active_set.into_iter());
+            step_acceptable
         } else {
             // No contact constraints, all solutions are good.
             true

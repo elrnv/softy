@@ -154,7 +154,13 @@ impl ContactConstraint for ImplicitContactConstraint {
 
     fn subtract_friction_force(&self, grad: &mut [f64]) {
         if let Some(ref friction) = self.friction {
+            if friction.force.is_empty() {
+                return;
+            }
+
             let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+
+            assert_eq!(indices.len(), friction.force.len());
 
             for (&i, f) in indices.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
@@ -167,7 +173,13 @@ impl ContactConstraint for ImplicitContactConstraint {
     fn frictional_dissipation(&self, dx: &[f64]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref friction) = self.friction {
+            if friction.force.is_empty() {
+                return dissipation;
+            }
+
             let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+
+            assert_eq!(indices.len(), friction.force.len());
 
             for (&i, f) in indices.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
@@ -176,6 +188,21 @@ impl ContactConstraint for ImplicitContactConstraint {
             }
         }
         dissipation
+    }
+
+    fn remap_friction(&mut self, old_indices: &[Index]) {
+        // Remap friction forces the same way we remap constraint multipliers for the contact
+        // solve.
+        if let Some(ref mut friction) = self.friction {
+            let mut new_friction_forces = friction.force.clone();
+            new_friction_forces.resize(old_indices.len(), [0.0; 3]);
+            for (old_idx, new_f) in old_indices.iter().zip(new_friction_forces.iter_mut())
+                .filter_map(|(&idx, f)| idx.into_option().map(|i| (i, f)))
+            {
+                *new_f = friction.force[old_idx];
+            }
+            std::mem::replace(&mut friction.force, new_friction_forces);
+        }
     }
 
     /// For visualization purposes.
@@ -232,10 +259,28 @@ impl ContactConstraint for ImplicitContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self) -> bool {
-        let sim_mesh = self.simulation_mesh.borrow();
-        let vert_pos = sim_mesh.vertex_positions();
-        self.update_query_points(self.simulation_surf_verts.iter().map(|&i| vert_pos[i]));
+    fn update_cache(&mut self, pos: Option<&[f64]>, disp: Option<&[f64]>) -> bool {
+        if let Some(pos) = pos {
+            if let Some(disp) = disp {
+                self.update_query_points_with_displacement(pos, disp);
+            } else {
+                let pos: &[[f64;3]] = reinterpret_slice(pos);
+                self.update_query_points(self.simulation_surf_verts.iter().map(|&i| pos[i]));
+            }
+        } else {
+            let sim_mesh = self.simulation_mesh.borrow();
+            let vert_pos: &[Vector3<f64>] = reinterpret_slice(sim_mesh.vertex_positions());
+            if let Some(disp) = disp {
+                let disp: &[Vector3<f64>] = reinterpret_slice(disp);
+                self.update_query_points(
+                    self.simulation_surf_verts
+                        .iter()
+                        .map(|&i| (vert_pos[i] + disp[i]).into())
+                );
+            } else {
+                self.update_query_points(self.simulation_surf_verts.iter().map(|&i| vert_pos[i].into()));
+            }
+        }
 
         let collision_mesh = self.collision_object.borrow();
         let mut surf = self.implicit_surface.borrow_mut();

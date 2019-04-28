@@ -233,7 +233,7 @@ impl Neighbourhood {
         Some(changed)
     }
 
-    /// Compute neighbouroods. Teturn `true` if neighbourhood sparsity has changed and false
+    /// Compute neighbouroods. Return `true` if neighbourhood sparsity has changed and `false`
     /// otherwise.
     pub(crate) fn compute_neighbourhoods<'a, T, I, N, C>(
         &mut self,

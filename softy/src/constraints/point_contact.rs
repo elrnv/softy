@@ -403,6 +403,11 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
+    fn clear_friction_force(&mut self) {
+        if let Some(ref mut friction) = self.friction {
+            friction.force.clear();
+        }
+    }
     fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool {
         use reinterpret::*;
 
@@ -412,7 +417,7 @@ impl ContactConstraint for PointContactConstraint {
 
         let normals = self.contact_normals(reinterpret_slice(x), reinterpret_slice(dx))
             .expect("Failed to compute contact normals.");
-        let surf_indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+        let query_indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
 
         let friction = self.friction.as_mut().unwrap();
 
@@ -423,12 +428,31 @@ impl ContactConstraint for PointContactConstraint {
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
 
-        // Friction force in physical space at contact positions
-        let mut friction_force = vec![Vector3::zeros(); query_points.len()];
+        // Compute contact jacobian
+        let surf = self.implicit_surface.borrow();
 
-        for (contact_idx, (surf_idx, &cf)) in zip!(surf_indices.into_iter(), contact_force.iter()).enumerate() {
-            let vtx_idx = self.sample_verts[surf_idx];
-            let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
+        let mut cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices()
+            .expect("Failed to get contact jacobian size.")];
+        surf.contact_jacobian_matrices(query_points, &mut cj_matrices)
+            .expect("Failed to compute contact jacobian.");
+        let cj_indices_iter = surf.contact_jacobian_matrix_indices_iter()
+            .expect("Failed to get contact jacobian indices.");
+
+        // Friction force in physical space at contact positions.
+        let mut friction_force = vec![Vector3::zeros(); query_points.len()];
+        // Velocity (Displacement) in physical space at contact positions.
+        let mut displacement = vec![Vector3::zeros(); query_points.len()];
+
+        // Compute product J*u to produce velocities (displacements) at each point of contact in
+        // physical space.
+        for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
+            let vtx_idx = self.sample_verts[c];
+            displacement[r] = (displacement[r] + Matrix3(m) * Vector3(dx[vtx_idx])).into();
+        }
+
+        for (contact_idx, (query_idx, &cf)) in zip!(query_indices.into_iter(), contact_force.iter()).enumerate() {
+            let disp: [f64;3] = displacement[query_idx].into();
+            let v = friction.to_contact_coordinates(disp, contact_idx);
             let f = if v[0] <= 0.0 {
                 let v_t = Vector2([v[1], v[2]]); // Tangential component
                 let mag = v_t.norm();
@@ -438,7 +462,7 @@ impl ContactConstraint for PointContactConstraint {
             } else {
                 Vector3::zeros()
             };
-            friction_force[surf_idx] = f;
+            friction_force[query_idx] = f;
         }
 
         // Now we apply the contact jacobian to map the frictional forces at contact points (on
@@ -449,16 +473,11 @@ impl ContactConstraint for PointContactConstraint {
         friction.force.clear();
         friction.force.resize(self.sample_verts.len(), [0.0; 3]);
 
-        let surf = self.implicit_surface.borrow();
-
-        let mut cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices().expect("Failed to get contact jacobian size.")];
-        surf.contact_jacobian_matrices(query_points, &mut cj_matrices).expect("Failed to compute contact jacobian.");
-
         let cj_indices_iter = surf.contact_jacobian_matrix_indices_iter()
             .expect("Failed to get contact jacobian indices.");
 
         // Copute transpose product J^T*f
-        for ((r, c), m) in cj_indices_iter.zip(cj_matrices.into_iter()) {
+        for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
             friction.force[c] = (Vector3(friction.force[c]) + Matrix3(m).transpose() * friction_force[r]).into();
         }
         
@@ -470,7 +489,7 @@ impl ContactConstraint for PointContactConstraint {
             if friction.force.is_empty() {
                 return;
             }
-            assert_eq!(grad.len(), friction.force.len() * 3);
+            assert_eq!(self.sample_verts.len(), friction.force.len());
             for (&i, f) in self.sample_verts.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
                     grad[3*i + j] -= f[j];
@@ -577,7 +596,6 @@ impl ContactConstraint for PointContactConstraint {
         use reinterpret::*;
         let mesh = self.collision_object.borrow();
         let query_points = reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions());
-        let surf = self.implicit_surface.borrow_mut();
         if let Some(pos) = pos {
             if let Some(disp) = disp {
                 self.update_surface_with_displacement(pos, disp);
@@ -596,6 +614,7 @@ impl ContactConstraint for PointContactConstraint {
             }
             // Else don't update the surface at all.
         }
+        let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_query_neighbourhood();
         surf.cache_neighbours(query_points)
     }

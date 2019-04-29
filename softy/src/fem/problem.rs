@@ -187,8 +187,12 @@ impl NonLinearProblem {
     pub fn intermediate_cb(&mut self, data: ipopt::IntermediateCallbackData) -> bool {
         if data.iter_count == 0 {
             // Record the initial max of dual and primal infeasibility.
-            self.initial_residual_error = data.inf_pr.max(data.inf_du);
+            if data.inf_du > 0.0 {
+                self.initial_residual_error = data.inf_du;
+            }
         }
+        dbg!(data.inf_pr);
+        dbg!(data.inf_du);
 
         self.iterations += 1;
         !(self.interrupt_checker)()
@@ -211,6 +215,12 @@ impl NonLinearProblem {
         }
 
         active_set
+    }
+
+    pub fn clear_friction_impulses(&mut self) {
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            scc.clear_friction_force();
+        }
     }
 
     /// Restore the constraint set.
@@ -236,11 +246,25 @@ impl NonLinearProblem {
 
     /// Build a new set of multipliers from the old set and replace warm start multipliers with the
     /// new set.
-    pub fn remap_multipliers(&mut self, old_constraint_set: impl Iterator<Item = usize> + Clone) {
+    pub fn remap_contacts(&mut self, mut old_constraint_set: impl Iterator<Item = usize> + Clone) {
         use crate::constraints::remap_values;
-        let new_constraint_set = self.active_constraint_set();
-        let new_multipliers = remap_values(self.warm_start.constraint_multipliers.iter().cloned(), 0.0, old_constraint_set, new_constraint_set.into_iter());
+        let mut new_constraint_set = self.active_constraint_set().into_iter();
+
+        // Remap multipliers
+        let new_multipliers = remap_values(self.warm_start.constraint_multipliers.iter().cloned(), 0.0, old_constraint_set.clone(), new_constraint_set.clone());
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+
+        // Remap friction forces (if any)
+        if let Some(ref mut scc) = self.smooth_contact_constraint {
+            if self.volume_constraint.is_some() {
+                // Consume the first constraint if any.
+                old_constraint_set.next();
+                new_constraint_set.next();
+            }
+            let old_set: Vec<_> = old_constraint_set.collect();
+            let new_set: Vec<_> = new_constraint_set.collect();
+            scc.remap_friction(&old_set, &new_set);
+        }
     }
 
     ///// Update all stateful constraints with the most recent data. This also involves remapping any
@@ -315,6 +339,10 @@ impl NonLinearProblem {
 
             (old_warm_start, old_prev_pos, old_prev_vel)
         };
+
+        if !and_warm_start {
+            self.reset_warm_start();
+        }
 
         //if and_warm_start {
         //    self.update_warm_start(solution);
@@ -507,13 +535,14 @@ impl NonLinearProblem {
         obj
     }
 
-    /// Return true if the friction impulse was successfully updated, and false otherwise.
-    pub fn update_friction_impulse(&mut self, displacement: &[[f64; 3]]) -> bool {
+    /// Return true if the friction impulse was updated, and false otherwise.
+    pub fn update_friction_impulse(&mut self, solution: ipopt::Solution) -> bool {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
+            let displacement: &[[f64; 3]] = reinterpret::reinterpret_slice(solution.primal_variables);
             let offset = if self.volume_constraint.is_some() { 1 } else { 0 };
-            let contact_force = &self.warm_start.constraint_multipliers[offset..];
+            let contact_force = &solution.constraint_multipliers[offset..];
             scc.update_friction_force(contact_force, position, displacement)
         } else {
             false
@@ -527,7 +556,7 @@ impl NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint {
             scc.subtract_friction_force(&mut impulse);
             for f in impulse.iter_mut() {
-                *f *= self.time_step; // convert force to impulse
+                *f *= -self.time_step; // convert force to impulse
             }
         }
         reinterpret::reinterpret_vec(impulse)
@@ -789,6 +818,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn initial_constraint_multipliers(&self, lambda: &mut [Number]) -> bool {
         // The constrained points may change between updating the warm start and using it here.
+        assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
         lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
         true
     }

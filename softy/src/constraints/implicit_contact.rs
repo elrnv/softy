@@ -118,6 +118,11 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
+    fn clear_friction_force(&mut self) {
+        if let Some(ref mut friction) = self.friction {
+            friction.force.clear();
+        }
+    }
     fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool {
         if self.friction.is_none() {
             return false;
@@ -138,15 +143,15 @@ impl ContactConstraint for ImplicitContactConstraint {
         for (contact_idx, (surf_idx, &cf)) in zip!(surf_indices.into_iter(), contact_force.iter()).enumerate() {
             let vtx_idx = self.simulation_surf_verts[surf_idx];
             let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
-            let f = if v[0] <= 0.0 {
-                let v_t = Vector2([v[1], v[2]]); // Tangential component
-                let mag = v_t.norm();
-                let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
-                let f_t = dir * (mu * cf);
-                Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into())
-            } else {
-                Vector3::zeros()
-            };
+            let v_t = Vector2([v[1], v[2]]); // Tangential component
+            let mag = v_t.norm();
+            let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
+            let f_t = dir * (mu * cf); // cf is already negative because of normal orientation.
+            let f = Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into());
+            let v_: [f64;3] = v.into();
+            let f_: [f64;3] = f.into();
+            let dot = Vector3(v_).dot(Vector3(f_));
+            println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", v_, f_, cf, dot);
             friction.force.push(f.into());
         }
         true
@@ -190,17 +195,11 @@ impl ContactConstraint for ImplicitContactConstraint {
         dissipation
     }
 
-    fn remap_friction(&mut self, old_indices: &[Index]) {
+    fn remap_friction(&mut self, old_set: &[usize], new_set: &[usize]) {
         // Remap friction forces the same way we remap constraint multipliers for the contact
         // solve.
         if let Some(ref mut friction) = self.friction {
-            let mut new_friction_forces = friction.force.clone();
-            new_friction_forces.resize(old_indices.len(), [0.0; 3]);
-            for (old_idx, new_f) in old_indices.iter().zip(new_friction_forces.iter_mut())
-                .filter_map(|(&idx, f)| idx.into_option().map(|i| (i, f)))
-            {
-                *new_f = friction.force[old_idx];
-            }
+            let new_friction_forces = crate::constraints::remap_values(friction.force.iter().cloned(), [0.0;3], old_set.iter().cloned(), new_set.iter().cloned());
             std::mem::replace(&mut friction.force, new_friction_forces);
         }
     }

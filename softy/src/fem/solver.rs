@@ -657,6 +657,7 @@ impl Solver {
         } = self.solver.solve();
 
         let iterations = solver_data.problem.pop_iteration_count() as u32;
+        solver_data.problem.update_warm_start(solver_data.solution);
 
         let result = InnerSolveResult {
             iterations,
@@ -809,12 +810,31 @@ impl Solver {
         &mut self,
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
-        let SolverDataMut {
-            problem, solution, ..
-        } = self.solver.solver_data_mut();
+        let res = {
+            let SolverDataMut {
+                problem, solution, ..
+            } = self.solver.solver_data_mut();
 
-        // Advance internal state (positions and velocities) of the problem.
-        problem.advance(solution, and_warm_start)
+            // Advance internal state (positions and velocities) of the problem.
+            problem.advance(solution, and_warm_start)
+        };
+
+        // Comitting solution. Reduce max_step for next iteration.
+        if let Some(radius) = self.contact_radius() {
+            let SolverDataMut {
+                problem, solution, ..
+            } = self.solver.solver_data_mut();
+            if and_warm_start {
+                let step = inf_norm(solution.primal_variables);
+                // If warm start is selected, then this solution was good and we're not comitting
+                // it just for debugging
+                let new_max_step = (step - radius).max(self.max_step*0.5);
+                self.max_step = new_max_step;
+                problem.update_max_step(new_max_step);
+                problem.reset_constraint_set();
+            }
+        }
+        res
     }
 
     /// Revert previously committed solution. We just subtract step here.
@@ -902,11 +922,14 @@ impl Solver {
 
     /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
     /// return false to indicate that the same step should be taken again.
-    fn check_inner_step(&mut self) -> bool {
-        if let Some(radius) = self.contact_radius() {
+    /// In either case this function modifies the configuration of the constraints and updates the
+    /// constraint set. This means that the caller should take care to remap any constraint related
+    /// values as needed. The configuration may also need to be reverted.
+    fn check_inner_step(&mut self) -> (bool, Vec<usize>) {
+        let old_active_set = self.problem().active_constraint_set();
+        let step_accepted = if let Some(radius) = self.contact_radius() {
             let step = inf_norm(self.dx());
 
-            let old_active_set = self.problem().active_constraint_set();
             let constraint_violation = {
                 let SolverDataMut {
                     problem, solution, ..
@@ -923,37 +946,38 @@ impl Solver {
             let initial_error = self.initial_residual_error();
             let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
             dbg!(constraint_violation);
-            let step_acceptable = if constraint_violation > relative_tolerance {
+            dbg!(relative_tolerance);
+            if constraint_violation > relative_tolerance {
                 // intersecting objects detected (allow leeway via relative_tolerance)
                 if self.max_step < step {
-                    println!("[softy] Increasing max step to {}", step);
-                    self.update_max_step(step);
-                    self.problem_mut().reset_constraint_set(); // Reset constraints back to original config
+                    // Increase the max_step to be slightly bigger than the current step to avoid
+                    // floating point issues.
+                    println!("[softy] Increasing max step to {:e}", 1.1*step);
+                    self.update_max_step(1.1*step);
 
                     // We don't commit the solution here because it may be far from the
                     // true solution, just redo the whole solve with the right
                     // neighbourhood information.
                     false
                 } else {
+                    println!("[softy] Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
                     // The step is smaller than max_step and the constraint is still violated.
                     // Nothing else we can do, just accept the solution and move on.
                     true
                 }
             } else {
-                // The solution is good, commit the solution, reset the max_step,  and
-                // continue.
-                println!("[softy] Decreasing max step to {}", (step - radius).max(0.0));
-                self.update_max_step((step - radius).max(0.0));
+                // The solution is good, reset the max_step, and continue.
+                // TODO: There is room for optimization here. It may be better to reduce the max
+                // step but not to zero to prevent extra steps in the future.
+                println!("[softy] Solution accepted");
                 true
-            };
-
-            // Remap multipliers for warm start.
-            self.problem_mut().remap_multipliers(old_active_set.into_iter());
-            step_acceptable
+            }
         } else {
             // No contact constraints, all solutions are good.
             true
-        }
+        };
+        
+        (step_accepted, old_active_set)
     }
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
@@ -966,8 +990,7 @@ impl Solver {
             ..
         } = self.solver.solver_data_mut();
 
-        let displacement = reinterpret::reinterpret_slice::<_, [f64; 3]>(solution.primal_variables);
-        problem.update_friction_impulse(displacement)
+        problem.update_friction_impulse(solution)
     }
 
     /// Run the optimization solver on one time step.
@@ -1001,25 +1024,40 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
-                    if self.check_inner_step() {
+                    let (step_acceptable, old_active_set) = self.check_inner_step();
+                    if step_acceptable {
                         if friction_steps > 0 {
+                            self.problem_mut().reset_constraint_set();
+                            // TODO: verify that old_active_set is the same as new instead of
+                            // remapping here.
+                            self.problem_mut().remap_contacts(old_active_set.clone().into_iter());
                             if self.compute_friction_impulse() {
                                 friction_steps -= 1;
                                 continue;
                             }
                         }
                         self.commit_solution(true);
+                        self.problem_mut().remap_contacts(old_active_set.into_iter());
                         break;
                     }
+                    // Going to do another iteration, let's reset the constraints back to original
+                    // configuration ...
+                    self.problem_mut().reset_constraint_set();
+                    // ... and remap the constraint values
+                    self.problem_mut().remap_contacts(old_active_set.into_iter());
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
                     result = result.combine_inner_result(&step_result);
+                    let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(true);
+                    self.problem_mut().remap_contacts(old_active_set.into_iter());
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
+                    let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(false);
+                    self.problem_mut().remap_contacts(old_active_set.into_iter());
                     return Err(e);
                 }
             }
@@ -1042,6 +1080,9 @@ impl Solver {
         // Write back friction impulses
         self.add_friction_impulses_attrib();
         self.add_contact_impulses_attrib();
+
+        // Clear friction forces.
+        self.problem_mut().clear_friction_impulses();
 
         let mut mesh = self.borrow_mut_mesh();
 

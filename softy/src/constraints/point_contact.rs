@@ -447,21 +447,19 @@ impl ContactConstraint for PointContactConstraint {
         // physical space.
         for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
             let vtx_idx = self.sample_verts[c];
-            displacement[r] = (displacement[r] + Matrix3(m) * Vector3(dx[vtx_idx])).into();
+            displacement[r] += Matrix3(m) * Vector3(dx[vtx_idx]);
         }
+
+        assert_eq!(query_indices.len(), contact_force.len());
 
         for (contact_idx, (query_idx, &cf)) in zip!(query_indices.into_iter(), contact_force.iter()).enumerate() {
             let disp: [f64;3] = displacement[query_idx].into();
             let v = friction.to_contact_coordinates(disp, contact_idx);
-            let f = if v[0] <= 0.0 {
-                let v_t = Vector2([v[1], v[2]]); // Tangential component
-                let mag = v_t.norm();
-                let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
-                let f_t = dir * (-mu * cf);
-                Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into())
-            } else {
-                Vector3::zeros()
-            };
+            let v_t = Vector2([v[1], v[2]]); // Tangential component
+            let mag = v_t.norm();
+            let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
+            let f_t = dir * (mu * cf);
+            let f = Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into());
             friction_force[query_idx] = f;
         }
 

@@ -191,8 +191,6 @@ impl NonLinearProblem {
                 self.initial_residual_error = data.inf_du;
             }
         }
-        dbg!(data.inf_pr);
-        dbg!(data.inf_du);
 
         self.iterations += 1;
         !(self.interrupt_checker)()

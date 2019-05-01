@@ -40,8 +40,8 @@ pub fn make_grid(grid_params: Grid) -> PolyMesh<f64> {
     let mut positions = Vec::new();
 
     // iterate over vertices
-    for j in 0..cols + 1 {
-        for i in 0..rows + 1 {
+    for j in 0..=cols {
+        for i in 0..=rows {
             let r = -1.0 + 2.0 * (i as f64) / rows as f64;
             let c = -1.0 + 2.0 * (j as f64) / cols as f64;
             let node_pos = match orientation {

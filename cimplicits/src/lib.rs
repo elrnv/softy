@@ -144,8 +144,37 @@ pub unsafe extern "C" fn el_iso_compute_potential(
     }
 }
 
-/// Project the given positions to the given iso value of the potential field represented by this
-/// implicit surface.
+/// Project the given positions to below the given iso value of the potential field represented by
+/// this implicit surface. Only vertices with potentials below the given `iso_value` are actually
+/// modified.  The resulting projected `query_point_coords` are guaranteed to be
+/// below the given `iso_value` given that this function returns 0. Only query points within
+/// this surface's radius are considered for projection. Those projected will be within a
+/// `tolerance` of the given `iso_value` but strictly below the `iso_value`.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_project_to_below(
+    implicit_surface: *const EL_IsoSurface,
+    iso_value: f64,
+    tolerance: f64,
+    num_query_points: c_int,
+    query_point_coords: *mut f64,
+) -> c_int {
+    let coords = std::slice::from_raw_parts_mut(query_point_coords, num_query_points as usize * 3);
+    let query_points: &mut [[f64; 3]] = reinterpret_mut_slice(coords);
+
+    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+
+    match surf.project_to_below(iso_value, tolerance, query_points) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// Project the given positions to above the given iso value of the potential field represented by
+/// this implicit surface. Only vertices with potentials above the given `iso_value` are actually
+/// modified.  The resulting projected `query_point_coords` are guaranteed to be
+/// above the given `iso_value` given that this function returns 0. Only query points within
+/// this surface's radius are considered for projection. Those projected will be within a
+/// `tolerance` of the given `iso_value` but strictly above the `iso_value`.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_project_to_above(
     implicit_surface: *const EL_IsoSurface,

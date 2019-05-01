@@ -36,6 +36,15 @@ pub enum SampleType {
     Face,
 }
 
+/// Side of the implicit field. This is used to indicate a side of the implicit field with respect
+/// to some iso-value, where `Above` refers to the potential above the iso-value and `Below` refers
+/// to the potential below a certain iso-value.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Side {
+    Above,
+    Below,
+}
+
 /// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
 /// vector, this type will fit a vector field.
 #[derive(Clone, Debug)]
@@ -371,11 +380,26 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         }
     }
 
+    /// Project the given set of positions to be below the specified iso-value along the gradient.
+    /// If the query point is already below the given iso-value, then it is not modified.
+    /// The given `epsilon` determines how far below the iso-surface the point is allowed to be
+    /// projected, essentially it is the thickness below the iso-surface of value projections.
+    /// This function will return true if convergence is achieved and false if the projection needed
+    /// more iterations.
+    pub fn project_to_below(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<bool, super::Error> {
+        self.project(Side::Below, iso_value, epsilon, query_points)
+    }
+
     /// Project the given set of positions to be above the specified iso-value along the gradient.
     /// If the query point is already above the given iso-value, then it is not modified.
     /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
     /// projected, essentially it is the thickness above the iso-surface of value projections.
-    /// This function will return true if convergence is achieve and false if the projection needed
+    /// This function will return true if convergence is achieved and false if the projection needed
     /// more iterations.
     pub fn project_to_above(
         &self,
@@ -383,6 +407,26 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         epsilon: T,
         query_points: &mut [[T; 3]],
     ) -> Result<bool, super::Error> {
+        self.project(Side::Above, iso_value, epsilon, query_points)
+    }
+
+    /// Project the given set of positions to be above (below) the specified iso-value along the
+    /// gradient.  If the query point is already above (below) the given iso-value, then it is not
+    /// modified.  The given `epsilon` determines how far above (below) the iso-surface the point
+    /// is allowed to be projected, essentially it is the thickness above (below) the iso-surface
+    /// of value projections.  This function will return true if convergence is achieved and false
+    /// if the projection needed more iterations.
+    pub fn project(
+        &self,
+        side: Side,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<bool, super::Error> {
+
+        let multiplier = match side { Side::Above => T::one(), Side::Below => -T::one() };
+        let iso_value = iso_value * multiplier;
+
         let mut candidate_points = query_points.to_vec();
         let mut potential = vec![T::zero(); query_points.len()];
         let mut candidate_potential = vec![T::zero(); query_points.len()];
@@ -395,6 +439,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         for i in 0..max_steps {
             self.potential(query_points, &mut potential)?;
+            potential.iter_mut().for_each(|x| *x *= multiplier);
 
             // Count the number of points with values less than iso_value.
             let count_violations = potential.iter().filter(|&&x| x < iso_value).count();
@@ -412,7 +457,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             {
                 let nml = Vector3(*step);
                 let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / nml.norm();
-                *step = (nml * offset).into();
+                *step = (nml * (multiplier * offset)).into();
             }
 
             for j in 0..max_binary_search_iters {
@@ -429,6 +474,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 }
 
                 self.potential(&candidate_points, &mut candidate_potential)?;
+                candidate_potential.iter_mut().for_each(|x| *x *= multiplier);
 
                 let mut count_overshoots = 0;
                 for (step, _, _) in zip!(
@@ -1173,10 +1219,15 @@ mod tests {
 
     // Helper function for testing. This is an implicit surface and grid mesh pair where each
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
-    fn make_octahedron_and_grid_local() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
+    // surface.
+    fn make_octahedron_and_grid_local(reverse: bool) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
+        if reverse {
+            sphere.reverse();
+        }
 
         // Translate the mesh slightly in z.
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
@@ -1209,10 +1260,15 @@ mod tests {
 
     // Helper function for testing. This is an implicit surface and grid mesh pair where each
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
-    fn make_octahedron_and_grid() -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
+    // surface.
+    fn make_octahedron_and_grid(reverse: bool) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
+        if reverse {
+            sphere.reverse();
+        }
 
         // Translate the mesh slightly in z.
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
@@ -1242,7 +1298,8 @@ mod tests {
         Ok((surface, grid))
     }
 
-    fn projection_tester(surface: ImplicitSurface, mut grid: PolyMesh<f64>) -> Result<(), crate::Error> {
+    fn projection_tester(surface: &ImplicitSurface, mut grid: PolyMesh<f64>, side: Side) -> Result<(), crate::Error> {
+        let epsilon = 1e-4;
         let init_potential = {
             // Get grid node positions to be projected.
             let pos = grid.vertex_positions_mut();
@@ -1252,25 +1309,39 @@ mod tests {
             surface.potential(pos, &mut init_potential)?;
 
             // Project grid outside the implicit surface.
-            assert!(surface.project_to_above(0.0, 1e-4, pos)?);
+            assert!(surface.project(side, 0.0, epsilon, pos)?);
             init_potential
         };
 
-        //geo::io::save_polymesh(&grid, &std::path::PathBuf::from("out/mesh.vtk"))?;
-
-        let pos = grid.vertex_positions();
-
+        
         // Compute potential after projection.
-        let mut final_potential = vec![0.0; pos.len()];
-        surface.potential(pos, &mut final_potential)?;
+        let mut final_potential = vec![0.0; init_potential.len()];
+        surface.potential(grid.vertex_positions(), &mut final_potential)?;
+
+        //use geo::mesh::topology::VertexIndex;
+        //grid.set_attrib_data::<_, VertexIndex>("init_potential", &init_potential);
+        //grid.set_attrib_data::<_, VertexIndex>("final_potential", &final_potential);
+        //geo::io::save_polymesh(&grid, &std::path::PathBuf::from("out/mesh.vtk"))?;
 
         for (&old, &new) in init_potential.iter().zip(final_potential.iter()) {
             // Check that all vertices are outside the implicit solid.
-            assert!(new >= 0.0, "old = {}", old);
-            if old < 0.0 {
-                // Check that the projected vertices are now within the narrow band of valid
-                // projections (between 0 and 1e-4).
-                assert!(new <= 1e-4, "new = {}", new);
+            match side {
+                Side::Above => {
+                    assert!(new >= 0.0, "new = {}, old = {}", new, old);
+                    if old < 0.0 {
+                        // Check that the projected vertices are now within the narrow band of valid
+                        // projections (between 0 and epsilon).
+                        assert!(new <= epsilon, "new = {}", new);
+                    }
+                }
+                Side::Below => {
+                    assert!(new <= 0.0, "new = {}, old = {}", new, old);
+                    if old > 0.0 {
+                        // Check that the projected vertices are now within the narrow band of valid
+                        // projections (between 0 and epsilon).
+                        assert!(new >= -epsilon, "new = {}", new);
+                    }
+                }
             }
         }
 
@@ -1281,22 +1352,26 @@ mod tests {
     /// implicit surface.
     #[test]
     fn local_projection_test() -> Result<(), crate::Error> {
-        let (surface, grid) = make_octahedron_and_grid_local()?;
-        projection_tester(surface, grid)
+        let (surface, grid) = make_octahedron_and_grid_local(false)?;
+        projection_tester(&surface, grid, Side::Above)?;
+        let (surface, grid) = make_octahedron_and_grid_local(true)?;
+        projection_tester(&surface, grid, Side::Below)
     }
 
     /// Test projection where some projected vertices may not have a local neighbourhood at all.
     /// This is a more complex test than the local_projection_test
     #[test]
     fn global_projection_test() -> Result<(), crate::Error> {
-        let (surface, grid) = make_octahedron_and_grid()?;
-        projection_tester(surface, grid)
+        let (surface, grid) = make_octahedron_and_grid(false)?;
+        projection_tester(&surface, grid, Side::Above)?;
+        let (surface, grid) = make_octahedron_and_grid(true)?;
+        projection_tester(&surface, grid, Side::Below)
     }
 
     #[test]
     fn cached_neighbourhoods() -> Result<(), crate::Error> {
         // Local test
-        let (surface, grid) = make_octahedron_and_grid_local()?;
+        let (surface, grid) = make_octahedron_and_grid_local(false)?;
         surface.cache_neighbours(grid.vertex_positions());
         assert_eq!(
             surface.num_cached_neighbourhoods()?,
@@ -1304,7 +1379,7 @@ mod tests {
         );
 
         // Non-local test
-        let (surface, grid) = make_octahedron_and_grid()?;
+        let (surface, grid) = make_octahedron_and_grid(false)?;
         surface.cache_neighbours(grid.vertex_positions());
         assert_eq!(
             surface.num_cached_neighbourhoods()?,

@@ -100,8 +100,12 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
                 _ => softy::MuStrategy::Adaptive,
             },
             max_gradient_scaling,
-            log_file: unsafe { std::ffi::CStr::from_ptr(log_file).to_str().ok().map(|path|
-                std::path::PathBuf::from(path.to_string())) }
+            log_file: unsafe {
+                std::ffi::CStr::from_ptr(log_file)
+                    .to_str()
+                    .ok()
+                    .map(|path| std::path::PathBuf::from(path.to_string()))
+            },
         }
     }
 }
@@ -150,12 +154,8 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
                     tolerance,
                     radius_multiplier,
                 },
-                2 => softy::KernelType::Cubic {
-                    radius_multiplier,
-                },
-                _ => softy::KernelType::Global {
-                    tolerance,
-                },
+                2 => softy::KernelType::Cubic { radius_multiplier },
+                _ => softy::KernelType::Global { tolerance },
             },
             contact_type: match contact_type {
                 0 => softy::ContactType::Implicit,
@@ -163,7 +163,7 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             },
             friction_params: Some(softy::FrictionParams {
                 dynamic_friction: f64::from(dynamic_friction),
-            })
+            }),
         }
     }
 }
@@ -247,7 +247,7 @@ where
             Err(softy::Error::AttribError(err)) =>
                 return (None, None, CookResult::Warning(
                         format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
-            Err(err) => 
+            Err(err) =>
                 return (None, None, CookResult::Error(
                         format!("Error updating tetmesh vertices. ({:?})", err))),
             _ => {}

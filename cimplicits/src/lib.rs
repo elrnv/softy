@@ -250,8 +250,10 @@ pub unsafe extern "C" fn el_iso_project_to_above(
 // below.
 macro_rules! impl_num_jac_entries {
     ($iso:ident.$fn:ident ()) => {
-        (&*($iso as *const implicits::ImplicitSurface)).$fn().unwrap_or(0) as c_int
-    }
+        (&*($iso as *const implicits::ImplicitSurface))
+            .$fn()
+            .unwrap_or(0) as c_int
+    };
 }
 
 macro_rules! impl_jac_indices {
@@ -271,7 +273,7 @@ macro_rules! impl_jac_indices {
             }
             Err(_) => 1,
         }
-    }
+    };
 }
 
 macro_rules! impl_jac_values {
@@ -285,7 +287,7 @@ macro_rules! impl_jac_values {
             Ok(()) => 0,
             Err(_) => 1,
         }
-    }
+    };
 }
 
 /// Get the number of entries in the sparse Jacobian of the implicit function with respect to surface
@@ -298,7 +300,9 @@ macro_rules! impl_jac_values {
 /// This function determines the sizes of the mutable arrays expected in
 /// `el_iso_surface_jacobian_indices` and `el_iso_surface_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(
+    implicit_surface: *const EL_IsoSurface,
+) -> c_int {
     impl_num_jac_entries! {
         implicit_surface.num_surface_jacobian_entries()
     }
@@ -339,7 +343,9 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
 /// This function determines the sizes of the mutable arrays expected in
 /// `el_iso_query_jacobian_indices` and `el_iso_query_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(
+    implicit_surface: *const EL_IsoSurface,
+) -> c_int {
     impl_num_jac_entries! {
         implicit_surface.num_query_jacobian_entries()
     }
@@ -359,7 +365,7 @@ pub unsafe extern "C" fn el_iso_query_jacobian_indices(
     }
 }
 
-/// Compute query Jacobian for the given implicit function. 
+/// Compute query Jacobian for the given implicit function.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_query_jacobian_values(
     implicit_surface: *const EL_IsoSurface,
@@ -379,7 +385,9 @@ pub unsafe extern "C" fn el_iso_query_jacobian_values(
 /// This function determines the sizes of the mutable arrays expected in
 /// `el_iso_contact_jacobian_indices` and `el_iso_contact_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(
+    implicit_surface: *const EL_IsoSurface,
+) -> c_int {
     impl_num_jac_entries! {
         implicit_surface.num_contact_jacobian_entries()
     }
@@ -399,7 +407,7 @@ pub unsafe extern "C" fn el_iso_contact_jacobian_indices(
     }
 }
 
-/// Compute contact Jacobian for the given implicit function. 
+/// Compute contact Jacobian for the given implicit function.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_contact_jacobian_values(
     implicit_surface: *const EL_IsoSurface,
@@ -424,7 +432,9 @@ pub unsafe extern "C" fn el_iso_contact_jacobian_values(
 /// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
 /// This function will return 0 if no query points were previously cached.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(implicit_surface: *const EL_IsoSurface) -> c_int {
+pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(
+    implicit_surface: *const EL_IsoSurface,
+) -> c_int {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
     surf.num_surface_hessian_product_entries().unwrap_or(0) as c_int
 }
@@ -497,7 +507,8 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
 /// updated or there are zero cached query points.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_cached_query_points(
-    implicit_surface: *const EL_IsoSurface) -> c_int {
+    implicit_surface: *const EL_IsoSurface,
+) -> c_int {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
     surf.num_cached_query_points().unwrap_or(0) as c_int
 }
@@ -515,7 +526,8 @@ pub unsafe extern "C" fn el_iso_cached_neighbourhood_indices(
     cached_neighbourhood_indices: *mut c_int,
 ) -> bool {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    let cached_neighbourhood_indices = std::slice::from_raw_parts_mut(cached_neighbourhood_indices, num_query_points as usize);
+    let cached_neighbourhood_indices =
+        std::slice::from_raw_parts_mut(cached_neighbourhood_indices, num_query_points as usize);
 
     if let Ok(sizes) = surf.cached_neighbourhood_sizes() {
         assert_eq!(num_query_points as usize, sizes.len());
@@ -544,9 +556,7 @@ pub unsafe extern "C" fn el_iso_cached_neighbourhood_indices(
 /// Invalidate neighbour cache. This must be done explicitly after we have completed a simulation
 /// step. This implies that the implicit surface may change.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_invalidate_neighbour_cache(
-    implicit_surface: *const EL_IsoSurface,
-) {
+pub unsafe extern "C" fn el_iso_invalidate_neighbour_cache(implicit_surface: *const EL_IsoSurface) {
     let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
     surf.invalidate_query_neighbourhood();
 }
@@ -576,7 +586,7 @@ pub unsafe extern "C" fn el_iso_update(
     num_positions: c_int,
     position_coords: *const f64,
 ) -> c_int {
-    let coords= std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
+    let coords = std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
     let pos: &[[f64; 3]] = reinterpret_slice(coords);
     let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
     surf.update(pos.iter().cloned()) as c_int
@@ -598,9 +608,7 @@ pub unsafe extern "C" fn el_iso_update_max_step(
 
 /// Get the current MLS radius.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_get_radius(
-    implicit_surface: *mut EL_IsoSurface,
-) -> f32 {
+pub unsafe extern "C" fn el_iso_get_radius(implicit_surface: *mut EL_IsoSurface) -> f32 {
     let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
     surf.radius() as f32
 }

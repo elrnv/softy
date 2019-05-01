@@ -6,9 +6,7 @@ use geo::io::{
     convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
-use geo::mesh::{
-    attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions,
-};
+use geo::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
 use geo::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use reinterpret::reinterpret_slice;
@@ -220,7 +218,9 @@ pub unsafe extern "C" fn hr_tetmesh_attrib_iter(
         HRAttribLocation::HR_VERTEX => {
             HR_AttribIter::Vertex(mesh.mesh.attrib_dict::<topo::VertexIndex>().iter())
         }
-        HRAttribLocation::HR_CELL => HR_AttribIter::Cell(mesh.mesh.attrib_dict::<topo::CellIndex>().iter()),
+        HRAttribLocation::HR_CELL => {
+            HR_AttribIter::Cell(mesh.mesh.attrib_dict::<topo::CellIndex>().iter())
+        }
         HRAttribLocation::HR_CELLVERTEX => {
             HR_AttribIter::CellVertex(mesh.mesh.attrib_dict::<topo::CellVertexIndex>().iter())
         }
@@ -244,7 +244,9 @@ pub unsafe extern "C" fn hr_polymesh_attrib_iter(
         HRAttribLocation::HR_VERTEX => {
             HR_AttribIter::Vertex(mesh.mesh.attrib_dict::<topo::VertexIndex>().iter())
         }
-        HRAttribLocation::HR_FACE => HR_AttribIter::Face(mesh.mesh.attrib_dict::<topo::FaceIndex>().iter()),
+        HRAttribLocation::HR_FACE => {
+            HR_AttribIter::Face(mesh.mesh.attrib_dict::<topo::FaceIndex>().iter())
+        }
         HRAttribLocation::HR_FACEVERTEX => {
             HR_AttribIter::FaceVertex(mesh.mesh.attrib_dict::<topo::FaceVertexIndex>().iter())
         }
@@ -657,7 +659,9 @@ pub unsafe extern "C" fn hr_make_pointcloud(
         "Given coordinate array size is not a multiple of 3."
     );
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
-    let ptcloud = Box::new(HR_PointCloud { mesh: geo::mesh::PointCloud::new(verts) });
+    let ptcloud = Box::new(HR_PointCloud {
+        mesh: geo::mesh::PointCloud::new(verts),
+    });
     Box::into_raw(ptcloud)
 }
 
@@ -672,7 +676,9 @@ macro_rules! make_mesh_impl {
         let indices = $convert;
         let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
 
-        let mesh = Box::new($hr_mesh { mesh: geo::mesh::$mesh_ty::new(verts, indices) });
+        let mesh = Box::new($hr_mesh {
+            mesh: geo::mesh::$mesh_ty::new(verts, indices),
+        });
 
         Box::into_raw(mesh)
     }};
@@ -927,7 +933,15 @@ pub unsafe extern "C" fn hr_add_pointcloud_attrib_f32(
     len: size_t,
     data: *const c_float,
 ) {
-    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_float);
+    impl_add_attrib!(
+        HR_PointCloud,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        len,
+        data: c_float
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -940,7 +954,15 @@ pub unsafe extern "C" fn hr_add_pointcloud_attrib_f64(
     len: size_t,
     data: *const c_double,
 ) {
-    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_double);
+    impl_add_attrib!(
+        HR_PointCloud,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        len,
+        data: c_double
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -953,7 +975,15 @@ pub unsafe extern "C" fn hr_add_pointcloud_attrib_i8(
     len: size_t,
     data: *const c_schar,
 ) {
-    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, len, data: c_schar);
+    impl_add_attrib!(
+        HR_PointCloud,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        len,
+        data: c_schar
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1005,7 +1035,15 @@ pub unsafe extern "C" fn hr_add_polymesh_attrib_f64(
     len: size_t,
     data: *const c_double,
 ) {
-    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, len, data: c_double);
+    impl_add_attrib!(
+        HR_PolyMesh,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        len,
+        data: c_double
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1124,7 +1162,17 @@ pub unsafe extern "C" fn hr_add_pointcloud_attrib_str(
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(HR_PointCloud, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+    impl_add_attrib!(
+        HR_PointCloud,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        nstrings,
+        strings,
+        len,
+        data
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1139,7 +1187,17 @@ pub unsafe extern "C" fn hr_add_polymesh_attrib_str(
     len: size_t,
     data: *const i64,
 ) {
-    impl_add_attrib!(HR_PolyMesh, mesh, loc, name, tuple_size, nstrings, strings, len, data);
+    impl_add_attrib!(
+        HR_PolyMesh,
+        mesh,
+        loc,
+        name,
+        tuple_size,
+        nstrings,
+        strings,
+        len,
+        data
+    );
 }
 
 /// If the given mesh is null, this function will panic.
@@ -1199,7 +1257,8 @@ pub unsafe extern "C" fn hr_make_tetmesh_vtk_buffer(mesh: *const HR_TetMesh) -> 
     match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk_be(vtk)
+            vec_data
+                .write_vtk_be(vtk)
                 .expect("Failed to write Vtk data to byte buffer");
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();
@@ -1226,7 +1285,8 @@ pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -
     match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
-            vec_data.write_vtk_be(vtk)
+            vec_data
+                .write_vtk_be(vtk)
                 .expect("Failed to write Vtk data to byte buffer");
             let boxed_data = vec_data.into_boxed_slice();
             let size = boxed_data.len();

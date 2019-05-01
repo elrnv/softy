@@ -13,7 +13,7 @@ use implicits;
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
     pub action: i32,
-    pub iso_value: f32, // Only used for projection
+    pub iso_value: f32,      // Only used for projection
     pub project_below: bool, // Only used for projection
     pub tolerance: f32,
     pub radius_multiplier: f32,
@@ -71,8 +71,8 @@ impl Into<implicits::Params> for Params {
 fn project_vertices(
     samplemesh: &mut geo::mesh::PolyMesh<f64>,
     surface: &mut geo::mesh::PolyMesh<f64>,
-    params: Params) -> Result<(), implicits::Error>
-{
+    params: Params,
+) -> Result<(), implicits::Error> {
     use geo::mesh::VertexPositions;
 
     surface.reverse(); // reverse polygons for compatibility with hdk
@@ -103,7 +103,8 @@ where
     if let Some(samples) = samplemesh {
         if let Some(surface) = polymesh {
             match params.action {
-                0 => { // Compute potential
+                0 => {
+                    // Compute potential
                     surface.reverse(); // reverse polygons for compatibility with hdk
                     let res = implicits::compute_potential_debug(
                         samples,
@@ -113,8 +114,9 @@ where
                     );
                     surface.reverse(); // reverse back
                     convert_to_cookresult(res)
-                },
-                _ => { // Project vertices
+                }
+                _ => {
+                    // Project vertices
                     let res = project_vertices(samples, surface, params);
                     convert_to_cookresult(res)
                 }
@@ -136,7 +138,9 @@ fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
         Err(implicits::Error::MissingNormals) => {
             CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
         }
-        Err(implicits::Error::MissingNeighbourData) => CookResult::Error("Missing neighbour data for derivative computations.".to_string()),
+        Err(implicits::Error::MissingNeighbourData) => {
+            CookResult::Error("Missing neighbour data for derivative computations.".to_string())
+        }
         Err(implicits::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
         Err(implicits::Error::UnsupportedKernel) => {
             CookResult::Error("Given kernel is not supported yet.".to_string())
@@ -144,9 +148,9 @@ fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
         Err(implicits::Error::InvalidBackgroundConstruction) => {
             CookResult::Error("Invalid Background field.".to_string())
         }
-        Err(implicits::Error::UnsupportedSampleType) => {
-            CookResult::Error("Given sample type is not supported by the chosen configuration.".to_string())
-        }
+        Err(implicits::Error::UnsupportedSampleType) => CookResult::Error(
+            "Given sample type is not supported by the chosen configuration.".to_string(),
+        ),
         Err(implicits::Error::IO(err)) => CookResult::Error(format!("IO Error: {:?}", err)),
     }
 }

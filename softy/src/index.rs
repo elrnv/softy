@@ -72,6 +72,16 @@ impl Index {
         }
     }
 
+    /// Checked `and_then` over inner index. This allows operations on valid indices only.
+    #[inline]
+    pub fn and_then<F: FnOnce(usize) -> Index>(self, f: F) -> Index {
+        if self.is_valid() {
+            f(self.0 as usize)
+        } else {
+            self
+        }
+    }
+
     /// Apply a function to the inner `usize` index. The index remains unchanged if invalid.
     #[inline]
     pub fn apply<F: FnOnce(&mut usize)>(&mut self, f: F) {
@@ -171,12 +181,8 @@ impl Add for Index {
 
     #[inline]
     fn add(self, rhs: Index) -> Index {
-        if rhs.is_valid() && self.is_valid() {
-            // Note: add with overflow is checked by Rust for debug builds.
-            rhs.map_inner(|x| self.0 + x)
-        } else {
-            Index::invalid()
-        }
+        // Note: add with overflow is checked by Rust for debug builds.
+        self.and_then(|x| rhs.map(|y| x + y))
     }
 }
 
@@ -203,12 +209,8 @@ impl Sub for Index {
 
     #[inline]
     fn sub(self, rhs: Index) -> Index {
-        if rhs.is_valid() && self.is_valid() {
-            // Note: subtract with overflow is checked by Rust for debug builds.
-            rhs.map_inner(|x| self.0 - x)
-        } else {
-            Index::invalid()
-        }
+        // Note: subtract with overflow is checked by Rust for debug builds.
+        self.and_then(|x| rhs.map(|y| x - y))
     }
 }
 

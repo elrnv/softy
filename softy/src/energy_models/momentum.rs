@@ -68,7 +68,7 @@ impl<T: Real> Energy<T> for MomentumPotential {
                 let tet_dv = tet_dx * dt_inv - tet_v;
 
                 T::from(0.5).unwrap() * {
-                    let dvTdv: T = tet_dv.into_array().into_iter().map(|&dv| dv.dot(dv)).sum();
+                    let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
                     // momentum
                     T::from(0.25 * vol * density).unwrap() * dvTdv
                 }

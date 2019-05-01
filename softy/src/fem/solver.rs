@@ -205,7 +205,7 @@ impl SolverBuilder {
         // We need this quantity to compute the tolerance.
         let max_vol = mesh
             .tet_iter()
-            .map(|tet| tet.volume())
+            .map(Volume::volume)
             .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
             .expect("Given TetMesh is empty");
 
@@ -323,7 +323,7 @@ impl SolverBuilder {
         //ipopt.set_option("jac_d_constant", "yes");
         ipopt.set_option(
             "nlp_scaling_max_gradient",
-            params.max_gradient_scaling as f64,
+            f64::from(params.max_gradient_scaling),
         );
         //ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
@@ -511,7 +511,8 @@ impl Solver {
         self.problem_mut()
             .smooth_contact_constraint
             .as_ref()
-            .map(|scc| scc.contact_radius())
+            .map(|x| &**x) // remove box wrapper
+            .map(ContactConstraint::contact_radius)
     }
 
     /// Update the solver mesh with the given points.
@@ -933,7 +934,7 @@ impl Solver {
     /// values as needed. The configuration may also need to be reverted.
     fn check_inner_step(&mut self) -> (bool, Vec<usize>) {
         let old_active_set = self.problem().active_constraint_set();
-        let step_accepted = if let Some(radius) = self.contact_radius() {
+        let step_accepted = if self.contact_radius().is_some() {
             let step = inf_norm(self.dx());
 
             let constraint_violation = {
@@ -950,7 +951,7 @@ impl Solver {
             };
 
             let initial_error = self.initial_residual_error();
-            let relative_tolerance = self.sim_params.tolerance as f64 / initial_error;
+            let relative_tolerance = f64::from(self.sim_params.tolerance) / initial_error;
             dbg!(constraint_violation);
             dbg!(relative_tolerance);
             if constraint_violation > relative_tolerance {
@@ -999,6 +1000,10 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        // TODO: This doesn't actually work because Ipopt holds a lock to the logfile, so we can
+        // fix this by either writing to a different log file, or prepending this info to the
+        // beginning of the solve before ipopt gets the lock since this info won't change between
+        // solves.
         if let Some(ref log) = self.sim_params.log_file {
             if let Ok(ref mut file) = std::fs::OpenOptions::new()
                 .write(true)
@@ -1006,8 +1011,8 @@ impl Solver {
                 .open(log)
             {
                 use std::io::Write;
-                write!(file, "Params = {:#?}\n", self.sim_params)?;
-                write!(file, "Material = {:#?}\n", self.solid_material)?;
+                writeln!(file, "Params = {:#?}", self.sim_params)?;
+                writeln!(file, "Material = {:#?}", self.solid_material)?;
             }
         }
 

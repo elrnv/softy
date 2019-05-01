@@ -96,7 +96,7 @@ pub trait ContactConstraint:
     /// called when neighbourhood information changes to ensure correct correspondence of friction
     /// forces to vertices. It may be not necessary to implement this function if friction forces are
     /// stored on the entire mesh.
-    fn remap_friction(&mut self, old_set: &[usize], new_set: &[usize]) {}
+    fn remap_friction(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn compute_contact_impulse(
         &self,
         x: &[f64],

@@ -159,13 +159,13 @@ impl NonLinearProblem {
         self.warm_start.update(solution);
     }
 
-    /// Clear the warm start using the sizes in the given solution.
-    pub fn clear_warm_start(&mut self, solution: ipopt::Solution) {
-        self.warm_start.reset(
-            solution.primal_variables.len(),
-            solution.constraint_multipliers.len(),
-        );
-    }
+    ///// Clear the warm start using the sizes in the given solution.
+    //pub fn clear_warm_start(&mut self, solution: ipopt::Solution) {
+    //    self.warm_start.reset(
+    //        solution.primal_variables.len(),
+    //        solution.constraint_multipliers.len(),
+    //    );
+    //}
 
     /// Reset solution used for warm starts. Note that if the number of constraints has changed,
     /// then this method will set the warm start to have the new number of constraints.
@@ -200,7 +200,7 @@ impl NonLinearProblem {
     pub fn active_constraint_set(&self) -> Vec<usize> {
         let mut active_set = Vec::new();
 
-        if let Some(ref vc) = self.volume_constraint {
+        if self.volume_constraint.is_some() {
             active_set.push(0);
         }
 
@@ -573,7 +573,6 @@ impl NonLinearProblem {
 
     /// Return the stacked contact impulses: one for each vertex.
     pub fn contact_impulse(&self) -> Vec<[f64; 3]> {
-        use ipopt::BasicProblem;
         let mut impulse = vec![[0.0; 3]; self.tetmesh.borrow().num_vertices()];
         if let Some(ref scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
@@ -656,7 +655,7 @@ impl NonLinearProblem {
         use ipopt::{BasicProblem, ConstrainedProblem};
         use na::{base::storage::Storage, DMatrix};
 
-        if values.len() == 0 {
+        if values.is_empty() {
             return;
         }
 
@@ -686,9 +685,9 @@ impl NonLinearProblem {
                     write!(&mut f, "    .    ",).ok();
                 }
             }
-            writeln!(&mut f, "").ok();
+            writeln!(&mut f).ok();
         }
-        writeln!(&mut f, "").ok();
+        writeln!(&mut f).ok();
 
         let svd = na::SVD::new(jac, false, false);
         let s: &[Number] = svd.singular_values.data.as_slice();
@@ -702,7 +701,7 @@ impl NonLinearProblem {
         use ipopt::{BasicProblem, ConstrainedProblem};
         use na::{base::storage::Storage, DMatrix};
 
-        if values.len() == 0 {
+        if values.is_empty() {
             return;
         }
 

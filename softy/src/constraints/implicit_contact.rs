@@ -192,9 +192,9 @@ impl ContactConstraint for ImplicitContactConstraint {
             assert_eq!(indices.len(), friction.force.len());
 
             for (&i, f) in indices.iter().zip(friction.force.iter()) {
-                for j in 0..3 {
+                for (j, force) in f.iter().enumerate().take(3) {
                     let idx = 3 * self.simulation_surf_verts[i] + j;
-                    grad[idx] -= f[j];
+                    grad[idx] -= force;
                 }
             }
         }

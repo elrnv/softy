@@ -351,7 +351,7 @@ impl PointContactConstraint {
 
         let mut vertex_is_inside = vec![false; mesh.num_vertices()];
         for vidx in (0..mesh.num_vertices()).filter(|&i| !background_points[i]) {
-            vertex_is_inside[vidx] = if values[vidx] < 0.0 { true } else { false };
+            vertex_is_inside[vidx] = values[vidx] < 0.0;
         }
 
         let mut seen_vertices = vec![false; mesh.num_vertices()];

@@ -3,16 +3,68 @@ use std::os::raw::{c_double, c_int};
 
 pub use implicits::{BackgroundFieldType, KernelType, SampleType};
 
-/// A C interface for passing parameters from SOP parameters to the Rust code.
+/// A C interface for passing parameters that determine the construction of the implicit potential
+/// field.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct EL_IsoParams {
+    /// Used by a selection of kernels like the Approximate and Global, this value determines how
+    /// cloesely the surface approximates a given triangle mesh. Lower values result in more
+    /// accurate surfaces, while larger values produce smoother surfaces.
     pub tolerance: f32,
+    /// The value by which the internal kernel radius is multiplied. The internal radius is
+    /// determined to be the maximum of the smallest radius around each triangle centroid which
+    /// contains all of the triangles vertices.
     pub radius_multiplier: f32,
+    /// The type of interpolation kernel to use for interpolating local potentials around each
+    /// triangle.
+    /// 0 -> Local Interpolating kernel. This kernel will generate an implicit surface that passes
+    ///   through each sample point exactly, however it can produce singularities for large radii
+    ///   and is generally not suitable for simulation.
+    /// 1 -> Local Approximately Interpolating kernel. This kernel approximately interpolates the
+    ///   sample points defined by the input triangle mesh. The tradeoff between interpolating
+    ///   quality and smoothness is determined by the given tolerance. (See [Most and Bucher 2005]
+    ///   for details).
+    /// 2 -> Local Cubic kernel. This is the simplest and smoothest kernel without any
+    ///   interpolation control. It approximates the Gaussian kernel while being fast to compute.
+    ///   Not unlike the Gaussian kernel, this kernel has poor interpolation properties with large
+    ///   radii (See [Most and Bucher 2005] for details).
+    /// 3 -> Global inverse squared distance kernel. A global kernel traditionally used for surface
+    ///   reconstruction. It is unsuitable for simulation since the potential at each query point
+    ///   will depend on every single mesh sample. (See [Shen et al. 2004] for details).
+    /// 4 -> Hermite Radial Basis Functions. This is not strictly a kernel, but this option can be
+    ///   interpreted as a more expensive global kernel. This option produces the smoothest potential
+    ///   fields while also being interpolating. However, evaluating the potential field at a set
+    ///   of query points requires a solve of a dense linear system. This option is not recommended
+    ///   for simulation.
     pub kernel: i32,
+    /// Option for a type of background potential to use outside the radius of influence of all
+    /// samples of the triangle mesh.
+    /// 0 -> Zero.
+    /// 1 -> From input. When computing the potential field, the input values will remain
+    ///   unchanged.
+    /// 2 -> Distance based. A signed distance to the closest sample point is used for the
+    ///   background potential.
     pub background_potential: i32,
+    /// 0 -> Do NOT mix the background potential with the local potential field.
+    /// 1 -> Mix the background potential with the local potential field.
+    /// Note: when using the Distance based potential field, it is recommended to leave this at 0
+    /// because the Distance based field contains discontinuities which will pollute the local
+    /// field if mixed in.
     pub weighted: i32,
+    /// The positions of sample point used to define the implicit surface.
+    /// 0 -> Vertex. Samples are located at mesh vertices and normals are computed using an area
+    ///   weighted normals of adjacent triangles.
+    /// 1 -> Face. Samples are located at triangle centroids. This type of implicit surface
+    ///   is typically closer to the triangle surface than Vertex based implicits, especially when
+    ///   the triangle mesh is close to being uniform.
     pub sample_type: i32,
+    /// The max_step parameter determines the additional distance (beyond the radius of influence)
+    /// to consider when computing the set of neighbourhood samples for a given set of query
+    /// points. This is typically used for simulation, where the set of neighbourhoods is expected
+    /// to stay constant when the positions of the samples for the implicit surface or the
+    /// positions of the query points may be perturbed. If positions are unperturbed between calls
+    /// to `el_iso_cache_neighbours`, then this can be set to 0.0.
     pub max_step: f32,
 }
 

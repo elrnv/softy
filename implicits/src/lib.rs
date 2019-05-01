@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 #![type_length_limit = "4194304"]
+#![allow(clippy::just_underscores_and_digits)]
 
 #[cfg(test)]
 #[macro_use]

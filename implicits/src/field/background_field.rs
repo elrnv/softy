@@ -36,7 +36,7 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
     /// For computing derivatives, the field value is not actually needed, so we default it to zero
     /// if it's not provided.
     pub fn new(field_type: BackgroundFieldType, field_value: Option<V>) -> Self {
-        let field_value = field_value.unwrap_or(V::zero());
+        let field_value = field_value.unwrap_or_else(V::zero);
         match field_type {
             BackgroundFieldType::Zero => BackgroundFieldValue::Constant(V::zero()),
             BackgroundFieldType::FromInput => BackgroundFieldValue::Constant(field_value),
@@ -145,7 +145,7 @@ where
                 .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
                 .min_by(|(_, d0), (_, d1)| {
                     d0.partial_cmp(d1)
-                        .expect(&format!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
+                        .unwrap_or_else(|| panic!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
                 });
             if let Some((index, _)) = min_sample {
                 ClosestIndex::Local(index)
@@ -257,13 +257,11 @@ where
         if self.kernel.radius() < self.closest_sample_dist {
             // Closest point is not inside the local neighbourhood.
             T::one()
+        } else if self.weighted {
+            self.kernel
+                .f(self.kernel.radius() - self.closest_sample_dist)
         } else {
-            if self.weighted {
-                self.kernel
-                    .f(self.kernel.radius() - self.closest_sample_dist)
-            } else {
-                T::zero()
-            }
+            T::zero()
         }
     }
 
@@ -361,11 +359,11 @@ pub(crate) fn hessian_block_indices<'a>(
     weighted: bool,
     nbrs: &'a [usize],
 ) -> impl Iterator<Item = (usize, usize)> + 'a {
-    let diag_iter = nbrs.into_iter().map(move |&i| (i, i));
+    let diag_iter = nbrs.iter().map(move |&i| (i, i));
 
     let off_diag_iter = if weighted {
-        Some(nbrs.into_iter().flat_map(move |&i| {
-            nbrs.into_iter()
+        Some(nbrs.iter().flat_map(move |&i| {
+            nbrs.iter()
                 .filter(move |&&j| i < j)
                 .map(move |&j| (j, i))
         }))
@@ -478,10 +476,9 @@ where
         samples.into_iter().map(move |Sample { index, pos, .. }| {
             let mut grad = Vector3::zeros();
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
-                if index == closest_sample_index.get() {
-                    grad -= bg_grad * wb;
-                }
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get() {
+                grad -= bg_grad * wb;
             }
 
             if !weighted {
@@ -495,10 +492,9 @@ where
                 dwdp * (field * wb * weight_sum_inv)
             };
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
-                if index == closest_sample_index.get() {
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance &&
+                index == closest_sample_index.get() {
                     grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
-                }
             }
 
             grad
@@ -550,10 +546,9 @@ where
         let diag_iter = samples.into_iter().map(move |Sample { index, pos, .. }| {
             let mut hess = Matrix3::zeros();
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
-                if index == closest_sample_index.get() {
-                    hess += ddf * wb;
-                }
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance 
+                && index == closest_sample_index.get() {
+                hess += ddf * wb;
             }
 
             if !weighted {
@@ -568,16 +563,15 @@ where
                 (dw * (dw.transpose() * (_2 * weight_sum_inv)) - ddw) * (f * wb * weight_sum_inv)
             };
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance {
-                if index == closest_sample_index.get() {
-                    let factor = T::one() - wb * weight_sum_inv;
-                    hess += ddwb * (factor * f)
-                        - dwb * dwb.transpose() * (factor * _2 * f * weight_sum_inv)
-                        + sym_outer(dwb, dw)
-                            * ((T::one() - _2 * wb * weight_sum_inv) * f * weight_sum_inv)
-                        + sym_outer(df, dwb) * factor
-                        + sym_outer(df, dw) * wb * weight_sum_inv
-                }
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get() {
+                let factor = T::one() - wb * weight_sum_inv;
+                hess += ddwb * (factor * f)
+                    - dwb * dwb.transpose() * (factor * _2 * f * weight_sum_inv)
+                    + sym_outer(dwb, dw)
+                        * ((T::one() - _2 * wb * weight_sum_inv) * f * weight_sum_inv)
+                    + sym_outer(df, dwb) * factor
+                    + sym_outer(df, dw) * wb * weight_sum_inv
             }
 
             hess * weight_sum_inv

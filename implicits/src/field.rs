@@ -286,7 +286,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// This function returns previously cached closest samples if the neighbour cache is
     /// valid, and `None` otherwise.
-    fn closest_samples_borrow<'a>(&'a self) -> Result<Ref<'a, [usize]>, super::Error> {
+    fn closest_samples_borrow(&self) -> Result<Ref<'_, [usize]>, super::Error> {
         // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
         // cache and actually retrieving the neighbour points is done separately
         let valid = self.query_neighbourhood.borrow().closest_set().is_some();
@@ -359,7 +359,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Face => self.trivial_neighbourhood_borrow(),
         };
 
-        set.map(|neighbourhoods| neighbourhoods.iter().map(|x| x.len()).collect())
+        set.map(|neighbourhoods| neighbourhoods.iter().map(std::vec::Vec::len).collect())
     }
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to
@@ -787,7 +787,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<'a, K, F, M>(
+    fn compute_mls_on_mesh<K, F, M>(
         &self,
         mesh: &mut M,
         kernel: K,
@@ -1010,7 +1010,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         .expect("Triangle mesh topology corruption."),
                 );
                 let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in samples.from_view(tri_indices).into_iter() {
+                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
                     if sample.index != index {
                         let normk_inv = T::one() / sample.nml.norm();
                         let nmlk_proj = Matrix3::identity()

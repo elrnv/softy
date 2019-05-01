@@ -172,7 +172,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                 let c = tri.centroid();
                 let verts = [tri.0, tri.1, tri.2];
                 verts
-                    .into_iter()
+                    .iter()
                     .map(|&x| (x - c).norm_squared())
                     .max_by(|a, b| {
                         a.partial_cmp(b)

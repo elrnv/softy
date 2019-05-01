@@ -14,7 +14,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
-        Some(neigh_points.iter().map(|pts| pts.len()).sum::<usize>() * 3 * num_pts_per_sample)
+        Some(neigh_points.iter().map(std::vec::Vec::len).sum::<usize>() * 3 * num_pts_per_sample)
     }
 
     /// Compute the indices for the implicit surface potential Jacobian with respect to surface
@@ -303,17 +303,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         self.num_cached_neighbourhoods().map(|n| 3 * n)
     }
 
-    pub fn query_jacobian_indices_iter<'a>(
+    pub fn query_jacobian_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
         let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
-            s.into_iter()
+            s.iter()
                 .enumerate()
                 .filter(move |(_, nbrs)| !nbrs.is_empty())
                 .flat_map(move |(i, _)| (0..3).map(move |j| (i, 3 * i + j)))
                 .collect()
         });
-        indices.map(|i| i.into_iter())
+        indices.map(std::iter::IntoIterator::into_iter)
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
@@ -360,7 +360,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         )
     }
 
-    pub(crate) fn mls_query_jacobian_values<'a, K>(
+    pub(crate) fn mls_query_jacobian_values<K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
@@ -502,6 +502,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// The returned iterator returns only non-zero elements.  When
     /// using the unit normal as the multiplier and summing over all samples, this function
     /// produces the true Jacobian of the potential with respect to the query point.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn sample_contact_jacobian_product_at<'a, K: 'a>(
         q: Vector3<T>,
         sample_pos: Vector3<T>,
@@ -592,7 +593,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Multiplier is a stacked velocity stored at samples.
-    pub(crate) fn mls_contact_jacobian_product_values<'a, K>(
+    pub(crate) fn mls_contact_jacobian_product_values<K>(
         &self,
         query_points: &[[T; 3]],
         multiplier: &[[T; 3]],
@@ -698,7 +699,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
-        Ok(neigh_points.iter().map(|pts| pts.len()).sum::<usize>() * num_pts_per_sample)
+        Ok(neigh_points.iter().map(std::vec::Vec::len).sum::<usize>() * num_pts_per_sample)
     }
 
     /// Compute the contact Jacobian of this implicit surface function with respect to surface
@@ -743,7 +744,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .iter()
             .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
-            .flat_map(move |(row, nbr_points)| nbr_points.into_iter().map(move |&col| (row, col)));
+            .flat_map(move |(row, nbr_points)| nbr_points.iter().map(move |&col| (row, col)));
 
         let (vtx_iter, face_iter) = match sample_type {
             SampleType::Vertex => (Some(indices.collect::<Vec<_>>().into_iter()), None),
@@ -767,7 +768,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /// Multiplier is a stacked velocity stored at samples.
-    pub(crate) fn mls_contact_jacobian_matrices<'a, K>(
+    pub(crate) fn mls_contact_jacobian_matrices<K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,

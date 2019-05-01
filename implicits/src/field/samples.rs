@@ -316,11 +316,11 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
         }
     }
 
-    /// Construct a new view from this view using the same underlying data, but with a new set of
+    /// Construct a new view from a given view using the same underlying data, but with a new set of
     /// indices (which need not be a subset of indices from this view).
     #[inline]
-    pub fn from_view(self, indices: &'i [usize]) -> Self {
-        SamplesView { indices, ..self }
+    pub fn from_view(indices: &'i [usize], view: Self) -> Self {
+        SamplesView { indices, ..view }
     }
 
     #[inline]
@@ -368,7 +368,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     #[allow(clippy::should_implement_trait)] // waiting for impl trait on associated types
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + 'i {
-        self.indices.into_iter().map(move |&i| self.at_index(i))
+        self.indices.iter().map(move |&i| self.at_index(i))
     }
     #[inline]
     pub fn all_points(&'d self) -> &'d [Vector3<T>] {

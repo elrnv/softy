@@ -180,7 +180,7 @@ impl Neighbourhood {
     /// Note that the cache must be invalidated explicitly, there is no real way to automatically
     /// cache results because both: query points and sample points may change slightly, but we
     /// expect the neighbourhood information to remain the same.
-    pub(crate) fn compute_extended_set<'a, T>(
+    pub(crate) fn compute_extended_set<T>(
         &mut self,
         query_points: &[[T; 3]],
         tri_topo: &[[usize; 3]],
@@ -214,7 +214,7 @@ impl Neighbourhood {
                 .map(|(triv_pts, ext_pts)| {
                     let init_hash = Self::compute_hash(&ext_pts);
                     ext_pts.clear();
-                    let mut set: BTreeSet<_> = triv_pts.into_iter().collect();
+                    let mut set: BTreeSet<_> = triv_pts.iter().collect();
                     if sample_type == SampleType::Vertex && !dual_topo.is_empty() {
                         set.extend(triv_pts.iter().flat_map(|&pt| {
                             dual_topo[pt].iter().flat_map(|&tri| tri_topo[tri].iter())

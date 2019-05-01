@@ -103,7 +103,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         // TODO: Figure out how to do this more efficiently.
         self.surface_hessian_product_indices_iter()
             .ok()
-            .map(|x| x.count())
+            .map(std::iter::Iterator::count)
     }
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
@@ -378,10 +378,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn sample_hessian_indices<'a>(
         nbrs: &'a [usize],
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
-        nbrs.into_iter()
+        nbrs.iter()
             .map(move |&i| (i, i))
-            .chain(nbrs.into_iter().flat_map(move |&i| {
-                nbrs.into_iter()
+            .chain(nbrs.iter().flat_map(move |&i| {
+                nbrs.iter()
                     .filter(move |&&j| i < j)
                     .map(move |&j| (j, i))
             }))
@@ -629,7 +629,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
         let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
-            s.into_iter()
+            s.iter()
                 .enumerate()
                 .filter(move |(_, nbrs)| !nbrs.is_empty())
                 .flat_map(move |(i, _)| {
@@ -637,7 +637,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 })
                 .collect()
         });
-        indices.map(|i| i.into_iter())
+        indices.map(std::iter::IntoIterator::into_iter)
     }
 
     /// Compute the normalized sum of all sample weight gradients.
@@ -684,7 +684,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// This function populates the values of the hessian product matrix with 6 (lower trianglar)
     /// entries per diagonal 3x3 block of the hessian product.
-    pub(crate) fn mls_query_hessian_product_values<'a, K>(
+    pub(crate) fn mls_query_hessian_product_values<K>(
         &self,
         query_points: &[[T; 3]],
         multipliers: &[T],
@@ -720,9 +720,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .zip(hess_iter)
             .for_each(|(mtx, new_mtx)| {
                 let mut i = 0;
-                for c in 0..3 {
-                    for r in c..3 {
-                        mtx[i] = new_mtx[c][r];
+                for (c, new_col) in new_mtx.into_inner().iter().enumerate() {
+                    for &new_val in new_col.iter().skip(c) {
+                        mtx[i] = new_val;
                         i += 1;
                     }
                 }
@@ -794,9 +794,9 @@ pub(crate) fn print_full_hessian(hess: &[Vec<f64>], size: usize, name: &str) {
                 print!("{:9.5} ", hess[c][r]);
             }
         }
-        println!("");
+        println!();
     }
-    println!("");
+    println!();
 }
 
 #[cfg(test)]

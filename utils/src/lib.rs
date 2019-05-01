@@ -6,8 +6,8 @@ pub mod zip;
 
 pub use crate::transform::*;
 pub use crate::zip::*;
-use geo::mesh::{PolyMesh, TetMesh, TriMesh};
 use geo::math::Vector3;
+use geo::mesh::{PolyMesh, TetMesh, TriMesh};
 
 /// Parameters that define a grid that lies in one of the 3 axis planes in 3D space.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -104,29 +104,30 @@ pub fn make_regular_tet() -> TetMesh<f64> {
 
 pub fn make_regular_icosahedron() -> TriMesh<f64> {
     let sqrt5 = 5.0_f64.sqrt();
-    let a = 1.0/sqrt5;
-    let w1 = 0.25*(sqrt5 - 1.0);
-    let h1 = (0.125*(5.0 + sqrt5)).sqrt();
-    let w2 = 0.25*(sqrt5 + 1.0);
-    let h2 = (0.125*(5.0 - sqrt5)).sqrt();
+    let a = 1.0 / sqrt5;
+    let w1 = 0.25 * (sqrt5 - 1.0);
+    let h1 = (0.125 * (5.0 + sqrt5)).sqrt();
+    let w2 = 0.25 * (sqrt5 + 1.0);
+    let h2 = (0.125 * (5.0 - sqrt5)).sqrt();
     let vertices = vec![
         // North pole
         [0.0, 0.0, 1.0],
         // Alternating ring
-        [0.0, 2.0*a, a],
-        [2.0*a*h2, 2.0*a*w2, -a],
-        [2.0*a*h1, 2.0*a*w1, a],
-        [2.0*a*h1, -2.0*a*w1, -a],
-        [2.0*a*h2, -2.0*a*w2, a],
-        [0.0, -2.0*a, -a],
-        [-2.0*a*h2, -2.0*a*w2, a],
-        [-2.0*a*h1, -2.0*a*w1, -a],
-        [-2.0*a*h1, 2.0*a*w1, a],
-        [-2.0*a*h2, 2.0*a*w2, -a],
+        [0.0, 2.0 * a, a],
+        [2.0 * a * h2, 2.0 * a * w2, -a],
+        [2.0 * a * h1, 2.0 * a * w1, a],
+        [2.0 * a * h1, -2.0 * a * w1, -a],
+        [2.0 * a * h2, -2.0 * a * w2, a],
+        [0.0, -2.0 * a, -a],
+        [-2.0 * a * h2, -2.0 * a * w2, a],
+        [-2.0 * a * h1, -2.0 * a * w1, -a],
+        [-2.0 * a * h1, 2.0 * a * w1, a],
+        [-2.0 * a * h2, 2.0 * a * w2, -a],
         // South pole
         [0.0, 0.0, -1.0],
     ];
 
+    #[rustfmt::skip]
     let indices = vec![
         // North triangles
         0, 1, 3,
@@ -181,13 +182,12 @@ mod tests {
     /// Verify that the icosahedron has unit radius.
     #[test]
     fn icosahedron_unity_test() {
-        use geo::mesh::VertexPositions;
         use approx::assert_relative_eq;
+        use geo::mesh::VertexPositions;
 
         let icosa = make_regular_icosahedron();
         for &v in icosa.vertex_positions() {
             assert_relative_eq!(geo::math::Vector3(v).norm(), 1.0);
         }
-        geo::io::save_polymesh(&geo::mesh::PolyMesh::from(icosa), &std::path::PathBuf::from("icosa.vtk"));
     }
 }

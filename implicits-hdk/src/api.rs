@@ -14,6 +14,7 @@ use implicits;
 pub struct Params {
     pub action: i32,
     pub iso_value: f32, // Only used for projection
+    pub project_below: bool, // Only used for projection
     pub tolerance: f32,
     pub radius_multiplier: f32,
     pub kernel: i32,
@@ -78,7 +79,11 @@ fn project_vertices(
     let surf = implicits::surface_from_polymesh(surface, params.into())?;
 
     let pos = samplemesh.vertex_positions_mut();
-    surf.project_to_above(f64::from(params.iso_value), 1e-4, pos)?;
+    if params.project_below {
+        surf.project_to_below(f64::from(params.iso_value), 1e-4, pos)?;
+    } else {
+        surf.project_to_above(f64::from(params.iso_value), 1e-4, pos)?;
+    }
 
     surface.reverse(); // reverse back
 

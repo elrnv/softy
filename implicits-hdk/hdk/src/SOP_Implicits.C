@@ -60,6 +60,15 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     parm {
+        name "projectbelow"
+        cppname "ProjectBelow"
+        label "Project Below"
+        type toggle
+        default { "off" }
+        hidewhen "{ action == potential }"
+    }
+
+    parm {
         name "kernel"
         label "Kernel"
         type ordinal
@@ -193,6 +202,7 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     Params params;
     params.action = static_cast<int>(sopparms.getAction());
     params.iso_value = sopparms.getIsoValue();
+    params.project_below = sopparms.getProjectBelow();
     params.tolerance = sopparms.getTolerance();
     params.radius_multiplier = sopparms.getRadiusMultiplier();
     params.kernel = static_cast<int>(sopparms.getKernel());

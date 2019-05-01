@@ -2,12 +2,12 @@ pub mod implicit_contact;
 pub mod point_contact;
 pub mod volume;
 
-use crate::contact::*;
 use crate::constraint::*;
-use std::{cell::RefCell, rc::Rc};
+use crate::contact::*;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
+use std::{cell::RefCell, rc::Rc};
 
 pub use self::implicit_contact::*;
 pub use self::point_contact::*;
@@ -37,7 +37,6 @@ pub fn build_contact_constraint(
     })
 }
 
-
 /// A common pattern occuring with contact constraints becoming active and inactive is remapping
 /// values computed in a simulation step to the values available in the next step with a different
 /// set of active constraints. This is necessary for pure contact warm starts as well as friction
@@ -59,21 +58,23 @@ pub fn remap_values<T: Copy>(
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
     let mut old_iter = values.zip(old_indices);
 
-    new_indices.map(move |new_idx| {
-        let mut new_val = default;
-        for (val, old_idx) in &mut old_iter {
-            if old_idx < new_idx {
-                continue;
-            }
+    new_indices
+        .map(move |new_idx| {
+            let mut new_val = default;
+            for (val, old_idx) in &mut old_iter {
+                if old_idx < new_idx {
+                    continue;
+                }
 
-            if old_idx == new_idx {
-                new_val = val;
-            }
+                if old_idx == new_idx {
+                    new_val = val;
+                }
 
-            break;
-        }
-        new_val
-    }).collect()
+                break;
+            }
+            new_val
+        })
+        .collect()
 }
 
 pub trait ContactConstraint:
@@ -81,7 +82,12 @@ pub trait ContactConstraint:
 {
     fn clear_friction_force(&mut self);
     /// Update the underlying friction impulse based on the given predictive step.
-    fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool;
+    fn update_friction_force(
+        &mut self,
+        contact_force: &[f64],
+        x: &[[f64; 3]],
+        dx: &[[f64; 3]],
+    ) -> bool;
     /// Subtract the frictional impulse from the given gradient vector.
     fn subtract_friction_force(&self, grad: &mut [f64]);
     /// Compute the frictional energy dissipation.
@@ -91,7 +97,13 @@ pub trait ContactConstraint:
     /// forces to vertices. It may be not necessary to implement this function if friction forces are
     /// stored on the entire mesh.
     fn remap_friction(&mut self, old_set: &[usize], new_set: &[usize]) {}
-    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]);
+    fn compute_contact_impulse(
+        &self,
+        x: &[f64],
+        contact_force: &[f64],
+        dt: f64,
+        impulse: &mut [[f64; 3]],
+    );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if

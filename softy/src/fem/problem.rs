@@ -249,7 +249,12 @@ impl NonLinearProblem {
         let mut new_constraint_set = self.active_constraint_set().into_iter();
 
         // Remap multipliers
-        let new_multipliers = remap_values(self.warm_start.constraint_multipliers.iter().cloned(), 0.0, old_constraint_set.clone(), new_constraint_set.clone());
+        let new_multipliers = remap_values(
+            self.warm_start.constraint_multipliers.iter().cloned(),
+            0.0,
+            old_constraint_set.clone(),
+            new_constraint_set.clone(),
+        );
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
 
         // Remap friction forces (if any)
@@ -321,11 +326,12 @@ impl NonLinearProblem {
             let old_prev_pos = prev_pos.clone();
             let old_prev_vel = prev_vel.clone();
 
-            zip!(disp.iter(), prev_pos.iter_mut(), prev_vel.iter_mut())
-                .for_each(|(&dp, prev_p, prev_v)| {
+            zip!(disp.iter(), prev_pos.iter_mut(), prev_vel.iter_mut()).for_each(
+                |(&dp, prev_p, prev_v)| {
                     *prev_p += dp;
                     *prev_v = dp * dt_inv;
-                });
+                },
+            );
 
             {
                 let mut tetmesh = self.tetmesh.borrow_mut();
@@ -538,8 +544,13 @@ impl NonLinearProblem {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
-            let displacement: &[[f64; 3]] = reinterpret::reinterpret_slice(solution.primal_variables);
-            let offset = if self.volume_constraint.is_some() { 1 } else { 0 };
+            let displacement: &[[f64; 3]] =
+                reinterpret::reinterpret_slice(solution.primal_variables);
+            let offset = if self.volume_constraint.is_some() {
+                1
+            } else {
+                0
+            };
             let contact_force = &solution.constraint_multipliers[offset..];
             scc.update_friction_force(contact_force, position, displacement)
         } else {
@@ -548,7 +559,7 @@ impl NonLinearProblem {
     }
 
     /// Return the stacked friction impulses: one for each vertex.
-    pub fn friction_impulse(&self) -> Vec<[f64;3]> {
+    pub fn friction_impulse(&self) -> Vec<[f64; 3]> {
         use ipopt::BasicProblem;
         let mut impulse = vec![0.0; self.num_variables()];
         if let Some(ref scc) = self.smooth_contact_constraint {
@@ -561,14 +572,18 @@ impl NonLinearProblem {
     }
 
     /// Return the stacked contact impulses: one for each vertex.
-    pub fn contact_impulse(&self) -> Vec<[f64;3]> {
+    pub fn contact_impulse(&self) -> Vec<[f64; 3]> {
         use ipopt::BasicProblem;
-        let mut impulse = vec![[0.0;3]; self.tetmesh.borrow().num_vertices()];
+        let mut impulse = vec![[0.0; 3]; self.tetmesh.borrow().num_vertices()];
         if let Some(ref scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
             let position: &[f64] = reinterpret::reinterpret_slice(prev_pos.as_slice());
             // Get contact force from the warm start.
-            let offset = if self.volume_constraint.is_some() { 1 } else { 0 };
+            let offset = if self.volume_constraint.is_some() {
+                1
+            } else {
+                0
+            };
             let contact_force = &self.warm_start.constraint_multipliers[offset..];
             scc.compute_contact_impulse(position, contact_force, self.time_step, &mut impulse);
         }
@@ -923,13 +938,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x, dx, &mut vals[i..i + n]).ok();
+            vc.constraint_jacobian_values(x, dx, &mut vals[i..i + n])
+                .ok();
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_jacobian_size();
-            scc.constraint_jacobian_values(x, dx, &mut vals[i..i + n]).ok();
+            scc.constraint_jacobian_values(x, dx, &mut vals[i..i + n])
+                .ok();
             //println!("jac g vals = {:?}", &vals[i..i+n]);
         }
 
@@ -1029,7 +1046,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
-            if let Ok(()) = vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh]) {
+            if let Ok(()) =
+                vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh])
+            {
                 i += nh;
                 coff += nc;
             }
@@ -1038,7 +1057,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint {
             let nc = scc.constraint_size();
             let nh = scc.constraint_hessian_size();
-            if let Ok(()) = scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh]) {
+            if let Ok(()) =
+                scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh])
+            {
                 i += nh;
                 coff += nc;
             }

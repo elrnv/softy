@@ -1,6 +1,6 @@
 use crate::attrib_defines::*;
-use crate::contact::*;
 use crate::constraints::*;
+use crate::contact::*;
 use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity,
@@ -264,7 +264,7 @@ impl SolverBuilder {
 
         let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
             let cparams = smooth_contact_params.unwrap(); // already verified above.
-            crate::constraints::build_contact_constraint( &mesh, &trimesh, cparams).ok()
+            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams).ok()
         });
 
         let displacement_bound = None;
@@ -339,9 +339,13 @@ impl SolverBuilder {
             }
         }
         if let Some(ref log_file) = params.log_file {
-            ipopt.set_option("output_file", log_file.as_os_str()
-                             .to_str()
-                             .expect("Invalid log file path."));
+            ipopt.set_option(
+                "output_file",
+                log_file
+                    .as_os_str()
+                    .to_str()
+                    .expect("Invalid log file path."),
+            );
         }
         ipopt.set_intermediate_callback(Some(NonLinearProblem::intermediate_cb));
 
@@ -635,13 +639,15 @@ impl Solver {
     fn add_friction_impulses_attrib(&mut self) {
         let impulses = self.problem().friction_impulse();
         let mut mesh = self.borrow_mut_mesh();
-        mesh.set_attrib_data::<FrictionImpulseType, VertexIndex>(FRICTION_ATTRIB, &impulses).ok();
+        mesh.set_attrib_data::<FrictionImpulseType, VertexIndex>(FRICTION_ATTRIB, &impulses)
+            .ok();
     }
 
     fn add_contact_impulses_attrib(&mut self) {
         let impulses = self.problem().contact_impulse();
         let mut mesh = self.borrow_mut_mesh();
-        mesh.set_attrib_data::<ContactImpulseType, VertexIndex>(CONTACT_ATTRIB, &impulses).ok();
+        mesh.set_attrib_data::<ContactImpulseType, VertexIndex>(CONTACT_ATTRIB, &impulses)
+            .ok();
     }
 
     /// Solve one step without updating the mesh. This function is useful for testing and
@@ -828,7 +834,7 @@ impl Solver {
                 let step = inf_norm(solution.primal_variables);
                 // If warm start is selected, then this solution was good and we're not comitting
                 // it just for debugging
-                let new_max_step = (step - radius).max(self.max_step*0.5);
+                let new_max_step = (step - radius).max(self.max_step * 0.5);
                 self.max_step = new_max_step;
                 problem.update_max_step(new_max_step);
                 problem.reset_constraint_set();
@@ -952,8 +958,8 @@ impl Solver {
                 if self.max_step < step {
                     // Increase the max_step to be slightly bigger than the current step to avoid
                     // floating point issues.
-                    println!("[softy] Increasing max step to {:e}", 1.1*step);
-                    self.update_max_step(1.1*step);
+                    println!("[softy] Increasing max step to {:e}", 1.1 * step);
+                    self.update_max_step(1.1 * step);
 
                     // We don't commit the solution here because it may be far from the
                     // true solution, just redo the whole solve with the right
@@ -976,7 +982,7 @@ impl Solver {
             // No contact constraints, all solutions are good.
             true
         };
-        
+
         (step_accepted, old_active_set)
     }
 
@@ -985,9 +991,7 @@ impl Solver {
     fn compute_friction_impulse(&mut self) -> bool {
         // Select constraint multipliers responsible for the contact force.
         let SolverDataMut {
-            problem,
-            solution,
-            ..
+            problem, solution, ..
         } = self.solver.solver_data_mut();
 
         problem.update_friction_impulse(solution)
@@ -996,7 +1000,11 @@ impl Solver {
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         if let Some(ref log) = self.sim_params.log_file {
-            if let Ok(ref mut file) = std::fs::OpenOptions::new().write(true).append(true).open(log) {
+            if let Ok(ref mut file) = std::fs::OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(log)
+            {
                 use std::io::Write;
                 write!(file, "Params = {:#?}\n", self.sim_params)?;
                 write!(file, "Material = {:#?}\n", self.solid_material)?;
@@ -1030,34 +1038,39 @@ impl Solver {
                             self.problem_mut().reset_constraint_set();
                             // TODO: verify that old_active_set is the same as new instead of
                             // remapping here.
-                            self.problem_mut().remap_contacts(old_active_set.clone().into_iter());
+                            self.problem_mut()
+                                .remap_contacts(old_active_set.clone().into_iter());
                             if self.compute_friction_impulse() {
                                 friction_steps -= 1;
                                 continue;
                             }
                         }
                         self.commit_solution(true);
-                        self.problem_mut().remap_contacts(old_active_set.into_iter());
+                        self.problem_mut()
+                            .remap_contacts(old_active_set.into_iter());
                         break;
                     }
                     // Going to do another iteration, let's reset the constraints back to original
                     // configuration ...
                     self.problem_mut().reset_constraint_set();
                     // ... and remap the constraint values
-                    self.problem_mut().remap_contacts(old_active_set.into_iter());
+                    self.problem_mut()
+                        .remap_contacts(old_active_set.into_iter());
                 }
                 Err(Error::InnerSolveError(status, step_result)) => {
                     result = result.combine_inner_result(&step_result);
                     let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(true);
-                    self.problem_mut().remap_contacts(old_active_set.into_iter());
+                    self.problem_mut()
+                        .remap_contacts(old_active_set.into_iter());
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
                     let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(false);
-                    self.problem_mut().remap_contacts(old_active_set.into_iter());
+                    self.problem_mut()
+                        .remap_contacts(old_active_set.into_iter());
                     return Err(e);
                 }
             }
@@ -1265,9 +1278,9 @@ impl Solver {
 }
 #[cfg(test)]
 mod tests {
-    use crate::KernelType;
     use super::*;
     use crate::test_utils::*;
+    use crate::KernelType;
     use geo;
     use std::path::PathBuf;
     use utils::*;
@@ -1800,7 +1813,7 @@ mod tests {
             .smooth_contact_params(SmoothContactParams {
                 contact_type: ContactType::Point,
                 kernel,
-                friction_params: None
+                friction_params: None,
             })
             .build()?;
 
@@ -1819,8 +1832,7 @@ mod tests {
         }
 
         // Verify constraint, should be positive before push
-        let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
+        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
         assert!(constraint.iter().all(|&x| x >= 0.0f32));
 
         // Simulate push
@@ -1832,8 +1844,7 @@ mod tests {
         assert!(solve_result.iterations <= params.max_outer_iterations);
 
         // Verify constraint, should be positive after push
-        let constraint =
-            compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
+        let constraint = compute_contact_constraint(&trimesh, &solver.borrow_mesh(), kernel);
         assert!(constraint.iter().all(|&x| x >= -params.outer_tolerance));
 
         // Expect only the top vertex to be pushed down.

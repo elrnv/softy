@@ -1,18 +1,18 @@
 use super::ContactConstraint;
 use crate::constraint::*;
+use crate::contact::*;
 use crate::matrix::*;
+use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Vector3, Vector2};
+use geo::math::{Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use crate::Error;
 use utils::zip;
-use crate::contact::*;
 
 /// Enforce a contact constraint on a mesh against an animated implicit surface. This constraint prevents
 /// vertices of the simulation mesh from penetrating through the implicit surface.
@@ -74,12 +74,13 @@ impl ImplicitContactConstraint {
                 collision_object: Rc::clone(trimesh_rc),
                 simulation_surf_verts: surf_verts,
                 query_points: RefCell::new(query_points.to_vec()),
-                friction: friction_params.and_then(|fparams|
+                friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
                         Some(Friction::new(fparams))
                     } else {
                         None
-                    }),
+                    }
+                }),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
             };
 
@@ -123,14 +124,25 @@ impl ContactConstraint for ImplicitContactConstraint {
             friction.force.clear();
         }
     }
-    fn update_friction_force(&mut self, contact_force: &[f64], x: &[[f64;3]], dx: &[[f64;3]]) -> bool {
+    fn update_friction_force(
+        &mut self,
+        contact_force: &[f64],
+        x: &[[f64; 3]],
+        dx: &[[f64; 3]],
+    ) -> bool {
         if self.friction.is_none() {
             return false;
         }
 
-        let normals = self.contact_normals(reinterpret::reinterpret_slice(x), reinterpret::reinterpret_slice(dx))
+        let normals = self
+            .contact_normals(
+                reinterpret::reinterpret_slice(x),
+                reinterpret::reinterpret_slice(dx),
+            )
             .expect("Failed to compute contact normals.");
-        let surf_indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+        let surf_indices = self
+            .active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
 
         let friction = self.friction.as_mut().unwrap(); // Must be checked above.
 
@@ -140,16 +152,26 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction.force.clear();
         assert_eq!(contact_force.len(), surf_indices.len());
 
-        for (contact_idx, (surf_idx, &cf)) in zip!(surf_indices.into_iter(), contact_force.iter()).enumerate() {
+        for (contact_idx, (surf_idx, &cf)) in
+            zip!(surf_indices.into_iter(), contact_force.iter()).enumerate()
+        {
             let vtx_idx = self.simulation_surf_verts[surf_idx];
             let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
             let v_t = Vector2([v[1], v[2]]); // Tangential component
             let mag = v_t.norm();
-            let dir = if mag > 0.0 { v_t / mag } else { Vector2::zeros() };
+            let dir = if mag > 0.0 {
+                v_t / mag
+            } else {
+                Vector2::zeros()
+            };
             let f_t = dir * (mu * cf); // cf is already negative because of normal orientation.
-            let f = Vector3(friction.to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx).into());
-            let v_: [f64;3] = v.into();
-            let f_: [f64;3] = f.into();
+            let f = Vector3(
+                friction
+                    .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
+                    .into(),
+            );
+            let v_: [f64; 3] = v.into();
+            let f_: [f64; 3] = f.into();
             let dot = Vector3(v_).dot(Vector3(f_));
             println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", v_, f_, cf, dot);
             friction.force.push(f.into());
@@ -163,13 +185,15 @@ impl ContactConstraint for ImplicitContactConstraint {
                 return;
             }
 
-            let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+            let indices = self
+                .active_constraint_indices()
+                .expect("Failed to retrieve constraint indices.");
 
             assert_eq!(indices.len(), friction.force.len());
 
             for (&i, f) in indices.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
-                    let idx = 3*self.simulation_surf_verts[i] + j;
+                    let idx = 3 * self.simulation_surf_verts[i] + j;
                     grad[idx] -= f[j];
                 }
             }
@@ -182,13 +206,15 @@ impl ContactConstraint for ImplicitContactConstraint {
                 return dissipation;
             }
 
-            let indices = self.active_constraint_indices().expect("Failed to retrieve constraint indices.");
+            let indices = self
+                .active_constraint_indices()
+                .expect("Failed to retrieve constraint indices.");
 
             assert_eq!(indices.len(), friction.force.len());
 
             for (&i, f) in indices.iter().zip(friction.force.iter()) {
                 for j in 0..3 {
-                    dissipation += dx[3*self.simulation_surf_verts[i] + j] * f[j];
+                    dissipation += dx[3 * self.simulation_surf_verts[i] + j] * f[j];
                 }
             }
         }
@@ -199,20 +225,36 @@ impl ContactConstraint for ImplicitContactConstraint {
         // Remap friction forces the same way we remap constraint multipliers for the contact
         // solve.
         if let Some(ref mut friction) = self.friction {
-            let new_friction_forces = crate::constraints::remap_values(friction.force.iter().cloned(), [0.0;3], old_set.iter().cloned(), new_set.iter().cloned());
+            let new_friction_forces = crate::constraints::remap_values(
+                friction.force.iter().cloned(),
+                [0.0; 3],
+                old_set.iter().cloned(),
+                new_set.iter().cloned(),
+            );
             std::mem::replace(&mut friction.force, new_friction_forces);
         }
     }
 
     /// For visualization purposes.
-    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], dt: f64, impulse: &mut [[f64;3]]) {
-        let normals = self.contact_normals(x, &vec![0.0; x.len()])
+    fn compute_contact_impulse(
+        &self,
+        x: &[f64],
+        contact_force: &[f64],
+        dt: f64,
+        impulse: &mut [[f64; 3]],
+    ) {
+        let normals = self
+            .contact_normals(x, &vec![0.0; x.len()])
             .expect("Failed to retrieve contact normals.");
-        let indices = self.active_constraint_indices()
+        let indices = self
+            .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
         assert_eq!(contact_force.len(), normals.len());
         assert_eq!(indices.len(), normals.len());
-        for (i, (n, &f)) in indices.into_iter().zip(normals.into_iter().zip(contact_force.iter())) {
+        for (i, (n, &f)) in indices
+            .into_iter()
+            .zip(normals.into_iter().zip(contact_force.iter()))
+        {
             impulse[self.simulation_surf_verts[i]] = (Vector3(n) * f * dt).into();
         }
     }
@@ -244,7 +286,9 @@ impl ContactConstraint for ImplicitContactConstraint {
     }
 
     fn update_radius_multiplier(&mut self, rad_mult: f64) {
-        self.implicit_surface.borrow_mut().update_radius_multiplier(rad_mult);
+        self.implicit_surface
+            .borrow_mut()
+            .update_radius_multiplier(rad_mult);
     }
 
     fn update_max_step(&mut self, step: f64) {
@@ -263,7 +307,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             if let Some(disp) = disp {
                 self.update_query_points_with_displacement(pos, disp);
             } else {
-                let pos: &[[f64;3]] = reinterpret_slice(pos);
+                let pos: &[[f64; 3]] = reinterpret_slice(pos);
                 self.update_query_points(self.simulation_surf_verts.iter().map(|&i| pos[i]));
             }
         } else {
@@ -274,10 +318,14 @@ impl ContactConstraint for ImplicitContactConstraint {
                 self.update_query_points(
                     self.simulation_surf_verts
                         .iter()
-                        .map(|&i| (vert_pos[i] + disp[i]).into())
+                        .map(|&i| (vert_pos[i] + disp[i]).into()),
                 );
             } else {
-                self.update_query_points(self.simulation_surf_verts.iter().map(|&i| vert_pos[i].into()));
+                self.update_query_points(
+                    self.simulation_surf_verts
+                        .iter()
+                        .map(|&i| vert_pos[i].into()),
+                );
             }
         }
 
@@ -410,12 +458,18 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
         })))
     }
 
-    fn constraint_jacobian_values(&self, x: &[f64], dx: &[f64], values: &mut [f64]) -> Result<(), Error> {
+    fn constraint_jacobian_values(
+        &self,
+        x: &[f64],
+        dx: &[f64],
+        values: &mut [f64],
+    ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         self.update_query_points_with_displacement(x, dx);
         let query_points = self.query_points.borrow();
 
-        Ok(self.implicit_surface
+        Ok(self
+            .implicit_surface
             .borrow()
             .query_jacobian_values(&query_points, values)?)
     }
@@ -434,20 +488,26 @@ impl ConstraintHessian<f64> for ImplicitContactConstraint {
         &'a self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
         let surf = self.implicit_surface.borrow();
-        Ok(Box::new(
-            surf.query_hessian_product_indices_iter()?
-                .map(move |(row, col)| MatrixElementIndex {
-                    row: self.tetmesh_coordinate_index(row),
-                    col: self.tetmesh_coordinate_index(col),
-                }),
-        ))
+        Ok(Box::new(surf.query_hessian_product_indices_iter()?.map(
+            move |(row, col)| MatrixElementIndex {
+                row: self.tetmesh_coordinate_index(row),
+                col: self.tetmesh_coordinate_index(col),
+            },
+        )))
     }
 
-    fn constraint_hessian_values(&self, x: &[f64], dx: &[f64], lambda: &[f64], values: &mut [f64]) -> Result<(), Error> {
+    fn constraint_hessian_values(
+        &self,
+        x: &[f64],
+        dx: &[f64],
+        lambda: &[f64],
+        values: &mut [f64],
+    ) -> Result<(), Error> {
         self.update_query_points_with_displacement(x, dx);
         let query_points = self.query_points.borrow();
 
-        Ok(self.implicit_surface
+        Ok(self
+            .implicit_surface
             .borrow()
             .query_hessian_product_values(&query_points, lambda, values)?)
     }

@@ -7,14 +7,14 @@ mod attrib_defines;
 mod bench;
 mod constraint;
 mod constraints;
+mod contact;
 mod energy;
 mod energy_models;
-mod contact;
 pub mod fem;
+mod friction;
 mod index;
 pub mod mask_iter;
 mod matrix;
-mod friction;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -24,12 +24,12 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
+pub use self::contact::*;
 pub use self::contact::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };
 use self::friction::FrictionSolveResult;
-pub use self::contact::*;
 use geo::mesh::attrib;
 pub use index::Index;
 
@@ -56,7 +56,7 @@ pub enum Error {
     MeshIOError(geo::io::Error),
     FileIOError(std::io::ErrorKind),
     InvalidImplicitSurface,
-    ImplicitsError(implicits::Error)
+    ImplicitsError(implicits::Error),
 }
 
 impl From<std::io::Error> for Error {
@@ -108,13 +108,14 @@ impl From<Error> for SimResult {
                     SimResult::Warning(format!("Maximum iterations exceeded. \n{}", solve_result))
                 }
                 e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
-            }
+            },
             Error::InnerSolveError(e, solve_result) => {
                 SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result))
             }
-            Error::FrictionSolveError(e, solve_result) => {
-                SimResult::Error(format!("Friction Solve failed: {:?}\n{:?}", e, solve_result))
-            }
+            Error::FrictionSolveError(e, solve_result) => SimResult::Error(format!(
+                "Friction Solve failed: {:?}\n{:?}",
+                e, solve_result
+            )),
             Error::MissingContactParams => {
                 SimResult::Error("Missing smooth contact parameters.".to_string())
             }
@@ -132,9 +133,7 @@ impl From<Error> for SimResult {
             Error::MeshIOError(err) => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", err))
             }
-            Error::FileIOError(err) => {
-                SimResult::Error(format!("File I/O error: {:?}", err))
-            }
+            Error::FileIOError(err) => SimResult::Error(format!("File I/O error: {:?}", err)),
             Error::InvalidImplicitSurface => {
                 SimResult::Error("Error creating an implicit surface".to_string())
             }

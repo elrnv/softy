@@ -70,7 +70,12 @@ pub trait ConstraintJacobian<T: Scalar> {
     ///   - `x` is the variable expected by the specific constraint for the previous configuration.
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
-    fn constraint_jacobian(&self, x: &[T], dx: &[T], triplets: &mut [MatrixElementTriplet<T>]) -> Result<(), Error> {
+    fn constraint_jacobian(
+        &self,
+        x: &[T],
+        dx: &[T],
+        triplets: &mut [MatrixElementTriplet<T>],
+    ) -> Result<(), Error> {
         self.constraint_jacobian_offset(x, dx, (0, 0).into(), triplets)
     }
 }
@@ -92,7 +97,13 @@ pub trait ConstraintHessian<T: Scalar> {
     ///   - `x` is the variable expected by the specific constraint for the previous configuration.
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
-    fn constraint_hessian_values(&self, x: &[T], dx: &[T], lambda: &[T], values: &mut [T]) -> Result<(), Error>;
+    fn constraint_hessian_values(
+        &self,
+        x: &[T],
+        dx: &[T],
+        lambda: &[T],
+        values: &mut [T],
+    ) -> Result<(), Error>;
 
     /// Compute the Hessian row and column indices of the matrix resulting from the constraint
     /// Hessian multiplied by the Lagrange multiplier vector.

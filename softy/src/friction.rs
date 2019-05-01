@@ -1,6 +1,6 @@
 use crate::contact::*;
 use geo::math::{Matrix3, Vector3};
-use ipopt::{self, Ipopt, SolverData, SolverDataMut, Number, Index};
+use ipopt::{self, Index, Ipopt, Number, SolverData, SolverDataMut};
 use reinterpret::*;
 
 use approx::*;
@@ -26,15 +26,12 @@ pub struct FrictionSolver {
 impl FrictionSolver {
     /// Build a new solver for the friction problem.
     pub fn new() -> Result<FrictionSolver, Error> {
-        let problem = FrictionProblem {
-        };
+        let problem = FrictionProblem {};
 
         let mut ipopt = Ipopt::new_newton(problem)?;
         ipopt.set_option("print_level", 5);
 
-        Ok(FrictionSolver {
-            solver: ipopt,
-        })
+        Ok(FrictionSolver { solver: ipopt })
     }
 
     /// Get an immutable reference to the underlying problem.
@@ -59,9 +56,7 @@ impl FrictionSolver {
             ..
         } = self.solver.solve();
 
-        let result = FrictionSolveResult {
-            objective_value,
-        };
+        let result = FrictionSolveResult { objective_value };
 
         match status {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
@@ -72,8 +67,7 @@ impl FrictionSolver {
     }
 }
 
-pub(crate) struct FrictionProblem {
-}
+pub(crate) struct FrictionProblem {}
 
 impl FrictionProblem {
     // TODO: implement this

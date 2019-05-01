@@ -22,8 +22,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn surface_jacobian_indices_iter(
         &self,
     ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
-        self.kernel.apply_fns(|| self.mls_surface_jacobian_indices_iter(),
-                              || Err(Error::UnsupportedKernel))
+        self.kernel.apply_fns(
+            || self.mls_surface_jacobian_indices_iter(),
+            || Err(Error::UnsupportedKernel),
+        )
     }
 
     /// Compute the indices for the implicit surface potential Jacobian with respect to surface
@@ -33,8 +35,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         rows: &mut [usize],
         cols: &mut [usize],
     ) -> Result<(), Error> {
-        self.kernel.apply_fns(|| self.mls_surface_jacobian_indices(rows, cols),
-                              || Err(Error::UnsupportedKernel))
+        self.kernel.apply_fns(
+            || self.mls_surface_jacobian_indices(rows, cols),
+            || Err(Error::UnsupportedKernel),
+        )
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to surface
@@ -44,9 +48,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [T],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                   |kernel| self.mls_surface_jacobian_values(query_points, kernel, values),
-                                   || Err(Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kernel| self.mls_surface_jacobian_values(query_points, kernel, values),
+            || Err(Error::UnsupportedKernel)
+        )
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
@@ -317,9 +324,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                   |kernel| self.mls_query_jacobian_values(query_points, kernel, values, false),
-                                   || Err(Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kernel| self.mls_query_jacobian_values(query_points, kernel, values, false),
+            || Err(Error::UnsupportedKernel)
+        )
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
@@ -342,9 +352,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                   |kernel| self.mls_query_jacobian_values(query_points, kernel, values, true),
-                                   || Err(Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kernel| self.mls_query_jacobian_values(query_points, kernel, values, true),
+            || Err(Error::UnsupportedKernel)
+        )
     }
 
     pub(crate) fn mls_query_jacobian_values<'a, K>(
@@ -368,13 +381,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         } = *self;
 
         // For each row (query point)
-        zip!(query_points.iter(), neigh_points.iter(), closest_points.iter())
-            .filter(|(_, nbrs, _)| full || !nbrs.is_empty())
-            .zip(value_vecs.iter_mut())
-            .for_each(move |((q, nbr_points, &closest), vec)| {
-                let view = SamplesView::new(nbr_points, samples);
-                *vec = Self::query_jacobian_at(Vector3(*q), view, Some(closest), kernel, bg_field_params).into();
-            });
+        zip!(
+            query_points.iter(),
+            neigh_points.iter(),
+            closest_points.iter()
+        )
+        .filter(|(_, nbrs, _)| full || !nbrs.is_empty())
+        .zip(value_vecs.iter_mut())
+        .for_each(move |((q, nbr_points, &closest), vec)| {
+            let view = SamplesView::new(nbr_points, samples);
+            *vec =
+                Self::query_jacobian_at(Vector3(*q), view, Some(closest), kernel, bg_field_params)
+                    .into();
+        });
         Ok(())
     }
 
@@ -519,7 +538,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
         let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
-        ((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w) * weight_sum_inv
+        ((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w)
+            * weight_sum_inv
     }
 
     /// Compute the normalized sum of all sample weight gradients.
@@ -550,7 +570,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         dw_neigh * weight_sum_inv // normalize the neighbourhood derivative
     }
 
-
     /// Compute the contact Jacobian of this implicit surface function with respect to surface
     /// points.
     pub fn contact_jacobian_product_values(
@@ -559,9 +578,17 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         multiplier: &[[T; 3]],
         values: &mut [[T; 3]],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                       |kernel| self.mls_contact_jacobian_product_values(query_points, multiplier, kernel, values),
-                                       || Err(Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kernel| self.mls_contact_jacobian_product_values(
+                query_points,
+                multiplier,
+                kernel,
+                values
+            ),
+            || Err(Error::UnsupportedKernel)
+        )
     }
 
     /// Multiplier is a stacked velocity stored at samples.
@@ -646,7 +673,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         values: &mut [T],
     ) -> Result<(), Error> {
-        let matrices: &mut [[[T;3]; 3]] = reinterpret::reinterpret_mut_slice(values);
+        let matrices: &mut [[[T; 3]; 3]] = reinterpret::reinterpret_mut_slice(values);
         self.contact_jacobian_matrices(query_points, matrices)
     }
 
@@ -654,14 +681,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
         self.contact_jacobian_matrix_indices_iter()
-            .map(move |iter|
-                 iter.flat_map(move |(row_mtx, col_mtx)| {
-                     (0..3).flat_map(move |j| {
-                         (0..3).map(move |i| {
-                             (3 * row_mtx + i, 3 * col_mtx + j)
-                         })
-                     })
-                 }))
+            .map(move |iter| {
+                iter.flat_map(move |(row_mtx, col_mtx)| {
+                    (0..3)
+                        .flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
+                })
+            })
     }
 
     /*
@@ -683,16 +708,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         matrices: &mut [[[T; 3]; 3]],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                   |kernel| self.mls_contact_jacobian_matrices(query_points, kernel, matrices),
-                                   || Err(Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kernel| self.mls_contact_jacobian_matrices(query_points, kernel, matrices),
+            || Err(Error::UnsupportedKernel)
+        )
     }
 
     pub fn contact_jacobian_matrix_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        self.kernel.apply_fns(|| self.mls_contact_jacobian_matrix_indices_iter(),
-                              || Err(Error::UnsupportedKernel))
+        self.kernel.apply_fns(
+            || self.mls_contact_jacobian_matrix_indices_iter(),
+            || Err(Error::UnsupportedKernel),
+        )
     }
 
     /*
@@ -709,30 +739,31 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ..
         } = *self;
 
-        let indices = neigh_points.iter()
+        let indices = neigh_points
+            .iter()
             .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
-            .flat_map(move |(row, nbr_points)| {
-                nbr_points
-                    .into_iter()
-                    .map(move |&col| (row, col))
-            });
+            .flat_map(move |(row, nbr_points)| nbr_points.into_iter().map(move |&col| (row, col)));
 
-        let (vtx_iter, face_iter) = match sample_type  {
-            SampleType::Vertex => {
-                (Some(indices.collect::<Vec<_>>().into_iter()), None)
-            }
-            SampleType::Face => {
-                (None, 
-                 Some(indices
-                      .flat_map(move |(row, j)| {
-                          surface_topo[j].iter().map(move |&col| (row, col))
-                      })
-                      .collect::<Vec<_>>().into_iter()))
-            }
+        let (vtx_iter, face_iter) = match sample_type {
+            SampleType::Vertex => (Some(indices.collect::<Vec<_>>().into_iter()), None),
+            SampleType::Face => (
+                None,
+                Some(
+                    indices
+                        .flat_map(move |(row, j)| {
+                            surface_topo[j].iter().map(move |&col| (row, col))
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                ),
+            ),
         };
 
-        Ok(vtx_iter.into_iter().flatten().chain(face_iter.into_iter().flatten()))
+        Ok(vtx_iter
+            .into_iter()
+            .flatten()
+            .chain(face_iter.into_iter().flatten()))
     }
 
     /// Multiplier is a stacked velocity stored at samples.
@@ -762,21 +793,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .filter(|(_, nbrs)| !nbrs.is_empty())
             .flat_map(move |(q, nbr_points)| {
                 let view = SamplesView::new(nbr_points, samples);
-                Self::contact_jacobian_at(
-                    Vector3(*q),
-                    view,
-                    kernel,
-                    bg_field_params).0
+                Self::contact_jacobian_at(Vector3(*q), view, kernel, bg_field_params).0
             });
 
         match sample_type {
             SampleType::Vertex => {
-                value_mtx
-                    .iter_mut()
-                    .zip(jac)
-                    .for_each(|(mtx, new_mtx)| {
-                        *mtx = new_mtx.into();
-                    });
+                value_mtx.iter_mut().zip(jac).for_each(|(mtx, new_mtx)| {
+                    *mtx = new_mtx.into();
+                });
             }
             SampleType::Face => {
                 value_mtx
@@ -799,7 +823,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         samples: SamplesView<'a, 'a, T>,
         kernel: K,
         bg_field_params: BackgroundFieldParams,
-    ) -> (impl Iterator<Item=Matrix3<T>> + 'a, Vector3<T>)
+    ) -> (impl Iterator<Item = Matrix3<T>> + 'a, Vector3<T>)
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
@@ -812,20 +836,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
 
-        let jac_iter = samples
-            .into_iter()
-            .map(
-                move |sample| {
-                    Self::sample_contact_jacobian_at(
-                        q,
-                        sample.pos,
-                        kernel,
-                        dw_neigh,
-                        weight_sum_inv,
-                        closest_d,
-                    )
-                },
-            );
+        let jac_iter = samples.into_iter().map(move |sample| {
+            Self::sample_contact_jacobian_at(
+                q,
+                sample.pos,
+                kernel,
+                dw_neigh,
+                weight_sum_inv,
+                closest_d,
+            )
+        });
 
         (jac_iter, bg_jac)
     }
@@ -1060,8 +1080,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autodiff::F;
     use crate::kernel;
+    use autodiff::F;
 
     /// Tester for the Jacobian at a single position with respect to a surface defined by a single point.
     fn one_point_potential_derivative_tester(radius: f64, bg_field_params: BackgroundFieldParams) {
@@ -1738,7 +1758,7 @@ mod tests {
         let mut jac = vec![0.0; num_jac_entries];
         surf.contact_jacobian_values(&tri_verts, &mut jac)?;
         let multiplier_values: &[f64] = reinterpret::reinterpret_slice(&multipliers);
-        let mut alt_jac_prod_vals = vec![0.0; tri_verts.len()*3];
+        let mut alt_jac_prod_vals = vec![0.0; tri_verts.len() * 3];
         for ((row, col), jac) in indices_iter.zip(jac.into_iter()) {
             alt_jac_prod_vals[row] += jac * multiplier_values[col];
         }

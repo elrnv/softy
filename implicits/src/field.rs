@@ -55,7 +55,7 @@ where
     /// The type of kernel to use for fitting the data.
     kernel: KernelType,
 
-    /// The base radius or local feature size used to 
+    /// The base radius or local feature size used to
     base_radius: f64,
 
     /// Enum for choosing how to compute a background potential field that may be mixed in with
@@ -103,15 +103,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Radius of influence ( kernel radius ) for this implicit surface.
     pub fn radius(&self) -> f64 {
-         self.base_radius * match self.kernel {
-            KernelType::Interpolating { radius_multiplier }
-            | KernelType::Approximate { radius_multiplier, .. }
-            | KernelType::Cubic { radius_multiplier } =>
-                radius_multiplier,
-            KernelType::Global { .. }
-            | KernelType::Hrbf =>
-                std::f64::INFINITY,
-        }
+        self.base_radius
+            * match self.kernel {
+                KernelType::Interpolating { radius_multiplier }
+                | KernelType::Approximate {
+                    radius_multiplier, ..
+                }
+                | KernelType::Cubic { radius_multiplier } => radius_multiplier,
+                KernelType::Global { .. } | KernelType::Hrbf => std::f64::INFINITY,
+            }
     }
 
     /// Return the surface vertex positions used by this implicit surface.
@@ -221,7 +221,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         match *kernel {
             KernelType::Interpolating { radius_multiplier }
-            | KernelType::Approximate { radius_multiplier, .. }
+            | KernelType::Approximate {
+                radius_multiplier, ..
+            }
             | KernelType::Cubic { radius_multiplier } => {
                 let radius = base_radius * radius_multiplier;
                 let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
@@ -371,9 +373,16 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
         match self.kernel {
-            KernelType::Interpolating { ref mut radius_multiplier }
-            | KernelType::Approximate { ref mut radius_multiplier, .. }
-            | KernelType::Cubic { ref mut radius_multiplier } => {
+            KernelType::Interpolating {
+                ref mut radius_multiplier,
+            }
+            | KernelType::Approximate {
+                ref mut radius_multiplier,
+                ..
+            }
+            | KernelType::Cubic {
+                ref mut radius_multiplier,
+            } => {
                 *radius_multiplier = new_radius_multiplier;
             }
             _ => {}
@@ -423,8 +432,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         epsilon: T,
         query_points: &mut [[T; 3]],
     ) -> Result<bool, super::Error> {
-
-        let multiplier = match side { Side::Above => T::one(), Side::Below => -T::one() };
+        let multiplier = match side {
+            Side::Above => T::one(),
+            Side::Below => -T::one(),
+        };
         let iso_value = iso_value * multiplier;
 
         let mut candidate_points = query_points.to_vec();
@@ -474,7 +485,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 }
 
                 self.potential(&candidate_points, &mut candidate_potential)?;
-                candidate_potential.iter_mut().for_each(|x| *x *= multiplier);
+                candidate_potential
+                    .iter_mut()
+                    .for_each(|x| *x *= multiplier);
 
                 let mut count_overshoots = 0;
                 for (step, _, _) in zip!(
@@ -529,9 +542,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ..
         } = *self;
 
-        match_kernel_as_spherical!(kernel, base_radius,
-                                   |kern| self.compute_mls(query_points, kern, out_field),
-                                   || Self::compute_hrbf(query_points, samples, out_field))
+        match_kernel_as_spherical!(
+            kernel,
+            base_radius,
+            |kern| self.compute_mls(query_points, kern, out_field),
+            || Self::compute_hrbf(query_points, samples, out_field)
+        )
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
@@ -648,9 +664,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         out_vectors: &mut [[T; 3]],
     ) -> Result<(), super::Error> {
-        match_kernel_as_spherical!(self.kernel, self.base_radius,
-                                  |kern| self.compute_mls_vector_field(query_points, kern, out_vectors),
-                                  || Err(super::Error::UnsupportedKernel))
+        match_kernel_as_spherical!(
+            self.kernel,
+            self.base_radius,
+            |kern| self.compute_mls_vector_field(query_points, kern, out_vectors),
+            || Err(super::Error::UnsupportedKernel)
+        )
     }
 
     /// Interpolate the given vector field at the given query points.
@@ -759,9 +778,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ..
         } = *self;
 
-        match_kernel_as_spherical!(kernel, self.base_radius,
-                                   |kern| self.compute_mls_on_mesh(mesh, kern, interrupt),
-                                   || Self::compute_hrbf_on_mesh(mesh, samples, interrupt))
+        match_kernel_as_spherical!(
+            kernel,
+            self.base_radius,
+            |kern| self.compute_mls_on_mesh(mesh, kern, interrupt),
+            || Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
+        )
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
@@ -1221,7 +1243,9 @@ mod tests {
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
     // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
     // surface.
-    fn make_octahedron_and_grid_local(reverse: bool) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    fn make_octahedron_and_grid_local(
+        reverse: bool,
+    ) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1262,7 +1286,9 @@ mod tests {
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
     // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
     // surface.
-    fn make_octahedron_and_grid(reverse: bool) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    fn make_octahedron_and_grid(
+        reverse: bool,
+    ) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1298,7 +1324,11 @@ mod tests {
         Ok((surface, grid))
     }
 
-    fn projection_tester(surface: &ImplicitSurface, mut grid: PolyMesh<f64>, side: Side) -> Result<(), crate::Error> {
+    fn projection_tester(
+        surface: &ImplicitSurface,
+        mut grid: PolyMesh<f64>,
+        side: Side,
+    ) -> Result<(), crate::Error> {
         let epsilon = 1e-4;
         let init_potential = {
             // Get grid node positions to be projected.
@@ -1313,7 +1343,6 @@ mod tests {
             init_potential
         };
 
-        
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
         surface.potential(grid.vertex_positions(), &mut final_potential)?;

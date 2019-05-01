@@ -161,20 +161,31 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// mesh. More precisely, find `r` such that `|x_t - c_t| <= r` for all vertices `x_t` and all triangles
     /// `t`, where `c_t` is the centroid of triangle `t`.
     pub(crate) fn compute_base_radius(trimesh: &TriMesh<f64>) -> f64 {
+        use geo::mesh::VertexPositions;
         use geo::ops::Centroid;
         use geo::prim::Triangle;
-        use geo::mesh::VertexPositions;
         let pos = trimesh.vertex_positions();
-        trimesh.face_iter().map(|f| {
-            let tri = Triangle::from_indexed_slice(f.get(), pos);
-            let c = tri.centroid();
-            let verts = [tri.0, tri.1, tri.2];
-            verts.into_iter().map(|&x| (x - c).norm_squared())
-                .max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
-                .unwrap() // we know there are 3 vertices.
-        }).max_by(|a,b| a.partial_cmp(b).expect("Detected NaN. Please report this bug."))
-        .expect("Empty triangle mesh.")
-        .sqrt()
+        trimesh
+            .face_iter()
+            .map(|f| {
+                let tri = Triangle::from_indexed_slice(f.get(), pos);
+                let c = tri.centroid();
+                let verts = [tri.0, tri.1, tri.2];
+                verts
+                    .into_iter()
+                    .map(|&x| (x - c).norm_squared())
+                    .max_by(|a, b| {
+                        a.partial_cmp(b)
+                            .expect("Detected NaN. Please report this bug.")
+                    })
+                    .unwrap() // we know there are 3 vertices.
+            })
+            .max_by(|a, b| {
+                a.partial_cmp(b)
+                    .expect("Detected NaN. Please report this bug.")
+            })
+            .expect("Empty triangle mesh.")
+            .sqrt()
     }
 
     /// Builds the implicit surface. This function returns `None` when theres is not enough data to
@@ -195,7 +206,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         // Cannot build an implicit surface when the radius is 0.0.
         match kernel {
             KernelType::Interpolating { radius_multiplier }
-            | KernelType::Approximate { radius_multiplier, .. }
+            | KernelType::Approximate {
+                radius_multiplier, ..
+            }
             | KernelType::Cubic { radius_multiplier } => {
                 if radius_multiplier == 0.0 {
                     return None;

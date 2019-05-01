@@ -1,16 +1,25 @@
 #![allow(clippy::just_underscores_and_digits)]
 
+use super::Error;
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
-use super::Error;
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum KernelType {
-    Interpolating { radius_multiplier: f64 },
-    Approximate { radius_multiplier: f64, tolerance: f64 },
-    Cubic { radius_multiplier: f64 },
-    Global { tolerance: f64 },
+    Interpolating {
+        radius_multiplier: f64,
+    },
+    Approximate {
+        radius_multiplier: f64,
+        tolerance: f64,
+    },
+    Cubic {
+        radius_multiplier: f64,
+    },
+    Global {
+        tolerance: f64,
+    },
     Hrbf,
 }
 
@@ -22,15 +31,19 @@ pub enum KernelType {
 macro_rules! match_kernel_as_spherical {
     ($kernel:expr, $base_radius:expr, $mls:expr, $hrbf:expr) => {
         match $kernel {
-            KernelType::Interpolating { radius_multiplier } => {
-                $mls($crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier))
-            }
-            KernelType::Approximate { tolerance, radius_multiplier } => {
-                $mls($crate::kernel::LocalApproximate::new($base_radius * radius_multiplier, tolerance))
-            }
-            KernelType::Cubic { radius_multiplier } => {
-                $mls($crate::kernel::LocalCubic::new($base_radius * radius_multiplier))
-            }
+            KernelType::Interpolating { radius_multiplier } => $mls(
+                $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
+            ),
+            KernelType::Approximate {
+                tolerance,
+                radius_multiplier,
+            } => $mls($crate::kernel::LocalApproximate::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            )),
+            KernelType::Cubic { radius_multiplier } => $mls($crate::kernel::LocalCubic::new(
+                $base_radius * radius_multiplier,
+            )),
             KernelType::Global { tolerance } => {
                 // Global kernel, all points are neighbours
                 $mls($crate::kernel::GlobalInvDistance2::new(tolerance))
@@ -40,27 +53,23 @@ macro_rules! match_kernel_as_spherical {
                 $hrbf()
             }
         }
-    }
+    };
 }
-
 
 impl KernelType {
     /// Same as `apply_as_spherical` but without the need to specify the kernel, which allows us to
     /// write this as a function.
     pub fn apply_fns<MlsF, HrbfF, O>(self, mut mls: MlsF, mut hrbf: HrbfF) -> Result<O, Error>
-        where MlsF: FnMut() -> Result<O, Error>,
-              HrbfF: FnMut() -> Result<O, Error>,
+    where
+        MlsF: FnMut() -> Result<O, Error>,
+        HrbfF: FnMut() -> Result<O, Error>,
     {
         match self {
-            KernelType::Interpolating { .. }  |
-            KernelType::Approximate { .. } |
-            KernelType::Cubic { .. } |
-            KernelType::Global { .. } => {
-                mls()
-            }
-            KernelType::Hrbf => {
-                hrbf()
-            }
+            KernelType::Interpolating { .. }
+            | KernelType::Approximate { .. }
+            | KernelType::Cubic { .. }
+            | KernelType::Global { .. } => mls(),
+            KernelType::Hrbf => hrbf(),
         }
     }
 }

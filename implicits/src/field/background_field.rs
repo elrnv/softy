@@ -115,7 +115,14 @@ where
         bg_value: Option<V>,
     ) -> Result<Self, crate::Error> {
         if let Some(closest) = global_closest {
-            Ok(Self::global(q, local_samples_view, closest, kernel, bg_params, bg_value))
+            Ok(Self::global(
+                q,
+                local_samples_view,
+                closest,
+                kernel,
+                bg_params,
+                bg_value,
+            ))
         } else {
             Self::local(q, local_samples_view, kernel, bg_params, bg_value)
         }
@@ -807,7 +814,10 @@ mod tests {
         };
 
         let tolerance = 0.00001;
-        let kernel_type = KernelType::Approximate { tolerance, radius_multiplier };
+        let kernel_type = KernelType::Approximate {
+            tolerance,
+            radius_multiplier,
+        };
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh::<F>(
@@ -933,7 +943,10 @@ mod tests {
         };
 
         let tolerance = 0.00001;
-        let kernel_type = KernelType::Approximate { tolerance, radius_multiplier };
+        let kernel_type = KernelType::Approximate {
+            tolerance,
+            radius_multiplier,
+        };
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh::<F>(

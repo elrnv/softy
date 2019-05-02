@@ -134,19 +134,28 @@ impl ipopt::BasicProblem for FrictionProblem<'_> {
 
 impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
     fn num_constraints(&self) -> usize {
-        1
+        self.contact_force.len()
     }
 
     fn num_constraint_jacobian_non_zeros(&self) -> usize {
 
     }
 
-    fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
-
+    fn constraint(&self, f: &[Number], g: &mut [Number]) -> bool {
+        let forces: &[[f64; 2]] = reinterpret_slice(f);
+        assert_eq!(forces.len(), g.len());
+        for (c, f) in g.iter_mut().zip(forces.iter()) {
+            *c = Vector2(f).norm()
+        }
+        true
     }
 
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-
+        for ((l,u), &cf) in g_l.iter_mut().zip(g_u.iter_mut())
+            .zip(self.contact_force.iter()) {
+            *l = -2e19; // norm can never be negative, so leave this unconstrained.
+            *u = self.mu * cf;
+        }
     }
 
     fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {

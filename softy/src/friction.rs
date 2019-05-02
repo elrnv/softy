@@ -18,29 +18,32 @@ pub struct FrictionSolveResult {
 }
 
 /// Friction solver.
-pub struct FrictionSolver {
+pub struct FrictionSolver<'v> {
     /// Non-linear solver.
-    solver: Ipopt<FrictionProblem>,
+    solver: Ipopt<FrictionProblem<'v>>,
 }
 
-impl FrictionSolver {
-    /// Build a new solver for the friction problem.
-    pub fn new() -> Result<FrictionSolver, Error> {
-        let problem = FrictionProblem {};
+impl<'v> FrictionSolver<'v> {
+    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
+    /// tangential velocities for each contact point.
+    pub fn new(velocity: &'v [[f64; 2]]) -> Result<FrictionSolver<'v>, Error> {
+        let problem = FrictionProblem {
+            velocity,
+        };
 
-        let mut ipopt = Ipopt::new_newton(problem)?;
+        let mut ipopt = Ipopt::new(problem)?;
         ipopt.set_option("print_level", 5);
 
         Ok(FrictionSolver { solver: ipopt })
     }
 
     /// Get an immutable reference to the underlying problem.
-    fn problem(&self) -> &FrictionProblem {
+    fn problem(&self) -> &'v FrictionProblem {
         self.solver.solver_data().problem
     }
 
     /// Get a mutable reference to the underlying problem.
-    fn problem_mut(&mut self) -> &mut FrictionProblem {
+    fn problem_mut(&mut self) -> &'v mut FrictionProblem {
         self.solver.solver_data_mut().problem
     }
 
@@ -67,19 +70,26 @@ impl FrictionSolver {
     }
 }
 
-pub(crate) struct FrictionProblem {}
+pub(crate) struct FrictionProblem<'v> {
+    /// A set of tangential velocities in contact space for active contacts. These are used to
+    /// determine the applied frictional force.
+    velocity: &'v [[f64; 2]],
+    /// A set of contact forces for each contact point.
+    contact_force: &'v [f64],
+    /// Friction coefficient.
+    mu: f64,
+}
 
-impl FrictionProblem {
-    // TODO: implement this
+impl FrictionProblem<'_> {
     fn num_contacts(&self) -> usize {
-        0
+        velocity.len()
     }
 }
 
 /// Prepare the problem for Newton iterations.
-impl ipopt::BasicProblem for FrictionProblem {
+impl ipopt::BasicProblem for FrictionProblem<'_> {
     fn num_variables(&self) -> usize {
-        3 * self.num_contacts()
+        2 * self.num_contacts()
     }
 
     fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
@@ -95,29 +105,67 @@ impl ipopt::BasicProblem for FrictionProblem {
         true
     }
 
-    fn objective(&self, dx: &[Number], obj: &mut Number) -> bool {
-        // TODO: Implement this
+    fn objective(&self, f: &[Number], obj: &mut Number) -> bool {
+        let forces: &[[f64; 2]] = reinterpret_slice(f);
+        assert_eq!(self.velocity.len(), forces.len());
+
+        // Clear objective value.
         *obj = 0.0;
+
+        // Compute (negative of) frictional dissipation.
+        for (&v, &f) in self.velocity.iter().zip(forces.iter()) {
+            *obj += Vector3(v).dot(Vector3(f))
+        }
+
         true
     }
 
-    fn objective_grad(&self, dx: &[Number], grad_f: &mut [Number]) -> bool {
-        // TODO: implement this
+    fn objective_grad(&self, _f: &[Number], grad_f: &mut [Number]) -> bool {
+        let velocity_values: &[f64] = reinterpret_slice(self.velocity);
+        assert_eq!(velocity_values.len(), grad_f.len());
+        
+        for (g, v) in grad_f.iter_mut().zip(velocity_values) {
+            *g += v;
+        }
+
         true
     }
 }
 
-impl ipopt::NewtonProblem for FrictionProblem {
+impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
+    fn num_constraints(&self) -> usize {
+        1
+    }
+
+    fn num_constraint_jacobian_non_zeros(&self) -> usize {
+
+    }
+
+    fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
+
+    }
+
+    fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
+
+    }
+
+    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+
+    }
+
+    fn constraint_jacobian_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
+
+    }
+
+    // Hessian is zero.
     fn num_hessian_non_zeros(&self) -> usize {
         0
     }
     fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        // TODO: Implement this
-        false
+        true
     }
-    fn hessian_values(&self, x: &[Number], vals: &mut [Number]) -> bool {
-        // TODO: Implement this
-        false
+    fn hessian_values(&self, x: &[Number], obj_vactor: Number, lambda: &[Number], vals: &mut [Number]) -> bool {
+        true
     }
 }
 

@@ -29,7 +29,6 @@ pub use self::contact::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };
-use self::friction::FrictionSolveResult;
 use geo::mesh::attrib;
 pub use index::Index;
 
@@ -45,7 +44,7 @@ pub enum Error {
     SolveError(ipopt::SolveStatus, SolveResult),
     /// Error during an inner solve step. This reports iterations and objective value.
     InnerSolveError(ipopt::SolveStatus, InnerSolveResult),
-    FrictionSolveError(ipopt::SolveStatus, FrictionSolveResult),
+    FrictionSolveError(ipopt::SolveStatus),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
     MissingContactParams,
@@ -112,9 +111,9 @@ impl From<Error> for SimResult {
             Error::InnerSolveError(e, solve_result) => {
                 SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result))
             }
-            Error::FrictionSolveError(e, solve_result) => SimResult::Error(format!(
-                "Friction Solve failed: {:?}\n{:?}",
-                e, solve_result
+            Error::FrictionSolveError(e) => SimResult::Error(format!(
+                "Friction Solve failed: {:?}",
+                e
             )),
             Error::MissingContactParams => {
                 SimResult::Error("Missing smooth contact parameters.".to_string())

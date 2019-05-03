@@ -6,12 +6,13 @@ use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Matrix3, Vector2, Vector3};
+use geo::math::{Matrix3, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
+use crate::friction::*;
 use utils::zip;
 
 ///// Linearization of a constraint given by `C`.
@@ -465,26 +466,52 @@ impl ContactConstraint for PointContactConstraint {
 
         assert_eq!(query_indices.len(), contact_force.len());
 
-        for (contact_idx, (query_idx, &cf)) in
-            zip!(query_indices.into_iter(), contact_force.iter()).enumerate()
-        {
-            let disp: [f64; 3] = displacement[query_idx].into();
-            let v = friction.to_contact_coordinates(disp, contact_idx);
-            let v_t = Vector2([v[1], v[2]]); // Tangential component
-            let mag = v_t.norm();
-            let dir = if mag > 0.0 {
-                v_t / mag
+        let velocity_t: Vec<[f64; 2]> = query_indices
+            .iter()
+            .enumerate()
+            .map(|(contact_idx, &qi)| {
+                let disp: [f64; 3] = displacement[qi].into();
+                let v = friction.to_contact_coordinates(disp, contact_idx);
+                [v[1], v[2]]
+            })
+            .collect();
+
+        if let Ok(mut solver) = FrictionSolver::new(&velocity_t, contact_force, mu) {
+            if let Ok(FrictionSolveResult {
+                friction_force: f_t,
+                ..
+            }) = solver.step() {
+                for (contact_idx, (&query_idx, &f)) in query_indices.iter().zip(f_t.iter()).enumerate() {
+                    friction_force[query_idx] =
+                        Vector3(friction.to_physical_coordinates([0.0, f[0], f[1]], contact_idx).into());
+                }
             } else {
-                Vector2::zeros()
-            };
-            let f_t = dir * (mu * cf);
-            let f = Vector3(
-                friction
-                    .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
-                    .into(),
-            );
-            friction_force[query_idx] = f;
+                return false;
+            }
+        } else {
+            return false;
         }
+
+        //for (contact_idx, (query_idx, &cf)) in
+        //    zip!(query_indices.into_iter(), contact_force.iter()).enumerate()
+        //{
+        //    let disp: [f64; 3] = displacement[query_idx].into();
+        //    let v = friction.to_contact_coordinates(disp, contact_idx);
+        //    let v_t = Vector2([v[1], v[2]]); // Tangential component
+        //    let mag = v_t.norm();
+        //    let dir = if mag > 0.0 {
+        //        v_t / mag
+        //    } else {
+        //        Vector2::zeros()
+        //    };
+        //    let f_t = dir * (mu * cf);
+        //    let f = Vector3(
+        //        friction
+        //            .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
+        //            .into(),
+        //    );
+        //    friction_force[query_idx] = f;
+        //}
 
         // Now we apply the contact jacobian to map the frictional forces at contact points (on
         // collider vertices) to the vertices of the simulation mesh. Given contact jacobian J, and
@@ -904,5 +931,4 @@ mod tests {
             }
         }
     }
-
 }

@@ -11,7 +11,7 @@ geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", f
 rayon = "1.0"
 reinterpret = "0.1"
 implicits = { path = "../implicits" }
-#unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
+unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
 approx = "0.3"
 num-traits = "0.2"
 jemallocator = "0.3"

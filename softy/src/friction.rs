@@ -240,6 +240,7 @@ impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::*;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
@@ -256,6 +257,10 @@ mod tests {
             friction_force,
             objective_value
         } = result;
+
+        assert_relative_eq!(friction_force[0][0], -15.0, max_relative=1e-7);
+        assert_relative_eq!(friction_force[0][1], 0.0, max_relative=1e-7);
+        assert_relative_eq!(objective_value, -15.0, max_relative=1e-7);
 
         Ok(())
     }

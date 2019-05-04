@@ -25,6 +25,7 @@ pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::contact::*;
+pub use self::friction::*;
 pub use self::contact::{ContactType, SmoothContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
@@ -43,7 +44,7 @@ pub enum Error {
     /// iterations.
     SolveError(ipopt::SolveStatus, SolveResult),
     /// Error during an inner solve step. This reports iterations and objective value.
-    InnerSolveError(ipopt::SolveStatus, InnerSolveResult),
+    InnerSolveError { status: ipopt::SolveStatus, objective_value: f64, iterations: u32 },
     FrictionSolveError(ipopt::SolveStatus),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
@@ -108,8 +109,8 @@ impl From<Error> for SimResult {
                 }
                 e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
             },
-            Error::InnerSolveError(e, solve_result) => {
-                SimResult::Error(format!("Inner Solve failed: {:?}\n{:?}", e, solve_result))
+            Error::InnerSolveError { status, objective_value, iterations } => {
+                SimResult::Error(format!("Inner Solve failed: {:?}\nobjective value: {:?}\niterations: {:?}", status, objective_value, iterations))
             }
             Error::FrictionSolveError(e) => SimResult::Error(format!(
                 "Friction Solve failed: {:?}",

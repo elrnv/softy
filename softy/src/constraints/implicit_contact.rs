@@ -1,6 +1,6 @@
 use super::ContactConstraint;
 use crate::constraint::*;
-use crate::contact::*;
+use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
@@ -76,7 +76,7 @@ impl ImplicitContactConstraint {
                 query_points: RefCell::new(query_points.to_vec()),
                 friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams))
+                        Some(Friction::new(fparams, false))
                     } else {
                         None
                     }
@@ -129,6 +129,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
+        _constraint_values: &[f64],
     ) -> bool {
         if self.friction.is_none() {
             return false;
@@ -173,7 +174,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             let v_: [f64; 3] = v.into();
             let f_: [f64; 3] = f.into();
             let dot = Vector3(v_).dot(Vector3(f_));
-            println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", v_, f_, cf, dot);
+            //println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", v_, f_, cf, dot);
             friction.force.push(f.into());
         }
         true

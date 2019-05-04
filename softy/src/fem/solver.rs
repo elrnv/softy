@@ -33,6 +33,8 @@ pub struct InnerSolveResult {
     pub iterations: u32,
     /// The value of the objective at the end of the step.
     pub objective_value: f64,
+    /// Constraint values at the solution of the inner step.
+    pub constraint_values: Vec<f64>,
 }
 
 /// Result from one simulation step.
@@ -47,19 +49,22 @@ pub struct SolveResult {
 }
 
 impl SolveResult {
-    /// Add an inner solve result to this solve result.
-    fn combine_inner_result(self, inner: &InnerSolveResult) -> SolveResult {
+    fn combine_inner_step_data(self, iterations: u32, objective_value: f64) -> SolveResult {
         SolveResult {
             // Aggregate max number of iterations.
-            max_inner_iterations: inner.iterations.max(self.max_inner_iterations),
+            max_inner_iterations: iterations.max(self.max_inner_iterations),
 
             // Adding a new inner solve result means we have completed another inner solve: +1
             // outer iterations.
             iterations: self.iterations + 1,
 
             // The objective value of the solution is the objective value of the last inner solve.
-            objective_value: inner.objective_value,
+            objective_value,
         }
+    }
+    /// Add an inner solve result to this solve result.
+    fn combine_inner_result(self, inner: &InnerSolveResult) -> SolveResult {
+        self.combine_inner_step_data(inner.iterations, inner.objective_value)
     }
 }
 
@@ -658,9 +663,9 @@ impl Solver {
         let ipopt::SolveResult {
             // unpack ipopt result
             solver_data,
+            constraint_values,
             objective_value,
             status,
-            ..
         } = self.solver.solve();
 
         let iterations = solver_data.problem.pop_iteration_count() as u32;
@@ -669,13 +674,14 @@ impl Solver {
         let result = InnerSolveResult {
             iterations,
             objective_value,
+            constraint_values: constraint_values.to_vec(),
         };
 
         match status {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::InnerSolveError(e, result)),
+            e => Err(Error::InnerSolveError { status: e, objective_value, iterations }),
         }
     }
 
@@ -989,13 +995,13 @@ impl Solver {
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
     /// `false` otherwise. If friction is disabled, this function will return `false`.
-    fn compute_friction_impulse(&mut self) -> bool {
+    fn compute_friction_impulse(&mut self, constraint_values: &[f64]) -> bool {
         // Select constraint multipliers responsible for the contact force.
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
 
-        problem.update_friction_impulse(solution)
+        problem.update_friction_impulse(solution, constraint_values)
     }
 
     /// Run the optimization solver on one time step.
@@ -1045,7 +1051,7 @@ impl Solver {
                             // remapping here.
                             self.problem_mut()
                                 .remap_contacts(old_active_set.clone().into_iter());
-                            if self.compute_friction_impulse() {
+                            if self.compute_friction_impulse(&step_result.constraint_values) {
                                 friction_steps -= 1;
                                 continue;
                             }
@@ -1062,8 +1068,8 @@ impl Solver {
                     self.problem_mut()
                         .remap_contacts(old_active_set.into_iter());
                 }
-                Err(Error::InnerSolveError(status, step_result)) => {
-                    result = result.combine_inner_result(&step_result);
+                Err(Error::InnerSolveError { status, iterations, objective_value }) => {
+                    result = result.combine_inner_step_data(iterations, objective_value);
                     let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(true);
                     self.problem_mut()
@@ -1179,7 +1185,7 @@ impl Solver {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
                 }
-                Err(Error::InnerSolveError(status, step_result)) => {
+                Err(Error::InnerSolveError { status, iterations, objective_value }) => {
                     // If the problem is infeasible, it may be that our step size is too small,
                     // Try to increase it (but not past max_step) and try again:
                     if status == ipopt::SolveStatus::InfeasibleProblemDetected {
@@ -1191,7 +1197,7 @@ impl Solver {
                         }
                     } else {
                         // Otherwise we don't know what else to do so return an error.
-                        result = result.combine_inner_result(&step_result);
+                        result = result.combine_inner_step_data(iterations, objective_value);
                         return Err(Error::SolveError(status, result));
                     }
                 }

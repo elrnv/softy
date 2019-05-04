@@ -1,239 +1,123 @@
-use geo::math::{Matrix2, Vector2};
-use ipopt::{self, Index, Ipopt, Number};
+mod solver;
+mod polar_solver;
+
+pub use solver::*;
 use reinterpret::*;
+use na::{Vector2, Vector3, Matrix3};
 
-use unroll::unroll_for_loops;
-use utils::zip;
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FrictionParams {
+    pub dynamic_friction: f64,
+    pub inner_iterations: usize,
+    pub tolerance: f64,
+    pub print_level: u8,
+}
 
-use crate::{Error};
-
-/// Result from one inner friction step.
 #[derive(Clone, Debug, PartialEq)]
-pub struct FrictionSolveResult {
-    /// The value of the dissipation objective at the end of the step.
-    pub objective_value: f64,
-    /// Resultant friction force in contact space.
-    pub friction_force: Vec<[f64; 2]>,
+pub struct Friction {
+    pub use_cylindrical_coords: bool,
+    pub params: FrictionParams,
+    pub force: Vec<[f64; 3]>,
+    contact_normals: Vec<Vector3<f64>>,
+    contact_tangents: Vec<Vector3<f64>>,
 }
 
-/// Friction solver.
-pub struct FrictionSolver<'a> {
-    /// Non-linear solver.
-    solver: Ipopt<FrictionProblem<'a>>,
-}
+impl Friction {
+    pub fn new(params: FrictionParams, use_cylindrical_coords: bool) -> Friction {
+        Friction {
+            use_cylindrical_coords,
+            params,
+            force: Vec::new(),
+            contact_normals: Vec::new(),
+            contact_tangents: Vec::new(),
+        }
+    }
 
-impl<'a> FrictionSolver<'a> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_force` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
-    /// Finally, `mu` is the friction coefficient.
-    pub fn new(velocity: &'a [[f64; 2]], contact_force: &'a [f64], mu: f64) -> Result<FrictionSolver<'a>, Error> {
-        let problem = FrictionProblem {
-            velocity: reinterpret_slice(velocity),
-            contact_force,
-            mu,
+    /// Transform a vector at the given contact point index to contact coordinates. The index
+    /// determines which local contact coordinates to use.
+    pub fn to_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> Vector3<f64>
+    where
+        V3: Into<Vector3<f64>>,
+    {
+        let n = self.contact_normals[contact_index];
+        let t = self.contact_tangents[contact_index];
+        let b = n.cross(&t);
+        //b = b/b.norm(); // b may need to be renormalized here.
+        let vc = Matrix3::from_columns(&[n, t, b]).transpose() * v.into();
+        if !self.use_cylindrical_coords {
+            return vc;
+        }
+
+        // Cylindrical coordinates have the form: [Normal, Radius, Angle]
+        Vector3::new(vc[0], Vector2::new(vc[1], vc[2]).norm(), f64::atan2(vc[2], vc[1]))
+    }
+
+    /// Transform a vector at the given contact point index to physical coordinates. The index
+    /// determines which local contact coordinates to use.
+    pub fn to_physical_coordinates<V3>(&self, v: V3, contact_index: usize) -> Vector3<f64>
+    where
+        V3: Into<Vector3<f64>>,
+    {
+        let n = self.contact_normals[contact_index];
+        let t = self.contact_tangents[contact_index];
+        let b = n.cross(&t);
+        //b = b/b.norm(); // b may need to be renormalized here.
+        let v = v.into();
+
+        let v = if self.use_cylindrical_coords {
+            // Cylindrical coordinates have the form: [Normal, Radius, Angle]
+            let r = v[1];
+            let theta = v[2];
+            Vector3::new(v[0], r*f64::cos(theta), r*f64::sin(theta))
+        } else {
+            v
         };
 
-        let tolerance = 1e-8;
-        let mut ipopt = Ipopt::new(problem)?;
-        ipopt.set_option("print_level", 5);
-        ipopt.set_option("tol", tolerance);
-        ipopt.set_option("sb", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
-        ipopt.set_option("mu_strategy", "adaptive");
-        ipopt.set_option("max_iter", 20);
-
-        Ok(FrictionSolver { solver: ipopt })
+        Matrix3::from_columns(&[n, t, b]) * v
     }
 
-    /// Solve one step without updating the mesh. This function is useful for testing and
-    /// benchmarking. Otherwise it is intended to be used internally.
-    pub fn step(&mut self) -> Result<FrictionSolveResult, Error> {
-        // Solve non-linear problem
-        let ipopt::SolveResult {
-            // unpack ipopt result
-            solver_data,
-            objective_value,
-            status,
-            ..
-        } = self.solver.solve();
+    /// Transform a given stacked vector of vectors in physical space to values in normal direction
+    /// to each contact point and stacked 2D vectors in the tangent space of the contact point.
+    pub fn to_contact_space(&self, physical: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        physical
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| self.to_contact_coordinates(v, i).into())
+            .collect()
+    }
 
-        let result = FrictionSolveResult { 
-            objective_value,
-            friction_force: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
-        };
+    /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
+    pub fn to_physical_space(&self, contact: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        contact
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| self.to_physical_coordinates(v, i).into())
+            .collect()
+    }
 
-        match status {
-            ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
-                Ok(result)
-            }
-            e => Err(Error::FrictionSolveError(e)),
+    /// Update the basis for the contact space at each contact point given the specified set of
+    /// normals. The tangent space is chosen arbitrarily
+    pub fn update_contact_basis_from_normals(&mut self, normals: Vec<[f64; 3]>) {
+        self.contact_tangents
+            .resize(normals.len(), Vector3::zeros());
+        self.contact_normals = reinterpret_vec(normals);
+
+        for (&n, t) in self
+            .contact_normals
+            .iter()
+            .zip(self.contact_tangents.iter_mut())
+        {
+            // Find the axis that is most aligned with the normal, then use the next axis for the
+            // tangent.
+            let tangent_axis = (n.iamax() + 1) % 3;
+            t[tangent_axis] = 1.0;
+
+            // Project out the normal component.
+            *t -= n * n[tangent_axis];
+
+            // Normalize in-place.
+            t.normalize_mut();
         }
-    }
-}
-
-pub(crate) struct FrictionProblem<'a> {
-    /// A set of tangential velocities in contact space for active contacts. These are used to
-    /// determine the applied frictional force.
-    velocity: &'a [Vector2<f64>],
-    /// A set of contact forces for each contact point.
-    contact_force: &'a [f64],
-    /// Friction coefficient.
-    mu: f64,
-}
-
-impl FrictionProblem<'_> {
-    fn num_contacts(&self) -> usize {
-        self.velocity.len()
-    }
-}
-
-/// Prepare the problem for Newton iterations.
-impl ipopt::BasicProblem for FrictionProblem<'_> {
-    fn num_variables(&self) -> usize {
-        2 * self.num_contacts()
-    }
-
-    fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
-        // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        let bound = 2e19;
-        x_l.iter_mut().for_each(|x| *x = -bound);
-        x_u.iter_mut().for_each(|x| *x = bound);
-        true
-    }
-
-    fn initial_point(&self, f: &mut [Number]) -> bool {
-        let forces: &mut [Vector2<f64>] = reinterpret_mut_slice(f);
-        for (f, &cf, &v) in zip!(forces.iter_mut(), self.contact_force.iter(), self.velocity.iter()) {
-            let v_norm = v.norm();
-            if v_norm > 0.0 {
-                *f = v * ((-self.mu * cf.abs()) / v_norm)
-            } else {
-                *f = Vector2::zeros();
-            }
-        }
-        true
-    }
-
-    fn objective(&self, f: &[Number], obj: &mut Number) -> bool {
-        let forces: &[Vector2<f64>] = reinterpret_slice(f);
-        assert_eq!(self.velocity.len(), forces.len());
-
-        // Clear objective value.
-        *obj = 0.0;
-
-        // Compute (negative of) frictional dissipation.
-        for (&v, &f) in self.velocity.iter().zip(forces.iter()) {
-            *obj += v.dot(f)
-        }
-
-        true
-    }
-
-    fn objective_grad(&self, _f: &[Number], grad_f: &mut [Number]) -> bool {
-        let velocity_values: &[f64] = reinterpret_slice(self.velocity);
-        assert_eq!(velocity_values.len(), grad_f.len());
-        
-        for g in grad_f.iter_mut() {
-            *g = 0.0;
-        }
-
-        for (g, v) in grad_f.iter_mut().zip(velocity_values) {
-            *g += v;
-        }
-
-        true
-    }
-}
-
-impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
-    fn num_constraints(&self) -> usize {
-        self.contact_force.len()
-    }
-
-    fn num_constraint_jacobian_non_zeros(&self) -> usize {
-        2 * self.num_constraints()
-    }
-
-    fn constraint(&self, f: &[Number], g: &mut [Number]) -> bool {
-        let forces: &[Vector2<f64>] = reinterpret_slice(f);
-        assert_eq!(forces.len(), g.len());
-        for (c, f) in g.iter_mut().zip(forces.iter()) {
-            *c = f.norm()
-        }
-        true
-    }
-
-    fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-        for ((l,u), &cf) in g_l.iter_mut().zip(g_u.iter_mut())
-            .zip(self.contact_force.iter()) {
-            *l = -2e19; // norm can never be negative, so leave this unconstrained.
-            *u = self.mu * cf.abs();
-        }
-        true
-    }
-
-    #[unroll_for_loops]
-    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for constraint_idx in 0..self.num_constraints() {
-            for j in 0..2 {
-                rows[2*constraint_idx + j] = constraint_idx as Index;
-                cols[2*constraint_idx + j] = (2*constraint_idx + j) as Index;
-            }
-        }
-        true
-    }
-
-    fn constraint_jacobian_values(&self, f: &[Number], vals: &mut [Number]) -> bool {
-        let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
-        let forces: &[Vector2<f64>] = reinterpret_slice(f);
-        for (jac, &f) in jacobian.iter_mut().zip(forces.iter()) {
-            let f_norm = f.norm();
-            *jac = Vector2::zeros();
-            if f_norm > 0.0 {
-                *jac = f / f_norm;
-            }
-        }
-        true
-    }
-
-    fn num_hessian_non_zeros(&self) -> usize {
-        // Objective Hessian is zero.
-        // Constraint hessian is block diagonal. (lower triangular part only)
-        3 * self.num_constraints()
-    }
-
-    #[unroll_for_loops]
-    fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        let mut counter = 0;
-        for i in 0..self.num_constraints() {
-            // Constraint Hessian (only interested in lower triangular part
-            for c in 0..2 {
-                for r in c..2 {
-                    rows[counter] = (2*i + r) as Index;
-                    cols[counter] = (2*i + c) as Index;
-                    counter += 1;
-                }
-            }
-        }
-        true
-    }
-    fn hessian_values(&self, f: &[Number], _obj_factor: Number, lambda: &[Number], vals: &mut [Number]) -> bool {
-        let hess_vals: &mut [[f64; 3]] = reinterpret_mut_slice(vals);
-        let forces: &[Vector2<f64>] = reinterpret_slice(f);
-        assert_eq!(forces.len(), lambda.len());
-        assert_eq!(hess_vals.len(), lambda.len());
-        for ((h, &f), &l) in hess_vals.iter_mut().zip(forces.iter()).zip(lambda.iter()) {
-            let f_norm = f.norm();
-            *h = [0.0; 3];
-            if f_norm > 0.0 {
-                let f_norm_inv = 1.0 / f_norm;
-                let f_unit = f * f_norm_inv;
-                let hess = (Matrix2::identity() - f_unit * f_unit.transpose()) * (f_norm_inv * l);
-                *h = [hess[0][0], hess[0][1], hess[1][1]];
-            }
-        }
-        true
     }
 }
 
@@ -242,26 +126,50 @@ mod tests {
     use super::*;
     use approx::*;
 
-    /// A point mass slides across a 2D surface in the positive x direction.
+    // Verify that converting to contact space and back to physical space produces the same
+    // vectors.
     #[test]
-    fn sliding_point() -> Result<(), Error> {
-        let mu = 1.5; // friction coefficient.
-        let mass = 1.0;
+    fn contact_physical_space_conversion_test() -> Result<(), crate::Error> {
+        use geo::mesh::{topology::*, TriMesh, VertexPositions};
 
-        let velocity = vec![[1.0, 0.0]]; // one point sliding right.
-        let contact_force = vec![10.0 * mass];
+        let run = |trimesh: TriMesh<f64>| -> Result<(), crate::Error> {
+            let mut normals = vec![geo::math::Vector3::zeros(); trimesh.num_vertices()];
+            geo::algo::compute_vertex_area_weighted_normals(
+                trimesh.vertex_positions(),
+                reinterpret_slice(trimesh.indices.as_slice()),
+                &mut normals,
+            );
 
-        let mut solver = FrictionSolver::new(&velocity, &contact_force, mu)?;
-        let result = solver.step()?;
-        let FrictionSolveResult {
-            friction_force,
-            objective_value
-        } = result;
+            for n in normals.iter_mut() {
+                *n /= n.norm();
+            }
 
-        assert_relative_eq!(friction_force[0][0], -15.0, max_relative=1e-7);
-        assert_relative_eq!(friction_force[0][1], 0.0, max_relative=1e-7);
-        assert_relative_eq!(objective_value, -15.0, max_relative=1e-7);
+            let params = FrictionParams {
+                dynamic_friction: 0.5,
+                inner_iterations: 30,
+                tolerance: 1e-5,
+                print_level: 0,
+            };
 
-        Ok(())
+            let mut friction = Friction::new(params, false);
+            friction.update_contact_basis_from_normals(reinterpret_vec(normals));
+
+            let vecs = utils::random_vectors(trimesh.num_vertices());
+            let contact_vecs =
+                friction.to_contact_space(reinterpret_vec(vecs.clone()));
+            let physical_vecs = friction.to_physical_space(contact_vecs);
+
+            for (a, b) in vecs.into_iter().zip(physical_vecs.into_iter()) {
+                for i in 0..3 {
+                    assert_relative_eq!(a[i], b[i]);
+                }
+            }
+            Ok(())
+        };
+
+        let trimesh = utils::make_sample_octahedron();
+        run(trimesh)?;
+        let trimesh = utils::make_regular_icosahedron();
+        run(trimesh)
     }
 }

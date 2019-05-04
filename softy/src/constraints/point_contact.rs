@@ -1,6 +1,5 @@
 use super::ContactConstraint;
 use crate::constraint::*;
-use crate::contact::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
@@ -236,7 +235,7 @@ impl PointContactConstraint {
                 collision_object: Rc::clone(trimesh_rc),
                 friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams))
+                        Some(Friction::new(fparams, false))
                     } else {
                         None
                     }
@@ -415,6 +414,7 @@ impl ContactConstraint for PointContactConstraint {
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
+        potential_values: &[f64],
     ) -> bool {
         use reinterpret::*;
 
@@ -430,8 +430,6 @@ impl ContactConstraint for PointContactConstraint {
             .expect("Failed to retrieve constraint indices.");
 
         let friction = self.friction.as_mut().unwrap();
-
-        let mu = friction.params.dynamic_friction;
 
         friction.update_contact_basis_from_normals(normals);
 
@@ -465,30 +463,66 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         assert_eq!(query_indices.len(), contact_force.len());
+        assert_eq!(potential_values.len(), contact_force.len());
 
-        let velocity_t: Vec<[f64; 2]> = query_indices
+        let active_query_indices: Vec<_> = 
+            potential_values
             .iter()
+            .zip(contact_force.iter())
             .enumerate()
-            .map(|(contact_idx, &qi)| {
-                let disp: [f64; 3] = displacement[qi].into();
-                let v = friction.to_contact_coordinates(disp, contact_idx);
+            .filter_map(|(i, (&p, &cf))| if p.abs() < 0.01 && cf.abs() > 0.001 { Some(i) } else { None })
+            .collect();
+
+        let velocity_t: Vec<[f64; 2]> = active_query_indices
+            .iter()
+            .map(|&aqi| {
+                let disp: [f64; 3] = displacement[query_indices[aqi]].into();
+                let v = friction.to_contact_coordinates(disp, aqi);
                 [v[1], v[2]]
             })
             .collect();
 
-        if let Ok(mut solver) = FrictionSolver::new(&velocity_t, contact_force, mu) {
-            if let Ok(FrictionSolveResult {
-                friction_force: f_t,
-                ..
-            }) = solver.step() {
-                for (contact_idx, (&query_idx, &f)) in query_indices.iter().zip(f_t.iter()).enumerate() {
-                    friction_force[query_idx] =
-                        Vector3(friction.to_physical_coordinates([0.0, f[0], f[1]], contact_idx).into());
+        let contact_force: Vec<_> = 
+            active_query_indices
+            .iter()
+            .map(|&aqi| contact_force[aqi])
+            .collect();
+
+        let success = match FrictionSolver::new(&velocity_t, &contact_force, friction.params) {
+            Ok(mut solver) => {
+                eprintln!("#### Solving Friction");
+                if let Ok(FrictionSolveResult {
+                    friction_force: f_t,
+                    ..
+                }) = solver.step() {
+                    for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
+                        friction_force[query_indices[aqi]] =
+                            Vector3(friction.to_physical_coordinates([0.0, f[0], f[1]], aqi).into());
+                    }
+                    true
+                } else {
+                    eprintln!("Failed friction solve");
+                    false
                 }
-            } else {
-                return false;
             }
-        } else {
+            Err(err) => {
+                dbg!(err);
+                false
+            }
+        };
+
+        eprintln!("Contact forces");
+        for cf in contact_force.iter() {
+            eprintln!("{:?}", *cf);
+        }
+        eprintln!("Friction forces");
+        for f in friction_force.iter() {
+            if f.norm() > 0.0 {
+                eprintln!("{:?}", *f);
+            }
+        }
+
+        if !success {
             return false;
         }
 

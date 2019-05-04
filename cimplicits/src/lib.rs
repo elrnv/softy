@@ -1,7 +1,61 @@
 use reinterpret::*;
 use std::os::raw::{c_double, c_int};
 
-pub use implicits::{BackgroundFieldType, KernelType, SampleType};
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub enum SampleType {
+    /// Samples are located at mesh vertices and normals are computed using an area weighted
+    /// normals of adjacent triangles.
+    Vertex,
+    /// Samples are located at triangle centroids. This type of implicit surface is typically
+    /// closer to the triangle surface than Vertex based implicits, especially when the triangle
+    /// mesh is close to being uniform.
+    Face,
+}
+
+/// The style of background potential to be used alongside a local potential field.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub enum BackgroundFieldType {
+    /// Background field is set to be zero.
+    Zero,
+    /// When computing the potential field, the input values will be used as the background
+    /// potential.
+    FromInput,
+    /// A signed distance to the closest sample point is used for the background field.
+    DistanceBased,
+}
+
+/// The type of kernel to be used when interpolating potential values from a neighbourhood of
+/// samples.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub enum KernelType {
+    /// Local Interpolating kernel. This kernel will generate an implicit surface that passes
+    /// through each sample point exactly, however it can produce singularities for large radii
+    /// and is generally not suitable for simulation.
+    LocalInterpolating,
+    /// Local Approximately Interpolating kernel. This kernel approximately interpolates the
+    /// sample points defined by the input triangle mesh. The tradeoff between interpolating
+    /// quality and smoothness is determined by the given tolerance. (See [Most and Bucher 2005]
+    /// for details).
+    LocalApproximate,
+    /// Local Cubic kernel. This is the simplest and smoothest kernel without any
+    /// interpolation control. It approximates the Gaussian kernel while being fast to compute.
+    /// Not unlike the Gaussian kernel, this kernel has poor interpolation properties with large
+    /// radii (See [Most and Bucher 2005] for details).
+    LocalCubic,
+    /// Global inverse squared distance kernel. A global kernel traditionally used for surface
+    /// reconstruction. It is unsuitable for simulation since the potential at each query point
+    /// will depend on every single mesh sample. (See [Shen et al. 2004] for details).
+    GlobalInvDist,
+    /// Hermite Radial Basis Functions. This is not strictly a kernel, but this option can be
+    /// interpreted as a more expensive global kernel. This option produces the smoothest potential
+    /// fields while also being interpolating. However, evaluating the potential field at a set
+    /// of query points requires a solve of a dense linear system. This option is not recommended
+    /// for simulation.
+    GlobalHrbf,
+}
 
 /// A C interface for passing parameters that determine the construction of the implicit potential
 /// field.
@@ -18,47 +72,18 @@ pub struct EL_IsoParams {
     pub radius_multiplier: f32,
     /// The type of interpolation kernel to use for interpolating local potentials around each
     /// triangle.
-    /// 0 -> Local Interpolating kernel. This kernel will generate an implicit surface that passes
-    ///   through each sample point exactly, however it can produce singularities for large radii
-    ///   and is generally not suitable for simulation.
-    /// 1 -> Local Approximately Interpolating kernel. This kernel approximately interpolates the
-    ///   sample points defined by the input triangle mesh. The tradeoff between interpolating
-    ///   quality and smoothness is determined by the given tolerance. (See [Most and Bucher 2005]
-    ///   for details).
-    /// 2 -> Local Cubic kernel. This is the simplest and smoothest kernel without any
-    ///   interpolation control. It approximates the Gaussian kernel while being fast to compute.
-    ///   Not unlike the Gaussian kernel, this kernel has poor interpolation properties with large
-    ///   radii (See [Most and Bucher 2005] for details).
-    /// 3 -> Global inverse squared distance kernel. A global kernel traditionally used for surface
-    ///   reconstruction. It is unsuitable for simulation since the potential at each query point
-    ///   will depend on every single mesh sample. (See [Shen et al. 2004] for details).
-    /// 4 -> Hermite Radial Basis Functions. This is not strictly a kernel, but this option can be
-    ///   interpreted as a more expensive global kernel. This option produces the smoothest potential
-    ///   fields while also being interpolating. However, evaluating the potential field at a set
-    ///   of query points requires a solve of a dense linear system. This option is not recommended
-    ///   for simulation.
-    pub kernel: i32,
+    pub kernel: KernelType,
     /// Option for a type of background potential to use outside the radius of influence of all
     /// samples of the triangle mesh.
-    /// 0 -> Zero.
-    /// 1 -> From input. When computing the potential field, the input values will remain
-    ///   unchanged.
-    /// 2 -> Distance based. A signed distance to the closest sample point is used for the
-    ///   background potential.
-    pub background_potential: i32,
-    /// 0 -> Do NOT mix the background potential with the local potential field.
-    /// 1 -> Mix the background potential with the local potential field.
+    pub background_field: BackgroundFieldType,
+    /// `false` -> Do NOT mix the background potential with the local potential field.
+    /// `true` -> Mix the background potential with the local potential field.
     /// Note: when using the Distance based potential field, it is recommended to leave this at 0
     /// because the Distance based field contains discontinuities which will pollute the local
     /// field if mixed in.
-    pub weighted: i32,
+    pub weighted: bool,
     /// The positions of sample point used to define the implicit surface.
-    /// 0 -> Vertex. Samples are located at mesh vertices and normals are computed using an area
-    ///   weighted normals of adjacent triangles.
-    /// 1 -> Face. Samples are located at triangle centroids. This type of implicit surface
-    ///   is typically closer to the triangle surface than Vertex based implicits, especially when
-    ///   the triangle mesh is close to being uniform.
-    pub sample_type: i32,
+    pub sample_type: SampleType,
     /// The max_step parameter determines the additional distance (beyond the radius of influence)
     /// to consider when computing the set of neighbourhood samples for a given set of query
     /// points. This is typically used for simulation, where the set of neighbourhoods is expected
@@ -74,39 +99,41 @@ impl Into<implicits::Params> for EL_IsoParams {
             tolerance,
             radius_multiplier,
             kernel,
-            background_potential,
+            background_field,
             weighted,
             sample_type,
             max_step,
         } = self;
         implicits::Params {
             kernel: match kernel {
-                0 => implicits::KernelType::Interpolating {
+                KernelType::LocalInterpolating => implicits::KernelType::Interpolating {
                     radius_multiplier: radius_multiplier as f64,
                 },
-                1 => implicits::KernelType::Approximate {
+                KernelType::LocalApproximate => implicits::KernelType::Approximate {
                     radius_multiplier: radius_multiplier as f64,
                     tolerance: tolerance as f64,
                 },
-                2 => implicits::KernelType::Cubic {
+                KernelType::LocalCubic => implicits::KernelType::Cubic {
                     radius_multiplier: radius_multiplier as f64,
                 },
-                3 => implicits::KernelType::Global {
+                KernelType::GlobalInvDist => implicits::KernelType::Global {
                     tolerance: tolerance as f64,
                 },
-                _ => implicits::KernelType::Hrbf,
+                KernelType::GlobalHrbf => implicits::KernelType::Hrbf,
             },
             background_field: implicits::BackgroundFieldParams {
-                field_type: match background_potential {
-                    0 => implicits::BackgroundFieldType::Zero,
-                    1 => implicits::BackgroundFieldType::FromInput,
-                    _ => implicits::BackgroundFieldType::DistanceBased,
+                field_type: match background_field {
+                    BackgroundFieldType::Zero => implicits::BackgroundFieldType::Zero,
+                    BackgroundFieldType::FromInput => implicits::BackgroundFieldType::FromInput,
+                    BackgroundFieldType::DistanceBased => {
+                        implicits::BackgroundFieldType::DistanceBased
+                    }
                 },
-                weighted: weighted != 0,
+                weighted,
             },
             sample_type: match sample_type {
-                0 => implicits::SampleType::Vertex,
-                _ => implicits::SampleType::Face,
+                SampleType::Vertex => implicits::SampleType::Vertex,
+                SampleType::Face => implicits::SampleType::Face,
             },
             max_step: max_step as f64,
         }
@@ -611,4 +638,47 @@ pub unsafe extern "C" fn el_iso_update_max_step(
 pub unsafe extern "C" fn el_iso_get_radius(implicit_surface: *mut EL_IsoSurface) -> f32 {
     let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
     surf.radius() as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that the interface works by constructing a simple potential from a single triangle.
+    #[test]
+    fn triangle_test() {
+        let v = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+
+        let t = vec![0, 1, 2];
+
+        let trimesh = unsafe {
+            el_iso_create_trimesh(v.len() as i32, v.as_ptr(), t.len() as i32, t.as_ptr())
+        };
+
+        let params = EL_IsoParams {
+            tolerance: 1e-5,
+            radius_multiplier: 2.0,
+            kernel: KernelType::LocalApproximate,
+            background_field: BackgroundFieldType::DistanceBased,
+            weighted: false,
+            sample_type: SampleType::Face,
+            max_step: 0.0,
+        };
+
+        let surf = unsafe { el_iso_create_implicit_surface(trimesh, params) };
+
+        let q = vec![0.5; 3];
+
+        let mut p = vec![0.0];
+
+        let error = unsafe { el_iso_compute_potential(surf, 1, q.as_ptr(), p.as_mut_ptr()) };
+
+        unsafe {
+            el_iso_free_trimesh(trimesh);
+            el_iso_free_implicit_surface(surf);
+        }
+
+        assert_eq!(error, 0);
+        assert_eq!(p[0], 0.5);
+    }
 }

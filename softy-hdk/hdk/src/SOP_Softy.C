@@ -85,9 +85,25 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0 2 }
         }
         parm {
+            name "frictiontolerance"
+            cppname "FrictionTolerance"
+            label "Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+        }
+        parm {
+            name "frictioninneriterations"
+            cppname "FrictionInnerIterations"
+            label "Inner Iterations"
+            type integer
+            default { "40" }
+            range { 0 10 }
+        }
+        parm {
             name "frictioniterations"
             cppname "FrictionIterations"
-            label "Iterations"
+            label "Outer Iterations"
             type integer
             default { "1" }
             range { 0 10 }
@@ -420,6 +436,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.smoothness_tolerance = sopparms.getSmoothTol();
     sim_params.dynamic_friction = sopparms.getDynamicFriction();
     sim_params.friction_iterations = sopparms.getFrictionIterations();
+    sim_params.friction_tolerance = sopparms.getFrictionTolerance();
+    sim_params.friction_inner_iterations = sopparms.getFrictionInnerIterations();
+    sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());

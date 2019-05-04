@@ -143,6 +143,8 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             contact_radius_multiplier,
             smoothness_tolerance,
             dynamic_friction,
+            friction_inner_iterations,
+            friction_tolerance,
             ..
         } = self;
         let radius_multiplier = f64::from(contact_radius_multiplier);
@@ -163,6 +165,9 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             },
             friction_params: Some(softy::FrictionParams {
                 dynamic_friction: f64::from(dynamic_friction),
+                inner_iterations: friction_inner_iterations as usize,
+                tolerance: f64::from(friction_tolerance),
+                print_level: 5,
             }),
         }
     }
@@ -186,7 +191,7 @@ pub(crate) fn register_new_solver(
     // Add a shell if one was given.
     if let Some(polymesh) = shell {
         solver_builder
-            .add_shell(*polymesh)
+            .add_shell((*polymesh).reversed())
             .smooth_contact_params(params.into());
     }
 

@@ -87,6 +87,7 @@ pub trait ContactConstraint:
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
+        dt: f64,
         constraint_values: &[f64],
     ) -> bool;
     /// Subtract the frictional impulse from the given gradient vector.

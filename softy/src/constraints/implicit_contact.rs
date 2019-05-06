@@ -129,6 +129,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
+        _dt: f64,
         _constraint_values: &[f64],
     ) -> bool {
         if self.friction.is_none() {
@@ -144,8 +145,13 @@ impl ContactConstraint for ImplicitContactConstraint {
         let surf_indices = self
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
+        let ImplicitContactConstraint {
+            ref mut friction,
+            ref mut simulation_surf_verts,
+            ..
+        } = *self;
 
-        let friction = self.friction.as_mut().unwrap(); // Must be checked above.
+        let friction = friction.as_mut().unwrap(); // Must be checked above.
 
         let mu = friction.params.dynamic_friction;
 
@@ -153,12 +159,22 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction.force.clear();
         assert_eq!(contact_force.len(), surf_indices.len());
 
-        for (contact_idx, (surf_idx, &cf)) in
-            zip!(surf_indices.into_iter(), contact_force.iter()).enumerate()
+        let velocity_t: Vec<[f64;2]> = surf_indices
+            .iter()
+            .enumerate()
+            .map(|(contact_idx, &surf_idx)| {
+                let vtx_idx = simulation_surf_verts[surf_idx];
+                let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
+                [v[1], v[2]]
+            }).collect();
+
+        //let success = if true {
+        //    // switch between implicit solver and explicit solver here.
+        //    match FrictionPolarSolver::new(&velocity_t
+        for (contact_idx, (&v_t, &cf)) in
+            zip!(velocity_t.iter(), contact_force.iter()).enumerate()
         {
-            let vtx_idx = self.simulation_surf_verts[surf_idx];
-            let v = friction.to_contact_coordinates(dx[vtx_idx], contact_idx);
-            let v_t = Vector2([v[1], v[2]]); // Tangential component
+            let v_t = Vector2(v_t); // Tangential component
             let mag = v_t.norm();
             let dir = if mag > 0.0 {
                 v_t / mag
@@ -171,10 +187,6 @@ impl ContactConstraint for ImplicitContactConstraint {
                     .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
                     .into(),
             );
-            let _v: [f64; 3] = v.into();
-            let _f: [f64; 3] = f.into();
-            let _dot = Vector3(_v).dot(Vector3(_f));
-            //println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", _v, _f, cf, _dot);
             friction.force.push(f.into());
         }
         true

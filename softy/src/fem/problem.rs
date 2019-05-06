@@ -557,7 +557,7 @@ impl NonLinearProblem {
             };
             let contact_force = &solution.constraint_multipliers[offset..];
             let potential_values = &constraint_values[offset..];
-            scc.update_friction_force(contact_force, position, displacement, potential_values)
+            scc.update_friction_force(contact_force, position, displacement, self.time_step, potential_values)
         } else {
             false
         }

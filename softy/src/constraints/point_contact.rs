@@ -414,6 +414,7 @@ impl ContactConstraint for PointContactConstraint {
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
+        dt: f64,
         potential_values: &[f64],
     ) -> bool {
         use reinterpret::*;
@@ -465,6 +466,8 @@ impl ContactConstraint for PointContactConstraint {
         assert_eq!(query_indices.len(), contact_force.len());
         assert_eq!(potential_values.len(), contact_force.len());
 
+        let dt_inv = 1.0 / dt;
+
         let active_query_indices: Vec<_> = potential_values
             .iter()
             .zip(contact_force.iter())
@@ -476,7 +479,6 @@ impl ContactConstraint for PointContactConstraint {
                     None
                 }
             })
-            //.filter_map(|(i, (&p, &cf))| Some(i))
             .collect();
 
         let velocity_t: Vec<[f64; 2]> = active_query_indices
@@ -484,7 +486,7 @@ impl ContactConstraint for PointContactConstraint {
             .map(|&aqi| {
                 let disp: [f64; 3] = displacement[query_indices[aqi]].into();
                 let v = friction.to_contact_coordinates(disp, aqi);
-                [v[1], v[2]]
+                [v[1] * dt_inv, v[2]]
             })
             .collect();
 
@@ -493,7 +495,7 @@ impl ContactConstraint for PointContactConstraint {
             .map(|&aqi| contact_force[aqi])
             .collect();
 
-        let success = if true {
+        let success = if false {
             // switch between implicit solver and explicit solver here.
             match FrictionPolarSolver::new(&velocity_t, &contact_force, friction.params) {
                 Ok(mut solver) => {
@@ -522,6 +524,7 @@ impl ContactConstraint for PointContactConstraint {
                 }
             }
         } else {
+            let velocity_t: Vec<Polar2<f64>> = reinterpret_vec(velocity_t);
             let mu = friction.params.dynamic_friction;
             for (contact_idx, (&aqi, &v_t, &cf)) in zip!(
                 active_query_indices.iter(),
@@ -530,18 +533,17 @@ impl ContactConstraint for PointContactConstraint {
             )
             .enumerate()
             {
-                use geo::math::Vector2;
-                let v_t = Vector2(v_t);
-                let mag = v_t.norm();
-                let dir = if mag > 0.0 {
-                    v_t / mag
+                let f_t = if v_t.radius > 0.0 {
+                    Polar2 {
+                        radius: mu * cf.abs(),
+                        angle: negate_angle(v_t.angle),
+                    }
                 } else {
-                    Vector2::zeros()
+                    Polar2 { radius: 0.0, angle: 0.0 }
                 };
-                let f_t = dir * (mu * cf);
                 let f = Vector3(
                     friction
-                        .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
+                        .to_physical_coordinates([0.0, f_t.radius, f_t.angle], contact_idx)
                         .into(),
                 );
                 friction_force[query_indices[aqi]] = f;

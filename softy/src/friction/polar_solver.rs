@@ -11,7 +11,7 @@ use crate::Error;
 
 /// A two dimensional vector in polar coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
-struct Polar2<T: Real> {
+pub struct Polar2<T: Real> {
     pub radius: T,
     pub angle: T,
 }
@@ -93,7 +93,7 @@ impl FrictionPolarProblem<'_> {
 
 /// Return an angle in [-PI, PI] at 90 degrees to the given angle. The input angle is given in
 /// radians.
-fn negate_angle(angle: f64) -> f64 {
+pub fn negate_angle(angle: f64) -> f64 {
     normalize_angle(angle + std::f64::consts::PI)
 }
 

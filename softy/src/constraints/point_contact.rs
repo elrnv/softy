@@ -1,5 +1,6 @@
 use super::ContactConstraint;
 use crate::constraint::*;
+use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
@@ -11,7 +12,6 @@ use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use crate::friction::*;
 use utils::zip;
 
 ///// Linearization of a constraint given by `C`.
@@ -235,7 +235,7 @@ impl PointContactConstraint {
                 collision_object: Rc::clone(trimesh_rc),
                 friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams, false))
+                        Some(Friction::new(fparams, true))
                     } else {
                         None
                     }
@@ -465,12 +465,18 @@ impl ContactConstraint for PointContactConstraint {
         assert_eq!(query_indices.len(), contact_force.len());
         assert_eq!(potential_values.len(), contact_force.len());
 
-        let active_query_indices: Vec<_> = 
-            potential_values
+        let active_query_indices: Vec<_> = potential_values
             .iter()
             .zip(contact_force.iter())
             .enumerate()
-            .filter_map(|(i, (&p, &cf))| if p.abs() < 0.01 && cf.abs() > 0.001 { Some(i) } else { None })
+            .filter_map(|(i, (&p, &cf))| {
+                if p.abs() < 0.01 && cf.abs() > 0.001 {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            //.filter_map(|(i, (&p, &cf))| Some(i))
             .collect();
 
         let velocity_t: Vec<[f64; 2]> = active_query_indices
@@ -482,33 +488,65 @@ impl ContactConstraint for PointContactConstraint {
             })
             .collect();
 
-        let contact_force: Vec<_> = 
-            active_query_indices
+        let contact_force: Vec<_> = active_query_indices
             .iter()
             .map(|&aqi| contact_force[aqi])
             .collect();
 
-        let success = match FrictionSolver::new(&velocity_t, &contact_force, friction.params) {
-            Ok(mut solver) => {
-                eprintln!("#### Solving Friction");
-                if let Ok(FrictionSolveResult {
-                    friction_force: f_t,
-                    ..
-                }) = solver.step() {
-                    for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
-                        friction_force[query_indices[aqi]] =
-                            Vector3(friction.to_physical_coordinates([0.0, f[0], f[1]], aqi).into());
+        let success = if true {
+            // switch between implicit solver and explicit solver here.
+            match FrictionPolarSolver::new(&velocity_t, &contact_force, friction.params) {
+                Ok(mut solver) => {
+                    eprintln!("#### Solving Friction");
+                    if let Ok(FrictionSolveResult {
+                        friction_force: f_t,
+                        ..
+                    }) = solver.step()
+                    {
+                        for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
+                            friction_force[query_indices[aqi]] = Vector3(
+                                friction
+                                    .to_physical_coordinates([0.0, f[0], f[1]], aqi)
+                                    .into(),
+                            );
+                        }
+                        true
+                    } else {
+                        eprintln!("Failed friction solve");
+                        false
                     }
-                    true
-                } else {
-                    eprintln!("Failed friction solve");
+                }
+                Err(err) => {
+                    dbg!(err);
                     false
                 }
             }
-            Err(err) => {
-                dbg!(err);
-                false
+        } else {
+            let mu = friction.params.dynamic_friction;
+            for (contact_idx, (&aqi, &v_t, &cf)) in zip!(
+                active_query_indices.iter(),
+                velocity_t.iter(),
+                contact_force.iter()
+            )
+            .enumerate()
+            {
+                use geo::math::Vector2;
+                let v_t = Vector2(v_t);
+                let mag = v_t.norm();
+                let dir = if mag > 0.0 {
+                    v_t / mag
+                } else {
+                    Vector2::zeros()
+                };
+                let f_t = dir * (mu * cf);
+                let f = Vector3(
+                    friction
+                        .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
+                        .into(),
+                );
+                friction_force[query_indices[aqi]] = f;
             }
+            true
         };
 
         eprintln!("Contact forces");
@@ -525,27 +563,6 @@ impl ContactConstraint for PointContactConstraint {
         if !success {
             return false;
         }
-
-        //for (contact_idx, (query_idx, &cf)) in
-        //    zip!(query_indices.into_iter(), contact_force.iter()).enumerate()
-        //{
-        //    let disp: [f64; 3] = displacement[query_idx].into();
-        //    let v = friction.to_contact_coordinates(disp, contact_idx);
-        //    let v_t = Vector2([v[1], v[2]]); // Tangential component
-        //    let mag = v_t.norm();
-        //    let dir = if mag > 0.0 {
-        //        v_t / mag
-        //    } else {
-        //        Vector2::zeros()
-        //    };
-        //    let f_t = dir * (mu * cf);
-        //    let f = Vector3(
-        //        friction
-        //            .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
-        //            .into(),
-        //    );
-        //    friction_force[query_idx] = f;
-        //}
 
         // Now we apply the contact jacobian to map the frictional forces at contact points (on
         // collider vertices) to the vertices of the simulation mesh. Given contact jacobian J, and
@@ -919,6 +936,9 @@ impl ConstraintHessian<f64> for PointContactConstraint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::*;
+    use crate::*;
+    use std::path::PathBuf;
     use utils::*;
 
     /// Test the `fill_background_potential` function on a small grid.
@@ -964,5 +984,79 @@ mod tests {
                 assert!(v <= 0.0);
             }
         }
+    }
+
+    /// Pinch a box between two probes.
+    /// Given sufficient friction, the box should not fall.
+    fn pinch_tester(sc_params: SmoothContactParams) -> Result<(), Error> {
+        use geo::mesh::attrib::Attrib;
+        use geo::mesh::topology::*;
+        use geo::mesh::VertexPositions;
+
+        let params = SimParams {
+            max_iterations: 200,
+            max_outer_iterations: 20,
+            gravity: [0.0f32, -9.81, 0.0],
+            time_step: Some(0.01),
+            print_level: 5,
+            friction_iterations: 1,
+            ..DYNAMIC_PARAMS
+        };
+
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(1e6, 0.45),
+            ..SOLID_MATERIAL
+        };
+
+        let clamps = geo::io::load_polymesh(&PathBuf::from("assets/clamps.vtk"))?;
+        let mut box_mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box.vtk"))?;
+        box_mesh.remove_attrib::<VertexIndex>("fixed")?;
+
+        let mut solver = fem::SolverBuilder::new(params.clone())
+            .solid_material(material)
+            .add_solid(box_mesh)
+            .add_shell(clamps)
+            .smooth_contact_params(sc_params)
+            .build()?;
+
+        for iter in 0..50 {
+            let res = solver.step()?;
+
+            //println!("res = {:?}", res);
+            assert!(
+                res.iterations <= params.max_outer_iterations,
+                "Exceeded max outer iterations."
+            );
+
+            // Check that the mesh hasn't fallen.
+            let tetmesh = solver.borrow_mesh();
+
+            geo::io::save_tetmesh(&tetmesh, &PathBuf::from(&format!("out/mesh_{}.vtk", iter)))?;
+
+            for v in tetmesh.vertex_position_iter() {
+                assert!(v[1] > -0.6);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pinch a box against a couple of implicit surfaces.
+    #[test]
+    fn pinch_against_implicit() -> Result<(), Error> {
+        let sc_params = SmoothContactParams {
+            contact_type: ContactType::Point,
+            kernel: KernelType::Cubic {
+                radius_multiplier: 1.5,
+            },
+            friction_params: Some(FrictionParams {
+                dynamic_friction: 0.4,
+                inner_iterations: 40,
+                tolerance: 1e-5,
+                print_level: 5,
+            }),
+        };
+
+        pinch_tester(sc_params)
     }
 }

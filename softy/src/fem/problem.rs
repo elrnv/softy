@@ -540,7 +540,11 @@ impl NonLinearProblem {
     }
 
     /// Return true if the friction impulse was updated, and false otherwise.
-    pub fn update_friction_impulse(&mut self, solution: ipopt::Solution, constraint_values: &[f64]) -> bool {
+    pub fn update_friction_impulse(
+        &mut self,
+        solution: ipopt::Solution,
+        constraint_values: &[f64],
+    ) -> bool {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
             let prev_pos = self.prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());

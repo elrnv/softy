@@ -681,7 +681,11 @@ impl Solver {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::InnerSolveError { status: e, objective_value, iterations }),
+            e => Err(Error::InnerSolveError {
+                status: e,
+                objective_value,
+                iterations,
+            }),
         }
     }
 
@@ -1068,7 +1072,11 @@ impl Solver {
                     self.problem_mut()
                         .remap_contacts(old_active_set.into_iter());
                 }
-                Err(Error::InnerSolveError { status, iterations, objective_value }) => {
+                Err(Error::InnerSolveError {
+                    status,
+                    iterations,
+                    objective_value,
+                }) => {
                     result = result.combine_inner_step_data(iterations, objective_value);
                     let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(true);
@@ -1185,7 +1193,11 @@ impl Solver {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
                 }
-                Err(Error::InnerSolveError { status, iterations, objective_value }) => {
+                Err(Error::InnerSolveError {
+                    status,
+                    iterations,
+                    objective_value,
+                }) => {
                     // If the problem is infeasible, it may be that our step size is too small,
                     // Try to increase it (but not past max_step) and try again:
                     if status == ipopt::SolveStatus::InfeasibleProblemDetected {

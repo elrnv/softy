@@ -171,10 +171,10 @@ impl ContactConstraint for ImplicitContactConstraint {
                     .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
                     .into(),
             );
-            let v_: [f64; 3] = v.into();
-            let f_: [f64; 3] = f.into();
-            let dot = Vector3(v_).dot(Vector3(f_));
-            //println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", v_, f_, cf, dot);
+            let _v: [f64; 3] = v.into();
+            let _f: [f64; 3] = f.into();
+            let _dot = Vector3(_v).dot(Vector3(_f));
+            //println!("v = {:?}, f = {:?}, cf = {:?}, dot = {:?}", _v, _f, cf, _dot);
             friction.force.push(f.into());
         }
         true

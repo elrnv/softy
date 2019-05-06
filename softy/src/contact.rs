@@ -12,4 +12,3 @@ pub struct SmoothContactParams {
     pub contact_type: ContactType,
     pub friction_params: Option<FrictionParams>,
 }
-

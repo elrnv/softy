@@ -6,7 +6,7 @@ use reinterpret::*;
 use unroll::unroll_for_loops;
 use utils::zip;
 
-use crate::{Error};
+use crate::Error;
 
 /// Result from one inner friction step.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,7 +28,11 @@ impl<'a> FrictionSolver<'a> {
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
-    pub fn new(velocity: &'a [[f64; 2]], contact_force: &'a [f64], params: FrictionParams) -> Result<FrictionSolver<'a>, Error> {
+    pub fn new(
+        velocity: &'a [[f64; 2]],
+        contact_force: &'a [f64],
+        params: FrictionParams,
+    ) -> Result<FrictionSolver<'a>, Error> {
         let problem = FrictionProblem {
             velocity: reinterpret_slice(velocity),
             contact_force,
@@ -58,7 +62,7 @@ impl<'a> FrictionSolver<'a> {
             ..
         } = self.solver.solve();
 
-        let result = FrictionSolveResult { 
+        let result = FrictionSolveResult {
             objective_value,
             friction_force: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
         };
@@ -104,7 +108,11 @@ impl ipopt::BasicProblem for FrictionProblem<'_> {
 
     fn initial_point(&self, f: &mut [Number]) -> bool {
         let forces: &mut [Vector2<f64>] = reinterpret_mut_slice(f);
-        for (f, &cf, &v) in zip!(forces.iter_mut(), self.contact_force.iter(), self.velocity.iter()) {
+        for (f, &cf, &v) in zip!(
+            forces.iter_mut(),
+            self.contact_force.iter(),
+            self.velocity.iter()
+        ) {
             let v_norm = v.norm();
             if v_norm > 0.0 {
                 *f = v * ((-self.mu * cf.abs()) / v_norm)
@@ -133,7 +141,7 @@ impl ipopt::BasicProblem for FrictionProblem<'_> {
     fn objective_grad(&self, _f: &[Number], grad_f: &mut [Number]) -> bool {
         let velocity_values: &[f64] = reinterpret_slice(self.velocity);
         assert_eq!(velocity_values.len(), grad_f.len());
-        
+
         for g in grad_f.iter_mut() {
             *g = 0.0;
         }
@@ -165,8 +173,11 @@ impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
     }
 
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-        for ((l,u), &cf) in g_l.iter_mut().zip(g_u.iter_mut())
-            .zip(self.contact_force.iter()) {
+        for ((l, u), &cf) in g_l
+            .iter_mut()
+            .zip(g_u.iter_mut())
+            .zip(self.contact_force.iter())
+        {
             *l = -2e19; // norm can never be negative, so leave this unconstrained.
             *u = self.mu * cf.abs();
         }
@@ -177,8 +188,8 @@ impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
     fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         for constraint_idx in 0..self.num_constraints() {
             for j in 0..2 {
-                rows[2*constraint_idx + j] = constraint_idx as Index;
-                cols[2*constraint_idx + j] = (2*constraint_idx + j) as Index;
+                rows[2 * constraint_idx + j] = constraint_idx as Index;
+                cols[2 * constraint_idx + j] = (2 * constraint_idx + j) as Index;
             }
         }
         true
@@ -210,15 +221,21 @@ impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
             // Constraint Hessian (only interested in lower triangular part
             for c in 0..2 {
                 for r in c..2 {
-                    rows[counter] = (2*i + r) as Index;
-                    cols[counter] = (2*i + c) as Index;
+                    rows[counter] = (2 * i + r) as Index;
+                    cols[counter] = (2 * i + c) as Index;
                     counter += 1;
                 }
             }
         }
         true
     }
-    fn hessian_values(&self, f: &[Number], _obj_factor: Number, lambda: &[Number], vals: &mut [Number]) -> bool {
+    fn hessian_values(
+        &self,
+        f: &[Number],
+        _obj_factor: Number,
+        lambda: &[Number],
+        vals: &mut [Number],
+    ) -> bool {
         let hess_vals: &mut [[f64; 3]] = reinterpret_mut_slice(vals);
         let forces: &[Vector2<f64>] = reinterpret_slice(f);
         assert_eq!(forces.len(), lambda.len());
@@ -241,9 +258,6 @@ impl ipopt::ConstrainedProblem for FrictionProblem<'_> {
 mod tests {
     use super::*;
     use approx::*;
-    use crate::test_utils::*;
-    use crate::*;
-    use std::path::PathBuf;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
@@ -263,87 +277,13 @@ mod tests {
         let result = solver.step()?;
         let FrictionSolveResult {
             friction_force,
-            objective_value
+            objective_value,
         } = result;
 
-        assert_relative_eq!(friction_force[0][0], -15.0, max_relative=1e-6);
-        assert_relative_eq!(friction_force[0][1], 0.0, max_relative=1e-6);
-        assert_relative_eq!(objective_value, -15.0, max_relative=1e-6);
+        assert_relative_eq!(friction_force[0][0], -15.0, max_relative = 1e-6);
+        assert_relative_eq!(friction_force[0][1], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(objective_value, -15.0, max_relative = 1e-6);
 
         Ok(())
-    }
-
-    /// Pinch a box between two probes.
-    /// Given sufficient friction, the box should not fall.
-    fn pinch_tester(
-        sc_params: SmoothContactParams,
-    ) -> Result<(), Error> {
-        use geo::mesh::attrib::Attrib;
-        use geo::mesh::VertexPositions;
-        use geo::mesh::topology::*;
-
-        let params = SimParams {
-            max_iterations: 200,
-            max_outer_iterations: 20,
-            gravity: [0.0f32, -9.81, 0.0],
-            time_step: Some(0.01),
-            print_level: 5,
-            friction_iterations: 1,
-            ..DYNAMIC_PARAMS
-        };
-
-        let material = Material {
-            elasticity: ElasticityParameters::from_young_poisson(1e6, 0.45),
-            ..SOLID_MATERIAL
-        };
-
-        let clamps = geo::io::load_polymesh(&PathBuf::from("assets/clamps.vtk"))?;
-        let mut box_mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box.vtk"))?;
-        box_mesh.remove_attrib::<VertexIndex>("fixed")?;
-
-        let mut solver = fem::SolverBuilder::new(params.clone())
-            .solid_material(material)
-            .add_solid(box_mesh)
-            .add_shell(clamps)
-            .smooth_contact_params(sc_params)
-            .build()?;
-
-        for _ in 0..50 {
-            let res = solver.step()?;
-            
-            //println!("res = {:?}", res);
-            assert!(
-                res.iterations <= params.max_outer_iterations,
-                "Exceeded max outer iterations."
-            );
-
-            // Check that the mesh hasn't fallen.
-            let tetmesh = solver.borrow_mesh();
-            
-            for v in tetmesh.vertex_position_iter() {
-                assert!(v[1] > -0.6);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Pinch a box against a couple of implicit surfaces.
-    #[test]
-    fn pinch_against_implicit() -> Result<(), Error> {
-        let sc_params = SmoothContactParams {
-            contact_type: ContactType::Point,
-            kernel: KernelType::Cubic {
-                radius_multiplier: 1.5,
-            },
-            friction_params: Some(FrictionParams {
-                dynamic_friction: 0.4,
-                inner_iterations: 40,
-                tolerance: 1e-5,
-                print_level: 5,
-            }),
-        };
-
-        pinch_tester(sc_params)
     }
 }

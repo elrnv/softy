@@ -1,9 +1,10 @@
-mod solver;
 mod polar_solver;
+mod solver;
 
-pub use solver::*;
+use na::{Matrix3, Vector2, Vector3};
+pub use polar_solver::*;
 use reinterpret::*;
-use na::{Vector2, Vector3, Matrix3};
+pub use solver::*;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FrictionParams {
@@ -49,7 +50,11 @@ impl Friction {
         }
 
         // Cylindrical coordinates have the form: [Normal, Radius, Angle]
-        Vector3::new(vc[0], Vector2::new(vc[1], vc[2]).norm(), f64::atan2(vc[2], vc[1]))
+        Vector3::new(
+            vc[0],
+            Vector2::new(vc[1], vc[2]).norm(),
+            f64::atan2(vc[2], vc[1]),
+        )
     }
 
     /// Transform a vector at the given contact point index to physical coordinates. The index
@@ -68,7 +73,7 @@ impl Friction {
             // Cylindrical coordinates have the form: [Normal, Radius, Angle]
             let r = v[1];
             let theta = v[2];
-            Vector3::new(v[0], r*f64::cos(theta), r*f64::sin(theta))
+            Vector3::new(v[0], r * f64::cos(theta), r * f64::sin(theta))
         } else {
             v
         };
@@ -155,8 +160,7 @@ mod tests {
             friction.update_contact_basis_from_normals(reinterpret_vec(normals));
 
             let vecs = utils::random_vectors(trimesh.num_vertices());
-            let contact_vecs =
-                friction.to_contact_space(reinterpret_vec(vecs.clone()));
+            let contact_vecs = friction.to_contact_space(reinterpret_vec(vecs.clone()));
             let physical_vecs = friction.to_physical_space(contact_vecs);
 
             for (a, b) in vecs.into_iter().zip(physical_vecs.into_iter()) {

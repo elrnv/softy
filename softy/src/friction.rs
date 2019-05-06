@@ -12,6 +12,7 @@ pub struct FrictionParams {
     pub inner_iterations: usize,
     pub tolerance: f64,
     pub print_level: u8,
+    pub density: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

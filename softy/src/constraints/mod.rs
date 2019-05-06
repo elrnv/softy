@@ -20,6 +20,7 @@ pub fn build_contact_constraint(
     tetmesh_rc: &Rc<RefCell<TetMesh>>,
     trimesh_rc: &Rc<RefCell<TriMesh>>,
     params: SmoothContactParams,
+    density: f64,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
@@ -27,12 +28,14 @@ pub fn build_contact_constraint(
             trimesh_rc,
             params.kernel,
             params.friction_params,
+            density,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
             params.kernel,
             params.friction_params,
+            density,
         )?),
     })
 }

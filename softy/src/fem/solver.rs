@@ -269,7 +269,7 @@ impl SolverBuilder {
 
         let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
             let cparams = smooth_contact_params.unwrap(); // already verified above.
-            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams).ok()
+            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams, density).ok()
         });
 
         let displacement_bound = None;

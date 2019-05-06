@@ -189,6 +189,7 @@ pub struct PointContactConstraint {
 
     /// Friction impulses applied during contact.
     pub friction: Option<Friction>,
+    pub density: f64,
 
     /// Store the indices to the Hessian here. These will be served through the constraint
     /// interface.
@@ -205,6 +206,7 @@ impl PointContactConstraint {
         trimesh_rc: &Rc<RefCell<TriMesh>>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
+        density: f64,
     ) -> Result<Self, Error> {
         let tetmesh = tetmesh_rc.borrow();
         let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
@@ -240,6 +242,7 @@ impl PointContactConstraint {
                         None
                     }
                 }),
+                density,
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),

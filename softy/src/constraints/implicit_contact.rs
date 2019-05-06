@@ -1,3 +1,4 @@
+use crate::attrib_defines::*;
 use super::ContactConstraint;
 use crate::constraint::*;
 use crate::friction::*;
@@ -30,6 +31,7 @@ pub struct ImplicitContactConstraint {
     pub query_points: RefCell<Vec<[f64; 3]>>,
     /// Friction impulses applied during contact.
     pub friction: Option<Friction>,
+    pub density: f64,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -43,6 +45,7 @@ impl ImplicitContactConstraint {
         trimesh_rc: &Rc<RefCell<TriMesh>>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
+        density: f64,
     ) -> Result<Self, Error> {
         let trimesh = trimesh_rc.borrow();
 
@@ -81,6 +84,7 @@ impl ImplicitContactConstraint {
                         None
                     }
                 }),
+                density,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
             };
 
@@ -115,6 +119,24 @@ impl ImplicitContactConstraint {
         let mut query_points = self.query_points.borrow_mut();
         query_points.clear();
         query_points.extend(q_iter);
+    }
+
+    /// Return a vector of masses per simulation mesh vertex.
+    pub fn compute_vertex_masses(&self) -> Vec<f64> {
+        let tetmesh = self.simulation_mesh.borrow();
+        let mut all_masses = vec![0.0; tetmesh.num_vertices()];
+
+        for (&vol, cell) in tetmesh
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap()
+                .zip(tetmesh.cell_iter())
+        {
+            for i in 0..4 {
+                all_masses[cell[i]] += 0.25 * vol * self.density;
+            }
+        }
+
+        all_masses
     }
 }
 
@@ -158,6 +180,12 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction.update_contact_basis_from_normals(normals);
         friction.force.clear();
         assert_eq!(contact_force.len(), surf_indices.len());
+
+        let vertex_masses = self.compute_vertex_masses();
+        let contact_masses = surf_indices
+            .iter()
+            .map(|&surf_idx| vertex_masses[simulation_surf_verts[surf_idx]])
+            .collect();
 
         let velocity_t: Vec<[f64;2]> = surf_indices
             .iter()

@@ -6,7 +6,7 @@ use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Vector2, Vector3};
+use geo::math::{Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -76,7 +76,7 @@ impl ImplicitContactConstraint {
                 query_points: RefCell::new(query_points.to_vec()),
                 friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams, false))
+                        Some(Friction::new(fparams, true))
                     } else {
                         None
                     }
@@ -168,28 +168,53 @@ impl ContactConstraint for ImplicitContactConstraint {
                 [v[1], v[2]]
             }).collect();
 
-        //let success = if true {
-        //    // switch between implicit solver and explicit solver here.
-        //    match FrictionPolarSolver::new(&velocity_t
-        for (contact_idx, (&v_t, &cf)) in
-            zip!(velocity_t.iter(), contact_force.iter()).enumerate()
-        {
-            let v_t = Vector2(v_t); // Tangential component
-            let mag = v_t.norm();
-            let dir = if mag > 0.0 {
-                v_t / mag
-            } else {
-                Vector2::zeros()
-            };
-            let f_t = dir * (mu * cf); // cf is already negative because of normal orientation.
-            let f = Vector3(
-                friction
-                    .to_physical_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
-                    .into(),
-            );
-            friction.force.push(f.into());
-        }
-        true
+        if true {
+            // switch between implicit solver and explicit solver here.
+            match FrictionPolarSolver::new(&velocity_t, &contact_force, friction.params) {
+                Ok(mut solver) => {
+                    eprintln!("#### Solving Friction");
+                    if let Ok(FrictionSolveResult {
+                        friction_force: f_t,
+                        ..
+                    }) = solver.step()
+                    {
+                        for(contact_idx, &f) in f_t.iter().enumerate() {
+                            let f = 
+                                friction
+                                .to_physical_coordinates([0.0, f[0], f[1]], contact_idx);
+                            friction.force.push(f.into());
+                        }
+                        true
+                    } else {
+                        eprintln!("Failed friction solve");
+                        false
+                    }
+                }
+                Err(err) => {
+                    dbg!(err);
+                    false
+                }
+            }
+       } else {
+            for (contact_idx, (&v_t, &cf)) in
+                zip!(velocity_t.iter(), contact_force.iter()).enumerate()
+            {
+                let v_t = Polar2 { radius: v_t[0], angle: v_t[1] };
+                let f_t = if v_t.radius > 0.0 {
+                    Polar2 {
+                        radius: mu * cf.abs(),
+                        angle: negate_angle(v_t.angle),
+                    }
+                } else {
+                    Polar2 { radius: 0.0, angle: 0.0 }
+                };
+                let f = 
+                    friction
+                        .to_physical_coordinates([0.0, f_t.radius, f_t.angle], contact_idx);
+                friction.force.push(f.into());
+            }
+            true
+       }
     }
 
     fn subtract_friction_force(&self, grad: &mut [f64]) {

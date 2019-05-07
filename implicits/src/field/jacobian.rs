@@ -21,7 +21,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// points.
     pub fn surface_jacobian_indices_iter(
         &self,
-    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
+    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
         self.kernel.apply_fns(
             || self.mls_surface_jacobian_indices_iter(),
             || Err(Error::UnsupportedKernel),
@@ -60,15 +60,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// by the precomputed `neighbour_cache` map.
     pub(crate) fn mls_surface_jacobian_indices_iter(
         &self,
-    ) -> Result<Box<dyn Iterator<Item = (usize, usize)>>, Error> {
-        match self.sample_type {
+    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+        let iter = match self.sample_type {
             SampleType::Vertex => {
                 let cached_pts = {
                     let neigh_points = self.extended_neighbourhood_borrow()?;
                     neigh_points.to_vec()
                 };
-                Ok(Box::new(
-                    cached_pts
+                (Some(cached_pts
                         .into_iter()
                         .enumerate()
                         .filter(|(_, nbr_points)| !nbr_points.is_empty())
@@ -76,8 +75,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             nbr_points
                                 .into_iter()
                                 .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
-                        }),
-                ))
+                        })), None)
             }
             SampleType::Face => {
                 let cached: Vec<_> = {
@@ -95,10 +93,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         })
                         .collect()
                 };
-
-                Ok(Box::new(cached.into_iter()))
+                (None, Some(cached.into_iter()))
             }
-        }
+        };
+        Ok(iter.0.into_iter().flatten().chain(iter.1.into_iter().flatten()))
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
@@ -305,7 +303,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn query_jacobian_indices_iter(
         &self,
-    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+    ) -> Result<impl Iterator<Item = (usize, usize)> + Clone, Error> {
         let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
             s.iter()
                 .enumerate()
@@ -680,9 +678,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn contact_jacobian_indices_iter(
         &self,
-    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+    ) -> Result<impl Iterator<Item = (usize, usize)> + Clone, Error> {
         self.contact_jacobian_matrix_indices_iter()
-            .map(move |iter| {
+            .map(|iter| {
                 iter.flat_map(move |(row_mtx, col_mtx)| {
                     (0..3)
                         .flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
@@ -719,7 +717,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn contact_jacobian_matrix_indices_iter(
         &self,
-    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+    ) -> Result<impl Iterator<Item = (usize, usize)> + Clone, Error> {
         self.kernel.apply_fns(
             || self.mls_contact_jacobian_matrix_indices_iter(),
             || Err(Error::UnsupportedKernel),
@@ -731,7 +729,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub(crate) fn mls_contact_jacobian_matrix_indices_iter(
         &self,
-    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+    ) -> Result<impl Iterator<Item = (usize, usize)> + Clone, Error> {
         let neigh_points = self.trivial_neighbourhood_borrow()?;
 
         let ImplicitSurface {

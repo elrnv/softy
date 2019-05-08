@@ -1,5 +1,5 @@
-use crate::attrib_defines::*;
 use super::ContactConstraint;
+use crate::constraints::compute_vertex_masses;
 use crate::constraint::*;
 use crate::friction::*;
 use crate::contact::*;
@@ -32,7 +32,8 @@ pub struct ImplicitContactConstraint {
     pub query_points: RefCell<Vec<[f64; 3]>>,
     /// Friction impulses applied during contact.
     pub friction: Option<Friction>,
-    pub density: f64,
+    /// A mass for each vertex in the simulation mesh.
+    pub vertex_masses: Vec<f64>,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -72,6 +73,8 @@ impl ImplicitContactConstraint {
 
             let query_points = surf_mesh.vertex_positions();
 
+            let vertex_masses = compute_vertex_masses(&tetmesh, density);
+
             let constraint = ImplicitContactConstraint {
                 implicit_surface: RefCell::new(surface),
                 simulation_mesh: Rc::clone(tetmesh_rc),
@@ -85,7 +88,7 @@ impl ImplicitContactConstraint {
                         None
                     }
                 }),
-                density,
+                vertex_masses,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
             };
 
@@ -121,24 +124,6 @@ impl ImplicitContactConstraint {
         query_points.clear();
         query_points.extend(q_iter);
     }
-
-    /// Return a vector of masses per simulation mesh vertex.
-    pub fn compute_vertex_masses(&self) -> Vec<f64> {
-        let tetmesh = self.simulation_mesh.borrow();
-        let mut all_masses = vec![0.0; tetmesh.num_vertices()];
-
-        for (&vol, cell) in tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                .unwrap()
-                .zip(tetmesh.cell_iter())
-        {
-            for i in 0..4 {
-                all_masses[cell[i]] += 0.25 * vol * self.density;
-            }
-        }
-
-        all_masses
-    }
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
@@ -169,7 +154,11 @@ impl ContactConstraint for ImplicitContactConstraint {
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
 
-        let vertex_masses = self.compute_vertex_masses();
+        // A set of masses on active contact vertices.
+        let contact_masses: Vec<_> = surf_indices
+            .iter()
+            .map(|&surf_idx| self.vertex_masses[self.simulation_surf_verts[surf_idx]])
+            .collect();
 
         let ImplicitContactConstraint {
             ref mut friction,
@@ -185,11 +174,6 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction.contact_basis.update_from_normals(normals);
         friction.force.clear();
         assert_eq!(contact_force.len(), surf_indices.len());
-        let contact_masses: Vec<_> = surf_indices
-            .iter()
-            .map(|&surf_idx| vertex_masses[simulation_surf_verts[surf_idx]])
-            .collect();
-
         
         if false {
             // Polar coords
@@ -205,7 +189,8 @@ impl ContactConstraint for ImplicitContactConstraint {
 
             if true {
                 // switch between implicit solver and explicit solver here.
-                match FrictionPolarSolver::without_contact_jacobian(&velocity_t, &contact_force, &friction.contact_basis, friction.params) {
+                match FrictionPolarSolver::without_contact_jacobian(
+                    &velocity_t, &contact_force, &friction.contact_basis, &contact_masses, friction.params) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult {
@@ -246,7 +231,7 @@ impl ContactConstraint for ImplicitContactConstraint {
            }
         } else {
             // Euclidean coords
-            let velocity_t: Vec<[f64;2]> = surf_indices
+            let velocity_t: Vec<[f64; 2]> = surf_indices
                 .iter()
                 .enumerate()
                 .map(|(contact_idx, &surf_idx)| {
@@ -259,7 +244,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             if true {
                 // switch between implicit solver and explicit solver here.
                 match FrictionSolver::without_contact_jacobian(
-                    &velocity_t, &contact_force, &friction.contact_basis, friction.params)
+                    &velocity_t, &contact_force, &friction.contact_basis, &contact_masses, friction.params)
                 {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
@@ -298,7 +283,6 @@ impl ContactConstraint for ImplicitContactConstraint {
                 }
                 true
            }
-
         }
     }
 

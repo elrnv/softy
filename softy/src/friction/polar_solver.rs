@@ -26,9 +26,10 @@ impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize,usize)>> {
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
-    ) -> Result<FrictionPolarSolver<'a, std::iter::Empty<(usize,usize)>>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, params, None)
+    ) -> Result<FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>>, Error> {
+        Self::new_impl(velocity, contact_force, contact_basis, masses, params, None)
     }
 }
 
@@ -41,16 +42,18 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionPolarSolver<'a, CJI> {
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
         contact_jacobian: (&'a [Matrix3<f64>], CJI),
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, params, Some(contact_jacobian))
+        Self::new_impl(velocity, contact_force, contact_basis, masses, params, Some(contact_jacobian))
     }
 
     fn new_impl(
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
         contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
@@ -60,6 +63,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionPolarSolver<'a, CJI> {
             contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
+            masses,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -109,7 +113,12 @@ pub(crate) struct FrictionPolarProblem<'a, CJI> {
     contact_basis: &'a ContactBasis,
     /// Coefficient of dynamic friction.
     mu: f64,
+    /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
+    /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
+    /// meaning that contacts occur at vertex positions.
     contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+    /// Vertex masses.
+    masses: &'a [f64],
 }
 
 impl<CJI> FrictionPolarProblem<'_, CJI> {
@@ -382,13 +391,14 @@ mod tests {
         };
         let mass = 1.0;
 
-        let velocity = vec![[1.0, PI]]; // one point sliding up.
+        let velocity = vec![Polar2 { radius: 1.0, angle: PI }]; // one point sliding up.
         let contact_force = vec![10.0 * mass];
+        let masses = vec![mass; 3];
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
 
-        let mut solver = FrictionPolarSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, params)?;
+        let mut solver = FrictionPolarSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, &masses, params)?;
         let result = solver.step()?;
         let FrictionSolveResult {
             friction_force,

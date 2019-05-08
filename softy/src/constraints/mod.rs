@@ -2,11 +2,13 @@ pub mod implicit_contact;
 pub mod point_contact;
 pub mod volume;
 
+use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
+use geo::mesh::{Attrib, topology::*};
 use std::{cell::RefCell, rc::Rc};
 
 pub use self::implicit_contact::*;
@@ -78,6 +80,23 @@ pub fn remap_values<T: Copy>(
             new_val
         })
         .collect()
+}
+
+/// Return a vector of masses per simulation mesh vertex.
+pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
+    let mut all_masses = vec![0.0; tetmesh.num_vertices()];
+
+    for (&vol, cell) in tetmesh
+        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .unwrap()
+            .zip(tetmesh.cell_iter())
+    {
+        for i in 0..4 {
+            all_masses[cell[i]] += 0.25 * vol * density;
+        }
+    }
+
+    all_masses
 }
 
 pub trait ContactConstraint:

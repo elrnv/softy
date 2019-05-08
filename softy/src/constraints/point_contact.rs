@@ -1,5 +1,6 @@
 use super::ContactConstraint;
 use crate::constraint::*;
+use crate::constraints::compute_vertex_masses;
 use crate::friction::*;
 use crate::contact::*;
 use crate::matrix::*;
@@ -190,7 +191,7 @@ pub struct PointContactConstraint {
 
     /// Friction impulses applied during contact.
     pub friction: Option<Friction>,
-    pub density: f64,
+    pub vertex_masses: Vec<f64>,
 
     /// Store the indices to the Hessian here. These will be served through the constraint
     /// interface.
@@ -243,7 +244,7 @@ impl PointContactConstraint {
                         None
                     }
                 }),
-                density,
+                vertex_masses: compute_vertex_masses(&tetmesh, density),
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -494,6 +495,8 @@ impl ContactConstraint for PointContactConstraint {
             .map(|&aqi| contact_force[aqi])
             .collect();
 
+        let vertex_masses = &self.vertex_masses;
+
         let success = if false {
             // Polar coords
             let velocity_t: Vec<_> = active_query_indices
@@ -507,7 +510,7 @@ impl ContactConstraint for PointContactConstraint {
                 .collect();
             if true {
                 // switch between implicit solver and explicit solver here.
-                match FrictionPolarSolver::new(&velocity_t, &contact_force, &contact_basis, *params, (&cj_matrices, cj_indices_iter.clone())) {
+                match FrictionPolarSolver::new(&velocity_t, &contact_force, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone())) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult {
@@ -572,7 +575,7 @@ impl ContactConstraint for PointContactConstraint {
                 .collect();
             if true {
                 // switch between implicit solver and explicit solver here.
-                match FrictionSolver::new(&velocity_t, &contact_force, &contact_basis, *params, (&cj_matrices, cj_indices_iter.clone())) {
+                match FrictionSolver::new(&velocity_t, &contact_force, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone())) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult {
@@ -1114,7 +1117,6 @@ mod tests {
     }
 
     /// Pinch a box against a couple of implicit surfaces.
-    #[test]
     fn pinch_against_implicit() -> Result<(), Error> {
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,

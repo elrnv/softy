@@ -21,7 +21,7 @@ pub struct FrictionSolveResult {
 /// Friction solver.
 pub struct FrictionSolver<'a, CJI> {
     /// Non-linear solver.
-    solver: Ipopt<ExplicitFrictionProblem<'a, CJI>>,
+    solver: Ipopt<SemiImplicitFrictionProblem<'a, CJI>>,
 }
 
 impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
@@ -33,9 +33,10 @@ impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
         velocity: &'a [[f64; 2]],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
     ) -> Result<FrictionSolver<'a, std::iter::Empty<(usize, usize)>>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, params, None)
+        Self::new_impl(velocity, contact_force, contact_basis, masses, params, None)
     }
 }
 
@@ -48,25 +49,28 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
         velocity: &'a [[f64; 2]],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
         contact_jacobian: (&'a [Matrix3<f64>], CJI),
     ) -> Result<FrictionSolver<'a, CJI>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, params, Some(contact_jacobian))
+        Self::new_impl(velocity, contact_force, contact_basis, masses, params, Some(contact_jacobian))
     }
 
     fn new_impl(
         velocity: &'a [[f64; 2]],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
+        masses: &'a [f64],
         params: FrictionParams,
         contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     ) -> Result<FrictionSolver<'a, CJI>, Error> {
-        let problem = ExplicitFrictionProblem(FrictionProblem {
+        let problem = SemiImplicitFrictionProblem(FrictionProblem {
             velocity: reinterpret_slice(velocity),
             contact_force,
             contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
+            masses,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
@@ -79,8 +83,6 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
 
         Ok(FrictionSolver { solver: ipopt })
     }
-
-
 
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
@@ -118,7 +120,12 @@ pub(crate) struct FrictionProblem<'a, CJI> {
     contact_basis: &'a ContactBasis,
     /// Friction coefficient.
     mu: f64,
+    /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
+    /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
+    /// meaning that contacts occur at vertex positions.
     contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+    /// Vertex masses.
+    masses: &'a [f64],
 }
 
 impl<CJI> FrictionProblem<'_, CJI> {
@@ -284,6 +291,187 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
     }
 }
 
+pub(crate) struct SemiImplicitFrictionProblem<'a, CJI>(FrictionProblem<'a, CJI>);
+
+/// Prepare the problem for Newton iterations.
+impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
+    fn num_variables(&self) -> usize {
+        self.0.num_variables()
+    }
+
+    fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
+        self.0.bounds(x_l, x_u)
+    }
+
+    fn initial_point(&self, f: &mut [Number]) -> bool {
+        self.0.initial_point(f)
+    }
+
+    fn objective(&self, f: &[Number], obj: &mut Number) -> bool {
+        let forces: &[Vector2<f64>] = reinterpret_slice(f);
+        assert_eq!(self.0.velocity.len(), forces.len());
+
+        // Clear objective value.
+        *obj = 0.0;
+
+        // Compute (negative of) frictional dissipation.
+        for (&v, &f) in self.0.velocity.iter().zip(forces.iter()) {
+            *obj += v.dot(f);
+        }
+
+        if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
+            // A contact jacobian is provided. This makes computing the non-linear contribution a
+            // tad more expensive.
+            // TODO: implement this
+        } else {
+            // No constraint Jacobian is provided, the non-linear part is a standard inner product
+            // scaled by the mass
+            for (m, &f) in self.0.masses.iter().zip(forces.iter()) {
+                *obj += f.dot(f) * ( 1.0 / m);
+            }
+        }
+
+        true
+    }
+
+    fn objective_grad(&self, f: &[Number], grad_f: &mut [Number]) -> bool {
+        let velocities: &[Vector2<f64>] = reinterpret_slice(self.0.velocity);
+        let gradient: &mut [Vector2<f64>] = reinterpret_mut_slice(grad_f);
+        assert_eq!(velocities.len(), gradient.len());
+
+        for g in gradient.iter_mut() {
+            *g = Vector2::zeros();
+        }
+
+        for (g, &v) in gradient.iter_mut().zip(velocities.iter()) {
+            *g += v;
+        }
+
+        let forces: &[Vector2<f64>] = reinterpret_slice(f);
+        if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
+            // A contact jacobian is provided. This makes computing the non-linear contribution a
+            // tad more expensive.
+            // TODO: implement this
+        } else {
+            for (g, &m, &f) in zip!(gradient.iter_mut(), self.0.masses.iter(), forces.iter()) {
+                *g += f * (2.0 / m);
+            }
+        }
+
+        true
+    }
+}
+
+impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
+    fn num_constraints(&self) -> usize {
+        self.0.contact_force.len()
+    }
+
+    fn num_constraint_jacobian_non_zeros(&self) -> usize {
+        2 * self.num_constraints()
+    }
+
+    fn constraint(&self, f: &[Number], g: &mut [Number]) -> bool {
+        let forces: &[Vector2<f64>] = reinterpret_slice(f);
+        assert_eq!(forces.len(), g.len());
+        for (c, f) in g.iter_mut().zip(forces.iter()) {
+            *c = f.dot(*f);
+        }
+        true
+    }
+
+    fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
+        for ((l, u), &cf) in g_l
+            .iter_mut()
+            .zip(g_u.iter_mut())
+            .zip(self.0.contact_force.iter())
+        {
+            *l = -2e19; // inner product can never be negative, so leave this unconstrained.
+            *u = self.0.mu * cf.abs();
+            *u *= *u; // square the radius
+        }
+        true
+    }
+
+    #[unroll_for_loops]
+    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+        for constraint_idx in 0..self.num_constraints() {
+            for j in 0..2 {
+                rows[2 * constraint_idx + j] = constraint_idx as Index;
+                cols[2 * constraint_idx + j] = (2 * constraint_idx + j) as Index;
+            }
+        }
+        true
+    }
+
+    fn constraint_jacobian_values(&self, f: &[Number], vals: &mut [Number]) -> bool {
+        let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
+        let forces: &[Vector2<f64>] = reinterpret_slice(f);
+        for (jac, &f) in jacobian.iter_mut().zip(forces.iter()) {
+            *jac = f * 2.0;
+        }
+        true
+    }
+
+    fn num_hessian_non_zeros(&self) -> usize {
+        // Objective Hessian is diagonal.
+        // Constraint Hessian is diagonal.
+        2 * self.num_constraints()
+            + if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
+                0 // TODO: Implement this
+            } else {
+                2 * self.0.masses.len()
+            }
+    }
+
+    #[unroll_for_loops]
+    fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
+        // Diagonal objective Hessian.
+        let num_diagonal_entries = 2*self.num_constraints();
+        let offset = if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
+            0
+        } else {
+            for idx in 0..num_diagonal_entries {
+                rows[idx] = idx as Index;
+                cols[idx] = idx as Index;
+            }
+            2 * self.num_constraints()
+        };
+        // Diagonal Constraint matrix.
+        for idx in 0..num_diagonal_entries {
+            rows[offset + idx] = idx as Index;
+            cols[offset + idx] = idx as Index;
+        }
+        true
+    }
+    fn hessian_values(
+        &self,
+        _f: &[Number],
+        obj_factor: Number,
+        lambda: &[Number],
+        vals: &mut [Number],
+    ) -> bool {
+        let hess_vals: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
+        let num_hess_vals = hess_vals.len();
+        let mut hess_iter_mut = hess_vals.iter_mut();
+        if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
+            assert_eq!(num_hess_vals, lambda.len());
+            // A contact jacobian is provided. This makes computing the non-linear contribution a
+            // tad more expensive.
+            // TODO: implement this
+        } else {
+            assert_eq!(num_hess_vals, self.0.masses.len() + lambda.len());
+            for (&m, h) in self.0.masses.iter().zip(&mut hess_iter_mut) {
+                *h = Vector2::ones() * (2.0 * obj_factor / m);
+            }
+        }
+        for (&l, h) in lambda.iter().zip(&mut hess_iter_mut) {
+            *h = Vector2([2.0, 2.0]) * l;
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,8 +491,12 @@ mod tests {
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_force = vec![10.0 * mass];
+        let masses = vec![mass; 1];
 
-        let mut solver = FrictionSolver::new(&velocity, &contact_force, params)?;
+        let mut contact_basis = ContactBasis::new();
+        contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
+
+        let mut solver = FrictionSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, &masses, params)?;
         let result = solver.step()?;
         let FrictionSolveResult {
             friction_force,

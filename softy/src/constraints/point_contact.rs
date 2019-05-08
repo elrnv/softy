@@ -1,12 +1,13 @@
 use super::ContactConstraint;
 use crate::constraint::*;
 use crate::friction::*;
+use crate::contact::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Matrix3, Vector3};
+use geo::math::{Matrix3, Vector3, Vector2};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -237,7 +238,7 @@ impl PointContactConstraint {
                 collision_object: Rc::clone(trimesh_rc),
                 friction: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams, true))
+                        Some(Friction::new(fparams))
                     } else {
                         None
                     }
@@ -433,9 +434,13 @@ impl ContactConstraint for PointContactConstraint {
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
 
-        let friction = self.friction.as_mut().unwrap();
+        let Friction {
+            force: vertex_friction_force,
+            contact_basis,
+            params,
+        } = self.friction.as_mut().unwrap();
 
-        friction.update_contact_basis_from_normals(normals);
+        contact_basis.update_from_normals(normals);
 
         let collider = self.collision_object.borrow();
         let query_points = collider.vertex_positions();
@@ -444,15 +449,15 @@ impl ContactConstraint for PointContactConstraint {
         let surf = self.implicit_surface.borrow();
 
         let mut cj_matrices = vec![
-            [[0.0; 3]; 3];
+            Matrix3::zeros();
             surf.num_contact_jacobian_matrices()
-                .expect("Failed to get contact jacobian size.")
+                .expect("Failed to get contact Jacobian size.")
         ];
-        surf.contact_jacobian_matrices(query_points, &mut cj_matrices)
-            .expect("Failed to compute contact jacobian.");
+        surf.contact_jacobian_matrices(query_points, reinterpret_mut_slice(&mut cj_matrices))
+            .expect("Failed to compute contact Jacobian.");
         let cj_indices_iter = surf
             .contact_jacobian_matrix_indices_iter()
-            .expect("Failed to get contact jacobian indices.");
+            .expect("Failed to get contact Jacobian indices.");
 
         // Friction force in physical space at contact positions.
         let mut friction_force = vec![Vector3::zeros(); query_points.len()];
@@ -461,9 +466,9 @@ impl ContactConstraint for PointContactConstraint {
 
         // Compute product J*u to produce velocities (displacements) at each point of contact in
         // physical space.
-        for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
+        for ((r, c), &m) in cj_indices_iter.clone().zip(cj_matrices.iter()) {
             let vtx_idx = self.sample_verts[c];
-            displacement[r] += Matrix3(m) * Vector3(dx[vtx_idx]);
+            displacement[r] += m * Vector3(dx[vtx_idx]);
         }
 
         assert_eq!(query_indices.len(), contact_force.len());
@@ -484,74 +489,140 @@ impl ContactConstraint for PointContactConstraint {
             })
             .collect();
 
-        let velocity_t: Vec<[f64; 2]> = active_query_indices
-            .iter()
-            .map(|&aqi| {
-                let disp: [f64; 3] = displacement[query_indices[aqi]].into();
-                let v = friction.to_contact_coordinates(disp, aqi);
-                [v[1] * dt_inv, v[2]]
-            })
-            .collect();
-
         let contact_force: Vec<_> = active_query_indices
             .iter()
             .map(|&aqi| contact_force[aqi])
             .collect();
 
         let success = if false {
-            // switch between implicit solver and explicit solver here.
-            match FrictionPolarSolver::new(&velocity_t, &contact_force, friction.params) {
-                Ok(mut solver) => {
-                    eprintln!("#### Solving Friction");
-                    if let Ok(FrictionSolveResult {
-                        friction_force: f_t,
-                        ..
-                    }) = solver.step()
-                    {
-                        for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
-                            friction_force[query_indices[aqi]] = Vector3(
-                                friction
-                                    .to_physical_coordinates([0.0, f[0], f[1]], aqi)
-                                    .into(),
-                            );
+            // Polar coords
+            let velocity_t: Vec<_> = active_query_indices
+                .iter()
+                .map(|&aqi| {
+                    let disp: [f64; 3] = displacement[query_indices[aqi]].into();
+                    let mut v = contact_basis.to_cylindrical_contact_coordinates(disp, aqi);
+                    v.tangent.radius *= dt_inv;
+                    v.tangent
+                })
+                .collect();
+            if true {
+                // switch between implicit solver and explicit solver here.
+                match FrictionPolarSolver::new(&velocity_t, &contact_force, &contact_basis, *params, (&cj_matrices, cj_indices_iter.clone())) {
+                    Ok(mut solver) => {
+                        eprintln!("#### Solving Friction");
+                        if let Ok(FrictionSolveResult {
+                            friction_force: f_t,
+                            ..
+                        }) = solver.step()
+                        {
+                            for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
+                                let f_polar = Polar2 { radius: f[0], angle: f[1] };
+                                friction_force[query_indices[aqi]] = Vector3(
+                                    contact_basis
+                                        .from_cylindrical_contact_coordinates(f_polar.into(), aqi)
+                                        .into()
+                                );
+                            }
+                            true
+                        } else {
+                            eprintln!("Failed friction solve");
+                            false
                         }
-                        true
-                    } else {
-                        eprintln!("Failed friction solve");
+                    }
+                    Err(err) => {
+                        dbg!(err);
                         false
                     }
                 }
-                Err(err) => {
-                    dbg!(err);
-                    false
+            } else {
+                for (contact_idx, (&aqi, &v_t, &cf)) in zip!(
+                    active_query_indices.iter(),
+                    velocity_t.iter(),
+                    contact_force.iter()
+                )
+                .enumerate()
+                {
+                    let f_t = if v_t.radius > 0.0 {
+                        Polar2 {
+                            radius: params.dynamic_friction * cf.abs(),
+                            angle: negate_angle(v_t.angle),
+                        }
+                    } else {
+                        Polar2 { radius: 0.0, angle: 0.0 }
+                    };
+                    let f = Vector3(
+                        contact_basis
+                            .from_cylindrical_contact_coordinates(f_t.into(), contact_idx)
+                            .into(),
+                    );
+                    friction_force[query_indices[aqi]] = f;
                 }
+                true
             }
         } else {
-            let velocity_t: Vec<Polar2<f64>> = reinterpret_vec(velocity_t);
-            let mu = friction.params.dynamic_friction;
-            for (contact_idx, (&aqi, &v_t, &cf)) in zip!(
-                active_query_indices.iter(),
-                velocity_t.iter(),
-                contact_force.iter()
-            )
-            .enumerate()
-            {
-                let f_t = if v_t.radius > 0.0 {
-                    Polar2 {
-                        radius: mu * cf.abs(),
-                        angle: negate_angle(v_t.angle),
+            // Euclidean coords
+            let velocity_t: Vec<_> = active_query_indices
+                .iter()
+                .map(|&aqi| {
+                    let disp: [f64; 3] = displacement[query_indices[aqi]].into();
+                    let mut v = contact_basis.to_contact_coordinates(disp, aqi);
+                    v *= dt_inv;
+                    [v[1], v[2]]
+                })
+                .collect();
+            if true {
+                // switch between implicit solver and explicit solver here.
+                match FrictionSolver::new(&velocity_t, &contact_force, &contact_basis, *params, (&cj_matrices, cj_indices_iter.clone())) {
+                    Ok(mut solver) => {
+                        eprintln!("#### Solving Friction");
+                        if let Ok(FrictionSolveResult {
+                            friction_force: f_t,
+                            ..
+                        }) = solver.step()
+                        {
+                            for (&aqi, &f) in active_query_indices.iter().zip(f_t.iter()) {
+                                friction_force[query_indices[aqi]] = Vector3(
+                                    contact_basis
+                                        .from_contact_coordinates([0.0, f[0], f[1]], aqi)
+                                        .into()
+                                );
+                            }
+                            true
+                        } else {
+                            eprintln!("Failed friction solve");
+                            false
+                        }
                     }
-                } else {
-                    Polar2 { radius: 0.0, angle: 0.0 }
-                };
-                let f = Vector3(
-                    friction
-                        .to_physical_coordinates([0.0, f_t.radius, f_t.angle], contact_idx)
-                        .into(),
-                );
-                friction_force[query_indices[aqi]] = f;
+                    Err(err) => {
+                        dbg!(err);
+                        false
+                    }
+                }
+            } else {
+                for (contact_idx, (&aqi, &v_t, &cf)) in zip!(
+                    active_query_indices.iter(),
+                    velocity_t.iter(),
+                    contact_force.iter()
+                )
+                .enumerate()
+                {
+                    let v_t = Vector2(v_t);
+                    let v_norm = v_t.norm();
+                    let f_t = if v_norm > 0.0 {
+                        v_t * (-params.dynamic_friction * cf.abs() / v_norm)
+                    } else {
+                        Vector2::zeros()
+                    };
+                    let f = Vector3(
+                        contact_basis
+                            .from_contact_coordinates([0.0, f_t[0], f_t[1]], contact_idx)
+                            .into(),
+                    );
+                    friction_force[query_indices[aqi]] = f;
+                }
+                true
             }
-            true
+
         };
 
         eprintln!("Contact forces");
@@ -574,17 +645,13 @@ impl ContactConstraint for PointContactConstraint {
         // frictional forces f (in physical space), J^T*f produces frictional forces on the
         // deforming surface mesh. An additional remapping puts these forces on the volume mesh
         // vertices, but this is applied when the friction forces are actually used.
-        friction.force.clear();
-        friction.force.resize(self.sample_verts.len(), [0.0; 3]);
-
-        let cj_indices_iter = surf
-            .contact_jacobian_matrix_indices_iter()
-            .expect("Failed to get contact jacobian indices.");
+        vertex_friction_force.clear();
+        vertex_friction_force.resize(self.sample_verts.len(), [0.0; 3]);
 
         // Copute transpose product J^T*f
         for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
-            friction.force[c] =
-                (Vector3(friction.force[c]) + Matrix3(m).transpose() * friction_force[r]).into();
+            vertex_friction_force[c] =
+                (Vector3(vertex_friction_force[c]) + m.transpose() * friction_force[r]).into();
         }
 
         true
@@ -1059,6 +1126,7 @@ mod tests {
                 inner_iterations: 40,
                 tolerance: 1e-5,
                 print_level: 5,
+                density: 1000.0,
             }),
         };
 

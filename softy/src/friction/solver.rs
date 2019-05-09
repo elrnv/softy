@@ -78,6 +78,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
         ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
+        //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("max_iter", params.inner_iterations as i32);
 
@@ -327,7 +328,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
             // No constraint Jacobian is provided, the non-linear part is a standard inner product
             // scaled by the mass
             for (m, &f) in self.0.masses.iter().zip(forces.iter()) {
-                *obj += f.dot(f) * ( 1.0 / m);
+                *obj += f.dot(f) * ( 0.5 / m);
             }
         }
 
@@ -354,7 +355,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
             // TODO: implement this
         } else {
             for (g, &m, &f) in zip!(gradient.iter_mut(), self.0.masses.iter(), forces.iter()) {
-                *g += f * (2.0 / m);
+                *g += f * (1.0 / m);
             }
         }
 
@@ -462,7 +463,7 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
         } else {
             assert_eq!(num_hess_vals, self.0.masses.len() + lambda.len());
             for (&m, h) in self.0.masses.iter().zip(&mut hess_iter_mut) {
-                *h = Vector2::ones() * (2.0 * obj_factor / m);
+                *h = Vector2::ones() * (1.0 * obj_factor / m);
             }
         }
         for (&l, h) in lambda.iter().zip(&mut hess_iter_mut) {
@@ -481,13 +482,13 @@ mod tests {
     #[test]
     fn sliding_point() -> Result<(), Error> {
         let params = FrictionParams {
-            dynamic_friction: 1.5,
+            dynamic_friction: 0.1,
             inner_iterations: 30,
             tolerance: 1e-5,
-            print_level: 0,
+            print_level: 5,
             density: 1000.0,
         };
-        let mass = 1.0;
+        let mass = 0.1;
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_force = vec![10.0 * mass];
@@ -503,9 +504,11 @@ mod tests {
             objective_value,
         } = result;
 
+        dbg!(Vector2(velocity[0]) + Vector2(friction_force[0]) / mass);
         assert_relative_eq!(friction_force[0][0], -15.0, max_relative = 1e-6);
         assert_relative_eq!(friction_force[0][1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(objective_value, -15.0, max_relative = 1e-6);
+
 
         Ok(())
     }

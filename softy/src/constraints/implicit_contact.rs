@@ -175,7 +175,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction.force.clear();
         assert_eq!(contact_force.len(), surf_indices.len());
         
-        if false {
+        let success = if false {
             // Polar coords
             let velocity_t: Vec<_> = surf_indices
                 .iter()
@@ -283,7 +283,20 @@ impl ContactConstraint for ImplicitContactConstraint {
                 }
                 true
            }
+        };
+
+        eprintln!("Contact forces");
+        for cf in contact_force.iter() {
+            eprintln!("{:?}", *cf);
         }
+        eprintln!("Friction forces");
+        for &f in friction.force.iter() {
+            if Vector3(f).norm() > 0.0 {
+                eprintln!("{:?}", f);
+            }
+        }
+
+        success
     }
 
     fn subtract_friction_force(&self, grad: &mut [f64]) {

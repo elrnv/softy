@@ -42,6 +42,8 @@ pub struct InnerSolveResult {
 pub struct SolveResult {
     /// Maximum number of inner iterations during one outer step.
     pub max_inner_iterations: u32,
+    /// Number of total accumulated inner iterations.
+    pub inner_iterations: u32,
     /// Number of outer iterations of the step.
     pub iterations: u32,
     /// The value of the objective at the end of the time step.
@@ -53,6 +55,8 @@ impl SolveResult {
         SolveResult {
             // Aggregate max number of iterations.
             max_inner_iterations: iterations.max(self.max_inner_iterations),
+
+            inner_iterations: iterations + self.inner_iterations,
 
             // Adding a new inner solve result means we have completed another inner solve: +1
             // outer iterations.
@@ -1032,6 +1036,7 @@ impl Solver {
         // Initialize the result of this function.
         let mut result = SolveResult {
             max_inner_iterations: 0,
+            inner_iterations: 0,
             iterations: 0,
             objective_value: 0.0,
         };
@@ -1102,6 +1107,8 @@ impl Solver {
             );
         }
 
+        dbg!(result);
+
         //self.output_meshes(self.step_count as u32);
 
         self.step_count += 1;
@@ -1138,6 +1145,7 @@ impl Solver {
         // Initialize the result of this function.
         let mut result = SolveResult {
             max_inner_iterations: 0,
+            inner_iterations: 0,
             iterations: 0,
             objective_value: 0.0,
         };

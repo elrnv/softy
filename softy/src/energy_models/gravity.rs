@@ -32,13 +32,11 @@ impl Gravity {
 /// Gravity is a position based energy.
 impl<T: Real> Energy<T> for Gravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
-    fn energy(&self, x: &[T], dx: &[T]) -> T {
-        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
+        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
         let tetmesh = self.tetmesh.borrow();
         let tet_iter = tetmesh.cell_iter().map(|cell| {
-            Tetrahedron::from_indexed_slice(cell.get(), prev_pos)
-                + Tetrahedron::from_indexed_slice(cell.get(), disp)
+            Tetrahedron::from_indexed_slice(cell.get(), pos1)
         });
 
         let g = self.g.map(|x| T::from(x).unwrap());
@@ -58,8 +56,8 @@ impl<T: Real> Energy<T> for Gravity {
 
 impl<T: Real> EnergyGradient<T> for Gravity {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x: &[T], _dx: &[T], grad: &mut [T]) {
-        debug_assert_eq!(grad.len(), _x.len());
+    fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
+        debug_assert_eq!(grad.len(), _x0.len());
 
         let tetmesh = self.tetmesh.borrow();
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
@@ -85,7 +83,7 @@ impl EnergyHessian for Gravity {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values<T: Real>(&self, _x: &[T], _dx: &[T], _: &mut [T]) {}
+    fn energy_hessian_values<T: Real>(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
 #[cfg(test)]
@@ -95,17 +93,21 @@ mod tests {
 
     #[test]
     fn gradient() {
+        let dt = 0.01;
         gradient_tester(
             |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
             EnergyType::Position,
+            dt,
         );
     }
 
     #[test]
     fn hessian() {
+        let dt = 0.01;
         hessian_tester(
             |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
             EnergyType::Position,
+            dt
         );
     }
 }

@@ -102,37 +102,35 @@ pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
-    fn clear_friction_force(&mut self);
+    fn clear_friction_impulse(&mut self);
     /// Update the underlying friction impulse based on the given predictive step.
-    fn update_friction_force(
+    fn update_friction_impulse(
         &mut self,
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
-        dt: f64,
         constraint_values: &[f64],
     ) -> bool;
     /// Subtract the frictional impulse from the given gradient vector.
-    fn subtract_friction_force(&self, grad: &mut [f64]);
+    fn subtract_friction_impulse(&self, grad: &mut [f64]);
     /// Compute the frictional energy dissipation.
     fn frictional_dissipation(&self, dx: &[f64]) -> f64;
-    /// Remap existing friction forces to an updated neighbourhood set. This function will be
+    /// Remap existing friction impulses to an updated neighbourhood set. This function will be
     /// called when neighbourhood information changes to ensure correct correspondence of friction
-    /// forces to vertices. It may be not necessary to implement this function if friction forces are
-    /// stored on the entire mesh.
+    /// impulses to vertices. It may be not necessary to implement this function if friction
+    /// impulses are stored on the entire mesh.
     fn remap_friction(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn compute_contact_impulse(
         &self,
         x: &[f64],
         contact_force: &[f64],
-        dt: f64,
         impulse: &mut [[f64; 3]],
     );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, crate::Error>;
+    fn contact_normals(&self, x: &[f64]) -> Result<Vec<[f64; 3]>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
@@ -144,7 +142,7 @@ pub trait ContactConstraint:
     /// Note that this function doesn't remap any data corresponding to the old neighbourhood
     /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
     /// old data needed to perform the remapping of any user data.
-    fn update_cache(&mut self, pos: Option<&[f64]>, disp: Option<&[f64]>) -> bool;
+    fn update_cache(&mut self, x: Option<&[f64]>) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser

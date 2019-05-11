@@ -269,7 +269,7 @@ impl SolverBuilder {
 
         let momentum_potential = params
             .time_step
-            .map(|dt| MomentumPotential::new(Rc::clone(&mesh), density, f64::from(dt)));
+            .map(|_| MomentumPotential::new(Rc::clone(&mesh), density));
 
         let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
             let cparams = smooth_contact_params.unwrap(); // already verified above.
@@ -286,6 +286,7 @@ impl SolverBuilder {
         let mut problem = NonLinearProblem {
             prev_pos,
             prev_vel,
+            cur_pos: RefCell::new(Vec::new()),
             time_step: f64::from(params.time_step.unwrap_or(0.0f32)),
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
@@ -300,6 +301,7 @@ impl SolverBuilder {
             warm_start: Solution::default(),
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
+            scaled_variables: RefCell::new(Vec::new()),
         };
 
         // Note that we don't need the solution field to get the number of variables and
@@ -334,7 +336,7 @@ impl SolverBuilder {
             "nlp_scaling_max_gradient",
             f64::from(params.max_gradient_scaling),
         );
-        //ipopt.set_option("print_timing_statistics", "yes");
+        ipopt.set_option("print_timing_statistics", "yes");
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
             ipopt.set_option("derivative_test_tol", 1e-4);
@@ -465,6 +467,11 @@ pub struct Solver {
 }
 
 impl Solver {
+    /// If the time step was not specified or specified to be zero, then this function will return
+    /// zero.
+    pub fn time_step(&self) -> f64 {
+        self.sim_params.time_step.unwrap_or(0.0).into()
+    }
     /// Set the interrupt checker to the given function.
     pub fn set_interrupter(&mut self, checker: Box<FnMut() -> bool>) {
         self.problem_mut().interrupt_checker = checker;
@@ -840,18 +847,19 @@ impl Solver {
             } = self.solver.solver_data_mut();
 
             // Advance internal state (positions and velocities) of the problem.
-            problem.advance(solution, and_warm_start)
+            problem.advance(reinterpret_slice(solution.primal_variables), and_warm_start)
         };
 
         // Comitting solution. Reduce max_step for next iteration.
+        let dt = self.time_step();
         if let Some(radius) = self.contact_radius() {
             let SolverDataMut {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
             if and_warm_start {
-                let step = inf_norm(solution.primal_variables);
-                // If warm start is selected, then this solution was good and we're not comitting
-                // it just for debugging
+                let step = inf_norm(solution.primal_variables) * problem.scale() * if dt > 0.0 { dt } else { 1.0 };
+                // If warm start is selected, then this solution was good, which means we're not
+                // comitting it just for debugging purposes.
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
                 self.max_step = new_max_step;
                 problem.update_max_step(new_max_step);
@@ -952,7 +960,9 @@ impl Solver {
     fn check_inner_step(&mut self) -> (bool, Vec<usize>) {
         let old_active_set = self.problem().active_constraint_set();
         let step_accepted = if self.contact_radius().is_some() {
-            let step = inf_norm(self.dx());
+            let dt = self.time_step();
+            let scale = self.solver.solver_data().problem.scale();
+            let step = inf_norm(self.solver.solver_data().solution.primal_variables) * scale * if dt > 0.0 { dt } else { 1.0 };
 
             let constraint_violation = {
                 let SolverDataMut {
@@ -1341,7 +1351,7 @@ mod tests {
     fn one_tet_solver() -> Solver {
         let mesh = make_one_deformed_tet_mesh();
 
-        SolverBuilder::new(STATIC_PARAMS)
+        SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STATIC_PARAMS })
             .solid_material(SOLID_MATERIAL)
             .add_solid(mesh)
             .build()
@@ -1616,14 +1626,14 @@ mod tests {
     #[test]
     fn box_stretch_test() -> Result<(), Error> {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
-        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+        let mut solver = SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STRETCH_PARAMS })
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(mesh)
             .build()?;
         solver.step()?;
         let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
         let solution = solver.borrow_mesh();
-        compare_meshes(&solution, &expected, 1e-6);
+        compare_meshes(&solution, &expected, 1e-5);
         Ok(())
     }
 
@@ -1634,7 +1644,7 @@ mod tests {
             ..MEDIUM_SOLID_MATERIAL
         };
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
-        let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+        let mut solver = SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STRETCH_PARAMS })
             .solid_material(incompressible_material)
             .add_solid(mesh)
             .build()?;
@@ -1981,7 +1991,6 @@ mod tests {
             max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
             time_step: Some(0.0208333),
-            print_level: 5,
             ..DYNAMIC_PARAMS
         };
 
@@ -2139,7 +2148,7 @@ mod tests {
     #[test]
     fn torus_medium_test() -> Result<(), Error> {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+        let mut solver = SolverBuilder::new(SimParams { print_level: 0, ..DYNAMIC_PARAMS })
             .solid_material(STIFF_MATERIAL)
             .add_solid(mesh)
             .build()

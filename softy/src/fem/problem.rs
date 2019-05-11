@@ -15,7 +15,6 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::TetMesh;
 use crate::TriMesh;
-use utils::zip;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -112,6 +111,8 @@ pub(crate) struct NonLinearProblem {
     pub prev_pos: Rc<RefCell<Vec<Vector3<f64>>>>,
     /// Velocity from the previous time step.
     pub prev_vel: Rc<RefCell<Vec<Vector3<f64>>>>,
+    /// Workspace vector to compute intermediate displacements.
+    pub cur_pos: RefCell<Vec<Vector3<f64>>>,
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub tetmesh: Rc<RefCell<TetMesh>>,
     /// Static or animated collision object represented by a triangle mesh.
@@ -140,6 +141,7 @@ pub(crate) struct NonLinearProblem {
     pub warm_start: Solution,
     pub initial_residual_error: f64,
     pub iter_counter: RefCell<usize>,
+    pub scaled_variables: RefCell<Vec<f64>>,
 }
 
 impl fmt::Debug for NonLinearProblem {
@@ -154,6 +156,10 @@ impl fmt::Debug for NonLinearProblem {
 }
 
 impl NonLinearProblem {
+    pub fn scale(&self) -> f64 {
+        if self.time_step > 0.0 { 1.0 / self.time_step } else { 1.0 }
+    }
+
     /// Save Ipopt solution for warm starts.
     pub fn update_warm_start(&mut self, solution: ipopt::Solution) {
         self.warm_start.update(solution);
@@ -217,7 +223,7 @@ impl NonLinearProblem {
 
     pub fn clear_friction_impulses(&mut self) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.clear_friction_force();
+            scc.clear_friction_impulse();
         }
     }
 
@@ -232,11 +238,19 @@ impl NonLinearProblem {
     /// of possibly invalid indices.
     pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
+        
+        if self.smooth_contact_constraint.is_some() {
+            let prev_pos = self.prev_pos.borrow();
+            let mut cur_pos = self.cur_pos.borrow_mut();
+            let x = if let Some(v) = solution.map(|sol| sol.primal_variables) {
+                self.integrate_step(v, &mut cur_pos);
+                reinterpret_slice(cur_pos.as_slice())
+            } else {
+                reinterpret_slice(prev_pos.as_slice())
+            };
 
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let prev_pos = self.prev_pos.borrow_mut();
-            let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
-            changed |= scc.update_cache(Some(x), solution.map(|sol| sol.primal_variables));
+            let scc = self.smooth_contact_constraint.as_mut().unwrap();
+            changed |= scc.update_cache(Some(x));
         }
 
         changed
@@ -309,16 +323,14 @@ impl NonLinearProblem {
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
     pub fn advance(
         &mut self,
-        solution: ipopt::Solution,
+        cur_vel: &[Vector3<f64>],
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
             // Reinterpret solver variables as positions in 3D space.
-            let disp: &[Vector3<f64>] = reinterpret_slice(&solution.primal_variables);
-
-            // In static simulations, velocity is simply displacement.
-            let dt = self.time_step;
-            let dt_inv = 1.0 / if dt > 0.0 { dt } else { 1.0 };
+            let cur_vel_flat = &self.scale_variables(reinterpret_slice(cur_vel));
+            let cur_step = self.compute_step(cur_vel_flat);
+            let cur_vel: &[Vector3<f64>] = reinterpret_slice(cur_vel_flat);
 
             let mut prev_pos = self.prev_pos.borrow_mut();
             let mut prev_vel = self.prev_vel.borrow_mut();
@@ -326,13 +338,15 @@ impl NonLinearProblem {
             let old_prev_pos = prev_pos.clone();
             let old_prev_vel = prev_vel.clone();
 
-            zip!(disp.iter(), prev_pos.iter_mut(), prev_vel.iter_mut()).for_each(
-                |(&dp, prev_p, prev_v)| {
-                    *prev_p += dp;
-                    *prev_v = dp * dt_inv;
-                },
-            );
+            let cur_pos: std::cell::Ref<'_, [Vector3<f64>]> = std::cell::Ref::map(cur_step, |p| reinterpret_slice(p));
 
+            // Update prev pos
+            prev_pos.iter_mut().zip(cur_pos.iter()).for_each(|(prev, &cur)| *prev = cur);
+
+            // Update prev vel
+            prev_vel.iter_mut().zip(cur_vel.iter()).for_each(|(prev, &cur)| *prev = cur);
+
+            // Update tetmesh vertex positions
             {
                 let mut tetmesh = self.tetmesh.borrow_mut();
                 let verts = tetmesh.vertex_positions_mut();
@@ -347,16 +361,6 @@ impl NonLinearProblem {
         if !and_warm_start {
             self.reset_warm_start();
         }
-
-        //if and_warm_start {
-        //    self.update_warm_start(solution);
-        //} else {
-        //    self.clear_warm_start(solution);
-        //}
-
-        //// Since we transformed the mesh, we need to invalidate its neighbour data so it's
-        //// recomputed at the next time step (if applicable).
-        //self.update_constraints();
 
         (old_warm_start, old_prev_pos, old_prev_vel)
     }
@@ -516,27 +520,67 @@ impl NonLinearProblem {
         value
     }
 
+    fn integrate_step(&self, v: &[Number], x: &mut Vec<Vector3<Number>>) {
+        let vel: &[Vector3<Number>] = reinterpret_slice(v);
+        let x0 = self.prev_pos.borrow();
+        // In static simulations, velocity is simply displacement.
+        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        x.resize(vel.len(), Vector3::zeros());
+        x.iter_mut().zip(x0.iter().zip(vel.iter())).for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
+    }
+
+    /// A convenience function to integrate the given velocity by the internal time step. For
+    /// implicit itegration this boils down to a simple multiply by the time step.
+    pub fn compute_step(&self, v: &[Number]) -> std::cell::Ref<'_, [Number]> {
+        {
+            let mut x1 = self.cur_pos.borrow_mut();
+            self.integrate_step(v, &mut x1);
+        }
+        std::cell::Ref::map(self.cur_pos.borrow(), |pos| reinterpret::reinterpret_slice(pos))
+    }
+
+    pub fn scale_variables(&self, v: &[Number]) -> std::cell::Ref<'_, [Number]> {
+        {
+            let scale = self.scale();
+            let mut sv = self.scaled_variables.borrow_mut();
+            sv.clear();
+            sv.extend(v.iter().map(|&val| val * scale));
+        }
+        std::cell::Ref::map(self.scaled_variables.borrow(), |val| val.as_slice())
+    }
+
     /// Compute and return the objective value.
-    pub fn objective_value(&self, dx: &[Number]) -> f64 {
+    pub fn objective_value(&self, v: &[Number]) -> f64 {
+        let x1 = &self.compute_step(v);
         let prev_pos = self.prev_pos.borrow();
-        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
-        let mut obj = self.energy_model.energy(x, dx);
+        let mut obj = self.energy_model.energy(x0, x1);
 
-        obj += self.gravity.energy(x, dx);
+        obj += self.gravity.energy(x0, x1);
 
         if let Some(ref mp) = self.momentum_potential {
             let prev_vel = self.prev_vel.borrow();
-            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            obj += mp.energy(v, dx);
+            let vel0: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            obj += mp.energy(vel0, v);
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             if self.time_step > 0.0 {
-                obj -= scc.frictional_dissipation(dx);
+                obj -= scc.frictional_dissipation(v);
             }
         }
+
         obj
+    }
+
+    /// Convert a given array of contact forces to impulses.
+    fn contact_impulse_magnitudes(forces: &[f64], dt: f64) -> Vec<f64> {
+        let dt = if dt > 0.0 { dt } else { 1.0 };
+        forces 
+            .iter()
+            .map(|&cf| cf * dt)
+            .collect()
     }
 
     /// Return true if the friction impulse was updated, and false otherwise.
@@ -555,9 +599,10 @@ impl NonLinearProblem {
             } else {
                 0
             };
-            let contact_force = &solution.constraint_multipliers[offset..];
+            let contact_impulse =
+                Self::contact_impulse_magnitudes(&solution.constraint_multipliers[offset..], self.time_step);
             let potential_values = &constraint_values[offset..];
-            scc.update_friction_force(contact_force, position, displacement, self.time_step, potential_values)
+            scc.update_friction_impulse(&contact_impulse, position, displacement, potential_values)
         } else {
             false
         }
@@ -568,10 +613,7 @@ impl NonLinearProblem {
         use ipopt::BasicProblem;
         let mut impulse = vec![0.0; self.num_variables()];
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.subtract_friction_force(&mut impulse);
-            for f in impulse.iter_mut() {
-                *f *= -self.time_step; // convert force to impulse
-            }
+            scc.subtract_friction_impulse(&mut impulse);
         }
         reinterpret::reinterpret_vec(impulse)
     }
@@ -588,8 +630,9 @@ impl NonLinearProblem {
             } else {
                 0
             };
-            let contact_force = &self.warm_start.constraint_multipliers[offset..];
-            scc.compute_contact_impulse(position, contact_force, self.time_step, &mut impulse);
+            let contact_impulse = 
+                Self::contact_impulse_magnitudes(&self.warm_start.constraint_multipliers[offset..], self.time_step);
+            scc.compute_contact_impulse(position, &contact_impulse, &mut impulse);
         }
         reinterpret::reinterpret_vec(impulse)
     }
@@ -740,7 +783,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
     fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
         let tetmesh = self.tetmesh.borrow();
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        let bound = self.displacement_bound.unwrap_or(2e19);
+        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let bound = self.displacement_bound.unwrap_or(2e19) / (self.scale() * dt);
         x_l.iter_mut().for_each(|x| *x = -bound);
         x_u.iter_mut().for_each(|x| *x = bound);
 
@@ -773,38 +817,43 @@ impl ipopt::BasicProblem for NonLinearProblem {
         true
     }
 
-    fn objective(&self, dx: &[Number], obj: &mut Number) -> bool {
-        *obj = self.objective_value(dx);
+    fn objective(&self, uv: &[Number], obj: &mut Number) -> bool {
+        let v = &self.scale_variables(uv);
+        *obj = self.objective_value(v);
         true
     }
 
-    fn objective_grad(&self, dx: &[Number], grad_f: &mut [Number]) -> bool {
+    fn objective_grad(&self, uv: &[Number], grad_f: &mut [Number]) -> bool {
         grad_f.iter_mut().for_each(|x| *x = 0.0); // clear gradient vector
+        let v = &self.scale_variables(uv);
+        let x = &self.compute_step(v);
         let prev_pos = self.prev_pos.borrow();
-        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
-        self.energy_model.add_energy_gradient(x, dx, grad_f);
-        self.gravity.add_energy_gradient(x, dx, grad_f);
+        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
+
+        self.energy_model.add_energy_gradient(x0, x, grad_f);
+        self.gravity.add_energy_gradient(x0, x, grad_f);
+
+        let dt = self.time_step;
+        if dt > 0.0 {
+            // This is a correction to transform the above energy gradients to velocity gradients
+            // from displacement or position gradients.
+            grad_f.iter_mut().for_each(|g| *g *= dt);
+        }
+
         if let Some(ref mp) = self.momentum_potential {
             let prev_vel = self.prev_vel.borrow();
-            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            mp.add_energy_gradient(v, dx, grad_f);
+            let v0: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            mp.add_energy_gradient(v0, v, grad_f);
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.subtract_friction_force(grad_f);
+            scc.subtract_friction_impulse(grad_f);
         }
 
+        let scale = self.scale();
+        grad_f.iter_mut().for_each(|g| *g *= scale);
+
         true
-    }
-
-    fn objective_scaling(&self) -> f64 {
-        1.0 //e-4
-    }
-
-    /// Scaling the variables: `x_scaling` is the pre-allocated slice of scales, one for
-    /// each constraint.
-    fn variable_scaling(&self, _x_scaling: &mut [Number]) -> bool {
-        false
     }
 }
 
@@ -840,9 +889,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint(&self, dx: &[Number], g: &mut [Number]) -> bool {
+    fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
+        let v = &self.scale_variables(uv);
+        let x = &self.compute_step(v);
         let prev_pos = self.prev_pos.borrow();
-        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
@@ -850,13 +901,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_size();
-            vc.constraint(x, dx, &mut g[i..i + n]);
+            vc.constraint(x0, x, &mut g[i..i + n]);
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_size();
-            scc.constraint(x, dx, &mut g[i..i + n]);
+            scc.constraint(x0, x, &mut g[i..i + n]);
         }
 
         true
@@ -934,25 +985,30 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         true
     }
 
-    fn constraint_jacobian_values(&self, dx: &[Number], vals: &mut [Number]) -> bool {
+    fn constraint_jacobian_values(&self, uv: &[Number], vals: &mut [Number]) -> bool {
+        let v = &self.scale_variables(uv);
+        let x = &self.compute_step(v);
         let prev_pos = self.prev_pos.borrow();
-        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         let mut i = 0;
 
         if let Some(ref vc) = self.volume_constraint {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x, dx, &mut vals[i..i + n])
+            vc.constraint_jacobian_values(x0, x, &mut vals[i..i + n])
                 .ok();
             i += n;
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
             let n = scc.constraint_jacobian_size();
-            scc.constraint_jacobian_values(x, dx, &mut vals[i..i + n])
+            scc.constraint_jacobian_values(x0, x, &mut vals[i..i + n])
                 .ok();
             //println!("jac g vals = {:?}", &vals[i..i+n]);
         }
+        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let scale = dt * self.scale();
+        vals.iter_mut().for_each(|v| *v *= scale);
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
         //self.print_jacobian_svd(vals);
@@ -1011,13 +1067,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
     fn hessian_values(
         &self,
-        dx: &[Number],
+        uv: &[Number],
         obj_factor: Number,
         lambda: &[Number],
         vals: &mut [Number],
     ) -> bool {
+        let v = &self.scale_variables(uv);
+        let x = &self.compute_step(v);
         let prev_pos = self.prev_pos.borrow();
-        let x: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
         if cfg!(debug_assertions) {
             // Initialize vals in debug builds.
@@ -1028,30 +1086,39 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut i = 0;
         let n = self.energy_model.energy_hessian_size();
+
+        // Correction to make the above hessian wrt velocity instead of displacement.
+        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
         self.energy_model
-            .energy_hessian_values(x, dx, &mut vals[i..i + n]);
+            .energy_hessian_values(x0, x, dt*dt, &mut vals[i..i + n]);
+
         i += n;
 
         if let Some(ref mp) = self.momentum_potential {
             let n = mp.energy_hessian_size();
             let prev_vel = self.prev_vel.borrow();
-            let v: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            mp.energy_hessian_values(v, dx, &mut vals[i..i + n]);
+            let v0: &[Number] = reinterpret_slice(prev_vel.as_slice());
+            mp.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
             i += n;
         }
 
         // Multiply energy hessian by objective factor.
+        let factor = obj_factor * self.scale() * self.scale();
         for v in vals[0..i].iter_mut() {
-            *v *= obj_factor;
+            *v *= factor;
         }
 
         let mut coff = 0;
+
+        let chess_begin = i;
+
+        let c_scale = self.scale() * self.scale() * dt * dt;
 
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
             if let Ok(()) =
-                vc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh])
+                vc.constraint_hessian_values(x0, x, &lambda[coff..coff + nc], c_scale, &mut vals[i..i + nh])
             {
                 i += nh;
                 coff += nc;
@@ -1062,7 +1129,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let nc = scc.constraint_size();
             let nh = scc.constraint_hessian_size();
             if let Ok(()) =
-                scc.constraint_hessian_values(x, dx, &lambda[coff..coff + nc], &mut vals[i..i + nh])
+                scc.constraint_hessian_values(x0, x, &lambda[coff..coff + nc], c_scale, &mut vals[i..i + nh])
             {
                 i += nh;
                 coff += nc;
@@ -1074,22 +1141,5 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //self.print_hessian_svd(vals);
 
         true
-    }
-
-    /// Scaling the constraint function: `g_scaling` is the pre-allocated slice of scales, one for
-    /// each constraint.
-    fn constraint_scaling(&self, _g_scaling: &mut [Number]) -> bool {
-        // Here we scale down the constraint function to prevent the solver from aggressively
-        // avoiding the infeasible region. This has been observed only for the contact constraint
-        // so far.
-        // TODO: Figure out a more robust way to do this. From the Ipopt docs we are recommended:
-        //  "As a guideline, we suggest to scale the optimization problem (either directly in the
-        //  original formulation, or after using scaling factors) so that all sensitivities, i.e.,
-        //  all non-zero first partial derivatives, are typically of the order $ 0.1-10$."
-        //for g in g_scaling.iter_mut() {
-        //    *g = 1e-4;
-        //}
-        //true
-        false
     }
 }

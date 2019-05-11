@@ -109,14 +109,9 @@ impl ImplicitContactConstraint {
         3 * self.simulation_surf_verts[idx / 3] + idx % 3
     }
 
-    pub fn update_query_points_with_displacement(&self, x: &[f64], dx: &[f64]) {
-        let pos: &[Vector3<f64>] = reinterpret_slice(x);
-        let disp: &[Vector3<f64>] = reinterpret_slice(dx);
-        self.update_query_points(
-            self.simulation_surf_verts
-                .iter()
-                .map(|&i| (pos[i] + disp[i]).into()),
-        );
+    pub fn update_query_points_with_mesh_pos(&self, x: &[f64]) {
+        let pos = reinterpret_slice(x);
+        self.update_query_points(self.simulation_surf_verts.iter().map(|&i| pos[i]));
     }
 
     pub fn update_query_points(&self, q_iter: impl Iterator<Item = [f64; 3]>) {
@@ -127,17 +122,16 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
-    fn clear_friction_force(&mut self) {
+    fn clear_friction_impulse(&mut self) {
         if let Some(ref mut friction) = self.friction {
-            friction.force.clear();
+            friction.impulse.clear();
         }
     }
-    fn update_friction_force(
+    fn update_friction_impulse(
         &mut self,
-        contact_force: &[f64],
+        contact_impulse: &[f64],
         x: &[[f64; 3]],
-        dx: &[[f64; 3]],
-        dt: f64,
+        v: &[[f64; 3]],
         _constraint_values: &[f64],
     ) -> bool {
         if self.friction.is_none() {
@@ -145,10 +139,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         }
 
         let normals = self
-            .contact_normals(
-                reinterpret::reinterpret_slice(x),
-                reinterpret::reinterpret_slice(dx),
-            )
+            .contact_normals(reinterpret::reinterpret_slice(x))
             .expect("Failed to compute contact normals.");
         let surf_indices = self
             .active_constraint_indices()
@@ -169,11 +160,10 @@ impl ContactConstraint for ImplicitContactConstraint {
         let friction = friction.as_mut().unwrap(); // Must be checked above.
 
         let mu = friction.params.dynamic_friction;
-        let dt_inv = 1.0 / dt;
 
         friction.contact_basis.update_from_normals(normals);
-        friction.force.clear();
-        assert_eq!(contact_force.len(), surf_indices.len());
+        friction.impulse.clear();
+        assert_eq!(contact_impulse.len(), surf_indices.len());
         
         let success = if false {
             // Polar coords
@@ -182,23 +172,22 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .enumerate()
                 .map(|(contact_idx, &surf_idx)| {
                     let vtx_idx = simulation_surf_verts[surf_idx];
-                    let mut v = friction.contact_basis.to_cylindrical_contact_coordinates(dx[vtx_idx], contact_idx);
-                    v.tangent.radius *= dt_inv;
+                    let v = friction.contact_basis.to_cylindrical_contact_coordinates(v[vtx_idx], contact_idx);
                     v.tangent
                 }).collect();
 
             if true {
                 // switch between implicit solver and explicit solver here.
                 match FrictionPolarSolver::without_contact_jacobian(
-                    &velocity_t, &contact_force, &friction.contact_basis, &contact_masses, friction.params) {
+                    &velocity_t, &contact_impulse, &friction.contact_basis, &contact_masses, friction.params) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult {
-                            friction_force: f_t,
+                            solution: r_t,
                             ..
                         }) = solver.step()
                         {
-                            friction.force.append(&mut friction.contact_basis.from_polar_tangent_space(reinterpret_vec(f_t)));
+                            friction.impulse.append(&mut friction.contact_basis.from_polar_tangent_space(reinterpret_vec(r_t)));
                             true
                         } else {
                             eprintln!("Failed friction solve");
@@ -211,21 +200,21 @@ impl ContactConstraint for ImplicitContactConstraint {
                     }
                 }
            } else {
-                for (contact_idx, (&v_t, &cf)) in
-                    zip!(velocity_t.iter(), contact_force.iter()).enumerate()
+                for (contact_idx, (&v_t, &cr)) in
+                    zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
                 {
-                    let f_t = if v_t.radius > 0.0 {
+                    let r_t = if v_t.radius > 0.0 {
                         Polar2 {
-                            radius: mu * cf.abs(),
+                            radius: mu * cr.abs(),
                             angle: negate_angle(v_t.angle),
                         }
                     } else {
                         Polar2 { radius: 0.0, angle: 0.0 }
                     };
-                    let f = 
+                    let r = 
                         friction.contact_basis
-                            .from_cylindrical_contact_coordinates(f_t.into(), contact_idx);
-                    friction.force.push(f.into());
+                            .from_cylindrical_contact_coordinates(r_t.into(), contact_idx);
+                    friction.impulse.push(r.into());
                 }
                 true
            }
@@ -236,24 +225,23 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .enumerate()
                 .map(|(contact_idx, &surf_idx)| {
                     let vtx_idx = simulation_surf_verts[surf_idx];
-                    let mut v = friction.contact_basis.to_contact_coordinates(dx[vtx_idx], contact_idx);
-                    v *= dt_inv;
+                    let v = friction.contact_basis.to_contact_coordinates(v[vtx_idx], contact_idx);
                     [v[1], v[2]]
                 }).collect();
 
             if true {
                 // switch between implicit solver and explicit solver here.
                 match FrictionSolver::without_contact_jacobian(
-                    &velocity_t, &contact_force, &friction.contact_basis, &contact_masses, friction.params)
+                    &velocity_t, &contact_impulse, &friction.contact_basis, &contact_masses, friction.params)
                 {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult {
-                            friction_force: f_t,
+                            solution: r_t,
                             ..
                         }) = solver.step()
                         {
-                            friction.force.append(&mut friction.contact_basis.from_tangent_space(reinterpret_vec(f_t)));
+                            friction.impulse.append(&mut friction.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
                             true
                         } else {
                             eprintln!("Failed friction solve");
@@ -266,42 +254,42 @@ impl ContactConstraint for ImplicitContactConstraint {
                     }
                 }
            } else {
-                for (contact_idx, (&v_t, &cf)) in
-                    zip!(velocity_t.iter(), contact_force.iter()).enumerate()
+                for (contact_idx, (&v_t, &cr)) in
+                    zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
                 {
                     let v_t = Vector2(v_t);
                     let v_norm = v_t.norm();
-                    let f_t = if v_norm > 0.0 {
-                        v_t * (-mu * cf.abs() / v_norm)
+                    let r_t = if v_norm > 0.0 {
+                        v_t * (-mu * cr.abs() / v_norm)
                     } else {
                         Vector2::zeros()
                     };
-                    let f = 
+                    let r = 
                         friction.contact_basis
-                            .from_contact_coordinates([0.0, f_t[0], f_t[1]], contact_idx);
-                    friction.force.push(f.into());
+                            .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
+                    friction.impulse.push(r.into());
                 }
                 true
            }
         };
 
         eprintln!("Contact forces");
-        for cf in contact_force.iter() {
-            eprintln!("{:?}", *cf);
+        for cr in contact_impulse.iter() {
+            eprintln!("{:?}", *cr);
         }
         eprintln!("Friction forces");
-        for &f in friction.force.iter() {
-            if Vector3(f).norm() > 0.0 {
-                eprintln!("{:?}", f);
+        for &r in friction.impulse.iter() {
+            if Vector3(r).norm() > 0.0 {
+                eprintln!("{:?}", r);
             }
         }
 
         success
     }
 
-    fn subtract_friction_force(&self, grad: &mut [f64]) {
+    fn subtract_friction_impulse(&self, grad: &mut [f64]) {
         if let Some(ref friction) = self.friction {
-            if friction.force.is_empty() {
+            if friction.impulse.is_empty() {
                 return;
             }
 
@@ -309,20 +297,20 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            assert_eq!(indices.len(), friction.force.len());
+            assert_eq!(indices.len(), friction.impulse.len());
 
-            for (&i, f) in indices.iter().zip(friction.force.iter()) {
-                for (j, force) in f.iter().enumerate().take(3) {
+            for (&i, r) in indices.iter().zip(friction.impulse.iter()) {
+                for (j, impulse) in r.iter().enumerate().take(3) {
                     let idx = 3 * self.simulation_surf_verts[i] + j;
-                    grad[idx] -= force;
+                    grad[idx] -= impulse;
                 }
             }
         }
     }
-    fn frictional_dissipation(&self, dx: &[f64]) -> f64 {
+    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref friction) = self.friction {
-            if friction.force.is_empty() {
+            if friction.impulse.is_empty() {
                 return dissipation;
             }
 
@@ -330,11 +318,11 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            assert_eq!(indices.len(), friction.force.len());
+            assert_eq!(indices.len(), friction.impulse.len());
 
-            for (&i, f) in indices.iter().zip(friction.force.iter()) {
+            for (&i, f) in indices.iter().zip(friction.impulse.iter()) {
                 for j in 0..3 {
-                    dissipation += dx[3 * self.simulation_surf_verts[i] + j] * f[j];
+                    dissipation += v[3 * self.simulation_surf_verts[i] + j] * f[j];
                 }
             }
         }
@@ -345,13 +333,13 @@ impl ContactConstraint for ImplicitContactConstraint {
         // Remap friction forces the same way we remap constraint multipliers for the contact
         // solve.
         if let Some(ref mut friction) = self.friction {
-            let new_friction_forces = crate::constraints::remap_values(
-                friction.force.iter().cloned(),
+            let new_friction_impulses = crate::constraints::remap_values(
+                friction.impulse.iter().cloned(),
                 [0.0; 3],
                 old_set.iter().cloned(),
                 new_set.iter().cloned(),
             );
-            std::mem::replace(&mut friction.force, new_friction_forces);
+            std::mem::replace(&mut friction.impulse, new_friction_impulses);
         }
     }
 
@@ -359,30 +347,29 @@ impl ContactConstraint for ImplicitContactConstraint {
     fn compute_contact_impulse(
         &self,
         x: &[f64],
-        contact_force: &[f64],
-        dt: f64,
+        contact_impulse: &[f64],
         impulse: &mut [[f64; 3]],
     ) {
         let normals = self
-            .contact_normals(x, &vec![0.0; x.len()])
+            .contact_normals(x)
             .expect("Failed to retrieve contact normals.");
         let indices = self
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
-        assert_eq!(contact_force.len(), normals.len());
+        assert_eq!(contact_impulse.len(), normals.len());
         assert_eq!(indices.len(), normals.len());
         for (i, (n, &f)) in indices
             .into_iter()
-            .zip(normals.into_iter().zip(contact_force.iter()))
+            .zip(normals.into_iter().zip(contact_impulse.iter()))
         {
-            impulse[self.simulation_surf_verts[i]] = (Vector3(n) * f * dt).into();
+            impulse[self.simulation_surf_verts[i]] = (Vector3(n) * f).into();
         }
     }
 
-    fn contact_normals(&self, x: &[f64], dx: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
+    fn contact_normals(&self, x: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();
-        self.update_query_points_with_displacement(x, dx);
+        self.update_query_points_with_mesh_pos(x);
         let query_points = self.query_points.borrow();
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
@@ -422,31 +409,14 @@ impl ContactConstraint for ImplicitContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self, pos: Option<&[f64]>, disp: Option<&[f64]>) -> bool {
-        if let Some(pos) = pos {
-            if let Some(disp) = disp {
-                self.update_query_points_with_displacement(pos, disp);
-            } else {
-                let pos: &[[f64; 3]] = reinterpret_slice(pos);
-                self.update_query_points(self.simulation_surf_verts.iter().map(|&i| pos[i]));
-            }
+    fn update_cache(&mut self, x: Option<&[f64]>) -> bool {
+        // If positions are given, then use them, otherwise, update cache using the vertex
+        // positions in the simulation mesh.
+        if let Some(x) = x {
+            self.update_query_points_with_mesh_pos(x);
         } else {
             let sim_mesh = self.simulation_mesh.borrow();
-            let vert_pos: &[Vector3<f64>] = reinterpret_slice(sim_mesh.vertex_positions());
-            if let Some(disp) = disp {
-                let disp: &[Vector3<f64>] = reinterpret_slice(disp);
-                self.update_query_points(
-                    self.simulation_surf_verts
-                        .iter()
-                        .map(|&i| (vert_pos[i] + disp[i]).into()),
-                );
-            } else {
-                self.update_query_points(
-                    self.simulation_surf_verts
-                        .iter()
-                        .map(|&i| vert_pos[i].into()),
-                );
-            }
+            self.update_query_points_with_mesh_pos(reinterpret_slice(sim_mesh.vertex_positions()));
         }
 
         let collision_mesh = self.collision_object.borrow();
@@ -505,9 +475,9 @@ impl Constraint<f64> for ImplicitContactConstraint {
     }
 
     #[inline]
-    fn constraint(&self, x: &[f64], dx: &[f64], value: &mut [f64]) {
+    fn constraint(&self, _x0: &[f64], x1: &[f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        self.update_query_points_with_displacement(x, dx);
+        self.update_query_points_with_mesh_pos(x1);
 
         let query_points = self.query_points.borrow();
         let mut cbuf = self.constraint_buffer.borrow_mut();
@@ -580,12 +550,12 @@ impl ConstraintJacobian<f64> for ImplicitContactConstraint {
 
     fn constraint_jacobian_values(
         &self,
-        x: &[f64],
-        dx: &[f64],
+        _x0: &[f64],
+        x1: &[f64],
         values: &mut [f64],
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
-        self.update_query_points_with_displacement(x, dx);
+        self.update_query_points_with_mesh_pos(x1);
         let query_points = self.query_points.borrow();
 
         Ok(self
@@ -618,17 +588,18 @@ impl ConstraintHessian<f64> for ImplicitContactConstraint {
 
     fn constraint_hessian_values(
         &self,
-        x: &[f64],
-        dx: &[f64],
+        _x0: &[f64],
+        x1: &[f64],
         lambda: &[f64],
+        scale: f64,
         values: &mut [f64],
     ) -> Result<(), Error> {
-        self.update_query_points_with_displacement(x, dx);
+        self.update_query_points_with_mesh_pos(x1);
         let query_points = self.query_points.borrow();
 
         Ok(self
             .implicit_surface
             .borrow()
-            .query_hessian_product_values(&query_points, lambda, values)?)
+            .query_hessian_product_scaled_values(&query_points, lambda, scale, values)?)
     }
 }

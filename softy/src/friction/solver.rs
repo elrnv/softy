@@ -15,7 +15,7 @@ pub struct FrictionSolveResult {
     /// The value of the dissipation objective at the end of the step.
     pub objective_value: f64,
     /// Resultant friction force in contact space.
-    pub friction_force: Vec<[f64; 2]>,
+    pub solution: Vec<[f64; 2]>,
 }
 
 /// Friction solver.
@@ -99,7 +99,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
 
         let result = FrictionSolveResult {
             objective_value,
-            friction_force: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
+            solution: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
         };
 
         match status {
@@ -500,13 +500,13 @@ mod tests {
         let mut solver = FrictionSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, &masses, params)?;
         let result = solver.step()?;
         let FrictionSolveResult {
-            friction_force,
+            solution,
             objective_value,
         } = result;
 
-        dbg!(Vector2(velocity[0]) + Vector2(friction_force[0]) / mass);
-        assert_relative_eq!(friction_force[0][0], -15.0, max_relative = 1e-6);
-        assert_relative_eq!(friction_force[0][1], 0.0, max_relative = 1e-6);
+        dbg!(Vector2(velocity[0]) + Vector2(solution[0]) / mass);
+        assert_relative_eq!(solution[0][0], -15.0, max_relative = 1e-6);
+        assert_relative_eq!(solution[0][1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(objective_value, -15.0, max_relative = 1e-6);
 
 

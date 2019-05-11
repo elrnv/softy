@@ -20,10 +20,6 @@ pub struct MomentumPotential {
     /// The density of the material. Typically measured in kg/m³, however the actual value stored
     /// in this struct may be normalized.
     pub density: f64,
-
-    /// Step size in seconds for dynamics time integration scheme. If the time step is zero
-    /// then the simulation becomes effectively quasi-static.
-    time_step: f64,
 }
 
 impl MomentumPotential {
@@ -32,40 +28,36 @@ impl MomentumPotential {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.
     /// This function takes a tetrahedron mesh specifying a discretization of the solid domain
-    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64, time_step: f64) -> Self {
+    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64) -> Self {
         MomentumPotential {
             tetmesh,
             density,
-            time_step,
         }
     }
 }
 
 impl<T: Real> Energy<T> for MomentumPotential {
     #[allow(non_snake_case)]
-    fn energy(&self, v: &[T], dx: &[T]) -> T {
+    fn energy(&self, v0: &[T], v1: &[T]) -> T {
         let MomentumPotential {
             ref tetmesh,
             density,
-            time_step: dt,
             ..
         } = *self;
 
-        let dt_inv = T::from(1.0 / dt).unwrap();
-
         let tetmesh = tetmesh.borrow();
 
-        let vel: &[Vector3<T>] = reinterpret_slice(v);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+        let vel0: &[Vector3<T>] = reinterpret_slice(v0);
+        let vel1: &[Vector3<T>] = reinterpret_slice(v1);
 
         tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .zip(tetmesh.cell_iter())
             .map(|(&vol, cell)| {
-                let tet_v = Tetrahedron::from_indexed_slice(cell.get(), vel);
-                let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
-                let tet_dv = tet_dx * dt_inv - tet_v;
+                let tet_v0 = Tetrahedron::from_indexed_slice(cell.get(), vel0);
+                let tet_v1 = Tetrahedron::from_indexed_slice(cell.get(), vel1);
+                let tet_dv = tet_v1 - tet_v0;
 
                 T::from(0.5).unwrap() * {
                     let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
@@ -79,22 +71,19 @@ impl<T: Real> Energy<T> for MomentumPotential {
 
 impl<T: Real> EnergyGradient<T> for MomentumPotential {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v: &[T], dx: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
         let MomentumPotential {
             ref tetmesh,
             density,
-            time_step: dt,
             ..
         } = *self;
 
-        let dt_inv = T::one() / T::from(dt).unwrap();
-
         let tetmesh = tetmesh.borrow();
 
-        let vel: &[Vector3<T>] = reinterpret_slice(v);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+        let vel0: &[Vector3<T>] = reinterpret_slice(v0);
+        let vel1: &[Vector3<T>] = reinterpret_slice(v1);
 
-        debug_assert_eq!(grad_f.len(), dx.len());
+        debug_assert_eq!(grad_f.len(), v0.len());
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
@@ -104,12 +93,12 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
             .unwrap()
             .zip(tetmesh.cell_iter())
         {
-            let tet_v = Tetrahedron::from_indexed_slice(cell.get(), vel);
-            let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
-            let tet_dv = (tet_dx * dt_inv - tet_v).into_array();
+            let tet_v0 = Tetrahedron::from_indexed_slice(cell.get(), vel0);
+            let tet_v1 = Tetrahedron::from_indexed_slice(cell.get(), vel1);
+            let tet_dv = (tet_v1 - tet_v0).into_array();
 
             for i in 0..4 {
-                gradient[cell[i]] += tet_dv[i] * (dt_inv * T::from(0.25 * vol * density).unwrap());
+                gradient[cell[i]] += tet_dv[i] * (T::from(0.25 * vol * density).unwrap());
             }
         }
     }
@@ -188,17 +177,14 @@ impl EnergyHessian for MomentumPotential {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, _x: &[T], _dx: &[T], values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let MomentumPotential {
             ref tetmesh,
             density,
-            time_step: dt,
             ..
         } = *self;
-
-        let dt_inv = T::from(1.0 / dt).unwrap();
 
         let tetmesh = &*tetmesh.borrow();
 
@@ -221,7 +207,7 @@ impl EnergyHessian for MomentumPotential {
                     for j in 0..3 {
                         // vector component
                         tet_hess[3 * vi + j] =
-                            T::from(0.25 * vol * density).unwrap() * dt_inv * dt_inv;
+                            T::from(0.25 * vol * density).unwrap() * scale;
                     }
                 }
             });
@@ -235,19 +221,19 @@ mod tests {
 
     #[test]
     fn gradient() {
-        let dt = 0.01;
         gradient_tester(
-            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt),
-            EnergyType::Velocity(dt),
+            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
+            EnergyType::Velocity,
+            0.01
         );
     }
 
     #[test]
     fn hessian() {
-        let dt = 0.01;
         hessian_tester(
-            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0, dt),
-            EnergyType::Velocity(dt),
+            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
+            EnergyType::Velocity,
+            0.01
         );
     }
 }

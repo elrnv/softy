@@ -534,7 +534,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -590,7 +590,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
                 let tet_energy = InvertibleNHTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
 
-                let factor = T::from(1.0 + damping).unwrap();
+                let factor = T::from(1.0 + damping).unwrap() * scale;
 
                 let local_hessians = tet_energy.elastic_energy_hessian();
 
@@ -610,11 +610,13 @@ mod tests {
 
     #[test]
     fn gradient() {
-        gradient_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        let dt = 0.01;
+        gradient_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position, dt);
     }
 
     #[test]
     fn hessian() {
-        hessian_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        let dt = 0.01;
+        hessian_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position, dt);
     }
 }

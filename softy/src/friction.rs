@@ -18,14 +18,14 @@ pub struct FrictionParams {
 pub struct Friction {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
-    pub force: Vec<[f64; 3]>,
+    pub impulse: Vec<[f64; 3]>,
 }
 
 impl Friction {
     pub fn new(params: FrictionParams) -> Friction {
         Friction {
             params,
-            force: Vec::new(),
+            impulse: Vec::new(),
             contact_basis: ContactBasis::new()
         }
     }

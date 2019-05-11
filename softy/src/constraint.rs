@@ -102,6 +102,7 @@ pub trait ConstraintHessian<T: Scalar> {
         x: &[T],
         dx: &[T],
         lambda: &[T],
+        scale: T,
         values: &mut [T],
     ) -> Result<(), Error>;
 
@@ -130,6 +131,7 @@ pub trait ConstraintHessian<T: Scalar> {
         dx: &[T],
         lambda: &[T],
         offset: MatrixElementIndex,
+        scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
     ) -> Result<(), Error> {
         let n = self.constraint_hessian_size();
@@ -137,7 +139,7 @@ pub trait ConstraintHessian<T: Scalar> {
             .constraint_hessian_indices_iter()?
             .map(|idx| idx + offset);
         let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
-        self.constraint_hessian_values(x, dx, lambda, values.as_mut_slice())?;
+        self.constraint_hessian_values(x, dx, lambda, scale, values.as_mut_slice())?;
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
@@ -157,8 +159,9 @@ pub trait ConstraintHessian<T: Scalar> {
         x: &[T],
         dx: &[T],
         lambda: &[T],
+        scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
     ) -> Result<(), Error> {
-        self.constraint_hessian_offset(x, dx, lambda, (0, 0).into(), triplets)
+        self.constraint_hessian_offset(x, dx, lambda, (0, 0).into(), scale, triplets)
     }
 }

@@ -80,7 +80,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], values: &mut [T]);
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]);
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
@@ -135,13 +135,14 @@ pub trait EnergyHessian {
         x: &[T],
         dx: &[T],
         offset: MatrixElementIndex,
+        scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
         let n = self.energy_hessian_size();
         let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
         let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
-        self.energy_hessian_values(x, dx, values.as_mut_slice());
+        self.energy_hessian_values(x, dx, scale, values.as_mut_slice());
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices.iter().zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
@@ -159,8 +160,9 @@ pub trait EnergyHessian {
         &self,
         x: &[T],
         dx: &[T],
+        scale: T,
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
-        self.energy_hessian_offset(x, dx, (0, 0).into(), triplets)
+        self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets)
     }
 }

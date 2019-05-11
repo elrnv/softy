@@ -91,7 +91,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionPolarSolver<'a, CJI> {
 
         let result = FrictionSolveResult {
             objective_value,
-            friction_force: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
+            solution: reinterpret_vec(solver_data.solution.primal_variables.to_vec()),
         };
 
         match status {
@@ -401,13 +401,13 @@ mod tests {
         let mut solver = FrictionPolarSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, &masses, params)?;
         let result = solver.step()?;
         let FrictionSolveResult {
-            friction_force,
+            solution,
             objective_value,
         } = result;
 
-        assert_relative_eq!(friction_force[0][0], 15.0, max_relative = 1e-5);
+        assert_relative_eq!(solution[0][0], 15.0, max_relative = 1e-5);
         assert_relative_eq!(
-            friction_force[0][1],
+            solution[0][1],
             0.0,
             max_relative = 1e-5,
             epsilon = 1e-8

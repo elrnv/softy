@@ -323,7 +323,7 @@ impl ElasticTetMeshEnergy {
 /// Define energy for ElasticTetMeshEnergy materials.
 impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn energy(&self, x: &[T], dx: &[T]) -> T {
+    fn energy(&self, x0: &[T], x1: &[T]) -> T {
         let ElasticTetMeshEnergy {
             ref tetmesh,
             material:
@@ -337,8 +337,8 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
 
         let tetmesh = tetmesh.borrow();
 
-        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
+        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 
         tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -350,9 +350,9 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
             )
             .zip(tetmesh.cell_iter())
             .map(|((&vol, &DX_inv), cell)| {
-                let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
-                let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx.clone();
-                let Dx = tet.shape_matrix();
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
+                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
+                let Dx = tet_x1.shape_matrix();
                 let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
                 let vol = T::from(vol).unwrap();
                 let lambda = T::from(lambda).unwrap();
@@ -374,7 +374,7 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
 
 impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, x: &[T], dx: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
         let ElasticTetMeshEnergy {
             ref tetmesh,
             material:
@@ -388,11 +388,11 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
 
         let tetmesh = tetmesh.borrow();
 
-        debug_assert_eq!(grad_f.len(), x.len());
-        debug_assert_eq!(grad_f.len(), dx.len());
+        debug_assert_eq!(grad_f.len(), x0.len());
+        debug_assert_eq!(grad_f.len(), x1.len());
 
-        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
+        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
@@ -407,11 +407,10 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             )
             .zip(tetmesh.cell_iter())
         {
-            // Make tet displacement.
-            let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
-
             // Make deformed tet.
-            let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx.clone();
+            let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
+            // Make tet displacement.
+            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
 
             let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();
@@ -419,7 +418,7 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             let mu = T::from(mu).unwrap();
             let damping = T::from(damping).unwrap();
 
-            let tet_energy = NeoHookeanTetEnergy::new(tet.shape_matrix(), DX_inv, vol, lambda, mu);
+            let tet_energy = NeoHookeanTetEnergy::new(tet_x1.shape_matrix(), DX_inv, vol, lambda, mu);
 
             let grad = tet_energy.elastic_energy_gradient();
 
@@ -520,7 +519,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(&self, _: &[T], x1: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -535,8 +534,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
         let tetmesh = &*tetmesh.borrow();
 
-        let prev_pos: &[Vector3<T>] = reinterpret_slice(x);
-        let disp: &[Vector3<T>] = reinterpret_slice(dx);
+        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
@@ -562,12 +560,10 @@ impl EnergyHessian for ElasticTetMeshEnergy {
                 .zip(tetmesh.cells().par_iter());
 
             hess_iter.for_each(|(((tet_hess, &vol), &DX_inv), cell)| {
-                // Make tet displacement.
-                let tet_dx = Tetrahedron::from_indexed_slice(cell.get(), disp);
                 // Make deformed tet.
-                let tet = Tetrahedron::from_indexed_slice(cell.get(), prev_pos) + tet_dx;
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
 
-                let Dx = tet.shape_matrix();
+                let Dx = tet_x1.shape_matrix();
 
                 let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
                 let vol = T::from(vol).unwrap();
@@ -576,7 +572,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
 
-                let factor = T::from(1.0 + damping).unwrap();
+                let factor = T::from(1.0 + damping).unwrap() * scale;
 
                 let local_hessians = tet_energy.elastic_energy_hessian();
 
@@ -596,17 +592,21 @@ mod tests {
 
     #[test]
     fn gradient() {
+        let dt = 0.01;
         gradient_tester(
             |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
             EnergyType::Position,
+            dt
         );
     }
 
     #[test]
     fn hessian() {
+        let dt = 0.01;
         hessian_tester(
             |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
             EnergyType::Position,
+            dt
         );
     }
 }

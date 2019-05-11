@@ -361,6 +361,7 @@ impl SolverBuilder {
         Ok(Solver {
             solver: ipopt,
             step_count: 0,
+            inner_iterations: 0,
             sim_params: params,
             solid_material: Some(solid_material),
             max_step: 0.0,
@@ -1111,7 +1112,7 @@ impl Solver {
 
         //self.output_meshes(self.step_count as u32);
 
-        self.inner_iterations += result.inner_iterations;
+        self.inner_iterations += result.inner_iterations as usize;
         self.step_count += 1;
 
         dbg!(self.inner_iterations);

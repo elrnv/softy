@@ -450,6 +450,8 @@ pub struct Solver {
     /// Step count (outer iterations). These count the number of times the function `step` was
     /// called.
     step_count: usize,
+    /// Total number of Ipopt iterations taken by this solver.
+    inner_iterations: usize,
     /// Simulation paramters. This is kept around for convenience.
     sim_params: SimParams,
     /// Solid material properties.
@@ -1107,11 +1109,12 @@ impl Solver {
             );
         }
 
-        dbg!(result);
-
         //self.output_meshes(self.step_count as u32);
 
+        self.inner_iterations += result.inner_iterations;
         self.step_count += 1;
+
+        dbg!(self.inner_iterations);
 
         // On success, update the mesh with new positions and useful metrics.
         let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
@@ -1977,6 +1980,7 @@ mod tests {
             max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
             time_step: Some(0.0208333),
+            print_level: 5,
             ..DYNAMIC_PARAMS
         };
 

@@ -163,7 +163,6 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     pub(crate) fn compute_base_radius(trimesh: &TriMesh<f64>) -> f64 {
         use geo::mesh::VertexPositions;
         use geo::ops::Centroid;
-        use geo::prim::Triangle;
         let pos = trimesh.vertex_positions();
         trimesh
             .face_iter()

@@ -843,11 +843,13 @@ impl Solver {
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let res = {
             let SolverDataMut {
-                problem, solution, ..
+                problem,
+                solution,
+                ..
             } = self.solver.solver_data_mut();
 
             // Advance internal state (positions and velocities) of the problem.
-            problem.advance(reinterpret_slice(solution.primal_variables), and_warm_start)
+            problem.advance(solution.primal_variables, and_warm_start)
         };
 
         // Comitting solution. Reduce max_step for next iteration.
@@ -857,7 +859,7 @@ impl Solver {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
             if and_warm_start {
-                let step = inf_norm(solution.primal_variables) * problem.scale() * if dt > 0.0 { dt } else { 1.0 };
+                let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables)) * if dt > 0.0 { dt } else { 1.0 };
                 // If warm start is selected, then this solution was good, which means we're not
                 // comitting it just for debugging purposes.
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
@@ -937,8 +939,8 @@ impl Solver {
         self.add_constraint_jacobian_product(objective_residual);
         self.compute_constraint_violation(constraint_violation);
 
-        let constraint_violation_norm = inf_norm(constraint_violation);
-        let residual_norm = inf_norm(residual);
+        let constraint_violation_norm = inf_norm(constraint_violation.iter().cloned());
+        let residual_norm = inf_norm(residual.iter().cloned());
 
         println!(
             "residual = {:?}, cv = {:?}",
@@ -960,9 +962,15 @@ impl Solver {
     fn check_inner_step(&mut self) -> (bool, Vec<usize>) {
         let old_active_set = self.problem().active_constraint_set();
         let step_accepted = if self.contact_radius().is_some() {
-            let dt = self.time_step();
-            let scale = self.solver.solver_data().problem.scale();
-            let step = inf_norm(self.solver.solver_data().solution.primal_variables) * scale * if dt > 0.0 { dt } else { 1.0 };
+            let step = {
+                let SolverData {
+                    problem,
+                    solution,
+                    ..
+                } = self.solver.solver_data();
+                let dt = self.time_step();
+                inf_norm(problem.scaled_variables_iter(solution.primal_variables)) * if dt > 0.0 { dt } else { 1.0 }
+            };
 
             let constraint_violation = {
                 let SolverDataMut {
@@ -1075,7 +1083,9 @@ impl Solver {
                                 .remap_contacts(old_active_set.clone().into_iter());
                             if self.compute_friction_impulse(&step_result.constraint_values) {
                                 friction_steps -= 1;
-                                continue;
+                                if friction_steps > 0 {
+                                    continue;
+                                }
                             }
                         }
                         self.commit_solution(true);
@@ -1266,7 +1276,7 @@ impl Solver {
                         let reduction = (prev_merit - merit_value) / (prev_model - merit_model);
                         println!("reduction = {:?}", reduction);
 
-                        let step_size = inf_norm(solution.primal_variables);
+                        let step_size = inf_norm(solution.primal_variables.iter().cloned());
 
                         if reduction < 0.25 {
                             if step_size < 1e-5 * max_step {

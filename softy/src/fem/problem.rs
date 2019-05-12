@@ -320,17 +320,30 @@ impl NonLinearProblem {
     //    changed
     //}
 
+    pub fn apply_friction_impulse(&self, vel: &mut [Vector3<f64>]) {
+        let impulse: Vec<Vector3<f64>> = reinterpret_vec(self.friction_impulse());
+        assert_eq!(impulse.len(), vel.len());
+        for (v, &r) in vel.iter_mut().zip(impulse.iter()) {
+            *v += r;
+        }
+    }
+
     /// Commit displacement by advancing the internal state by the given displacement `dx`.
     pub fn advance(
         &mut self,
-        cur_vel: &[Vector3<f64>],
+        uv: &[f64],
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
             // Reinterpret solver variables as positions in 3D space.
-            let cur_vel_flat = &self.scale_variables(reinterpret_slice(cur_vel));
-            let cur_step = self.compute_step(cur_vel_flat);
-            let cur_vel: &[Vector3<f64>] = reinterpret_slice(cur_vel_flat);
+            let mut cur_vel = self.scaled_variables.borrow_mut();
+            cur_vel.clear();
+            cur_vel.extend(self.scaled_variables_iter(uv));
+            let mut cur_vel: &mut [Vector3<f64>] = reinterpret_mut_slice(&mut cur_vel);
+
+            self.apply_friction_impulse(reinterpret_mut_slice(&mut cur_vel));
+
+            let cur_step = self.compute_step(reinterpret_slice(&cur_vel));
 
             let mut prev_pos = self.prev_pos.borrow_mut();
             let mut prev_vel = self.prev_vel.borrow_mut();
@@ -433,7 +446,7 @@ impl NonLinearProblem {
         use ipopt::ConstrainedProblem;
         let mut g = vec![0.0; self.num_constraints()];
         self.compute_constraint_violation(displacement, &mut g);
-        crate::inf_norm(&g)
+        crate::inf_norm(g)
     }
 
     /// Return the constraint violation and whether the neighbourhood data (sparsity) would be
@@ -539,12 +552,17 @@ impl NonLinearProblem {
         std::cell::Ref::map(self.cur_pos.borrow(), |pos| reinterpret::reinterpret_slice(pos))
     }
 
+    /// Produce an iterator over the given slice of scaled variables.
+    pub fn scaled_variables_iter<'a>(&self, v: &'a [Number]) -> impl Iterator<Item = Number> + 'a {
+        let scale = self.scale();
+        v.iter().map(move |&val| val * scale)
+    }
+
     pub fn scale_variables(&self, v: &[Number]) -> std::cell::Ref<'_, [Number]> {
         {
-            let scale = self.scale();
             let mut sv = self.scaled_variables.borrow_mut();
             sv.clear();
-            sv.extend(v.iter().map(|&val| val * scale));
+            sv.extend(self.scaled_variables_iter(v));
         }
         std::cell::Ref::map(self.scaled_variables.borrow(), |val| val.as_slice())
     }
@@ -1109,8 +1127,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         let mut coff = 0;
-
-        let chess_begin = i;
 
         let c_scale = self.scale() * self.scale() * dt * dt;
 

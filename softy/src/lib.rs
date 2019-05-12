@@ -188,9 +188,10 @@ pub fn sim(
     }
 }
 
-pub(crate) fn inf_norm(vec: &[f64]) -> f64 {
-    vec.iter()
-        .map(|x| x.abs())
+pub(crate) fn inf_norm<I>(iter: I) -> f64
+    where I: IntoIterator<Item = f64>
+{
+    iter.into_iter().map(|x| x.abs())
         .max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
         .unwrap_or(0.0)
 }

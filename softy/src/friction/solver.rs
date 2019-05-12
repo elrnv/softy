@@ -482,13 +482,13 @@ mod tests {
     #[test]
     fn sliding_point() -> Result<(), Error> {
         let params = FrictionParams {
-            dynamic_friction: 0.1,
+            dynamic_friction: 1.5,
             inner_iterations: 30,
             tolerance: 1e-5,
-            print_level: 5,
+            print_level: 0,
             density: 1000.0,
         };
-        let mass = 0.1;
+        let mass = 10.0;
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_force = vec![10.0 * mass];
@@ -504,11 +504,11 @@ mod tests {
             objective_value,
         } = result;
 
-        dbg!(Vector2(velocity[0]) + Vector2(solution[0]) / mass);
-        assert_relative_eq!(solution[0][0], -15.0, max_relative = 1e-6);
+        // Check that the point gets stuck
+        let final_velocity = Vector2(velocity[0]) + Vector2(solution[0]) / mass;
+        assert_relative_eq!(final_velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
+        assert_relative_eq!(final_velocity[1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(solution[0][1], 0.0, max_relative = 1e-6);
-        assert_relative_eq!(objective_value, -15.0, max_relative = 1e-6);
-
 
         Ok(())
     }

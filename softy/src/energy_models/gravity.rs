@@ -93,21 +93,17 @@ mod tests {
 
     #[test]
     fn gradient() {
-        let dt = 0.01;
         gradient_tester(
             |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
             EnergyType::Position,
-            dt,
         );
     }
 
     #[test]
     fn hessian() {
-        let dt = 0.01;
         hessian_tester(
             |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
             EnergyType::Position,
-            dt
         );
     }
 }

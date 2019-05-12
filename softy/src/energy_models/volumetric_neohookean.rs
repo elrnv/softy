@@ -592,21 +592,17 @@ mod tests {
 
     #[test]
     fn gradient() {
-        let dt = 0.01;
         gradient_tester(
             |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
             EnergyType::Position,
-            dt
         );
     }
 
     #[test]
     fn hessian() {
-        let dt = 0.01;
         hessian_tester(
             |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
             EnergyType::Position,
-            dt
         );
     }
 }

@@ -224,7 +224,6 @@ mod tests {
         gradient_tester(
             |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
             EnergyType::Velocity,
-            0.01
         );
     }
 
@@ -233,7 +232,6 @@ mod tests {
         hessian_tester(
             |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
             EnergyType::Velocity,
-            0.01
         );
     }
 }

@@ -111,6 +111,7 @@ pub trait ContactConstraint:
         dx: &[[f64; 3]],
         constraint_values: &[f64],
     ) -> bool;
+    fn add_mass_weighted_friction_impulse(&self, x: &mut [f64]);
     /// Subtract the frictional impulse from the given gradient vector.
     fn subtract_friction_impulse(&self, grad: &mut [f64]);
     /// Compute the frictional energy dissipation.

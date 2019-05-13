@@ -320,11 +320,9 @@ impl NonLinearProblem {
     //    changed
     //}
 
-    pub fn apply_friction_impulse(&self, vel: &mut [Vector3<f64>]) {
-        let impulse: Vec<Vector3<f64>> = reinterpret_vec(self.friction_impulse());
-        assert_eq!(impulse.len(), vel.len());
-        for (v, &r) in vel.iter_mut().zip(impulse.iter()) {
-            *v += r;
+    pub fn apply_friction_impulse(&self, vel: &mut [f64]) {
+        if let Some(ref scc) = self.smooth_contact_constraint {
+            scc.add_mass_weighted_friction_impulse(vel);
         }
     }
 
@@ -339,9 +337,9 @@ impl NonLinearProblem {
             let mut cur_vel = self.scaled_variables.borrow_mut();
             cur_vel.clear();
             cur_vel.extend(self.scaled_variables_iter(uv));
-            let mut cur_vel: &mut [Vector3<f64>] = reinterpret_mut_slice(&mut cur_vel);
+            self.apply_friction_impulse(&mut cur_vel);
 
-            self.apply_friction_impulse(reinterpret_mut_slice(&mut cur_vel));
+            let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
 
             let cur_step = self.compute_step(reinterpret_slice(&cur_vel));
 
@@ -607,20 +605,33 @@ impl NonLinearProblem {
         solution: ipopt::Solution,
         constraint_values: &[f64],
     ) -> bool {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            let prev_pos = self.prev_pos.borrow();
+        if self.smooth_contact_constraint.is_some() {
+            {
+                let mut sv = self.scaled_variables.borrow_mut();
+                sv.clear();
+                sv.extend(self.scaled_variables_iter(solution.primal_variables));
+            }
+            let NonLinearProblem {
+                prev_pos,
+                volume_constraint,
+                scaled_variables,
+                smooth_contact_constraint,
+                time_step,
+                ..
+            } = self;
+            let prev_pos = prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
-            let displacement: &[[f64; 3]] =
-                reinterpret::reinterpret_slice(solution.primal_variables);
-            let offset = if self.volume_constraint.is_some() {
+            let offset = if volume_constraint.is_some() {
                 1
             } else {
                 0
             };
             let contact_impulse =
-                Self::contact_impulse_magnitudes(&solution.constraint_multipliers[offset..], self.time_step);
+                Self::contact_impulse_magnitudes(&solution.constraint_multipliers[offset..], *time_step);
+            let velocity = &scaled_variables.borrow();
             let potential_values = &constraint_values[offset..];
-            scc.update_friction_impulse(&contact_impulse, position, displacement, potential_values)
+            smooth_contact_constraint.as_mut().unwrap()
+                .update_friction_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values)
         } else {
             false
         }

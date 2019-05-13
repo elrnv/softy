@@ -241,6 +241,10 @@ impl ContactConstraint for ImplicitContactConstraint {
                             ..
                         }) = solver.step()
                         {
+                            use ipopt::ConstrainedProblem;
+                            let mut g = vec![0.0; solver.problem().num_constraints()];
+                            solver.problem().constraint(reinterpret_slice(&r_t), &mut g);
+                            dbg!(g);
                             friction.impulse.append(&mut friction.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
                             true
                         } else {
@@ -273,20 +277,43 @@ impl ContactConstraint for ImplicitContactConstraint {
            }
         };
 
-        eprintln!("Contact forces");
+        eprintln!("Contact impulses with mu {:?}", mu);
         for cr in contact_impulse.iter() {
-            eprintln!("{:?}", *cr);
+            eprintln!("{:?}", *cr * mu);
         }
-        eprintln!("Friction forces");
+        eprintln!("Friction impulse magnitudes");
         for &r in friction.impulse.iter() {
             if Vector3(r).norm() > 0.0 {
-                eprintln!("{:?}", r);
+                eprintln!("{:?}", Vector3(r).norm());
             }
         }
 
         success
     }
 
+    fn add_mass_weighted_friction_impulse(&self, x: &mut [f64]) {
+        if let Some(ref friction) = self.friction {
+            if friction.impulse.is_empty() {
+                return;
+            }
+
+            let indices = self
+                .active_constraint_indices()
+                .expect("Failed to retrieve constraint indices.");
+
+            assert_eq!(indices.len(), friction.impulse.len());
+
+            for (&i, r) in indices.iter().zip(friction.impulse.iter()) {
+                let surf_vert_idx = self.simulation_surf_verts[i];
+                let m = self.vertex_masses[surf_vert_idx];
+                for (j, impulse) in r.iter().enumerate().take(3) {
+                    let idx = 3 * surf_vert_idx + j;
+                    dbg!(impulse / m);
+                    x[idx] += impulse / m;
+                }
+            }
+        }
+    }
     fn subtract_friction_impulse(&self, grad: &mut [f64]) {
         if let Some(ref friction) = self.friction {
             if friction.impulse.is_empty() {

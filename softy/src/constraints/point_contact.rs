@@ -579,7 +579,7 @@ impl ContactConstraint for PointContactConstraint {
                     [v[1], v[2]]
                 })
                 .collect();
-            if true {
+            if false {
                 // switch between implicit solver and explicit solver here.
                 match FrictionSolver::new(&velocity_t, &contact_impulse, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone())) {
                     Ok(mut solver) => {
@@ -664,6 +664,20 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         true
+    }
+
+    fn add_mass_weighted_friction_impulse(&self, x: &mut [f64]) {
+        if let Some(ref friction) = self.friction {
+            if friction.impulse.is_empty() {
+                return;
+            }
+            assert_eq!(self.sample_verts.len(), friction.impulse.len());
+            for (&i, f) in self.sample_verts.iter().zip(friction.impulse.iter()) {
+                for j in 0..3 {
+                    x[3 * i + j] += f[j] / self.vertex_masses[i];
+                }
+            }
+        }
     }
 
     fn subtract_friction_impulse(&self, grad: &mut [f64]) {

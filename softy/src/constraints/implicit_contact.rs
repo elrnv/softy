@@ -231,6 +231,11 @@ impl ContactConstraint for ImplicitContactConstraint {
 
             if true {
                 // switch between implicit solver and explicit solver here.
+                dbg!(&velocity_t);
+                dbg!(&contact_impulse);
+                dbg!(&contact_masses);
+                dbg!(&friction.params);
+                dbg!(&friction.contact_basis);
                 match FrictionSolver::without_contact_jacobian(
                     &velocity_t, &contact_impulse, &friction.contact_basis, &contact_masses, friction.params)
                 {

@@ -77,7 +77,8 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
+        ipopt.set_option("nlp_scaling_method", "user-scaling");
+        //ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("max_iter", params.inner_iterations as i32);
@@ -133,7 +134,11 @@ pub(crate) struct FrictionProblem<'a, CJI> {
     masses: &'a [f64],
 }
 
-impl<CJI> FrictionProblem<'_, CJI> {
+impl<'a, CJI> FrictionProblem<'a, CJI> {
+    pub fn variable_scales(&'a self) -> impl Iterator<Item=f64> + Clone + 'a {
+        self.contact_impulse.iter().map(move |&cr| 1.0 / (self.mu * cr.abs()))
+    }
+
     pub fn num_contacts(&self) -> usize {
         self.velocity.len()
     }
@@ -151,14 +156,14 @@ impl<CJI> FrictionProblem<'_, CJI> {
 
     pub fn initial_point(&self, r: &mut [Number]) -> bool {
         let impulses: &mut [Vector2<f64>] = reinterpret_mut_slice(r);
-        for (r, &cr, &v) in zip!(
+        for (r, &v, &cr) in zip!(
             impulses.iter_mut(),
-            self.contact_impulse.iter(),
-            self.velocity.iter()
+            self.velocity.iter(),
+            self.contact_impulse.iter()
         ) {
             let v_norm = v.norm();
             if v_norm > 0.0 {
-                *r = v * ((-self.mu * cr.abs()) / v_norm)
+                *r = v * (-self.mu * cr / v_norm)
             } else {
                 *r = Vector2::zeros();
             }
@@ -191,7 +196,7 @@ impl<CJI> ipopt::BasicProblem for ExplicitFrictionProblem<'_, CJI> {
         *obj = 0.0;
 
         // Compute (negative of) frictional dissipation.
-        for (&v, &r) in self.0.velocity.iter().zip(impulses.iter()) {
+        for (&v, &r) in zip!(self.0.velocity.iter(), impulses.iter()) {
             *obj += v.dot(r)
         }
 
@@ -206,10 +211,17 @@ impl<CJI> ipopt::BasicProblem for ExplicitFrictionProblem<'_, CJI> {
             *g = 0.0;
         }
 
-        for (g, v) in grad_f.iter_mut().zip(velocity_values) {
+        for (g, v) in zip!(grad_f.iter_mut(), velocity_values) {
             *g += v;
         }
 
+        true
+    }
+
+    fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
+        for (out, s) in r_scaling.iter_mut().zip(self.0.variable_scales()) {
+            *out = s;
+        }
         true
     }
 }
@@ -226,7 +238,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
     fn constraint(&self, r: &[Number], g: &mut [Number]) -> bool {
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         assert_eq!(impulses.len(), g.len());
-        for (c, r) in g.iter_mut().zip(impulses.iter()) {
+        for (c, r) in zip!(g.iter_mut(), impulses.iter()) {
             *c = r.dot(*r);
         }
         true
@@ -240,7 +252,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = self.0.mu * cr.abs();
-            *u *= *u; // square the radius
+            *u *= *u;
         }
         true
     }
@@ -259,7 +271,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
     fn constraint_jacobian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
         let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
-        for (jac, &r) in jacobian.iter_mut().zip(impulses.iter()) {
+        for (jac, &r) in zip!(jacobian.iter_mut(), impulses.iter()) {
             *jac = r * 2.0;
         }
         true
@@ -289,7 +301,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
     ) -> bool {
         let hess_vals: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
         assert_eq!(hess_vals.len(), lambda.len());
-        for (h, &l) in hess_vals.iter_mut().zip(lambda.iter()) {
+        for (h, &l) in zip!(hess_vals.iter_mut(), lambda.iter()) {
             *h = Vector2([2.0, 2.0]) * l;
         }
         true
@@ -320,7 +332,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
         *obj = 0.0;
 
         // Compute (negative of) frictional dissipation.
-        for (&v, &r) in self.0.velocity.iter().zip(impulses.iter()) {
+        for (&v, &r) in zip!(self.0.velocity.iter(), impulses.iter()) {
             *obj += v.dot(r);
         }
 
@@ -331,8 +343,8 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
         } else {
             // No constraint Jacobian is provided, the non-linear part is a standard inner product
             // scaled by the mass
-            for (m, &r) in self.0.masses.iter().zip(impulses.iter()) {
-                *obj += r.dot(r) * ( 0.5 / m);
+            for (m, &r) in zip!(self.0.masses.iter(), impulses.iter()) {
+                *obj += r.dot(r) * (0.5 / m);
             }
         }
 
@@ -348,7 +360,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
             *g = Vector2::zeros();
         }
 
-        for (g, &v) in gradient.iter_mut().zip(velocities.iter()) {
+        for (g, &v) in zip!(gradient.iter_mut(), velocities.iter()) {
             *g += v;
         }
 
@@ -365,6 +377,20 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
 
         true
     }
+
+    fn objective_scaling(&self) -> f64 {
+        zip!(self.0.contact_impulse.iter(), self.0.masses.iter())
+            .map(move |(&cr, &m)| m / (cr.abs()))
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            .unwrap_or(1.0)
+    }
+
+    fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
+        for (out, &cr) in r_scaling.iter_mut().zip(self.0.contact_impulse.iter()) {
+            *out = if cr > 0.0 { 1.0 / cr } else { 0.0 };
+        }
+        true
+    }
 }
 
 impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
@@ -379,9 +405,16 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
     fn constraint(&self, r: &[Number], g: &mut [Number]) -> bool {
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         assert_eq!(impulses.len(), g.len());
-        for (c, r) in g.iter_mut().zip(impulses.iter()) {
-            *c = r.dot(*r);
+        for (c, &r) in zip!(g.iter_mut(), impulses.iter()) {
+            *c = r.dot(r);
             dbg!(*c);
+        }
+        true
+    }
+
+    fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
+        for (gs, &cr) in zip!(g_scaling.iter_mut(), self.0.contact_impulse.iter()) {
+            *gs = 1.0/cr;
         }
         true
     }
@@ -394,8 +427,7 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = self.0.mu * cr.abs();
-            *u *= *u; // square the radius
-            dbg!(*u);
+            *u *= *u;
         }
         true
     }
@@ -414,7 +446,7 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
     fn constraint_jacobian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
         let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
-        for (jac, &r) in jacobian.iter_mut().zip(impulses.iter()) {
+        for (jac, &r) in zip!(jacobian.iter_mut(), impulses.iter()) {
             *jac = r * 2.0;
         }
         true
@@ -468,11 +500,11 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
             // TODO: implement this
         } else {
             assert_eq!(num_hess_vals, self.0.masses.len() + lambda.len());
-            for (&m, h) in self.0.masses.iter().zip(&mut hess_iter_mut) {
+            for (&m, h) in zip!(self.0.masses.iter(), &mut hess_iter_mut) {
                 *h = Vector2::ones() * (1.0 * obj_factor / m);
             }
         }
-        for (&l, h) in lambda.iter().zip(&mut hess_iter_mut) {
+        for (&l, h) in zip!(lambda.iter(), &mut hess_iter_mut) {
             *h = Vector2([2.0, 2.0]) * l;
         }
         true
@@ -487,14 +519,42 @@ mod tests {
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
     fn sliding_point() -> Result<(), Error> {
+        let mass = 10.0;
+        let (velocity, impulse) = sliding_point_tester(0.000001, mass)?;
+
+        // Check that the point still has velocity in the positive x direction
+        dbg!(&velocity);
+        dbg!(&impulse);
+        assert!(velocity[0] > 0.8);
+
+        // Sanity check that no perpendicular velocities or impulses were produced in the process
+        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn sticking_point() -> Result<(), Error> {
+        let mass = 10.0;
+        let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
+        // Check that the point gets stuck
+        dbg!(&impulse);
+        assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
+
+        // Sanity check that no perpendicular velocities or impulses were produced in the process
+        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
+        Ok(())
+    }
+
+    fn sliding_point_tester(mu: f64, mass: f64) -> Result<(Vector2<f64>, Vector2<f64>), Error> {
         let params = FrictionParams {
-            dynamic_friction: 1.5,
+            dynamic_friction: mu,
             inner_iterations: 30,
-            tolerance: 1e-5,
-            print_level: 0,
+            tolerance: 1e-10,
+            print_level: 5,
             density: 1000.0,
         };
-        let mass = 10.0;
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
@@ -510,12 +570,71 @@ mod tests {
             ..
         } = result;
 
-        // Check that the point gets stuck
+        let impulse = Vector2(solution[0]);
+        let final_velocity = Vector2(velocity[0]) + impulse / mass;
+
+        Ok((final_velocity, impulse))
+    }
+
+    /// A tetrahedron sliding on a slanted surface.
+    #[test]
+    fn sliding_tet() -> Result<(), Error> {
+        let params = FrictionParams {
+            dynamic_friction: 0.001,
+            inner_iterations: 40,
+            tolerance: 1e-10,
+            print_level: 5,
+            density: 1000.0,
+        };
+
+        let velocity = vec![
+            [
+                0.07225747944670913,
+                0.0000001280108566301736
+            ],
+            [
+                0.06185827187696774,
+                -0.0060040275393186595
+            ]
+        ]; // tet vertex velocities
+        let contact_impulse = vec![
+            -0.0000000018048827573828247,
+            -0.00003259055555607145
+        ];
+        let masses = vec![
+            0.0003720701030949866,
+            0.0003720701030949866,
+        ];
+
+        let mut contact_basis = ContactBasis::new();
+        let normals = vec![
+            [
+                -0.0,
+                -0.7071067811865476,
+                -0.7071067811865476
+            ],
+            [
+                -0.0,
+                -0.7071067811865476,
+                -0.7071067811865476
+            ]
+        ];
+        contact_basis.update_from_normals(normals);
+
+        let mut solver = FrictionSolver::without_contact_jacobian(&velocity, &contact_impulse, &contact_basis, &masses, params)?;
+        let result = solver.step()?;
+        let FrictionSolveResult {
+            solution,
+            ..
+        } = result;
+
+        let final_velocity: Vec<_> =
+            zip!(velocity.iter(), solution.iter(), masses.iter())
+            .map(|(&v, &r, &m)| Vector2(v) + Vector2(r) / m)
+            .collect();
+
         dbg!(&solution);
-        let final_velocity = Vector2(velocity[0]) + Vector2(solution[0]) / mass;
-        assert_relative_eq!(final_velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
-        assert_relative_eq!(final_velocity[1], 0.0, max_relative = 1e-6);
-        assert_relative_eq!(solution[0][1], 0.0, max_relative = 1e-6);
+        dbg!(&final_velocity);
 
         Ok(())
     }

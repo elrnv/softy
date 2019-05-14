@@ -581,32 +581,17 @@ impl ContactConstraint for PointContactConstraint {
                 .collect();
             if false {
                 // switch between implicit solver and explicit solver here.
-                match FrictionSolver::new(&velocity_t, &contact_impulse, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone())) {
-                    Ok(mut solver) => {
-                        eprintln!("#### Solving Friction");
-                        if let Ok(FrictionSolveResult {
-                            solution: r_t,
-                            ..
-                        }) = solver.step()
-                        {
-                            for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
-                                friction_impulse[query_indices[aqi]] = Vector3(
-                                    contact_basis
-                                        .from_contact_coordinates([0.0, r[0], r[1]], aqi)
-                                        .into()
-                                );
-                            }
-                            true
-                        } else {
-                            eprintln!("Failed friction solve");
-                            false
-                        }
-                    }
-                    Err(err) => {
-                        dbg!(err);
-                        false
-                    }
+                let mut solver = FrictionSolver::new(&velocity_t, &contact_impulse, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone()));
+                eprintln!("#### Solving Friction");
+                let r_t = solver.step();
+                for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
+                    friction_impulse[query_indices[aqi]] = Vector3(
+                        contact_basis
+                            .from_contact_coordinates([0.0, r[0], r[1]], aqi)
+                            .into()
+                    );
                 }
+                true
             } else {
                 for (contact_idx, (&aqi, &v_t, &cr)) in zip!(
                     active_query_indices.iter(),

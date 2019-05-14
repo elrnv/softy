@@ -231,37 +231,12 @@ impl ContactConstraint for ImplicitContactConstraint {
 
             if true {
                 // switch between implicit solver and explicit solver here.
-                dbg!(&velocity_t);
-                dbg!(&contact_impulse);
-                dbg!(&contact_masses);
-                dbg!(&friction.params);
-                dbg!(&friction.contact_basis);
-                match FrictionSolver::without_contact_jacobian(
-                    &velocity_t, &contact_impulse, &friction.contact_basis, &contact_masses, friction.params)
-                {
-                    Ok(mut solver) => {
-                        eprintln!("#### Solving Friction");
-                        if let Ok(FrictionSolveResult {
-                            solution: r_t,
-                            ..
-                        }) = solver.step()
-                        {
-                            use ipopt::ConstrainedProblem;
-                            let mut g = vec![0.0; solver.problem().num_constraints()];
-                            solver.problem().constraint(reinterpret_slice(&r_t), &mut g);
-                            dbg!(g);
-                            friction.impulse.append(&mut friction.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
-                            true
-                        } else {
-                            eprintln!("Failed friction solve");
-                            false
-                        }
-                    }
-                    Err(err) => {
-                        dbg!(err);
-                        false
-                    }
-                }
+                let mut solver = FrictionSolver::without_contact_jacobian(
+                    &velocity_t, &contact_impulse, &friction.contact_basis, &contact_masses, friction.params);
+                eprintln!("#### Solving Friction");
+                let r_t = solver.step();
+                friction.impulse.append(&mut friction.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
+                true
            } else {
                 for (contact_idx, (&v_t, &cr)) in
                     zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()

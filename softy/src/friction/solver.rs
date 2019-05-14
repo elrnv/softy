@@ -6,17 +6,9 @@ use crate::contact::*;
 
 use unroll::unroll_for_loops;
 use utils::zip;
+use super::FrictionSolveResult;
 
 use crate::Error;
-
-/// Result from one inner friction step.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FrictionSolveResult {
-    /// The value of the dissipation objective at the end of the step.
-    pub objective_value: f64,
-    /// Resultant friction force in contact space.
-    pub solution: Vec<[f64; 2]>,
-}
 
 /// Friction solver.
 pub struct FrictionSolver<'a, CJI> {
@@ -64,6 +56,12 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
         params: FrictionParams,
         contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     ) -> Result<FrictionSolver<'a, CJI>, Error> {
+        let scale = 100.0;
+            //zip!(contact_impulse.iter(), self.0.masses.iter())
+            //.map(move |(&cr, &m)| m / (cr.abs()))
+            //.max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            //.unwrap_or(1.0);
+
         let problem = SemiImplicitFrictionProblem(FrictionProblem {
             velocity: reinterpret_slice(velocity),
             contact_impulse,
@@ -71,13 +69,14 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
             mu: params.dynamic_friction,
             contact_jacobian,
             masses,
+            scale,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
-        ipopt.set_option("nlp_scaling_method", "user-scaling");
+        //ipopt.set_option("nlp_scaling_method", "user-scaling");
         //ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
@@ -86,12 +85,15 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
         Ok(FrictionSolver { solver: ipopt })
     }
 
+    pub(crate) fn scale(&self) -> f64 {
+        self.problem().0.scale
+    }
+
     pub(crate) fn problem(&self) -> &SemiImplicitFrictionProblem<'a, CJI> {
         self.solver.solver_data().problem
     }
 
-    /// Solve one step without updating the mesh. This function is useful for testing and
-    /// benchmarking. Otherwise it is intended to be used internally.
+    /// Solve one step.
     pub fn step(&mut self) -> Result<FrictionSolveResult, Error> {
         // Solve non-linear problem
         let ipopt::SolveResult {
@@ -132,6 +134,7 @@ pub(crate) struct FrictionProblem<'a, CJI> {
     contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     /// Vertex masses.
     masses: &'a [f64],
+    pub scale: f64,
 }
 
 impl<'a, CJI> FrictionProblem<'a, CJI> {
@@ -142,6 +145,7 @@ impl<'a, CJI> FrictionProblem<'a, CJI> {
     pub fn num_contacts(&self) -> usize {
         self.velocity.len()
     }
+
     pub fn num_variables(&self) -> usize {
         2 * self.num_contacts()
     }
@@ -163,7 +167,7 @@ impl<'a, CJI> FrictionProblem<'a, CJI> {
         ) {
             let v_norm = v.norm();
             if v_norm > 0.0 {
-                *r = v * (-self.mu * cr / v_norm)
+                *r = v * (-self.mu * cr.abs() * self.scale / v_norm)
             } else {
                 *r = Vector2::zeros();
             }
@@ -197,8 +201,10 @@ impl<CJI> ipopt::BasicProblem for ExplicitFrictionProblem<'_, CJI> {
 
         // Compute (negative of) frictional dissipation.
         for (&v, &r) in zip!(self.0.velocity.iter(), impulses.iter()) {
-            *obj += v.dot(r)
+            *obj += v.dot(r) * self.0.scale;
         }
+
+        *obj *= self.0.scale;
 
         true
     }
@@ -218,12 +224,12 @@ impl<CJI> ipopt::BasicProblem for ExplicitFrictionProblem<'_, CJI> {
         true
     }
 
-    fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
-        for (out, s) in r_scaling.iter_mut().zip(self.0.variable_scales()) {
-            *out = s;
-        }
-        true
-    }
+    //fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
+    //    for (out, s) in r_scaling.iter_mut().zip(self.0.variable_scales()) {
+    //        *out = s;
+    //    }
+    //    true
+    //}
 }
 
 impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
@@ -239,7 +245,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         assert_eq!(impulses.len(), g.len());
         for (c, r) in zip!(g.iter_mut(), impulses.iter()) {
-            *c = r.dot(*r);
+            *c = r.dot(*r) * self.0.scale * self.0.scale;
         }
         true
     }
@@ -272,7 +278,7 @@ impl<CJI> ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_, CJI> {
         let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         for (jac, &r) in zip!(jacobian.iter_mut(), impulses.iter()) {
-            *jac = r * 2.0;
+            *jac = r * 2.0 * self.0.scale;
         }
         true
     }
@@ -333,7 +339,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
 
         // Compute (negative of) frictional dissipation.
         for (&v, &r) in zip!(self.0.velocity.iter(), impulses.iter()) {
-            *obj += v.dot(r);
+            *obj += v.dot(r) * self.0.scale;
         }
 
         if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
@@ -344,7 +350,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
             // No constraint Jacobian is provided, the non-linear part is a standard inner product
             // scaled by the mass
             for (m, &r) in zip!(self.0.masses.iter(), impulses.iter()) {
-                *obj += r.dot(r) * (0.5 / m);
+                *obj += r.dot(r) * (0.5 * self.0.scale * self.0.scale / m);
             }
         }
 
@@ -371,26 +377,31 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
             // TODO: implement this
         } else {
             for (g, &m, &r) in zip!(gradient.iter_mut(), self.0.masses.iter(), impulses.iter()) {
-                *g += r * (1.0 / m);
+                *g += r * (self.0.scale * 1.0 / m);
             }
         }
 
-        true
-    }
-
-    fn objective_scaling(&self) -> f64 {
-        zip!(self.0.contact_impulse.iter(), self.0.masses.iter())
-            .map(move |(&cr, &m)| m / (cr.abs()))
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-            .unwrap_or(1.0)
-    }
-
-    fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
-        for (out, &cr) in r_scaling.iter_mut().zip(self.0.contact_impulse.iter()) {
-            *out = if cr > 0.0 { 1.0 / cr } else { 0.0 };
+        for g in gradient.iter_mut() {
+            *g *= self.0.scale;
         }
+
         true
     }
+
+    //fn objective_scaling(&self) -> f64 {
+    //}
+
+    //fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
+    //    let max_cr = 
+    //        zip!(self.0.contact_impulse.iter(), self.0.masses.iter())
+    //        .map(move |(&cr, &m)| m / (cr.abs()))
+    //        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+    //        .unwrap_or(1.0);
+    //    for s in r_scaling.iter_mut() {
+    //        *s = max_cr;
+    //    }
+    //    true
+    //}
 }
 
 impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
@@ -406,18 +417,18 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         assert_eq!(impulses.len(), g.len());
         for (c, &r) in zip!(g.iter_mut(), impulses.iter()) {
-            *c = r.dot(r);
+            *c = r.dot(r) * self.0.scale * self.0.scale;
             dbg!(*c);
         }
         true
     }
 
-    fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
-        for (gs, &cr) in zip!(g_scaling.iter_mut(), self.0.contact_impulse.iter()) {
-            *gs = 1.0/cr;
-        }
-        true
-    }
+    //fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
+    //    for (gs, &cr) in zip!(g_scaling.iter_mut(), self.0.contact_impulse.iter()) {
+    //        *gs = 1.0/cr;
+    //    }
+    //    true
+    //}
 
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
         for ((l, u), &cr) in g_l
@@ -447,7 +458,7 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
         let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         for (jac, &r) in zip!(jacobian.iter_mut(), impulses.iter()) {
-            *jac = r * 2.0;
+            *jac = r * 2.0 * self.0.scale * self.0.scale;
         }
         true
     }
@@ -507,6 +518,10 @@ impl<CJI> ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_, CJI> {
         for (&l, h) in zip!(lambda.iter(), &mut hess_iter_mut) {
             *h = Vector2([2.0, 2.0]) * l;
         }
+
+        for h in hess_vals.iter_mut() {
+            *h *= self.0.scale * self.0.scale;
+        }
         true
     }
 }
@@ -552,7 +567,7 @@ mod tests {
             dynamic_friction: mu,
             inner_iterations: 30,
             tolerance: 1e-10,
-            print_level: 5,
+            print_level: 0,
             density: 1000.0,
         };
 
@@ -570,7 +585,7 @@ mod tests {
             ..
         } = result;
 
-        let impulse = Vector2(solution[0]);
+        let impulse = Vector2(solution[0]) * solver.scale();
         let final_velocity = Vector2(velocity[0]) + impulse / mass;
 
         Ok((final_velocity, impulse))
@@ -583,7 +598,7 @@ mod tests {
             dynamic_friction: 0.001,
             inner_iterations: 40,
             tolerance: 1e-10,
-            print_level: 5,
+            print_level: 0,
             density: 1000.0,
         };
 
@@ -630,7 +645,7 @@ mod tests {
 
         let final_velocity: Vec<_> =
             zip!(velocity.iter(), solution.iter(), masses.iter())
-            .map(|(&v, &r, &m)| Vector2(v) + Vector2(r) / m)
+            .map(|(&v, &r, &m)| Vector2(v) + Vector2(r) * (solver.scale() / m))
             .collect();
 
         dbg!(&solution);

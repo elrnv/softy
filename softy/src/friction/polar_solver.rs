@@ -1,4 +1,4 @@
-use super::solver::FrictionSolveResult; // Reuse the result from the xy solver.
+use super::FrictionSolveResult;
 use super::FrictionParams;
 use geo::{math::Matrix3};
 use ipopt::{self, Index, Ipopt, Number};

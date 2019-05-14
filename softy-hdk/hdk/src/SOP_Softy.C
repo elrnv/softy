@@ -47,6 +47,14 @@ static const char *theDsFile = R"THEDSFILE(
     name softy
 
     parm {
+        name "clearcache"
+        label "Clear Cache"
+        type button
+        default { "0" }
+        range { 0 1 }
+    }
+
+    parm {
         name "timestep"
         cppname "TimeStep"
         label "Time Step"
@@ -71,49 +79,9 @@ static const char *theDsFile = R"THEDSFILE(
         default { "" }
     }
 
-    groupsimple {
-        name "friction"
-        label "Friction"
-        grouptag { "group_type" "simple" }
-
-        parm {
-            name "dynamicfriction"
-            cppname "DynamicFriction"
-            label "Dynamic"
-            type float
-            default { "0.5" }
-            range { 0 2 }
-        }
-        parm {
-            name "frictiontolerance"
-            cppname "FrictionTolerance"
-            label "Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-        }
-        parm {
-            name "frictioninneriterations"
-            cppname "FrictionInnerIterations"
-            label "Inner Iterations"
-            type integer
-            default { "40" }
-            range { 0 10 }
-        }
-        parm {
-            name "frictioniterations"
-            cppname "FrictionIterations"
-            label "Outer Iterations"
-            type integer
-            default { "1" }
-            range { 0 10 }
-        }
-    }
-
-    groupsimple {
+    group {
         name "material"
         label "Material"
-        grouptag { "group_type" "simple" }
 
         parm {
             name "density"
@@ -130,59 +98,62 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0 1000 }
         }
 
-        groupradio {
-            name "stiffness_type"
-            label "Shear Bulk"
-            grouptag { "group_type" "radio" }
-
-            parm {
-                name "shapestiffness"
-                cppname "ShapeStiffness"
-                label "Shape Stiffness"
-                type float
-                default { "10" }
-                range { 0 100 }
-            }
-
-            parm {
-                name "volumestiffness"
-                cppname "VolumeStiffness"
-                label "Volume Stiffness"
-                type float
-                default { "1750" }
-                range { 0 10000 }
+        parm {
+            name "stiffnesstype"
+            cppname "StiffnessType"
+            label "Stiffness Type"
+            type ordinal
+            default { "1" }
+            menu {
+                "shearbulk" "Shear and Bulk Moduli"
+                "youngpoisson" "Young's Modulus and Poisson's Ratio"
             }
         }
 
-        groupradio {
-            name "stiffness_type_1"
-            label "Young Poisson"
-            grouptag { "group_type" "radio" }
+        parm {
+            name "shapestiffness"
+            cppname "ShapeStiffness"
+            label "Shape Stiffness"
+            type float
+            default { "10" }
+            range { 0 100 }
+            hidewhen "{ stiffnesstype == youngpoisson }"
+        }
 
-            parm {
-                name "youngmodulus"
-                cppname "YoungModulus"
-                label "Young Modulus"
-                type float
-                default { "3.24" }
-                range { 0 1000 }
-            }
+        parm {
+            name "volumestiffness"
+            cppname "VolumeStiffness"
+            label "Volume Stiffness"
+            type float
+            default { "1750" }
+            range { 0 10000 }
+            hidewhen "{ stiffnesstype == youngpoisson }"
+        }
 
-            parm {
-                name "poissonratio"
-                cppname "PoissonRatio"
-                label "Poisson Ratio"
-                type float
-                default { "0.49" }
-                range { 0 0.5 }
-            }
+        parm {
+            name "youngmodulus"
+            cppname "YoungModulus"
+            label "Young Modulus"
+            type float
+            default { "3.24" }
+            range { 0 1000 }
+            hidewhen "{ stiffnesstype == shearbulk }"
+        }
+
+        parm {
+            name "poissonratio"
+            cppname "PoissonRatio"
+            label "Poisson Ratio"
+            type float
+            default { "0.49" }
+            range { 0 0.5 }
+            hidewhen "{ stiffnesstype == shearbulk }"
         }
     }
 
-    groupsimple {
+    group {
         name "optimization"
         label "Optimization"
-        grouptag { "group_type" "simple" }
 
         parm {
             name "innertolerance"
@@ -216,12 +187,57 @@ static const char *theDsFile = R"THEDSFILE(
             default { "10" }
             range { 0 1000 }
         }
+
+        groupcollapsible {
+            name    "ipoptoptions"
+            label   "Ipopt Options"
+            grouptag { "group_type" "collapsible" }
+
+            parm {
+                name "mustrategy"
+                cppname "MuStrategy"
+                label "Mu Strategy"
+                type ordinal
+                default { "1" }
+                menu {
+                    "monotone" "Monotone"
+                    "adaptive" "Adaptive"
+                }
+            }
+
+            parm {
+                name "maxgradientscaling"
+                cppname "MaxGradientScaling"
+                label "Max Gradient Scaling"
+                type log
+                default { "100.0" }
+                range { 0.0 100.0 }
+            }
+
+            parm {
+                name "printlevel"
+                cppname "PrintLevel"
+                label "Print Level"
+                type integer
+                default { "0" }
+                range { 0! 12! }
+            }
+
+            parm {
+                name "derivativetest"
+                cppname "DerivativeTest"
+                label "Derivative Test"
+                type integer
+                default { "0" }
+                range { 0! 2! }
+            }
+        }
+
     }
 
-    groupsimple {
+    group {
         name "constraints"
         label "Constraints"
-        grouptag { "group_type" "simple" }
 
         parm {
             name "volumeconstraint"
@@ -243,10 +259,10 @@ static const char *theDsFile = R"THEDSFILE(
                 type ordinal
                 default { "1" }
                 menu {
-                    "interpolating", "Local Interpolating"
-                    "approximate", "Local approximately interpolating"
-                    "cubic", "Local cubic"
-                    "global", "Global inverse squared distance"
+                    "interpolating" "Local Interpolating"
+                    "approximate" "Local approximately interpolating"
+                    "cubic" "Local cubic"
+                    "global" "Global inverse squared distance"
                 }
             }
 
@@ -257,8 +273,8 @@ static const char *theDsFile = R"THEDSFILE(
                 type ordinal
                 default { "0" }
                 menu {
-                    "implicit", "Implicit"
-                    "point", "Point"
+                    "implicit" "Implicit"
+                    "point" "Point"
                 }
             }
 
@@ -282,57 +298,42 @@ static const char *theDsFile = R"THEDSFILE(
         }
     }
 
-    groupcollapsible {
-        name    "ipoptoptions"
-        label   "Ipopt Options"
-        grouptag { "group_type" "collapsible" }
+    group {
+        name "friction"
+        label "Friction"
 
         parm {
-            name "mustrategy"
-            cppname "MuStrategy"
-            label "Mu Strategy"
-            type ordinal
-            default { "0" }
-            menu {
-                "monotone", "Monotone"
-                "adaptive", "Adaptive"
-            }
+            name "dynamicfriction"
+            cppname "DynamicFriction"
+            label "Dynamic"
+            type float
+            default { "0.5" }
+            range { 0 2 }
         }
-
         parm {
-            name "maxgradientscaling"
-            cppname "MaxGradientScaling"
-            label "Max Gradient Scaling"
+            name "frictiontolerance"
+            cppname "FrictionTolerance"
+            label "Tolerance"
             type log
-            default { "100.0" }
-            range { 0.0 100.0 }
+            default { "1e-5" }
+            range { 0.0 1.0 }
         }
-
         parm {
-            name "printlevel"
-            cppname "PrintLevel"
-            label "Print Level"
+            name "frictioninneriterations"
+            cppname "FrictionInnerIterations"
+            label "Inner Iterations"
             type integer
-            default { "0" }
-            range { 0! 12! }
+            default { "40" }
+            range { 0 10 }
         }
-
         parm {
-            name "derivativetest"
-            cppname "DerivativeTest"
-            label "Derivative Test"
+            name "frictioniterations"
+            cppname "FrictionIterations"
+            label "Outer Iterations"
             type integer
-            default { "0" }
-            range { 0! 2! }
+            default { "1" }
+            range { 0 10 }
         }
-    }
-
-    parm {
-        name "clearcache"
-        label "Clear Cache"
-        type button
-        default { "0" }
-        range { 0 1 }
     }
 
 }
@@ -410,7 +411,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     EL_SoftySimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
 
-    if (sopparms.getStiffness_type() == 0) { 
+    if (sopparms.getStiffnessType() == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
         sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e3;
         sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e3;
     } else {

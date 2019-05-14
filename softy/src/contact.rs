@@ -1,3 +1,5 @@
+mod solver;
+
 use na::{Real, Matrix3, Vector2, Vector3};
 use crate::friction::FrictionParams;
 

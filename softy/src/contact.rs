@@ -105,6 +105,12 @@ impl ContactBasis {
         }
     }
 
+    /// Check if the basis is empty. It may be empty if uninitialized or when there are no
+    /// contacts.
+    pub fn is_empty(&self) -> bool {
+        self.normals.is_empty()
+    }
+
     pub fn to_cylindrical_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> VectorCyl<f64>
     where
         V3: Into<Vector3<f64>>,

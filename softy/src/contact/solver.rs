@@ -2,10 +2,7 @@ use geo::math::{Matrix3, Vector2};
 use reinterpret::*;
 use crate::contact::*;
 
-use unroll::unroll_for_loops;
 use utils::zip;
-
-use crate::Error;
 
 /// Contact solver.
 pub struct ContactSolver<'a, CJI> {
@@ -86,6 +83,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> ContactSolver<'a, CJI> {
 mod tests {
     use super::*;
     use approx::*;
+    use crate::Error;
 
     #[test]
     fn contact_test() -> Result<(), Error> {

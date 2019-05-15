@@ -1,4 +1,4 @@
-use super::ContactConstraint;
+use super::*;
 use crate::constraint::*;
 use crate::constraints::compute_vertex_masses;
 use crate::friction::*;
@@ -184,13 +184,13 @@ pub struct PointContactConstraint {
     /// original tetmesh vertices. This mapping is important for computing correct Jacobians and
     /// mapping incoming tetmesh vertex positions and displacements to sample positions and
     /// displacements.
-    pub sample_verts: Vec<usize>,
+    pub sim_verts: Vec<usize>,
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
     pub collision_object: Rc<RefCell<TriMesh>>,
 
     /// Friction impulses applied during contact.
-    pub friction: Option<Friction>,
+    pub frictional_contact: Option<FrictionalContact>,
     pub vertex_masses: Vec<f64>,
 
     /// Store the indices to the Hessian here. These will be served through the constraint
@@ -212,7 +212,7 @@ impl PointContactConstraint {
     ) -> Result<Self, Error> {
         let tetmesh = tetmesh_rc.borrow();
         let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
-        let sample_verts = surf_mesh
+        let sim_verts = surf_mesh
             .remove_attrib::<VertexIndex>("i")
             .expect("Failed to map indices.")
             .into_buffer()
@@ -234,12 +234,12 @@ impl PointContactConstraint {
             let query_points = trimesh.vertex_positions();
 
             let constraint = PointContactConstraint {
-                sample_verts,
+                sim_verts,
                 implicit_surface: RefCell::new(surface),
                 collision_object: Rc::clone(trimesh_rc),
-                friction: friction_params.and_then(|fparams| {
+                frictional_contact: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
-                        Some(Friction::new(fparams))
+                        Some(FrictionalContact::new(fparams))
                     } else {
                         None
                     }
@@ -264,14 +264,14 @@ impl PointContactConstraint {
     /// Given an index into the surface point position coordinates, return the corresponding index
     /// into the original `TetMesh`.
     pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
-        3 * self.sample_verts[idx / 3] + idx % 3
+        3 * self.sim_verts[idx / 3] + idx % 3
     }
 
     /// Update implicit surface using the given position data from mesh vertices.
     pub fn update_surface_with_mesh_pos(&self, x: &[f64]) {
         let pos: &[[f64; 3]] = reinterpret_slice(x);
         let points_iter = self
-            .sample_verts
+            .sim_verts
             .iter()
             .map(|&i| pos[i].into());
 
@@ -283,7 +283,7 @@ impl PointContactConstraint {
     //    let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
     //    let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
     //    let points_iter = self
-    //        .sample_verts
+    //        .sim_verts
     //        .iter()
     //        .map(|&i| (all_positions[i] + all_displacements[i]).into());
 
@@ -294,7 +294,7 @@ impl PointContactConstraint {
     /// Update implicit surface using the given position data.
     pub fn update_surface(&self, x: &[f64]) {
         let all_positions: &[[f64; 3]] = reinterpret_slice(x);
-        let points_iter = self.sample_verts.iter().map(|&i| all_positions[i]);
+        let points_iter = self.sim_verts.iter().map(|&i| all_positions[i]);
 
         self.implicit_surface.borrow_mut().update(points_iter);
     }
@@ -421,19 +421,27 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
-    fn clear_friction_impulse(&mut self) {
-        if let Some(ref mut friction) = self.friction {
-            friction.impulse.clear();
-        }
+    fn frictional_contact(&self) -> Option<&FrictionalContact> {
+        self.frictional_contact.as_ref()
     }
-    fn update_friction_impulse(
+    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact> {
+        self.frictional_contact.as_mut()
+    }
+    fn vertex_index_mapping(&self) -> Option<&[usize]> {
+        None 
+    }
+    fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
+        ARef::Plain(&self.sim_verts)
+    }
+ 
+    fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
         x: &[[f64; 3]],
         v: &[[f64; 3]],
         potential_values: &[f64],
     ) -> bool {
-        if self.friction.is_none() {
+        if self.frictional_contact.is_none() {
             return false;
         }
 
@@ -444,11 +452,11 @@ impl ContactConstraint for PointContactConstraint {
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
 
-        let Friction {
+        let FrictionalContact {
             impulse: vertex_friction_impulse,
             contact_basis,
             params,
-        } = self.friction.as_mut().unwrap();
+        } = self.frictional_contact.as_mut().unwrap();
 
         contact_basis.update_from_normals(normals);
 
@@ -477,7 +485,7 @@ impl ContactConstraint for PointContactConstraint {
         // Compute product J*u to produce velocities (displacements) at each point of contact in
         // physical space.
         for ((r, c), &m) in cj_indices_iter.clone().zip(cj_matrices.iter()) {
-            let vtx_idx = self.sample_verts[c];
+            let vtx_idx = self.sim_verts[c];
             velocity[r] += m * Vector3(v[vtx_idx]);
         }
 
@@ -640,7 +648,7 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         vertex_friction_impulse.clear();
-        vertex_friction_impulse.resize(self.sample_verts.len(), [0.0; 3]);
+        vertex_friction_impulse.resize(self.sim_verts.len(), [0.0; 3]);
 
         // Copute transpose product J^T*f
         for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
@@ -651,13 +659,13 @@ impl ContactConstraint for PointContactConstraint {
         true
     }
 
-    fn add_mass_weighted_friction_impulse(&self, x: &mut [f64]) {
-        if let Some(ref friction) = self.friction {
-            if friction.impulse.is_empty() {
+    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]) {
+        if let Some(ref frictional_contact) = self.frictional_contact {
+            if frictional_contact.impulse.is_empty() {
                 return;
             }
-            assert_eq!(self.sample_verts.len(), friction.impulse.len());
-            for (&i, f) in self.sample_verts.iter().zip(friction.impulse.iter()) {
+            assert_eq!(self.sim_verts.len(), frictional_contact.impulse.len());
+            for (&i, f) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
                 for j in 0..3 {
                     x[3 * i + j] += f[j] / self.vertex_masses[i];
                 }
@@ -665,32 +673,32 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn subtract_friction_impulse(&self, grad: &mut [f64]) {
-        if let Some(ref friction) = self.friction {
-            if friction.impulse.is_empty() {
-                return;
-            }
-            assert_eq!(self.sample_verts.len(), friction.impulse.len());
-            for (&i, f) in self.sample_verts.iter().zip(friction.impulse.iter()) {
-                for j in 0..3 {
-                    grad[3 * i + j] -= f[j];
-                }
-            }
-        }
-    }
+    //fn subtract_friction_impulse(&self, grad: &mut [f64]) {
+    //    if let Some(ref friction) = self.friction {
+    //        if friction.impulse.is_empty() {
+    //            return;
+    //        }
+    //        assert_eq!(self.sim_verts.len(), friction.impulse.len());
+    //        for (&i, f) in self.sim_verts.iter().zip(friction.impulse.iter()) {
+    //            for j in 0..3 {
+    //                grad[3 * i + j] -= f[j];
+    //            }
+    //        }
+    //    }
+    //}
 
-    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
-        let mut dissipation = 0.0;
-        if let Some(ref friction) = self.friction {
-            for (&i, f) in self.sample_verts.iter().zip(friction.impulse.iter()) {
-                for j in 0..3 {
-                    dissipation += v[3 * i + j] * f[j];
-                }
-            }
-        }
+    //fn frictional_dissipation(&self, v: &[f64]) -> f64 {
+    //    let mut dissipation = 0.0;
+    //    if let Some(ref friction) = self.friction {
+    //        for (&i, f) in self.sim_verts.iter().zip(friction.impulse.iter()) {
+    //            for j in 0..3 {
+    //                dissipation += v[3 * i + j] * f[j];
+    //            }
+    //        }
+    //    }
 
-        dissipation
-    }
+    //    dissipation
+    //}
 
     /// For visualization purposes.
     fn compute_contact_impulse(
@@ -741,7 +749,7 @@ impl ContactConstraint for PointContactConstraint {
             .expect("Failed to get contact jacobian indices");
 
         for ((r, c), m) in cj_indices_iter.zip(cj_matrices.into_iter()) {
-            let vtx_idx = self.sample_verts[c];
+            let vtx_idx = self.sim_verts[c];
             impulse[vtx_idx] =
                 (Vector3(impulse[vtx_idx]) + Matrix3(m).transpose() * surface_impulse[r]).into()
         }
@@ -797,7 +805,7 @@ impl ContactConstraint for PointContactConstraint {
         let query_points = reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions());
         if let Some(x) = x {
             let pos: &[[f64; 3]] = reinterpret_slice(x);
-            let points_iter = self.sample_verts.iter().map(|&i| pos[i]);
+            let points_iter = self.sim_verts.iter().map(|&i| pos[i]);
             self.implicit_surface.borrow_mut().update(points_iter);
         } // Else don't update the surface at all.
         let surf = self.implicit_surface.borrow_mut();

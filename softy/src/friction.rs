@@ -25,18 +25,18 @@ pub struct FrictionParams {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Friction {
+pub struct FrictionalContact {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
     pub impulse: Vec<[f64; 3]>,
 }
 
-impl Friction {
-    pub fn new(params: FrictionParams) -> Friction {
-        Friction {
+impl FrictionalContact {
+    pub fn new(params: FrictionParams) -> FrictionalContact {
+        FrictionalContact {
             params,
+            contact_basis: ContactBasis::new(),
             impulse: Vec::new(),
-            contact_basis: ContactBasis::new()
         }
     }
 }

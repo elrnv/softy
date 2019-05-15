@@ -2023,6 +2023,10 @@ mod tests {
         for _ in 0..50 {
             let res = solver.step()?;
             //println!("res = {:?}", res);
+            //geo::io::save_tetmesh(
+            //    &solver.borrow_mesh(),
+            //    &PathBuf::from(format!("./out/mesh_{}.vtk", i)),
+            //    ).unwrap();
             assert!(
                 res.iterations <= params.max_outer_iterations,
                 "Exceeded max outer iterations."

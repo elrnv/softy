@@ -223,7 +223,7 @@ impl NonLinearProblem {
 
     pub fn clear_friction_impulses(&mut self) {
         if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.clear_friction_impulse();
+            scc.clear_frictional_contact_impulse();
         }
     }
 
@@ -280,7 +280,7 @@ impl NonLinearProblem {
             }
             let old_set: Vec<_> = old_constraint_set.collect();
             let new_set: Vec<_> = new_constraint_set.collect();
-            scc.remap_friction(&old_set, &new_set);
+            scc.remap_frictional_contact(&old_set, &new_set);
         }
     }
 
@@ -320,9 +320,9 @@ impl NonLinearProblem {
     //    changed
     //}
 
-    pub fn apply_friction_impulse(&self, vel: &mut [f64]) {
+    pub fn apply_frictional_contact_impulse(&self, vel: &mut [f64]) {
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.add_mass_weighted_friction_impulse(vel);
+            scc.add_mass_weighted_frictional_contact_impulse(vel);
         }
     }
 
@@ -337,7 +337,7 @@ impl NonLinearProblem {
             let mut cur_vel = self.scaled_variables.borrow_mut();
             cur_vel.clear();
             cur_vel.extend(self.scaled_variables_iter(uv));
-            self.apply_friction_impulse(&mut cur_vel);
+            self.apply_frictional_contact_impulse(&mut cur_vel);
 
             let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
 
@@ -631,7 +631,7 @@ impl NonLinearProblem {
             let velocity = &scaled_variables.borrow();
             let potential_values = &constraint_values[offset..];
             smooth_contact_constraint.as_mut().unwrap()
-                .update_friction_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values)
+                .update_frictional_contact_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values)
         } else {
             false
         }

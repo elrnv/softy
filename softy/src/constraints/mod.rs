@@ -5,11 +5,13 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
+use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::mesh::{Attrib, topology::*};
+use geo::{mesh::{Attrib, topology::*}, math::Vector3};
 use std::{cell::RefCell, rc::Rc};
+use reinterpret::*;
 
 pub use self::implicit_contact::*;
 pub use self::point_contact::*;
@@ -99,28 +101,125 @@ pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
     all_masses
 }
 
+/// A reference abstracting over borrowed cell refs and plain old & style refs.
+pub enum ARef<'a, T: ?Sized> {
+    Plain(&'a T),
+    Cell(std::cell::Ref<'a, T>),
+}
+
+impl<'a, T: ?Sized> std::ops::Deref for ARef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            ARef::Plain(r) => r,
+            ARef::Cell(r) => r,
+        }
+    }
+}
+
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
-    fn clear_friction_impulse(&mut self);
+    /// Provide the frictional contact data.
+    fn frictional_contact(&self) -> Option<&FrictionalContact>;
+    /// Provide the frictional contact mutable data.
+    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact>;
+
+    /// Return a slice that maps from a given surface vertex index to a corresponding simulation
+    /// mesh vertex.
+    fn vertex_index_mapping(&self) -> Option<&[usize]>;
+
+    /// Return a set of surface vertex indices that could be in contact.
+    fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]>;
+
+    /// Clear the saved frictional contact impulse.
+    fn clear_frictional_contact_impulse(&mut self) {
+        if let Some(ref mut frictional_contact) = self.frictional_contact_mut() {
+            frictional_contact.impulse.clear();
+        }
+    }
     /// Update the underlying friction impulse based on the given predictive step.
-    fn update_friction_impulse(
+    fn update_frictional_contact_impulse(
         &mut self,
         contact_force: &[f64],
         x: &[[f64; 3]],
         dx: &[[f64; 3]],
         constraint_values: &[f64],
     ) -> bool;
-    fn add_mass_weighted_friction_impulse(&self, x: &mut [f64]);
+
+    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]);
     /// Subtract the frictional impulse from the given gradient vector.
-    fn subtract_friction_impulse(&self, grad: &mut [f64]);
+    fn subtract_friction_impulse(&self, grad: &mut [f64]) {
+        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if frictional_contact.impulse.is_empty() {
+                return;
+            }
+
+            let indices = self.active_surface_vertex_indices();
+            if indices.is_empty() {
+                return;
+            }
+
+            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            for (contact_idx, (&i, &r)) in indices.iter().zip(frictional_contact.impulse.iter()).enumerate() {
+                let r_t = if !frictional_contact.contact_basis.is_empty() {
+                    let f = frictional_contact
+                        .contact_basis
+                        .to_contact_coordinates(r, contact_idx);
+                    Vector3(frictional_contact
+                        .contact_basis
+                        .from_contact_coordinates([0.0, f[1], f[2]], contact_idx).into())
+                } else {
+                    Vector3::zeros()
+                };
+
+                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
+                grad[vertex_idx] -= Vector3(r_t.into());
+            }
+        }
+    }
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(&self, dx: &[f64]) -> f64;
+    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
+        let vel: &[Vector3<f64>] = reinterpret_slice(v);
+        let mut dissipation = 0.0;
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if frictional_contact.impulse.is_empty() {
+                return dissipation;
+            }
+
+            let indices = self.active_surface_vertex_indices();
+            if indices.is_empty() {
+                return dissipation;
+            }
+
+            assert_eq!(indices.len(), frictional_contact.impulse.len());
+
+            for (contact_idx, (&i, &r)) in indices.iter().zip(frictional_contact.impulse.iter()).enumerate() {
+                let r_t = if !frictional_contact.contact_basis.is_empty() {
+                    let f = frictional_contact
+                        .contact_basis
+                        .to_contact_coordinates(r, contact_idx);
+                    Vector3(frictional_contact
+                        .contact_basis
+                        .from_contact_coordinates([0.0, f[1], f[2]], contact_idx).into())
+                } else {
+                    Vector3::zeros()
+                };
+
+                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
+                dissipation += vel[vertex_idx].dot(r_t);
+            }
+        }
+        dissipation
+    }
+
     /// Remap existing friction impulses to an updated neighbourhood set. This function will be
     /// called when neighbourhood information changes to ensure correct correspondence of friction
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
-    fn remap_friction(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
+    fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn compute_contact_impulse(
         &self,
         x: &[f64],
@@ -151,19 +250,4 @@ pub trait ContactConstraint:
     /// will be errors in the derivative. It is the callers responsibility to set this step
     /// accurately.
     fn update_max_step(&mut self, max_step: f64);
-
-    ///// Update cache, return true if changed along with the mapping to original constraints.
-    ///// For constraints with no mapping to an old constraint, the corresponding index will be
-    ///// invalid.
-    //fn update_cache_with_mapping(&mut self, pos: &[f64], disp: &[f64]) -> Result<(bool, Vec<Index>), crate::Error> {
-    //    let old_indices = self.active_constraint_indices()?;
-    //    let seq = (0..).map(|i| Index::new(i));
-    //    if self.update_cache(Some(pos), Some(disp)) {
-    //        let new_indices = self.active_constraint_indices()?;
-    //        let mapping = remap_values(seq, Index::invalid(), &old_indices, &new_indices);
-    //        Ok((true, mapping))
-    //    } else {
-    //        Ok((false, seq.take(old_indices.len()).collect::<Vec<_>>()))
-    //    }
-    //}
 }

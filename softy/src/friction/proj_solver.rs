@@ -3,10 +3,7 @@ use geo::math::{Matrix3, Vector2};
 use reinterpret::*;
 use crate::contact::*;
 
-use unroll::unroll_for_loops;
 use utils::zip;
-
-use crate::Error;
 
 /// Friction solver.
 pub struct FrictionSolver<'a, CJI> {
@@ -101,6 +98,7 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionSolver<'a, CJI> {
 mod tests {
     use super::*;
     use approx::*;
+    use crate::Error;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]

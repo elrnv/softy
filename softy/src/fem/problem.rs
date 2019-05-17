@@ -202,10 +202,8 @@ impl NonLinearProblem {
         !(self.interrupt_checker)()
     }
 
-    /// Get the set of currently active constraints.
-    pub fn active_constraint_set(&self) -> Vec<usize> {
-        let mut active_set = Vec::new();
-
+    /// Compute the set of currently active constraints into the given `Vec`.
+    pub fn compute_active_constraint_set(&self, active_set: &mut Vec<usize>) {
         if self.volume_constraint.is_some() {
             active_set.push(0);
         }
@@ -217,7 +215,11 @@ impl NonLinearProblem {
                 active_set.push(c + offset);
             }
         }
-
+    }
+    /// Get the set of currently active constraints.
+    pub fn active_constraint_set(&self) -> Vec<usize> {
+        let mut active_set = Vec::new();
+        self.compute_active_constraint_set(&mut active_set);
         active_set
     }
 
@@ -240,9 +242,8 @@ impl NonLinearProblem {
     }
 
     /// Update all stateful constraints with the most recent data.
-    /// Return an estimate if any constraints have changed. This estimate may have false negatives.
-    /// Also return the mapping from new constraint indices to old constraint indices via a `Vec`
-    /// of possibly invalid indices.
+    /// Return an estimate if any constraints have changed, though this estimate may have false
+    /// negatives.
     pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
         

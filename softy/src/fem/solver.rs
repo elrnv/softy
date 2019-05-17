@@ -959,13 +959,22 @@ impl Solver {
         self.problem().initial_residual_error
     }
 
+    fn save_current_active_constraint_set(&mut self) {
+        let Solver {
+            ref solver,
+            ref mut old_active_set,
+            ..
+        } = self;
+        old_active_set.clear();
+        solver.solver_data().problem.compute_active_constraint_set(old_active_set);
+    }
+
     /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
     /// return false to indicate that the same step should be taken again.
     /// In either case this function modifies the configuration of the constraints and updates the
     /// constraint set. This means that the caller should take care to remap any constraint related
     /// values as needed. The configuration may also need to be reverted.
-    fn check_inner_step(&mut self) -> (bool, Vec<usize>) {
-        let old_active_set = self.problem().active_constraint_set();
+    fn check_inner_step(&mut self) -> bool {
         let step_accepted = if self.contact_radius().is_some() {
             let step = {
                 let SolverData {
@@ -1024,7 +1033,7 @@ impl Solver {
             true
         };
 
-        (step_accepted, old_active_set)
+        step_accepted
     }
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
@@ -1077,10 +1086,15 @@ impl Solver {
             objective_value: 0.0,
         };
 
+        // Recompute constraints since the active set may have changed if a collision mesh has moved.
+        self.save_current_active_constraint_set();
+        self.problem_mut().reset_constraint_set();
+        self.remap_contacts();
+
         // The number of friction solves to do.
         let mut friction_steps = self.sim_params.friction_iterations;
         for _ in 0..self.sim_params.max_outer_iterations {
-            self.remap_contacts();
+            self.save_current_active_constraint_set();
             let step_result = self.inner_step();
 
             // The following block determines if after the inner step there were any changes
@@ -1089,13 +1103,12 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
-                    let (step_acceptable, old_active_set) = self.check_inner_step();
+                    let step_acceptable = self.check_inner_step();
                     if step_acceptable {
                         if friction_steps > 0 {
+                            // Restore the constraints to original configuration.
                             self.problem_mut().reset_constraint_set();
-                            // TODO: verify that old_active_set is the same as new instead of
-                            // remapping here.
-                            debug_assert!(self.problem().is_same_as_constraint_set(&old_active_set));
+                            debug_assert!(self.problem().is_same_as_constraint_set(&self.old_active_set));
                             if self.compute_friction_impulse(&step_result.constraint_values) {
                                 friction_steps -= 1;
                                 if friction_steps > 0 {
@@ -1103,19 +1116,12 @@ impl Solver {
                                 }
                             }
                         }
-                        self.old_active_set = old_active_set;
                         self.commit_solution(true);
-                        //self.problem_mut()
-                        //    .remap_contacts(old_active_set.into_iter());
                         break;
                     }
                     // Going to do another iteration, let's reset the constraints back to original
                     // configuration ...
                     self.problem_mut().reset_constraint_set();
-                    // ... and remap the constraint values
-                    self.old_active_set = old_active_set;
-                    //self.problem_mut()
-                    //    .remap_contacts(old_active_set.into_iter());
                 }
                 Err(Error::InnerSolveError {
                     status,
@@ -1123,24 +1129,19 @@ impl Solver {
                     objective_value,
                 }) => {
                     result = result.combine_inner_step_data(iterations, objective_value);
-                    let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(true);
-                    self.old_active_set = old_active_set;
-                    //self.problem_mut()
-                    //    .remap_contacts(old_active_set.into_iter());
                     return Err(Error::SolveError(status, result));
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
-                    let old_active_set = self.problem().active_constraint_set();
                     self.commit_solution(false);
-                    self.old_active_set = old_active_set;
-                    //self.problem_mut()
-                    //    .remap_contacts(old_active_set.into_iter());
                     return Err(e);
                 }
             }
         }
+
+        // Remap contacts since the 
+        self.remap_contacts();
 
         if result.iterations > self.sim_params.max_outer_iterations {
             eprintln!(

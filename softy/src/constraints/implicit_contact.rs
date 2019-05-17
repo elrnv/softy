@@ -276,17 +276,6 @@ impl ContactConstraint for ImplicitContactConstraint {
            }
         };
 
-        eprintln!("Contact impulses with mu {:?}", mu);
-        for cr in contact_impulse.iter() {
-            eprintln!("{:?}", *cr * mu);
-        }
-        eprintln!("Friction impulse magnitudes");
-        for &r in frictional_contact.impulse.iter() {
-            if Vector3(r).norm() > 0.0 {
-                eprintln!("{:?}", Vector3(r).norm());
-            }
-        }
-
         success
     }
 

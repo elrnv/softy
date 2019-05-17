@@ -1089,11 +1089,11 @@ impl Solver {
         // Recompute constraints since the active set may have changed if a collision mesh has moved.
         self.save_current_active_constraint_set();
         self.problem_mut().reset_constraint_set();
-        self.remap_contacts();
 
         // The number of friction solves to do.
         let mut friction_steps = self.sim_params.friction_iterations;
         for _ in 0..self.sim_params.max_outer_iterations {
+            self.remap_contacts();
             self.save_current_active_constraint_set();
             let step_result = self.inner_step();
 

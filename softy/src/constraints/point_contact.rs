@@ -772,7 +772,7 @@ impl ContactConstraint for PointContactConstraint {
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= len;
+                *n /= -len;
             }
         }
 

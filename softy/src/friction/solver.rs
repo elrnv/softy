@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::FrictionParams;
 use geo::math::{Matrix3, Vector2};
 use ipopt::{self, Index, Ipopt, Number};

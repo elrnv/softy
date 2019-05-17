@@ -324,6 +324,8 @@ impl ContactConstraint for ImplicitContactConstraint {
                 new_set.iter().cloned(),
             );
             std::mem::replace(&mut frictional_contact.impulse, new_friction_impulses);
+
+            frictional_contact.contact_basis.remap(old_set, new_set);
         }
     }
 
@@ -365,7 +367,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= -len;
+                *n /= len;
             }
         }
 

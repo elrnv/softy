@@ -232,6 +232,13 @@ impl NonLinearProblem {
         self.update_constraint_set(None)
     }
 
+    /// Check if the given constraint set is the same as the current one.
+    pub fn is_same_as_constraint_set(&self, other_set: &[usize]) -> bool {
+        let cur_set = self.active_constraint_set();
+        cur_set.len() == other_set.len() &&
+            cur_set.into_iter().zip(other_set.iter()).all(|(cur, &other)| cur == other)
+    }
+
     /// Update all stateful constraints with the most recent data.
     /// Return an estimate if any constraints have changed. This estimate may have false negatives.
     /// Also return the mapping from new constraint indices to old constraint indices via a `Vec`

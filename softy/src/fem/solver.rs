@@ -1093,6 +1093,8 @@ impl Solver {
         // The number of friction solves to do.
         let mut friction_steps = self.sim_params.friction_iterations;
         for _ in 0..self.sim_params.max_outer_iterations {
+            // Remap contacts from the initial constraint reset above, or if the constraints were
+            // updated after advection.
             self.remap_contacts();
             self.save_current_active_constraint_set();
             let step_result = self.inner_step();
@@ -1140,7 +1142,7 @@ impl Solver {
             }
         }
 
-        // Remap contacts since the 
+        // Remap contacts since after committing the solution, the constraint set may have changed.
         self.remap_contacts();
 
         if result.iterations > self.sim_params.max_outer_iterations {

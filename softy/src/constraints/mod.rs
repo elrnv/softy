@@ -150,7 +150,7 @@ pub trait ContactConstraint:
 
     fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]);
     /// Subtract the frictional impulse from the given gradient vector.
-    fn subtract_friction_impulse(&self, grad: &mut [f64]) {
+    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
         let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
@@ -176,7 +176,7 @@ pub trait ContactConstraint:
                 };
 
                 let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                grad[vertex_idx] -= Vector3(r_t.into());
+                grad[vertex_idx] += Vector3(r_t.into()) * multiplier;
             }
         }
     }

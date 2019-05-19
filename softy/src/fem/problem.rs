@@ -636,6 +636,7 @@ impl NonLinearProblem {
             };
             let contact_impulse =
                 Self::contact_impulse_magnitudes(&solution.constraint_multipliers[offset..], *time_step);
+            dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
             let velocity = &scaled_variables.borrow();
             let potential_values = &constraint_values[offset..];
             smooth_contact_constraint.as_mut().unwrap()
@@ -650,7 +651,7 @@ impl NonLinearProblem {
         use ipopt::BasicProblem;
         let mut impulse = vec![0.0; self.num_variables()];
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.subtract_friction_impulse(&mut impulse);
+            scc.add_friction_impulse(&mut impulse, 1.0);
         }
         reinterpret::reinterpret_vec(impulse)
     }
@@ -884,7 +885,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         }
 
         if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.subtract_friction_impulse(grad_f);
+            scc.add_friction_impulse(grad_f, -1.0);
         }
 
         let scale = self.scale();

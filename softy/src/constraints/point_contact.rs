@@ -418,6 +418,19 @@ impl PointContactConstraint {
             }
         }
     }
+    fn in_contact_indices(&self, contact_impulse: &[f64]) -> Vec<usize> {
+        contact_impulse.iter()
+            .enumerate()
+            .map(|(i, _)| i)
+            //.filter_map(|(i, &cf)| {
+            //    if cf.abs() > tolerance {
+            //        Some(i)
+            //    } else {
+            //        None
+            //    }
+            //})
+            .collect()
+    }
 }
 
 impl ContactConstraint for PointContactConstraint {
@@ -451,6 +464,8 @@ impl ContactConstraint for PointContactConstraint {
         let query_indices = self
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
+
+        let active_query_indices = self.in_contact_indices(contact_impulse);
 
         let FrictionalContact {
             impulse: vertex_friction_impulse,
@@ -491,19 +506,6 @@ impl ContactConstraint for PointContactConstraint {
 
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());
-
-        let active_query_indices: Vec<_> = potential_values
-            .iter()
-            .zip(contact_impulse.iter())
-            .enumerate()
-            .filter_map(|(i, (&p, &cf))| {
-                if p.abs() < 0.01 && cf.abs() > 0.001 {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
 
         // Compute contact impulse on active query indices.
         let contact_impulse: Vec<_> = active_query_indices
@@ -627,17 +629,6 @@ impl ContactConstraint for PointContactConstraint {
 
         };
 
-        eprintln!("Contact impulses");
-        for cr in contact_impulse.iter() {
-            eprintln!("{:?}", *cr);
-        }
-        eprintln!("Friction impulses");
-        for r in friction_impulse.iter() {
-            if r.norm() > 0.0 {
-                eprintln!("{:?}", *r);
-            }
-        }
-
         if !success {
             return false;
         }
@@ -673,32 +664,42 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    //fn subtract_friction_impulse(&self, grad: &mut [f64]) {
-    //    if let Some(ref friction) = self.friction {
-    //        if friction.impulse.is_empty() {
-    //            return;
-    //        }
-    //        assert_eq!(self.sim_verts.len(), friction.impulse.len());
-    //        for (&i, f) in self.sim_verts.iter().zip(friction.impulse.iter()) {
-    //            for j in 0..3 {
-    //                grad[3 * i + j] -= f[j];
-    //            }
-    //        }
-    //    }
-    //}
+    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
+        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if frictional_contact.impulse.is_empty() {
+                return;
+            }
 
-    //fn frictional_dissipation(&self, v: &[f64]) -> f64 {
-    //    let mut dissipation = 0.0;
-    //    if let Some(ref friction) = self.friction {
-    //        for (&i, f) in self.sim_verts.iter().zip(friction.impulse.iter()) {
-    //            for j in 0..3 {
-    //                dissipation += v[3 * i + j] * f[j];
-    //            }
-    //        }
-    //    }
+            assert_eq!(self.sim_verts.len(), frictional_contact.impulse.len());
+            for (&i, &r) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
+                grad[i] += Vector3(r) * multiplier;
+            }
+        }
+    }
 
-    //    dissipation
-    //}
+    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
+        let mut dissipation = 0.0;
+        if let Some(ref frictional_contact) = self.frictional_contact {
+            for (&i, f) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
+                for j in 0..3 {
+                    dissipation += v[3 * i + j] * f[j];
+                }
+            }
+        }
+
+        dissipation
+    }
+
+    fn remap_frictional_contact(&mut self, old_set: &[usize], new_set: &[usize]) {
+        // Remap friction forces the same way we remap constraint multipliers for the contact
+        // solve.
+        if let Some(ref mut frictional_contact) = self.frictional_contact {
+            // No need to remap friction impulse because we store one for every vertex on the
+            // surface of the deforming mesh instead of just at contact points.
+            frictional_contact.contact_basis.remap(old_set, new_set);
+        }
+    }
 
     /// For visualization purposes.
     fn compute_contact_impulse(
@@ -772,7 +773,7 @@ impl ContactConstraint for PointContactConstraint {
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= -len;
+                *n /= len;
             }
         }
 

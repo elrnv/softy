@@ -351,12 +351,12 @@ impl ContactConstraint for ImplicitContactConstraint {
         surf.query_jacobian_values(&query_points, &mut normal_coords)?;
         let mut normals: Vec<Vector3<f64>> = reinterpret::reinterpret_vec(normal_coords);
 
-        // Normalize normals and reverse direction so that normals are pointing away from the
-        // deforming mesh.
+        // Normalize normals.
+        // These should be pointing away from the deforming mesh.
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= len;
+                *n /= -len;
             }
         }
 

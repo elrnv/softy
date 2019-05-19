@@ -618,7 +618,6 @@ void update_attributes(GU_Detail *detail, HR_AttribIter *it, GA_AttributeOwner o
 /**
  * Add a tetmesh to the current detail
  */
-__attribute__((unused))
 void add_tetmesh(GU_Detail* detail, OwnedPtr<HR_TetMesh> tetmesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
@@ -657,7 +656,6 @@ void add_tetmesh(GU_Detail* detail, OwnedPtr<HR_TetMesh> tetmesh_ptr) {
 /**
  * Add a polymesh to the current detail
  */
-__attribute__((unused))
 void add_polymesh(GU_Detail* detail, OwnedPtr<HR_PolyMesh> polymesh_ptr) {
     GA_Offset startvtxoff = GA_Offset(detail->getNumVertexOffsets());
 
@@ -710,7 +708,6 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<HR_PolyMesh> polymesh_ptr) {
 /**
  * Add a ptcloud to the current detail
  */
-__attribute__((unused))
 void add_pointcloud(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
     auto ptcloud = ptcloud_ptr.get();
 
@@ -732,7 +729,6 @@ void add_pointcloud(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
 /**
  * Update points in the detail according to what's in the ptcloud
  */
-__attribute__((unused))
 void update_points(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
     auto ptcloud = ptcloud_ptr.get();
 
@@ -749,7 +745,6 @@ void update_points(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
     }
 }
 
-__attribute__((unused))
 OwnedPtr<HR_TetMesh> build_tetmesh(const GU_Detail *detail) {
     // Get tets for the body from the first input
     std::vector<double> tet_vertices;
@@ -791,7 +786,6 @@ OwnedPtr<HR_TetMesh> build_tetmesh(const GU_Detail *detail) {
     return OwnedPtr<HR_TetMesh>(nullptr);
 }
 
-__attribute__((unused))
 OwnedPtr<HR_PolyMesh> build_polymesh(const GU_Detail* detail) {
     std::vector<double> poly_vertices;
     poly_vertices.reserve(3*detail->getNumPointOffsets());
@@ -835,7 +829,6 @@ OwnedPtr<HR_PolyMesh> build_polymesh(const GU_Detail* detail) {
     return OwnedPtr<HR_PolyMesh>(nullptr);
 }
 
-__attribute__((unused))
 OwnedPtr<HR_PointCloud> build_pointcloud(const GU_Detail* detail) {
     std::vector<double> vertex_coords(3*detail->getNumPoints());
     std::vector<bool> pt_grp(detail->getNumPointOffsets(), false);

@@ -2,11 +2,12 @@ use super::{samples::Sample, SampleType};
 use geo::Real;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
+use serde::{Serialize, Deserialize};
 
 /// Cache data structure that stores information about the neighbourhood of a query point.
 /// For radial neighbourhood sets, this determines the entire sparsity structure for each query
 /// point.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NeighbourCache<T> {
     /// For each query point, record the neighbour data in this vector.
     pub points: Vec<T>,
@@ -36,7 +37,7 @@ impl<T> NeighbourCache<T> {
 ///      set* and
 ///   2. an extended set of samples reachable via triangles adjacent to the trivial set, which we
 ///      dub the *extended set*.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Neighbourhood {
     /// The closest sample to each query point.
     closest_set: NeighbourCache<usize>,

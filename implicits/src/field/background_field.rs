@@ -2,6 +2,7 @@ use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::{RadialKernel, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
+use serde::{Serialize, Deserialize};
 
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -15,7 +16,7 @@ pub enum BackgroundFieldType {
 }
 
 /// Parameters used to pick which type of background field should be used.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackgroundFieldParams {
     pub field_type: BackgroundFieldType,
     pub weighted: bool,
@@ -49,7 +50,7 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
 /// indicates that the closest point is within some radius (e.g. kernel radius) of the query point.
 /// A `Global` index is outside this radius, which indicates that the query point is outside the
 /// local radius of the samples, and the field is purely a background field.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ClosestIndex {
     Local(usize),
     Global(usize),
@@ -67,7 +68,7 @@ impl ClosestIndex {
 /// This `struct` represents the data needed to compute a background field at a local query
 /// point. This `struct` also conveniently computes useful information about the neighbourhood
 /// (like closest distance to a sample point) that can be reused elsewhere.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct BackgroundField<'a, T, V, K>
 where
     T: Real,

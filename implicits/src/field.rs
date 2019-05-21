@@ -13,6 +13,7 @@ use rayon::prelude::*;
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
 use utils::zip;
+use serde::{Deserialize, Serialize};
 
 pub mod background_field;
 pub mod builder;
@@ -30,7 +31,7 @@ pub(crate) use self::background_field::*;
 pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::neighbour_cache::Neighbourhood;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SampleType {
     Vertex,
     Face,
@@ -47,7 +48,7 @@ pub enum Side {
 
 /// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
 /// vector, this type will fit a vector field.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImplicitSurface<T = f64>
 where
     T: Real,
@@ -416,7 +417,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         epsilon: T,
         query_points: &mut [[T; 3]],
     ) -> Result<bool, super::Error> {
-        self.project(Side::Above, iso_value, epsilon, query_points)
+        //dbg!(&query_points);
+        //dbg!(&self);
+        let res = self.project(Side::Above, iso_value, epsilon, query_points);
+        //dbg!(&res);
+        res
     }
 
     /// Project the given set of positions to be above (below) the specified iso-value along the
@@ -1288,6 +1293,7 @@ mod tests {
     // surface.
     fn make_octahedron_and_grid(
         reverse: bool,
+        radius_multiplier: f64,
     ) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
@@ -1305,7 +1311,7 @@ mod tests {
             Params {
                 kernel: KernelType::Approximate {
                     tolerance: 0.00001,
-                    radius_multiplier: 2.45,
+                    radius_multiplier,
                 },
                 background_field: BackgroundFieldParams {
                     field_type: BackgroundFieldType::DistanceBased,
@@ -1391,10 +1397,54 @@ mod tests {
     /// This is a more complex test than the local_projection_test
     #[test]
     fn global_projection_test() -> Result<(), crate::Error> {
-        let (surface, grid) = make_octahedron_and_grid(false)?;
+        let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
         projection_tester(&surface, grid, Side::Above)?;
-        let (surface, grid) = make_octahedron_and_grid(true)?;
+        let (surface, grid) = make_octahedron_and_grid(true, 2.45)?;
         projection_tester(&surface, grid, Side::Below)
+    }
+
+    /// Test with a radius multiplier less than 1.0. Although not strictly useful, this should not
+    /// crash.
+    #[test]
+    fn narrow_projection_test() -> Result<(), crate::Error> {
+        // Make a mesh to be projected.
+        use geo::mesh::attrib::*;
+        use geo::mesh::topology::*;
+
+        let mut grid = utils::make_grid(utils::Grid {
+            rows: 18,
+            cols: 19,
+            orientation: utils::AxisPlaneOrientation::ZX,
+        });
+        grid.add_attrib::<_, VertexIndex>("potential", 0.0f32)
+            .unwrap();
+
+        grid.reverse();
+
+        utils::translate(&mut grid, [0.0, 0.12639757990837097, 0.0]);
+
+        let torus = geo::io::load_polymesh(&std::path::PathBuf::from("assets/projection_torus.vtk"))?;
+
+        // Construct the implicit surface.
+        let surface = surface_from_polymesh(
+            &torus,
+            Params {
+                kernel: KernelType::Approximate {
+                    tolerance: 0.000009999999747378752,
+                    radius_multiplier: 0.7599999904632568,
+                },
+                background_field: BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+                sample_type: SampleType::Face,
+                ..Default::default()
+            },
+        )?;
+
+        projection_tester(&surface, grid, Side::Above)?;
+
+        Ok(())
     }
 
     #[test]
@@ -1408,7 +1458,7 @@ mod tests {
         );
 
         // Non-local test
-        let (surface, grid) = make_octahedron_and_grid(false)?;
+        let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
         surface.cache_neighbours(grid.vertex_positions());
         assert_eq!(
             surface.num_cached_neighbourhoods()?,

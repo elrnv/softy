@@ -3,9 +3,10 @@
 use super::Error;
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
+use serde::{Serialize, Deserialize};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KernelType {
     Interpolating {
         radius_multiplier: f64,

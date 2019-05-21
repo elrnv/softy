@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use geo::math::{Matrix3, Vector2};
 use reinterpret::*;
 use crate::contact::*;
@@ -82,7 +83,6 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> ContactSolver<'a, CJI> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::*;
     use crate::Error;
 
     #[test]

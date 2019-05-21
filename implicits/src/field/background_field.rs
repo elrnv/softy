@@ -5,7 +5,7 @@ use geo::Real;
 use serde::{Serialize, Deserialize};
 
 /// Different types of background fields supported.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BackgroundFieldType {
     /// Use a zero background field.
     Zero,
@@ -68,7 +68,7 @@ impl ClosestIndex {
 /// This `struct` represents the data needed to compute a background field at a local query
 /// point. This `struct` also conveniently computes useful information about the neighbourhood
 /// (like closest distance to a sample point) that can be reused elsewhere.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub(crate) struct BackgroundField<'a, T, V, K>
 where
     T: Real,

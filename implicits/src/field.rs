@@ -417,11 +417,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         epsilon: T,
         query_points: &mut [[T; 3]],
     ) -> Result<bool, super::Error> {
-        //dbg!(&query_points);
-        //dbg!(&self);
-        let res = self.project(Side::Above, iso_value, epsilon, query_points);
-        //dbg!(&res);
-        res
+        self.project(Side::Above, iso_value, epsilon, query_points)
     }
 
     /// Project the given set of positions to be above (below) the specified iso-value along the
@@ -471,8 +467,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             for (step, &value) in
                 zip!(steps.iter_mut(), potential.iter()).filter(|(_, &pot)| pot < iso_value)
             {
-                let nml = Vector3(*step);
-                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / nml.norm();
+                let mut nml = Vector3(*step);
+                let mut nml_norm = nml.norm();
+                if nml_norm == T::zero() {
+                    // Invalid direction vector. Choose an arbitrary direction.
+                    nml = Vector3([T::one(), T::zero(), T::zero()]);
+                    nml_norm = T::one();
+                }
+                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / nml_norm;
                 *step = (nml * (multiplier * offset)).into();
             }
 
@@ -1443,6 +1445,55 @@ mod tests {
         )?;
 
         projection_tester(&surface, grid, Side::Above)?;
+
+        Ok(())
+    }
+
+    /// Test a specific case where the projection direction can be zero, which could result in
+    /// NaNs. This case must not crash.
+    #[test]
+    fn zero_step_projection_test() -> Result<(), crate::Error> {
+        use std::io::Read;
+        let iso_value = 0.0;
+        let epsilon = 0.0001;
+        let mut query_points: Vec<[f64;3]> = {
+            let mut file = std::fs::File::open("assets/grid_points.json").expect("Faile to open query points file");
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).expect("Failed to read grid points json.");
+            serde_json::from_str(&contents).expect("Failed to deserialize grid points.")
+        };
+
+        let surface: ImplicitSurface<f64> = {
+            let mut file = std::fs::File::open("assets/torus_surf.json").expect("Faile to torus surface file");
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).expect("Failed to read torus surface json.");
+            serde_json::from_str(&contents).expect("Failed to deserialize torus surface.")
+        };
+
+        let init_potential = {
+            // Compute potential before projection.
+            let mut init_potential = vec![0.0; query_points.len()];
+            surface.potential(&query_points, &mut init_potential)?;
+
+            // Project grid outside the implicit surface.
+            assert!(surface.project_to_above(iso_value, epsilon, &mut query_points)?);
+            init_potential
+        };
+
+        // Compute potential after projection.
+        let mut final_potential = vec![0.0; init_potential.len()];
+        surface.potential(&query_points, &mut final_potential)?;
+
+        for (&old, &new) in init_potential.iter().zip(final_potential.iter()) {
+            // Check that all vertices are outside the implicit solid.
+            assert!(new >= 0.0, "new = {}, old = {}", new, old);
+            if old < 0.0 {
+                // Check that the projected vertices are now within the narrow band of valid
+                // projections (between 0 and epsilon).
+                assert!(new <= epsilon, "new = {}", new);
+            }
+        }
+
 
         Ok(())
     }

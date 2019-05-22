@@ -1,3 +1,4 @@
+pub mod sp_implicit_contact;
 pub mod implicit_contact;
 pub mod point_contact;
 pub mod volume;

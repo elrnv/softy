@@ -1038,13 +1038,13 @@ impl Solver {
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
     /// `false` otherwise. If friction is disabled, this function will return `false`.
-    fn compute_friction_impulse(&mut self, constraint_values: &[f64]) -> bool {
+    fn compute_friction_impulse(&mut self, constraint_values: &[f64], friction_steps: u32) -> u32 {
         // Select constraint multipliers responsible for the contact force.
         let SolverDataMut {
             problem, solution, ..
         } = self.solver.solver_data_mut();
 
-        problem.update_friction_impulse(solution, constraint_values)
+        problem.update_friction_impulse(solution, constraint_values, friction_steps)
     }
 
     fn remap_contacts(&mut self) {
@@ -1111,11 +1111,9 @@ impl Solver {
                             // Restore the constraints to original configuration.
                             self.problem_mut().reset_constraint_set();
                             debug_assert!(self.problem().is_same_as_constraint_set(&self.old_active_set));
-                            if self.compute_friction_impulse(&step_result.constraint_values) {
-                                friction_steps -= 1;
-                                if friction_steps > 0 {
-                                    continue;
-                                }
+                            friction_steps = self.compute_friction_impulse(&step_result.constraint_values, friction_steps);
+                            if friction_steps > 0 {
+                                continue;
                             }
                         }
                         self.commit_solution(true);

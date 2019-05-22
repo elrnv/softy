@@ -612,7 +612,8 @@ impl NonLinearProblem {
         &mut self,
         solution: ipopt::Solution,
         constraint_values: &[f64],
-    ) -> bool {
+        friction_steps: u32,
+    ) -> u32 {
         if self.smooth_contact_constraint.is_some() {
             {
                 let mut sv = self.scaled_variables.borrow_mut();
@@ -640,9 +641,9 @@ impl NonLinearProblem {
             let velocity = &scaled_variables.borrow();
             let potential_values = &constraint_values[offset..];
             smooth_contact_constraint.as_mut().unwrap()
-                .update_frictional_contact_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values)
+                .update_frictional_contact_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values, friction_steps)
         } else {
-            false
+            0
         }
     }
 
@@ -921,9 +922,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn initial_constraint_multipliers(&self, lambda: &mut [Number]) -> bool {
-        // The constrained points may change between updating the warm start and using it here.
-        assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
-        lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
+        // TODO: Move this is_empty logic to remapping contacts: The important observation here is
+        // that contact set != constraint set because some methods don't enforce contacts via a
+        // constraint.
+        if !lambda.is_empty() {
+            // The constrained points may change between updating the warm start and using it here.
+            assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
+            lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
+        }
         true
     }
 

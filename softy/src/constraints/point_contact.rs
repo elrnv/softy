@@ -453,9 +453,10 @@ impl ContactConstraint for PointContactConstraint {
         x: &[[f64; 3]],
         v: &[[f64; 3]],
         potential_values: &[f64],
-    ) -> bool {
+        friction_steps: u32,
+    ) -> u32 {
         if self.frictional_contact.is_none() {
-            return false;
+            return 0;
         }
 
         let normals = self
@@ -630,7 +631,7 @@ impl ContactConstraint for PointContactConstraint {
         };
 
         if !success {
-            return false;
+            return 0;
         }
 
         // Now we apply the contact jacobian to map the frictional impulses at contact points (on
@@ -647,7 +648,7 @@ impl ContactConstraint for PointContactConstraint {
                 (Vector3(vertex_friction_impulse[c]) + m.transpose() * friction_impulse[r]).into();
         }
 
-        true
+        friction_steps - 1
     }
 
     fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]) {

@@ -152,9 +152,10 @@ impl ContactConstraint for ImplicitContactConstraint {
         x: &[[f64; 3]],
         v: &[[f64; 3]],
         _constraint_values: &[f64],
-    ) -> bool {
+        mut friction_steps: u32,
+    ) -> u32 {
         if self.frictional_contact.is_none() {
-            return false;
+            return 0;
         }
 
         let normals = self
@@ -207,15 +208,15 @@ impl ContactConstraint for ImplicitContactConstraint {
                         }) = solver.step()
                         {
                             frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_polar_tangent_space(reinterpret_vec(r_t)));
-                            true
+                            friction_steps -= 1;
                         } else {
                             eprintln!("Failed friction solve");
-                            false
+                            friction_steps = 0;
                         }
                     }
                     Err(err) => {
                         dbg!(err);
-                        false
+                        friction_steps = 0;
                     }
                 }
            } else {
@@ -235,7 +236,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                             .from_cylindrical_contact_coordinates(r_t.into(), contact_idx);
                     frictional_contact.impulse.push(r.into());
                 }
-                true
+                friction_steps -= 1;
            }
         } else {
             // Euclidean coords
@@ -255,7 +256,6 @@ impl ContactConstraint for ImplicitContactConstraint {
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
                 frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
-                true
            } else {
                 for (contact_idx, (&v_t, &cr)) in
                     zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
@@ -272,11 +272,11 @@ impl ContactConstraint for ImplicitContactConstraint {
                             .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
                     frictional_contact.impulse.push(r.into());
                 }
-                true
            }
+            friction_steps -= 1;
         };
 
-        success
+        friction_steps
     }
 
     fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]) {

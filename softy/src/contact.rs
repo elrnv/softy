@@ -111,7 +111,7 @@ impl ContactBasis {
         self.normals.is_empty()
     }
 
-    /// Remap values in the contact basis when the set of contats change.
+    /// Remap values in the contact basis when the set of contacts change.
     pub fn remap(&mut self, old_set: &[usize], new_set: &[usize]) {
         // TODO: In addition to remapping this basis, we should just rebuild the missing parts.
         let new_normals = crate::constraints::remap_values(

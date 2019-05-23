@@ -8,7 +8,7 @@ use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Vector2, Vector3};
+use geo::math::{Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -109,9 +109,9 @@ impl SPImplicitContactConstraint {
 
     /// Given an index into the surface point position coordinates, return the corresponding index
     /// into the original `TetMesh`.
-    pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
-        3 * self.sim_verts[idx / 3] + idx % 3
-    }
+    //pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
+    //    3 * self.sim_verts[idx / 3] + idx % 3
+    //}
 
     pub fn update_query_points_with_mesh_pos(&self, x: &[f64]) {
         let pos = reinterpret_slice(x);
@@ -148,7 +148,7 @@ impl ContactConstraint for SPImplicitContactConstraint {
 
     fn update_frictional_contact_impulse(
         &mut self,
-        contact_impulse: &[f64],
+        _contact_impulse: &[f64],
         x: &[[f64; 3]],
         v: &[[f64; 3]],
         _constraint_values: &[f64],
@@ -165,10 +165,38 @@ impl ContactConstraint for SPImplicitContactConstraint {
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
 
-        // A set of masses on active contact vertices.
-        let contact_masses: Vec<_> = surf_indices
+        {
+            // NOTE: here we rely on query points being updated in contact_normals.
+            let SPImplicitContactConstraint {
+                constraint_buffer,
+                implicit_surface,
+                ..
+            } = self;
+            let mut potential_values = constraint_buffer.borrow_mut();
+            implicit_surface.borrow().potential(&self.query_points.borrow(), &mut potential_values).unwrap();
+            dbg!(&potential_values);
+            dbg!(&normals);
+        }
+
+        // Define a subset of surface indices deemed to be in contact.
+        let active_contact_indices: Vec<_> = self.constraint_buffer.borrow()
             .iter()
-            .map(|&surf_idx| self.vertex_masses[self.sim_verts[surf_idx]])
+            .enumerate()
+            .filter_map(|(i, &potential)| {
+                if potential < 0.0 {
+                    Some(i)
+                } else {
+                    None
+                }
+            }).collect();
+
+        // A subset of all surface normals that are in contact
+        let contact_normals: Vec<_> = active_contact_indices.iter().map(|&i| normals[i]).collect();
+
+        // A set of masses on active contact vertices.
+        let contact_masses: Vec<_> = active_contact_indices
+            .iter()
+            .map(|&contact_idx| self.vertex_masses[self.sim_verts[surf_indices[contact_idx]]])
             .collect();
 
         let SPImplicitContactConstraint {
@@ -178,126 +206,46 @@ impl ContactConstraint for SPImplicitContactConstraint {
         } = *self;
 
         let frictional_contact = frictional_contact.as_mut().unwrap(); // Must be checked above.
-
-        let mu = frictional_contact.params.dynamic_friction;
-
-        frictional_contact.contact_basis.update_from_normals(normals);
+        frictional_contact.contact_basis.update_from_normals(contact_normals);
         frictional_contact.impulse.clear();
-        let contact_impulse = if contact_impulse.is_empty() {
-            vec![0.0; surf_indices.len()]
-        } else {
-            contact_impulse.to_vec()
-        };
-
-        assert_eq!(contact_impulse.len(), surf_indices.len());
+        let contact_impulse = vec![0.0; active_contact_indices.len()];
         
-        eprintln!("#### Solveing Friction");
-        let success = if false {
-            // Polar coords
-            let velocity_t: Vec<_> = surf_indices
-                .iter()
-                .enumerate()
-                .map(|(contact_idx, &surf_idx)| {
-                    let vtx_idx = sim_verts[surf_idx];
-                    let v = frictional_contact.contact_basis.to_cylindrical_contact_coordinates(v[vtx_idx], contact_idx);
-                    v.tangent
-                }).collect();
+        eprintln!("#### Solving Friction");
+        let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = active_contact_indices
+            .iter()
+            .enumerate()
+            .map(|(contact_idx, &aci)| {
+                let vtx_idx = sim_verts[surf_indices[aci]];
+                let v = frictional_contact.contact_basis.to_contact_coordinates(v[vtx_idx], contact_idx);
+                (v[0], [v[1], v[2]])
+            }).unzip();
 
-            if true {
-                // switch between implicit solver and explicit solver here.
-                match FrictionPolarSolver::without_contact_jacobian(
-                    &velocity_t, &contact_impulse, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params) {
-                    Ok(mut solver) => {
-                        eprintln!("#### Solving Friction");
-                        if let Ok(FrictionSolveResult {
-                            solution: r_t,
-                            ..
-                        }) = solver.step()
-                        {
-                            frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_polar_tangent_space(reinterpret_vec(r_t)));
-                            friction_steps -= 1;
-                        } else {
-                            eprintln!("Failed friction solve");
-                            friction_steps = 0;
-                        }
-                    }
-                    Err(err) => {
-                        dbg!(err);
-                        friction_steps = 0;
-                    }
-                }
-           } else {
-                for (contact_idx, (&v_t, &cr)) in
-                    zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
-                {
-                    let r_t = if v_t.radius > 0.0 {
-                        Polar2 {
-                            radius: mu * cr.abs(),
-                            angle: negate_angle(v_t.angle),
-                        }
-                    } else {
-                        Polar2 { radius: 0.0, angle: 0.0 }
-                    };
-                    let r = 
-                        frictional_contact.contact_basis
-                            .from_cylindrical_contact_coordinates(r_t.into(), contact_idx);
-                    frictional_contact.impulse.push(r.into());
-                }
-                friction_steps -= 1;
-           }
-        } else {
-            // Euclidean coords
-            let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = surf_indices
-                .iter()
-                .enumerate()
-                .map(|(contact_idx, &surf_idx)| {
-                    let vtx_idx = sim_verts[surf_idx];
-                    let v = frictional_contact.contact_basis.to_contact_coordinates(v[vtx_idx], contact_idx);
-                    (v[0], [v[1], v[2]])
-                }).unzip();
+        dbg!(&velocity_n);
+        dbg!(&velocity_t);
 
-            // switch between implicit solver and explicit solver here.
-            if true {
-                let mut r_n = contact_impulse.clone();
-                let mut r_t = Vec::new();
-                while friction_steps > 0 {
-                    friction_steps -= 1;
-                    let mut solver = ContactSolver::without_contact_jacobian(
-                        &velocity_n, &r_t, &frictional_contact.contact_basis, &contact_masses);
-                    r_n.clear();
-                    r_n.append(&mut solver.step());
-
-                    let mut solver = FrictionSolver::without_contact_jacobian(
-                        &velocity_t, &r_n, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params);
-                    r_t.clear();
-                    r_t.append(&mut solver.step());
-                }
-
-                assert_eq!(r_n.len(), r_t.len());
-                frictional_contact.impulse.resize(r_n.len(), [0.0; 3]);
-                for (i, (&r_n, &r_t, r)) in zip!(r_n.iter(), r_t.iter(), frictional_contact.impulse.iter_mut()).enumerate() {
-                    *r = frictional_contact.contact_basis.from_contact_coordinates([r_n, r_t[0], r_t[1]], i).into();
-                }
-            } else {
-                for (contact_idx, (&v_t, &cr)) in
-                    zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
-                    {
-                        let v_t = Vector2(v_t);
-                        let v_norm = v_t.norm();
-                        let r_t = if v_norm > 0.0 {
-                            v_t * (-mu * cr.abs() / v_norm)
-                        } else {
-                            Vector2::zeros()
-                        };
-                        let r = 
-                            frictional_contact.contact_basis
-                            .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
-                        frictional_contact.impulse.push(r.into());
-                    }
-            }
+        let mut r_n = Vec::new();
+        let mut r_t = Vec::new();
+        while friction_steps > 0 {
             friction_steps -= 1;
-        };
+            let mut solver = ContactSolver::without_contact_jacobian(
+                &velocity_n, &r_t, &frictional_contact.contact_basis, &contact_masses);
+            r_n.clear();
+            r_n.append(&mut solver.step());
 
+            let mut solver = FrictionSolver::without_contact_jacobian(
+                &velocity_t, &r_n, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params);
+            r_t.clear();
+            r_t.append(&mut solver.step());
+        }
+
+        dbg!(&r_n);
+        dbg!(&r_t);
+
+        assert_eq!(r_n.len(), r_t.len());
+        frictional_contact.impulse.resize(surf_indices.len(), [0.0; 3]);
+        for (i, (&r_n, &r_t, r)) in zip!(r_n.iter(), r_t.iter(), frictional_contact.impulse.iter_mut()).enumerate() {
+            *r = frictional_contact.contact_basis.from_contact_coordinates([r_n, r_t[0], r_t[1]], i).into();
+        }
         friction_steps
     }
 
@@ -320,6 +268,28 @@ impl ContactConstraint for SPImplicitContactConstraint {
                     let idx = 3 * surf_vert_idx + j;
                     x[idx] += impulse / m;
                 }
+            }
+        }
+    }
+
+    /// Add the frictional impulse to the given gradient vector.
+    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
+        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if frictional_contact.impulse.is_empty() {
+                return;
+            }
+
+            let indices = self.active_surface_vertex_indices();
+            if indices.is_empty() {
+                return;
+            }
+
+            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            for (&i, &r) in indices.iter().zip(frictional_contact.impulse.iter()) {
+
+                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
+                grad[vertex_idx] += Vector3(r.into()) * multiplier;
             }
         }
     }
@@ -381,11 +351,12 @@ impl ContactConstraint for SPImplicitContactConstraint {
         let mut normals: Vec<Vector3<f64>> = reinterpret::reinterpret_vec(normal_coords);
 
         // Normalize normals.
-        // These should be pointing away from the deforming mesh.
+        // Contact normals point away from the surface being collided against.
+        // In this case the gradient coincides with this direction.
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= -len;
+                *n /= len;
             }
         }
 

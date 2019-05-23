@@ -185,7 +185,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         frictional_contact.impulse.clear();
         assert_eq!(contact_impulse.len(), surf_indices.len());
         
-        let success = if false {
+        if false {
             // Polar coords
             let velocity_t: Vec<_> = surf_indices
                 .iter()
@@ -352,11 +352,12 @@ impl ContactConstraint for ImplicitContactConstraint {
         let mut normals: Vec<Vector3<f64>> = reinterpret::reinterpret_vec(normal_coords);
 
         // Normalize normals.
-        // These should be pointing away from the deforming mesh.
+        // Contact normals point away from the surface being collided against.
+        // In this case the gradient coincides with this direction.
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= -len;
+                *n /= len;
             }
         }
 

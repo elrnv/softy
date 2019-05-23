@@ -14,7 +14,7 @@ use geo::{mesh::{Attrib, topology::*}, math::Vector3};
 use std::{cell::RefCell, rc::Rc};
 use reinterpret::*;
 
-pub use self::implicit_contact::*;
+pub use self::sp_implicit_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
 
@@ -28,7 +28,7 @@ pub fn build_contact_constraint(
     density: f64,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
+        ContactType::Implicit => Box::new(SPImplicitContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
             params.kernel,
@@ -151,7 +151,7 @@ pub trait ContactConstraint:
     ) -> u32;
 
     fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]);
-    /// Subtract the frictional impulse from the given gradient vector.
+    /// Add the frictional impulse to the given gradient vector.
     fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
         let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
         if let Some(ref frictional_contact) = self.frictional_contact() {

@@ -771,10 +771,12 @@ impl ContactConstraint for PointContactConstraint {
         let mut normals: Vec<Vector3<f64>> = reinterpret_vec(normal_coords);
 
         // Normalize normals
+        // Contact normals point away from the surface being collided against.
+        // In this case the gradient is opposite of this direction.
         for n in normals.iter_mut() {
             let len = n.norm();
             if len > 0.0 {
-                *n /= len;
+                *n /= -len;
             }
         }
 

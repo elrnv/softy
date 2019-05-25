@@ -275,6 +275,7 @@ static const char *theDsFile = R"THEDSFILE(
                 menu {
                     "implicit" "Implicit"
                     "point" "Point"
+                    "spimplicit" "Stag. Proj. Implicit"
                 }
             }
 

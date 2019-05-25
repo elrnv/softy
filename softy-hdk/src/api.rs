@@ -165,7 +165,8 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             },
             contact_type: match contact_type {
                 0 => softy::ContactType::Implicit,
-                _ => softy::ContactType::Point,
+                1 => softy::ContactType::Point,
+                _ => softy::ContactType::SPImplicit,
             },
             friction_params: Some(softy::FrictionParams {
                 dynamic_friction: f64::from(dynamic_friction),

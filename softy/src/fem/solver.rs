@@ -276,7 +276,15 @@ impl SolverBuilder {
 
         let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
             let cparams = smooth_contact_params.unwrap(); // already verified above.
-            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams, density, time_step, energy_model_builder.build()).ok()
+            crate::constraints::build_contact_constraint(
+                &mesh,
+                &trimesh,
+                cparams,
+                density,
+                time_step,
+                energy_model_builder.build(),
+            )
+            .ok()
         });
 
         let displacement_bound = None;
@@ -851,9 +859,7 @@ impl Solver {
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let res = {
             let SolverDataMut {
-                problem,
-                solution,
-                ..
+                problem, solution, ..
             } = self.solver.solver_data_mut();
 
             // Advance internal state (positions and velocities) of the problem.
@@ -867,7 +873,8 @@ impl Solver {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
             if and_warm_start {
-                let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables)) * if dt > 0.0 { dt } else { 1.0 };
+                let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
+                    * if dt > 0.0 { dt } else { 1.0 };
                 // If warm start is selected, then this solution was good, which means we're not
                 // comitting it just for debugging purposes.
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
@@ -969,7 +976,10 @@ impl Solver {
             ..
         } = self;
         old_active_set.clear();
-        solver.solver_data().problem.compute_active_constraint_set(old_active_set);
+        solver
+            .solver_data()
+            .problem
+            .compute_active_constraint_set(old_active_set);
     }
 
     /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
@@ -981,12 +991,11 @@ impl Solver {
         let step_accepted = if self.contact_radius().is_some() {
             let step = {
                 let SolverData {
-                    problem,
-                    solution,
-                    ..
+                    problem, solution, ..
                 } = self.solver.solver_data();
                 let dt = self.time_step();
-                inf_norm(problem.scaled_variables_iter(solution.primal_variables)) * if dt > 0.0 { dt } else { 1.0 }
+                inf_norm(problem.scaled_variables_iter(solution.primal_variables))
+                    * if dt > 0.0 { dt } else { 1.0 }
             };
 
             let constraint_violation = {
@@ -1057,7 +1066,10 @@ impl Solver {
             ..
         } = self;
 
-        solver.solver_data_mut().problem.remap_contacts(old_active_set.iter().cloned());
+        solver
+            .solver_data_mut()
+            .problem
+            .remap_contacts(old_active_set.iter().cloned());
     }
 
     /// Run the optimization solver on one time step.
@@ -1113,8 +1125,13 @@ impl Solver {
                         if friction_steps > 0 {
                             // Restore the constraints to original configuration.
                             self.problem_mut().reset_constraint_set();
-                            debug_assert!(self.problem().is_same_as_constraint_set(&self.old_active_set));
-                            friction_steps = self.compute_friction_impulse(&step_result.constraint_values, friction_steps);
+                            debug_assert!(self
+                                .problem()
+                                .is_same_as_constraint_set(&self.old_active_set));
+                            friction_steps = self.compute_friction_impulse(
+                                &step_result.constraint_values,
+                                friction_steps,
+                            );
                             if friction_steps > 0 {
                                 continue;
                             }
@@ -1384,11 +1401,15 @@ mod tests {
     fn one_tet_solver() -> Solver {
         let mesh = make_one_deformed_tet_mesh();
 
-        SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STATIC_PARAMS })
-            .solid_material(SOLID_MATERIAL)
-            .add_solid(mesh)
-            .build()
-            .expect("Failed to build a solver for a one tet test.")
+        SolverBuilder::new(SimParams {
+            print_level: 0,
+            derivative_test: 0,
+            ..STATIC_PARAMS
+        })
+        .solid_material(SOLID_MATERIAL)
+        .add_solid(mesh)
+        .build()
+        .expect("Failed to build a solver for a one tet test.")
     }
 
     /// Test that the solver produces no change for an equilibrium configuration.
@@ -1659,10 +1680,14 @@ mod tests {
     #[test]
     fn box_stretch_test() -> Result<(), Error> {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
-        let mut solver = SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STRETCH_PARAMS })
-            .solid_material(MEDIUM_SOLID_MATERIAL)
-            .add_solid(mesh)
-            .build()?;
+        let mut solver = SolverBuilder::new(SimParams {
+            print_level: 0,
+            derivative_test: 0,
+            ..STRETCH_PARAMS
+        })
+        .solid_material(MEDIUM_SOLID_MATERIAL)
+        .add_solid(mesh)
+        .build()?;
         solver.step()?;
         let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
         let solution = solver.borrow_mesh();
@@ -1677,10 +1702,14 @@ mod tests {
             ..MEDIUM_SOLID_MATERIAL
         };
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
-        let mut solver = SolverBuilder::new(SimParams { print_level: 0, derivative_test: 0, ..STRETCH_PARAMS })
-            .solid_material(incompressible_material)
-            .add_solid(mesh)
-            .build()?;
+        let mut solver = SolverBuilder::new(SimParams {
+            print_level: 0,
+            derivative_test: 0,
+            ..STRETCH_PARAMS
+        })
+        .solid_material(incompressible_material)
+        .add_solid(mesh)
+        .build()?;
         solver.step()?;
         let expected: TetMesh =
             geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
@@ -2218,11 +2247,14 @@ mod tests {
     #[test]
     fn torus_medium_test() -> Result<(), Error> {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        let mut solver = SolverBuilder::new(SimParams { print_level: 0, ..DYNAMIC_PARAMS })
-            .solid_material(STIFF_MATERIAL)
-            .add_solid(mesh)
-            .build()
-            .unwrap();
+        let mut solver = SolverBuilder::new(SimParams {
+            print_level: 0,
+            ..DYNAMIC_PARAMS
+        })
+        .solid_material(STIFF_MATERIAL)
+        .add_solid(mesh)
+        .build()
+        .unwrap();
         solver.step()?;
         Ok(())
     }

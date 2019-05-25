@@ -1,6 +1,6 @@
 mod elastic_solver;
-mod proj_solver;
 mod polar_solver;
+mod proj_solver;
 mod solver;
 
 use crate::contact::ContactBasis;

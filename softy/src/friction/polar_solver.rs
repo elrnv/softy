@@ -1,15 +1,15 @@
-use super::FrictionSolveResult;
 use super::FrictionParams;
-use geo::{math::Matrix3};
+use super::FrictionSolveResult;
+use crate::contact::ContactBasis;
+use geo::math::Matrix3;
 use ipopt::{self, Index, Ipopt, Number};
 use reinterpret::*;
-use crate::contact::ContactBasis;
 
 use unroll::unroll_for_loops;
 use utils::zip;
 
-use crate::Error;
 use crate::contact::Polar2;
+use crate::Error;
 
 /// Friction solver.
 pub struct FrictionPolarSolver<'a, CJI> {
@@ -17,7 +17,7 @@ pub struct FrictionPolarSolver<'a, CJI> {
     solver: Ipopt<ExplicitFrictionPolarProblem<'a, CJI>>,
 }
 
-impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize,usize)>> {
+impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -33,7 +33,7 @@ impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize,usize)>> {
     }
 }
 
-impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionPolarSolver<'a, CJI> {
+impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionPolarSolver<'a, CJI> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -46,7 +46,14 @@ impl<'a, CJI: Iterator<Item=(usize, usize)>> FrictionPolarSolver<'a, CJI> {
         params: FrictionParams,
         contact_jacobian: (&'a [Matrix3<f64>], CJI),
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, masses, params, Some(contact_jacobian))
+        Self::new_impl(
+            velocity,
+            contact_force,
+            contact_basis,
+            masses,
+            params,
+            Some(contact_jacobian),
+        )
     }
 
     fn new_impl(
@@ -274,7 +281,6 @@ impl<CJI> ipopt::NewtonProblem for ExplicitFrictionPolarProblem<'_, CJI> {
     }
 }
 
-
 /// Semi-implicit Friction problem is one step more accurate than the explicit one.
 pub(crate) struct SemiImplicitFrictionPolarProblem<'a, CJI>(FrictionPolarProblem<'a, CJI>);
 
@@ -390,14 +396,23 @@ mod tests {
         };
         let mass = 1.0;
 
-        let velocity = vec![Polar2 { radius: 1.0, angle: PI }]; // one point sliding up.
+        let velocity = vec![Polar2 {
+            radius: 1.0,
+            angle: PI,
+        }]; // one point sliding up.
         let contact_force = vec![10.0 * mass];
         let masses = vec![mass; 3];
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
 
-        let mut solver = FrictionPolarSolver::without_contact_jacobian(&velocity, &contact_force, &contact_basis, &masses, params)?;
+        let mut solver = FrictionPolarSolver::without_contact_jacobian(
+            &velocity,
+            &contact_force,
+            &contact_basis,
+            &masses,
+            params,
+        )?;
         let result = solver.step()?;
         let FrictionSolveResult {
             solution,
@@ -405,12 +420,7 @@ mod tests {
         } = result;
 
         assert_relative_eq!(solution[0][0], 15.0, max_relative = 1e-5);
-        assert_relative_eq!(
-            solution[0][1],
-            0.0,
-            max_relative = 1e-5,
-            epsilon = 1e-8
-        );
+        assert_relative_eq!(solution[0][1], 0.0, max_relative = 1e-5, epsilon = 1e-8);
         assert_relative_eq!(objective_value, -15.0, max_relative = 1e-5);
 
         Ok(())

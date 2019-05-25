@@ -1,14 +1,14 @@
 use super::*;
 use crate::constraint::*;
 use crate::constraints::compute_vertex_masses;
-use crate::friction::*;
 use crate::contact::*;
+use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Matrix3, Vector3, Vector2};
+use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -270,10 +270,7 @@ impl PointContactConstraint {
     /// Update implicit surface using the given position data from mesh vertices.
     pub fn update_surface_with_mesh_pos(&self, x: &[f64]) {
         let pos: &[[f64; 3]] = reinterpret_slice(x);
-        let points_iter = self
-            .sim_verts
-            .iter()
-            .map(|&i| pos[i].into());
+        let points_iter = self.sim_verts.iter().map(|&i| pos[i].into());
 
         self.implicit_surface.borrow_mut().update(points_iter);
     }
@@ -419,7 +416,8 @@ impl PointContactConstraint {
         }
     }
     fn in_contact_indices(&self, contact_impulse: &[f64]) -> Vec<usize> {
-        contact_impulse.iter()
+        contact_impulse
+            .iter()
             .enumerate()
             .map(|(i, _)| i)
             //.filter_map(|(i, &cf)| {
@@ -441,7 +439,7 @@ impl ContactConstraint for PointContactConstraint {
         self.frictional_contact.as_mut()
     }
     fn vertex_index_mapping(&self) -> Option<&[usize]> {
-        None 
+        None
     }
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
         ARef::Plain(&self.sim_verts)
@@ -468,9 +466,7 @@ impl ContactConstraint for PointContactConstraint {
         let mut rows = vec![0i32; nnz];
         let mut cols = vec![0i32; nnz];
 
-        for ((row, col), (r, c)) in cj_indices_iter
-            .zip(rows.iter_mut().zip(cols.iter_mut()))
-        {
+        for ((row, col), (r, c)) in cj_indices_iter.zip(rows.iter_mut().zip(cols.iter_mut())) {
             *r = row as i32;
             *c = col as i32;
         }
@@ -487,9 +483,16 @@ impl ContactConstraint for PointContactConstraint {
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
         let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+        af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        )
     }
- 
+
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
@@ -571,20 +574,26 @@ impl ContactConstraint for PointContactConstraint {
                 .collect();
             if true {
                 // switch between implicit solver and explicit solver here.
-                match FrictionPolarSolver::new(&velocity_t, &contact_impulse, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone())) {
+                match FrictionPolarSolver::new(
+                    &velocity_t,
+                    &contact_impulse,
+                    &contact_basis,
+                    vertex_masses,
+                    *params,
+                    (&cj_matrices, cj_indices_iter.clone()),
+                ) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
-                        if let Ok(FrictionSolveResult {
-                            solution: r_t,
-                            ..
-                        }) = solver.step()
-                        {
+                        if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
                             for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
-                                let r_polar = Polar2 { radius: r[0], angle: r[1] };
+                                let r_polar = Polar2 {
+                                    radius: r[0],
+                                    angle: r[1],
+                                };
                                 friction_impulse[query_indices[aqi]] = Vector3(
                                     contact_basis
                                         .from_cylindrical_contact_coordinates(r_polar.into(), aqi)
-                                        .into()
+                                        .into(),
                                 );
                             }
                             true
@@ -612,7 +621,10 @@ impl ContactConstraint for PointContactConstraint {
                             angle: negate_angle(v_t.angle),
                         }
                     } else {
-                        Polar2 { radius: 0.0, angle: 0.0 }
+                        Polar2 {
+                            radius: 0.0,
+                            angle: 0.0,
+                        }
                     };
                     let r = Vector3(
                         contact_basis
@@ -635,14 +647,21 @@ impl ContactConstraint for PointContactConstraint {
                 .collect();
             if false {
                 // switch between implicit solver and explicit solver here.
-                let mut solver = FrictionSolver::new(&velocity_t, &contact_impulse, &contact_basis, vertex_masses, *params, (&cj_matrices, cj_indices_iter.clone()));
+                let mut solver = FrictionSolver::new(
+                    &velocity_t,
+                    &contact_impulse,
+                    &contact_basis,
+                    vertex_masses,
+                    *params,
+                    (&cj_matrices, cj_indices_iter.clone()),
+                );
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
                 for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
                     friction_impulse[query_indices[aqi]] = Vector3(
                         contact_basis
                             .from_contact_coordinates([0.0, r[0], r[1]], aqi)
-                            .into()
+                            .into(),
                     );
                 }
                 true
@@ -670,7 +689,6 @@ impl ContactConstraint for PointContactConstraint {
                 }
                 true
             }
-
         };
 
         if !success {

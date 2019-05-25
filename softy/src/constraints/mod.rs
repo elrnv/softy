@@ -1,23 +1,26 @@
-pub mod sp_implicit_contact;
 pub mod implicit_contact;
 pub mod point_contact;
+pub mod sp_implicit_contact;
 pub mod volume;
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
+use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
 use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
-use geo::{mesh::{Attrib, topology::*}, math::Vector3};
-use std::{cell::RefCell, rc::Rc};
+use geo::{
+    math::Vector3,
+    mesh::{topology::*, Attrib},
+};
 use reinterpret::*;
+use std::{cell::RefCell, rc::Rc};
 
 pub use self::implicit_contact::*;
-pub use self::sp_implicit_contact::*;
 pub use self::point_contact::*;
+pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
@@ -104,8 +107,8 @@ pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
 
     for (&vol, cell) in tetmesh
         .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .zip(tetmesh.cell_iter())
+        .unwrap()
+        .zip(tetmesh.cell_iter())
     {
         for i in 0..4 {
             all_masses[cell[i]] += 0.25 * vol * density;
@@ -182,14 +185,21 @@ pub trait ContactConstraint:
             }
 
             assert_eq!(indices.len(), frictional_contact.impulse.len());
-            for (contact_idx, (&i, &r)) in indices.iter().zip(frictional_contact.impulse.iter()).enumerate() {
+            for (contact_idx, (&i, &r)) in indices
+                .iter()
+                .zip(frictional_contact.impulse.iter())
+                .enumerate()
+            {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(frictional_contact
-                        .contact_basis
-                        .from_contact_coordinates([0.0, f[1], f[2]], contact_idx).into())
+                    Vector3(
+                        frictional_contact
+                            .contact_basis
+                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                            .into(),
+                    )
                 } else {
                     Vector3::zeros()
                 };
@@ -215,14 +225,21 @@ pub trait ContactConstraint:
 
             assert_eq!(indices.len(), frictional_contact.impulse.len());
 
-            for (contact_idx, (&i, &r)) in indices.iter().zip(frictional_contact.impulse.iter()).enumerate() {
+            for (contact_idx, (&i, &r)) in indices
+                .iter()
+                .zip(frictional_contact.impulse.iter())
+                .enumerate()
+            {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(frictional_contact
-                        .contact_basis
-                        .from_contact_coordinates([0.0, f[1], f[2]], contact_idx).into())
+                    Vector3(
+                        frictional_contact
+                            .contact_basis
+                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                            .into(),
+                    )
                 } else {
                     Vector3::zeros()
                 };
@@ -239,12 +256,7 @@ pub trait ContactConstraint:
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-    fn compute_contact_impulse(
-        &self,
-        x: &[f64],
-        contact_force: &[f64],
-        impulse: &mut [[f64; 3]],
-    );
+    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], impulse: &mut [[f64; 3]]);
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if

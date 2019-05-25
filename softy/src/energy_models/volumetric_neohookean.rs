@@ -361,12 +361,13 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
                 let damping = T::from(damping).unwrap();
                 let tet_energy = NeoHookeanTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
                 // elasticity
-                tet_energy.elastic_energy() + half * damping * {
-                    let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
-                    // damping (viscosity)
-                    (dH[0].dot(tet_dx.0) + dH[1].dot(tet_dx.1) + dH[2].dot(tet_dx.2)
-                        - (tet_dx.3.transpose() * dH).sum())
-                }
+                tet_energy.elastic_energy()
+                    + half * damping * {
+                        let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
+                        // damping (viscosity)
+                        (dH[0].dot(tet_dx.0) + dH[1].dot(tet_dx.1) + dH[2].dot(tet_dx.2)
+                            - (tet_dx.3.transpose() * dH).sum())
+                    }
             })
             .sum()
     }
@@ -418,7 +419,8 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             let mu = T::from(mu).unwrap();
             let damping = T::from(damping).unwrap();
 
-            let tet_energy = NeoHookeanTetEnergy::new(tet_x1.shape_matrix(), DX_inv, vol, lambda, mu);
+            let tet_energy =
+                NeoHookeanTetEnergy::new(tet_x1.shape_matrix(), DX_inv, vol, lambda, mu);
 
             let grad = tet_energy.elastic_energy_gradient();
 
@@ -519,7 +521,13 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, _: &[T], x1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        _: &[T],
+        x1: &[T],
+        scale: T,
+        values: &mut [T],
+    ) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,

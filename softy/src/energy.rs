@@ -80,7 +80,13 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]);
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        x: &[T],
+        dx: &[T],
+        scale: T,
+        values: &mut [T],
+    );
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
@@ -196,6 +202,13 @@ pub trait EnergyHessian {
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
         let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+        af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        )
     }
 }

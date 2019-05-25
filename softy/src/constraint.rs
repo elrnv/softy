@@ -83,20 +83,15 @@ pub trait ConstraintJacobian<T: Scalar> {
 /// Trait defining a constraint Jacobian for ArrayFire.
 pub trait ConstraintJacobianAF: Constraint<f64> + ConstraintJacobian<f64> {
     /// Construct ArrayFire matrix for the Constraint Jacobian.
-    fn constraint_jacobian_af(
-        &self,
-        x: &[f64],
-        dx: &[f64],
-    ) -> Result<af::Array<f64>, Error>
-    {
+    fn constraint_jacobian_af(&self, x: &[f64], dx: &[f64]) -> Result<af::Array<f64>, Error> {
         let nnz = self.constraint_jacobian_size();
         let mut rows = vec![0i32; nnz];
         let mut cols = vec![0i32; nnz];
 
         let indices_iter = self.constraint_jacobian_indices_iter()?;
 
-        for (MatrixElementIndex { row, col }, (r, c)) in indices_iter
-            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        for (MatrixElementIndex { row, col }, (r, c)) in
+            indices_iter.zip(rows.iter_mut().zip(cols.iter_mut()))
         {
             *r = row as i32;
             *c = col as i32;
@@ -115,7 +110,14 @@ pub trait ConstraintJacobianAF: Constraint<f64> + ConstraintJacobian<f64> {
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
         let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        Ok(af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO))
+        Ok(af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        ))
     }
 }
 
@@ -223,8 +225,8 @@ trait ConstraintHessianAF: ConstraintHessian<f64> {
 
         let indices_iter = self.constraint_hessian_indices_iter()?;
 
-        for (MatrixElementIndex { row, col }, (r, c)) in indices_iter
-            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        for (MatrixElementIndex { row, col }, (r, c)) in
+            indices_iter.zip(rows.iter_mut().zip(cols.iter_mut()))
         {
             *r = row as i32;
             *c = col as i32;
@@ -243,7 +245,14 @@ trait ConstraintHessianAF: ConstraintHessian<f64> {
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
         let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        Ok(af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO))
+        Ok(af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        ))
     }
 }
 

@@ -1,14 +1,14 @@
 use super::*;
-use crate::constraints::compute_vertex_masses;
 use crate::constraint::*;
-use crate::friction::*;
+use crate::constraints::compute_vertex_masses;
 use crate::contact::*;
+use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
-use geo::math::{Vector3};
+use geo::math::Vector3;
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -143,7 +143,10 @@ impl ContactConstraint for SPImplicitContactConstraint {
                 active_constraint_indices.append(&mut indices);
             }
         }
-        ARef::Cell(std::cell::Ref::map(self.active_constraint_indices.borrow(), |v| v.as_slice()))
+        ARef::Cell(std::cell::Ref::map(
+            self.active_constraint_indices.borrow(),
+            |v| v.as_slice(),
+        ))
     }
 
     fn contact_jacobian_af(&self) -> af::Array<f64> {
@@ -169,7 +172,14 @@ impl ContactConstraint for SPImplicitContactConstraint {
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
         let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+        af::sparse(
+            num_rows,
+            num_cols,
+            &values,
+            &row_indices,
+            &col_indices,
+            af::SparseFormat::COO,
+        )
     }
 
     fn update_frictional_contact_impulse(
@@ -221,44 +231,69 @@ impl ContactConstraint for SPImplicitContactConstraint {
         } = *self;
 
         let frictional_contact = frictional_contact.as_mut().unwrap(); // Must be checked above.
-        frictional_contact.contact_basis.update_from_normals(normals);
+        frictional_contact
+            .contact_basis
+            .update_from_normals(normals);
         frictional_contact.impulse.clear();
         let contact_impulse = vec![0.0; surf_indices.len()];
-        
+
         eprintln!("#### Solving Friction");
         let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = surf_indices
             .iter()
             .enumerate()
             .map(|(contact_idx, &surf_idx)| {
                 let vtx_idx = sim_verts[surf_idx];
-                let v = frictional_contact.contact_basis.to_contact_coordinates(v[vtx_idx], contact_idx);
+                let v = frictional_contact
+                    .contact_basis
+                    .to_contact_coordinates(v[vtx_idx], contact_idx);
                 if potential[surf_idx] < 0.0 {
                     (v[0], [v[1], v[2]])
                 } else {
                     // Dont constrain points that are not actually in contact.
                     (0.0, [0.0, 0.0])
                 }
-            }).unzip();
+            })
+            .unzip();
 
         let mut r_n = Vec::new();
         let mut r_t = Vec::new();
         while friction_steps > 0 {
             friction_steps -= 1;
             let mut solver = ContactSolver::without_contact_jacobian(
-                &velocity_n, &r_t, &frictional_contact.contact_basis, &contact_masses);
+                &velocity_n,
+                &r_t,
+                &frictional_contact.contact_basis,
+                &contact_masses,
+            );
             r_n.clear();
             r_n.append(&mut solver.step());
 
             let mut solver = FrictionSolver::without_contact_jacobian(
-                &velocity_t, &r_n, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params);
+                &velocity_t,
+                &r_n,
+                &frictional_contact.contact_basis,
+                &contact_masses,
+                frictional_contact.params,
+            );
             r_t.clear();
             r_t.append(&mut solver.step());
         }
 
         assert_eq!(r_n.len(), r_t.len());
-        frictional_contact.impulse.resize(surf_indices.len(), [0.0; 3]);
-        for (i, (&r_n, &r_t, r)) in zip!(r_n.iter(), r_t.iter(), frictional_contact.impulse.iter_mut()).enumerate() {
-            *r = frictional_contact.contact_basis.from_contact_coordinates([r_n, r_t[0], r_t[1]], i).into();
+        frictional_contact
+            .impulse
+            .resize(surf_indices.len(), [0.0; 3]);
+        for (i, (&r_n, &r_t, r)) in zip!(
+            r_n.iter(),
+            r_t.iter(),
+            frictional_contact.impulse.iter_mut()
+        )
+        .enumerate()
+        {
+            *r = frictional_contact
+                .contact_basis
+                .from_contact_coordinates([r_n, r_t[0], r_t[1]], i)
+                .into();
         }
         friction_steps
     }
@@ -301,7 +336,6 @@ impl ContactConstraint for SPImplicitContactConstraint {
 
             assert_eq!(indices.len(), frictional_contact.impulse.len());
             for (&i, &r) in indices.iter().zip(frictional_contact.impulse.iter()) {
-
                 let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
                 grad[vertex_idx] += Vector3(r.into()) * multiplier;
             }
@@ -461,8 +495,7 @@ impl Constraint<f64> for SPImplicitContactConstraint {
     }
 
     #[inline]
-    fn constraint(&self, _x0: &[f64], _x1: &[f64], _value: &mut [f64]) {
-    }
+    fn constraint(&self, _x0: &[f64], _x1: &[f64], _value: &mut [f64]) {}
 }
 
 impl ConstraintJacobian<f64> for SPImplicitContactConstraint {

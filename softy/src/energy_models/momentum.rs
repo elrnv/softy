@@ -29,10 +29,7 @@ impl MomentumPotential {
     /// using a non-linear solver like Ipopt.
     /// This function takes a tetrahedron mesh specifying a discretization of the solid domain
     pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64) -> Self {
-        MomentumPotential {
-            tetmesh,
-            density,
-        }
+        MomentumPotential { tetmesh, density }
     }
 }
 
@@ -177,7 +174,13 @@ impl EnergyHessian for MomentumPotential {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        _v0: &[T],
+        _v1: &[T],
+        scale: T,
+        values: &mut [T],
+    ) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let MomentumPotential {
@@ -206,8 +209,7 @@ impl EnergyHessian for MomentumPotential {
                     // vertex index
                     for j in 0..3 {
                         // vector component
-                        tet_hess[3 * vi + j] =
-                            T::from(0.25 * vol * density).unwrap() * scale;
+                        tet_hess[3 * vi + j] = T::from(0.25 * vol * density).unwrap() * scale;
                     }
                 }
             });

@@ -157,7 +157,11 @@ impl fmt::Debug for NonLinearProblem {
 
 impl NonLinearProblem {
     pub fn scale(&self) -> f64 {
-        if self.time_step > 0.0 { 1.0 / self.time_step } else { 1.0 }
+        if self.time_step > 0.0 {
+            1.0 / self.time_step
+        } else {
+            1.0
+        }
     }
 
     /// Save Ipopt solution for warm starts.
@@ -237,8 +241,11 @@ impl NonLinearProblem {
     /// Check if the given constraint set is the same as the current one.
     pub fn is_same_as_constraint_set(&self, other_set: &[usize]) -> bool {
         let cur_set = self.active_constraint_set();
-        cur_set.len() == other_set.len() &&
-            cur_set.into_iter().zip(other_set.iter()).all(|(cur, &other)| cur == other)
+        cur_set.len() == other_set.len()
+            && cur_set
+                .into_iter()
+                .zip(other_set.iter())
+                .all(|(cur, &other)| cur == other)
     }
 
     /// Update all stateful constraints with the most recent data.
@@ -246,7 +253,7 @@ impl NonLinearProblem {
     /// negatives.
     pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
-        
+
         if self.smooth_contact_constraint.is_some() {
             let prev_pos = self.prev_pos.borrow();
             let mut cur_pos = self.cur_pos.borrow_mut();
@@ -357,13 +364,20 @@ impl NonLinearProblem {
             let old_prev_pos = prev_pos.clone();
             let old_prev_vel = prev_vel.clone();
 
-            let cur_pos: std::cell::Ref<'_, [Vector3<f64>]> = std::cell::Ref::map(cur_step, |p| reinterpret_slice(p));
+            let cur_pos: std::cell::Ref<'_, [Vector3<f64>]> =
+                std::cell::Ref::map(cur_step, |p| reinterpret_slice(p));
 
             // Update prev pos
-            prev_pos.iter_mut().zip(cur_pos.iter()).for_each(|(prev, &cur)| *prev = cur);
+            prev_pos
+                .iter_mut()
+                .zip(cur_pos.iter())
+                .for_each(|(prev, &cur)| *prev = cur);
 
             // Update prev vel
-            prev_vel.iter_mut().zip(cur_vel.iter()).for_each(|(prev, &cur)| *prev = cur);
+            prev_vel
+                .iter_mut()
+                .zip(cur_vel.iter())
+                .for_each(|(prev, &cur)| *prev = cur);
 
             // Update tetmesh vertex positions
             {
@@ -543,9 +557,15 @@ impl NonLinearProblem {
         let vel: &[Vector3<Number>] = reinterpret_slice(v);
         let x0 = self.prev_pos.borrow();
         // In static simulations, velocity is simply displacement.
-        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let dt = if self.time_step > 0.0 {
+            self.time_step
+        } else {
+            1.0
+        };
         x.resize(vel.len(), Vector3::zeros());
-        x.iter_mut().zip(x0.iter().zip(vel.iter())).for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
+        x.iter_mut()
+            .zip(x0.iter().zip(vel.iter()))
+            .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
     }
 
     /// A convenience function to integrate the given velocity by the internal time step. For
@@ -555,7 +575,9 @@ impl NonLinearProblem {
             let mut x1 = self.cur_pos.borrow_mut();
             self.integrate_step(v, &mut x1);
         }
-        std::cell::Ref::map(self.cur_pos.borrow(), |pos| reinterpret::reinterpret_slice(pos))
+        std::cell::Ref::map(self.cur_pos.borrow(), |pos| {
+            reinterpret::reinterpret_slice(pos)
+        })
     }
 
     /// Produce an iterator over the given slice of scaled variables.
@@ -601,10 +623,7 @@ impl NonLinearProblem {
     /// Convert a given array of contact forces to impulses.
     fn contact_impulse_magnitudes(forces: &[f64], dt: f64) -> Vec<f64> {
         let dt = if dt > 0.0 { dt } else { 1.0 };
-        forces 
-            .iter()
-            .map(|&cf| cf * dt)
-            .collect()
+        forces.iter().map(|&cf| cf * dt).collect()
     }
 
     /// Return true if the friction impulse was updated, and false otherwise.
@@ -630,18 +649,24 @@ impl NonLinearProblem {
             } = self;
             let prev_pos = prev_pos.borrow();
             let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
-            let offset = if volume_constraint.is_some() {
-                1
-            } else {
-                0
-            };
-            let contact_impulse =
-                Self::contact_impulse_magnitudes(&solution.constraint_multipliers[offset..], *time_step);
+            let offset = if volume_constraint.is_some() { 1 } else { 0 };
+            let contact_impulse = Self::contact_impulse_magnitudes(
+                &solution.constraint_multipliers[offset..],
+                *time_step,
+            );
             dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
             let velocity = &scaled_variables.borrow();
             let potential_values = &constraint_values[offset..];
-            smooth_contact_constraint.as_mut().unwrap()
-                .update_frictional_contact_impulse(&contact_impulse, position, reinterpret_slice(velocity), potential_values, friction_steps)
+            smooth_contact_constraint
+                .as_mut()
+                .unwrap()
+                .update_frictional_contact_impulse(
+                    &contact_impulse,
+                    position,
+                    reinterpret_slice(velocity),
+                    potential_values,
+                    friction_steps,
+                )
         } else {
             0
         }
@@ -669,8 +694,10 @@ impl NonLinearProblem {
             } else {
                 0
             };
-            let contact_impulse = 
-                Self::contact_impulse_magnitudes(&self.warm_start.constraint_multipliers[offset..], self.time_step);
+            let contact_impulse = Self::contact_impulse_magnitudes(
+                &self.warm_start.constraint_multipliers[offset..],
+                self.time_step,
+            );
             scc.compute_contact_impulse(position, &contact_impulse, &mut impulse);
         }
         reinterpret::reinterpret_vec(impulse)
@@ -822,7 +849,11 @@ impl ipopt::BasicProblem for NonLinearProblem {
     fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
         let tetmesh = self.tetmesh.borrow();
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let dt = if self.time_step > 0.0 {
+            self.time_step
+        } else {
+            1.0
+        };
         let bound = self.displacement_bound.unwrap_or(2e19) / (self.scale() * dt);
         x_l.iter_mut().for_each(|x| *x = -bound);
         x_u.iter_mut().for_each(|x| *x = bound);
@@ -1050,7 +1081,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 .ok();
             //println!("jac g vals = {:?}", &vals[i..i+n]);
         }
-        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let dt = if self.time_step > 0.0 {
+            self.time_step
+        } else {
+            1.0
+        };
         let scale = dt * self.scale();
         vals.iter_mut().for_each(|v| *v *= scale);
 
@@ -1132,9 +1167,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let n = self.energy_model.energy_hessian_size();
 
         // Correction to make the above hessian wrt velocity instead of displacement.
-        let dt = if self.time_step > 0.0 { self.time_step } else { 1.0 };
+        let dt = if self.time_step > 0.0 {
+            self.time_step
+        } else {
+            1.0
+        };
         self.energy_model
-            .energy_hessian_values(x0, x, dt*dt, &mut vals[i..i + n]);
+            .energy_hessian_values(x0, x, dt * dt, &mut vals[i..i + n]);
 
         i += n;
 
@@ -1159,9 +1198,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref vc) = self.volume_constraint {
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
-            if let Ok(()) =
-                vc.constraint_hessian_values(x0, x, &lambda[coff..coff + nc], c_scale, &mut vals[i..i + nh])
-            {
+            if let Ok(()) = vc.constraint_hessian_values(
+                x0,
+                x,
+                &lambda[coff..coff + nc],
+                c_scale,
+                &mut vals[i..i + nh],
+            ) {
                 i += nh;
                 coff += nc;
             }
@@ -1170,9 +1213,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         if let Some(ref scc) = self.smooth_contact_constraint {
             let nc = scc.constraint_size();
             let nh = scc.constraint_hessian_size();
-            if let Ok(()) =
-                scc.constraint_hessian_values(x0, x, &lambda[coff..coff + nc], c_scale, &mut vals[i..i + nh])
-            {
+            if let Ok(()) = scc.constraint_hessian_values(
+                x0,
+                x,
+                &lambda[coff..coff + nc],
+                c_scale,
+                &mut vals[i..i + nh],
+            ) {
                 i += nh;
                 coff += nc;
             }

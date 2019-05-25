@@ -47,19 +47,17 @@ pub(crate) mod test_utils {
         let v0 = vec![F::cst(0.0); pos.len()]; // previous vel
         let v1 = random_displacement(pos.len()); // current vel
 
-        let p0: Vec<F> = pos
-            .iter()
-            .map(|&x| F::cst(x))
-            .collect();
+        let p0: Vec<F> = pos.iter().map(|&x| F::cst(x)).collect();
 
-        let p1: Vec<F> = pos.iter()
+        let p1: Vec<F> = pos
+            .iter()
             .zip(v1.iter())
             .map(|(&x, &v)| F::cst(x + v))
             .collect();
 
         match ty {
             EnergyType::Position => (p0, p1),
-            EnergyType::Velocity => (v0, v1)
+            EnergyType::Velocity => (v0, v1),
         }
     }
 

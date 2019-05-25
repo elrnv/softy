@@ -1,8 +1,8 @@
 mod solver;
 
-pub use solver::ContactSolver;
-use na::{Real, Matrix3, Vector2, Vector3};
 use crate::friction::FrictionParams;
+use na::{Matrix3, Real, Vector2, Vector3};
+pub use solver::ContactSolver;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -30,24 +30,21 @@ pub struct Polar2<T: Real> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VectorCyl<T: Real> {
     pub normal: T,
-    pub tangent: Polar2<T>
+    pub tangent: Polar2<T>,
 }
 
 impl<T: Real> VectorCyl<T> {
     pub fn new(normal: T, radius: T, angle: T) -> VectorCyl<T> {
         VectorCyl {
             normal,
-            tangent: Polar2 {
-                radius,
-                angle,
-            }
+            tangent: Polar2 { radius, angle },
         }
     }
 
     pub fn from_polar_tangent(tangent: Polar2<T>) -> VectorCyl<T> {
         VectorCyl {
             normal: T::zero(),
-            tangent
+            tangent,
         }
     }
 
@@ -58,17 +55,14 @@ impl<T: Real> VectorCyl<T> {
             tangent: Polar2 {
                 radius: Vector2::new(v[1], v[2]).norm(),
                 angle: T::atan2(v[2], v[1]),
-            }
+            },
         }
     }
 
     pub fn to_euclidean(self) -> Vector3<T> {
         let VectorCyl {
             normal,
-            tangent: Polar2 {
-                radius,
-                angle,
-            }
+            tangent: Polar2 { radius, angle },
         } = self;
         Vector3::new(normal, radius * angle.cos(), radius * angle.sin())
     }
@@ -96,7 +90,7 @@ impl<T: Real> Into<Vector3<T>> for VectorCyl<T> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContactBasis {
     normals: Vec<Vector3<f64>>,
-    tangents: Vec<Vector3<f64>> 
+    tangents: Vec<Vector3<f64>>,
 }
 
 impl ContactBasis {
@@ -121,18 +115,22 @@ impl ContactBasis {
             Vector3::zeros(),
             old_set.iter().cloned(),
             new_set.iter().cloned(),
-            );
+        );
         let new_tangents = crate::constraints::remap_values(
             self.tangents.iter().cloned(),
             Vector3::zeros(),
             old_set.iter().cloned(),
             new_set.iter().cloned(),
-            );
+        );
         std::mem::replace(&mut self.normals, new_normals);
         std::mem::replace(&mut self.tangents, new_tangents);
     }
 
-    pub fn to_cylindrical_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> VectorCyl<f64>
+    pub fn to_cylindrical_contact_coordinates<V3>(
+        &self,
+        v: V3,
+        contact_index: usize,
+    ) -> VectorCyl<f64>
     where
         V3: Into<Vector3<f64>>,
     {
@@ -152,8 +150,11 @@ impl ContactBasis {
         Matrix3::from_columns(&[n, t, b]).transpose() * v.into()
     }
 
-    pub fn from_cylindrical_contact_coordinates(&self, v: VectorCyl<f64>, contact_index: usize) -> Vector3<f64>
-    {
+    pub fn from_cylindrical_contact_coordinates(
+        &self,
+        v: VectorCyl<f64>,
+        contact_index: usize,
+    ) -> Vector3<f64> {
         self.from_contact_coordinates(v, contact_index)
     }
 
@@ -196,9 +197,7 @@ impl ContactBasis {
         physical
             .iter()
             .enumerate()
-            .map(|(i, &v)| {
-                self.to_cylindrical_contact_coordinates(v, i).tangent
-            })
+            .map(|(i, &v)| self.to_cylindrical_contact_coordinates(v, i).tangent)
             .collect()
     }
 
@@ -206,22 +205,20 @@ impl ContactBasis {
         contact
             .iter()
             .enumerate()
-            .map(|(i, &v)| self.from_cylindrical_contact_coordinates(v.into(), i).into())
+            .map(|(i, &v)| {
+                self.from_cylindrical_contact_coordinates(v.into(), i)
+                    .into()
+            })
             .collect()
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of
     /// normals. The tangent space is chosen arbitrarily
     pub fn update_from_normals(&mut self, normals: Vec<[f64; 3]>) {
-        self.tangents
-            .resize(normals.len(), Vector3::zeros());
+        self.tangents.resize(normals.len(), Vector3::zeros());
         self.normals = reinterpret::reinterpret_vec(normals);
 
-        for (&n, t) in self
-            .normals
-            .iter()
-            .zip(self.tangents.iter_mut())
-        {
+        for (&n, t) in self.normals.iter().zip(self.tangents.iter_mut()) {
             // Find the axis that is most aligned with the normal, then use the next axis for the
             // tangent.
             let tangent_axis = (n.iamax() + 1) % 3;
@@ -268,7 +265,8 @@ mod tests {
             // Test euclidean basis
             let contact_vecs = basis.to_tangent_space(reinterpret_vec(vecs.clone()));
             let projected_physical_vecs = basis.from_tangent_space(contact_vecs.clone());
-            let projected_contact_vecs = basis.to_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
+            let projected_contact_vecs =
+                basis.to_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 for i in 0..2 {
@@ -278,17 +276,20 @@ mod tests {
 
             let reprojected_physical_vecs = basis.from_tangent_space(projected_contact_vecs);
 
-            for (a, b) in projected_physical_vecs.into_iter().zip(reprojected_physical_vecs.into_iter()) {
+            for (a, b) in projected_physical_vecs
+                .into_iter()
+                .zip(reprojected_physical_vecs.into_iter())
+            {
                 for i in 0..3 {
                     assert_relative_eq!(a[i], b[i]);
                 }
             }
 
-
             // Test cylindrical coordinates
             let contact_vecs = basis.to_polar_tangent_space(reinterpret_vec(vecs.clone()));
             let projected_physical_vecs = basis.from_polar_tangent_space(contact_vecs.clone());
-            let projected_contact_vecs = basis.to_polar_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
+            let projected_contact_vecs =
+                basis.to_polar_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 assert_relative_eq!(a.radius, b.radius);
@@ -297,7 +298,10 @@ mod tests {
 
             let reprojected_physical_vecs = basis.from_polar_tangent_space(projected_contact_vecs);
 
-            for (a, b) in projected_physical_vecs.into_iter().zip(reprojected_physical_vecs.into_iter()) {
+            for (a, b) in projected_physical_vecs
+                .into_iter()
+                .zip(reprojected_physical_vecs.into_iter())
+            {
                 for i in 0..3 {
                     assert_relative_eq!(a[i], b[i]);
                 }

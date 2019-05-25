@@ -35,9 +35,9 @@ impl<T: Real> Energy<T> for Gravity {
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
         let tetmesh = self.tetmesh.borrow();
-        let tet_iter = tetmesh.cell_iter().map(|cell| {
-            Tetrahedron::from_indexed_slice(cell.get(), pos1)
-        });
+        let tet_iter = tetmesh
+            .cell_iter()
+            .map(|cell| Tetrahedron::from_indexed_slice(cell.get(), pos1));
 
         let g = self.g.map(|x| T::from(x).unwrap());
 

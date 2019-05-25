@@ -208,7 +208,7 @@ impl<T: Real> TetEnergy<T> for NeoHookeanTetEnergy<T> {
 }
 
 /// A possibly non-linear elastic energy for tetrahedral meshes.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ElasticTetMeshEnergy {
     /// The discretization of the solid domain using a tetrahedral mesh. This field should never be
     /// borrowed mutably.

@@ -8,6 +8,7 @@ use crate::Error;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
+use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
 use geo::math::{Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
@@ -38,6 +39,9 @@ pub struct ImplicitContactConstraint {
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
 
+    energy_model: ElasticTetMeshEnergy,
+    time_step: f64,
+
     /// Worspace vector to keep track of active constraint indices.
     active_constraint_indices: RefCell<Vec<usize>>,
 }
@@ -51,6 +55,8 @@ impl ImplicitContactConstraint {
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
         density: f64,
+        time_step: f64,
+        energy_model: ElasticTetMeshEnergy,
     ) -> Result<Self, Error> {
         let trimesh = trimesh_rc.borrow();
 
@@ -93,6 +99,8 @@ impl ImplicitContactConstraint {
                 }),
                 vertex_masses,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
+                energy_model,
+                time_step,
                 active_constraint_indices: RefCell::new(Vec::new()),
             };
 
@@ -146,6 +154,32 @@ impl ContactConstraint for ImplicitContactConstraint {
         ARef::Cell(std::cell::Ref::map(self.active_constraint_indices.borrow(), |v| v.as_slice()))
     }
 
+    fn contact_jacobian_af(&self) -> af::Array<f64> {
+        // The contact jacobian for implicit collisions is just a selection matrix of vertices that
+        // are in contact, since contacts are colocated with vertex positions.
+
+        let surf_indices = self
+            .active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
+
+        let nnz = surf_indices.len();
+        let values = vec![1.0; nnz];
+        let rows: Vec<_> = (0i32..nnz as i32).collect();
+        let cols: Vec<_> = surf_indices.iter().map(|&i| i as i32).collect();
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = nnz as u64;
+        let num_cols = self.sim_verts.len() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+    }
+
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
@@ -174,6 +208,8 @@ impl ContactConstraint for ImplicitContactConstraint {
         let ImplicitContactConstraint {
             ref mut frictional_contact,
             ref mut sim_verts,
+            ref energy_model,
+            time_step,
             ..
         } = *self;
 
@@ -249,10 +285,15 @@ impl ContactConstraint for ImplicitContactConstraint {
                     [v[1], v[2]]
                 }).collect();
 
+            // switch between implicit solver and explicit solver here.
             if true {
-                // switch between implicit solver and explicit solver here.
-                let mut solver = FrictionSolver::without_contact_jacobian(
-                    &velocity_t, &contact_impulse, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params);
+                let elastic_energy = crate::friction::ElasticEnergyParams {
+                    energy_model: energy_model.clone(),
+                    time_step,
+                };
+
+                let mut solver = ElasticFrictionSolver::without_contact_jacobian(
+                    &velocity_t, &contact_impulse, &frictional_contact.contact_basis, &contact_masses, frictional_contact.params, Some(elastic_energy));
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
                 frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_tangent_space(reinterpret_vec(r_t)));

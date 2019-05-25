@@ -104,7 +104,7 @@ pub trait EnergyHessian {
         cols: &mut [I],
     ) {
         let n = self.energy_hessian_size();
-        let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
+        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; n];
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
         for (MatrixElementIndex { row, col }, (r, c)) in indices
             .into_iter()
@@ -139,9 +139,9 @@ pub trait EnergyHessian {
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
         let n = self.energy_hessian_size();
-        let mut indices = unsafe { vec![::std::mem::uninitialized(); n] };
+        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; n];
         self.energy_hessian_indices_offset(offset, indices.as_mut_slice());
-        let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
+        let mut values = vec![T::zero(); n];
         self.energy_hessian_values(x, dx, scale, values.as_mut_slice());
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices.iter().zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
@@ -164,5 +164,38 @@ pub trait EnergyHessian {
         triplets: &mut [MatrixElementTriplet<T>],
     ) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets)
+    }
+
+    /// Construct an ArrayFire matrix.
+    fn energy_hessian_af(&self, x: &[f64], dx: &[f64], scale: f64) -> af::Array<f64> {
+        let nnz = self.energy_hessian_size();
+        let mut rows = vec![0i32; nnz];
+        let mut cols = vec![0i32; nnz];
+
+        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
+        self.energy_hessian_indices(indices.as_mut_slice());
+
+        for (MatrixElementIndex { row, col }, (r, c)) in indices
+            .into_iter()
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        {
+            *r = row as i32;
+            *c = col as i32;
+        }
+
+        let mut values = vec![0.0; nnz];
+        self.energy_hessian_values(x, dx, scale, &mut values);
+
+        // Build arrayfire matrix
+        let nnz = nnz as u64;
+        let num_rows = x.len() as u64;
+        let num_cols = x.len() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
     }
 }

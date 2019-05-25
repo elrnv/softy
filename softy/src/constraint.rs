@@ -80,6 +80,47 @@ pub trait ConstraintJacobian<T: Scalar> {
     }
 }
 
+/// Trait defining a constraint Jacobian for ArrayFire.
+pub trait ConstraintJacobianAF: Constraint<f64> + ConstraintJacobian<f64> {
+    /// Construct ArrayFire matrix for the Constraint Jacobian.
+    fn constraint_jacobian_af(
+        &self,
+        x: &[f64],
+        dx: &[f64],
+    ) -> Result<af::Array<f64>, Error>
+    {
+        let nnz = self.constraint_jacobian_size();
+        let mut rows = vec![0i32; nnz];
+        let mut cols = vec![0i32; nnz];
+
+        let indices_iter = self.constraint_jacobian_indices_iter()?;
+
+        for (MatrixElementIndex { row, col }, (r, c)) in indices_iter
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        {
+            *r = row as i32;
+            *c = col as i32;
+        }
+
+        let mut values = vec![0.0f64; nnz];
+        self.constraint_jacobian_values(x, dx, &mut values)?;
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = self.constraint_size() as u64;
+        let num_cols = x.len() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        Ok(af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO))
+    }
+}
+
+impl<T> ConstraintJacobianAF for T where T: Constraint<f64> + ConstraintJacobian<f64> {}
+
 /// This trait provides a way to compute the constraint Hessian multiplied by a vector of Lagrange
 /// multipliers. Strictly speaking this is not the actual constraint Hessian, however if the
 /// constraint function had dimension 1 and `lambda` was given to be 1, then this trait provides
@@ -165,3 +206,45 @@ pub trait ConstraintHessian<T: Scalar> {
         self.constraint_hessian_offset(x, dx, lambda, (0, 0).into(), scale, triplets)
     }
 }
+
+/// Trait implementing the constraint Hessian for ArrayFire.
+trait ConstraintHessianAF: ConstraintHessian<f64> {
+    /// Construct ArrayFire matrix.
+    fn constraint_hessian_af(
+        &self,
+        x: &[f64],
+        dx: &[f64],
+        lambda: &[f64],
+        scale: f64,
+    ) -> Result<af::Array<f64>, Error> {
+        let nnz = self.constraint_hessian_size();
+        let mut rows = vec![0i32; nnz];
+        let mut cols = vec![0i32; nnz];
+
+        let indices_iter = self.constraint_hessian_indices_iter()?;
+
+        for (MatrixElementIndex { row, col }, (r, c)) in indices_iter
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        {
+            *r = row as i32;
+            *c = col as i32;
+        }
+
+        let mut values = vec![0.0; nnz];
+        self.constraint_hessian_values(x, dx, lambda, scale, &mut values)?;
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = x.len() as u64;
+        let num_cols = x.len() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        Ok(af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO))
+    }
+}
+
+impl<T> ConstraintHessianAF for T where T: ConstraintHessian<f64> {}

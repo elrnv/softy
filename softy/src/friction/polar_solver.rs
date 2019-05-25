@@ -387,7 +387,6 @@ mod tests {
             inner_iterations: 30,
             tolerance: 1e-5,
             print_level: 0,
-            density: 1000.0,
         };
         let mass = 1.0;
 

@@ -1,8 +1,10 @@
+mod elastic_solver;
 mod proj_solver;
 mod polar_solver;
 mod solver;
 
 use crate::contact::ContactBasis;
+pub use elastic_solver::*;
 pub use polar_solver::*;
 pub use proj_solver::*;
 
@@ -21,7 +23,6 @@ pub struct FrictionParams {
     pub inner_iterations: usize,
     pub tolerance: f64,
     pub print_level: u8,
-    pub density: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

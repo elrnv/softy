@@ -446,6 +446,49 @@ impl ContactConstraint for PointContactConstraint {
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
         ARef::Plain(&self.sim_verts)
     }
+
+    fn contact_jacobian_af(&self) -> af::Array<f64> {
+        // Compute contact jacobian
+        let surf = self.implicit_surface.borrow();
+        let collider = self.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+
+        let mut cj_values = vec![
+            0.0;
+            surf.num_contact_jacobian_entries()
+                .expect("Failed to get contact Jacobian size.")
+        ];
+        surf.contact_jacobian_values(query_points, reinterpret_mut_slice(&mut cj_values))
+            .expect("Failed to compute contact Jacobian.");
+        let cj_indices_iter = surf
+            .contact_jacobian_indices_iter()
+            .expect("Failed to get contact Jacobian indices.");
+
+        let nnz = self.constraint_jacobian_size();
+        let mut rows = vec![0i32; nnz];
+        let mut cols = vec![0i32; nnz];
+
+        for ((row, col), (r, c)) in cj_indices_iter
+            .zip(rows.iter_mut().zip(cols.iter_mut()))
+        {
+            *r = row as i32;
+            *c = col as i32;
+        }
+
+        let collider = self.collision_object.borrow();
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = self.sim_verts.len() as u64;
+        let num_cols = collider.num_vertices() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&cj_values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+    }
  
     fn update_frictional_contact_impulse(
         &mut self,
@@ -1121,7 +1164,6 @@ mod tests {
                 inner_iterations: 40,
                 tolerance: 1e-5,
                 print_level: 5,
-                density: 1000.0,
             }),
         };
 

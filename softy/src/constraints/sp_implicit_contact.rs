@@ -146,6 +146,32 @@ impl ContactConstraint for SPImplicitContactConstraint {
         ARef::Cell(std::cell::Ref::map(self.active_constraint_indices.borrow(), |v| v.as_slice()))
     }
 
+    fn contact_jacobian_af(&self) -> af::Array<f64> {
+        // The contact jacobian for implicit collisions is just a selection matrix of vertices that
+        // are in contact, since contacts are colocated with vertex positions.
+
+        let surf_indices = self
+            .active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
+
+        let nnz = surf_indices.len();
+        let values = vec![1.0; nnz];
+        let rows: Vec<_> = (0i32..nnz as i32).collect();
+        let cols: Vec<_> = surf_indices.iter().map(|&i| i as i32).collect();
+
+        // Build ArrayFire matrix
+        let nnz = nnz as u64;
+        let num_rows = nnz as u64;
+        let num_cols = self.sim_verts.len() as u64;
+        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
+
+        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
+
+        af::sparse(num_rows, num_cols, &values, &row_indices, &col_indices, af::SparseFormat::COO)
+    }
+
     fn update_frictional_contact_impulse(
         &mut self,
         _contact_impulse: &[f64],
@@ -173,30 +199,19 @@ impl ContactConstraint for SPImplicitContactConstraint {
                 ..
             } = self;
             let mut potential_values = constraint_buffer.borrow_mut();
-            implicit_surface.borrow().potential(&self.query_points.borrow(), &mut potential_values).unwrap();
-            dbg!(&potential_values);
-            dbg!(&normals);
+            implicit_surface
+                .borrow()
+                .potential(&self.query_points.borrow(), &mut potential_values)
+                .unwrap();
         }
 
         // Define a subset of surface indices deemed to be in contact.
-        let active_contact_indices: Vec<_> = self.constraint_buffer.borrow()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &potential)| {
-                if potential < 0.0 {
-                    Some(i)
-                } else {
-                    None
-                }
-            }).collect();
-
-        // A subset of all surface normals that are in contact
-        let contact_normals: Vec<_> = active_contact_indices.iter().map(|&i| normals[i]).collect();
+        let potential = self.constraint_buffer.borrow();
 
         // A set of masses on active contact vertices.
-        let contact_masses: Vec<_> = active_contact_indices
+        let contact_masses: Vec<_> = surf_indices
             .iter()
-            .map(|&contact_idx| self.vertex_masses[self.sim_verts[surf_indices[contact_idx]]])
+            .map(|&surf_idx| self.vertex_masses[self.sim_verts[surf_idx]])
             .collect();
 
         let SPImplicitContactConstraint {
@@ -206,22 +221,24 @@ impl ContactConstraint for SPImplicitContactConstraint {
         } = *self;
 
         let frictional_contact = frictional_contact.as_mut().unwrap(); // Must be checked above.
-        frictional_contact.contact_basis.update_from_normals(contact_normals);
+        frictional_contact.contact_basis.update_from_normals(normals);
         frictional_contact.impulse.clear();
-        let contact_impulse = vec![0.0; active_contact_indices.len()];
+        let contact_impulse = vec![0.0; surf_indices.len()];
         
         eprintln!("#### Solving Friction");
-        let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = active_contact_indices
+        let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = surf_indices
             .iter()
             .enumerate()
-            .map(|(contact_idx, &aci)| {
-                let vtx_idx = sim_verts[surf_indices[aci]];
+            .map(|(contact_idx, &surf_idx)| {
+                let vtx_idx = sim_verts[surf_idx];
                 let v = frictional_contact.contact_basis.to_contact_coordinates(v[vtx_idx], contact_idx);
-                (v[0], [v[1], v[2]])
+                if potential[surf_idx] < 0.0 {
+                    (v[0], [v[1], v[2]])
+                } else {
+                    // Dont constrain points that are not actually in contact.
+                    (0.0, [0.0, 0.0])
+                }
             }).unzip();
-
-        dbg!(&velocity_n);
-        dbg!(&velocity_t);
 
         let mut r_n = Vec::new();
         let mut r_t = Vec::new();
@@ -237,9 +254,6 @@ impl ContactConstraint for SPImplicitContactConstraint {
             r_t.clear();
             r_t.append(&mut solver.step());
         }
-
-        dbg!(&r_n);
-        dbg!(&r_t);
 
         assert_eq!(r_n.len(), r_t.len());
         frictional_contact.impulse.resize(surf_indices.len(), [0.0; 3]);

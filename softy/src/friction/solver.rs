@@ -569,7 +569,6 @@ mod tests {
             inner_iterations: 30,
             tolerance: 1e-10,
             print_level: 0,
-            density: 1000.0,
         };
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
@@ -600,7 +599,6 @@ mod tests {
             inner_iterations: 40,
             tolerance: 1e-10,
             print_level: 0,
-            density: 1000.0,
         };
 
         let velocity = vec![

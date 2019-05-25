@@ -6,6 +6,7 @@ use crate::friction::FrictionParams;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
+    SPImplicit,
     Implicit,
     Point,
 }

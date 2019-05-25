@@ -10,10 +10,12 @@ use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TetMesh;
 use crate::TriMesh;
+use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
 use geo::{mesh::{Attrib, topology::*}, math::Vector3};
 use std::{cell::RefCell, rc::Rc};
 use reinterpret::*;
 
+pub use self::implicit_contact::*;
 pub use self::sp_implicit_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
@@ -26,14 +28,25 @@ pub fn build_contact_constraint(
     trimesh_rc: &Rc<RefCell<TriMesh>>,
     params: SmoothContactParams,
     density: f64,
+    time_step: f64,
+    energy_model: ElasticTetMeshEnergy,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::Implicit => Box::new(SPImplicitContactConstraint::new(
+        ContactType::SPImplicit => Box::new(SPImplicitContactConstraint::new(
             tetmesh_rc,
             trimesh_rc,
             params.kernel,
             params.friction_params,
             density,
+        )?),
+        ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
+            tetmesh_rc,
+            trimesh_rc,
+            params.kernel,
+            params.friction_params,
+            density,
+            time_step,
+            energy_model,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             tetmesh_rc,
@@ -140,6 +153,10 @@ pub trait ContactConstraint:
             frictional_contact.impulse.clear();
         }
     }
+
+    /// Compute the contact Jacobian as an ArrayFire matrix.
+    fn contact_jacobian_af(&self) -> af::Array<f64>;
+
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,

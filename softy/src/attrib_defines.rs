@@ -1,7 +1,7 @@
 use geo::math::Matrix3;
 
 pub(crate) const FIXED_ATTRIB: &str = "fixed";
-pub(crate) const DISPLACEMENT_ATTRIB: &str = "displacement";
+pub(crate) const VELOCITY_ATTRIB: &str = "vel";
 pub(crate) const REFERENCE_POSITION_ATTRIB: &str = "ref";
 pub(crate) const REFERENCE_VOLUME_ATTRIB: &str = "ref_volume";
 pub(crate) const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &str = "ref_shape_mtx_inv";
@@ -11,7 +11,7 @@ pub(crate) const FRICTION_ATTRIB: &str = "friction";
 pub(crate) const CONTACT_ATTRIB: &str = "contact";
 
 pub(crate) type FixedIntType = i8;
-pub(crate) type DispType = [f64; 3];
+pub(crate) type VelType = [f64; 3];
 pub(crate) type RefPosType = [f64; 3];
 pub(crate) type RefVolType = f64;
 pub(crate) type RefShapeMtxInvType = Matrix3<f64>;

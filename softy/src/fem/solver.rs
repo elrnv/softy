@@ -226,8 +226,9 @@ impl SolverBuilder {
             reinterpret_slice(mesh.vertex_positions()).to_vec(),
         ));
 
+        let prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
         // Initialize zero velocities
-        let prev_vel = Rc::new(RefCell::new(vec![Vector3::zeros(); mesh.num_vertices()]));
+        let prev_vel = Rc::new(RefCell::new(reinterpret_vec(prev_vel)));
 
         let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
 
@@ -271,9 +272,11 @@ impl SolverBuilder {
             .time_step
             .map(|_| MomentumPotential::new(Rc::clone(&mesh), density));
 
+        let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
+
         let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
             let cparams = smooth_contact_params.unwrap(); // already verified above.
-            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams, density).ok()
+            crate::constraints::build_contact_constraint(&mesh, &trimesh, cparams, density, time_step, energy_model_builder.build()).ok()
         });
 
         let displacement_bound = None;
@@ -287,7 +290,7 @@ impl SolverBuilder {
             prev_pos,
             prev_vel,
             cur_pos: RefCell::new(Vec::new()),
-            time_step: f64::from(params.time_step.unwrap_or(0.0f32)),
+            time_step,
             tetmesh: Rc::clone(&mesh),
             kinematic_object,
             energy_model: energy_model_builder.build(),
@@ -404,7 +407,7 @@ impl SolverBuilder {
             verts.as_slice(),
         )?;
 
-        mesh.attrib_or_add::<DispType, VertexIndex>(DISPLACEMENT_ATTRIB, [0.0; 3])?;
+        mesh.attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
 
         // If this attribute doesn't exist, assume no vertices are fixed. This function will
         // return an error if there is an existing Fixed attribute with the wrong type.
@@ -2015,12 +2018,18 @@ mod tests {
         sc_params: SmoothContactParams,
         tetmesh: TetMesh,
     ) -> Result<(), Error> {
+        let friction_iterations = if sc_params.friction_params.is_some() {
+            1
+        } else {
+            0
+        };
         let params = SimParams {
             max_iterations: 200,
             outer_tolerance: 0.1,
             max_outer_iterations: 20,
             gravity: [0.0f32, -9.81, 0.0],
             time_step: Some(0.0208333),
+            friction_iterations,
             ..DYNAMIC_PARAMS
         };
 
@@ -2160,6 +2169,33 @@ mod tests {
                 tolerance: 0.0001,
             },
             friction_params: None,
+        };
+
+        let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;
+
+        ball_bounce_tester(material, sc_params, tetmesh)
+    }
+
+    /// Ball bouncing on an implicit surface with staggered projections friction.
+    #[test]
+    fn ball_bounce_on_sp_implicit_test() -> Result<(), Error> {
+        let material = Material {
+            elasticity: ElasticityParameters::from_young_poisson(10e5, 0.4),
+            ..SOLID_MATERIAL
+        };
+
+        let sc_params = SmoothContactParams {
+            contact_type: ContactType::SPImplicit,
+            kernel: KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 0.0001,
+            },
+            friction_params: Some(crate::friction::FrictionParams {
+                dynamic_friction: 0.2,
+                inner_iterations: 100,
+                tolerance: 1e-5,
+                print_level: 0,
+            }),
         };
 
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball.vtk"))?;

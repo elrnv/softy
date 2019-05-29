@@ -145,10 +145,6 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             dynamic_friction,
             friction_inner_iterations,
             friction_tolerance,
-            material: EL_SoftyMaterialProperties {
-                density,
-                ..
-            },
             ..
         } = self;
         let radius_multiplier = f64::from(contact_radius_multiplier);
@@ -173,7 +169,6 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
                 inner_iterations: friction_inner_iterations as usize,
                 tolerance: f64::from(friction_tolerance),
                 print_level: 5,
-                density: density.into(),
             }),
         }
     }

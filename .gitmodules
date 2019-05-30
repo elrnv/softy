@@ -1,0 +1,3 @@
+[submodule "arrayfire"]
+	path = arrayfire
+	url = git@github.com:elrnv/arrayfire-rust.git

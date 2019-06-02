@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::FrictionParams;
 use crate::contact::*;
 use geo::math::{Matrix3, Vector2};

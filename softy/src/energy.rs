@@ -196,7 +196,6 @@ pub trait EnergyHessian {
         let nnz = nnz as u64;
         let num_rows = x.len() as u64;
         let num_cols = x.len() as u64;
-        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
 
         let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -210,5 +209,21 @@ pub trait EnergyHessian {
             &col_indices,
             af::SparseFormat::COO,
         )
+    }
+
+    /// Construct a sparse matrix in CSR format.
+    fn energy_hessian_sprs(&self, x: &[f64], dx: &[f64], scale: f64) -> sprs::CsMat<f64> {
+        let nnz = self.energy_hessian_size();
+        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
+        self.energy_hessian_indices(indices.as_mut_slice());
+
+        let (rows, cols) = indices.into_iter().map(|MatrixElementIndex { row, col }| (row, col)).unzip();
+
+        let mut values = vec![0.0; nnz];
+        self.energy_hessian_values(x, dx, scale, &mut values);
+
+        let num_rows = x.len();
+        let num_cols = x.len();
+        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }
 }

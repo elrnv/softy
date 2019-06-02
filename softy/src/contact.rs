@@ -1,7 +1,9 @@
 mod solver;
 
 use crate::friction::FrictionParams;
-use na::{Matrix3, Real, Vector2, Vector3};
+use utils::zip;
+use reinterpret::*;
+use na::{Matrix3, Matrix3x2, Real, Vector2, Vector3};
 pub use solver::ContactSolver;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -137,17 +139,21 @@ impl ContactBasis {
         VectorCyl::from(self.to_contact_coordinates(v, contact_index))
     }
 
+    pub fn contact_basis_matrix(&self, contact_index: usize) -> Matrix3<f64> {
+        let n = self.normals[contact_index];
+        let t = self.tangents[contact_index];
+        let b = n.cross(&t);
+        //b = b/b.norm(); // b may need to be renormalized here.
+        Matrix3::from_columns(&[n, t, b])
+    }
+
     /// Transform a vector at the given contact point index to contact coordinates. The index
     /// determines which local contact coordinates to use.
     pub fn to_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> Vector3<f64>
     where
         V3: Into<Vector3<f64>>,
     {
-        let n = self.normals[contact_index];
-        let t = self.tangents[contact_index];
-        let b = n.cross(&t);
-        //b = b/b.norm(); // b may need to be renormalized here.
-        Matrix3::from_columns(&[n, t, b]).transpose() * v.into()
+        self.contact_basis_matrix(contact_index).transpose() * v.into()
     }
 
     pub fn from_cylindrical_contact_coordinates(
@@ -164,11 +170,7 @@ impl ContactBasis {
     where
         V3: Into<Vector3<f64>>,
     {
-        let n = self.normals[contact_index];
-        let t = self.tangents[contact_index];
-        let b = n.cross(&t);
-        //b = b/b.norm(); // b may need to be renormalized here.
-        Matrix3::from_columns(&[n, t, b]) * v.into()
+        self.contact_basis_matrix(contact_index) * v.into()
     }
 
     /// Transform a given stacked vector of vectors in physical space to values in normal direction
@@ -210,6 +212,59 @@ impl ContactBasis {
                     .into()
             })
             .collect()
+    }
+
+    pub fn normal_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
+        let n = self.normals.len();
+
+        // A vector of column major change of basis matrices
+        let row_mtx = Vector3::new(0, 1, 2);
+        let col_mtx = Vector3::new(0, 0, 0);
+        let mut rows = vec![[0; 3]; n];
+        let mut cols = vec![[0; 3]; n];
+        let mut bases = vec![[0.0; 3]; n];
+        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+            let mtx = self.contact_basis_matrix(contact_idx);
+            *m = mtx.column(0).into();
+
+            *r = row_mtx.add_scalar(3*contact_idx).into();
+            *c = col_mtx.add_scalar(contact_idx).into();
+        }
+        
+        let num_rows = 3*n;
+        let num_cols = n;
+        sprs::TriMat::from_triplets(
+            (num_rows, num_cols),
+            reinterpret_vec(rows),
+            reinterpret_vec(cols),
+            reinterpret_vec(bases)).to_csr()
+    }
+
+    pub fn tangent_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
+        let n = self.normals.len();
+
+        // A vector of column major change of basis matrices
+        let row_mtx = Matrix3x2::new(0, 0, 1, 1, 2, 2);
+        let col_mtx = Matrix3x2::new(0, 1, 0, 1, 0, 1);
+        let mut rows = vec![[[0;3];2]; n];
+        let mut cols = vec![[[0;3];2]; n];
+        let mut bases = vec![[[0.0;3];2]; n];
+        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+            let mtx = self.contact_basis_matrix(contact_idx);
+            m[0] = mtx.column(1).into();
+            m[1] = mtx.column(2).into();
+
+            *r = row_mtx.add_scalar(3*contact_idx).into();
+            *c = col_mtx.add_scalar(2*contact_idx).into();
+        }
+        
+        let num_rows = 3*n;
+        let num_cols = 2*n;
+        sprs::TriMat::from_triplets(
+            (num_rows, num_cols),
+            reinterpret_vec(rows),
+            reinterpret_vec(cols),
+            reinterpret_vec(bases)).to_csr()
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of

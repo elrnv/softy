@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::FrictionParams;
 use super::FrictionSolveResult;
 use crate::contact::ContactBasis;
@@ -59,18 +60,18 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionPolarSolver<'a, CJI> {
     fn new_impl(
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
-        contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        _contact_basis: &'a ContactBasis,
+        _masses: &'a [f64],
         params: FrictionParams,
         contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
         let problem = ExplicitFrictionPolarProblem(FrictionPolarProblem {
             velocity,
             contact_force,
-            contact_basis,
+            //contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
-            masses,
+            //masses,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -116,16 +117,17 @@ pub(crate) struct FrictionPolarProblem<'a, CJI> {
     velocity: &'a [Polar2<f64>],
     /// A set of contact forces for each contact point.
     contact_force: &'a [f64],
-    /// Basis defining the normal and tangent space at each point of contact.
-    contact_basis: &'a ContactBasis,
+    ///// Basis defining the normal and tangent space at each point of contact.
+    //contact_basis: &'a ContactBasis,
     /// Coefficient of dynamic friction.
     mu: f64,
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
+    #[allow(dead_code)]
     contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
-    /// Vertex masses.
-    masses: &'a [f64],
+    ///// Vertex masses.
+    //masses: &'a [f64],
 }
 
 impl<CJI> FrictionPolarProblem<'_, CJI> {

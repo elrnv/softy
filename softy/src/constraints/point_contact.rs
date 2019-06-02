@@ -477,7 +477,6 @@ impl ContactConstraint for PointContactConstraint {
         let nnz = nnz as u64;
         let num_rows = self.sim_verts.len() as u64;
         let num_cols = collider.num_vertices() as u64;
-        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
 
         let values = af::Array::new(&cj_values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -491,6 +490,33 @@ impl ContactConstraint for PointContactConstraint {
             &col_indices,
             af::SparseFormat::COO,
         )
+    }
+
+    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
+        // Compute contact jacobian
+        let surf = self.implicit_surface.borrow();
+        let collider = self.collision_object.borrow();
+        let query_points = collider.vertex_positions();
+
+        let mut cj_values = vec![
+            0.0;
+            surf.num_contact_jacobian_entries()
+                .expect("Failed to get contact Jacobian size.")
+        ];
+        surf.contact_jacobian_values(query_points, reinterpret_mut_slice(&mut cj_values))
+            .expect("Failed to compute contact Jacobian.");
+        let cj_indices_iter = surf
+            .contact_jacobian_indices_iter()
+            .expect("Failed to get contact Jacobian indices.");
+
+        let (rows, cols) = cj_indices_iter.unzip();
+
+        let collider = self.collision_object.borrow();
+
+        let num_cols = self.sim_verts.len();
+        let num_rows = collider.num_vertices();
+
+        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, cj_values).to_csr()
     }
 
     fn update_frictional_contact_impulse(
@@ -1171,6 +1197,7 @@ mod tests {
     }
 
     /// Pinch a box against a couple of implicit surfaces.
+    #[allow(dead_code)]
     fn pinch_against_implicit() -> Result<(), Error> {
         let sc_params = SmoothContactParams {
             contact_type: ContactType::Point,

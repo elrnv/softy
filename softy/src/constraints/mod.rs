@@ -160,6 +160,9 @@ pub trait ContactConstraint:
     /// Compute the contact Jacobian as an ArrayFire matrix.
     fn contact_jacobian_af(&self) -> af::Array<f64>;
 
+    /// Compute the contact Jacobian as a sparse matrix.
+    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64>;
+
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,

@@ -166,7 +166,6 @@ impl ContactConstraint for SPImplicitContactConstraint {
         let nnz = nnz as u64;
         let num_rows = nnz as u64;
         let num_cols = self.sim_verts.len() as u64;
-        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
 
         let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -180,6 +179,25 @@ impl ContactConstraint for SPImplicitContactConstraint {
             &col_indices,
             af::SparseFormat::COO,
         )
+    }
+
+    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
+        // The contact jacobian for implicit collisions is just a selection matrix of vertices that
+        // are in contact, since contacts are colocated with vertex positions.
+
+        let surf_indices = self
+            .active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
+
+        let nnz = surf_indices.len();
+        let values = vec![1.0; nnz];
+        let rows: Vec<_> = (0..nnz).collect();
+        let cols: Vec<_> = surf_indices;
+
+        let num_rows = nnz;
+        let num_cols = self.sim_verts.len();
+
+        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }
 
     fn update_frictional_contact_impulse(
@@ -235,7 +253,6 @@ impl ContactConstraint for SPImplicitContactConstraint {
             .contact_basis
             .update_from_normals(normals);
         frictional_contact.impulse.clear();
-        let contact_impulse = vec![0.0; surf_indices.len()];
 
         eprintln!("#### Solving Friction");
         let (velocity_n, velocity_t): (Vec<_>, Vec<_>) = surf_indices

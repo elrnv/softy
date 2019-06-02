@@ -1,10 +1,10 @@
-mod elastic_solver;
+//mod elastic_solver;
 mod polar_solver;
 mod proj_solver;
 mod solver;
 
 use crate::contact::ContactBasis;
-pub use elastic_solver::*;
+//pub use elastic_solver::*;
 pub use polar_solver::*;
 pub use proj_solver::*;
 

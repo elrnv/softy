@@ -210,7 +210,7 @@ pub trait ConstraintHessian<T: Scalar> {
 }
 
 /// Trait implementing the constraint Hessian for ArrayFire.
-trait ConstraintHessianAF: ConstraintHessian<f64> {
+trait ConstraintHessianMatrix: ConstraintHessian<f64> {
     /// Construct ArrayFire matrix.
     fn constraint_hessian_af(
         &self,
@@ -239,7 +239,6 @@ trait ConstraintHessianAF: ConstraintHessian<f64> {
         let nnz = nnz as u64;
         let num_rows = x.len() as u64;
         let num_cols = x.len() as u64;
-        af::Dim4::new(&[num_rows, num_cols, 1, 1]);
 
         let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -254,6 +253,25 @@ trait ConstraintHessianAF: ConstraintHessian<f64> {
             af::SparseFormat::COO,
         ))
     }
+
+    /// Construct ArrayFire matrix.
+    fn constraint_hessian_sprs(
+        &self,
+        x: &[f64],
+        dx: &[f64],
+        lambda: &[f64],
+        scale: f64,
+    ) -> Result<sprs::CsMat<f64>, Error> {
+        let indices_iter = self.constraint_hessian_indices_iter()?;
+        let (rows, cols) = indices_iter.map(|MatrixElementIndex { row, col }| (row, col)).unzip();
+
+        let mut values = vec![0.0; self.constraint_hessian_size()];
+        self.constraint_hessian_values(x, dx, lambda, scale, &mut values)?;
+
+        let num_rows = x.len();
+        let num_cols = x.len();
+        Ok(sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr())
+    }
 }
 
-impl<T> ConstraintHessianAF for T where T: ConstraintHessian<f64> {}
+impl<T> ConstraintHessianMatrix for T where T: ConstraintHessian<f64> {}

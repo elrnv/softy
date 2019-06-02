@@ -18,7 +18,9 @@ jemallocator = "0.3"
 image = "0.21" # For visualizing large sparse matrices
 utils = { path = "../utils" }
 is_sorted = "0.1"
-af = { package = "arrayfire", version = "3.6" }
+sprs = "0.6.4"
+ndarray = "0.12.1"
+af = { package = "arrayfire", path = "../arrayfire" }
 
 [dev-dependencies]
 criterion = { version = "0.2" }

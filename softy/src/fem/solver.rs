@@ -988,7 +988,7 @@ impl Solver {
     /// constraint set. This means that the caller should take care to remap any constraint related
     /// values as needed. The configuration may also need to be reverted.
     fn check_inner_step(&mut self) -> bool {
-        let step_accepted = if self.contact_radius().is_some() {
+        if self.contact_radius().is_some() {
             let step = {
                 let SolverData {
                     problem, solution, ..
@@ -1015,7 +1015,9 @@ impl Solver {
             let relative_tolerance = f64::from(self.sim_params.tolerance) / initial_error;
             dbg!(constraint_violation);
             dbg!(relative_tolerance);
-            if constraint_violation > relative_tolerance {
+            // NOTE: Ipopt can't detect constraint values below 1e-7 in absolute value. It seems to
+            // be a hardcoded threshold.
+            if constraint_violation > 1e-7_f64.max(relative_tolerance) {
                 // intersecting objects detected (allow leeway via relative_tolerance)
                 if self.max_step < step {
                     // Increase the max_step to be slightly bigger than the current step to avoid
@@ -1043,9 +1045,7 @@ impl Solver {
         } else {
             // No contact constraints, all solutions are good.
             true
-        };
-
-        step_accepted
+        }
     }
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
@@ -1121,10 +1121,12 @@ impl Solver {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
                     let step_acceptable = self.check_inner_step();
+
+                    // Restore the constraints to original configuration.
+                    self.problem_mut().reset_constraint_set();
+
                     if step_acceptable {
                         if friction_steps > 0 {
-                            // Restore the constraints to original configuration.
-                            self.problem_mut().reset_constraint_set();
                             debug_assert!(self
                                 .problem()
                                 .is_same_as_constraint_set(&self.old_active_set));
@@ -1139,9 +1141,6 @@ impl Solver {
                         self.commit_solution(true);
                         break;
                     }
-                    // Going to do another iteration, let's reset the constraints back to original
-                    // configuration ...
-                    self.problem_mut().reset_constraint_set();
                 }
                 Err(Error::InnerSolveError {
                     status,

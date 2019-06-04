@@ -257,7 +257,8 @@ impl NonLinearProblem {
         if self.smooth_contact_constraint.is_some() {
             let prev_pos = self.prev_pos.borrow();
             let mut cur_pos = self.cur_pos.borrow_mut();
-            let x = if let Some(v) = solution.map(|sol| sol.primal_variables) {
+            let x = if let Some(uv) = solution.map(|sol| sol.primal_variables) {
+                let v = &self.scale_variables(uv);
                 self.integrate_step(v, &mut cur_pos);
                 reinterpret_slice(cur_pos.as_slice())
             } else {
@@ -341,7 +342,7 @@ impl NonLinearProblem {
         }
     }
 
-    /// Commit displacement by advancing the internal state by the given displacement `dx`.
+    /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
     pub fn advance(
         &mut self,
         uv: &[f64],
@@ -436,12 +437,12 @@ impl NonLinearProblem {
         //self.update_constraints();
     }
 
-    fn compute_constraint_violation(&self, displacement: &[f64], constraint: &mut [f64]) {
+    fn compute_constraint_violation(&self, unscaled_vel: &[f64], constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
         let mut lower = vec![0.0; constraint.len()];
         let mut upper = vec![0.0; constraint.len()];
         self.constraint_bounds(&mut lower, &mut upper);
-        assert!(self.constraint(displacement, constraint));
+        assert!(self.constraint(unscaled_vel, constraint));
         for (c, (l, u)) in constraint
             .iter_mut()
             .zip(lower.into_iter().zip(upper.into_iter()))
@@ -462,10 +463,10 @@ impl NonLinearProblem {
         }
     }
 
-    fn constraint_violation_norm(&self, displacement: &[f64]) -> f64 {
+    fn constraint_violation_norm(&self, unscaled_vel: &[f64]) -> f64 {
         use ipopt::ConstrainedProblem;
         let mut g = vec![0.0; self.num_constraints()];
-        self.compute_constraint_violation(displacement, &mut g);
+        self.compute_constraint_violation(unscaled_vel, &mut g);
         crate::inf_norm(g)
     }
 

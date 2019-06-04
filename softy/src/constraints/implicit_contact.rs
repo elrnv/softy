@@ -376,7 +376,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction_steps
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]) {
+    fn add_mass_weighted_frictional_contact_impulse(&self, vel: &mut [f64]) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -392,7 +392,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                 let vert_idx = self.sim_verts[i];
                 let m = self.vertex_masses[vert_idx];
                 for (j, impulse) in r.iter().enumerate().take(3) {
-                    x[3 * vert_idx + j] += impulse / m;
+                    vel[3 * vert_idx + j] += impulse / m;
                 }
             }
         }

@@ -738,7 +738,7 @@ void update_points(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
         for (exint pt_idx = 0; pt_idx < points.size; ++pt_idx) {
             GA_Offset ptoff = detail->pointOffset(pt_idx);
             detail->setPos3(ptoff, UT_Vector3(points.array[pt_idx]));
-        }
+        }	
 
         update_attributes(detail, hr_pointcloud_attrib_iter(ptcloud, HRAttribLocation::HR_VERTEX, 0), GA_ATTRIB_POINT);
         hr_free_point_array(points);

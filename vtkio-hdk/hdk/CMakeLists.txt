@@ -7,8 +7,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS_DEBUG "-g")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+if(NOT WIN32)
+    set(CMAKE_CXX_FLAGS_DEBUG "-g")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+endif()
 
 # CMAKE_PREFIX_PATH must contain the path to the toolkit/cmake subdirectory of
 # the Houdini installation. See the "Compiling with CMake" section of the HDK
@@ -49,6 +51,11 @@ add_library( ${library_name} SHARED
 # compile definitions.
 target_link_libraries( ${library_name} Houdini ${Vtkio_LIBRARIES} ${MACOS_SECURITY}
     ${Boost_LIBRARIES})
+
+if(WIN32)
+    # Add Rust specific Windows system dependencies.
+    target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv )
+endif(WIN32)
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE

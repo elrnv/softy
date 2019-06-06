@@ -156,6 +156,13 @@ static const char *theDsFile = R"THEDSFILE(
         label "Optimization"
 
         parm {
+            name "clearvelocity"
+            cppname "ClearVelocity"
+            label "Clear Velocity"
+            type toggle
+            default { "off" }
+        }
+        parm {
             name "innertolerance"
             cppname "InnerTolerance"
             label "Inner Error Tolerance"
@@ -427,6 +434,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.material.damping = sopparms.getDamping();
     sim_params.material.density = sopparms.getDensity();
     sim_params.gravity = sopparms.getGravity();
+    sim_params.clear_velocity = sopparms.getClearVelocity();
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();
     sim_params.outer_tolerance = sopparms.getOuterTolerance();

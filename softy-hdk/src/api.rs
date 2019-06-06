@@ -69,6 +69,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
         let EL_SoftySimParams {
             time_step,
             gravity,
+            clear_velocity,
             tolerance,
             max_iterations,
             outer_tolerance,
@@ -88,6 +89,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
                 None
             },
             gravity: [0.0, -gravity, 0.0],
+            clear_velocity,
             tolerance,
             max_iterations,
             outer_tolerance,

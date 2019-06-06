@@ -12,6 +12,7 @@ use geo::mesh::VertexPositions;
 pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
+    clear_velocity: false,
     tolerance: 1e-9,
     max_iterations: 300,
     max_outer_iterations: 1,
@@ -22,6 +23,13 @@ pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     mu_strategy: MuStrategy::Adaptive,
     max_gradient_scaling: 1e-5,
     log_file: None,
+};
+
+pub(crate) const QUASI_STATIC_PARAMS: SimParams = SimParams {
+    gravity: [0.0f32, 0.0, 0.0],
+    time_step: Some(0.01),
+    clear_velocity: true,
+    ..STATIC_PARAMS
 };
 
 pub(crate) const DYNAMIC_PARAMS: SimParams = SimParams {

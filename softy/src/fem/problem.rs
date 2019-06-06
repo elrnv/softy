@@ -343,9 +343,12 @@ impl NonLinearProblem {
     }
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
+    /// If `and_velocity` is `false`, then only positions are advance, and velocities are reset.
+    /// This emulates a critically damped, or quasi-static simulation.
     pub fn advance(
         &mut self,
         uv: &[f64],
+        and_velocity: bool,
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
@@ -375,10 +378,18 @@ impl NonLinearProblem {
                 .for_each(|(prev, &cur)| *prev = cur);
 
             // Update prev vel
-            prev_vel
-                .iter_mut()
-                .zip(cur_vel.iter())
-                .for_each(|(prev, &cur)| *prev = cur);
+            if and_velocity {
+                prev_vel
+                    .iter_mut()
+                    .zip(cur_vel.iter())
+                    .for_each(|(prev, &cur)| *prev = cur);
+            } else {
+                // Clear velocities. This ensures that any non-zero initial velocities are cleared
+                // for subsequent steps.
+                prev_vel
+                    .iter_mut()
+                    .for_each(|v| *v = Vector3::zeros());
+            }
 
             // Update tetmesh vertex positions
             {

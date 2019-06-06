@@ -21,6 +21,7 @@ pub struct EL_SoftySimParams {
     pub material: EL_SoftyMaterialProperties,
     pub time_step: f32,
     pub gravity: f32,
+    pub clear_velocity: bool,
     pub tolerance: f32,
     pub max_iterations: u32,
     pub outer_tolerance: f32,

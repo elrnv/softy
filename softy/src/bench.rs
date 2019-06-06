@@ -21,6 +21,7 @@ mod bench {
         },
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(0.01),
+        clear_velocity: false,
         tolerance: 1e-9,
         max_iterations: 800,
         volume_constraint: false,

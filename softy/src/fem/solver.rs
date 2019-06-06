@@ -227,7 +227,6 @@ impl SolverBuilder {
         ));
 
         let prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-        // Initialize zero velocities
         let prev_vel = Rc::new(RefCell::new(reinterpret_vec(prev_vel)));
 
         let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
@@ -858,12 +857,13 @@ impl Solver {
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let res = {
+            let and_velocity = !self.sim_params.clear_velocity;
             let SolverDataMut {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
 
             // Advance internal state (positions and velocities) of the problem.
-            problem.advance(solution.primal_variables, and_warm_start)
+            problem.advance(solution.primal_variables, and_velocity, and_warm_start)
         };
 
         // Comitting solution. Reduce max_step for next iteration.

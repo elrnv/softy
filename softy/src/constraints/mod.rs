@@ -80,25 +80,63 @@ pub fn remap_values<T: Copy>(
     // Check that both input slices are sorted.
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut old_indices.clone()));
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
-    let mut old_iter = values.zip(old_indices);
+    let mut old_iter = values.zip(old_indices).peekable();
 
     new_indices
         .map(move |new_idx| {
-            let mut new_val = default;
-            for (val, old_idx) in &mut old_iter {
+            while let Some(&(_, old_idx)) = old_iter.peek() {
                 if old_idx < new_idx {
+                    // Trash old value, no corresponding new value here.
+                    old_iter.next();
                     continue;
                 }
 
                 if old_idx == new_idx {
-                    new_val = val;
+                    // A match! Consume old value.
+                    return old_iter.next().unwrap().0;
                 }
+
+                // Otherwise, we don't consume old and increment new_iter only.
 
                 break;
             }
-            new_val
+            return default;
         })
         .collect()
+}
+
+#[test]
+fn remap_values_identity_test() {
+    let old_indices = vec![284, 288, 572, 573, 574, 575];
+    let new_indices = vec![284, 288, 572, 573, 574, 575];
+    let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
+    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
+}
+
+#[test]
+fn remap_values_more_new_test() {
+    let old_indices = vec![284, 288, 572, 573, 574, 575];
+    let new_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
+    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    assert_eq!(new_values, vec![284.0, 288.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 572.0, 573.0, 574.0, 575.0]);
+}
+#[test]
+fn remap_values_more_old_test() {
+    let old_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let new_indices = vec![284, 288, 572, 573, 574, 575];
+    let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
+    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
+}
+#[test]
+fn remap_values_complex_test() {
+    let old_indices = vec![1, 2, 6, 7, 10, 11];
+    let new_indices = vec![0, 1, 3, 4, 5, 6, 7, 8, 11, 12];
+    let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
+    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    assert_eq!(new_values, vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]);
 }
 
 /// Return a vector of masses per simulation mesh vertex.

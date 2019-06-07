@@ -517,7 +517,7 @@ impl Solver {
     }
 
     /// Get a mutable borrow for the underlying `TetMesh`.
-    pub fn borrow_mut_mesh(&mut self) -> RefMut<'_, TetMesh> {
+    pub fn borrow_mut_mesh(&self) -> RefMut<'_, TetMesh> {
         self.problem().tetmesh.borrow_mut()
     }
 
@@ -1120,6 +1120,24 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
+                    //{
+                    //    // Output intermediate mesh
+                    //    let SolverData {
+                    //        problem, solution, ..
+                    //    } = self.solver.solver_data();
+                    //    let pos = problem.compute_step_from_unscaled_velocities(solution.primal_variables);
+                    //    let mut tetmesh = self.borrow_mut_mesh();
+                    //    let v = problem.scale_variables(solution.primal_variables);
+                    //    tetmesh.set_attrib_data::<VelType, VertexIndex>("inter_vel", reinterpret_slice(&v))?;
+                    //    for (&new_p, prev_p) in pos.iter().zip(tetmesh.vertex_positions_mut()) {
+                    //        *prev_p = new_p.into();
+                    //    }
+                    //    geo::io::save_tetmesh(
+                    //        &tetmesh,
+                    //        &std::path::PathBuf::from(format!("./out/mesh_before_{}.vtk", self.step_count)),
+                    //    )?;
+                    //}
+
                     let step_acceptable = self.check_inner_step();
 
                     // Restore the constraints to original configuration.

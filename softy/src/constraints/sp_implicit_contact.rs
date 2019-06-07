@@ -263,7 +263,7 @@ impl ContactConstraint for SPImplicitContactConstraint {
                 let v = frictional_contact
                     .contact_basis
                     .to_contact_coordinates(v[vtx_idx], contact_idx);
-                if potential[surf_idx] < 0.0 {
+                if potential[surf_idx] <= 0.0 {
                     (v[0], [v[1], v[2]])
                 } else {
                     // Dont constrain points that are not actually in contact.

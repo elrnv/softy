@@ -342,6 +342,19 @@ impl NonLinearProblem {
         }
     }
 
+    /// Helper function to compute new positions from a given slice of unscaled velocities.
+    /// This function is used for debugging.
+    #[allow(dead_code)]
+    pub fn compute_step_from_unscaled_velocities(&self, uv: &[f64]) -> std::cell::Ref<'_, [Vector3<f64>]> {
+        let cur_vel = &self.scale_variables(uv);
+        let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
+        {
+            let mut x1 = self.cur_pos.borrow_mut();
+            self.integrate_step(reinterpret_slice(cur_vel), &mut x1);
+        }
+        std::cell::Ref::map(self.cur_pos.borrow(), |p| reinterpret_slice(p))
+    }
+
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
     /// If `and_velocity` is `false`, then only positions are advance, and velocities are reset.
     /// This emulates a critically damped, or quasi-static simulation.
@@ -352,7 +365,6 @@ impl NonLinearProblem {
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
-            // Reinterpret solver variables as positions in 3D space.
             let mut cur_vel = self.scaled_variables.borrow_mut();
             cur_vel.clear();
             cur_vel.extend(self.scaled_variables_iter(uv));
@@ -360,16 +372,15 @@ impl NonLinearProblem {
 
             let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
 
-            let cur_step = self.compute_step(reinterpret_slice(&cur_vel));
+            let cur_pos = self.compute_step(reinterpret_slice(&cur_vel));
+            let cur_pos: std::cell::Ref<'_, [Vector3<f64>]> =
+                std::cell::Ref::map(cur_pos, |p| reinterpret_slice(p));
 
             let mut prev_pos = self.prev_pos.borrow_mut();
             let mut prev_vel = self.prev_vel.borrow_mut();
 
             let old_prev_pos = prev_pos.clone();
             let old_prev_vel = prev_vel.clone();
-
-            let cur_pos: std::cell::Ref<'_, [Vector3<f64>]> =
-                std::cell::Ref::map(cur_step, |p| reinterpret_slice(p));
 
             // Update prev pos
             prev_pos
@@ -646,11 +657,7 @@ impl NonLinearProblem {
         friction_steps: u32,
     ) -> u32 {
         if self.smooth_contact_constraint.is_some() {
-            {
-                let mut sv = self.scaled_variables.borrow_mut();
-                sv.clear();
-                sv.extend(self.scaled_variables_iter(solution.primal_variables));
-            }
+            self.scale_variables(solution.primal_variables);
             let NonLinearProblem {
                 prev_pos,
                 volume_constraint,

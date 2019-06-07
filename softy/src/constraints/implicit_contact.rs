@@ -330,46 +330,64 @@ impl ContactConstraint for ImplicitContactConstraint {
                 })
                 .collect();
 
-            // switch between implicit solver and explicit solver here.
-            for (contact_idx, (&v_t, &cr)) in
-                zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
-            {
-                let v_t = Vector2(v_t);
-                let v_norm = v_t.norm();
-                let r_t = if v_norm > 0.0 {
-                    v_t * (-mu * cr.abs() / v_norm)
-                } else {
-                    Vector2::zeros()
-                };
-                let r = frictional_contact
-                    .contact_basis
-                    .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
-                frictional_contact.impulse.push(r.into());
+            if true {
+                // Implicit Friction
+                
+                let mut solver = FrictionSolver::without_contact_jacobian(
+                    &velocity_t,
+                    &contact_impulse,
+                    &frictional_contact.contact_basis,
+                    &contact_masses,
+                    frictional_contact.params
+                );
+
+                eprintln!("#### Solving Friction");
+                let r_t = solver.step();
+
+                frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
+
+                //// This contact jacobian is a selection matrix or a mapping from contact vertices to
+                //// simulation vertices, because contacts are colocated with a subset of  simulation
+                //// vertices on the surface.
+                //let contact_jacobian_indices: Vec<_> = surf_indices.map(|idx| sim_verts[idx]).collect();
+                //let elastic_energy = crate::friction::ElasticEnergyParams {
+                //    energy_model: energy_model.clone(),
+                //    time_step,
+                //};
+
+                //let solver = ElasticFrictionSolver::selection_contact_jacobian(
+                //    v,
+                //    &contact_impulse,
+                //    &frictional_contact.contact_basis,
+                //    &vertex_masses,
+                //    frictional_contact.params,
+                //    &contact_jacobian_indices,
+                //    Some(elastic_energy),
+                //);
+
+                //eprintln!("#### Solving Friction");
+                //let r = solver.step();
+
+                //frictional_contact.impulse.append(&mut reinterpret_vec(r));
+            } else {
+                // Explicit Friction
+                for (contact_idx, (&v_t, &cr)) in
+                    zip!(velocity_t.iter(), contact_impulse.iter()).enumerate()
+                {
+                    let v_t = Vector2(v_t);
+                    let v_norm = v_t.norm();
+                    let r_t = if v_norm > 0.0 {
+                        v_t * (-mu * cr.abs() / v_norm)
+                    } else {
+                        Vector2::zeros()
+                    };
+                    let r = frictional_contact
+                        .contact_basis
+                        .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
+                    frictional_contact.impulse.push(r.into());
+                }
             }
 
-            //// This contact jacobian is a selection matrix or a mapping from contact vertices to
-            //// simulation vertices, because contacts are colocated with a subset of  simulation
-            //// vertices on the surface.
-            //let contact_jacobian_indices: Vec<_> = surf_indices.map(|idx| sim_verts[idx]).collect();
-            //let elastic_energy = crate::friction::ElasticEnergyParams {
-            //    energy_model: energy_model.clone(),
-            //    time_step,
-            //};
-
-            //let solver = ElasticFrictionSolver::selection_contact_jacobian(
-            //    v,
-            //    &contact_impulse,
-            //    &frictional_contact.contact_basis,
-            //    &vertex_masses,
-            //    frictional_contact.params,
-            //    &contact_jacobian_indices,
-            //    Some(elastic_energy),
-            //);
-
-            //eprintln!("#### Solving Friction");
-            //let r = solver.step();
-
-            //frictional_contact.impulse.append(&mut reinterpret_vec(r));
             friction_steps -= 1;
         };
 

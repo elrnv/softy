@@ -91,19 +91,22 @@ if [ $platform = "Darwin" ]
 
     # Strip all installed rpaths since they reveal directory unrelated structures and are basically
     # useless
-    set rpaths (otool -l $vmr_dir/lib/lib$implicits_lib.dylib | grep RPATH -A2 | grep path | sed "s/.*path\ \(.*\) (.*).*/\1/g")
-    if [ $status -ne 0 ]
-        echo "Error getting rust rpaths in lib$implicits_lib.dylib"
-        exit 2
-    end
+    #set rpaths (otool -l $vmr_dir/lib/lib$implicits_lib.dylib | grep RPATH -A2 | grep path | sed "s/.*path\ \(.*\) (.*).*/\1/g")
+    #if [ $status -ne 0 ]
+    #    echo "Error getting rust rpaths in lib$implicits_lib.dylib"
+    #    exit 2
+    #end
 
-    for rpath in $rpaths
-        install_name_tool -delete_rpath $rpath $vmr_dir/lib/lib$implicits_lib.dylib
-        if [ $status -ne 0 ]
-            echo "Error removing rpath $rpath from lib$implicits_lib.dylib"
-            exit 2
-    end
-    end
+    #for rpath in $rpaths
+    #    install_name_tool -delete_rpath $rpath $vmr_dir/lib/lib$implicits_lib.dylib
+    #    if [ $status -ne 0 ]
+    #        echo "Error removing rpath $rpath from lib$implicits_lib.dylib"
+    #        exit 2
+    #    end
+    #end
+
+    # Set cimplicits to be portable.
+    install_name_tool -id @rpath/lib$implicits_lib.dylib $vmr_dir/lib/lib$implicits_lib.dylib
 
     conan_install
 

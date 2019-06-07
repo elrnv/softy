@@ -23,6 +23,11 @@ fn main() {
 
     // Copy artifact to where CMake can find it easily.
     fs::copy(&output_file, &cmake_target_dir().join(header_file.clone())).unwrap();
+
+    if cfg!(target_os = "linux") {
+        // Set soname on linux to make this lib more portable.
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname=libcimplicits.so");
+    }
 }
 
 fn target_dir() -> PathBuf {

@@ -5,7 +5,7 @@ use crate::energy::*;
 use crate::energy_models::{
     gravity::Gravity,
     momentum::MomentumPotential,
-    volumetric_neohookean::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
+    tet_nh::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{tetmesh::TetCell, topology::*, Attrib, VertexPositions};

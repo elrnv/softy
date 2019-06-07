@@ -6,7 +6,7 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
+use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
 use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TetMesh;

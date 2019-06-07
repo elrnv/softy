@@ -1,6 +1,6 @@
 pub mod gravity;
 pub mod momentum;
-pub mod volumetric_neohookean;
+pub mod tet_nh;
 
 #[cfg(test)]
 pub(crate) mod test_utils {

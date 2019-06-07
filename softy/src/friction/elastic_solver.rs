@@ -1,6 +1,6 @@
 use super::FrictionParams;
 use crate::contact::*;
-use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
+use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
 use geo::math::{Matrix3, Vector3, Vector2};
 use reinterpret::*;
 

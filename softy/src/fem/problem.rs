@@ -3,7 +3,7 @@ use crate::constraint::*;
 use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
 use crate::energy::*;
 use crate::energy_models::{
-    gravity::Gravity, momentum::MomentumPotential, volumetric_neohookean::ElasticTetMeshEnergy,
+    gravity::Gravity, momentum::MomentumPotential, tet_nh::ElasticTetMeshEnergy,
 };
 use crate::matrix::*;
 use geo::math::Vector3;

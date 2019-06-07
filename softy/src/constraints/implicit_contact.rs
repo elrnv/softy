@@ -2,7 +2,7 @@ use super::*;
 use crate::constraint::*;
 use crate::constraints::compute_vertex_masses;
 use crate::contact::*;
-use crate::energy_models::volumetric_neohookean::ElasticTetMeshEnergy;
+use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
 use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;

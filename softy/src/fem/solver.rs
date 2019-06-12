@@ -81,49 +81,6 @@ impl std::fmt::Display for SolveResult {
         )
     }
 }
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ElasticityParameters {
-    /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
-    /// incompressibility. The larger the value, the more incompressible the material is.
-    /// Think of this as "Volume Stiffness".
-    pub bulk_modulus: f32,
-    /// Shear modulus measures the material's resistance to shear deformation. The larger the
-    /// value, the more it resists changes in shape. Think of this as "Shape Stiffness".
-    pub shear_modulus: f32,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Material {
-    /// Parameters determining the elastic behaviour of a simulated solid.
-    pub elasticity: ElasticityParameters,
-    /// Incompressibility sets the material to be globally incompressible, if set to `true`. In
-    /// contrast to `elasticity.bulk_modulus`, this parameter affects global incompressibility,
-    /// while `bulk_modulus` affects *local* incompressibility (on a per element level).
-    pub incompressibility: bool,
-    /// The density of the material.
-    pub density: f32,
-    /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
-    /// damping model.
-    pub damping: f32,
-}
-
-impl ElasticityParameters {
-    pub fn from_young_poisson(young: f32, poisson: f32) -> Self {
-        ElasticityParameters {
-            bulk_modulus: young / (3.0 * (1.0 - 2.0 * poisson)),
-            shear_modulus: young / (2.0 * (1.0 + poisson)),
-        }
-    }
-
-    /// Convert internal elasticity parameters to Lame parameters for Neo-Hookean energy.
-    pub fn lame_parameters(self) -> (f64, f64) {
-        let lambda = f64::from(self.bulk_modulus) - 2.0 * f64::from(self.shear_modulus) / 3.0;
-        let mu = f64::from(self.shear_modulus);
-        (lambda, mu)
-    }
-}
-
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
 pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
@@ -203,50 +160,35 @@ impl SolverBuilder {
             None
         };
 
-        // TODO: add support for more solids.
         if solids.is_empty() {
             return Err(Error::NoSimulationMesh);
         }
 
-        // Get deformable solid.
-        let mut mesh = solids[0].clone();
+        let solid_material = solid_material.unwrap_or_default();
 
-        // We need this quantity to compute the tolerance.
-        let max_vol = mesh
-            .tet_iter()
-            .map(Volume::volume)
-            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
-            .expect("Given TetMesh is empty");
+        let mut max_vol = 0.0;
 
-        // Prepare deformable solid for simulation.
-        Self::prepare_mesh_attributes(&mut mesh)?;
+        for mesh in solids {
+            // We need this quantity to compute the tolerance.
+            max_vol = max_vol.max(mesh
+                              .tet_iter()
+                              .map(Volume::volume)
+                              .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
+                              .expect("Given TetMesh is empty"));
 
-        // Get previous position vector from the tetmesh.
-        let prev_pos = Rc::new(RefCell::new(
-            reinterpret_slice(mesh.vertex_positions()).to_vec(),
-        ));
+            // Prepare deformable solid for simulation.
+            Self::prepare_mesh_attributes(&mut mesh)?;
 
-        let prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-        let prev_vel = Rc::new(RefCell::new(reinterpret_vec(prev_vel)));
+            // Get previous position vector from the tetmesh.
+            let prev_pos = Rc::new(RefCell::new(
+                reinterpret_slice(mesh.vertex_positions()).to_vec(),
+            ));
 
-        let solid_material = solid_material.unwrap(); // TODO: implement variable material properties
+            let prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+            let prev_vel = Rc::new(RefCell::new(reinterpret_vec(prev_vel)));
 
-        // Retrieve lame parameters.
-        let (lambda, mu) = solid_material.elasticity.lame_parameters();
-
-        // Normalize material parameters with mu.
-        let lambda = lambda / mu;
-        let density = f64::from(solid_material.density) / mu;
-        // premultiply damping by timestep reciprocal.
-        let damping =
-            params
-                .time_step
-                .map_or(0.0, |dt| if dt != 0.0 { 1.0 / f64::from(dt) } else { 0.0 })
-                * f64::from(solid_material.damping)
-                / mu;
-
-        // All values are normalized by mu including mu itself so it becomes 1.0.
-        let mu = 1.0;
+            // Retrieve lame parameters.
+            let (lambda, mu) = solid_material.elasticity.lame_parameters();
 
         let gravity = [
             f64::from(params.gravity[0]),

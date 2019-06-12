@@ -126,11 +126,8 @@ impl Into<softy::Material> for EL_SoftySimParams {
             ..
         } = self;
         softy::Material {
-            elasticity: softy::ElasticityParameters {
-                bulk_modulus,
-                shear_modulus,
-            },
-            incompressibility: volume_constraint,
+            elasticity: softy::ElasticityParameters::from_bulk_shear(bulk_modulus, shear_modulus),
+            volume_preservation: volume_constraint,
             density,
             damping,
         }
@@ -184,18 +181,23 @@ pub(crate) fn register_new_solver(
     shell: Option<Box<PolyMesh<f64>>>,
     params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
+    use geo::algo::SplitIntoConnectedComponents;
+
     // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
-    solver_builder
-        .add_solid(tetmesh)
-        .solid_material(params.into());
+    for mesh in tetmesh.split_into_connected_components() {
+        solver_builder.add_solid(mesh);
+    }
+
+    solver_builder.solid_material(params.into());
 
     // Add a shell if one was given.
     if let Some(polymesh) = shell {
-        solver_builder
-            .add_shell((*polymesh).reversed())
-            .smooth_contact_params(params.into());
+        for mesh in (*polymesh).reversed().split_into_connected_components() {
+            solver_builder.add_shell(mesh);
+        }
+        solver_builder.smooth_contact_params(params.into());
     }
 
     let solver = match solver_builder.build() {

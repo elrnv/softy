@@ -227,29 +227,6 @@ pub struct ElasticTetMeshEnergyBuilder {
     material: Option<MaterialModel>,
 }
 
-/// The material model including elasticity Lame parameters as well as dynamics specific parameter
-/// like the damping coefficient.
-#[derive(Copy, Clone, Debug, PartialEq)]
-struct MaterialModel {
-    /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
-    pub lambda: f64,
-    /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
-    pub mu: f64,
-    /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
-    /// damping model. This coefficient should incorporate the timestep.
-    pub damping: f64,
-}
-
-impl Default for MaterialModel {
-    fn default() -> Self {
-        MaterialModel {
-            lambda: 5.4,
-            mu: 263.1,
-            damping: 0.0,
-        }
-    }
-}
-
 impl ElasticTetMeshEnergyBuilder {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.

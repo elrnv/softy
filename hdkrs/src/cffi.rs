@@ -107,7 +107,7 @@ pub unsafe extern "C" fn hr_get_tetmesh_indices(mesh: *const HR_TetMesh) -> HR_I
     let mut indices = Vec::new();
 
     for cell in (*mesh).mesh.cell_iter() {
-        for &idx in cell.get().iter() {
+        for &idx in cell.iter() {
             indices.push(idx);
         }
     }

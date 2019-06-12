@@ -1457,7 +1457,7 @@ mod tests {
         let iso_value = 0.0;
         let epsilon = 0.0001;
         let mut query_points: Vec<[f64;3]> = {
-            let mut file = std::fs::File::open("assets/grid_points.json").expect("Faile to open query points file");
+            let mut file = std::fs::File::open("assets/grid_points.json").expect("Failed to open query points file");
             let mut contents = String::new();
             file.read_to_string(&mut contents).expect("Failed to read grid points json.");
             serde_json::from_str(&contents).expect("Failed to deserialize grid points.")

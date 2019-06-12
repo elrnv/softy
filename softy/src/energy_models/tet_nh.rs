@@ -352,8 +352,8 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
             )
             .zip(tetmesh.cell_iter())
             .map(|((&vol, &DX_inv), cell)| {
-                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
-                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
                 let Dx = tet_x1.shape_matrix();
                 let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
                 let vol = T::from(vol).unwrap();
@@ -411,9 +411,9 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             .zip(tetmesh.cell_iter())
         {
             // Make deformed tet.
-            let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
+            let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
             // Make tet displacement.
-            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
+            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
 
             let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();
@@ -571,7 +571,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
             hess_iter.for_each(|(((tet_hess, &vol), &DX_inv), cell)| {
                 // Make deformed tet.
-                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
 
                 let Dx = tet_x1.shape_matrix();
 

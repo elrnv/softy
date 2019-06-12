@@ -8,7 +8,7 @@ use crate::energy_models::{
     tet_nh::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
 };
 use geo::math::{Matrix3, Vector3};
-use geo::mesh::{tetmesh::TetCell, topology::*, Attrib, VertexPositions};
+use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
@@ -126,13 +126,13 @@ impl ElasticityParameters {
 
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
-pub fn ref_tet(tetmesh: &TetMesh, indices: &TetCell) -> Tetrahedron<f64> {
+pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
     let ref_pos = tetmesh
         .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
         .unwrap()
         .as_slice::<[f64; 3]>()
         .unwrap();
-    Tetrahedron::from_indexed_slice(indices.get(), ref_pos)
+    Tetrahedron::from_indexed_slice(indices, ref_pos)
 }
 
 #[derive(Clone, Debug)]

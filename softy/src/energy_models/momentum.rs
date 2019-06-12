@@ -52,8 +52,8 @@ impl<T: Real> Energy<T> for MomentumPotential {
             .unwrap()
             .zip(tetmesh.cell_iter())
             .map(|(&vol, cell)| {
-                let tet_v0 = Tetrahedron::from_indexed_slice(cell.get(), vel0);
-                let tet_v1 = Tetrahedron::from_indexed_slice(cell.get(), vel1);
+                let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+                let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
                 let tet_dv = tet_v1 - tet_v0;
 
                 T::from(0.5).unwrap() * {
@@ -90,8 +90,8 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
             .unwrap()
             .zip(tetmesh.cell_iter())
         {
-            let tet_v0 = Tetrahedron::from_indexed_slice(cell.get(), vel0);
-            let tet_v1 = Tetrahedron::from_indexed_slice(cell.get(), vel1);
+            let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+            let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
             let tet_dv = (tet_v1 - tet_v0).into_array();
 
             for i in 0..4 {

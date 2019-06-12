@@ -167,7 +167,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         trimesh
             .face_iter()
             .map(|f| {
-                let tri = Triangle::from_indexed_slice(f.get(), pos);
+                let tri = Triangle::from_indexed_slice(f, pos);
                 let c = tri.centroid();
                 let verts = [tri.0, tri.1, tri.2];
                 verts

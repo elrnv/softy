@@ -649,7 +649,9 @@ impl NonLinearProblem {
         forces.iter().map(|&cf| cf * dt).collect()
     }
 
-    /// Return true if the friction impulse was updated, and false otherwise.
+    /// Return the number of friction steps remaining. I.e. friction_steps minus the number of
+    /// friction steps consumed. If there is no contact constraint, then there is no friction, so
+    /// we simply return 0 since there's nothing else left to do.
     pub fn update_friction_impulse(
         &mut self,
         solution: ipopt::Solution,

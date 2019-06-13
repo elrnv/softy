@@ -1,6 +1,6 @@
 pub mod gravity;
-pub mod momentum;
-pub mod tet_nh;
+pub mod inertia;
+pub mod elasticity;
 
 #[cfg(test)]
 pub(crate) mod test_utils {

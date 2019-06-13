@@ -3,7 +3,7 @@ use crate::constraint::*;
 use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
 use crate::energy::*;
 use crate::energy_models::{
-    gravity::Gravity, momentum::MomentumPotential, tet_nh::ElasticTetMeshEnergy,
+    gravity::TetMeshGravity, inertia::TetMeshInertia, elasticity::tet_nh::TetMeshNeoHookean,
 };
 use crate::matrix::*;
 use geo::math::Vector3;
@@ -118,9 +118,9 @@ pub(crate) struct NonLinearProblem {
     /// Static or animated collision object represented by a triangle mesh.
     pub kinematic_object: Option<Rc<RefCell<TriMesh>>>,
     /// Elastic energy model.
-    pub energy_model: ElasticTetMeshEnergy,
+    pub energy_model: TetMeshNeoHookean,
     /// Gravitational potential energy.
-    pub gravity: Gravity,
+    pub gravity: [f64; 3],
     /// Momentum potential. The energy responsible for inertia.
     pub momentum_potential: Option<MomentumPotential>,
     /// Constraint on the total volume.

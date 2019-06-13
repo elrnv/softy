@@ -1,7 +1,7 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::TetMesh;
+use crate::objects::solid::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
@@ -10,19 +10,22 @@ use geo::Real;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 
+/// This trait defines a convenient accessor for the specific gravity implementation for a given
+/// object.
+pub trait Gravity<E, T> where E: Energy<T> + EnergyGradient<T> + EnergyHessian {
+    fn gravity(&self, g: [f64; 3]) -> E;
+}
+
 /// A constant directional force.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Gravity {
-    pub tetmesh: Rc<RefCell<TetMesh>>,
-    density: f64,
+pub struct TetMeshGravity<'a> {
+    solid: &'a TetMeshSolid,
     g: Vector3<f64>,
 }
 
-impl Gravity {
-    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64, gravity: &[f64; 3]) -> Gravity {
-        Gravity {
-            tetmesh,
-            density,
+impl TetMeshGravity {
+    pub fn new(solid: &TetMeshSolid, gravity: &[f64; 3]) -> Gravity {
+        TetMeshGravity {
+            solid,
             g: (*gravity).into(),
         }
     }
@@ -30,11 +33,11 @@ impl Gravity {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
-impl<T: Real> Energy<T> for Gravity {
+impl<T: Real> Energy<T> for TetMeshGravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
-        let tetmesh = self.tetmesh.borrow();
+        let tetmesh = self.solid.tetmesh;
         let tet_iter = tetmesh
             .cell_iter()
             .map(|cell| Tetrahedron::from_indexed_slice(cell, pos1));
@@ -54,12 +57,12 @@ impl<T: Real> Energy<T> for Gravity {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for Gravity {
+impl<T: Real> EnergyGradient<T> for TetMeshGravity {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
 
-        let tetmesh = self.tetmesh.borrow();
+        let tetmesh = self.solid.tetmesh;
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
 
         let g = self.g.map(|x| T::from(x).unwrap());
@@ -78,7 +81,7 @@ impl<T: Real> EnergyGradient<T> for Gravity {
     }
 }
 
-impl EnergyHessian for Gravity {
+impl EnergyHessian for TetMeshGravity {
     fn energy_hessian_size(&self) -> usize {
         0
     }
@@ -90,11 +93,16 @@ impl EnergyHessian for Gravity {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
+    use crate::TetMesh;
+
+    fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
+        TetMeshSolid { tetmesh, material: Material { density: 1000.0, ..Material::default() } }
+    }
 
     #[test]
     fn gradient() {
         gradient_tester(
-            |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
+            |mesh| TetMeshGravity::new(&make_tetmesh_solid(mesh), &[0.0, -9.81, 0.0]),
             EnergyType::Position,
         );
     }
@@ -102,7 +110,7 @@ mod tests {
     #[test]
     fn hessian() {
         hessian_tester(
-            |mesh| Gravity::new(Rc::new(RefCell::new(mesh)), 1000.0, &[0.0, -9.81, 0.0]),
+            |mesh| TetMeshGravity::new(&make_tetmesh_solid(mesh), &[0.0, -9.81, 0.0]),
             EnergyType::Position,
         );
     }

@@ -1,5 +1,8 @@
 use geo::math::Matrix3;
 
+pub(crate) const DENSITY_ATTRIB : &str = "density";
+pub(crate) const MU_ATTRIB : &str = "mu";
+pub(crate) const LAMBDA_ATTRIB : &str = "lambda";
 pub(crate) const FIXED_ATTRIB: &str = "fixed";
 pub(crate) const VELOCITY_ATTRIB: &str = "vel";
 pub(crate) const REFERENCE_POSITION_ATTRIB: &str = "ref";
@@ -10,6 +13,9 @@ pub(crate) const ELASTIC_FORCE_ATTRIB: &str = "elastic_force";
 pub(crate) const FRICTION_ATTRIB: &str = "friction";
 pub(crate) const CONTACT_ATTRIB: &str = "contact";
 
+pub(crate) type DensityType = f64;
+pub(crate) type MuType = f64;
+pub(crate) type LambdaType = f64;
 pub(crate) type FixedIntType = i8;
 pub(crate) type VelType = [f64; 3];
 pub(crate) type RefPosType = [f64; 3];

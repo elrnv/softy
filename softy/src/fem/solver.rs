@@ -3,9 +3,9 @@ use crate::constraints::*;
 use crate::contact::*;
 use crate::energy::*;
 use crate::energy_models::{
-    gravity::Gravity,
-    momentum::MomentumPotential,
-    tet_nh::{ElasticTetMeshEnergyBuilder, NeoHookeanTetEnergy},
+    gravity::TetMeshGravity,
+    inertia::TetMeshInertia,
+    elasticity::tet_nh::{TetMeshNeoHookean, NeoHookeanTetEnergy},
 };
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib, VertexPositions};
@@ -164,11 +164,12 @@ impl SolverBuilder {
             return Err(Error::NoSimulationMesh);
         }
 
-        let solid_material = solid_material.unwrap_or_default();
-
         let mut max_vol = 0.0;
 
-        for mesh in solids {
+        let mut prev_pos = Vec::new();
+        let mut prev_vel = Vec::new();
+
+        for mesh in solids.iter() {
             // We need this quantity to compute the tolerance.
             max_vol = max_vol.max(mesh
                               .tet_iter()
@@ -176,42 +177,33 @@ impl SolverBuilder {
                               .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
                               .expect("Given TetMesh is empty"));
 
-            // Prepare deformable solid for simulation.
-            Self::prepare_mesh_attributes(&mut mesh)?;
-
             // Get previous position vector from the tetmesh.
-            let prev_pos = Rc::new(RefCell::new(
-                reinterpret_slice(mesh.vertex_positions()).to_vec(),
-            ));
+            prev_pos.extend(mesh.vertex_position_iter().cloned());
+            prev_vel.append(&mut mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+        }
 
-            let prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-            let prev_vel = Rc::new(RefCell::new(reinterpret_vec(prev_vel)));
+        let mut volume_constraints = Vec::new();
 
-            // Retrieve lame parameters.
-            let (lambda, mu) = solid_material.elasticity.lame_parameters();
+        for mesh in solids.iter() {
+            // Initialize volume constraint
+            if solid_material.volume_preservation {
+                volume_constraint.push(VolumeConstraint::new(mesh));
+            }
+        }
+
+        // Equip tetmeshes with physics parameters, making them bona-fide solids.
+        let solid_material = solid_material.unwrap_or_default();
+        let solids = solids.into_iter().map(|mut mesh| {
+            // Prepare deformable solid for simulation.
+            Self::prepare_mesh_attributes(&mut mesh, solid_material)?;
+            TetMeshSolid { tetmesh: mesh, material: solid_material }
+        });
 
         let gravity = [
             f64::from(params.gravity[0]),
             f64::from(params.gravity[1]),
             f64::from(params.gravity[2]),
         ];
-
-        // Initialize volume constraint
-        let volume_constraint = if solid_material.incompressibility {
-            Some(VolumeConstraint::new(&mesh))
-        } else {
-            None
-        };
-
-        // Lift mesh into the heap to be shared among energies and constraints.
-        let mesh = Rc::new(RefCell::new(mesh));
-
-        let energy_model_builder =
-            ElasticTetMeshEnergyBuilder::new(Rc::clone(&mesh)).material(lambda, mu, damping);
-
-        let momentum_potential = params
-            .time_step
-            .map(|_| MomentumPotential::new(Rc::clone(&mesh), density));
 
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
 
@@ -240,12 +232,10 @@ impl SolverBuilder {
             prev_vel,
             cur_pos: RefCell::new(Vec::new()),
             time_step,
-            tetmesh: Rc::clone(&mesh),
-            kinematic_object,
-            energy_model: energy_model_builder.build(),
-            gravity: Gravity::new(Rc::clone(&mesh), density, &gravity),
-            momentum_potential,
+            solids,
+            shells,
             volume_constraint,
+            gravity,
             smooth_contact_constraint,
             displacement_bound,
             interrupt_checker: Box::new(|| false),
@@ -348,7 +338,9 @@ impl SolverBuilder {
     }
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
-    pub(crate) fn prepare_mesh_attributes(mesh: &mut TetMesh) -> Result<&mut TetMesh, Error> {
+    pub(crate) fn prepare_mesh_attributes(mesh: &mut TetMesh, material: Material)
+        -> Result<&mut TetMesh, Error>
+    {
         let verts = mesh.vertex_positions().to_vec();
 
         mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
@@ -393,6 +385,58 @@ impl SolverBuilder {
             // These will be computed at the end of the time step.
             mesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
             mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+        }
+
+        // Below we prepare attributes that give elasticity and density parameters. If such were
+        // already provided on the mesh, then any given global parameters are ignored. This
+        // behaviour is justified because variable material properties are most likely more
+        // accurate and probably determined from a data driven method.
+
+        // Prepare elasticity parameters
+        if let Some(elasticity) = material.elasticity {
+            match mesh.add_attrib_data::<LambdaType, CellIndex>(
+                LAMBDA_ATTRIB,
+                vec![elasticity.lambda; mesh.num_cells()]
+            ) {
+                Err(e) => return Err(e);
+                // if ok or already exists, everything is ok.
+                Err(Error::AlreadyExists(_)) => { }
+                _ => {} 
+            }
+            match mesh.add_attrib_data::<MuType, CellIndex>(
+                MU_ATTRIB,
+                vec![elasticity.mu; mesh.num_cells()]
+            ) {
+                Err(e) => return Err(e);
+                // if ok or already exists, everything is ok.
+                Err(Error::AlreadyExists(_)) => { }
+                _ => {} 
+            }
+        } else {
+            // No global elasticity parameters were given. Check that the mesh has the right
+            // parameters.
+            if mesh.attrib_check::<LambdaType, CellIndex>(LAMBDA_ATTRIB).is_err()
+            || mesh.attrib_check::<MuType, CellIndex>(MU_ATTRIB).is_err() {
+                   return Err(Error::MissingElasticityParams)
+            }
+        }
+
+        // Prepare density parameter
+        if let Some(density) = material.density {
+            match mesh.add_attrib_data::<LambdaType, CellIndex>(
+                LAMBDA_ATTRIB,
+                vec![elasticity.lambda; mesh.num_cells()]
+            ) {
+                Err(e) => return Err(e);
+                // if ok or already exists, everything is ok.
+                Err(Error::AlreadyExists(_)) => { }
+                _ => {} 
+            }
+        } else {
+            // No global density parameter was given. Check that it exists on the mesh itself.
+            if mesh.attrib_check::<DensityType, CellIndex>(DENSITY_ATTRIB).is_err() {
+                return Err(Error::MissingDensityParam)
+            }
         }
 
         Ok(mesh)

@@ -1,4 +1,4 @@
-//! Neo-Hookean energy model for tetrahedral meshes.
+//! Neo-Hookean energy model for triangle meshes.
 
 //use std::path::Path;
 //use geo::io::save_tetmesh;
@@ -227,6 +227,29 @@ pub struct ElasticTetMeshEnergyBuilder {
     material: Option<MaterialModel>,
 }
 
+/// The material model including elasticity Lame parameters as well as dynamics specific parameter
+/// like the damping coefficient.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct MaterialModel {
+    /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
+    pub lambda: f64,
+    /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
+    pub mu: f64,
+    /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
+    /// damping model. This coefficient should incorporate the timestep.
+    pub damping: f64,
+}
+
+impl Default for MaterialModel {
+    fn default() -> Self {
+        MaterialModel {
+            lambda: 5.4,
+            mu: 263.1,
+            damping: 0.0,
+        }
+    }
+}
+
 impl ElasticTetMeshEnergyBuilder {
     /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
     /// using a non-linear solver like Ipopt.
@@ -329,8 +352,8 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
             )
             .zip(tetmesh.cell_iter())
             .map(|((&vol, &DX_inv), cell)| {
-                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
-                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
+                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
                 let Dx = tet_x1.shape_matrix();
                 let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
                 let vol = T::from(vol).unwrap();
@@ -388,9 +411,9 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             .zip(tetmesh.cell_iter())
         {
             // Make deformed tet.
-            let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+            let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
             // Make tet displacement.
-            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
+            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell.get(), pos0);
 
             let DX_inv = DX_inv.map(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();
@@ -548,7 +571,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
             hess_iter.for_each(|(((tet_hess, &vol), &DX_inv), cell)| {
                 // Make deformed tet.
-                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell.get(), pos1);
 
                 let Dx = tet_x1.shape_matrix();
 

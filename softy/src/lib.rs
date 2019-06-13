@@ -52,6 +52,8 @@ pub enum Error {
     FrictionSolveError(ipopt::SolveStatus),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
+    MissingDensityParam,
+    MissingElasticityParams,
     MissingContactParams,
     MissingContactConstraint,
     NoSimulationMesh,
@@ -102,14 +104,14 @@ pub enum SimResult {
 impl From<Error> for SimResult {
     fn from(err: Error) -> SimResult {
         match err {
-            Error::SizeMismatch => SimResult::Error("Size mismatch error.".to_string()),
+            Error::SizeMismatch => SimResult::Error("Size mismatch error".to_string()),
             Error::AttribError(e) => SimResult::Error(format!("Attribute error: {:?}", e)),
             Error::InvertedReferenceElement => {
-                SimResult::Error("Inverted reference element detected.".to_string())
+                SimResult::Error("Inverted reference element detected".to_string())
             }
             Error::SolveError(e, solve_result) => match e {
                 ipopt::SolveStatus::MaximumIterationsExceeded => {
-                    SimResult::Warning(format!("Maximum iterations exceeded. \n{}", solve_result))
+                    SimResult::Warning(format!("Maximum iterations exceeded \n{}", solve_result))
                 }
                 e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
             },
@@ -124,14 +126,20 @@ impl From<Error> for SimResult {
             Error::FrictionSolveError(e) => {
                 SimResult::Error(format!("Friction Solve failed: {:?}", e))
             }
+            Error::MissingDensityParam => {
+                SimResult::Error("Missing density parameter or per-element density attribute".to_string())
+            }
+            Error::MissingElasticityParams => {
+                SimResult::Error("Missing elasticity parameters or per-element elasticity attributes".to_string())
+            }
             Error::MissingContactParams => {
-                SimResult::Error("Missing smooth contact parameters.".to_string())
+                SimResult::Error("Missing smooth contact parameters".to_string())
             }
             Error::MissingContactConstraint => {
-                SimResult::Error("Missing smooth contact constraint.".to_string())
+                SimResult::Error("Missing smooth contact constraint".to_string())
             }
-            Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh.".to_string()),
-            Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh.".to_string()),
+            Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh".to_string()),
+            Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh".to_string()),
             Error::SolverCreateError(err) => {
                 SimResult::Error(format!("Failed to create a solver: {:?}", err))
             }

@@ -3,6 +3,7 @@
  */
 pub mod transform;
 pub mod zip;
+pub mod soap;
 
 pub use crate::transform::*;
 pub use crate::zip::*;

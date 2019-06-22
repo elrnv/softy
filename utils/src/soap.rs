@@ -190,6 +190,20 @@ impl<S: Set, N: num::Unsigned> UniformSet<S, N>
     }
 }
 
+impl<S> std::iter::FromIterator<[<S as IntoIterator>::Item; 3]> for UniformSet<S, num::U3>
+    where S: Set + Default + std::iter::FromIterator<<S as IntoIterator>::Item>
+{
+    fn from_iter<T>(iter: T) -> Self
+    where T: IntoIterator<Item = [<S as IntoIterator>::Item; 3]>
+    {
+        let mut s = UniformSet::default();
+        for i in iter {
+            s.push(i);
+        }
+        s
+    }
+}
+
 impl<S: Set> UniformSet<S, num::U3> {
     pub fn push(&mut self, element: [<S as IntoIterator>::Item; 3]) {
         let [a,b,c] = element;
@@ -357,6 +371,8 @@ mod tests {
         fn from_iter<T>(iter: T) -> Self
             where T: IntoIterator<Item = Vertex>
         {
+            // TODO: Benchmark this against unzipping first and iterating twice.
+            // I suspect that would be faster but need to check.
             let mut vs = VertexSet::new();
             for i in iter {
                 vs.push(i);

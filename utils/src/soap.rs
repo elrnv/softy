@@ -37,10 +37,12 @@ pub mod num {
 pub trait Set: Clone + IntoIterator {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool { self.len() == 0 }
+    fn push(&mut self, element: <Self as IntoIterator>::Item);
 }
 
 impl<T: Clone> Set for Vec<T> {
     fn len(&self) -> usize { self.len() }
+    fn push(&mut self, element: T) { self.push(element); }
 }
 
 // Reference into a set.
@@ -151,7 +153,7 @@ impl<S: Set> DynamicSet<S> {
 
 
 /// Assigns a uniform stride to the specified buffer.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UniformSet<S, N> {
     pub data: S,
     phantom: PhantomData<N>,
@@ -169,18 +171,12 @@ where S: Set + ReinterpretSet<N>,
     }
 }
 
-impl<'a, S: 'a, N> UniformSet<S, N>
-where
-    S: Set,
-    &'a S: IntoIterator,
-    &'a mut S: IntoIterator,
-    N: num::Unsigned,
+impl<S: Set, N: num::Unsigned> UniformSet<S, N>
 {
-    pub fn new(data: S) -> Self {
+    pub fn from_flat(data: S) -> Self {
         assert_eq!(data.len() % N::value(), 0);
         UniformSet { data, phantom: PhantomData }
     }
-
     pub fn data(&self) -> &S {
         &self.data
     }
@@ -191,6 +187,21 @@ where
 
     pub fn len(&self) -> usize {
         self.data.len() / N::value()
+    }
+}
+
+impl<S: Set> UniformSet<S, num::U3> {
+    pub fn push(&mut self, element: [<S as IntoIterator>::Item; 3]) {
+        let [a,b,c] = element;
+        self.data.push(a);
+        self.data.push(b);
+        self.data.push(c);
+    }
+}
+
+impl<S: Set + Default, N: num::Unsigned> Default for UniformSet<S, N> {
+    fn default() -> Self {
+        Self::from_flat(S::default())
     }
 }
 
@@ -284,9 +295,10 @@ pub struct UniformSubset<'a, T: 'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TODO: Below code is mechanical, generate it with macros.
 
     /// A displacement node.
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     struct Displacement([f64; 3]);
 
     /// A vertex node.
@@ -296,7 +308,7 @@ mod tests {
     }
 
     struct VertexRef<'a> {
-        pos: &'a [f64; 3],
+        _pos: &'a [f64; 3],
         vel: &'a [f64; 3],
     }
 
@@ -307,13 +319,25 @@ mod tests {
 
     #[derive(Debug)]
     struct VertexSet {
-        pos: UniformSet<Vec<f64>, num::U3>,
-        vel: Vec<[f64; 3]>,
+        pub pos: UniformSet<Vec<f64>, num::U3>,
+        pub vel: Vec<[f64; 3]>,
         //data_rc: Rc<RefCell<Vec<[f64;3]>>>,
         //data_arc: Arc<RwLock<Vec<[f64;3]>>>,
     }
 
     impl VertexSet {
+        fn new() -> Self {
+            VertexSet {
+                pos: UniformSet::default(),
+                vel: Vec::default(),
+            }
+        }
+
+        fn push(&mut self, v: Vertex) {
+            self.pos.push(v.pos);
+            self.vel.push(v.vel);
+        }
+
         fn iter(&self) -> VertexIter {
             VertexIter {
                 pos: self.pos.iter(),
@@ -325,6 +349,20 @@ mod tests {
                 pos: self.pos.iter_mut(),
                 vel: self.vel.iter_mut(),
             }
+        }
+    }
+
+    /// Implements collect for VertexSet
+    impl std::iter::FromIterator<Vertex> for VertexSet {
+        fn from_iter<T>(iter: T) -> Self
+            where T: IntoIterator<Item = Vertex>
+        {
+            let mut vs = VertexSet::new();
+            for i in iter {
+                vs.push(i);
+            }
+
+            vs
         }
     }
 
@@ -354,7 +392,7 @@ mod tests {
         type Item = VertexRef<'a>;
         fn next(&mut self) -> Option<Self::Item> {
             self.pos.next().and_then(|pos|
-                self.vel.next().map(|vel| VertexRef { pos, vel }))
+                self.vel.next().map(|vel| VertexRef { _pos: pos, vel }))
         }
     }
 
@@ -394,27 +432,45 @@ mod tests {
         fn displacement(self, dt: &f64) -> Displacement {
             let mut disp = Displacement([0.0; 3]);
             for i in 0..3 {
-                disp.0[i] = self.pos[i] + dt*self.vel[i];
+                disp.0[i] = dt*self.vel[i];
             }
             disp
+        }
+    }
+
+    impl Vertex {
+        /// A function that generates new data.
+        fn advance(mut self, dt: &f64) -> Vertex {
+            for i in 0..3 {
+                self.pos[i] += dt*self.vel[i];
+            }
+            self
         }
     }
 
     #[test]
     fn basic_set() {
         let mut vs = VertexSet {
-            pos: UniformSet::<_, num::U3>::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            pos: UniformSet::<_, num::U3>::from_flat(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
             vel: vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
         };
 
-        let dt = 0.1;
+        let dt = 0.125;
 
         // The operators available on VertexSet determine how the data will be accessed. This means
         // the data will be available through a borrow, mutable borrow or by value. This is
-        // consistent with `.iter`, `.iter_mut` and `.into_iter` functions on a `Vec`. We should
-        // possibly preserve this interface for sequential access.
-        vs.iter_mut().for_each(|x| x.integrate(&dt));
+        // consistent with `.iter`, `.iter_mut` and `.into_iter` functions on a `Vec`.
+
+        // Compute the displacement. Here we need Displacement and VertexRef.
         let disp: Vec<_> = vs.iter().map(|x| x.displacement(&dt)).collect();
-        dbg!(disp);
+        assert_eq!(disp, vec![Displacement([0.0125, 0.025, 0.0375]), Displacement([0.05, 0.0625, 0.075])]);
+
+        // Modify the vertex by advancing it along the velocity field with time step dt. Here we need VertexMut.
+        vs.iter_mut().for_each(|x| x.integrate(&dt));
+        assert_eq!(vs.pos.clone(), UniformSet::<Vec<f64>, num::U3>::from_flat(vec![1.0125, 2.025, 3.0375,4.05,5.0625,6.075]));
+
+        // Advance VertexSet by consuming it. Here we need Vertex.
+        let vs: VertexSet = vs.into_iter().map(|x| x.advance(&dt)).collect();
+        assert_eq!(vs.pos.clone(), UniformSet::<Vec<f64>, num::U3>::from_flat(vec![1.025, 2.05, 3.075,4.1,5.125,6.15]));
     }
 }

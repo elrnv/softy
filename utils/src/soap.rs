@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
-use std::rc::Rc;
-use cell::{Ref, RefMut, RefCell};
-use std::sync::{Arc, RwLock};
+//use std::rc::Rc;
+//use cell::{Ref, RefMut, RefCell};
+//use std::sync::{Arc, RwLock};
 
 // Helper module defines a few useful unsigned type level integers.
 // This is to avoid having to depend on yet another crate.
@@ -35,16 +35,19 @@ pub mod num {
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
 /// positions.
 pub trait Set: Clone + IntoIterator {
-    //type Iter;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool { self.len() == 0 }
+}
+
+impl<T: Clone> Set for Vec<T> {
+    fn len(&self) -> usize { self.len() }
 }
 
 // Reference into a set.
 //pub struct RefIter<'a, I> {
 //    s: Ref<'a, I>,
 //}
-//
+
 //impl<'a, 'b: 'a, I: StaticIter + 'a> IntoIterator for &'b RefSet<'a, I> {
 //    type Item = &'a <Self as Set>::Element;
 //    type IntoIter = I::Iter;
@@ -149,12 +152,30 @@ impl<S: Set> DynamicSet<S> {
 
 /// Assigns a uniform stride to the specified buffer.
 #[derive(Clone, Debug)]
-pub struct UniformSet<S: Set, N> {
+pub struct UniformSet<S, N> {
     pub data: S,
     phantom: PhantomData<N>,
 }
 
-impl<S: Set, N: num::Unsigned> UniformSet<S, N> {
+impl<S, N> IntoIterator for UniformSet<S, N>
+where S: Set + ReinterpretSet<N>,
+      N: num::Unsigned,
+{
+    type Item = <<S as ReinterpretSet<N>>::Output as IntoIterator>::Item;
+    type IntoIter = <<S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.reinterpret_set().into_iter()
+    }
+}
+
+impl<'a, S: 'a, N> UniformSet<S, N>
+where
+    S: Set,
+    &'a S: IntoIterator,
+    &'a mut S: IntoIterator,
+    N: num::Unsigned,
+{
     pub fn new(data: S) -> Self {
         assert_eq!(data.len() % N::value(), 0);
         UniformSet { data, phantom: PhantomData }
@@ -169,19 +190,81 @@ impl<S: Set, N: num::Unsigned> UniformSet<S, N> {
     }
 
     pub fn len(&self) -> usize {
-        self.data.len() % N::value()
+        self.data.len() / N::value()
     }
-
-    //pub fn iter(&self) -> S::Iter {
-    //    self.data.len() % N::value()
-    //}
 }
 
-//impl<S: Set> UniformSet<S, num::U1> {
-//    pub fn iter(&self) -> S::Iter<> {
-//        self.data.len() % N::value()
-//    }
-//}
+impl<'a, S: 'a, N> UniformSet<S, N>
+where
+    S: Set,
+    &'a S: IntoIterator + ReinterpretSet<N>,
+    &'a mut S: IntoIterator + ReinterpretSet<N>,
+    N: num::Unsigned,
+{
+    pub fn iter(&'a self) -> <<&'a S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+        (&self.data).reinterpret_set().into_iter()
+    }
+    pub fn iter_mut(&'a mut self) -> <<&'a mut S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+        (&mut self.data).reinterpret_set().into_iter()
+    }
+}
+
+pub trait ReinterpretSet<N> {
+    type Output: IntoIterator;
+    fn reinterpret_set(self) -> Self::Output;
+}
+
+impl<'a, T: 'a> ReinterpretSet<num::U3> for Vec<T> {
+    type Output = Vec<[T; 3]>;
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        reinterpret::reinterpret_vec(self)
+    }
+}
+
+impl<'a, T: 'a> ReinterpretSet<num::U3> for &'a Vec<T> {
+    type Output = &'a [[T; 3]];
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        reinterpret::reinterpret_slice(self.as_slice())
+    }
+}
+
+impl<'a, T: 'a> ReinterpretSet<num::U3> for &'a mut Vec<T> {
+    type Output = &'a mut [[T; 3]];
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        reinterpret::reinterpret_mut_slice(self.as_mut_slice())
+    }
+}
+
+/*
+ * When N is U1, reinterpret_set is a noop.
+ * We could implement it as returning an array of size 1, but this is not useful.
+ */
+impl<'a, T: 'a> ReinterpretSet<num::U1> for Vec<T> {
+    type Output = Vec<T>;
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        self
+    }
+}
+
+impl<'a, T: 'a> ReinterpretSet<num::U1> for &'a Vec<T> {
+    type Output = &'a [T];
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        self
+    }
+}
+
+impl<'a, T: 'a> ReinterpretSet<num::U1> for &'a mut Vec<T> {
+    type Output = &'a mut [T];
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        self
+    }
+}
 
 /*
  * Strict subset types corresponding to each of the set types.
@@ -198,6 +281,7 @@ pub struct UniformSubset<'a, T: 'static> {
     pub data: &'a [T],
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -207,24 +291,24 @@ mod tests {
 
     /// A vertex node.
     struct Vertex {
-        //pos: [f64; 3],
+        pos: [f64; 3],
         vel: [f64; 3],
     }
 
     struct VertexRef<'a> {
-        //pos: [f64; 3],
+        pos: &'a [f64; 3],
         vel: &'a [f64; 3],
     }
 
     struct VertexMut<'a> {
-        //pos: [f64; 3],
+        pos: &'a mut [f64; 3],
         vel: &'a mut [f64; 3],
     }
 
     #[derive(Debug)]
     struct VertexSet {
-        //pos: UniformSet<Vec<f64>, num::U3>,
-        vel: Vec<[f64;3]>,
+        pos: UniformSet<Vec<f64>, num::U3>,
+        vel: Vec<[f64; 3]>,
         //data_rc: Rc<RefCell<Vec<[f64;3]>>>,
         //data_arc: Arc<RwLock<Vec<[f64;3]>>>,
     }
@@ -232,13 +316,13 @@ mod tests {
     impl VertexSet {
         fn iter(&self) -> VertexIter {
             VertexIter {
-                //pos: self.pos.iter(),
+                pos: self.pos.iter(),
                 vel: self.vel.iter(),
             }
         }
         fn iter_mut(&mut self) -> VertexIterMut {
             VertexIterMut {
-                //pos: self.pos.iter_mut(),
+                pos: self.pos.iter_mut(),
                 vel: self.vel.iter_mut(),
             }
         }
@@ -246,36 +330,39 @@ mod tests {
 
     // Should be automatically generated
     struct VertexIter<'a> {
-        //pos: std::slice::Iter<[f64; 3]>,
+        pos: std::slice::Iter<'a, [f64; 3]>,
         vel: std::slice::Iter<'a, [f64; 3]>,
     }
     struct VertexIterMut<'a> {
-        //pos: std::slice::IterMut<[f64; 3]>,
+        pos: std::slice::IterMut<'a, [f64; 3]>,
         vel: std::slice::IterMut<'a, [f64; 3]>,
     }
     struct VertexIntoIter {
-        //pos: std::vec::IntoIter<[f64; 3]>,
+        pos: std::vec::IntoIter<[f64; 3]>,
         vel: std::vec::IntoIter<[f64; 3]>,
     }
 
     impl<'a> Iterator for VertexIterMut<'a> {
         type Item = VertexMut<'a>;
         fn next(&mut self) -> Option<Self::Item> {
-            self.vel.next().map(|vel| VertexMut { vel })
+            self.pos.next().and_then(|pos|
+                self.vel.next().map(move |vel| VertexMut { pos, vel }))
         }
     }
 
     impl<'a> Iterator for VertexIter<'a> {
         type Item = VertexRef<'a>;
         fn next(&mut self) -> Option<Self::Item> {
-            self.vel.next().map(|vel| VertexRef { vel })
+            self.pos.next().and_then(|pos|
+                self.vel.next().map(|vel| VertexRef { pos, vel }))
         }
     }
 
     impl Iterator for VertexIntoIter {
         type Item = Vertex;
         fn next(&mut self) -> Option<Self::Item> {
-            self.vel.next().map(|vel| Vertex { vel })
+            self.pos.next().and_then(|pos|
+                self.vel.next().map(|vel| Vertex { pos, vel }))
         }
     }
 
@@ -286,7 +373,7 @@ mod tests {
 
         fn into_iter(self) -> Self::IntoIter {
             VertexIntoIter {
-                //pos: self.pos.into_iter(),
+                pos: self.pos.into_iter(),
                 vel: self.vel.into_iter(),
             }
         }
@@ -296,8 +383,7 @@ mod tests {
         /// A sample function that simply modifies `Self`.
         fn integrate(self, dt: &f64) {
             for i in 0..3 {
-                //self.pos[i] += dt*self.vel[i];
-                self.vel[i] *= dt;
+                self.pos[i] += dt*self.vel[i];
             }
         }
     }
@@ -308,8 +394,7 @@ mod tests {
         fn displacement(self, dt: &f64) -> Displacement {
             let mut disp = Displacement([0.0; 3]);
             for i in 0..3 {
-                //disp[i] = self.pos[i] + dt*self.vel[i];
-                disp.0[i] = self.vel[i];
+                disp.0[i] = self.pos[i] + dt*self.vel[i];
             }
             disp
         }
@@ -318,7 +403,7 @@ mod tests {
     #[test]
     fn basic_set() {
         let mut vs = VertexSet {
-            //pos: UniformSet::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            pos: UniformSet::<_, num::U3>::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
             vel: vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
         };
 
@@ -330,5 +415,6 @@ mod tests {
         // possibly preserve this interface for sequential access.
         vs.iter_mut().for_each(|x| x.integrate(&dt));
         let disp: Vec<_> = vs.iter().map(|x| x.displacement(&dt)).collect();
+        dbg!(disp);
     }
 }

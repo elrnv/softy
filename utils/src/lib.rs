@@ -1,9 +1,10 @@
+pub mod soap;
+pub mod transform;
+pub mod zip;
+
 /**
  * This crate provides convenience functions for building common meshes.
  */
-pub mod transform;
-pub mod zip;
-pub mod soap;
 
 pub use crate::transform::*;
 pub use crate::zip::*;

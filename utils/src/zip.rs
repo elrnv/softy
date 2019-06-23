@@ -1,7 +1,7 @@
 /// Zip multiple iterators
-/// 
+///
 /// # Examples
-/// 
+///
 /// Zipping multiple iterators can significantly reduce the boulerplate ".zip" calls and extra
 /// parentheses.
 ///

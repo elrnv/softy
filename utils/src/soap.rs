@@ -24,71 +24,34 @@ pub mod num {
         }
     }
 
-    def_num!(
-        (U1, 1),
-        (U2, 2),
-        (U3, 3)
-    );
+    def_num!((U1, 1), (U2, 2), (U3, 3));
 }
 
 /// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
 /// positions.
-pub trait Set: Clone + IntoIterator {
+pub trait Set: Clone {
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
-    fn push(&mut self, element: <Self as IntoIterator>::Item);
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    //fn push(&mut self, element: Self::Item);
 }
 
 impl<T: Clone> Set for Vec<T> {
-    fn len(&self) -> usize { self.len() }
-    fn push(&mut self, element: T) { self.push(element); }
+    fn len(&self) -> usize {
+        self.len()
+    }
+    //fn push(&mut self, element: T) {
+    //    self.push(element);
+    //}
 }
 
 // Reference into a set.
 //pub struct RefIter<'a, I> {
 //    s: Ref<'a, I>,
 //}
-
-//impl<'a, 'b: 'a, I: StaticIter + 'a> IntoIterator for &'b RefSet<'a, I> {
-//    type Item = &'a <Self as Set>::Element;
-//    type IntoIter = I::Iter;
-//
-//    fn into_iter(self) -> Self::IntoIter {
-//        self.0.iter()
-//    }
-//}
 /*
-/// Statically checked borrowing iterator.
-pub trait StaticIter {
-    type Iter;
-    type IterMut;
-    fn iter(&self) -> Self::Iter;
-    fn iter_mut(&mut self) -> Self::IterMut;
-}
-
-/// Dynamically checked borrowing iterator.
-pub trait DynamicIter {
-    type Iter;
-    type IterMut;
-    fn iter(&self) -> Self::Iter;
-    fn iter_mut(&self) -> Self::IterMut;
-}
-
-impl<T: Clone> Set for Vec<T> {
-    fn len(&self) -> usize { self.len() }
-}
-
-impl<T> StaticIter<'a> for Vec<T> {
-    type Iter = std::slice::Iter<T>;
-    type IterMut = std::slice::IterMut<T>;
-    fn iter(&self) -> Self::Iter {
-        self.iter()
-    }
-    fn iter_mut(&mut self) -> Self::IterMut {
-        self.iter_mut()
-    }
-}
 
 impl<S: Set> Set for Rc<RefCell<S>> {
     fn len(&self) -> usize { self.borrow().len() }
@@ -121,6 +84,10 @@ impl<S: Set> DynamicIter for Arc<RwLock<S>> {
 }
 */
 
+/*
+ * DynamicSet
+ */
+
 /// A set of variable length elements. Each offset represents one element and gives the offset into
 /// the data buffer for the first of subelement in the Set.
 /// Offsets always begins with a 0 and ends with the length of the buffer.
@@ -131,7 +98,7 @@ pub struct DynamicSet<S> {
 }
 
 impl<S: Set> DynamicSet<S> {
-    pub fn new(offsets: Vec<usize>, data: S) -> Self {
+    pub fn from_offsets(offsets: Vec<usize>, data: S) -> Self {
         assert!(offsets.len() > 0);
         assert_eq!(offsets[0], 0);
         assert_eq!(*offsets.last().unwrap(), data.len());
@@ -151,6 +118,293 @@ impl<S: Set> DynamicSet<S> {
     }
 }
 
+impl<S> DynamicSet<S>
+where
+    S: Set + IntoIterator
+        + AppendVec<Item = <S as IntoIterator>::Item>
+        + Default
+        + std::iter::FromIterator<std::vec::Vec<<S as std::iter::IntoIterator>::Item>>,
+{
+    pub fn from_nested_vec(nested_data: Vec<Vec<<S as IntoIterator>::Item>>) -> Self {
+        nested_data.into_iter().collect()
+    }
+}
+
+// NOTE: There is currently no way to split ownership of a Vec without
+// allocating. For this reason we opt to use a slice and defer allocation to
+// a later step when the results may be collected into another Vec. This saves
+// an extra allocation. We could make this more righteous with a custom
+// allocator.
+impl<'a, S> std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]> for DynamicSet<S>
+where
+    S: Set
+        + ExtendFromSlice<Item = <S as IntoIterator>::Item>
+        + Default
+        + IntoIterator
+        + std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]>,
+    <S as IntoIterator>::Item: 'a,
+{
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = &'a mut [<S as IntoIterator>::Item]>,
+    {
+        let mut s = DynamicSet::default();
+        for i in iter {
+            s.push_slice(i);
+        }
+        s
+    }
+}
+
+// For convenience we also implement a `FromIterator` trait for building from
+// nested `Vec`s, however as mentioned in the note above, this is typically
+// inefficient because it relies on intermediate allocations. This is acceptable
+// during initialization, for instance.
+impl<S> std::iter::FromIterator<Vec<<S as IntoIterator>::Item>> for DynamicSet<S>
+where
+    S: Set
+        + AppendVec<Item = <S as IntoIterator>::Item>
+        + Default
+        + IntoIterator
+        + std::iter::FromIterator<Vec<<S as IntoIterator>::Item>>,
+{
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = Vec<<S as IntoIterator>::Item>>,
+    {
+        let mut s = DynamicSet::default();
+        for i in iter {
+            s.push(i);
+        }
+        s
+    }
+}
+
+impl<S: Clone> Set for DynamicSet<S> {
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+}
+
+impl<S: Set + IntoIterator + AppendVec<Item = <S as IntoIterator>::Item>> DynamicSet<S> {
+    fn push(&mut self, mut element: Vec<<S as IntoIterator>::Item>) {
+        self.data.append(&mut element);
+        self.offsets.push(self.data.len());
+    }
+}
+
+//impl<S: Set> IntoFlatVec for DynamicSet<S> {
+//    type SubItem = <S as IntoFlatVec>::SubItem;
+//    fn into_flat_vec(self) -> Vec<Self::SubItem> {
+//        self.data.into_flat_vec()
+//    }
+//}
+
+impl<S: Set + IntoIterator + ExtendFromSlice<Item = <S as IntoIterator>::Item>> DynamicSet<S> {
+    pub fn push_slice(&mut self, element: &[<S as IntoIterator>::Item]) {
+        self.data.extend_from_slice(element);
+        self.offsets.push(self.data.len());
+    }
+}
+
+impl<S: Set + Default> Default for DynamicSet<S> {
+    fn default() -> Self {
+        Self::from_offsets(vec![0], S::default())
+    }
+}
+
+impl<S> DynamicSet<S>
+where
+    S: Set + AsMutSlice,
+{
+    pub fn iter(&self) -> DynamicIter<<S as AsSlice>::Item> {
+        DynamicIter {
+            offsets: &self.offsets,
+            data: self.data.as_slice(),
+        }
+    }
+    pub fn iter_mut(&mut self) -> DynamicIterMut<<S as AsSlice>::Item> {
+        DynamicIterMut {
+            offsets: &self.offsets,
+            data: self.data.as_mut_slice(),
+        }
+    }
+}
+
+/*
+ * Utility traits intended to expose the necessary behaviour to implement `DynamicSet`s
+ */
+//pub trait IntoFlatVec {
+//    type SubItem;
+//    fn into_flat_vec(self) -> Vec<Self::SubItem>;
+//}
+
+pub trait ExtendFromSlice {
+    type Item;
+    fn extend_from_slice(&mut self, other: &[Self::Item]);
+}
+pub trait AppendVec {
+    type Item;
+    fn append(&mut self, other: &mut Vec<Self::Item>);
+}
+
+pub trait AsSlice {
+    type Item;
+    fn as_slice(&self) -> &[Self::Item];
+}
+pub trait AsMutSlice: AsSlice {
+    fn as_mut_slice(&mut self) -> &mut [Self::Item];
+}
+
+/*
+ * Implement helper traits for supported `Set` types
+ */
+
+//impl<T> IntoFlatVec for Vec<T> {
+//    type SubItem = T;
+//    fn into_flat_vec(self) -> Vec<Self::SubItem> {
+//        self
+//    }
+//}
+
+impl<T: Clone> ExtendFromSlice for Vec<T> {
+    type Item = T;
+    fn extend_from_slice(&mut self, other: &[Self::Item]) {
+        Vec::extend_from_slice(self, other);
+    }
+}
+impl<T> AppendVec for Vec<T> {
+    type Item = T;
+    fn append(&mut self, other: &mut Vec<Self::Item>) {
+        Vec::append(self, other);
+    }
+}
+
+impl<T> AsSlice for Vec<T> {
+    type Item = T;
+    fn as_slice(&self) -> &[Self::Item] {
+        Vec::as_slice(self)
+    }
+}
+impl<T> AsMutSlice for Vec<T> {
+    fn as_mut_slice(&mut self) -> &mut [Self::Item] {
+        Vec::as_mut_slice(self)
+    }
+}
+
+/// A special iterator capable of iterating over a `DynamicSet`.
+pub struct DynamicIter<'a, T> {
+    offsets: &'a [usize],
+    data: &'a [T],
+}
+
+/// Mutable variant of `DynamicIter`.
+pub struct DynamicIterMut<'a, T> {
+    offsets: &'a [usize],
+    data: &'a mut [T],
+}
+
+impl<'a, T: 'a> Iterator for DynamicIter<'a, T> {
+    type Item = &'a [T];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.offsets.split_first() {
+            Some((head, tail)) => {
+                if tail.is_empty() {
+                    return None;
+                }
+                self.offsets = tail;
+                let n = unsafe { *tail.get_unchecked(0) } - *head;
+                let (l, r) = self.data.split_at(n);
+                self.data = r;
+                Some(l)
+            }
+            None => {
+                panic!("Dynamic Set is corrupted and cannot be iterated.");
+            }
+        }
+    }
+}
+
+impl<'a, T: 'a> Iterator for DynamicIterMut<'a, T> {
+    type Item = &'a mut [T];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Get a unique mutable reference for the data.
+        let data_slice = std::mem::replace(&mut self.data, &mut []);
+
+        match self.offsets.split_first() {
+            Some((head, tail)) => {
+                if tail.is_empty() {
+                    return None;
+                }
+                self.offsets = tail;
+                let n = unsafe { *tail.get_unchecked(0) } - *head;
+                let (l, r) = data_slice.split_at_mut(n);
+                self.data = r;
+                Some(l)
+            }
+            None => {
+                panic!("Dynamic Set is corrupted and cannot be iterated.");
+            }
+        }
+    }
+}
+
+/*
+ * `IntoIterator` implementation for `DynamicSet`. Note that this type of
+ * iterator allocates a new `Vec` at each iteration. This is an expensive
+ * operation and is here for compatibility with the rest of Rust's ecosystem.
+ * However, this iterator should be used sparingly.
+ */
+
+/// IntoIter for `DynamicSet`.
+pub struct DynamicIntoIter<T> {
+    offsets: std::iter::Peekable<std::vec::IntoIter<usize>>,
+    data: Vec<T>,
+}
+
+impl<T> Iterator for DynamicIntoIter<T> {
+    type Item = Vec<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let begin = self
+            .offsets
+            .next()
+            .expect("Dynamic Set is corrupted and cannot be iterated.");
+        if self.offsets.len() <= 1 {
+            return None; // Ignore the last offset
+        }
+        let end = *self.offsets.peek().unwrap();
+        let n = end - begin;
+        let mut rest = self.data.split_off(n);
+        std::mem::swap(&mut rest, &mut self.data);
+        Some(rest) // These are the elements [0..n).
+    }
+}
+
+//impl<S> IntoIterator for DynamicSet<S>
+//where
+//    S: Set,
+//{
+//    type Item = Vec<<Self as IntoFlatVec>::SubItem>;
+//    type IntoIter = DynamicIntoIter<<Self as IntoFlatVec>::SubItem>;
+//
+//    fn into_iter(self) -> Self::IntoIter {
+//        let DynamicSet {
+//            offsets,
+//            data,
+//        } = self;
+//        DynamicIntoIter {
+//            offsets: offsets.into_iter().peekable(),
+//            data: data.into_flat_vec(),
+//        }
+//    }
+//}
+
+/*
+ * Uniform Set
+ */
 
 /// Assigns a uniform stride to the specified buffer.
 #[derive(Clone, Debug, PartialEq)]
@@ -159,23 +413,13 @@ pub struct UniformSet<S, N> {
     phantom: PhantomData<N>,
 }
 
-impl<S, N> IntoIterator for UniformSet<S, N>
-where S: Set + ReinterpretSet<N>,
-      N: num::Unsigned,
-{
-    type Item = <<S as ReinterpretSet<N>>::Output as IntoIterator>::Item;
-    type IntoIter = <<S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.data.reinterpret_set().into_iter()
-    }
-}
-
-impl<S: Set, N: num::Unsigned> UniformSet<S, N>
-{
+impl<S: Set, N: num::Unsigned> UniformSet<S, N> {
     pub fn from_flat(data: S) -> Self {
         assert_eq!(data.len() % N::value(), 0);
-        UniformSet { data, phantom: PhantomData }
+        UniformSet {
+            data,
+            phantom: PhantomData,
+        }
     }
     pub fn data(&self) -> &S {
         &self.data
@@ -190,11 +434,51 @@ impl<S: Set, N: num::Unsigned> UniformSet<S, N>
     }
 }
 
+//impl<S: Set, N> IntoFlatVec for UniformSet<S, N> {
+//    type SubItem = <S as IntoFlatVec>::SubItem;
+//    fn into_flat_vec(self) -> Vec<Self::SubItem> {
+//        self.data.into_flat_vec()
+//    }
+//}
+
+pub trait Push<T> {
+    fn push(&mut self, element: T);
+}
+
+impl<T> Push<T> for Vec<T> {
+    fn push(&mut self, element: T) {
+        Vec::push(self, element);
+    }
+}
+impl<S: IntoIterator + Push<<S as IntoIterator>::Item>> Push<[<S as IntoIterator>::Item; 3]> for UniformSet<S, num::U3> {
+    fn push(&mut self, element: [<S as IntoIterator>::Item; 3]) {
+        let [a, b, c] = element;
+        self.data.push(a);
+        self.data.push(b);
+        self.data.push(c);
+    }
+}
+
+impl<S, N> IntoIterator for UniformSet<S, N>
+where
+    S: Set + IntoIterator + ReinterpretSet<N>,
+    N: num::Unsigned,
+{
+    type Item = <<S as ReinterpretSet<N>>::Output as IntoIterator>::Item;
+    type IntoIter = <<S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.reinterpret_set().into_iter()
+    }
+}
+
 impl<S> std::iter::FromIterator<[<S as IntoIterator>::Item; 3]> for UniformSet<S, num::U3>
-    where S: Set + Default + std::iter::FromIterator<<S as IntoIterator>::Item>
+where
+    S: Set + IntoIterator + Push<<S as IntoIterator>::Item> + Default + std::iter::FromIterator<<S as IntoIterator>::Item>,
 {
     fn from_iter<T>(iter: T) -> Self
-    where T: IntoIterator<Item = [<S as IntoIterator>::Item; 3]>
+    where
+        T: IntoIterator<Item = [<S as IntoIterator>::Item; 3]>,
     {
         let mut s = UniformSet::default();
         for i in iter {
@@ -204,24 +488,15 @@ impl<S> std::iter::FromIterator<[<S as IntoIterator>::Item; 3]> for UniformSet<S
     }
 }
 
-impl<S: Set> UniformSet<S, num::U3> {
-    pub fn push(&mut self, element: [<S as IntoIterator>::Item; 3]) {
-        let [a,b,c] = element;
-        self.data.push(a);
-        self.data.push(b);
-        self.data.push(c);
-    }
-}
-
 impl<S: Set + Default, N: num::Unsigned> Default for UniformSet<S, N> {
     fn default() -> Self {
         Self::from_flat(S::default())
     }
 }
 
-impl<'a, S: 'a, N> UniformSet<S, N>
+impl<'a, S, N> UniformSet<S, N>
 where
-    S: Set,
+    S: Set + 'a,
     &'a S: IntoIterator + ReinterpretSet<N>,
     &'a mut S: IntoIterator + ReinterpretSet<N>,
     N: num::Unsigned,
@@ -229,7 +504,9 @@ where
     pub fn iter(&'a self) -> <<&'a S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
         (&self.data).reinterpret_set().into_iter()
     }
-    pub fn iter_mut(&'a mut self) -> <<&'a mut S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+    pub fn iter_mut(
+        &'a mut self,
+    ) -> <<&'a mut S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
         (&mut self.data).reinterpret_set().into_iter()
     }
 }
@@ -304,189 +581,4 @@ pub struct DynamicSubset<'a, T: 'static> {
 #[derive(Clone, Debug)]
 pub struct UniformSubset<'a, T: 'static> {
     pub data: &'a [T],
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    // TODO: Below code is mechanical, generate it with macros.
-
-    /// A displacement node.
-    #[derive(Debug, PartialEq)]
-    struct Displacement([f64; 3]);
-
-    /// A vertex node.
-    struct Vertex {
-        pos: [f64; 3],
-        vel: [f64; 3],
-    }
-
-    struct VertexRef<'a> {
-        _pos: &'a [f64; 3],
-        vel: &'a [f64; 3],
-    }
-
-    struct VertexMut<'a> {
-        pos: &'a mut [f64; 3],
-        vel: &'a mut [f64; 3],
-    }
-
-    #[derive(Debug)]
-    struct VertexSet {
-        pub pos: UniformSet<Vec<f64>, num::U3>,
-        pub vel: Vec<[f64; 3]>,
-        //data_rc: Rc<RefCell<Vec<[f64;3]>>>,
-        //data_arc: Arc<RwLock<Vec<[f64;3]>>>,
-    }
-
-    impl VertexSet {
-        fn new() -> Self {
-            VertexSet {
-                pos: UniformSet::default(),
-                vel: Vec::default(),
-            }
-        }
-
-        fn push(&mut self, v: Vertex) {
-            self.pos.push(v.pos);
-            self.vel.push(v.vel);
-        }
-
-        fn iter(&self) -> VertexIter {
-            VertexIter {
-                pos: self.pos.iter(),
-                vel: self.vel.iter(),
-            }
-        }
-        fn iter_mut(&mut self) -> VertexIterMut {
-            VertexIterMut {
-                pos: self.pos.iter_mut(),
-                vel: self.vel.iter_mut(),
-            }
-        }
-    }
-
-    /// Implements collect for VertexSet
-    impl std::iter::FromIterator<Vertex> for VertexSet {
-        fn from_iter<T>(iter: T) -> Self
-            where T: IntoIterator<Item = Vertex>
-        {
-            // TODO: Benchmark this against unzipping first and iterating twice.
-            // I suspect that would be faster but need to check.
-            let mut vs = VertexSet::new();
-            for i in iter {
-                vs.push(i);
-            }
-
-            vs
-        }
-    }
-
-    // Should be automatically generated
-    struct VertexIter<'a> {
-        pos: std::slice::Iter<'a, [f64; 3]>,
-        vel: std::slice::Iter<'a, [f64; 3]>,
-    }
-    struct VertexIterMut<'a> {
-        pos: std::slice::IterMut<'a, [f64; 3]>,
-        vel: std::slice::IterMut<'a, [f64; 3]>,
-    }
-    struct VertexIntoIter {
-        pos: std::vec::IntoIter<[f64; 3]>,
-        vel: std::vec::IntoIter<[f64; 3]>,
-    }
-
-    impl<'a> Iterator for VertexIterMut<'a> {
-        type Item = VertexMut<'a>;
-        fn next(&mut self) -> Option<Self::Item> {
-            self.pos.next().and_then(|pos|
-                self.vel.next().map(move |vel| VertexMut { pos, vel }))
-        }
-    }
-
-    impl<'a> Iterator for VertexIter<'a> {
-        type Item = VertexRef<'a>;
-        fn next(&mut self) -> Option<Self::Item> {
-            self.pos.next().and_then(|pos|
-                self.vel.next().map(|vel| VertexRef { _pos: pos, vel }))
-        }
-    }
-
-    impl Iterator for VertexIntoIter {
-        type Item = Vertex;
-        fn next(&mut self) -> Option<Self::Item> {
-            self.pos.next().and_then(|pos|
-                self.vel.next().map(|vel| Vertex { pos, vel }))
-        }
-    }
-
-    // Implement iterator on `VertexSet`
-    impl IntoIterator for VertexSet {
-        type Item = Vertex;
-        type IntoIter = VertexIntoIter;
-
-        fn into_iter(self) -> Self::IntoIter {
-            VertexIntoIter {
-                pos: self.pos.into_iter(),
-                vel: self.vel.into_iter(),
-            }
-        }
-    }
-
-    impl VertexMut<'_> {
-        /// A sample function that simply modifies `Self`.
-        fn integrate(self, dt: &f64) {
-            for i in 0..3 {
-                self.pos[i] += dt*self.vel[i];
-            }
-        }
-    }
-
-    // Implement kernels
-    impl VertexRef<'_> {
-        /// A function that generates new data.
-        fn displacement(self, dt: &f64) -> Displacement {
-            let mut disp = Displacement([0.0; 3]);
-            for i in 0..3 {
-                disp.0[i] = dt*self.vel[i];
-            }
-            disp
-        }
-    }
-
-    impl Vertex {
-        /// A function that generates new data.
-        fn advance(mut self, dt: &f64) -> Vertex {
-            for i in 0..3 {
-                self.pos[i] += dt*self.vel[i];
-            }
-            self
-        }
-    }
-
-    #[test]
-    fn basic_set() {
-        let mut vs = VertexSet {
-            pos: UniformSet::<_, num::U3>::from_flat(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
-            vel: vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
-        };
-
-        let dt = 0.125;
-
-        // The operators available on VertexSet determine how the data will be accessed. This means
-        // the data will be available through a borrow, mutable borrow or by value. This is
-        // consistent with `.iter`, `.iter_mut` and `.into_iter` functions on a `Vec`.
-
-        // Compute the displacement. Here we need Displacement and VertexRef.
-        let disp: Vec<_> = vs.iter().map(|x| x.displacement(&dt)).collect();
-        assert_eq!(disp, vec![Displacement([0.0125, 0.025, 0.0375]), Displacement([0.05, 0.0625, 0.075])]);
-
-        // Modify the vertex by advancing it along the velocity field with time step dt. Here we need VertexMut.
-        vs.iter_mut().for_each(|x| x.integrate(&dt));
-        assert_eq!(vs.pos.clone(), UniformSet::<Vec<f64>, num::U3>::from_flat(vec![1.0125, 2.025, 3.0375,4.05,5.0625,6.075]));
-
-        // Advance VertexSet by consuming it. Here we need Vertex.
-        let vs: VertexSet = vs.into_iter().map(|x| x.advance(&dt)).collect();
-        assert_eq!(vs.pos.clone(), UniformSet::<Vec<f64>, num::U3>::from_flat(vec![1.025, 2.05, 3.075,4.1,5.125,6.15]));
-    }
 }

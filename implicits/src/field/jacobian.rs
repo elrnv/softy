@@ -1692,6 +1692,108 @@ mod tests {
         }
     }
 
+    /// Verify that the contact jacobian can interpolate an accurate normal.
+    /// Given a triangle with identical normals at each vertex, we compute the
+    /// corresponding normal at the triangle centroid and verify that it is the
+    /// same.
+    #[test]
+    fn contact_jacobian_normal_test() -> Result<(), Error> {
+        use crate::*;
+        use geo::NumVertices;
+
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
+        let area = 0.32475975;
+        let centroid = [0.0; 3];
+        let query_points = vec![centroid];
+
+        let surf_params = Params {
+            kernel: kernel::KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 1e-5,
+            },
+            background_field:
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+            sample_type: SampleType::Vertex,
+            max_step: 0.0,
+        };
+
+        let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
+
+        let mut jac = vec![[[0.0; 3]; 3]; trimesh.num_vertices()];
+
+        surf.contact_jacobian_matrices(&query_points, &mut jac)?;
+        let num_jac_entries = surf.num_contact_jacobian_matrices()?;
+        assert_eq!(num_jac_entries, 3);
+        let weighted_normal = Vector3([0.0, area, 0.0]);
+
+        let mut result = Vector3::zeros();
+        for &jac_mtx in jac.iter() {
+            result += Matrix3(jac_mtx) * weighted_normal;
+        }
+
+        let expected = weighted_normal;
+        for i in 0..3 {
+            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+        Ok(())
+    }
+
+    /// Verify that the contact jacobian can interpolate an accurate tangent vector.
+    /// Given a triangle with identical tangent vectors at each vertex, we compute the
+    /// corresponding vector at the triangle centroid and verify that it is the
+    /// same.
+    #[test]
+    fn contact_jacobian_tangent_test() -> Result<(), Error> {
+        use crate::*;
+        use geo::NumVertices;
+
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
+        let centroid = [0.0; 3];
+        let query_points = vec![centroid];
+
+        let surf_params = Params {
+            kernel: kernel::KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 1e-5,
+            },
+            background_field:
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+            sample_type: SampleType::Vertex,
+            max_step: 0.0,
+        };
+
+        let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
+
+        let mut jac = vec![[[0.0; 3]; 3]; trimesh.num_vertices()];
+
+        surf.contact_jacobian_matrices(&query_points, &mut jac)?;
+        let num_jac_entries = surf.num_contact_jacobian_matrices()?;
+        assert_eq!(num_jac_entries, 3);
+        let tangent = Vector3([1.5, 0.3, 0.5]);
+
+        let mut result = Vector3::zeros();
+        for &jac_mtx in jac.iter() {
+            result += Matrix3(jac_mtx) * tangent;
+        }
+        dbg!(result);
+
+        let expected = tangent;
+        for i in 0..3 {
+            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+        Ok(())
+    }
+
     /// Tester for the contact jacobian. This tester is parameterized by background field type,
     /// radius and a perturb function.
     fn contact_jacobian<P: FnMut() -> Vector3<f64>>(

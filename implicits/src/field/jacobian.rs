@@ -424,7 +424,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                           pos, nml, value, ..
                       }| {
                     let unit_nml = nml * (T::one() / nml.norm());
-                    Self::sample_contact_jacobian_product_at(
+                    Self::sample_query_jacobian_at(
                         q,
                         pos,
                         value,
@@ -501,7 +501,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// using the unit normal as the multiplier and summing over all samples, this function
     /// produces the true Jacobian of the potential with respect to the query point.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn sample_contact_jacobian_product_at<'a, K: 'a>(
+    pub(crate) fn sample_query_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         sample_pos: Vector3<T>,
         sample_value: T,
@@ -527,18 +527,48 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn sample_contact_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         sample_pos: Vector3<T>,
+        sample_nml: Vector3<T>,
         kernel: K,
-        dw_neigh_normalized: Vector3<T>,
+        grad_phi: Vector3<T>,
         weight_sum_inv: T,
         closest_d: T,
     ) -> Matrix3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy,
     {
-        let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
-        let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
-        ((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w)
-            * weight_sum_inv
+        let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
+        let u = sample_nml.cross(grad_phi);
+        let ux = u.skew();
+        let rot = Matrix3::identity() + ux + (ux*ux) / (T::one() + sample_nml.dot(grad_phi));
+        rot * w_normalized
+
+        //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
+        //let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
+        //((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w)
+        //    * weight_sum_inv
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn sample_contact_jacobian_product_at<'a, K: 'a>(
+        q: Vector3<T>,
+        sample_pos: Vector3<T>,
+        sample_nml: Vector3<T>,
+        kernel: K,
+        grad_phi: Vector3<T>,
+        weight_sum_inv: T,
+        closest_d: T,
+        multiplier: Vector3<T>,
+    ) -> Vector3<T>
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy,
+    {
+        let jac = Self::sample_contact_jacobian_at(q, sample_pos, sample_nml, kernel, grad_phi, weight_sum_inv, closest_d);
+        jac * multiplier
+
+        //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
+        //let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
+        //let psi = T::from(sample_value).unwrap() + multiplier.dot(q - sample_pos);
+        //((dw - dw_neigh_normalized * w) * psi + (multiplier * w)) * weight_sum_inv
     }
 
     /// Compute the normalized sum of all sample weight gradients.
@@ -833,14 +863,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac_iter = samples.into_iter().map(move |sample| {
             Self::sample_contact_jacobian_at(
                 q,
                 sample.pos,
+                sample.nml,
                 kernel,
-                dw_neigh,
+                grad_phi,
                 weight_sum_inv,
                 closest_d,
             )
@@ -870,24 +901,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac = samples
             .into_iter()
             .map(
                 move |Sample {
-                          index, pos, value, ..
+                          index, pos, nml, ..
                       }| {
                     let mult = sample_multipliers[index].into();
                     Self::sample_contact_jacobian_product_at(
                         q,
                         pos,
-                        value,
+                        nml,
                         kernel,
-                        mult,
-                        dw_neigh,
+                        grad_phi,
                         weight_sum_inv,
                         closest_d,
+                        mult,
                     )
                 },
             )
@@ -918,13 +949,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac = samples
             .into_iter()
             .map(
                 move |Sample {
-                          index, pos, value, ..
+                          index, pos, nml, ..
                       }| {
                     let mult = (0..3).fold(Vector3::zeros(), |acc, i| {
                         acc + vertex_multipliers[triangles[index][i]].into()
@@ -932,12 +963,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     Self::sample_contact_jacobian_product_at(
                         q,
                         pos,
-                        value,
+                        nml,
                         kernel,
-                        mult,
-                        dw_neigh,
+                        grad_phi,
                         weight_sum_inv,
                         closest_d,
+                        mult,
                     )
                 },
             )
@@ -1774,8 +1805,8 @@ mod tests {
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
         let test_vector = Vector3([1.5, 0.3, 0.5]);
-        trimesh.add_attrib_data::<[f64;3], VertexIndex>("V", vec![test_vector.into();3]);
-        trimesh.add_attrib_data::<[f64;3], VertexIndex>("N", vec![[0.0,1.0,0.0];3]);
+        trimesh.add_attrib_data::<[f64;3], VertexIndex>("V", vec![test_vector.into();3])?;
+        trimesh.add_attrib_data::<[f64;3], VertexIndex>("N", vec![[0.0,1.0,0.0];3])?;
 
         let mut surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
 
@@ -1792,9 +1823,9 @@ mod tests {
         dbg!(result);
 
         let mut ptcld = geo::mesh::PointCloud::new(query_points.clone());
-        surf.compute_potential_on_mesh(&mut ptcld, || false);
+        surf.compute_potential_on_mesh(&mut ptcld, || false)?;
         let result_attrib = ptcld.remove_attrib::<VertexIndex>("tangents")?;
-        let result2: [f64; 3] = result_attrib.clone_into_vec()?[0];
+        let result2: [f32; 3] = result_attrib.clone_into_vec()?[0];
         dbg!(result2);
 
         let expected = test_vector;

@@ -220,7 +220,7 @@ impl ContactConstraint for SPImplicitContactConstraint {
             .expect("Failed to retrieve constraint indices.");
 
         {
-            // NOTE: here we rely on query points being updated in contact_normals.
+            // NOTE: here we rely on query points being updated in the contact_normals fn.
             let SPImplicitContactConstraint {
                 constraint_buffer,
                 implicit_surface,

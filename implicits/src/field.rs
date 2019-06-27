@@ -743,22 +743,21 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let weight_sum_inv = bg.weight_sum_inv();
 
-        let grad_w_sum_normalized =
-            Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_potential);
 
         for Sample {
-            pos, vel, value, ..
+            pos, vel, nml, ..
         } in samples.iter()
         {
             out_field += Self::sample_contact_jacobian_product_at(
                 q,
                 pos,
-                value,
+                nml,
                 kernel,
-                vel,
-                grad_w_sum_normalized,
+                grad_phi,
                 weight_sum_inv,
                 closest_dist,
+                vel,
             );
         }
 
@@ -954,8 +953,29 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             numerator += w * p;
                             out_normal +=
                                 grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
-                            out_tangent +=
-                                grad_w_normalized * (q - pos).dot(vel) + vel * w_normalized;
+
+                            // Compute vector interpolation
+                            let grad_phi = Self::query_jacobian_at(pos, view, Some(*closest), kernel, bg_field_params);
+
+                            let nml_dot_grad = nml.dot(grad_phi);
+                            // Handle degenerate case when nml and grad are exactly opposing. In
+                            // this case the solution is not unique, so we pick one.
+                            let rot = if nml_dot_grad != -T::one() {
+                                let u = nml.cross(grad_phi);
+                                let ux = u.skew();
+                                Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+                            } else {
+                                // TODO: take a convenient unit vector u and compute the rotation
+                                // as
+                                //let ux = u.skew();
+                                //Matrix3::identity() + (ux*ux) * 2
+                                Matrix3::identity()
+                            };
+
+                            dbg!(rot);
+                            dbg!(vel);
+
+                            out_tangent += (rot * vel) * w_normalized;
                         }
 
                         *potential = (*potential + numerator.to_f32().unwrap())

@@ -433,7 +433,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                           pos, nml, value, ..
                       }| {
                     let unit_nml = nml * (T::one() / nml.norm());
-                    Self::sample_contact_jacobian_product_at(
+                    Self::sample_query_jacobian_at(
                         q,
                         pos,
                         value,
@@ -510,7 +510,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// using the unit normal as the multiplier and summing over all samples, this function
     /// produces the true Jacobian of the potential with respect to the query point.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn sample_contact_jacobian_product_at<'a, K: 'a>(
+    pub(crate) fn sample_query_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         sample_pos: Vector3<T>,
         sample_value: T,
@@ -536,18 +536,57 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub(crate) fn sample_contact_jacobian_at<'a, K: 'a>(
         q: Vector3<T>,
         sample_pos: Vector3<T>,
+        sample_nml: Vector3<T>,
         kernel: K,
-        dw_neigh_normalized: Vector3<T>,
+        grad_phi: Vector3<T>,
         weight_sum_inv: T,
         closest_d: T,
     ) -> Matrix3<T>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy,
     {
-        let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
-        let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
-        ((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w)
-            * weight_sum_inv
+        let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
+        let nml_dot_grad = sample_nml.dot(grad_phi);
+        let rot = if nml_dot_grad != -T::one() {
+            let u = sample_nml.cross(grad_phi);
+            let ux = u.skew();
+            Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+        } else {
+            // TODO: take a convenient unit vector u and compute the rotation
+            // as
+            //let ux = u.skew();
+            //Matrix3::identity() + (ux*ux) * 2
+            Matrix3::identity()
+        };
+        rot * w_normalized
+
+        //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
+        //let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
+        //((dw - dw_neigh_normalized * w) * (q - sample_pos).transpose() + Matrix3::identity() * w)
+        //    * weight_sum_inv
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn sample_contact_jacobian_product_at<'a, K: 'a>(
+        q: Vector3<T>,
+        sample_pos: Vector3<T>,
+        sample_nml: Vector3<T>,
+        kernel: K,
+        grad_phi: Vector3<T>,
+        weight_sum_inv: T,
+        closest_d: T,
+        multiplier: Vector3<T>,
+    ) -> Vector3<T>
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy,
+    {
+        let jac = Self::sample_contact_jacobian_at(q, sample_pos, sample_nml, kernel, grad_phi, weight_sum_inv, closest_d);
+        jac * multiplier
+
+        //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
+        //let dw = kernel.with_closest_dist(closest_d).grad(q, sample_pos);
+        //let psi = T::from(sample_value).unwrap() + multiplier.dot(q - sample_pos);
+        //((dw - dw_neigh_normalized * w) * psi + (multiplier * w)) * weight_sum_inv
     }
 
     /// Compute the normalized sum of all sample weight gradients.
@@ -840,14 +879,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac_iter = samples.into_iter().map(move |sample| {
             Self::sample_contact_jacobian_at(
                 q,
                 sample.pos,
+                sample.nml,
                 kernel,
-                dw_neigh,
+                grad_phi,
                 weight_sum_inv,
                 closest_d,
             )
@@ -877,24 +917,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac = samples
             .into_iter()
             .map(
                 move |Sample {
-                          index, pos, value, ..
+                          index, pos, nml, ..
                       }| {
                     let mult = sample_multipliers[index].into();
                     Self::sample_contact_jacobian_product_at(
                         q,
                         pos,
-                        value,
+                        nml,
                         kernel,
-                        mult,
-                        dw_neigh,
+                        grad_phi,
                         weight_sum_inv,
                         closest_d,
+                        mult,
                     )
                 },
             )
@@ -925,13 +965,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let bg_jac = bg.compute_query_jacobian();
 
-        let dw_neigh = Self::normalized_neighbour_weight_gradient(q, samples, kernel, bg);
+        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_field_params);
 
         let jac = samples
             .into_iter()
             .map(
                 move |Sample {
-                          index, pos, value, ..
+                          index, pos, nml, ..
                       }| {
                     let mult = (0..3).fold(Vector3::zeros(), |acc, i| {
                         acc + vertex_multipliers[triangles[index][i]].into()
@@ -939,12 +979,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     Self::sample_contact_jacobian_product_at(
                         q,
                         pos,
-                        value,
+                        nml,
                         kernel,
-                        mult,
-                        dw_neigh,
+                        grad_phi,
                         weight_sum_inv,
                         closest_d,
+                        mult,
                     )
                 },
             )
@@ -1697,6 +1737,125 @@ mod tests {
                 &mut perturb,
             );
         }
+    }
+
+    /// Verify that the contact jacobian can interpolate an accurate normal.
+    /// Given a triangle with identical normals at each vertex, we compute the
+    /// corresponding normal at the triangle centroid and verify that it is the
+    /// same.
+    #[test]
+    fn contact_jacobian_normal_test() -> Result<(), Error> {
+        use crate::*;
+        use geo::NumVertices;
+
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
+        let area = 0.32475975;
+        let centroid = [0.0; 3];
+        let query_points = vec![centroid];
+
+        let surf_params = Params {
+            kernel: kernel::KernelType::Approximate {
+                radius_multiplier: 2.0,
+                tolerance: 1e-5,
+            },
+            background_field:
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+            sample_type: SampleType::Vertex,
+            max_step: 0.0,
+        };
+
+        let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
+
+        let mut jac = vec![[[0.0; 3]; 3]; trimesh.num_vertices()];
+
+        surf.contact_jacobian_matrices(&query_points, &mut jac)?;
+        let num_jac_entries = surf.num_contact_jacobian_matrices()?;
+        assert_eq!(num_jac_entries, 3);
+        let weighted_normal = Vector3([0.0, area, 0.0]);
+
+        let mut result = Vector3::zeros();
+        for &jac_mtx in jac.iter() {
+            result += Matrix3(jac_mtx) * weighted_normal;
+        }
+
+        let expected = weighted_normal;
+        for i in 0..3 {
+            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+        Ok(())
+    }
+
+    /// Verify that the contact jacobian can interpolate an accurate tangent vector.
+    /// Given a triangle with identical tangent vectors at each vertex, we compute the
+    /// corresponding vector at the triangle centroid and verify that it is the
+    /// same.
+    #[test]
+    fn contact_jacobian_identity_test() -> Result<(), Error> {
+        use crate::*;
+        use geo::NumVertices;
+
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
+        let centroid = [0.0; 3];
+        let query_points = vec![centroid];
+
+        let kernel = kernel::KernelType::Approximate {
+            radius_multiplier: 2.0,
+            tolerance: 1e-5,
+        };
+        let surf_params = Params {
+            kernel,
+            background_field:
+                BackgroundFieldParams {
+                    field_type: BackgroundFieldType::DistanceBased,
+                    weighted: false,
+                },
+            sample_type: SampleType::Vertex,
+            max_step: 0.0,
+        };
+
+        let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let test_vector = Vector3([1.5, 0.3, 0.5]);
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into();3])?;
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
+
+        let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
+
+        let mut jac = vec![[[0.0; 3]; 3]; trimesh.num_vertices()];
+
+        surf.contact_jacobian_matrices(&query_points, &mut jac)?;
+        let num_jac_entries = surf.num_contact_jacobian_matrices()?;
+        assert_eq!(num_jac_entries, 3);
+
+        let mut result = Vector3::zeros();
+        for &jac_mtx in jac.iter() {
+            result += Matrix3(jac_mtx) * test_vector;
+        }
+
+        // Verify that the contact jacobian produces the same result as when computing the
+        // quantities on an input mesh, which is often used for debugging and prototyping.
+        let mut ptcld = geo::mesh::PointCloud::new(query_points.clone());
+        surf.compute_potential_on_mesh(&mut ptcld, || false)?;
+        let result_attrib = ptcld.remove_attrib::<VertexIndex>("tangents")?;
+        let tangents_vec = result_attrib.clone_into_vec()?;
+        let result2: [f32; 3] = tangents_vec[0];
+
+        for i in 0..3 {
+            assert_relative_eq!(result[i], result2[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+
+        // Finally verify that the produced vector is indeed the same as the input test_vector.
+        // That is interpolating the same vector better produce that same vector.
+        let expected = test_vector;
+        for i in 0..3 {
+            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+        Ok(())
     }
 
     /// Tester for the contact jacobian. This tester is parameterized by background field type,

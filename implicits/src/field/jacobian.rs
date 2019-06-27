@@ -1774,10 +1774,10 @@ mod tests {
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
         let test_vector = Vector3([1.5, 0.3, 0.5]);
-        trimesh.add_attrib_data::<[f64;3], VertexIndex>("V", vec![test_vector.into();3]);
-        trimesh.add_attrib_data::<[f64;3], VertexIndex>("N", vec![[0.0,1.0,0.0];3]);
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into();3])?;
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
 
-        let mut surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
+        let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();
 
         let mut jac = vec![[[0.0; 3]; 3]; trimesh.num_vertices()];
 
@@ -1789,17 +1789,17 @@ mod tests {
         for &jac_mtx in jac.iter() {
             result += Matrix3(jac_mtx) * test_vector;
         }
-        dbg!(result);
 
         let mut ptcld = geo::mesh::PointCloud::new(query_points.clone());
-        surf.compute_potential_on_mesh(&mut ptcld, || false);
+        surf.compute_potential_on_mesh(&mut ptcld, || false)?;
         let result_attrib = ptcld.remove_attrib::<VertexIndex>("tangents")?;
-        let result2: [f64; 3] = result_attrib.clone_into_vec()?[0];
-        dbg!(result2);
+        let tangents_vec = result_attrib.clone_into_vec()?;
+        let result2: [f32; 3] = tangents_vec[0];
 
-        let expected = test_vector;
+        //let expected = test_vector;
         for i in 0..3 {
-            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+            //assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
+            assert_relative_eq!(result[i], result2[i], max_relative = 1e-5, epsilon = 1e-10);
         }
         Ok(())
     }

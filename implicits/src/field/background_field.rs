@@ -2,7 +2,7 @@ use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::{RadialKernel, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -363,11 +363,10 @@ pub(crate) fn hessian_block_indices<'a>(
     let diag_iter = nbrs.iter().map(move |&i| (i, i));
 
     let off_diag_iter = if weighted {
-        Some(nbrs.iter().flat_map(move |&i| {
+        Some(
             nbrs.iter()
-                .filter(move |&&j| i < j)
-                .map(move |&j| (j, i))
-        }))
+                .flat_map(move |&i| nbrs.iter().filter(move |&&j| i < j).map(move |&j| (j, i))),
+        )
     } else {
         None
     };
@@ -478,7 +477,8 @@ where
             let mut grad = Vector3::zeros();
 
             if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
-                && index == closest_sample_index.get() {
+                && index == closest_sample_index.get()
+            {
                 grad -= bg_grad * wb;
             }
 
@@ -493,9 +493,10 @@ where
                 dwdp * (field * wb * weight_sum_inv)
             };
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance &&
-                index == closest_sample_index.get() {
-                    grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get()
+            {
+                grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
             }
 
             grad
@@ -547,8 +548,9 @@ where
         let diag_iter = samples.into_iter().map(move |Sample { index, pos, .. }| {
             let mut hess = Matrix3::zeros();
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance 
-                && index == closest_sample_index.get() {
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get()
+            {
                 hess += ddf * wb;
             }
 
@@ -565,7 +567,8 @@ where
             };
 
             if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
-                && index == closest_sample_index.get() {
+                && index == closest_sample_index.get()
+            {
                 let factor = T::one() - wb * weight_sum_inv;
                 hess += ddwb * (factor * f)
                     - dwb * dwb.transpose() * (factor * _2 * f * weight_sum_inv)

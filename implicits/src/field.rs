@@ -10,10 +10,10 @@ use geo::prim::Triangle;
 use geo::Real;
 use num_traits::cast;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use spade::rtree::RTree;
 use std::cell::{Ref, RefCell};
 use utils::zip;
-use serde::{Deserialize, Serialize};
 
 pub mod background_field;
 pub mod builder;
@@ -1425,7 +1425,8 @@ mod tests {
 
         utils::translate(&mut grid, [0.0, 0.12639757990837097, 0.0]);
 
-        let torus = geo::io::load_polymesh(&std::path::PathBuf::from("assets/projection_torus.vtk"))?;
+        let torus =
+            geo::io::load_polymesh(&std::path::PathBuf::from("assets/projection_torus.vtk"))?;
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh(
@@ -1456,17 +1457,21 @@ mod tests {
         use std::io::Read;
         let iso_value = 0.0;
         let epsilon = 0.0001;
-        let mut query_points: Vec<[f64;3]> = {
-            let mut file = std::fs::File::open("assets/grid_points.json").expect("Failed to open query points file");
+        let mut query_points: Vec<[f64; 3]> = {
+            let mut file = std::fs::File::open("assets/grid_points.json")
+                .expect("Failed to open query points file");
             let mut contents = String::new();
-            file.read_to_string(&mut contents).expect("Failed to read grid points json.");
+            file.read_to_string(&mut contents)
+                .expect("Failed to read grid points json.");
             serde_json::from_str(&contents).expect("Failed to deserialize grid points.")
         };
 
         let surface: ImplicitSurface<f64> = {
-            let mut file = std::fs::File::open("assets/torus_surf.json").expect("Faile to torus surface file");
+            let mut file =
+                std::fs::File::open("assets/torus_surf.json").expect("Faile to torus surface file");
             let mut contents = String::new();
-            file.read_to_string(&mut contents).expect("Failed to read torus surface json.");
+            file.read_to_string(&mut contents)
+                .expect("Failed to read torus surface json.");
             serde_json::from_str(&contents).expect("Failed to deserialize torus surface.")
         };
 
@@ -1493,7 +1498,6 @@ mod tests {
                 assert!(new <= epsilon, "new = {}", new);
             }
         }
-
 
         Ok(())
     }

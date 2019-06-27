@@ -1,8 +1,8 @@
 use super::{samples::Sample, SampleType};
 use geo::Real;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use serde::{Serialize, Deserialize};
 
 /// Cache data structure that stores information about the neighbourhood of a query point.
 /// For radial neighbourhood sets, this determines the entire sparsity structure for each query

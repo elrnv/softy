@@ -2,7 +2,7 @@ use geo::math::Vector3;
 use geo::ops::*;
 use geo::Real;
 use rayon::prelude::IndexedParallelIterator;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub use super::*;
 

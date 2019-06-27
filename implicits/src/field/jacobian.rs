@@ -67,15 +67,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     let neigh_points = self.extended_neighbourhood_borrow()?;
                     neigh_points.to_vec()
                 };
-                (Some(cached_pts
-                        .into_iter()
-                        .enumerate()
-                        .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                        .flat_map(move |(row, nbr_points)| {
-                            nbr_points
-                                .into_iter()
-                                .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
-                        })), None)
+                (
+                    Some(
+                        cached_pts
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(_, nbr_points)| !nbr_points.is_empty())
+                            .flat_map(move |(row, nbr_points)| {
+                                nbr_points
+                                    .into_iter()
+                                    .flat_map(move |col| (0..3).map(move |i| (row, 3 * col + i)))
+                            }),
+                    ),
+                    None,
+                )
             }
             SampleType::Face => {
                 let cached: Vec<_> = {
@@ -96,7 +101,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 (None, Some(cached.into_iter()))
             }
         };
-        Ok(iter.0.into_iter().flatten().chain(iter.1.into_iter().flatten()))
+        Ok(iter
+            .0
+            .into_iter()
+            .flatten()
+            .chain(iter.1.into_iter().flatten()))
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
@@ -679,13 +688,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn contact_jacobian_indices_iter(
         &self,
     ) -> Result<impl Iterator<Item = (usize, usize)> + Clone, Error> {
-        self.contact_jacobian_matrix_indices_iter()
-            .map(|iter| {
-                iter.flat_map(move |(row_mtx, col_mtx)| {
-                    (0..3)
-                        .flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
-                })
+        self.contact_jacobian_matrix_indices_iter().map(|iter| {
+            iter.flat_map(move |(row_mtx, col_mtx)| {
+                (0..3).flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
             })
+        })
     }
 
     /*

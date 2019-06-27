@@ -537,9 +537,18 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         K: SphericalKernel<T> + std::fmt::Debug + Copy,
     {
         let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
-        let u = sample_nml.cross(grad_phi);
-        let ux = u.skew();
-        let rot = Matrix3::identity() + ux + (ux*ux) / (T::one() + sample_nml.dot(grad_phi));
+        let nml_dot_grad = sample_nml.dot(grad_phi);
+        let rot = if nml_dot_grad != -T::one() {
+            let u = sample_nml.cross(grad_phi);
+            let ux = u.skew();
+            Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+        } else {
+            // TODO: take a convenient unit vector u and compute the rotation
+            // as
+            //let ux = u.skew();
+            //Matrix3::identity() + (ux*ux) * 2
+            Matrix3::identity()
+        };
         rot * w_normalized
 
         //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
@@ -1779,7 +1788,7 @@ mod tests {
     /// corresponding vector at the triangle centroid and verify that it is the
     /// same.
     #[test]
-    fn contact_jacobian_tangent_test() -> Result<(), Error> {
+    fn contact_jacobian_identity_test() -> Result<(), Error> {
         use crate::*;
         use geo::NumVertices;
 
@@ -1821,16 +1830,23 @@ mod tests {
             result += Matrix3(jac_mtx) * test_vector;
         }
 
+        // Verify that the contact jacobian produces the same result as when computing the
+        // quantities on an input mesh, which is often used for debugging and prototyping.
         let mut ptcld = geo::mesh::PointCloud::new(query_points.clone());
         surf.compute_potential_on_mesh(&mut ptcld, || false)?;
         let result_attrib = ptcld.remove_attrib::<VertexIndex>("tangents")?;
         let tangents_vec = result_attrib.clone_into_vec()?;
         let result2: [f32; 3] = tangents_vec[0];
 
-        //let expected = test_vector;
         for i in 0..3 {
-            //assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
             assert_relative_eq!(result[i], result2[i], max_relative = 1e-5, epsilon = 1e-10);
+        }
+
+        // Finally verify that the produced vector is indeed the same as the input test_vector.
+        // That is interpolating the same vector better produce that same vector.
+        let expected = test_vector;
+        for i in 0..3 {
+            assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
         }
         Ok(())
     }

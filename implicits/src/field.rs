@@ -957,9 +957,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             // Compute vector interpolation
                             let grad_phi = Self::query_jacobian_at(pos, view, Some(*closest), kernel, bg_field_params);
 
-                            let u = nml.cross(grad_phi);
-                            let ux = u.skew();
-                            let rot = Matrix3::identity() + ux + (ux*ux) / (T::one() + nml.dot(grad_phi));
+                            let nml_dot_grad = nml.dot(grad_phi);
+                            // Handle degenerate case when nml and grad are exactly opposing. In
+                            // this case the solution is not unique, so we pick one.
+                            let rot = if nml_dot_grad != -T::one() {
+                                let u = nml.cross(grad_phi);
+                                let ux = u.skew();
+                                Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+                            } else {
+                                // TODO: take a convenient unit vector u and compute the rotation
+                                // as
+                                //let ux = u.skew();
+                                //Matrix3::identity() + (ux*ux) * 2
+                                Matrix3::identity()
+                            };
+
+                            dbg!(rot);
+                            dbg!(vel);
+
                             out_tangent += (rot * vel) * w_normalized;
                         }
 

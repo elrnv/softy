@@ -529,7 +529,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         sample_pos: Vector3<T>,
         sample_nml: Vector3<T>,
         kernel: K,
-        grad_phi: Vector3<T>,
+        mut grad_phi: Vector3<T>,
         weight_sum_inv: T,
         closest_d: T,
     ) -> Matrix3<T>
@@ -537,6 +537,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         K: SphericalKernel<T> + std::fmt::Debug + Copy,
     {
         let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
+        let grad_phi_norm = grad_phi.norm();
+        if grad_phi_norm != T::zero() {
+            grad_phi /= grad_phi_norm;
+        }; // normalize grad_phi
         let nml_dot_grad = sample_nml.dot(grad_phi);
         let rot = if nml_dot_grad != -T::one() {
             let u = sample_nml.cross(grad_phi);

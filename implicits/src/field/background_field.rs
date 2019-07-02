@@ -410,7 +410,16 @@ where
 
         match bg_field_value {
             BackgroundFieldValue::Constant(_) => Vector3::zeros(),
-            BackgroundFieldValue::ClosestSampleSignedDistance => disp * (self.orientation() / dist),
+            BackgroundFieldValue::ClosestSampleSignedDistance => {
+                // The strategy for removing NaNs here is that degenerate cases may produce NaNs
+                // that may otherwise be zeroed out elsewhere. This check ensures that this
+                // cancellation happens.
+                if dist != T::zero() { // Remove possibility of NaN
+                    disp * (self.orientation() / dist)
+                } else {
+                    Vector3::zeros()
+                }
+            }
         }
     }
 
@@ -429,9 +438,13 @@ where
         match bg_field_value {
             BackgroundFieldValue::Constant(_) => Matrix3::zeros(),
             BackgroundFieldValue::ClosestSampleSignedDistance => {
-                let dist_inv = self.orientation() / dist;
-                let dir = disp * dist_inv;
-                Matrix3::diag([dist_inv; 3]) - dir * (dir.transpose() * dist_inv)
+                if dist != T::zero() { // Remove possibility of NaN
+                    let dist_inv = self.orientation() / dist;
+                    let dir = disp * dist_inv;
+                    Matrix3::diag([dist_inv; 3]) - dir * (dir.transpose() * dist_inv)
+                } else {
+                    Matrix3::zeros()
+                }
             }
         }
     }

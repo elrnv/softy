@@ -443,6 +443,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let mut potential = vec![T::zero(); query_points.len()];
         let mut candidate_potential = vec![T::zero(); query_points.len()];
         let mut steps = vec![[T::zero(); 3]; query_points.len()];
+        let mut nml_sizes = vec![T::zero(); query_points.len()];
 
         let max_steps = 20;
         let max_binary_search_iters = 10;
@@ -453,40 +454,42 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             self.potential(query_points, &mut potential)?;
             potential.iter_mut().for_each(|x| *x *= multiplier);
 
+            // The transpose of the potential gradient at each of the query points.
+            self.query_jacobian_full(query_points, &mut steps)?;
+
+            for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
+                *norm = Vector3(*step).norm();
+            }
+
             // Count the number of points with values less than iso_value.
-            let count_violations = potential.iter().filter(|&&x| x < iso_value).count();
+            let count_violations = potential.iter()
+                .zip(nml_sizes.iter())
+                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
+                .count();
 
             if count_violations == 0 {
                 break;
             }
 
-            // The transpose of the potential gradient at each of the query points.
-            self.query_jacobian_full(query_points, &mut steps)?;
-
             // Compute initial step directions
-            for (step, &value) in
-                zip!(steps.iter_mut(), potential.iter()).filter(|(_, &pot)| pot < iso_value)
+            for (step, &norm, &value) in
+                zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter()).filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
             {
-                let mut nml = Vector3(*step);
-                let mut nml_norm = nml.norm();
-                if nml_norm == T::zero() {
-                    // Invalid direction vector. Choose an arbitrary direction.
-                    nml = Vector3([T::one(), T::zero(), T::zero()]);
-                    nml_norm = T::one();
-                }
-                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / nml_norm;
-                *step = (nml * (multiplier * offset)).into();
+                let nml = Vector3(*step);
+                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
+                *step = (nml * (multiplier * offset)).into()
             }
 
             for j in 0..max_binary_search_iters {
                 // Try this step
-                for (p, q, &step, _) in zip!(
+                for (p, q, &step, _, _) in zip!(
                     candidate_points.iter_mut(),
                     query_points.iter(),
                     steps.iter(),
+                    nml_sizes.iter(),
                     potential.iter()
                 )
-                .filter(|(_, _, _, &pot)| pot < iso_value)
+                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
                 {
                     *p = (Vector3(*q) + Vector3(step)).into();
                 }
@@ -497,12 +500,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     .for_each(|x| *x *= multiplier);
 
                 let mut count_overshoots = 0;
-                for (step, _, _) in zip!(
+                for (step, _, _, _) in zip!(
                     steps.iter_mut(),
+                    nml_sizes.iter(),
                     potential.iter(),
                     candidate_potential.iter()
                 )
-                .filter(|(_, &old, &new)| old < iso_value && new > iso_value + epsilon)
+                .filter(|(_, &norm, &old, &new)| old < iso_value && new > iso_value + epsilon && norm != T::zero())
                 {
                     *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
                     count_overshoots += 1;
@@ -1481,7 +1485,7 @@ mod tests {
         };
 
         let surface: ImplicitSurface<f64> = {
-            let mut file = std::fs::File::open("assets/torus_surf.json").expect("Faile to torus surface file");
+            let mut file = std::fs::File::open("assets/torus_surf.json").expect("Failed to open torus surface file");
             let mut contents = String::new();
             file.read_to_string(&mut contents).expect("Failed to read torus surface json.");
             serde_json::from_str(&contents).expect("Failed to deserialize torus surface.")
@@ -1491,26 +1495,32 @@ mod tests {
             // Compute potential before projection.
             let mut init_potential = vec![0.0; query_points.len()];
             surface.potential(&query_points, &mut init_potential)?;
-
-            // Project grid outside the implicit surface.
-            assert!(surface.project_to_above(iso_value, epsilon, &mut query_points)?);
             init_potential
         };
+
+        // Project grid outside the implicit surface.
+        assert!(surface.project_to_above(iso_value, epsilon, &mut query_points)?);
 
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
         surface.potential(&query_points, &mut final_potential)?;
 
-        for (&old, &new) in init_potential.iter().zip(final_potential.iter()) {
+        let ptcld = PointCloud::new(query_points.clone());
+
+        let mut indices = vec![query_points.len()];
+        indices.append(&mut (0..query_points.len()).collect());
+
+        geo::io::save_polymesh(&PolyMesh::new(ptcld.vertex_positions().to_vec(), &indices), &std::path::PathBuf::from("out/mesh.vtk"));
+
+        for (i, (&old, &new)) in init_potential.iter().zip(final_potential.iter()).enumerate() {
             // Check that all vertices are outside the implicit solid.
-            assert!(new >= 0.0, "new = {}, old = {}", new, old);
+            assert!(new >= 0.0, "new = {}, old = {}, i = {}", new, old, i);
             if old < 0.0 {
                 // Check that the projected vertices are now within the narrow band of valid
                 // projections (between 0 and epsilon).
                 assert!(new <= epsilon, "new = {}", new);
             }
         }
-
 
         Ok(())
     }

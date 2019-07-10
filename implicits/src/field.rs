@@ -477,7 +477,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             {
                 let nml = Vector3(*step);
                 let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
-                *step = (nml * (multiplier * offset)).into()
+                *step = (nml * (multiplier * offset)).into();
+
             }
 
             for j in 0..max_binary_search_iters {
@@ -526,6 +527,10 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 .iter_mut()
                 .zip(candidate_points.iter())
                 .for_each(|(q, p)| *q = *p);
+
+            // Since the query points have changed position, we invalidate the cache to force a
+            // recomputation of neighbourhoods.
+            self.invalidate_query_neighbourhood();
 
             if i == max_steps - 1 {
                 convergence = false;
@@ -1504,13 +1509,6 @@ mod tests {
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
         surface.potential(&query_points, &mut final_potential)?;
-
-        let ptcld = PointCloud::new(query_points.clone());
-
-        let mut indices = vec![query_points.len()];
-        indices.append(&mut (0..query_points.len()).collect());
-
-        geo::io::save_polymesh(&PolyMesh::new(ptcld.vertex_positions().to_vec(), &indices), &std::path::PathBuf::from("out/mesh.vtk"));
 
         for (i, (&old, &new)) in init_potential.iter().zip(final_potential.iter()).enumerate() {
             // Check that all vertices are outside the implicit solid.

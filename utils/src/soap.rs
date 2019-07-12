@@ -30,7 +30,7 @@ pub mod num {
 /// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
 /// positions.
-pub trait Set: Clone {
+pub trait Set {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -38,13 +38,37 @@ pub trait Set: Clone {
     //fn push(&mut self, element: Self::Item);
 }
 
-impl<T: Clone> Set for Vec<T> {
+impl<T> Set for Vec<T> {
     fn len(&self) -> usize {
         self.len()
     }
     //fn push(&mut self, element: T) {
     //    self.push(element);
     //}
+}
+
+impl<T> Set for &Vec<T> {
+    fn len(&self) -> usize {
+        Vec::<T>::len(self)
+    }
+}
+
+impl<T> Set for &mut Vec<T> {
+    fn len(&self) -> usize {
+        Vec::<T>::len(self)
+    }
+}
+
+impl<T> Set for &[T] {
+    fn len(&self) -> usize {
+        <[T]>::len(self)
+    }
+}
+
+impl<T> Set for &mut [T] {
+    fn len(&self) -> usize {
+        <[T]>::len(self)
+    }
 }
 
 // Reference into a set.
@@ -57,7 +81,7 @@ impl<S: Set> Set for Rc<RefCell<S>> {
     fn len(&self) -> usize { self.borrow().len() }
 }
 
-impl<S: Set> DynamicIter for Rc<RefCell<S>> {
+impl<S: Set> VarIter for Rc<RefCell<S>> {
     type Iter = std::cell::Ref<S::Iter>;
     type IterMut = std::cell::RefMut<S::IterMut>;
     fn iter(&self) -> Self::Iter {
@@ -72,7 +96,7 @@ impl<S: Set> Set for Arc<RwLock<S>> {
     fn len(&self) -> usize { self.read().unwrap().len() }
 }
 
-impl<S: Set> DynamicIter for Arc<RwLock<S>> {
+impl<S: Set> VarIter for Arc<RwLock<S>> {
     type Iter = S::Iter;
     type IterMut = S::IterMut;
     fn iter(&self) -> Self::Iter {
@@ -85,24 +109,24 @@ impl<S: Set> DynamicIter for Arc<RwLock<S>> {
 */
 
 /*
- * DynamicSet
+ * VarSet
  */
 
 /// A set of variable length elements. Each offset represents one element and gives the offset into
 /// the data buffer for the first of subelement in the Set.
 /// Offsets always begins with a 0 and ends with the length of the buffer.
 #[derive(Clone, Debug)]
-pub struct DynamicSet<S> {
+pub struct VarSet<S> {
     pub offsets: Vec<usize>,
     pub data: S,
 }
 
-impl<S: Set> DynamicSet<S> {
+impl<S: Set> VarSet<S> {
     pub fn from_offsets(offsets: Vec<usize>, data: S) -> Self {
         assert!(offsets.len() > 0);
         assert_eq!(offsets[0], 0);
         assert_eq!(*offsets.last().unwrap(), data.len());
-        DynamicSet { offsets, data }
+        VarSet { offsets, data }
     }
 
     pub fn data(&self) -> &S {
@@ -118,7 +142,7 @@ impl<S: Set> DynamicSet<S> {
     }
 }
 
-impl<S> DynamicSet<S>
+impl<S> VarSet<S>
 where
     S: Set + IntoIterator
         + AppendVec<Item = <S as IntoIterator>::Item>
@@ -135,7 +159,7 @@ where
 // a later step when the results may be collected into another Vec. This saves
 // an extra allocation. We could make this more righteous with a custom
 // allocator.
-impl<'a, S> std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]> for DynamicSet<S>
+impl<'a, S> std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]> for VarSet<S>
 where
     S: Set
         + ExtendFromSlice<Item = <S as IntoIterator>::Item>
@@ -148,7 +172,7 @@ where
     where
         T: IntoIterator<Item = &'a mut [<S as IntoIterator>::Item]>,
     {
-        let mut s = DynamicSet::default();
+        let mut s = VarSet::default();
         for i in iter {
             s.push_slice(i);
         }
@@ -160,7 +184,7 @@ where
 // nested `Vec`s, however as mentioned in the note above, this is typically
 // inefficient because it relies on intermediate allocations. This is acceptable
 // during initialization, for instance.
-impl<S> std::iter::FromIterator<Vec<<S as IntoIterator>::Item>> for DynamicSet<S>
+impl<S> std::iter::FromIterator<Vec<<S as IntoIterator>::Item>> for VarSet<S>
 where
     S: Set
         + AppendVec<Item = <S as IntoIterator>::Item>
@@ -172,7 +196,7 @@ where
     where
         T: IntoIterator<Item = Vec<<S as IntoIterator>::Item>>,
     {
-        let mut s = DynamicSet::default();
+        let mut s = VarSet::default();
         for i in iter {
             s.push(i);
         }
@@ -180,51 +204,51 @@ where
     }
 }
 
-impl<S: Clone> Set for DynamicSet<S> {
+impl<S: Set + Clone> Set for VarSet<S> {
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
 }
 
-impl<S: Set + IntoIterator + AppendVec<Item = <S as IntoIterator>::Item>> DynamicSet<S> {
+impl<S: Set + IntoIterator + AppendVec<Item = <S as IntoIterator>::Item>> VarSet<S> {
     fn push(&mut self, mut element: Vec<<S as IntoIterator>::Item>) {
         self.data.append(&mut element);
         self.offsets.push(self.data.len());
     }
 }
 
-//impl<S: Set> IntoFlatVec for DynamicSet<S> {
+//impl<S: Set> IntoFlatVec for VarSet<S> {
 //    type SubItem = <S as IntoFlatVec>::SubItem;
 //    fn into_flat_vec(self) -> Vec<Self::SubItem> {
 //        self.data.into_flat_vec()
 //    }
 //}
 
-impl<S: Set + IntoIterator + ExtendFromSlice<Item = <S as IntoIterator>::Item>> DynamicSet<S> {
+impl<S: Set + IntoIterator + ExtendFromSlice<Item = <S as IntoIterator>::Item>> VarSet<S> {
     pub fn push_slice(&mut self, element: &[<S as IntoIterator>::Item]) {
         self.data.extend_from_slice(element);
         self.offsets.push(self.data.len());
     }
 }
 
-impl<S: Set + Default> Default for DynamicSet<S> {
+impl<S: Set + Default> Default for VarSet<S> {
     fn default() -> Self {
         Self::from_offsets(vec![0], S::default())
     }
 }
 
-impl<S> DynamicSet<S>
+impl<S> VarSet<S>
 where
     S: Set + AsMutSlice,
 {
-    pub fn iter(&self) -> DynamicIter<<S as AsSlice>::Item> {
-        DynamicIter {
+    pub fn iter(&self) -> VarIter<<S as AsSlice>::Item> {
+        VarIter {
             offsets: &self.offsets,
             data: self.data.as_slice(),
         }
     }
-    pub fn iter_mut(&mut self) -> DynamicIterMut<<S as AsSlice>::Item> {
-        DynamicIterMut {
+    pub fn iter_mut(&mut self) -> VarIterMut<<S as AsSlice>::Item> {
+        VarIterMut {
             offsets: &self.offsets,
             data: self.data.as_mut_slice(),
         }
@@ -232,7 +256,7 @@ where
 }
 
 /*
- * Utility traits intended to expose the necessary behaviour to implement `DynamicSet`s
+ * Utility traits intended to expose the necessary behaviour to implement `VarSet`s
  */
 //pub trait IntoFlatVec {
 //    type SubItem;
@@ -292,19 +316,19 @@ impl<T> AsMutSlice for Vec<T> {
     }
 }
 
-/// A special iterator capable of iterating over a `DynamicSet`.
-pub struct DynamicIter<'a, T> {
+/// A special iterator capable of iterating over a `VarSet`.
+pub struct VarIter<'a, T> {
     offsets: &'a [usize],
     data: &'a [T],
 }
 
-/// Mutable variant of `DynamicIter`.
-pub struct DynamicIterMut<'a, T> {
+/// Mutable variant of `VarIter`.
+pub struct VarIterMut<'a, T> {
     offsets: &'a [usize],
     data: &'a mut [T],
 }
 
-impl<'a, T: 'a> Iterator for DynamicIter<'a, T> {
+impl<'a, T: 'a> Iterator for VarIter<'a, T> {
     type Item = &'a [T];
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -320,13 +344,13 @@ impl<'a, T: 'a> Iterator for DynamicIter<'a, T> {
                 Some(l)
             }
             None => {
-                panic!("Dynamic Set is corrupted and cannot be iterated.");
+                panic!("Var Set is corrupted and cannot be iterated.");
             }
         }
     }
 }
 
-impl<'a, T: 'a> Iterator for DynamicIterMut<'a, T> {
+impl<'a, T: 'a> Iterator for VarIterMut<'a, T> {
     type Item = &'a mut [T];
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -345,33 +369,33 @@ impl<'a, T: 'a> Iterator for DynamicIterMut<'a, T> {
                 Some(l)
             }
             None => {
-                panic!("Dynamic Set is corrupted and cannot be iterated.");
+                panic!("Var Set is corrupted and cannot be iterated.");
             }
         }
     }
 }
 
 /*
- * `IntoIterator` implementation for `DynamicSet`. Note that this type of
+ * `IntoIterator` implementation for `VarSet`. Note that this type of
  * iterator allocates a new `Vec` at each iteration. This is an expensive
  * operation and is here for compatibility with the rest of Rust's ecosystem.
  * However, this iterator should be used sparingly.
  */
 
-/// IntoIter for `DynamicSet`.
-pub struct DynamicIntoIter<T> {
+/// IntoIter for `VarSet`.
+pub struct VarIntoIter<T> {
     offsets: std::iter::Peekable<std::vec::IntoIter<usize>>,
     data: Vec<T>,
 }
 
-impl<T> Iterator for DynamicIntoIter<T> {
+impl<T> Iterator for VarIntoIter<T> {
     type Item = Vec<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let begin = self
             .offsets
             .next()
-            .expect("Dynamic Set is corrupted and cannot be iterated.");
+            .expect("Var Set is corrupted and cannot be iterated.");
         if self.offsets.len() <= 1 {
             return None; // Ignore the last offset
         }
@@ -383,19 +407,19 @@ impl<T> Iterator for DynamicIntoIter<T> {
     }
 }
 
-//impl<S> IntoIterator for DynamicSet<S>
+//impl<S> IntoIterator for VarSet<S>
 //where
 //    S: Set,
 //{
 //    type Item = Vec<<Self as IntoFlatVec>::SubItem>;
-//    type IntoIter = DynamicIntoIter<<Self as IntoFlatVec>::SubItem>;
+//    type IntoIter = VarIntoIter<<Self as IntoFlatVec>::SubItem>;
 //
 //    fn into_iter(self) -> Self::IntoIter {
-//        let DynamicSet {
+//        let VarSet {
 //            offsets,
 //            data,
 //        } = self;
-//        DynamicIntoIter {
+//        VarIntoIter {
 //            offsets: offsets.into_iter().peekable(),
 //            data: data.into_flat_vec(),
 //        }
@@ -403,20 +427,20 @@ impl<T> Iterator for DynamicIntoIter<T> {
 //}
 
 /*
- * Uniform Set
+ * Uniformly spaced Set
  */
 
 /// Assigns a uniform stride to the specified buffer.
 #[derive(Clone, Debug, PartialEq)]
-pub struct UniformSet<S, N> {
+pub struct UniSet<S, N> {
     pub data: S,
     phantom: PhantomData<N>,
 }
 
-impl<S: Set, N: num::Unsigned> UniformSet<S, N> {
+impl<S: Set, N: num::Unsigned> UniSet<S, N> {
     pub fn from_flat(data: S) -> Self {
         assert_eq!(data.len() % N::value(), 0);
-        UniformSet {
+        UniSet {
             data,
             phantom: PhantomData,
         }
@@ -428,13 +452,9 @@ impl<S: Set, N: num::Unsigned> UniformSet<S, N> {
     pub fn data_mut(&mut self) -> &mut S {
         &mut self.data
     }
-
-    pub fn len(&self) -> usize {
-        self.data.len() / N::value()
-    }
 }
 
-//impl<S: Set, N> IntoFlatVec for UniformSet<S, N> {
+//impl<S: Set, N> IntoFlatVec for UniSet<S, N> {
 //    type SubItem = <S as IntoFlatVec>::SubItem;
 //    fn into_flat_vec(self) -> Vec<Self::SubItem> {
 //        self.data.into_flat_vec()
@@ -450,7 +470,7 @@ impl<T> Push<T> for Vec<T> {
         Vec::push(self, element);
     }
 }
-impl<S: IntoIterator + Push<<S as IntoIterator>::Item>> Push<[<S as IntoIterator>::Item; 3]> for UniformSet<S, num::U3> {
+impl<S: IntoIterator + Push<<S as IntoIterator>::Item>> Push<[<S as IntoIterator>::Item; 3]> for UniSet<S, num::U3> {
     fn push(&mut self, element: [<S as IntoIterator>::Item; 3]) {
         let [a, b, c] = element;
         self.data.push(a);
@@ -459,7 +479,7 @@ impl<S: IntoIterator + Push<<S as IntoIterator>::Item>> Push<[<S as IntoIterator
     }
 }
 
-impl<S, N> IntoIterator for UniformSet<S, N>
+impl<S, N> IntoIterator for UniSet<S, N>
 where
     S: Set + IntoIterator + ReinterpretSet<N>,
     N: num::Unsigned,
@@ -472,7 +492,7 @@ where
     }
 }
 
-impl<S> std::iter::FromIterator<[<S as IntoIterator>::Item; 3]> for UniformSet<S, num::U3>
+impl<S> std::iter::FromIterator<[<S as IntoIterator>::Item; 3]> for UniSet<S, num::U3>
 where
     S: Set + IntoIterator + Push<<S as IntoIterator>::Item> + Default + std::iter::FromIterator<<S as IntoIterator>::Item>,
 {
@@ -480,7 +500,7 @@ where
     where
         T: IntoIterator<Item = [<S as IntoIterator>::Item; 3]>,
     {
-        let mut s = UniformSet::default();
+        let mut s = UniSet::default();
         for i in iter {
             s.push(i);
         }
@@ -488,13 +508,13 @@ where
     }
 }
 
-impl<S: Set + Default, N: num::Unsigned> Default for UniformSet<S, N> {
+impl<S: Set + Default, N: num::Unsigned> Default for UniSet<S, N> {
     fn default() -> Self {
         Self::from_flat(S::default())
     }
 }
 
-impl<'a, S, N> UniformSet<S, N>
+impl<'a, S, N> UniSet<S, N>
 where
     S: Set + 'a,
     &'a S: IntoIterator + ReinterpretSet<N>,
@@ -568,17 +588,191 @@ impl<'a, T: 'a> ReinterpretSet<num::U1> for &'a mut Vec<T> {
     }
 }
 
+impl<S: Set + ReinterpretSet<N>, N: num::Unsigned> Set for UniSet<S, N> {
+    fn len(&self) -> usize {
+        self.data.len() / N::value()
+    }
+}
+
 /*
  * Strict subset types corresponding to each of the set types.
  */
 
+/// A VarSet that is a contiguous subset of some larger set (which could have any type).
+/// `S` is any borrowed collection type.
 #[derive(Clone, Debug)]
-pub struct DynamicSubset<'a, T: 'static> {
-    pub offset: usize,
-    pub data: &'a [T],
+pub struct VarSubview<'a, S: ?Sized + 'a> {
+    offset: &'a [usize],
+    data: &'a S,
 }
 
+/// A UniSet that is a contiguous subset of some larger set (which could have any type).
+/// `S` is any borrowed collection type.
 #[derive(Clone, Debug)]
-pub struct UniformSubset<'a, T: 'static> {
-    pub data: &'a [T],
+pub struct UniSubview<'a, S: ?Sized + 'a, N> {
+    data: &'a S,
+    phantom_size: PhantomData<N>,
+}
+
+/// A Set that is a non-contiguous subset of some larger set (which could have any type).
+/// `B` can be any borrowed collection type.
+///
+/// # Example
+///
+/// The following example shows how to create a `Subset` from a standard `Vec`.
+///
+/// ```rust
+/// use utils::soap::*;
+/// let v = vec![1,2,3,4,5];
+/// let subset = Subset::from_indices(vec![0,2,4], v.as_slice());
+/// let mut subset_iter = subset.iter();
+/// assert_eq!(Some(&1), subset_iter.next());
+/// assert_eq!(Some(&3), subset_iter.next());
+/// assert_eq!(Some(&5), subset_iter.next());
+/// assert_eq!(None, subset_iter.next());
+/// ```
+#[derive(Clone, Debug)]
+pub struct Subset<S> {
+    indices: Vec<usize>,
+    set: S,
+}
+
+impl<'a, S: Set> Subset<S> {
+    /// Create a subset of elements from the original set given at the specified indices.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3];
+    /// let subset = Subset::from_indices(vec![0,2], v.as_slice());
+    /// assert_eq!(1, subset[0]);
+    /// assert_eq!(3, subset[1]);
+    /// ```
+    pub fn from_indices(mut indices: Vec<usize>, set: S) -> Self {
+        // Ensure that indices are sorted and there are no duplicates.
+        // Failure to enforce this invariant can cause race conditions.
+
+        indices.sort_unstable();
+        indices.dedup();
+
+        Self::validate(Subset {
+            indices,
+            set,
+        })
+    }
+
+    /// Create a subset with all elements from the original set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let subset = Subset::all(vec![1,2,3]);
+    /// let mut subset_iter = subset.iter();
+    /// assert_eq!(Some(&1), subset_iter.next());
+    /// assert_eq!(Some(&2), subset_iter.next());
+    /// assert_eq!(Some(&3), subset_iter.next());
+    /// assert_eq!(None, subset_iter.next());
+    /// ```
+    pub fn all(set: S) -> Self {
+        Self::validate(Subset {
+            indices: (0..set.len()).collect(),
+            set,
+        })
+    }
+
+    /// Panics if this subset is invald.
+    #[inline]
+    fn validate(self) -> Self {
+        for &i in self.indices.iter() {
+            assert!(i < self.set.len(), "Subset index out of bounds.");
+        }
+        self
+    }
+}
+
+impl<'a, T> std::ops::Index<usize> for Subset<&'a [T]> {
+    type Output = T;
+    /// Immutably index the subset.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5];
+    /// let subset = Subset::from_indices(vec![0,2,4], v.as_slice());
+    /// assert_eq!(subset[1], 3);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        self.set.index(self.indices[idx])
+    }
+}
+
+impl<'a, T> std::ops::Index<usize> for Subset<&'a mut [T]> {
+    type Output = T;
+    /// Immutably index the subset.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// assert_eq!(subset[1], 3);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        self.set.index(self.indices[idx])
+    }
+}
+
+impl<'a, T> std::ops::IndexMut<usize> for Subset<&'a mut [T]> {
+    /// Mutably index the subset.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// assert_eq!(subset[1], 3);
+    /// subset[1] = 100;
+    /// assert_eq!(subset[0], 1);
+    /// assert_eq!(subset[1], 100);
+    /// assert_eq!(subset[2], 5);
+    /// ```
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        self.set.index_mut(self.indices[idx])
+    }
+}
+
+impl<S> Subset<S> {
+    pub fn iter<'a, T: 'a>(&'a self) -> impl Iterator<Item = &'a T>
+        where S: std::borrow::Borrow<[T]>
+    {
+        let ptr = self.set.borrow().as_ptr();
+        self.indices.iter().map(move |&i| unsafe { &*ptr.add(i) })
+    }
+}
+
+impl<S> Subset<S> {
+    /// Mutably iterate over a subset.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// for i in subset.iter_mut() {
+    ///     *i += 1;
+    /// }
+    /// assert_eq!(v, vec![2,2,4,4,6]);
+    /// ```
+    pub fn iter_mut<'a, T: 'a>(&'a mut self) -> impl Iterator<Item = &'a mut T>
+        where S: std::borrow::BorrowMut<[T]>
+    {
+        let ptr = self.set.borrow_mut().as_mut_ptr();
+        self.indices.iter().map(move |&i| unsafe { &mut *ptr.add(i) })
+    }
 }

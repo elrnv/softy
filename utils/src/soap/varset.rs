@@ -8,37 +8,61 @@ use super::*;
 /// the data buffer for the first of subelement in the Set.
 /// Offsets always begins with a 0 and ends with the length of the buffer.
 #[derive(Clone, Debug)]
-pub struct VarSet<S> {
-    pub offsets: Vec<usize>,
-    pub data: S,
+pub struct VarSet<S, O=Vec<usize>> {
+    data: S,
+    offsets: O,
 }
 
 impl<S: Set> VarSet<S> {
+    /// Construct a `VarSet` from a `Vec` of offsets into another set. This is
+    /// the most efficient constructor, although it is also the most error
+    /// prone.
+    ///
+    /// # Panics
+    ///
+    /// `offsets` must always begin with `0` and end with `data.len()`.
+    /// This also implies that it cannot be empty. This function panics if these
+    /// invariants aren't satisfied.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut varset_iter = s.iter();
+    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
     pub fn from_offsets(offsets: Vec<usize>, data: S) -> Self {
         assert!(offsets.len() > 0);
         assert_eq!(offsets[0], 0);
         assert_eq!(*offsets.last().unwrap(), data.len());
         VarSet { offsets, data }
     }
-
-    pub fn data(&self) -> &S {
-        &self.data
-    }
-
-    pub fn data_mut(&mut self) -> &mut S {
-        &mut self.data
-    }
 }
 
 impl<S> VarSet<S>
 where
     S: Set
-        + IntoIterator
-        + AppendVec<Item = <S as IntoIterator>::Item>
+        + AppendVec<Item = <S as Set>::Elem>
         + Default
-        + std::iter::FromIterator<std::vec::Vec<<S as std::iter::IntoIterator>::Item>>,
 {
-    pub fn from_nested_vec(nested_data: Vec<Vec<<S as IntoIterator>::Item>>) -> Self {
+    /// Construct a `VarSet` from a nested set of `Vec`s.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::<Vec<_>>::from_nested_vec(vec![vec![1,2,3],vec![4],vec![5,6]]);
+    /// let mut varset_iter = s.iter();
+    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
+    pub fn from_nested_vec(nested_data: Vec<Vec<<S as Set>::Elem>>) -> Self {
         nested_data.into_iter().collect()
     }
 }
@@ -48,18 +72,17 @@ where
 // a later step when the results may be collected into another Vec. This saves
 // an extra allocation. We could make this more righteous with a custom
 // allocator.
-impl<'a, S> std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]> for VarSet<S>
+impl<'a, S> std::iter::FromIterator<&'a mut [<S as Set>::Elem]> for VarSet<S>
 where
     S: Set
-        + ExtendFromSlice<Item = <S as IntoIterator>::Item>
+        + ExtendFromSlice<Item = <S as Set>::Elem>
         + Default
-        + IntoIterator
-        + std::iter::FromIterator<&'a mut [<S as IntoIterator>::Item]>,
-    <S as IntoIterator>::Item: 'a,
+        + std::iter::FromIterator<&'a mut [<S as Set>::Elem]>,
+    <S as Set>::Elem: 'a,
 {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = &'a mut [<S as IntoIterator>::Item]>,
+        T: IntoIterator<Item = &'a mut [<S as Set>::Elem]>,
     {
         let mut s = VarSet::default();
         for i in iter {
@@ -73,21 +96,33 @@ where
 // nested `Vec`s, however as mentioned in the note above, this is typically
 // inefficient because it relies on intermediate allocations. This is acceptable
 // during initialization, for instance.
-impl<S> std::iter::FromIterator<Vec<<S as IntoIterator>::Item>> for VarSet<S>
+impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for VarSet<S>
 where
     S: Set
-        + AppendVec<Item = <S as IntoIterator>::Item>
+        + AppendVec<Item = <S as Set>::Elem>
         + Default
-        + IntoIterator
-        + std::iter::FromIterator<Vec<<S as IntoIterator>::Item>>,
 {
+    /// Construct a `VarSet` from an iterator over `Vec` types.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// use std::iter::FromIterator;
+    /// let s = VarSet::<Vec<_>>::from_iter(vec![vec![1,2,3],vec![4],vec![5,6]].into_iter());
+    /// let mut varset_iter = s.iter();
+    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = Vec<<S as IntoIterator>::Item>>,
+        T: IntoIterator<Item = Vec<<S as Set>::Elem>>,
     {
         let mut s = VarSet::default();
         for i in iter {
-            s.push(i);
+            s.push_vec(i);
         }
         s
     }
@@ -95,6 +130,15 @@ where
 
 impl<S: Set + Clone> Set for VarSet<S> {
     type Elem = Vec<S::Elem>;
+    /// Get the number of elements in a `VarSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// assert_eq!(3, s.len());
+    /// ```
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
@@ -106,8 +150,19 @@ impl<S: Set + Clone> Set for VarSet<S> {
 //    }
 //}
 
-impl<S: Set + IntoIterator + AppendVec<Item = <S as IntoIterator>::Item>> VarSet<S> {
-    fn push(&mut self, mut element: Vec<<S as IntoIterator>::Item>) {
+impl<S: Set + AppendVec<Item = <S as Set>::Elem>> VarSet<S> {
+    /// Push a `Vec` of elements onto this `VarSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = VarSet::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.push_vec(vec![1,2]);
+    /// assert_eq!(3, s.len());
+    /// ```
+    pub fn push_vec(&mut self, mut element: Vec<<S as Set>::Elem>) {
         self.data.append(&mut element);
         self.offsets.push(self.data.len());
     }
@@ -120,33 +175,88 @@ impl<S: Set + IntoIterator + AppendVec<Item = <S as IntoIterator>::Item>> VarSet
 //    }
 //}
 
-impl<S: Set + IntoIterator + ExtendFromSlice<Item = <S as IntoIterator>::Item>> VarSet<S> {
-    pub fn push_slice(&mut self, element: &[<S as IntoIterator>::Item]) {
+impl<S: Set + ExtendFromSlice<Item = <S as Set>::Elem>> VarSet<S> {
+    /// Push a slice of elements onto this `VarSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = VarSet::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.push_slice(&[1,2]);
+    /// assert_eq!(3, s.len());
+    /// ```
+    pub fn push_slice(&mut self, element: &[<S as Set>::Elem]) {
         self.data.extend_from_slice(element);
         self.offsets.push(self.data.len());
     }
 }
 
 impl<S: Set + Default> Default for VarSet<S> {
+    /// Construct an empty `VarSet`.
     fn default() -> Self {
         Self::from_offsets(vec![0], S::default())
     }
 }
 
-impl<S> VarSet<S>
+impl<'a, S> VarSet<S>
 where
-    S: Set + AsMutSlice,
+    S: View<'a>,
+    <S as View<'a>>::Type: IntoSlice<'a>,
 {
-    pub fn iter(&self) -> VarIter<<S as AsSlice>::Item> {
+    /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut varset_iter = s.iter();
+    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
+    pub fn iter(
+        &'a self,
+    ) -> VarIter<<<S as View<'a>>::Type as IntoSlice<'a>>::Item> {
         VarIter {
             offsets: &self.offsets,
-            data: self.data.as_slice(),
+            data: self.data.view().into_slice(),
         }
     }
-    pub fn iter_mut(&mut self) -> VarIterMut<<S as AsSlice>::Item> {
+}
+
+impl<'a, S> VarSet<S>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: IntoMutSlice<'a>,
+{
+    /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// for i in s.iter_mut() {
+    ///     for j in i.iter_mut() {
+    ///         *j += 1;
+    ///     }
+    /// }
+    /// let mut varset_iter = s.iter();
+    /// assert_eq!(vec![2,3,4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![6,7], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
+    pub fn iter_mut(
+        &'a mut self,
+    ) -> VarIterMut<<<S as ViewMut<'a>>::Type as IntoSlice<'a>>::Item> {
         VarIterMut {
             offsets: &self.offsets,
-            data: self.data.as_mut_slice(),
+            data: self.data.view_mut().into_mut_slice(),
         }
     }
 }
@@ -166,6 +276,14 @@ pub trait ExtendFromSlice {
 pub trait AppendVec {
     type Item;
     fn append(&mut self, other: &mut Vec<Self::Item>);
+}
+
+pub trait IntoSlice<'a> {
+    type Item;
+    fn into_slice(self) -> &'a [Self::Item];
+}
+pub trait IntoMutSlice<'a>: IntoSlice<'a> {
+    fn into_mut_slice(self) -> &'a mut [Self::Item];
 }
 
 pub trait AsSlice {
@@ -209,6 +327,24 @@ impl<T> AsSlice for Vec<T> {
 impl<T> AsMutSlice for Vec<T> {
     fn as_mut_slice(&mut self) -> &mut [Self::Item] {
         Vec::as_mut_slice(self)
+    }
+}
+
+impl<'a, T> IntoSlice<'a> for &'a [T] {
+    type Item = T;
+    fn into_slice(self) -> &'a [Self::Item] {
+        self
+    }
+}
+impl<'a, T> IntoSlice<'a> for &'a mut [T] {
+    type Item = T;
+    fn into_slice(self) -> &'a [Self::Item] {
+        self
+    }
+}
+impl<'a, T> IntoMutSlice<'a> for &'a mut [T] {
+    fn into_mut_slice(self) -> &'a mut [Self::Item] {
+        self
     }
 }
 

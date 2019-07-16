@@ -96,7 +96,7 @@ where
 
 impl<S, N> IntoIterator for UniSet<S, N>
 where
-    S: Set + IntoIterator + ReinterpretSet<N>,
+    S: Set + ReinterpretSet<N>,
     N: num::Unsigned,
 {
     type Item = <<S as ReinterpretSet<N>>::Output as IntoIterator>::Item;
@@ -122,11 +122,7 @@ where
 impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Type> for UniSet<S, N>
 where
     N: num::Unsigned,
-    S: Set
-        + IntoIterator
-        + Default
-        + Push<<S as Set>::Elem>
-        + std::iter::FromIterator<<S as Set>::Elem>,
+    S: Set + Default + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Grouped<N>,
 {
     /// Construct a `UniSet` from an iterator that produces grouped elements.
@@ -348,3 +344,57 @@ impl_borrow_uniset!(num::U3, 3);
 //        self.data.index(idx)
 //    }
 //}
+
+impl<'a, S, N> UniSet<S, N>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: ReinterpretSet<N>,
+    N: num::Unsigned,
+{
+    /// Produce an iterator over borrowed grouped elements of the `UniSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![1,2,3,4]);
+    /// let mut uniset_iter = s.iter();
+    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
+    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
+    /// assert_eq!(None, uniset_iter.next());
+    /// ```
+    pub fn iter(
+        &'a self,
+    ) -> <<<S as View<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+        self.data.view().reinterpret_set().into_iter()
+    }
+}
+
+impl<'a, S, N> UniSet<S, N>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: ReinterpretSet<N>,
+    N: num::Unsigned,
+{
+    /// Produce an iterator over mutably borrowed grouped elements of the `UniSet`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+    /// for i in s.iter_mut() {
+    ///     i[0] += 1;
+    ///     i[1] += 1;
+    /// }
+    /// let mut uniset_iter = s.iter();
+    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
+    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
+    /// assert_eq!(None, uniset_iter.next());
+    /// ```
+    pub fn iter_mut(
+        &'a mut self,
+    ) -> <<<S as ViewMut<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+        self.data.view_mut().reinterpret_set().into_iter()
+    }
+}

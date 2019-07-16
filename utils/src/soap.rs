@@ -43,6 +43,7 @@ pub trait Set {
     }
 }
 
+/// A helper trait analogous to `SliceIndex` from the standard library.
 pub trait GetIndex<T> {
     type Output: ?Sized;
     fn get(self, set: &T) -> Option<&Self::Output>;
@@ -63,7 +64,21 @@ where
         Some(set.index_mut(self))
     }
 }
+//
+//impl<S, N> GetIndex<UniSet<S, N>> for usize
+//where
+//    S: Set + ReinterpretSet<N>,
+//{
+//    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
+//    fn get(self, set: &S) -> Option<&Self::Output> {
+//        Some()
+//    }
+//    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
+//        Some()
+//    }
+//}
 
+/// An index trait for `Set` types.
 pub trait Get<'a, I> {
     type Output;
     fn get(&'a self, idx: I) -> Self::Output;

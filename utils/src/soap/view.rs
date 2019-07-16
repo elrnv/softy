@@ -6,30 +6,17 @@ use super::*;
 
 /// A VarSet that is a contiguous sub-view of some larger set (which could have
 /// any type).
-#[derive(Clone)]
-pub struct VarSetView<'a, V>
-where
-    V: View<'a>,
-{
-    offset: &'a [usize],
-    data: <V as View<'a>>::Type,
-}
+pub type VarSetView<'a, V> = VarSet<<V as View<'a>>::Type, &'a [usize]>;
 
 /// A VarSet that is a contiguous mutable sub-view of some larger set (which
 /// could have any type).
-pub struct VarSetViewMut<'a, V>
-where
-    V: ViewMut<'a>,
-{
-    offset: &'a [usize],
-    data: <V as ViewMut<'a>>::Type,
-}
+pub type VarSetViewMut<'a, V> = VarSet<<V as ViewMut<'a>>::Type, &'a [usize]>;
 
 /// A contiguous immutable UniSet view of some larger set (which could have any type).
-pub type UniSetView<'a, R, N> = UniSet<<R as View<'a>>::Type, N>;
+pub type UniSetView<'a, V, N> = UniSet<<V as View<'a>>::Type, N>;
 
 /// A contiguous mutable UniSet view of some larger set (which could have any type).
-pub type UniSetViewMut<'a, R, N> = UniSet<<R as ViewMut<'a>>::Type, N>;
+pub type UniSetViewMut<'a, V, N> = UniSet<<V as ViewMut<'a>>::Type, N>;
 
 /// A trait defining a set that can be accessed via a contiguous immutable
 /// (shared) view.  This type of view can be cloned.
@@ -119,59 +106,5 @@ where
 
     fn view_mut(&'a mut self) -> Self::Type {
         UniSet::from_flat(self.data.view_mut())
-    }
-}
-
-impl<'a, S, N> UniSet<S, N>
-where
-    S: View<'a>,
-    <S as View<'a>>::Type: ReinterpretSet<N>,
-    N: num::Unsigned,
-{
-    /// Produce an iterator over borrowed grouped elements of the `UniSet`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![1,2,3,4]);
-    /// let mut uniset_iter = s.iter();
-    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
-    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
-    /// assert_eq!(None, uniset_iter.next());
-    /// ```
-    pub fn iter(
-        &'a self,
-    ) -> <<<S as View<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        self.data.view().reinterpret_set().into_iter()
-    }
-}
-
-impl<'a, S, N> UniSet<S, N>
-where
-    S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: ReinterpretSet<N>,
-    N: num::Unsigned,
-{
-    /// Produce an iterator over mutably borrowed grouped elements of the `UniSet`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
-    /// for i in s.iter_mut() {
-    ///     i[0] += 1;
-    ///     i[1] += 1;
-    /// }
-    /// let mut uniset_iter = s.iter();
-    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
-    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
-    /// assert_eq!(None, uniset_iter.next());
-    /// ```
-    pub fn iter_mut(
-        &'a mut self,
-    ) -> <<<S as ViewMut<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        self.data.view_mut().reinterpret_set().into_iter()
     }
 }

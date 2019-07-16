@@ -49,6 +49,19 @@ pub trait GetIndex<T> {
     fn get_mut(self, set: &mut T) -> Option<&mut Self::Output>;
 }
 
+/// Blanket implementation of `GetIndex` for all std index types over slices.
+impl<I, S> GetIndex<S> for I
+    where I: std::slice::SliceIndex<S>, S: std::ops::Index<I> + std::ops::IndexMut<I>
+{
+    type Output = <S as std::ops::Index<I>>::Output;
+    fn get(self, set: &S) -> Option<&Self::Output> {
+        Some(set.index(self))
+    }
+    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
+        Some(set.index_mut(self))
+    }
+}
+
 pub trait Get<'a, I> {
     type Output;
     fn get(&'a self, idx: I) -> Self::Output;

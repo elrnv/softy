@@ -152,52 +152,6 @@ impl<S: Set + Default, N: num::Unsigned> Default for UniSet<S, N> {
     }
 }
 
-impl<'a, S, N> UniSet<S, N>
-where
-    S: Set + 'a,
-    &'a S: IntoIterator + ReinterpretSet<N>,
-    &'a mut S: IntoIterator + ReinterpretSet<N>,
-    N: num::Unsigned,
-{
-    /// Produce an iterator over borrowed grouped elements of the `UniSet`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![1,2,3,4]);
-    /// let mut uniset_iter = s.iter();
-    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
-    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
-    /// assert_eq!(None, uniset_iter.next());
-    /// ```
-    pub fn iter(&'a self) -> <<&'a S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        (&self.data).reinterpret_set().into_iter()
-    }
-
-    /// Produce an iterator over mutably borrowed grouped elements of the `UniSet`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
-    /// for i in s.iter_mut() {
-    ///     i[0] += 1;
-    ///     i[1] += 1;
-    /// }
-    /// let mut uniset_iter = s.iter();
-    /// assert_eq!(Some(&[1,2]), uniset_iter.next());
-    /// assert_eq!(Some(&[3,4]), uniset_iter.next());
-    /// assert_eq!(None, uniset_iter.next());
-    /// ```
-    pub fn iter_mut(
-        &'a mut self,
-    ) -> <<&'a mut S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        (&mut self.data).reinterpret_set().into_iter()
-    }
-}
-
 pub trait ReinterpretSet<N> {
     type Output: IntoIterator;
     fn reinterpret_set(self) -> Self::Output;

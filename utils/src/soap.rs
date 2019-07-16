@@ -1,12 +1,12 @@
+mod subset;
 mod uniset;
 mod varset;
 mod view;
-mod subset;
 
+pub use subset::*;
 pub use uniset::*;
 pub use varset::*;
 pub use view::*;
-pub use subset::*;
 
 // Helper module defines a few useful unsigned type level integers.
 // This is to avoid having to depend on yet another crate.
@@ -51,7 +51,9 @@ pub trait GetIndex<T> {
 
 /// Blanket implementation of `GetIndex` for all std index types over slices.
 impl<I, S> GetIndex<S> for I
-    where I: std::slice::SliceIndex<S>, S: std::ops::Index<I> + std::ops::IndexMut<I>
+where
+    I: std::slice::SliceIndex<S>,
+    S: std::ops::Index<I> + std::ops::IndexMut<I>,
 {
     type Output = <S as std::ops::Index<I>>::Output;
     fn get(self, set: &S) -> Option<&Self::Output> {
@@ -68,9 +70,10 @@ pub trait Get<'a, I> {
 }
 
 impl<'a, S, I> Get<'a, I> for &'a S
-    where S: std::ops::Index<I> + ?Sized,
-          <S as std::ops::Index<I>>::Output: 'a,
-          I: std::slice::SliceIndex<S>,
+where
+    S: std::ops::Index<I> + ?Sized,
+    <S as std::ops::Index<I>>::Output: 'a,
+    I: std::slice::SliceIndex<S>,
 {
     type Output = &'a <S as std::ops::Index<I>>::Output;
     fn get(&'a self, idx: I) -> Self::Output {
@@ -79,9 +82,10 @@ impl<'a, S, I> Get<'a, I> for &'a S
 }
 
 impl<'a, S, I> Get<'a, I> for &'a mut S
-    where S: std::ops::Index<I> + ?Sized,
-          <S as std::ops::Index<I>>::Output: 'a,
-          I: std::slice::SliceIndex<S>,
+where
+    S: std::ops::Index<I> + ?Sized,
+    <S as std::ops::Index<I>>::Output: 'a,
+    I: std::slice::SliceIndex<S>,
 {
     type Output = &'a <S as std::ops::Index<I>>::Output;
     fn get(&'a self, idx: I) -> Self::Output {

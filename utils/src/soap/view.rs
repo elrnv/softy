@@ -7,14 +7,20 @@ use super::*;
 /// A VarSet that is a contiguous sub-view of some larger set (which could have
 /// any type).
 #[derive(Clone)]
-pub struct VarSetView<'a, V> where V: View<'a> {
+pub struct VarSetView<'a, V>
+where
+    V: View<'a>,
+{
     offset: &'a [usize],
     data: <V as View<'a>>::Type,
 }
 
 /// A VarSet that is a contiguous mutable sub-view of some larger set (which
 /// could have any type).
-pub struct VarSetViewMut<'a, V> where V: ViewMut<'a> {
+pub struct VarSetViewMut<'a, V>
+where
+    V: ViewMut<'a>,
+{
     offset: &'a [usize],
     data: <V as ViewMut<'a>>::Type,
 }
@@ -75,9 +81,10 @@ impl<'a, S: ?Sized + 'a> ViewMut<'a> for &'a mut S {
 }
 
 impl<'a, S, N> View<'a> for UniSet<S, N>
-    where S: Set + View<'a>,
-          N: num::Unsigned,
-          <S as View<'a>>::Type: Set,
+where
+    S: Set + View<'a>,
+    N: num::Unsigned,
+    <S as View<'a>>::Type: Set,
 {
     type Type = UniSetView<'a, S, N>;
 
@@ -103,9 +110,10 @@ impl<'a, S, N> View<'a> for UniSet<S, N>
     }
 }
 impl<'a, S, N> ViewMut<'a> for UniSet<S, N>
-    where S: Set + ViewMut<'a>,
-          N: num::Unsigned,
-          <S as ViewMut<'a>>::Type: Set,
+where
+    S: Set + ViewMut<'a>,
+    N: num::Unsigned,
+    <S as ViewMut<'a>>::Type: Set,
 {
     type Type = UniSetViewMut<'a, S, N>;
 
@@ -132,7 +140,9 @@ where
     /// assert_eq!(Some(&[3,4]), uniset_iter.next());
     /// assert_eq!(None, uniset_iter.next());
     /// ```
-    pub fn iter(&'a self) -> <<<S as View<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
+    pub fn iter(
+        &'a self,
+    ) -> <<<S as View<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
         self.data.view().reinterpret_set().into_iter()
     }
 }

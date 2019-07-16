@@ -5,7 +5,6 @@ pub mod zip;
 /**
  * This crate provides convenience functions for building common meshes.
  */
-
 pub use crate::transform::*;
 pub use crate::zip::*;
 use geo::math::Vector3;

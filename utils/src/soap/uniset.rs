@@ -24,7 +24,10 @@ pub struct UniSet<S, N> {
     phantom: PhantomData<N>,
 }
 
-impl<S, N> Clone for UniSet<S, N> where S: Clone {
+impl<S, N> Clone for UniSet<S, N>
+where
+    S: Clone,
+{
     fn clone(&self) -> Self {
         UniSet {
             data: self.data.clone(),
@@ -68,8 +71,9 @@ impl<T> Push<T> for Vec<T> {
 }
 
 impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Type> for UniSet<S, N>
-    where S: Set + Push<<S as Set>::Elem>,
-          <S as Set>::Elem: Grouped<N>
+where
+    S: Set + Push<<S as Set>::Elem>,
+    <S as Set>::Elem: Grouped<N>,
 {
     /// Push a grouped element onto the `UniSet`. Each element must have exactly
     /// `N` sub-elements.
@@ -118,7 +122,11 @@ where
 impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Type> for UniSet<S, N>
 where
     N: num::Unsigned,
-    S: Set + IntoIterator + Default + Push<<S as Set>::Elem> + std::iter::FromIterator<<S as Set>::Elem>,
+    S: Set
+        + IntoIterator
+        + Default
+        + Push<<S as Set>::Elem>
+        + std::iter::FromIterator<<S as Set>::Elem>,
     <S as Set>::Elem: Grouped<N>,
 {
     /// Construct a `UniSet` from an iterator that produces grouped elements.
@@ -158,7 +166,8 @@ pub trait ReinterpretSet<N> {
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for Vec<T>
-    where <T as Grouped<N>>::Type: 'a,
+where
+    <T as Grouped<N>>::Type: 'a,
 {
     type Output = Vec<<T as Grouped<N>>::Type>;
     #[inline]
@@ -168,7 +177,8 @@ impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for Vec<T>
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a Vec<T>
-    where <T as Grouped<N>>::Type: 'a,
+where
+    <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a [<T as Grouped<N>>::Type];
     #[inline]
@@ -178,7 +188,8 @@ impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a Vec<T>
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut Vec<T>
-    where <T as Grouped<N>>::Type: 'a,
+where
+    <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a mut [<T as Grouped<N>>::Type];
     #[inline]
@@ -188,7 +199,8 @@ impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut Vec<T>
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a [T]
-    where <T as Grouped<N>>::Type: 'a,
+where
+    <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a [<T as Grouped<N>>::Type];
     #[inline]
@@ -198,7 +210,8 @@ impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a [T]
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut [T]
-    where <T as Grouped<N>>::Type: 'a,
+where
+    <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a mut [<T as Grouped<N>>::Type];
     #[inline]
@@ -207,7 +220,10 @@ impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut [T]
     }
 }
 
-pub trait Grouped<N> where Self: Sized {
+pub trait Grouped<N>
+where
+    Self: Sized,
+{
     type Type;
     /// This method tells this type how it can be pushed to a set as a grouped
     /// type.
@@ -231,7 +247,7 @@ macro_rules! impl_grouped {
                 }
             }
         }
-    }
+    };
 }
 
 impl_grouped!(num::U2, 2);
@@ -239,7 +255,8 @@ impl_grouped!(num::U3, 3);
 
 /// An implementation of `Set` for `UniSet` of any type that can be grouped as `N` sub-elements.
 impl<S: Set, N: num::Unsigned> Set for UniSet<S, N>
-    where S::Elem: Grouped<N>,
+where
+    S::Elem: Grouped<N>,
 {
     type Elem = <S::Elem as Grouped<N>>::Type;
     /// Compute the length of this set as the number of grouped elements in the set.
@@ -305,7 +322,7 @@ macro_rules! impl_borrow_uniset {
                 reinterpret::reinterpret_mut_slice(self.data)
             }
         }
-    }
+    };
 }
 
 impl_borrow_uniset!(num::U2, 2);

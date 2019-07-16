@@ -59,10 +59,7 @@ impl<'a, S: Set> Subset<S> {
         indices.sort_unstable();
         indices.dedup();
 
-        Self::validate(Subset {
-            indices,
-            set,
-        })
+        Self::validate(Subset { indices, set })
     }
 
     /// Create a subset with all elements from the original set.
@@ -159,7 +156,6 @@ impl<'a, S: std::ops::IndexMut<usize> + ?Sized> std::ops::IndexMut<usize> for Su
     }
 }
 
-
 //impl<S, N> std::ops::Index<usize> for Subset<UniSet<S, N>> {
 //    type Output = <UniSet<S, N> as std::ops::Index<usize>>::Output;
 //    /// Immutably index the subset.
@@ -183,7 +179,8 @@ impl<'a, S: std::ops::IndexMut<usize> + ?Sized> std::ops::IndexMut<usize> for Su
 
 impl<S> Subset<S> {
     pub fn iter<'a, T: 'a>(&'a self) -> impl Iterator<Item = &'a T>
-        where S: std::borrow::Borrow<[T]>
+    where
+        S: std::borrow::Borrow<[T]>,
     {
         let ptr = self.set.borrow().as_ptr();
         self.indices.iter().map(move |&i| unsafe { &*ptr.add(i) })
@@ -205,9 +202,12 @@ impl<S> Subset<S> {
     /// assert_eq!(v, vec![2,2,4,4,6]);
     /// ```
     pub fn iter_mut<'a, T: 'a>(&'a mut self) -> impl Iterator<Item = &'a mut T>
-        where S: std::borrow::BorrowMut<[T]>
+    where
+        S: std::borrow::BorrowMut<[T]>,
     {
         let ptr = self.set.borrow_mut().as_mut_ptr();
-        self.indices.iter().map(move |&i| unsafe { &mut *ptr.add(i) })
+        self.indices
+            .iter()
+            .map(move |&i| unsafe { &mut *ptr.add(i) })
     }
 }

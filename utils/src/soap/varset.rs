@@ -32,7 +32,8 @@ impl<S: Set> VarSet<S> {
 
 impl<S> VarSet<S>
 where
-    S: Set + IntoIterator
+    S: Set
+        + IntoIterator
         + AppendVec<Item = <S as IntoIterator>::Item>
         + Default
         + std::iter::FromIterator<std::vec::Vec<<S as std::iter::IntoIterator>::Item>>,

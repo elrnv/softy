@@ -8,7 +8,7 @@ use super::*;
 /// the data buffer for the first of subelement in the Set.
 /// Offsets always begins with a 0 and ends with the length of the buffer.
 #[derive(Clone, Debug)]
-pub struct VarSet<S, O=Vec<usize>> {
+pub struct VarSet<S, O = Vec<usize>> {
     data: S,
     offsets: O,
 }
@@ -45,9 +45,7 @@ impl<S: Set> VarSet<S> {
 
 impl<S> VarSet<S>
 where
-    S: Set
-        + AppendVec<Item = <S as Set>::Elem>
-        + Default
+    S: Set + AppendVec<Item = <S as Set>::Elem> + Default,
 {
     /// Construct a `VarSet` from a nested set of `Vec`s.
     ///
@@ -98,9 +96,7 @@ where
 // during initialization, for instance.
 impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for VarSet<S>
 where
-    S: Set
-        + AppendVec<Item = <S as Set>::Elem>
-        + Default
+    S: Set + AppendVec<Item = <S as Set>::Elem> + Default,
 {
     /// Construct a `VarSet` from an iterator over `Vec` types.
     ///
@@ -218,9 +214,7 @@ where
     /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(None, varset_iter.next());
     /// ```
-    pub fn iter(
-        &'a self,
-    ) -> VarIter<<<S as View<'a>>::Type as IntoSlice<'a>>::Item> {
+    pub fn iter(&'a self) -> VarIter<<<S as View<'a>>::Type as IntoSlice<'a>>::Item> {
         VarIter {
             offsets: &self.offsets,
             data: self.data.view().into_slice(),
@@ -251,9 +245,7 @@ where
     /// assert_eq!(vec![6,7], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(None, varset_iter.next());
     /// ```
-    pub fn iter_mut(
-        &'a mut self,
-    ) -> VarIterMut<<<S as ViewMut<'a>>::Type as IntoSlice<'a>>::Item> {
+    pub fn iter_mut(&'a mut self) -> VarIterMut<<<S as ViewMut<'a>>::Type as IntoSlice<'a>>::Item> {
         VarIterMut {
             offsets: &self.offsets,
             data: self.data.view_mut().into_mut_slice(),

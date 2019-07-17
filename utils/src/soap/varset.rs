@@ -46,6 +46,7 @@ impl<S: Set> VarSet<S> {
 impl<S> VarSet<S>
 where
     S: Set + AppendVec<Item = <S as Set>::Elem> + Default,
+    <S as Set>::Elem: Sized,
 {
     /// Construct a `VarSet` from a nested set of `Vec`s.
     ///
@@ -76,7 +77,7 @@ where
         + ExtendFromSlice<Item = <S as Set>::Elem>
         + Default
         + std::iter::FromIterator<&'a mut [<S as Set>::Elem]>,
-    <S as Set>::Elem: 'a,
+    <S as Set>::Elem: Sized + 'a,
 {
     fn from_iter<T>(iter: T) -> Self
     where
@@ -97,6 +98,7 @@ where
 impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for VarSet<S>
 where
     S: Set + AppendVec<Item = <S as Set>::Elem> + Default,
+    <S as Set>::Elem: Sized,
 {
     /// Construct a `VarSet` from an iterator over `Vec` types.
     ///
@@ -124,7 +126,10 @@ where
     }
 }
 
-impl<S: Set + Clone> Set for VarSet<S> {
+impl<S> Set for VarSet<S>
+where S: Set + Clone,
+      <S as Set>::Elem: Sized,
+{
     type Elem = Vec<S::Elem>;
     /// Get the number of elements in a `VarSet`.
     ///
@@ -146,7 +151,10 @@ impl<S: Set + Clone> Set for VarSet<S> {
 //    }
 //}
 
-impl<S: Set + AppendVec<Item = <S as Set>::Elem>> VarSet<S> {
+impl<S> VarSet<S>
+where S: Set + AppendVec<Item = <S as Set>::Elem>,
+    <S as Set>::Elem: Sized
+{
     /// Push a `Vec` of elements onto this `VarSet`.
     ///
     /// # Example
@@ -171,7 +179,11 @@ impl<S: Set + AppendVec<Item = <S as Set>::Elem>> VarSet<S> {
 //    }
 //}
 
-impl<S: Set + ExtendFromSlice<Item = <S as Set>::Elem>> VarSet<S> {
+impl<S> VarSet<S>
+where
+    S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
+    <S as Set>::Elem: Sized
+{
     /// Push a slice of elements onto this `VarSet`.
     ///
     /// # Example
@@ -278,14 +290,6 @@ pub trait IntoMutSlice<'a>: IntoSlice<'a> {
     fn into_mut_slice(self) -> &'a mut [Self::Item];
 }
 
-pub trait AsSlice {
-    type Item;
-    fn as_slice(&self) -> &[Self::Item];
-}
-pub trait AsMutSlice: AsSlice {
-    fn as_mut_slice(&mut self) -> &mut [Self::Item];
-}
-
 /*
  * Implement helper traits for supported `Set` types
  */
@@ -307,18 +311,6 @@ impl<T> AppendVec for Vec<T> {
     type Item = T;
     fn append(&mut self, other: &mut Vec<Self::Item>) {
         Vec::append(self, other);
-    }
-}
-
-impl<T> AsSlice for Vec<T> {
-    type Item = T;
-    fn as_slice(&self) -> &[Self::Item] {
-        Vec::as_slice(self)
-    }
-}
-impl<T> AsMutSlice for Vec<T> {
-    fn as_mut_slice(&mut self) -> &mut [Self::Item] {
-        Vec::as_mut_slice(self)
     }
 }
 
@@ -447,5 +439,20 @@ impl<T> Iterator for VarIntoIter<T> {
 //            offsets: offsets.into_iter().peekable(),
 //            data: data.into_flat_vec(),
 //        }
+//    }
+//}
+
+//impl<'a, S: Set + Push<&'a <S as Set>::Elem>> Push<&'a <Self as Set>::Elem> for VarSet<S> {
+//    fn push(&mut self, element: &<Self as Set>::Elem) {
+//        for i in element.iter() {
+//            self.data.push(i);
+//        }
+//        self.offsets.push(self.data.len());
+//    }
+//}
+//
+//impl<'a, S: Set + View<'a>> Push<<S as View<'a>>::Type> for VarSet<S> {
+//    fn push(&mut self, element: <S as View<'a>>::Type) {
+//        self.
 //    }
 //}

@@ -59,17 +59,6 @@ impl<S: Set, N: num::Unsigned> UniSet<S, N> {
     }
 }
 
-/// Abstraction for pushing elements of type `T` onto a collection.
-pub trait Push<T> {
-    fn push(&mut self, element: T);
-}
-
-impl<T> Push<T> for Vec<T> {
-    fn push(&mut self, element: T) {
-        Vec::push(self, element);
-    }
-}
-
 impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Type> for UniSet<S, N>
 where
     S: Set + Push<<S as Set>::Elem>,
@@ -159,6 +148,18 @@ impl<S: Set + Default, N: num::Unsigned> Default for UniSet<S, N> {
 pub trait ReinterpretSet<N> {
     type Output: IntoIterator;
     fn reinterpret_set(self) -> Self::Output;
+}
+
+impl<'a, S, N: num::Unsigned, M: num::Unsigned> ReinterpretSet<N> for UniSet<S, M>
+where
+    S: ReinterpretSet<M>,
+    <S as ReinterpretSet<M>>::Output: ReinterpretSet<N>,
+{
+    type Output = <<S as ReinterpretSet<M>>::Output as ReinterpretSet<N>>::Output;
+    #[inline]
+    fn reinterpret_set(self) -> Self::Output {
+        self.data.reinterpret_set().reinterpret_set()
+    }
 }
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for Vec<T>
@@ -353,7 +354,9 @@ where
 {
     /// Produce an iterator over borrowed grouped elements of the `UniSet`.
     ///
-    /// # Example
+    /// # Examples
+    ///
+    /// The following is a simple test for iterating over a uniformly organized `Vec`.
     ///
     /// ```rust
     /// use utils::soap::*;
@@ -362,6 +365,25 @@ where
     /// assert_eq!(Some(&[1,2]), uniset_iter.next());
     /// assert_eq!(Some(&[3,4]), uniset_iter.next());
     /// assert_eq!(None, uniset_iter.next());
+    /// ```
+    ///
+    /// A more complex example consists of data organized as a nested `UniSet`.
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s0 = UniSet::<_, num::U2>::from_flat(vec![1,2, 3,4, 5,6, 7,8, 9,10, 11,12]);
+    /// let s1 = UniSet::<_, num::U3>::from_flat(s0);
+    /// let mut iter1 = s1.iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[1,2]), iter0.next());
+    /// assert_eq!(Some(&[3,4]), iter0.next());
+    /// assert_eq!(Some(&[5,6]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[7,8]), iter0.next());
+    /// assert_eq!(Some(&[9,10]), iter0.next());
+    /// assert_eq!(Some(&[11,12]), iter0.next());
+    /// assert_eq!(None, iter0.next());
     /// ```
     pub fn iter(
         &'a self,
@@ -378,7 +400,9 @@ where
 {
     /// Produce an iterator over mutably borrowed grouped elements of the `UniSet`.
     ///
-    /// # Example
+    /// # Examples
+    ///
+    /// The following example shows a simple modification of a uniformly organized `Vec`.
     ///
     /// ```rust
     /// use utils::soap::*;
@@ -391,6 +415,31 @@ where
     /// assert_eq!(Some(&[1,2]), uniset_iter.next());
     /// assert_eq!(Some(&[3,4]), uniset_iter.next());
     /// assert_eq!(None, uniset_iter.next());
+    /// ```
+    ///
+    /// Nested `UniSet`s can also be modified as follows:
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s0 = UniSet::<_, num::U2>::from_flat(vec![1,2, 3,4, 5,6, 7,8, 9,10, 11,12]);
+    /// let mut s1 = UniSet::<_, num::U3>::from_flat(s0);
+    /// for i in s1.iter_mut() {
+    ///     for j in i.iter_mut() {
+    ///         j[0] += 1;
+    ///         j[1] += 2;
+    ///     }
+    /// }
+    /// let mut iter1 = s1.iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[2,4]), iter0.next());
+    /// assert_eq!(Some(&[4,6]), iter0.next());
+    /// assert_eq!(Some(&[6,8]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[8,10]), iter0.next());
+    /// assert_eq!(Some(&[10,12]), iter0.next());
+    /// assert_eq!(Some(&[12,14]), iter0.next());
+    /// assert_eq!(None, iter0.next());
     /// ```
     pub fn iter_mut(
         &'a mut self,

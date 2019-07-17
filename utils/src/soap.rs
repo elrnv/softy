@@ -36,11 +36,17 @@ pub mod num {
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
 /// positions.
 pub trait Set {
+    /// Owned element of the set.
     type Elem;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+pub trait SetView<'a>: Set {
+    type ElemRef;
+    type ElemMut;
 }
 
 /// A helper trait analogous to `SliceIndex` from the standard library.
@@ -108,13 +114,6 @@ where
     }
 }
 
-impl<T> Set for Vec<T> {
-    type Elem = T;
-    fn len(&self) -> usize {
-        self.len()
-    }
-}
-
 impl<T: Clone> Get<'_, usize> for Vec<T> {
     type Output = T;
     fn get(&self, idx: usize) -> Self::Output {
@@ -122,67 +121,46 @@ impl<T: Clone> Get<'_, usize> for Vec<T> {
     }
 }
 
-impl<'a, T> Set for &'a Vec<T> {
-    type Elem = &'a T;
+impl<T> Set for Vec<T> {
+    type Elem = T;
     fn len(&self) -> usize {
-        Vec::<T>::len(self)
+        self.len()
     }
 }
 
-impl<'a, T> Set for &'a mut Vec<T> {
-    type Elem = &'a mut T;
+impl<T> Set for [T] {
+    type Elem = T;
     fn len(&self) -> usize {
-        Vec::<T>::len(self)
+        self.len()
     }
 }
 
-impl<'a, T> Set for &'a [T] {
-    type Elem = &'a T;
+impl<'a, S: Set + ?Sized> Set for &'a S {
+    type Elem = <S as Set>::Elem;
     fn len(&self) -> usize {
-        <[T]>::len(self)
+        <S as Set>::len(self)
     }
 }
-
-impl<'a, T> Set for &'a mut [T] {
-    type Elem = &'a mut T;
+impl<'a, S: Set + ?Sized> Set for &'a mut S {
+    type Elem = <S as Set>::Elem;
     fn len(&self) -> usize {
-        <[T]>::len(self)
+        <S as Set>::len(self)
     }
 }
 
-// reference into a set.
-//pub struct RefIter<'a, I> {
-//    s: Ref<'a, I>,
-//}
-/*
-
-impl<S: Set> Set for Rc<RefCell<S>> {
-    fn len(&self) -> usize { self.borrow().len() }
+/// The element of a set is a view into the set of size one.
+impl<'a, S: Set + View<'a> + ViewMut<'a>> SetView<'a> for S {
+    type ElemRef = <S as View<'a>>::Type;
+    type ElemMut = <S as ViewMut<'a>>::Type;
 }
 
-impl<S: Set> VarIter for Rc<RefCell<S>> {
-    type Iter = std::cell::Ref<S::Iter>;
-    type IterMut = std::cell::RefMut<S::IterMut>;
-    fn iter(&self) -> Self::Iter {
-        std::cell::Ref::map(self.borrow(), |x| x.iter())
-    }
-    fn iter_mut(&self) -> Self::IterMut {
-        std::cell::RefMut::map(self.borrow_mut(), |x| x.iter_mut())
-    }
+/// Abstraction for pushing elements of type `T` onto a collection.
+pub trait Push<T> {
+    fn push(&mut self, element: T);
 }
 
-impl<S: Set> Set for Arc<RwLock<S>> {
-    fn len(&self) -> usize { self.read().unwrap().len() }
-}
-
-impl<S: Set> VarIter for Arc<RwLock<S>> {
-    type Iter = S::Iter;
-    type IterMut = S::IterMut;
-    fn iter(&self) -> Self::Iter {
-        self.read().unwrap().iter()
-    }
-    fn iter_mut(&self) -> Self::IterMut {
-        self.write().unwrap().iter_mut()
+impl<T> Push<T> for Vec<T> {
+    fn push(&mut self, element: T) {
+        Vec::push(self, element);
     }
 }
-*/

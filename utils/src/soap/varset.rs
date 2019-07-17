@@ -215,16 +215,39 @@ where
 {
     /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
     ///
-    /// # Example
+    /// # Examples
+    ///
+    /// The following simple example demonstrates how to iterate over a `VarSet`
+    /// of integers stored in a flat `Vec`.
     ///
     /// ```rust
     /// use utils::soap::*;
     /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
     /// let mut varset_iter = s.iter();
-    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(Some(&[1,2,3][..]), varset_iter.next());
+    /// assert_eq!(Some(&[4][..]), varset_iter.next());
+    /// assert_eq!(Some(&[5,6][..]), varset_iter.next());
     /// assert_eq!(None, varset_iter.next());
+    /// ```
+    ///
+    /// Nested `VarSet`s can also be used to create more complex data organization:
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![1,2,3,4,5,6,7,8,9,10,11]);
+    /// let s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// let mut iter1 = s1.iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[4][..]), iter0.next());
+    /// assert_eq!(Some(&[5,6][..]), iter0.next());
+    /// assert_eq!(Some(&[7,8,9][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[10,11][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
     /// ```
     pub fn iter(&'a self) -> VarIter<<<S as View<'a>>::Type as IntoSlice<'a>>::Item> {
         VarIter {

@@ -64,8 +64,8 @@ impl<'a, T: 'a> ViewMut<'a> for [T] {
     }
 }
 
-/// Blanket implementation for all immutable borrows.
-impl<'a, S: ?Sized + 'a> View<'a> for &'a S {
+/// Blanket implementation of `View` for all immutable borrows.
+impl<'a, 'b: 'a, S: ?Sized + 'b> View<'a> for &'b S {
     type Type = &'a S;
 
     fn view(&'a self) -> Self::Type {
@@ -73,8 +73,17 @@ impl<'a, S: ?Sized + 'a> View<'a> for &'a S {
     }
 }
 
-/// Blanket implementation for all mutable borrows.
-impl<'a, S: ?Sized + 'a> ViewMut<'a> for &'a mut S {
+/// Blanket implementation of `View` for all mutable borrows.
+impl<'a, 'b: 'a, S: ?Sized + 'b> View<'a> for &'b mut S {
+    type Type = &'a S;
+
+    fn view(&'a self) -> Self::Type {
+        *self
+    }
+}
+
+/// Blanket implementation of `ViewMut` for all mutable borrows.
+impl<'a, 'b: 'a, S: ?Sized + 'b> ViewMut<'a> for &'b mut S {
     type Type = &'a mut S;
 
     fn view_mut(&'a mut self) -> Self::Type {
@@ -119,7 +128,53 @@ where
 {
     type Type = UniSetViewMut<'a, S, N>;
 
+    /// Create a contiguous mutable (unique) view into this set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+    /// let mut v = s.view_mut();
+    /// {
+    ///    v.iter_mut().next().unwrap()[0] = 100;
+    /// }
+    /// let mut view_iter = v.iter();
+    /// assert_eq!(Some(&[100,1]), view_iter.next());
+    /// assert_eq!(Some(&[2,3]), view_iter.next());
+    /// assert_eq!(None, view_iter.next());
+    /// ```
     fn view_mut(&'a mut self) -> Self::Type {
         UniSet::from_flat(self.data.view_mut())
     }
 }
+
+//impl<'a, S, N> View<'a> for VarSet<S, N>
+//where
+//    S: Set + View<'a>,
+//    N: num::Unsigned,
+//    <S as View<'a>>::Type: Set,
+//{
+//    type Type = UniSetView<'a, S, N>;
+//
+//    /// Create a contiguous immutable (shareable) view into this set.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// use utils::soap::*;
+//    /// let s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+//    /// let v1 = s.view(); // s is now inaccessible.
+//    /// let v2 = v1.clone();
+//    /// let mut view1_iter = v1.iter();
+//    /// assert_eq!(Some(&[0,1]), view1_iter.next());
+//    /// assert_eq!(Some(&[2,3]), view1_iter.next());
+//    /// assert_eq!(None, view1_iter.next());
+//    /// for (a,b) in v1.iter().zip(v2.iter()) {
+//    ///     assert_eq!(a,b);
+//    /// }
+//    /// ```
+//    fn view(&'a self) -> Self::Type {
+//        UniSet::from_flat(self.data.view())
+//    }
+//}

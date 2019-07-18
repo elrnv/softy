@@ -65,14 +65,11 @@ pub struct VarSetViewMut<'a, V> where V: ViewMut<'a> {
     pub(crate) phantom: PhantomData<&'a V>,
 }
 
-//impl<'a, V: ViewMut<'a>> std::ops::Deref for VarSetViewMut<'a, V> {
-//    type Target = VarSet<<V as ViewMut<'a>>::Type, &'a [usize]>;
-//
-//    fn deref(&self) -> &Self::Target {
-//        &self.view
+//impl<'a, V: ViewMut<'a>> std::ops::DerefMut for VarSetViewMut<'a, V> {
+//    fn deref_mut(&mut self) -> &mut Self::Target {
+//        &mut self.view
 //    }
 //}
-//
 //impl<'a, V: View<'a>> std::ops::Deref for VarSetView<'a, V> {
 //    type Target = VarSet<<V as View<'a>>::Type, &'a [usize]>;
 //
@@ -80,6 +77,34 @@ pub struct VarSetViewMut<'a, V> where V: ViewMut<'a> {
 //        &self.view
 //    }
 //}
+
+impl<'a, V: View<'a> + ViewMut<'a>> std::ops::Deref for VarSetViewMut<'a, V> {
+    type Target = VarSetView<'a, V>;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self as *const Self as *const Self::Target) }
+    }
+}
+
+impl<'a, V: View<'a> + ViewMut<'a>> std::ops::DerefMut for VarSetViewMut<'a, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self as *mut Self as *mut Self::Target) }
+    }
+}
+
+impl<'a, V: ViewMut<'a> + 'a> std::ops::Deref for VarSet<V, &'a [usize]> {
+    type Target = VarSetViewMut<'a, V>;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self as *const Self as *const Self::Target) }
+    }
+}
+
+impl<'a, V: ViewMut<'a> + 'a> std::ops::DerefMut for VarSet<V, &'a [usize]> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self as *mut Self as *mut Self::Target) }
+    }
+}
 
 impl<'a, V> std::fmt::Debug for VarSetViewMut<'a, V>
 where
@@ -99,7 +124,6 @@ where V: ViewMut<'a>,
     fn len(&self) -> usize {
         self.view.len()
     }
-
 }
 
 impl<'a, V> VarSetViewMut<'a, V>

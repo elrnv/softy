@@ -6,11 +6,11 @@ use super::*;
 
 /// A set of variable length elements. Each offset represents one element and gives the offset into
 /// the data buffer for the first of subelement in the Set.
-/// Offsets always begins with a 0 and ends with the length of the buffer.
+/// Offsets always ends with the length of the buffer minus the value of the first offset.
 #[derive(Copy, Clone, Debug)]
 pub struct VarSet<S, O = Vec<usize>> {
-    data: S,
-    offsets: O,
+    pub(crate) data: S,
+    pub(crate) offsets: O,
 }
 
 impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
@@ -208,10 +208,9 @@ impl<S: Set + Default> Default for VarSet<S> {
     }
 }
 
-impl<'a, S, O> VarSet<S, O>
+impl<'a, S> VarSet<S>
 where
     S: View<'a>,
-    O: std::borrow::Borrow<[usize]>,
 {
     /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
     ///
@@ -255,7 +254,7 @@ where
     /// ```
     pub fn iter(&'a self) -> VarIter<'a, <S as View<'a>>::Type> {
         VarIter {
-            offsets: self.offsets.borrow(),
+            offsets: &self.offsets,
             data: self.data.view(),
         }
     }
@@ -313,10 +312,9 @@ where
     }
 }
 
-impl<'a, S, O> VarSet<S, O>
+impl<'a, S> VarSet<S>
 where
     S: ViewMut<'a>,
-    O: std::borrow::Borrow<[usize]>,
 {
     /// Produce a mutable iterator over elements (borrowed slices) of a
     /// `VarSet`.
@@ -345,7 +343,7 @@ where
     /// use utils::soap::*;
     /// let mut s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![0,1,2,3,4,5,6,7,8,9,10]);
     /// let mut s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
-    /// for v0 in s1.iter_mut() {
+    /// for mut v0 in s1.iter_mut() {
     ///     for i in v0.iter_mut() {
     ///         for j in i.iter_mut() {
     ///             *j += 1;
@@ -367,7 +365,7 @@ where
     /// ```
     pub fn iter_mut(&'a mut self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
         VarIterMut {
-            offsets: self.offsets.borrow(),
+            offsets: &self.offsets,
             data: self.data.view_mut(),
         }
     }
@@ -376,6 +374,7 @@ where
 impl<'a, S> VarSetViewMut<'a, S>
 where
     S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Default,
 {
     /// Produce a mutable iterator over elements (borrowed slices) of a
     /// `VarSetViewMut`.
@@ -423,10 +422,19 @@ where
     /// assert_eq!(Some(&[10,11][..]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter_mut(self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
+    pub fn iter_mut(&'a mut self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
+        let VarSetViewMut {
+            view: VarSet {
+                offsets,
+                data,
+            },
+            ..
+        } = self;
+
+        let data = std::mem::replace(data, Default::default());
         VarIterMut {
-            offsets: self.view.offsets,
-            data: self.view.data,
+            offsets: offsets,
+            data: data,
         }
     }
 }
@@ -772,7 +780,7 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// let mut s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
     /// let mut v1 = s.view_mut();
     /// v1.iter_mut().next().unwrap()[0] = 100;
     /// let mut view1_iter = v1.iter();

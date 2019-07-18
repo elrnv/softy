@@ -7,22 +7,24 @@ use super::*;
 /// A set of variable length elements. Each offset represents one element and gives the offset into
 /// the data buffer for the first of subelement in the Set.
 /// Offsets always begins with a 0 and ends with the length of the buffer.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct VarSet<S, O = Vec<usize>> {
     data: S,
     offsets: O,
 }
 
-impl<S: Set> VarSet<S> {
+impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
     /// Construct a `VarSet` from a `Vec` of offsets into another set. This is
     /// the most efficient constructor, although it is also the most error
     /// prone.
     ///
     /// # Panics
     ///
-    /// `offsets` must always begin with `0` and end with `data.len()`.
-    /// This also implies that it cannot be empty. This function panics if these
-    /// invariants aren't satisfied.
+    /// The absolute value of `offsets` is not significant, however their
+    /// relative quantities are. More specifically, if `x` is the first offset,
+    /// then the last element of offsets must always be `data.len() + x`.
+    /// This also implies that `offsets` cannot be empty. This function panics
+    /// if any one of these invariants isn't satisfied.
     ///
     /// # Example
     ///
@@ -35,10 +37,9 @@ impl<S: Set> VarSet<S> {
     /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(None, varset_iter.next());
     /// ```
-    pub fn from_offsets(offsets: Vec<usize>, data: S) -> Self {
-        assert!(offsets.len() > 0);
-        assert_eq!(offsets[0], 0);
-        assert_eq!(*offsets.last().unwrap(), data.len());
+    pub fn from_offsets(offsets: O, data: S) -> Self {
+        assert!(!offsets.is_empty());
+        assert_eq!(*offsets.last().unwrap(), data.len() + *offsets.first().unwrap());
         VarSet { offsets, data }
     }
 }
@@ -126,9 +127,8 @@ where
     }
 }
 
-impl<S> Set for VarSet<S>
-where S: Set + Clone,
-      <S as Set>::Elem: Sized,
+impl<S, O> Set for VarSet<S, O>
+where S: Set, O: Set
 {
     type Elem = Vec<S::Elem>;
     /// Get the number of elements in a `VarSet`.
@@ -208,10 +208,10 @@ impl<S: Set + Default> Default for VarSet<S> {
     }
 }
 
-impl<'a, S> VarSet<S>
+impl<'a, S, O> VarSet<S, O>
 where
     S: View<'a>,
-    <S as View<'a>>::Type: IntoSlice<'a>,
+    O: std::borrow::Borrow<[usize]>,
 {
     /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
     ///
@@ -223,8 +223,12 @@ where
     /// ```rust
     /// use utils::soap::*;
     /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
-    /// let mut varset_iter = s.iter();
-    /// assert_eq!(Some(&[1,2,3][..]), varset_iter.next());
+    /// let mut varset_iter = s.view().iter();
+    /// let mut e0_iter = varset_iter.next().unwrap().iter();
+    /// assert_eq!(Some(&1), e0_iter.next());
+    /// assert_eq!(Some(&2), e0_iter.next());
+    /// assert_eq!(Some(&3), e0_iter.next());
+    /// assert_eq!(None, e0_iter.next());
     /// assert_eq!(Some(&[4][..]), varset_iter.next());
     /// assert_eq!(Some(&[5,6][..]), varset_iter.next());
     /// assert_eq!(None, varset_iter.next());
@@ -249,20 +253,73 @@ where
     /// assert_eq!(Some(&[10,11][..]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter(&'a self) -> VarIter<<<S as View<'a>>::Type as IntoSlice<'a>>::Item> {
+    pub fn iter(&'a self) -> VarIter<'a, <S as View<'a>>::Type> {
         VarIter {
-            offsets: &self.offsets,
-            data: self.data.view().into_slice(),
+            offsets: self.offsets.borrow(),
+            data: self.data.view(),
         }
     }
 }
 
-impl<'a, S> VarSet<S>
+impl<'a, S> VarSetView<'a, S>
+where
+    S: View<'a>,
+{
+    /// Produce an iterator over elements (borrowed slices) of a `VarSetView`.
+    ///
+    /// # Examples
+    ///
+    /// The following simple example demonstrates how to iterate over a `VarSet`
+    /// of integers stored in a flat `Vec`.
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut varset_iter = s.view().iter();
+    /// let mut e0_iter = varset_iter.next().unwrap().iter();
+    /// assert_eq!(Some(&1), e0_iter.next());
+    /// assert_eq!(Some(&2), e0_iter.next());
+    /// assert_eq!(Some(&3), e0_iter.next());
+    /// assert_eq!(None, e0_iter.next());
+    /// assert_eq!(Some(&[4][..]), varset_iter.next());
+    /// assert_eq!(Some(&[5,6][..]), varset_iter.next());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
+    ///
+    /// Nested `VarSet`s can also be used to create more complex data organization:
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![1,2,3,4,5,6,7,8,9,10,11]);
+    /// let s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// let mut iter1 = s1.view().iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[4][..]), iter0.next());
+    /// assert_eq!(Some(&[5,6][..]), iter0.next());
+    /// assert_eq!(Some(&[7,8,9][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[10,11][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// ```
+    pub fn iter(self) -> VarIter<'a, <S as View<'a>>::Type> {
+        VarIter {
+            offsets: self.view.offsets,
+            data: self.view.data,
+        }
+    }
+}
+
+impl<'a, S, O> VarSet<S, O>
 where
     S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: IntoMutSlice<'a>,
+    O: std::borrow::Borrow<[usize]>,
 {
-    /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
+    /// Produce a mutable iterator over elements (borrowed slices) of a
+    /// `VarSet`.
     ///
     /// # Example
     ///
@@ -274,16 +331,102 @@ where
     ///         *j += 1;
     ///     }
     /// }
+    /// let mut v = s.view_mut();
+    /// let mut varset_iter = v.iter();
+    /// assert_eq!(vec![2,3,4], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![6,7], varset_iter.next().unwrap().to_vec());
+    /// assert_eq!(None, varset_iter.next());
+    /// ```
+    ///
+    /// Nested `VarSet`s can also be used to create more complex data organization:
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![0,1,2,3,4,5,6,7,8,9,10]);
+    /// let mut s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// for v0 in s1.iter_mut() {
+    ///     for i in v0.iter_mut() {
+    ///         for j in i.iter_mut() {
+    ///             *j += 1;
+    ///         }
+    ///     }
+    /// }
+    /// let mut iter1 = s1.view().iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[4][..]), iter0.next());
+    /// assert_eq!(Some(&[5,6][..]), iter0.next());
+    /// assert_eq!(Some(&[7,8,9][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[10,11][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// ```
+    pub fn iter_mut(&'a mut self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
+        VarIterMut {
+            offsets: self.offsets.borrow(),
+            data: self.data.view_mut(),
+        }
+    }
+}
+
+impl<'a, S> VarSetViewMut<'a, S>
+where
+    S: ViewMut<'a>,
+{
+    /// Produce a mutable iterator over elements (borrowed slices) of a
+    /// `VarSetViewMut`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// for i in s.view_mut().iter_mut() {
+    ///     for j in i.iter_mut() {
+    ///         *j += 1;
+    ///     }
+    /// }
     /// let mut varset_iter = s.iter();
     /// assert_eq!(vec![2,3,4], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(vec![5], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(vec![6,7], varset_iter.next().unwrap().to_vec());
     /// assert_eq!(None, varset_iter.next());
     /// ```
-    pub fn iter_mut(&'a mut self) -> VarIterMut<<<S as ViewMut<'a>>::Type as IntoSlice<'a>>::Item> {
+    ///
+    /// Nested `VarSet`s can also be used to create more complex data organization:
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![0,1,2,3,4,5,6,7,8,9,10]);
+    /// let mut s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// for v0 in s1.view_mut().iter_mut() {
+    ///     for i in v0.iter_mut() {
+    ///         for j in i.iter_mut() {
+    ///             *j += 1;
+    ///         }
+    ///     }
+    /// }
+    /// let mut iter1 = s1.view().iter();
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[4][..]), iter0.next());
+    /// assert_eq!(Some(&[5,6][..]), iter0.next());
+    /// assert_eq!(Some(&[7,8,9][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// let mut iter0 = iter1.next().unwrap().iter();
+    /// assert_eq!(Some(&[10,11][..]), iter0.next());
+    /// assert_eq!(None, iter0.next());
+    /// ```
+    pub fn iter_mut(self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
         VarIterMut {
-            offsets: &self.offsets,
-            data: self.data.view_mut().into_mut_slice(),
+            offsets: self.view.offsets,
+            data: self.view.data,
         }
     }
 }
@@ -305,10 +448,13 @@ pub trait AppendVec {
     fn append(&mut self, other: &mut Vec<Self::Item>);
 }
 
+/// A helper trait to convert a set view into a slice.
 pub trait IntoSlice<'a> {
     type Item;
     fn into_slice(self) -> &'a [Self::Item];
 }
+
+/// A mutable version of the `IntoSlice` trait.
 pub trait IntoMutSlice<'a>: IntoSlice<'a> {
     fn into_mut_slice(self) -> &'a mut [Self::Item];
 }
@@ -355,62 +501,165 @@ impl<'a, T> IntoMutSlice<'a> for &'a mut [T] {
     }
 }
 
-/// A special iterator capable of iterating over a `VarSet`.
-pub struct VarIter<'a, T> {
-    offsets: &'a [usize],
-    data: &'a [T],
+impl<'a, S> IntoSlice<'a> for VarSet<S, &'a [usize]>
+    where S: IntoSlice<'a>,
+{
+    type Item = <S as IntoSlice<'a>>::Item;
+    fn into_slice(self) -> &'a [Self::Item] {
+        self.data.into_slice()
+    }
 }
-
-/// Mutable variant of `VarIter`.
-pub struct VarIterMut<'a, T> {
-    offsets: &'a [usize],
-    data: &'a mut [T],
-}
-
-impl<'a, T: 'a> Iterator for VarIter<'a, T> {
-    type Item = &'a [T];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.offsets.split_first() {
-            Some((head, tail)) => {
-                if tail.is_empty() {
-                    return None;
-                }
-                self.offsets = tail;
-                let n = unsafe { *tail.get_unchecked(0) } - *head;
-                let (l, r) = self.data.split_at(n);
-                self.data = r;
-                Some(l)
-            }
-            None => {
-                panic!("Var Set is corrupted and cannot be iterated.");
-            }
-        }
+impl<'a, S> IntoMutSlice<'a> for VarSet<S, &'a [usize]>
+    where S: IntoMutSlice<'a>,
+{
+    fn into_mut_slice(self) -> &'a mut [Self::Item] {
+        self.data.into_mut_slice()
     }
 }
 
-impl<'a, T: 'a> Iterator for VarIterMut<'a, T> {
+impl<'a, T: 'a> SplitAt<'a> for &'a [T] {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        <[T]>::split_at(self, mid)
+    }
+}
+impl<'a, T: 'a> SplitAt<'a> for &'a mut [T] {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        <[T]>::split_at_mut(self, mid)
+    }
+}
+
+impl<'a, S> SplitAt<'a> for VarSetView<'a, S>
+where S: View<'a>,
+      <S as View<'a>>::Type: SplitAt<'a> + Set,
+{
+    fn split_at(mut self, mid: usize) -> (Self, Self) {
+        let (offsets_l, offsets_r) = split_offsets_at(self.view.offsets, mid);
+        let (data_l, data_r) = self.view.data.split_at(unsafe { *offsets_r.get_unchecked(0) - *offsets_l.get_unchecked(0) });
+        self.view.offsets = offsets_r;
+        self.view.data = data_r;
+        (VarSetView::from_offsets(offsets_l, data_l), self)
+    }
+}
+
+impl<'a, S> SplitAt<'a> for VarSetViewMut<'a, S>
+where S: ViewMut<'a>,
+      <S as ViewMut<'a>>::Type: SplitAt<'a> + Set,
+{
+    fn split_at(mut self, mid: usize) -> (Self, Self) {
+        let (offsets_l, offsets_r) = split_offsets_at(self.view.offsets, mid);
+        let (data_l, data_r) = self.view.data.split_at(unsafe { *offsets_r.get_unchecked(0) - *offsets_l.get_unchecked(0) });
+        self.view.offsets = offsets_r;
+        self.view.data = data_r;
+        (VarSetViewMut::from_offsets(offsets_l, data_l), self)
+    }
+}
+
+/// A special iterator capable of iterating over a `VarSet`.
+pub struct VarIter<'a, S> {
+    offsets: &'a [usize],
+    data: S,
+}
+
+/// Splits a slice of offsets at the given index into two slices such that each
+/// slice is a valid slice of offsets. This means that the element at index
+/// `mid` is shared between the two output slices.
+fn split_offsets_at(offsets: &[usize], mid: usize) -> (&[usize], &[usize]) {
+    debug_assert!(!offsets.is_empty());
+    debug_assert!(mid < offsets.len());
+    let (l, _) = offsets.split_at(mid+1);
+    let (_, r) = offsets.split_at(mid);
+    (l, r)
+}
+
+/// Test for the `split_offset_at` helper function.
+#[test]
+fn split_offset_at_test() {
+    let offsets = vec![0,1,2,3,4,5];
+    let (l, r) = split_offsets_at(offsets.as_slice(), 3);
+    assert_eq!(l, &[0,1,2,3]);
+    assert_eq!(r, &[3,4,5]);
+}
+
+
+/// Pops an offset from the given slice of offsets and produces an increment for
+/// advancing the data pointer. This is a helper function for implementing
+/// iterators over `VarSet` types.
+/// This function panics if offsets is empty.
+fn pop_offset(offsets: &mut &[usize]) -> Option<usize> {
+    debug_assert!(!offsets.is_empty(), "VarSet is corrupted and cannot be iterated.");
+    offsets.split_first().and_then(|(head, tail)| {
+        if tail.is_empty() {
+            return None;
+        }
+        *offsets = tail;
+        Some(unsafe { *tail.get_unchecked(0) } - *head)
+    })
+}
+
+impl<'a, V> Iterator for VarIter<'a, VarSetView<'a, V>>
+where V: View<'a>,
+      <V as View<'a>>::Type: SplitAt<'a> + Set,
+{
+    type Item = VarSetView<'a, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        pop_offset(&mut self.offsets).map(|n| {
+            let (l, r) = self.data.split_at(n);
+            self.data = r;
+            l
+        })
+    }
+}
+
+impl<'a, T: 'a> Iterator for VarIter<'a, &'a [T]>
+{
+    type Item = &'a [T];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        pop_offset(&mut self.offsets).map(|n| {
+            let (l, r) = self.data.split_at(n);
+            self.data = r;
+            l
+        })
+    }
+}
+
+/// Mutable variant of `VarIter`.
+pub struct VarIterMut<'a, S> {
+    offsets: &'a [usize],
+    data: S,
+}
+
+impl<'a, V> Iterator for VarIterMut<'a, VarSetViewMut<'a, V>>
+where V: ViewMut<'a>,
+      <V as ViewMut<'a>>::Type: SplitAt<'a> + Set + Default,
+{
+    type Item = VarSetViewMut<'a, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Get a unique mutable reference for the data.
+        let data_slice = std::mem::replace(&mut self.data, VarSetViewMut { view: VarSet { offsets: &[], data: Default::default() }, phantom: std::marker::PhantomData });
+
+        pop_offset(&mut self.offsets).map(move |n| {
+            let (l, r) = data_slice.split_at(n);
+            self.data = r;
+            l
+        })
+    }
+}
+
+impl<'a, T: 'a> Iterator for VarIterMut<'a, &'a mut [T]> {
     type Item = &'a mut [T];
 
     fn next(&mut self) -> Option<Self::Item> {
         // Get a unique mutable reference for the data.
         let data_slice = std::mem::replace(&mut self.data, &mut []);
 
-        match self.offsets.split_first() {
-            Some((head, tail)) => {
-                if tail.is_empty() {
-                    return None;
-                }
-                self.offsets = tail;
-                let n = unsafe { *tail.get_unchecked(0) } - *head;
-                let (l, r) = data_slice.split_at_mut(n);
-                self.data = r;
-                Some(l)
-            }
-            None => {
-                panic!("Var Set is corrupted and cannot be iterated.");
-            }
-        }
+        pop_offset(&mut self.offsets).map(move |n| {
+            let (l, r) = data_slice.split_at_mut(n);
+            self.data = r;
+            l
+        })
     }
 }
 
@@ -479,3 +728,102 @@ impl<T> Iterator for VarIntoIter<T> {
 //        self.
 //    }
 //}
+
+impl<'a, S: 'a> View<'a> for VarSet<S>
+where
+    S: Set + View<'a>,
+    <S as View<'a>>::Type: Set,
+{
+    type Type = VarSetView<'a, S>;
+
+    /// Create a contiguous immutable (shareable) view into this set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// let v1 = s.view();
+    /// let v2 = v1.clone();
+    /// let mut view1_iter = v1.iter();
+    /// assert_eq!(Some(&[0][..]), view1_iter.next());
+    /// assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
+    /// assert_eq!(Some(&[4,5][..]), view1_iter.next());
+    /// assert_eq!(None, view1_iter.next());
+    /// for (a,b) in v1.iter().zip(v2.iter()) {
+    ///     assert_eq!(a,b);
+    /// }
+    /// ```
+    fn view(&'a self) -> Self::Type {
+        VarSetView::from_offsets(self.offsets.as_slice(), self.data.view())
+    }
+}
+
+impl<'a, S: 'a> ViewMut<'a> for VarSet<S>
+where
+    S: Set + ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set,
+{
+    type Type = VarSetViewMut<'a, S>;
+
+    /// Create a contiguous mutable (unique) view into this set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// let mut v1 = s.view_mut();
+    /// v1.iter_mut().next().unwrap()[0] = 100;
+    /// let mut view1_iter = v1.iter();
+    /// assert_eq!(Some(&[100][..]), view1_iter.next());
+    /// assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
+    /// assert_eq!(Some(&[4,5][..]), view1_iter.next());
+    /// assert_eq!(None, view1_iter.next());
+    /// ```
+    fn view_mut(&'a mut self) -> Self::Type {
+        VarSetViewMut::from_offsets(self.offsets.as_slice(), self.data.view_mut())
+    }
+}
+
+/// A helper trait used to abstract over owned `Vec`s and slices.
+pub trait Buffer<T>: Set {
+    fn first(&self) -> Option<&T>;
+    fn last(&self) -> Option<&T>;
+}
+
+impl<T> Buffer<T> for Vec<T> {
+    fn first(&self) -> Option<&T> {
+        <[T]>::first(self)
+    }
+    fn last(&self) -> Option<&T> {
+        <[T]>::last(self)
+    }
+}
+
+impl<T> Buffer<T> for [T] {
+    fn first(&self) -> Option<&T> {
+        <[T]>::first(self)
+    }
+    fn last(&self) -> Option<&T> {
+        <[T]>::last(self)
+    }
+}
+
+impl<'a, T, S: Buffer<T> + Set + ?Sized> Buffer<T> for &'a S {
+    fn first(&self) -> Option<&T> {
+        <S as Buffer<T>>::first(*self)
+    }
+    fn last(&self) -> Option<&T> {
+        <S as Buffer<T>>::last(*self)
+    }
+}
+
+impl<'a, T, S: Buffer<T> + Set + ?Sized> Buffer<T> for &'a mut S {
+    fn first(&self) -> Option<&T> {
+        <S as Buffer<T>>::first(*self)
+    }
+    fn last(&self) -> Option<&T> {
+        <S as Buffer<T>>::last(*self)
+    }
+}

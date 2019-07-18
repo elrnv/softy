@@ -18,7 +18,7 @@ pub mod num {
     macro_rules! def_num {
         ($(($nty:ident, $n:expr)),*) => {
             $(
-                #[derive(Debug, Clone, PartialEq)]
+                #[derive(Debug, Copy, Clone, PartialEq)]
                 pub struct $nty;
                 impl Unsigned for $nty {
                     fn value() -> usize {
@@ -124,14 +124,14 @@ impl<T: Clone> Get<'_, usize> for Vec<T> {
 impl<T> Set for Vec<T> {
     type Elem = T;
     fn len(&self) -> usize {
-        self.len()
+        Vec::len(self)
     }
 }
 
 impl<T> Set for [T] {
     type Elem = T;
     fn len(&self) -> usize {
-        self.len()
+        <[T]>::len(self)
     }
 }
 
@@ -163,4 +163,13 @@ impl<T> Push<T> for Vec<T> {
     fn push(&mut self, element: T) {
         Vec::push(self, element);
     }
+}
+
+/// A helper trait to split a set into two sets at a given index.
+/// This trait is used to implement iteration over `VarSet`s.
+pub trait SplitAt<'a> where Self: Sized {
+    /// Split self into two sets at the given midpoint.
+    /// This function is analogous to `<[T]>::split_at`, however it is
+    /// implemented on borrows directly.
+    fn split_at(self, mid: usize) -> (Self, Self);
 }

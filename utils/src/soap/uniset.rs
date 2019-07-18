@@ -18,22 +18,10 @@ use std::marker::PhantomData;
 /// assert_eq!(Some(&[5,6]), uniset_iter.next());
 /// assert_eq!(None, uniset_iter.next());
 /// ```
-#[derive(PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct UniSet<S, N> {
     pub data: S,
     phantom: PhantomData<N>,
-}
-
-impl<S, N> Clone for UniSet<S, N>
-where
-    S: Clone,
-{
-    fn clone(&self) -> Self {
-        UniSet {
-            data: self.data.clone(),
-            phantom: PhantomData,
-        }
-    }
 }
 
 impl<S: Set, N: num::Unsigned> UniSet<S, N> {

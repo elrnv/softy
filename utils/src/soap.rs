@@ -166,10 +166,69 @@ impl<T> Push<T> for Vec<T> {
 }
 
 /// A helper trait to split a set into two sets at a given index.
-/// This trait is used to implement iteration over `VarSet`s.
-pub trait SplitAt<'a> where Self: Sized {
+/// This trait is used to implement iteration over `VarView`s.
+pub trait SplitAt where Self: Sized {
     /// Split self into two sets at the given midpoint.
-    /// This function is analogous to `<[T]>::split_at`, however it is
-    /// implemented on borrows directly.
+    /// This function is analogous to `<[T]>::split_at`.
     fn split_at(self, mid: usize) -> (Self, Self);
+}
+
+/// A helper trait to split owned sets into two sets at a given index.
+/// This trait is used to implement iteration over `VarSet`s.
+pub trait SplitOff {
+    /// Split self into two sets at the given midpoint.
+    /// This function is analogous to `Vec::split_off`.
+    /// `self` contains elements `[0, mid)`, and The returned `Self` contains
+    /// elements `[mid, len)`.
+    fn split_off(&mut self, mid: usize) -> Self;
+}
+
+
+/// Convert a collection into its underlying representation, effectively
+/// stripping any organizational info.
+pub trait IntoFlat {
+    type FlatType;
+    fn into_flat(self) -> Self::FlatType;
+}
+
+impl<T> SplitAt for Vec<T> {
+    fn split_at(mut self, mid: usize) -> (Self, Self) {
+        let r = self.split_off(mid);
+        (self, r)
+    }
+}
+
+/// A helper trait for constructing placeholder sets for use in `std::mem::replace`.
+/// These don't necessarily have to correspond to bona-fide sets.
+pub trait Dummy {
+    fn dummy() -> Self;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test iteration of a `UniSet` inside a `VarSet`.
+    #[test]
+    fn var_of_uni_iter_test() {
+        let u0 = UniSet::<_, num::U2>::from_flat((1..=12).collect::<Vec<_>>());
+        let v1 = VarSet::from_offsets(vec![0,2,3,6], u0);
+
+        let mut iter1 = v1.iter();
+        let v0 = iter1.next().unwrap();
+        let mut iter0 = v0.iter();
+        assert_eq!(Some(&[1,2]), iter0.next());
+        assert_eq!(Some(&[3,4]), iter0.next());
+        assert_eq!(None, iter0.next());
+        let v0 = iter1.next().unwrap();
+        let mut iter0 = v0.iter();
+        assert_eq!(Some(&[5,6]), iter0.next());
+        assert_eq!(None, iter0.next());
+        let v0 = iter1.next().unwrap();
+        let mut iter0 = v0.iter();
+        assert_eq!(Some(&[7,8]), iter0.next());
+        assert_eq!(Some(&[9,10]), iter0.next());
+        assert_eq!(Some(&[11,12]), iter0.next());
+        assert_eq!(None, iter0.next());
+    }
 }

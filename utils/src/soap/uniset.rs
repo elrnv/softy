@@ -47,6 +47,28 @@ impl<S: Set, N: num::Unsigned> UniSet<S, N> {
     }
 }
 
+/// An implementation of `Set` for `UniSet` of any type that can be grouped as `N` sub-elements.
+impl<S: Set, N: num::Unsigned> Set for UniSet<S, N>
+where
+    S::Elem: Grouped<N>,
+{
+    type Elem = <S::Elem as Grouped<N>>::Type;
+    /// Compute the length of this set as the number of grouped elements in the set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3,4,5]);
+    /// assert_eq!(s.len(), 3);
+    /// let s = UniSet::<_, num::U3>::from_flat(vec![0,1,2,3,4,5]);
+    /// assert_eq!(s.len(), 2);
+    /// ```
+    fn len(&self) -> usize {
+        self.data.len() / N::value()
+    }
+}
+
 impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Type> for UniSet<S, N>
 where
     S: Set + Push<<S as Set>::Elem>,
@@ -238,27 +260,6 @@ macro_rules! impl_grouped {
 impl_grouped!(num::U2, 2);
 impl_grouped!(num::U3, 3);
 
-/// An implementation of `Set` for `UniSet` of any type that can be grouped as `N` sub-elements.
-impl<S: Set, N: num::Unsigned> Set for UniSet<S, N>
-where
-    S::Elem: Grouped<N>,
-{
-    type Elem = <S::Elem as Grouped<N>>::Type;
-    /// Compute the length of this set as the number of grouped elements in the set.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3,4,5]);
-    /// assert_eq!(s.len(), 3);
-    /// let s = UniSet::<_, num::U3>::from_flat(vec![0,1,2,3,4,5]);
-    /// assert_eq!(s.len(), 2);
-    /// ```
-    fn len(&self) -> usize {
-        self.data.len() / N::value()
-    }
-}
 
 //impl<'a, S, N> Get<'a, usize> for UniSet<S, N>
 //where
@@ -317,7 +318,7 @@ impl_borrow_uniset!(num::U3, 3);
  * Indexing operators for convenience. Users familiar with indexing by `usize`
  * may find these implementations convenient.
  */
-//
+
 //impl<S: std::ops::Index<usize>, N> std::ops::Index<usize> for UniSet<S, N> {
 //    type Output = <UniSet<S, N> as Set>::Elem;
 //    /// Immutably index the subset.
@@ -433,5 +434,112 @@ where
         &'a mut self,
     ) -> <<<S as ViewMut<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
         self.data.view_mut().reinterpret_set().into_iter()
+    }
+}
+
+
+impl<'a, S, N> View<'a> for UniSet<S, N>
+where
+    S: Set + View<'a>,
+    N: num::Unsigned + Copy,
+    <S as View<'a>>::Type: Set,
+{
+    type Type = UniView<<S as View<'a>>::Type, N>;
+
+    /// Create a contiguous immutable (shareable) view into this set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+    /// let v1 = s.view(); // s is now inaccessible.
+    /// let v2 = v1.clone();
+    /// let mut view1_iter = v1.iter();
+    /// assert_eq!(Some(&[0,1]), view1_iter.next());
+    /// assert_eq!(Some(&[2,3]), view1_iter.next());
+    /// assert_eq!(None, view1_iter.next());
+    /// for ((a, b), c) in v1.iter().zip(v2.iter()).zip(s.iter()) {
+    ///     assert_eq!(a,b);
+    ///     assert_eq!(b,c);
+    /// }
+    /// ```
+    fn view(&'a self) -> Self::Type {
+        UniSet::from_flat(self.data.view())
+    }
+}
+
+impl<'a, S, N> ViewMut<'a> for UniSet<S, N>
+where
+    S: Set + ViewMut<'a>,
+    N: num::Unsigned,
+    <S as ViewMut<'a>>::Type: Set,
+{
+    type Type = UniView<<S as ViewMut<'a>>::Type, N>;
+
+    /// Create a contiguous mutable (unique) view into this set.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+    /// let mut v = s.view_mut();
+    /// {
+    ///    v.iter_mut().next().unwrap()[0] = 100;
+    /// }
+    /// let mut view_iter = v.iter();
+    /// assert_eq!(Some(&[100,1]), view_iter.next());
+    /// assert_eq!(Some(&[2,3]), view_iter.next());
+    /// assert_eq!(None, view_iter.next());
+    /// ```
+    fn view_mut(&'a mut self) -> Self::Type {
+        UniSet::from_flat(self.data.view_mut())
+    }
+}
+
+macro_rules! impl_split_at_fn {
+    ($self:ident, $split_fn:ident, $n:ty, $mid:expr) => {
+        {
+            let (l, r) = $self.data.$split_fn($mid * <$n>::value());
+            (UniSet::from_flat(l), UniSet::from_flat(r))
+        }
+    }
+}
+
+
+impl<S: SplitAt + Set, N: num::Unsigned> SplitAt for UniSet<S, N> {
+    /// Split the current set into two distinct sets at the given index `mid`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = UniSet::<_, num::U2>::from_flat(vec![0,1,2,3]);
+    /// let (l, r) = s.split_at(1);
+    /// assert_eq!(l, UniSet::<_, num::U2>::from_flat(vec![0,1]));
+    /// assert_eq!(r, UniSet::<_, num::U2>::from_flat(vec![2,3]));
+    /// ```
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        impl_split_at_fn!(self, split_at, N, mid)
+    }
+}
+
+impl<T, N: num::Unsigned> SplitAt for UniSet<&[T], N> {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        impl_split_at_fn!(self, split_at, N, mid)
+    }
+}
+
+impl<T, N: num::Unsigned> SplitAt for UniSet<&mut [T], N> {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        impl_split_at_fn!(self, split_at_mut, N, mid)
+    }
+}
+
+
+impl<S: Dummy, N> Dummy for UniSet<S, N> {
+    fn dummy() -> Self {
+        UniSet { data: Dummy::dummy(), phantom: PhantomData }
     }
 }

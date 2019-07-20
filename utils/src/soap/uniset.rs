@@ -45,6 +45,40 @@ impl<S: Set, N: num::Unsigned> UniSet<S, N> {
             phantom: PhantomData,
         }
     }
+
+    /// Get a immutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let s = UniSet::<_, num::U3>::from_flat(v.clone());
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data(&self) -> &S {
+        &self.data
+    }
+    /// Get a mutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6];
+    /// let mut s = UniSet::<_, num::U3>::from_flat(v.clone());
+    /// v[2] = 100;
+    /// s.data_mut()[2] = 100;
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
+
+    /// Convert this `UniSet` into its inner representation.
+    pub fn into_inner(self) -> S {
+        self.data
+    }
 }
 
 /// An implementation of `Set` for `UniSet` of any type that can be grouped as `N` sub-elements.
@@ -541,5 +575,13 @@ impl<T, N: num::Unsigned> SplitAt for UniSet<&mut [T], N> {
 impl<S: Dummy, N> Dummy for UniSet<S, N> {
     fn dummy() -> Self {
         UniSet { data: Dummy::dummy(), phantom: PhantomData }
+    }
+}
+
+impl<S: IntoFlat, N> IntoFlat for UniSet<S, N> {
+    type FlatType = <S as IntoFlat>::FlatType;
+    /// Strip away the uniform organization of the underlying data, and return the underlying data.
+    fn into_flat(self) -> Self::FlatType {
+        self.data.into_flat()
     }
 }

@@ -191,6 +191,29 @@ pub trait IntoFlat {
     fn into_flat(self) -> Self::FlatType;
 }
 
+impl<T> IntoFlat for Vec<T> {
+    type FlatType = Vec<T>;
+    /// Since a `Vec` has no information about the structure of its underlying
+    /// data, this is effectively a no-op.
+    fn into_flat(self) -> Self::FlatType {
+        self
+    }
+}
+
+impl<'a, T> IntoFlat for &'a [T] {
+    type FlatType = &'a [T];
+    fn into_flat(self) -> Self::FlatType {
+        self
+    }
+}
+
+impl<'a, T> IntoFlat for &'a mut [T] {
+    type FlatType = &'a mut [T];
+    fn into_flat(self) -> Self::FlatType {
+        self
+    }
+}
+
 impl<T> SplitAt for Vec<T> {
     fn split_at(mut self, mid: usize) -> (Self, Self) {
         let r = self.split_off(mid);

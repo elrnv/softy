@@ -9,8 +9,8 @@ use super::*;
 /// Offsets always ends with the length of the buffer minus the value of the first offset.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VarSet<S, O = Vec<usize>> {
-    pub(crate) data: S,
     pub(crate) offsets: O,
+    pub(crate) data: S,
 }
 
 impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
@@ -41,6 +41,63 @@ impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
         assert!(!offsets.is_empty());
         assert_eq!(*offsets.last().unwrap(), data.len() + *offsets.first().unwrap());
         VarSet { offsets, data }
+    }
+
+    /// Get a immutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let s = VarSet::from_offsets(vec![0,3,4,6], v.clone());
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data(&self) -> &S {
+        &self.data
+    }
+    /// Get a mutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6];
+    /// let mut s = VarSet::from_offsets(vec![0,3,4,6], v.clone());
+    /// v[2] = 100;
+    /// s.data_mut()[2] = 100;
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
+
+    pub fn offsets(&self) -> &O {
+        &self.offsets
+    }
+    pub fn offsets_mut(&mut self) -> &mut O {
+        &mut self.offsets
+    }
+
+    /// Convert this `VarSet` into its inner representation, which consists of a
+    /// collection of offsets (first output) along with the underlying data
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let data = vec![1,2,3,4,5,6];
+    /// let offsets = vec![0,3,4,6];
+    /// let s = VarSet::from_offsets(offsets.clone(), data.clone());
+    /// assert_eq!(s.into_inner(), (offsets, data));
+    /// ```
+    /// storage type (second output).
+    pub fn into_inner(self) -> (O, S) {
+        let VarSet {
+            offsets,
+            data
+        } = self;
+        (offsets, data)
     }
 }
 
@@ -630,30 +687,21 @@ pub trait IntoMutSlice<'a>: IntoSlice<'a> {
  * Implement helper traits for supported `Set` types
  */
 
-impl<T> IntoFlat for Vec<T> {
-    type FlatType = Vec<T>;
-    /// Since a `Vec` has no information about the structure of its underlying
-    /// data, this is effectively a no-op.
-    fn into_flat(self) -> Self::FlatType {
-        self
-    }
-}
-
-impl<S> IntoFlat for VarSet<S> {
-    type FlatType = S;
-    /// Strip the organizational information from this set, returning the
-    /// underlying collection type.
+impl<S: IntoFlat> IntoFlat for VarSet<S> {
+    type FlatType = <S as IntoFlat>::FlatType;
+    /// Strip all organizational information from this set, returning the
+    /// underlying storage type.
     ///
     /// ```rust
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
     /// let s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], v.clone());
     /// let s1 = VarSet::from_offsets(vec![0,1,4,5], s0.clone());
-    /// assert_eq!(s1.into_flat(), s0.clone());
+    /// assert_eq!(s1.into_flat(), v);
     /// assert_eq!(s0.into_flat(), v);
     /// ```
     fn into_flat(self) -> Self::FlatType {
-        self.data
+        self.data.into_flat()
     }
 }
 

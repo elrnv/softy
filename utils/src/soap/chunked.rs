@@ -1,22 +1,50 @@
 use super::*;
 
-/*
- * VarSet
- */
-
-/// A set of variable length elements. Each offset represents one element and gives the offset into
-/// the data buffer for the first of subelement in the Set.
-/// Offsets always ends with the length of the buffer minus the value of the first offset.
+/// A partitioning of the collection `S` into distinct chunks.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct VarSet<S, O = Vec<usize>> {
-    pub(crate) offsets: O,
+pub struct Chunked<S, O = Vec<usize>> {
+    /// This can be either offsets of a uniform chunk size, if
+    /// chunk size is specified at compile time.
+    pub(crate) chunks: O,
     pub(crate) data: S,
 }
 
-impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
-    /// Construct a `VarSet` from a `Vec` of offsets into another set. This is
-    /// the most efficient constructor, although it is also the most error
-    /// prone.
+
+impl<S, C> Chunked<S, C> {
+    /// Get a immutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let s = Chunked::from_offsets(vec![0,3,4,6], v.clone());
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data(&self) -> &S {
+        &self.data
+    }
+    /// Get a mutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6];
+    /// let mut s = Chunked::from_offsets(vec![0,3,4,6], v.clone());
+    /// v[2] = 100;
+    /// s.data_mut()[2] = 100;
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
+}
+
+impl<S: Set, O: Buffer<usize>> Chunked<S, O> {
+    /// Construct a `Chunked` collection of elements given a collection of
+    /// offsets into `S`. This is the most efficient constructor for creating
+    /// variable sized chunks, however it is also the most error prone.
     ///
     /// # Panics
     ///
@@ -30,56 +58,27 @@ impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
-    /// let mut varset_iter = s.iter();
-    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(None, varset_iter.next());
+    /// let s = Chunked::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+    /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_offsets(offsets: O, data: S) -> Self {
         assert!(!offsets.is_empty());
         assert_eq!(*offsets.last().unwrap(), data.len() + *offsets.first().unwrap());
-        VarSet { offsets, data }
-    }
-
-    /// Get a immutable reference to the underlying data.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let v = vec![1,2,3,4,5,6];
-    /// let s = VarSet::from_offsets(vec![0,3,4,6], v.clone());
-    /// assert_eq!(&v, s.data());
-    /// ```
-    pub fn data(&self) -> &S {
-        &self.data
-    }
-    /// Get a mutable reference to the underlying data.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5,6];
-    /// let mut s = VarSet::from_offsets(vec![0,3,4,6], v.clone());
-    /// v[2] = 100;
-    /// s.data_mut()[2] = 100;
-    /// assert_eq!(&v, s.data());
-    /// ```
-    pub fn data_mut(&mut self) -> &mut S {
-        &mut self.data
+        Chunked { chunks: offsets, data }
     }
 
     pub fn offsets(&self) -> &O {
-        &self.offsets
+        &self.chunks
     }
     pub fn offsets_mut(&mut self) -> &mut O {
-        &mut self.offsets
+        &mut self.chunks
     }
 
-    /// Convert this `VarSet` into its inner representation, which consists of a
+    /// Convert this `Chunked` into its inner representation, which consists of a
     /// collection of offsets (first output) along with the underlying data
     ///
     /// # Example
@@ -88,57 +87,83 @@ impl<S: Set, O: Buffer<usize>> VarSet<S, O> {
     /// use utils::soap::*;
     /// let data = vec![1,2,3,4,5,6];
     /// let offsets = vec![0,3,4,6];
-    /// let s = VarSet::from_offsets(offsets.clone(), data.clone());
+    /// let s = Chunked::from_offsets(offsets.clone(), data.clone());
     /// assert_eq!(s.into_inner(), (offsets, data));
     /// ```
     /// storage type (second output).
     pub fn into_inner(self) -> (O, S) {
-        let VarSet {
-            offsets,
+        let Chunked {
+            chunks,
             data
         } = self;
-        (offsets, data)
+        (chunks, data)
     }
 }
 
-impl<S> VarSet<S>
+
+impl<S> Chunked<S>
 where
     S: Set + Push<<S as Set>::Elem> + Default,
     <S as Set>::Elem: Sized,
 {
-    /// Construct a `VarSet` from a nested set of `Vec`s.
+    /// Construct a `Chunked` `Vec` from a nested `Vec`.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::<Vec<_>>::from_nested_vec(vec![vec![1,2,3],vec![4],vec![5,6]]);
-    /// let mut varset_iter = s.iter();
-    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(None, varset_iter.next());
+    /// let s = Chunked::<Vec<_>>::from_nested_vec(vec![vec![1,2,3],vec![4],vec![5,6]]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+    /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_nested_vec(nested_data: Vec<Vec<<S as Set>::Elem>>) -> Self {
         nested_data.into_iter().collect()
     }
 }
 
-impl<S, O> Set for VarSet<S, O>
+impl<S, O> Set for Chunked<S, O>
 where S: Set, O: Set
 {
     type Elem = Vec<S::Elem>;
-    /// Get the number of elements in a `VarSet`.
+
+    /// Get the number of elements in a `Chunked`.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let s = Chunked::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
     /// assert_eq!(3, s.len());
     /// ```
     fn len(&self) -> usize {
-        self.offsets.len() - 1
+        self.chunks.len() - 1
+    }
+}
+
+impl<'a, S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for Chunked<S> {
+    /// Push an element onto this `Chunked`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4], vec![0,1,2,3]);
+    /// s.push(vec![4,5]);
+    /// let v1 = s.view();
+    /// let mut view1_iter = v1.into_iter();
+    /// assert_eq!(Some(&[0][..]), view1_iter.next());
+    /// assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
+    /// assert_eq!(Some(&[4,5][..]), view1_iter.next());
+    /// assert_eq!(None, view1_iter.next());
+    /// ```
+    fn push(&mut self, element: <Self as Set>::Elem) {
+        for elem in element.into_iter() {
+            self.data.push(elem);
+        }
+        self.chunks.push(self.data.len());
     }
 }
 
@@ -147,7 +172,7 @@ where S: Set, O: Set
 // a later step when the results may be collected into another Vec. This saves
 // an extra allocation. We could make this more righteous with a custom
 // allocator.
-impl<'a, S> std::iter::FromIterator<&'a mut [<S as Set>::Elem]> for VarSet<S>
+impl<'a, S> std::iter::FromIterator<&'a mut [<S as Set>::Elem]> for Chunked<S>
 where
     S: Set
         + ExtendFromSlice<Item = <S as Set>::Elem>
@@ -159,7 +184,7 @@ where
     where
         T: IntoIterator<Item = &'a mut [<S as Set>::Elem]>,
     {
-        let mut s = VarSet::default();
+        let mut s = Chunked::default();
         for i in iter {
             s.push_slice(i);
         }
@@ -171,31 +196,31 @@ where
 // nested `Vec`s, however as mentioned in the note above, this is typically
 // inefficient because it relies on intermediate allocations. This is acceptable
 // during initialization, for instance.
-impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for VarSet<S>
+impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for Chunked<S>
 where
     S: Set + Default + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Sized,
 {
-    /// Construct a `VarSet` from an iterator over `Vec` types.
+    /// Construct a `Chunked` from an iterator over `Vec` types.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
     /// use std::iter::FromIterator;
-    /// let s = VarSet::<Vec<_>>::from_iter(vec![vec![1,2,3],vec![4],vec![5,6]].into_iter());
+    /// let s = Chunked::<Vec<_>>::from_iter(vec![vec![1,2,3],vec![4],vec![5,6]].into_iter());
     /// dbg!(&s);
-    /// let mut varset_iter = s.iter();
-    /// assert_eq!(vec![1,2,3], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![4], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![5,6], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(None, varset_iter.next());
+    /// let mut iter = s.iter();
+    /// assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+    /// assert_eq!(None, iter.next());
     /// ```
     fn from_iter<T>(iter: T) -> Self
     where
         T: IntoIterator<Item = Vec<<S as Set>::Elem>>,
     {
-        let mut s = VarSet::default();
+        let mut s = Chunked::default();
         for i in iter {
             s.push(i);
         }
@@ -203,77 +228,77 @@ where
     }
 }
 
-//impl<'a, S: std::ops::Index<> + Clone> GetElem<'a> for VarSet<S> {
+//impl<'a, S: std::ops::Index<> + Clone> GetElem<'a> for Chunked<S> {
 //    fn get(&'a self, idx: usize) -> Self::Elem {
-//        self.data[self.offsets[idx]..self.offsets[idx+1]].collect()
+//        self.data[self.chunks[idx]..self.chunks[idx+1]].collect()
 //    }
 //}
 
-impl<S> VarSet<S>
+impl<S> Chunked<S>
 where
     S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
     <S as Set>::Elem: Sized
 {
-    /// Push a slice of elements onto this `VarSet`.
+    /// Push a slice of elements onto this `Chunked`.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s = VarSet::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
     /// assert_eq!(2, s.len());
     /// s.push_slice(&[1,2]);
     /// assert_eq!(3, s.len());
     /// ```
     pub fn push_slice(&mut self, element: &[<S as Set>::Elem]) {
         self.data.extend_from_slice(element);
-        self.offsets.push(self.data.len());
+        self.chunks.push(self.data.len());
     }
 }
 
-impl<'a, T> IntoIterator for VarView<'a, &'a [T]> {
+impl<'a, T> IntoIterator for Chunked<&'a [T], &'a [usize]> {
     type Item = &'a [T];
     type IntoIter = VarIter<'a, &'a [T]>;
 
     fn into_iter(self) -> Self::IntoIter {
         VarIter {
-            offsets: self.offsets,
+            offsets: self.chunks,
             data: self.data,
         }
     }
 }
 
-impl<'a, S, O> VarSet<S, O>
+impl<'a, S, O> Chunked<S, O>
 where S: View<'a>,
       O: std::borrow::Borrow<[usize]>,
 {
-    /// Produce an iterator over elements (borrowed slices) of a `VarSet`.
+    /// Produce an iterator over elements (borrowed slices) of a `Chunked`.
     ///
     /// # Examples
     ///
-    /// The following simple example demonstrates how to iterate over a `VarSet`
+    /// The following simple example demonstrates how to iterate over a `Chunked`
     /// of integers stored in a flat `Vec`.
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
-    /// let mut varset_iter = s.iter();
-    /// let mut e0_iter = varset_iter.next().unwrap().iter();
+    /// let s = Chunked::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut iter = s.iter();
+    /// let mut e0_iter = iter.next().unwrap().iter();
     /// assert_eq!(Some(&1), e0_iter.next());
     /// assert_eq!(Some(&2), e0_iter.next());
     /// assert_eq!(Some(&3), e0_iter.next());
     /// assert_eq!(None, e0_iter.next());
-    /// assert_eq!(Some(&[4][..]), varset_iter.next());
-    /// assert_eq!(Some(&[5,6][..]), varset_iter.next());
-    /// assert_eq!(None, varset_iter.next());
+    /// assert_eq!(Some(&[4][..]), iter.next());
+    /// assert_eq!(Some(&[5,6][..]), iter.next());
+    /// assert_eq!(None, iter.next());
     /// ```
     ///
-    /// Nested `VarSet`s can also be used to create more complex data organization:
+    /// Nested `Chunked`s can also be used to create more complex data organization:
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![1,2,3,4,5,6,7,8,9,10,11]);
-    /// let s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// let s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], vec![1,2,3,4,5,6,7,8,9,10,11]);
+    /// let s1 = Chunked::from_offsets(vec![0,1,4,5], s0);
     /// let mut iter1 = s1.iter();
     /// let v0 = iter1.next().unwrap();
     /// let mut iter0 = v0.iter();
@@ -292,44 +317,44 @@ where S: View<'a>,
     /// ```
     pub fn iter(&'a self) -> VarIter<'a, <S as View<'a>>::Type> {
         VarIter {
-            offsets: self.offsets.borrow(),
+            offsets: self.chunks.borrow(),
             data: self.data.view(),
         }
     }
 }
 
 
-impl<'a, S, O> VarSet<S, O>
+impl<'a, S, O> Chunked<S, O>
 where
     S: ViewMut<'a>,
     O: std::borrow::Borrow<[usize]>,
 {
     /// Produce a mutable iterator over elements (borrowed slices) of a
-    /// `VarSet`.
+    /// `Chunked`.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s = VarSet::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
+    /// let mut s = Chunked::from_offsets(vec![0,3,4,6], vec![1,2,3,4,5,6]);
     /// for i in s.view_mut().iter_mut() {
     ///     for j in i.iter_mut() {
     ///         *j += 1;
     ///     }
     /// }
-    /// let mut varset_iter = s.iter();
-    /// assert_eq!(vec![2,3,4], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![5], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(vec![6,7], varset_iter.next().unwrap().to_vec());
-    /// assert_eq!(None, varset_iter.next());
+    /// let mut iter = s.iter();
+    /// assert_eq!(vec![2,3,4], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![6,7], iter.next().unwrap().to_vec());
+    /// assert_eq!(None, iter.next());
     /// ```
     ///
-    /// Nested `VarSet`s can also be used to create more complex data organization:
+    /// Nested `Chunked`s can also be used to create more complex data organization:
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], vec![0,1,2,3,4,5,6,7,8,9,10]);
-    /// let mut s1 = VarSet::from_offsets(vec![0,1,4,5], s0);
+    /// let mut s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], vec![0,1,2,3,4,5,6,7,8,9,10]);
+    /// let mut s1 = Chunked::from_offsets(vec![0,1,4,5], s0);
     /// for mut v0 in s1.view_mut().iter_mut() {
     ///     for i in v0.iter_mut() {
     ///         for j in i.iter_mut() {
@@ -356,7 +381,7 @@ where
     /// ```
     pub fn iter_mut(&'a mut self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
         VarIterMut {
-            offsets: self.offsets.borrow(),
+            offsets: self.chunks.borrow(),
             data: self.data.view_mut(),
         }
     }
@@ -365,33 +390,33 @@ where
 macro_rules! impl_split_at_fn {
     ($self:ident, $split_fn:ident, $mid:expr) => {
         {
-            let (offsets_l, offsets_r, off) = split_offsets_at($self.offsets, $mid);
+            let (offsets_l, offsets_r, off) = split_offsets_at($self.chunks, $mid);
             let (data_l, data_r) = $self.data.$split_fn(off);
-            ( VarSet { offsets: offsets_l, data: data_l },
-              VarSet { offsets: offsets_r, data: data_r } )
+            ( Chunked { chunks: offsets_l, data: data_l },
+              Chunked { chunks: offsets_r, data: data_r } )
         }
     }
 }
 
-impl<V: SplitAt + Set> SplitAt for VarView<'_, V> {
+impl<V: SplitAt + Set> SplitAt for Chunked<V, &[usize]> {
     fn split_at(self, mid: usize) -> (Self, Self) {
         impl_split_at_fn!(self, split_at, mid)
     }
 }
 
-impl<T> SplitAt for VarView<'_, &[T]> {
+impl<T> SplitAt for Chunked<&[T], &[usize]> {
     fn split_at(self, mid: usize) -> (Self, Self) {
         impl_split_at_fn!(self, split_at, mid)
     }
 }
 
-impl<T> SplitAt for VarView<'_, &mut [T]> {
+impl<T> SplitAt for Chunked<&mut [T], &[usize]> {
     fn split_at(self, mid: usize) -> (Self, Self) {
         impl_split_at_fn!(self, split_at_mut, mid)
     }
 }
 
-/// A special iterator capable of iterating over a `VarSet`.
+/// A special iterator capable of iterating over a `Chunked`.
 pub struct VarIter<'a, S> {
     offsets: &'a [usize],
     data: S,
@@ -427,10 +452,10 @@ fn split_offset_at_test() {
 
 /// Pops an offset from the given slice of offsets and produces an increment for
 /// advancing the data pointer. This is a helper function for implementing
-/// iterators over `VarSet` types.
+/// iterators over `Chunked` types.
 /// This function panics if offsets is empty.
 fn pop_offset(offsets: &mut &[usize]) -> Option<usize> {
-    debug_assert!(!offsets.is_empty(), "VarSet is corrupted and cannot be iterated.");
+    debug_assert!(!offsets.is_empty(), "Chunked is corrupted and cannot be iterated.");
     offsets.split_first().and_then(|(head, tail)| {
         if tail.is_empty() {
             return None;
@@ -507,13 +532,13 @@ impl<'a, T: 'a> Iterator for VarIterMut<'a, &'a mut [T]> {
 }
 
 /*
- * `IntoIterator` implementation for `VarSet`. Note that this type of
+ * `IntoIterator` implementation for `Chunked`. Note that this type of
  * iterator allocates a new `Vec` at each iteration. This is an expensive
  * operation and is here for compatibility with the rest of Rust's ecosystem.
  * However, this iterator should be used sparingly.
  */
 
-/// IntoIter for `VarSet`.
+/// IntoIter for `Chunked`.
 pub struct VarIntoIter<S> {
     offsets: std::iter::Peekable<std::vec::IntoIter<usize>>,
     data: S,
@@ -528,7 +553,7 @@ impl<S> Iterator for VarIntoIter<S>
         let begin = self
             .offsets
             .next()
-            .expect("VarSet is corrupted and cannot be iterated.");
+            .expect("Chunked is corrupted and cannot be iterated.");
         if self.offsets.len() <= 1 {
             return None; // Ignore the last offset
         }
@@ -540,17 +565,17 @@ impl<S> Iterator for VarIntoIter<S>
     }
 }
 
-impl<S: SplitOff + Set> SplitOff for VarSet<S> {
+impl<S: SplitOff + Set> SplitOff for Chunked<S> {
     fn split_off(&mut self, mid: usize) -> Self {
         // Note: Allocations in this function heavily outweigh any cost in bounds checking.
-        assert!(!self.offsets.is_empty());
-        assert!(mid < self.offsets.len());
-        let off = self.offsets[mid] - self.offsets[0];
-        let offsets_l = self.offsets[..mid+1].to_vec();
-        let offsets_r = self.offsets[mid..].to_vec();
-        self.offsets = offsets_l;
+        assert!(!self.chunks.is_empty());
+        assert!(mid < self.chunks.len());
+        let off = self.chunks[mid] - self.chunks[0];
+        let offsets_l = self.chunks[..mid+1].to_vec();
+        let offsets_r = self.chunks[mid..].to_vec();
+        self.chunks = offsets_l;
         let data_r = self.data.split_off(off);
-        VarSet::from_offsets(offsets_r, data_r)
+        Chunked::from_offsets(offsets_r, data_r)
     }
 }
 
@@ -561,7 +586,7 @@ impl<T> SplitOff for Vec<T> {
 }
 
 
-impl<S> IntoIterator for VarSet<S>
+impl<S> IntoIterator for Chunked<S>
 where
     S: SplitOff + Set,
 {
@@ -569,48 +594,24 @@ where
     type IntoIter = VarIntoIter<S>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let VarSet {
-            offsets,
+        let Chunked {
+            chunks,
             data,
         } = self;
         VarIntoIter {
-            offsets: offsets.into_iter().peekable(),
+            offsets: chunks.into_iter().peekable(),
             data: data,
         }
     }
 }
 
-impl<'a, S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for VarSet<S> {
-    /// Push an element onto this `VarSet`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4], vec![0,1,2,3]);
-    /// s.push(vec![4,5]);
-    /// let v1 = s.view();
-    /// let mut view1_iter = v1.into_iter();
-    /// assert_eq!(Some(&[0][..]), view1_iter.next());
-    /// assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
-    /// assert_eq!(Some(&[4,5][..]), view1_iter.next());
-    /// assert_eq!(None, view1_iter.next());
-    /// ```
-    fn push(&mut self, element: <Self as Set>::Elem) {
-        for elem in element.into_iter() {
-            self.data.push(elem);
-        }
-        self.offsets.push(self.data.len());
-    }
-}
-
-impl<'a, S, O> View<'a> for VarSet<S, O>
+impl<'a, S, O> View<'a> for Chunked<S, O>
 where
     S: Set + View<'a>,
-    <S as View<'a>>::Type: Set,
     O: std::borrow::Borrow<[usize]>,
+    <S as View<'a>>::Type: Set,
 {
-    type Type = VarView<'a, <S as View<'a>>::Type>;
+    type Type = Chunked<<S as View<'a>>::Type, &'a [usize]>;
 
     /// Create a contiguous immutable (shareable) view into this set.
     ///
@@ -618,7 +619,7 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// let s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
     /// let v1 = s.view();
     /// let v2 = v1.clone();
     /// let mut view1_iter = v1.into_iter();
@@ -631,17 +632,17 @@ where
     /// }
     /// ```
     fn view(&'a self) -> Self::Type {
-        VarSet::from_offsets(self.offsets.borrow(), self.data.view())
+        Chunked::from_offsets(self.chunks.borrow(), self.data.view())
     }
 }
 
-impl<'a, S, O> ViewMut<'a> for VarSet<S, O>
+impl<'a, S, O> ViewMut<'a> for Chunked<S, O>
 where
     S: Set + ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set,
     O: std::borrow::Borrow<[usize]>,
 {
-    type Type = VarView<'a, <S as ViewMut<'a>>::Type>;
+    type Type = Chunked<<S as ViewMut<'a>>::Type, &'a [usize]>;
 
     /// Create a contiguous mutable (unique) view into this set.
     ///
@@ -649,7 +650,7 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s = VarSet::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
     /// let mut v1 = s.view_mut();
     /// v1.iter_mut().next().unwrap()[0] = 100;
     /// let mut view1_iter = v1.iter();
@@ -659,12 +660,12 @@ where
     /// assert_eq!(None, view1_iter.next());
     /// ```
     fn view_mut(&'a mut self) -> Self::Type {
-        VarView::from_offsets(self.offsets.borrow(), self.data.view_mut())
+        Chunked::from_offsets(self.chunks.borrow(), self.data.view_mut())
     }
 }
 
 /*
- * Utility traits intended to expose the necessary behaviour to implement `VarSet`s
+ * Utility traits intended to expose the necessary behaviour to implement `Chunked` types.
  */
 
 pub trait ExtendFromSlice {
@@ -687,7 +688,7 @@ pub trait IntoMutSlice<'a>: IntoSlice<'a> {
  * Implement helper traits for supported `Set` types
  */
 
-impl<S: IntoFlat> IntoFlat for VarSet<S> {
+impl<S: IntoFlat> IntoFlat for Chunked<S> {
     type FlatType = <S as IntoFlat>::FlatType;
     /// Strip all organizational information from this set, returning the
     /// underlying storage type.
@@ -695,8 +696,8 @@ impl<S: IntoFlat> IntoFlat for VarSet<S> {
     /// ```rust
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
-    /// let s0 = VarSet::from_offsets(vec![0,3,4,6,9,11], v.clone());
-    /// let s1 = VarSet::from_offsets(vec![0,1,4,5], s0.clone());
+    /// let s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// let s1 = Chunked::from_offsets(vec![0,1,4,5], s0.clone());
     /// assert_eq!(s1.into_flat(), v);
     /// assert_eq!(s0.into_flat(), v);
     /// ```
@@ -730,7 +731,7 @@ impl<'a, T> IntoMutSlice<'a> for &'a mut [T] {
     }
 }
 
-impl<'a, S> IntoSlice<'a> for VarSet<S, &'a [usize]>
+impl<'a, S> IntoSlice<'a> for Chunked<S, &'a [usize]>
     where S: IntoSlice<'a>,
 {
     type Item = <S as IntoSlice<'a>>::Item;
@@ -738,7 +739,7 @@ impl<'a, S> IntoSlice<'a> for VarSet<S, &'a [usize]>
         self.data.into_slice()
     }
 }
-impl<'a, S> IntoMutSlice<'a> for VarSet<S, &'a [usize]>
+impl<'a, S> IntoMutSlice<'a> for Chunked<S, &'a [usize]>
     where S: IntoMutSlice<'a>,
 {
     fn into_mut_slice(self) -> &'a mut [Self::Item] {
@@ -788,19 +789,19 @@ impl<'a, T, S: Buffer<T> + Set + ?Sized> Buffer<T> for &'a mut S {
     }
 }
 
-impl<S: Default> Default for VarSet<S> {
-    /// Construct an empty `VarSet`.
+impl<S: Default> Default for Chunked<S> {
+    /// Construct an empty `Chunked`.
     fn default() -> Self {
-        VarSet {
+        Chunked {
             data: Default::default(),
-            offsets: vec![0],
+            chunks: vec![0],
         }
     }
 }
 
-impl<S: Dummy, O: Dummy> Dummy for VarSet<S, O> {
+impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
     fn dummy() -> Self {
-        VarSet { data: Dummy::dummy(), offsets: Dummy::dummy() }
+        Chunked { data: Dummy::dummy(), chunks: Dummy::dummy() }
     }
 }
 impl<T> Dummy for &[T] {

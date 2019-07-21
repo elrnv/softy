@@ -1,26 +1,13 @@
-use super::*;
-
-/*
- * Strict subview types corresponding to each of the set types.
- */
-
-/// A `VarSet` that is a contiguous sub-view of some larger set (which could have
-/// any type).
-pub type VarView<'a, V> = VarSet<V, &'a [usize]>;
-
-/// A contiguous `UniSet` view of some larger set (which could have any type).
-pub type UniView<V, N> = UniSet<V, N>;
-
-/// A trait defining a set that can be accessed via a contiguous immutable
-/// (shared) view.  This type of view can be cloned.
+/// A trait defining a collection that can be accessed via an
+/// immutable (shared) view. This type of view can be cloned and copied.
 pub trait View<'a> {
     type Type: Clone + Copy;
 
     fn view(&'a self) -> Self::Type;
 }
 
-/// A trait defining a set that can be accessed via a contiguous mutable
-/// (unique) view.
+/// A trait defining a collection that can be accessed via a mutable (unique)
+/// view.
 pub trait ViewMut<'a> {
     type Type;
 

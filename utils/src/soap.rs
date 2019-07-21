@@ -1,17 +1,18 @@
 mod subset;
-mod uniset;
-mod varset;
+mod chunked;
+mod uniform;
 mod view;
 
 pub use subset::*;
-pub use uniset::*;
-pub use varset::*;
+pub use chunked::*;
+pub use uniform::*;
 pub use view::*;
 
 // Helper module defines a few useful unsigned type level integers.
 // This is to avoid having to depend on yet another crate.
 pub mod num {
     pub trait Unsigned {
+        fn new() -> Self;
         fn value() -> usize;
     }
 
@@ -21,6 +22,7 @@ pub mod num {
                 #[derive(Debug, Copy, Clone, PartialEq)]
                 pub struct $nty;
                 impl Unsigned for $nty {
+                    fn new() -> Self { $nty }
                     fn value() -> usize {
                         $n
                     }
@@ -71,7 +73,7 @@ where
     }
 }
 //
-//impl<S, N> GetIndex<UniSet<S, N>> for usize
+//impl<S, N> GetIndex<Chunked<S, N>> for usize
 //where
 //    S: Set + ReinterpretSet<N>,
 //{
@@ -166,7 +168,7 @@ impl<T> Push<T> for Vec<T> {
 }
 
 /// A helper trait to split a set into two sets at a given index.
-/// This trait is used to implement iteration over `VarView`s.
+/// This trait is used to implement iteration over `ChunkedView`s.
 pub trait SplitAt where Self: Sized {
     /// Split self into two sets at the given midpoint.
     /// This function is analogous to `<[T]>::split_at`.
@@ -174,7 +176,7 @@ pub trait SplitAt where Self: Sized {
 }
 
 /// A helper trait to split owned sets into two sets at a given index.
-/// This trait is used to implement iteration over `VarSet`s.
+/// This trait is used to implement iteration over `Chunked`s.
 pub trait SplitOff {
     /// Split self into two sets at the given midpoint.
     /// This function is analogous to `Vec::split_off`.
@@ -231,11 +233,11 @@ pub trait Dummy {
 mod tests {
     use super::*;
 
-    /// Test iteration of a `UniSet` inside a `VarSet`.
+    /// Test iteration of a `Chunked` inside a `Chunked`.
     #[test]
     fn var_of_uni_iter_test() {
-        let u0 = UniSet::<_, num::U2>::from_flat((1..=12).collect::<Vec<_>>());
-        let v1 = VarSet::from_offsets(vec![0,2,3,6], u0);
+        let u0 = UniChunked::<_, num::U2>::from_flat((1..=12).collect::<Vec<_>>());
+        let v1 = Chunked::from_offsets(vec![0,2,3,6], u0);
 
         let mut iter1 = v1.iter();
         let v0 = iter1.next().unwrap();

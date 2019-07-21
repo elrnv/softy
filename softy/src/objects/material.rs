@@ -1,16 +1,22 @@
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Material {
+pub struct Material<P> {
     /// Material unique identifier.
-    id: usize,
+    /// It is the user's responsibility to ensure that this value is used correctly:
+    ///
+    /// `material1 == material2` if and only if `material1.id == material2.id`.
+    pub id: usize,
+    /// Material properties specific to the type of material.
+    pub properties: P,
+}
+
+/// Common material properties shared among all deformable objects.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DeformableProperties {
     /// Parameters determining the elastic behaviour of a simulated solid. If `None`, we will look
     /// for elasticity parameters in the mesh.
     elasticity: Option<ElasticityParameters>,
     /// The density of the material. If `None`, we will look for a density attribute in the mesh.
     density: Option<f64>,
-    /// Volume preservation sets the material to be globally incompressible, if set to `true`. In
-    /// contrast to Bulk Modulus, this parameter affects global incompressibility,
-    /// while Bulk Modulus affects *local* incompressibility (on a per element level).
-    volume_preservation: bool,
     /// Coefficient measuring the amount of artificial viscosity as dictated by the Rayleigh
     /// damping model. This value should be premultiplied by the timestep reciprocal to save
     /// passing the time step around to elastic energy models which are otherwise independent of
@@ -20,29 +26,112 @@ pub struct Material {
     scale: f64,
 }
 
-impl Material {
+impl Default for DeformableProperties {
+    fn default() -> Self {
+        DeformableProperties {
+            elasticity: None, // Assuming variable elasticity
+            density: None, // Assuming variable density
+            damping: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+/// Shells can be deformable or completely rigid. Rigid shells are not to be
+/// confused with solids, which are in fact deformable and are fundamentally
+/// different because they contain properties of the interior material.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ShellProperties {
+    /// A static shell is an infinite mass kinematic object.
+    Static,
+    /// A rigid shell has 6 degrees of freedom: 3 for translation and 3 for rotation.
+    Rigid { density: f64 } ,
+    /// A deformable shell has a 3 degrees of freedom for every vertex.
+    Deformable {
+        deformable: DeformableProperties,
+    }
+}
+
+impl Default for ShellProperties {
+    fn default() -> Self {
+        ShellProperties::Rigid
+    }
+}
+
+/// Solids are always elastically deformable. For rigid solids, use shells,
+/// because rigid solids don't require interior properties.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SolidProperties {
+    /// Volume preservation sets the material to be globally incompressible, if set to `true`. In
+    /// contrast to Bulk Modulus, this parameter affects global incompressibility,
+    /// while Bulk Modulus affects *local* incompressibility (on a per element level).
+    volume_preservation: bool,
+
+    /// Common material properties shared among all deformable materials.
+    deformable: DeformableProperties,
+}
+
+impl Default for SolidProperties {
+    fn default() -> Self {
+        SolidProperties {
+            volume_preservation: false,
+            deformable: DeformableProperties::default(),
+        }
+    }
+}
+
+pub type ShellMaterial = Material<ShellProperties>;
+pub type SolidMaterial = Material<SolidProperties>;
+
+impl<P: Default> Material<P> {
     pub fn new() -> Material {
-        Material::default()
-    }
-    pub fn elasticity(self, elasticity: ElasticityParameters) -> Material {
         Material {
-            elasticity: Some(elasticity),
+            id: 0,
+            properties: P::default(),
+        }
+    }
+}
+
+impl SolidProperties {
+    pub fn deformable(self, deformable: DeformableProperties) -> SolidProperties {
+        SolidProperties {
+            deformable,
             ..self
         }
     }
-    pub fn density(self, density: f64) -> Material {
-        Material {
-            density: Some(density),
-            ..self
-        }
-    }
-    pub fn volume_preservation(self, volume_preservation: bool) -> Material {
-        Material {
+    pub fn volume_preservation(self, volume_preservation: bool) -> SolidProperties {
+        SolidProperties {
             volume_preservation,
             ..self
         }
     }
-    pub fn damping(self, mut damping: f64, time_step: Option<f64>) -> Material {
+}
+
+impl ShellProperties {
+    pub fn rigid(self) -> ShellProperties {
+        ShellProperties::Rigid
+    }
+    pub fn deformable(self, deformable: DeformableProperties) -> ShellProperties {
+        ShellProperties::Deformable {
+            deformable,
+        }
+    }
+}
+
+impl DeformableProperties {
+    pub fn elasticity(self, elasticity: ElasticityParameters) -> DeformableProperties {
+        DeformableProperties {
+            elasticity: Some(elasticity),
+            ..self
+        }
+    }
+    pub fn density(self, density: f64) -> DeformableProperties {
+        DeformableProperties {
+            density: Some(density),
+            ..self
+        }
+    }
+    pub fn damping(self, mut damping: f64, time_step: Option<f64>) -> DeformableProperties {
         damping *= if let Some(dt) = time_step {
             if dt != 0.0 {
                 1.0 / dt;
@@ -53,7 +142,7 @@ impl Material {
             0.0
         };
 
-        Material {
+        DeformableProperties {
             damping,
             ..self
         }
@@ -64,13 +153,12 @@ impl Material {
     }
 
     /// Rescale parameters uniformly to be closer to 1.0.
-    pub fn normalized(self) -> Material {
-        Material {
+    pub fn normalized(self) -> DeformableProperties {
+        DeformableProperties {
             mut elasticity,
             mut density,
             mut damping,
             mut scale,
-            volume_preservation,
         } = self;
 
         if let Some(ref mut elasticity) = elasticity {
@@ -88,23 +176,21 @@ impl Material {
             }
         }
 
-        Material {
+        DeformableProperties {
             elasticity,
             density,
             damping,
             scale,
-            volume_preservation,
         }
     }
 
     /// Undo normalization.
-    pub fn unnormalized(self) -> Material {
-        Material {
+    pub fn unnormalized(self) -> DeformableProperties {
+        DeformableProperties {
             mut elasticity,
             mut density,
             mut damping,
             mut scale,
-            volume_preservation,
         } = self;
 
         if let Some(ref mut elasticity) = elasticity {
@@ -117,23 +203,10 @@ impl Material {
 
         damping *= scale;
 
-        Material {
+        DeformableProperties {
             elasticity,
             density,
             damping,
-            scale: 1.0,
-            volume_preservation,
-        }
-    }
-}
-
-impl Default for Material {
-    fn default() -> Self {
-        Material {
-            elasticity: None, // Assuming variable elasticity
-            density: None, // Assuming variable density
-            volume_preservation: false,
-            damping: 0.0,
             scale: 1.0,
         }
     }
@@ -178,5 +251,28 @@ impl ElasticityParameters {
             lambda: young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson),
             mu: young / (2.0 * (1.0 + poisson)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Verify that that a normalized material can be unnormalized into its
+    /// original state. In other words verify that `unnormalized` is the inverse
+    /// of `normalized`.
+    #[test]
+    fn deformable_material_normalization() {
+        let mat = DeformableMaterial::default()
+            .elasticity(ElasticityParameters { lambda: 123.0, mu: 0.01 })
+            .density(100.0)
+            .damping(0.125, 0.0725);
+
+        let normalized_mat = mat.normalized();
+        let unnormalized_mat = normalized_mat.unnormalized();
+
+        assert_eq!(unnormalized_mat, mat);
+
+        let renormalized_mat = unnormalized_mat.normalized();
+
+        assert_eq!(renormalized_mat, normalized_mat);
     }
 }

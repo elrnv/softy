@@ -5,11 +5,11 @@ use crate::objects::Material;
 /// physical material properties that govern how it behaves.
 pub struct TetMeshSolid {
     pub tetmesh: TetMesh,
-    pub material: Material,
+    pub material: SolidMaterial,
 }
 
 impl TetMeshSolid {
-    pub fn new(tetmesh: TetMesh, material: Material) -> TetMeshSolid {
+    pub fn new(tetmesh: TetMesh, material: SolidMaterial) -> TetMeshSolid {
         TetMeshSolid {
             tetmesh,
             material

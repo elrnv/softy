@@ -1,15 +1,15 @@
 use crate::TriMesh;
 use crate::objects::Material;
 
-/// A soft solid represented by a trimesh. It is effectively a tetrahedral mesh decorated by
+/// A soft shell represented by a trimesh. It is effectively a triangle mesh decorated by
 /// physical material properties that govern how it behaves.
 pub struct TriMeshShell {
     pub trimesh: TriMesh,
-    pub material: Material,
+    pub material: ShellMaterial,
 }
 
 impl TriMeshShell {
-    pub fn new(trimesh: TriMesh, material: Material) -> TriMeshShell {
+    pub fn new(trimesh: TriMesh, material: ShellMaterial) -> TriMeshShell {
         TriMeshShell {
             trimesh,
             material

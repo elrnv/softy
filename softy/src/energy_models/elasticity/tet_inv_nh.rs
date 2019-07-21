@@ -57,7 +57,7 @@ impl<T: Real> InvertibleNHTetEnergy<T> {
     #[inline]
     pub fn elastic_energy(&self) -> T {
         let InvertibleNHTetEnergy {
-            volume, mu, lambda, epsilon: eps ..
+            volume, mu, lambda, epsilon: eps, ..
         } = *self;
         let F = self.deformation_gradient();
         let I = F.norm_squared(); // tr(F^TF)
@@ -77,7 +77,7 @@ impl<T: Real> InvertibleNHTetEnergy<T> {
             half * lambda * logJ * logJ - mu * logJ
         };
 
-        volume * (E + half * mu * (I - T::from(3.0).unwrap())
+        volume * (E + half * mu * (I - T::from(3.0).unwrap()))
     }
 
     /// Elastic energy gradient per element vertex.

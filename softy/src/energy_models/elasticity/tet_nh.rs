@@ -546,7 +546,6 @@ mod tests {
                     lambda: 5.4,
                     mu: 263.1,
                 })
-            }
         }
     }
 

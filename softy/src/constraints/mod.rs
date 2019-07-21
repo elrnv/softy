@@ -27,41 +27,35 @@ pub use self::volume::*;
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
 pub fn build_contact_constraint(
-    tetmesh_rc: &Rc<RefCell<TetMesh>>,
-    trimesh_rc: &Rc<RefCell<TriMesh>>,
-    params: SmoothContactParams,
-    density: f64,
+    solid: &TetMeshSolid,
+    shell: &TriMeshShell,
+    params: FrictionalContactParams,
     time_step: f64,
-    energy_model: ElasticTetMeshEnergy,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
         ContactType::SPImplicit => Box::new(SPImplicitContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
+            solid,
+            shell,
             params.kernel,
             params.friction_params,
-            density,
         )?),
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
+            solid,
+            shell,
             params.kernel,
             params.friction_params,
-            density,
             time_step,
-            energy_model,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
+            solid,
+            shell,
             params.kernel,
             params.friction_params,
-            density,
         )?),
     })
 }
 
-/// A common pattern occuring with contact constraints becoming active and inactive is remapping
+/// A common pattern occurring with contact constraints becoming active and inactive is remapping
 /// values computed in a simulation step to the values available in the next step with a different
 /// set of active constraints. This is necessary for pure contact warm starts as well as friction
 /// impulses being carried over to the next step.

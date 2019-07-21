@@ -25,7 +25,7 @@ pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::contact::*;
-pub use self::contact::{ContactType, SmoothContactParams};
+pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{
     ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
 };

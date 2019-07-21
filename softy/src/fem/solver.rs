@@ -17,6 +17,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
+use utils::soap::*;
 
 use approx::*;
 
@@ -95,10 +96,9 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
     sim_params: SimParams,
-    solid_material: Option<Material>,
-    solids: Vec<TetMesh>,
-    shells: Vec<PolyMesh>,
-    smooth_contact_params: Option<SmoothContactParams>,
+    solids: Vec<(TetMesh, Material)>,
+    shells: Vec<(PolyMesh, Material)>,
+    frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
 }
 
 impl SolverBuilder {
@@ -107,35 +107,29 @@ impl SolverBuilder {
     pub fn new(sim_params: SimParams) -> Self {
         SolverBuilder {
             sim_params,
-            solid_material: None,
             solids: Vec::new(),
             shells: Vec::new(),
-            smooth_contact_params: None,
+            frictional_contacts: Vec::new(),
         }
     }
 
-    /// Set the solid material properties. This will override any variable material properties set
-    /// on the mesh itself.
-    pub fn solid_material(&mut self, mat_props: Material) -> &mut Self {
-        self.solid_material = Some(mat_props);
-        self
-    }
-
     /// Add a tetmesh representing a soft solid (e.g. soft tissue).
-    pub fn add_solid(&mut self, solid: TetMesh) -> &mut Self {
-        self.solids.push(solid);
+    pub fn add_solid(&mut self, mesh: TetMesh, mat: Material) -> &mut Self {
+        self.solids.push((mesh, mat));
         self
     }
 
     /// Add a polygon mesh representing a shell (e.g. cloth).
-    pub fn add_shell(&mut self, shell: PolyMesh) -> &mut Self {
-        self.shells.push(shell);
+    pub fn add_shell(&mut self, shell: PolyMesh, mat: Material) -> &mut Self {
+        self.shells.push((mesh, mat));
         self
     }
 
-    /// Set parameters for smooth contact problems. This is necessary when a shell is provided.
-    pub fn smooth_contact_params(&mut self, params: SmoothContactParams) -> &mut Self {
-        self.smooth_contact_params = Some(params);
+    /// Set parameters for frictional contact problems. The given two material IDs determine which
+    /// materials should experience frictional contact described by the given parameters. To add
+    /// self-contact, simply set the two ids to be equal.
+    pub fn add_frictional_contact(&mut self, params: FrictionalContactParams, mat_ids: (usize, usize)) -> &mut Self {
+        self.frictional_contacts.push((params, mat_ids));
         self
     }
 
@@ -143,61 +137,111 @@ impl SolverBuilder {
     pub fn build(&self) -> Result<Solver, Error> {
         let SolverBuilder {
             sim_params: mut params,
-            solid_material,
             solids,
             shells,
-            smooth_contact_params,
+            frictional_contacts,
         } = self.clone();
 
-        // Get kinematic shell
-        let kinematic_object = if !shells.is_empty() {
-            if smooth_contact_params.is_none() {
-                return Err(Error::MissingContactParams);
+        let mut max_size = 0.0;
+
+        // Prepare solids
+        let (solids, solid_vertex_set) = {
+            let mut prev_pos = Chunked::new();
+            let mut prev_vel = Chunked::new();
+
+            for (mesh, _) in solids.iter() {
+                // We need this quantity to compute the tolerance.
+                let mut max_vol = 0.0;
+                max_vol = max_vol.max(mesh
+                            .tet_iter()
+                            .map(Volume::volume)
+                            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
+                            .expect("Given TetMesh is empty"));
+                max_size = max_size.max(max_vol.cbrt());
+
+                // Get previous position vector from the tetmesh.
+                let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
+                prev_pos.push(mesh_prev_pos);
+                let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+                prev_vel.push(mesh_prev_vel);
             }
 
-            Some(Rc::new(RefCell::new(TriMesh::from(shells[0].clone()))))
-        } else {
-            None
-        };
-
-        if solids.is_empty() {
-            return Err(Error::NoSimulationMesh);
-        }
-
-        let mut max_vol = 0.0;
-
-        let mut prev_pos = Vec::new();
-        let mut prev_vel = Vec::new();
-
-        for mesh in solids.iter() {
-            // We need this quantity to compute the tolerance.
-            max_vol = max_vol.max(mesh
-                              .tet_iter()
-                              .map(Volume::volume)
-                              .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
-                              .expect("Given TetMesh is empty"));
-
-            // Get previous position vector from the tetmesh.
-            prev_pos.extend(mesh.vertex_position_iter().cloned());
-            prev_vel.append(&mut mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
-        }
-
-        let mut volume_constraints = Vec::new();
-
-        for mesh in solids.iter() {
             // Initialize volume constraint
-            if solid_material.volume_preservation {
-                volume_constraint.push(VolumeConstraint::new(mesh));
+            let mut volume_constraints = Vec::new();
+            for (id, (mesh, material)) in solids.iter().enumerate() {
+                if material.volume_preservation {
+                    volume_constraints.push((id, VolumeConstraint::new(mesh)));
+                }
             }
+
+            let vertex_set = VertexSet {
+                prev_pos: prev_pos.clone(),
+                prev_vel: prev_vel.clone(),
+                cur_pos: RefCell::new(prev_pos.clone()),
+                scaled_vel: RefCell::new(prev_vel.clone()),
+            };
+
+            // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
+            let solids = solids.into_iter().map(|(mut tetmesh, material)| {
+                // Prepare deformable solid for simulation.
+                Self::prepare_mesh_attributes(&mut tetmesh, material)?;
+                TetMeshSolid { tetmesh, material }
+            }).collect::Vec<_>();
+
+            (solids, vertex_set)
         }
 
-        // Equip tetmeshes with physics parameters, making them bona-fide solids.
-        let solid_material = solid_material.unwrap_or_default();
-        let solids = solids.into_iter().map(|mut mesh| {
-            // Prepare deformable solid for simulation.
-            Self::prepare_mesh_attributes(&mut mesh, solid_material)?;
-            TetMeshSolid { tetmesh: mesh, material: solid_material }
-        });
+        // Prepare shells
+        let shells = {
+            let mut prev_pos = Chunked::new();
+            let mut prev_vel = Chunked::new();
+
+            for (mesh, _) in shells.iter() {
+                let mesh = TriMesh::from(mesh); // Triangulate mesh.
+
+                // We need this quantity to compute the tolerance.
+                let mut max_area = 0.0;
+                max_area = max_area.max(mesh
+                            .tri_iter()
+                            .map(Area::area)
+                            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
+                            .expect("Given TriMesh is empty"));
+
+                max_size = max_size.max(max_area.sqrt());
+
+
+                // Get previous position vector from the tetmesh.
+                let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
+                prev_pos.push(mesh_prev_pos);
+                let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+                prev_vel.push(mesh_prev_vel);
+            }
+
+            // Initialize volume constraint
+            let mut volume_constraints = Vec::new();
+            for (id, (mesh, material)) in solids.iter().enumerate() {
+                if material.volume_preservation {
+                    volume_constraints.push((id, VolumeConstraint::new(mesh)));
+                }
+            }
+
+            let vertex_set = VertexSet {
+                prev_pos: prev_pos.clone(),
+                prev_vel: prev_vel.clone(),
+                cur_pos: RefCell::new(prev_pos.clone()),
+                scaled_vel: RefCell::new(prev_vel.clone()),
+            };
+
+            // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
+            let solids = solids.into_iter().map(|(mut tetmesh, material)| {
+                // Prepare deformable solid for simulation.
+                Self::prepare_mesh_attributes(&mut tetmesh, material)?;
+                TetMeshSolid { tetmesh, material }
+            }).collect::Vec<_>();
+
+            (solids, vertex_set)
+
+        }
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -207,15 +251,21 @@ impl SolverBuilder {
 
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
 
-        let smooth_contact_constraint = kinematic_object.as_ref().and_then(|trimesh| {
-            let cparams = smooth_contact_params.unwrap(); // already verified above.
+        let mut solid_surfaces = vec![None; solids.len()];
+
+        // Convert frictional contact parameters into frictional contact constraints.
+        for frictional_contacts = frictional_contacts.into_iter().map(|(params, ids)| {
+            if let Some(solid) = solids.iter().find(|&&solid| solid.material.id == ids.0) {
+            crate::constraints::build_contact_constraint(solids, shell, params)
+
+        }).collect();
+        let = kinematic_object.as_ref().and_then(|trimesh| {
             crate::constraints::build_contact_constraint(
                 &mesh,
                 &trimesh,
                 cparams,
                 density,
                 time_step,
-                energy_model_builder.build(),
             )
             .ok()
         });
@@ -226,15 +276,14 @@ impl SolverBuilder {
         //    // bound).
         //    scp.max_step / 3.0f64.sqrt()
         //});
-
+        //
         let mut problem = NonLinearProblem {
-            prev_pos,
-            prev_vel,
-            cur_pos: RefCell::new(Vec::new()),
+            vertex_set,
             time_step,
             solids,
+            solid_surfaces,
             shells,
-            volume_constraint,
+            volume_constraints,
             gravity,
             smooth_contact_constraint,
             displacement_bound,
@@ -243,7 +292,6 @@ impl SolverBuilder {
             warm_start: Solution::default(),
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
-            scaled_variables: RefCell::new(Vec::new()),
         };
 
         // Note that we don't need the solution field to get the number of variables and
@@ -256,9 +304,10 @@ impl SolverBuilder {
         // response which depends on mu and lambda as well as per tet volume:
         // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
         // should reflect these properties.
-        let tol = f64::from(params.tolerance) * max_vol * lambda.max(mu);
+        let max_area = max_size * max_size;
+        let tol = f64::from(params.tolerance) * max_area * lambda.max(mu);
         params.tolerance = tol as f32;
-        params.outer_tolerance *= (max_vol * lambda.max(mu)) as f32;
+        params.outer_tolerance *= (max_area * lambda.max(mu)) as f32;
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
@@ -535,48 +584,74 @@ impl Solver {
             .map(ContactConstraint::contact_radius)
     }
 
-    /// Update the solver mesh with the given points.
-    pub fn update_mesh_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
+    /// Update the solid meshes with the given points.
+    pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
+        // TODO: Move this implementation to the problem.
         let problem = self.problem_mut();
 
-        // Get the tetmesh and prev_pos so we can update fixed vertices only.
-        let tetmesh = &problem.tetmesh.borrow();
-        let mut prev_pos = problem.prev_pos.borrow_mut();
+        let mut prev_pos = problem.solid_vertex_set.prev_pos.borrow_mut();
 
-        if pts.num_vertices() != prev_pos.len() || pts.num_vertices() != tetmesh.num_vertices() {
+        // All solids are simulated, so the input point set must have the same
+        // size as our internal vertex set. If these are mismatched, then there
+        // was an issue with constructing the solid meshes. This may not
+        // necessarily be an error, we are just being conservative here.
+        if pts.num_vertices() != prev_pos.view().into_flat().len() {
             // We got an invalid point cloud
             return Err(Error::SizeMismatch);
         }
 
-        // Only update fixed vertices, if no such attribute exists, return an error.
-        let fixed_iter = tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
-        prev_pos
-            .iter_mut()
-            .zip(pts.vertex_position_iter())
-            .zip(fixed_iter)
-            .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-            .for_each(|(pos, new_pos)| *pos = Vector3::from(*new_pos));
+        let new_pos = pts.vertex_positions();
+
+        // Get the tetmesh and prev_pos so we can update the fixed vertices.
+        for (solid, prev_pos) in problem.solids.borrow().zip(prev_pos.iter_mut()) {
+            // Get the vertex index of the original vertex (point in given point cloud).
+            // This is done because meshes can be reordered when building the
+            // solver. This attribute maintains the link between the caller and
+            // the internal mesh representation. This way the user can still
+            // update internal meshes as needed between solves.
+            let source_index_iter = solid.tetmesh.attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
+            let pts_iter = source_index_iter.map(|&idx| new_pos[src_idx]);
+
+            // Only update fixed vertices, if no such attribute exists, return an error.
+            let fixed_iter = solid.tetmesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+            prev_pos
+                .iter_mut()
+                .zip(pts_iter)
+                .zip(fixed_iter)
+                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
+                .for_each(|(pos, new_pos)| *pos = *new_pos);
+        }
         Ok(())
     }
 
-    /// Update the kinematic object mesh with the given points.
-    pub fn update_kinematic_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
-        // Get the kinematic object so we can update the vertices.
-        let mut trimesh = match &self.problem_mut().kinematic_object {
-            Some(ref mesh) => mesh.borrow_mut(),
-            None => return Err(Error::NoKinematicMesh),
-        };
+    /// Update the shell meshes with the given points.
+    pub fn update_shell_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
+        // TODO: Move this implementation to the problem.
+        let problem = self.problem_mut();
 
-        if pts.num_vertices() != trimesh.num_vertices() {
-            // We got an invalid point cloud
-            return Err(Error::SizeMismatch);
+        let mut prev_pos = problem.shell_vertex_set.prev_pos.borrow_mut();
+
+        let new_pos = pts.vertex_positions();
+
+        // Get the tetmesh and prev_pos so we can update the fixed vertices.
+        for (shell, prev_pos) in problem.shells.borrow().zip(prev_pos.iter_mut()) {
+            // Get the vertex index of the original vertex (point in given point cloud).
+            // This is done because meshes can be reordered when building the
+            // solver. This attribute maintains the link between the caller and
+            // the internal mesh representation. This way the user can still
+            // update internal meshes as needed between solves.
+            let source_index_iter = shell.trimesh.attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
+            let pts_iter = source_index_iter.map(|&idx| new_pos[src_idx]);
+
+            // Only update fixed vertices, if no such attribute exists, return an error.
+            let fixed_iter = shell.trimesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+            prev_pos
+                .iter_mut()
+                .zip(pts_iter)
+                .zip(fixed_iter)
+                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
+                .for_each(|(pos, new_pos)| *pos = *new_pos);
         }
-
-        // Update all the vertices.
-        trimesh
-            .vertex_position_iter_mut()
-            .zip(pts.vertex_position_iter())
-            .for_each(|(pos, new_pos)| *pos = *new_pos);
         Ok(())
     }
 
@@ -1625,7 +1700,7 @@ mod tests {
             let offset = 0.01 * (if frame < 50 { frame } else { 0 } as f64);
             verts.iter_mut().for_each(|x| (*x)[1] += offset);
             let pts = PointCloud::new(verts.clone());
-            solver.update_mesh_vertices(&pts)?;
+            solver.update_solid_vertices(&pts)?;
             solver.step()?;
         }
         Ok(())
@@ -1661,7 +1736,7 @@ mod tests {
             //    solver.borrow_mesh(),
             //    &PathBuf::from(format!("./out/mesh_{}.vtk", frame)),
             //);
-            solver.update_mesh_vertices(&pts)?;
+            solver.update_solid_vertices(&pts)?;
             solver.step()?;
         }
         Ok(())
@@ -1920,7 +1995,7 @@ mod tests {
             .solid_material(MEDIUM_SOLID_MATERIAL)
             .add_solid(tetmesh.clone())
             .add_shell(trimesh.clone())
-            .smooth_contact_params(SmoothContactParams {
+            .smooth_contact_params(FrictionalContactParams {
                 contact_type: ContactType::Point,
                 kernel,
                 friction_params: None,
@@ -1949,7 +2024,7 @@ mod tests {
         let offset = 0.34;
         tri_verts.iter_mut().for_each(|x| (*x)[1] -= offset);
         let pts = PointCloud::new(tri_verts.clone());
-        assert!(solver.update_kinematic_vertices(&pts).is_ok());
+        assert!(solver.update_shell_vertices(&pts).is_ok());
         let solve_result = solver.step()?;
         assert!(solve_result.iterations <= params.max_outer_iterations);
 
@@ -1980,7 +2055,7 @@ mod tests {
 
     fn ball_tri_push_tester(
         material: Material,
-        sc_params: SmoothContactParams,
+        sc_params: FrictionalContactParams,
     ) -> Result<(), Error> {
         let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
 
@@ -2014,7 +2089,7 @@ mod tests {
             elasticity: ElasticityParameters::from_young_poisson(10e6, 0.4),
             ..SOLID_MATERIAL
         };
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.812,
@@ -2033,7 +2108,7 @@ mod tests {
             incompressibility: true,
             ..SOLID_MATERIAL
         };
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.812,
@@ -2047,7 +2122,7 @@ mod tests {
 
     fn ball_bounce_tester(
         material: Material,
-        sc_params: SmoothContactParams,
+        sc_params: FrictionalContactParams,
         tetmesh: TetMesh,
     ) -> Result<(), Error> {
         let friction_iterations = if sc_params.friction_params.is_some() {
@@ -2104,7 +2179,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.1,
@@ -2126,7 +2201,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
                 radius_multiplier: 1.1,
@@ -2149,7 +2224,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Implicit,
             kernel: KernelType::Approximate {
                 radius_multiplier: 20.0, // deliberately large radius
@@ -2171,7 +2246,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Implicit,
             kernel: KernelType::Approximate {
                 radius_multiplier: 2.0,
@@ -2194,7 +2269,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::Implicit,
             kernel: KernelType::Approximate {
                 radius_multiplier: 2.0,
@@ -2216,7 +2291,7 @@ mod tests {
             ..SOLID_MATERIAL
         };
 
-        let sc_params = SmoothContactParams {
+        let sc_params = FrictionalContactParams {
             contact_type: ContactType::SPImplicit,
             kernel: KernelType::Approximate {
                 radius_multiplier: 2.0,

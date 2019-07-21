@@ -14,7 +14,7 @@ pub enum ContactType {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SmoothContactParams {
+pub struct FrictionalContactParams {
     pub kernel: implicits::KernelType,
     pub contact_type: ContactType,
     pub friction_params: Option<FrictionParams>,

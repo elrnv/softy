@@ -477,7 +477,7 @@ mod tests {
     ///// Pinch a box between two probes.
     ///// Given sufficient friction, the box should not fall.
     //fn pinch_tester(
-    //    sc_params: SmoothContactParams,
+    //    sc_params: FrictionalContactParams,
     //) -> Result<(), Error> {
     //    use geo::mesh::attrib::Attrib;
     //    use geo::mesh::VertexPositions;
@@ -532,7 +532,7 @@ mod tests {
     ///// Pinch a box against a couple of implicit surfaces.
     //#[test]
     //fn pinch_against_implicit() -> Result<(), Error> {
-    //    let sc_params = SmoothContactParams {
+    //    let sc_params = FrictionalContactParams {
     //        contact_type: ContactType::Point,
     //        kernel: KernelType::Cubic {
     //            radius_multiplier: 1.5,

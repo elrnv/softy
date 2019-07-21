@@ -16,178 +16,15 @@ use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 use utils::zip;
 
-///// Linearization of a constraint given by `C`.
-//pub struct Linearized<C> {
-//    constraint: C,
-//}
-//
-//impl<T, C> Constraint<T> for Linearized<C> {
-//    #[inline]
-//    fn constraint_size(&self) -> usize {
-//        // Forward to full implementation
-//        self.0.constraint_size()
-//    }
-//
-//    #[inline]
-//    fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-//        // Forward to full implementation
-//        self.0.constraint_bounds()
-//    }
-//
-//    #[inline]
-//    fn constraint(&self, dx: &[f64], value: &mut [f64]) {
-//        self.0.constraint(dx, value);
-//
-//        // Get Jacobian index iterator.
-//        let surf = self.0.implicit_surface.borrow();
-//        let jac_idx_iter = surf.surface_jacobian_indices_iter().unwrap();
-//
-//        // Compute Jacobian . dx (dot product).
-//        let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
-//        self.current_constraint_jacobian_values(jac_values.as_mut_slice());
-//        for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
-//            value[row] += jac_val*dx[col];
-//        }
-//        //println!("g = {:?}", value);
-//    }
-//}
-
-/*
-
-/// A linearized version of the smooth contact constraint.
-#[derive(Clone, Debug)]
-pub struct LinearSmoothContactConstraint(pub SmoothContactConstraint);
-
-impl LinearSmoothContactConstraint {
-    pub fn new(
-        tetmesh_rc: &Rc<RefCell<TetMesh>>,
-        trimesh_rc: &Rc<RefCell<TriMesh>>,
-        params: SmoothContactParams,
-    ) -> Self {
-        LinearSmoothContactConstraint(SmoothContactConstraint::new(tetmesh_rc, trimesh_rc, params))
-    }
-
-    pub fn update_max_step(&mut self, step: f64) {
-        self.0.update_max_step(step);
-    }
-
-    ///// This function computes the constraint value for the current configuration.
-    //pub fn current_constraint_value(&self, values: &mut [f64]) {
-    //    debug_assert_eq!(values.len(), self.constraint_size());
-    //    let collider = self.0.collision_object.borrow();
-    //    let query_points = collider.vertex_positions();
-    //    self.0.implicit_surface.borrow().potential(query_points, values).unwrap();
-    //}
-
-    pub fn update_cache(&mut self, query_points: &[[f64; 3]]) {
-        self.0.update_cache(query_points);
-    }
-}
-
-impl Constraint<f64> for LinearSmoothContactConstraint {
-    #[inline]
-    fn constraint_size(&self) -> usize {
-        // Forward to full implementation
-        self.0.constraint_size()
-    }
-
-    #[inline]
-    fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-        // Forward to full implementation
-        self.0.constraint_bounds()
-    }
-
-    #[inline]
-    fn constraint(&self, x: &[f64], dx: &[f64], value: &mut [f64]) {
-        debug_assert_eq!(value.len(), self.constraint_size());
-        let collider = self.0.collision_object.borrow();
-        let query_points = collider.vertex_positions();
-
-        for val in value.iter_mut() {
-            *val = 0.0; // Clear potential value.
-        }
-
-        // Set our surface to be in the previous configuration.
-        self.0.update_surface(x);
-        let surf = self.0.implicit_surface.borrow();
-
-        // Compute the potential at the given query points
-        surf.potential(query_points, value).unwrap();
-
-        // Get Jacobian index iterator.
-        let jac_idx_iter = surf.surface_jacobian_indices_iter().unwrap();
-
-        // Compute Jacobian . dx (dot product).
-        let mut jac_values = vec![0.0; self.constraint_jacobian_size()];
-        surf.surface_jacobian_values(query_points, &mut jac_values)
-            .unwrap();
-        for ((row, col), &jac_val) in jac_idx_iter.zip(jac_values.iter()) {
-            value[row] += jac_val * dx[self.0.tetmesh_coordinate_index(col)];
-        }
-        //println!("g = {:?}", value);
-    }
-}
-
-impl ConstraintJacobian<f64> for LinearSmoothContactConstraint {
-    #[inline]
-    fn constraint_jacobian_size(&self) -> usize {
-        self.0.constraint_jacobian_size()
-    }
-    fn constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        self.0.constraint_jacobian_indices_iter()
-    }
-
-    /// The jacobian of a linear constraint is constant.
-    fn constraint_jacobian_values(&self, x: &[f64], _dx: &[f64], values: &mut [f64]) {
-        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
-        self.0.update_surface(x);
-        let collider = self.0.collision_object.borrow();
-        let query_points = collider.vertex_positions();
-        self.0
-            .implicit_surface
-            .borrow()
-            .surface_jacobian_values(query_points, values)
-            .unwrap();
-    }
-}
-
-// No hessian for linearized constraints
-impl ConstraintHessian<f64> for LinearSmoothContactConstraint {
-    #[inline]
-    fn constraint_hessian_size(&self) -> usize {
-        0
-    }
-    fn constraint_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
-        Box::new(std::iter::empty())
-    }
-    fn constraint_hessian_values(
-        &self,
-        _x: &[f64],
-        _dx: &[f64],
-        _lambda: &[f64],
-        _values: &mut [f64],
-    ) {
-        debug_assert_eq!(_values.len(), self.constraint_hessian_size());
-    }
-}
-*/
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
 #[derive(Clone, Debug)]
 pub struct PointContactConstraint {
-    /// Indices to the original tetmesh. This is the mapping from surface mesh vertices to the
-    /// original tetmesh vertices. This mapping is important for computing correct Jacobians and
-    /// mapping incoming tetmesh vertex positions and displacements to sample positions and
-    /// displacements.
-    pub sim_verts: Vec<usize>,
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
-    pub collision_object: Rc<RefCell<TriMesh>>,
+    /// Points where collision and contact occurs.
+    pub contact_points: RefCell<UniChunked<Vec<f64>, num::U3>>,
 
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
@@ -204,14 +41,15 @@ pub struct PointContactConstraint {
 
 impl PointContactConstraint {
     pub fn new(
-        tetmesh_rc: &Rc<RefCell<TetMesh>>,
-        trimesh_rc: &Rc<RefCell<TriMesh>>,
+        // Main object experiencing contact against its implicit surface representation.
+        object: &TriMesh,
+        // Collision object consisting of points pushing against the solid object.
+        collider: &TriMesh,
         kernel: KernelType,
-        friction_params: Option<FrictionParams>,
+        friction_params: FrictionParams,
         density: f64,
     ) -> Result<Self, Error> {
-        let tetmesh = tetmesh_rc.borrow();
-        let mut surf_mesh = tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
+        let mut surf_mesh = solid.tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
         let sim_verts = surf_mesh
             .remove_attrib::<VertexIndex>("i")
             .expect("Failed to map indices.")
@@ -230,8 +68,7 @@ impl PointContactConstraint {
             });
 
         if let Some(surface) = surface_builder.build() {
-            let trimesh = trimesh_rc.borrow();
-            let query_points = trimesh.vertex_positions();
+            let query_points = shell.trimesh.vertex_positions();
 
             let constraint = PointContactConstraint {
                 sim_verts,
@@ -244,7 +81,7 @@ impl PointContactConstraint {
                         None
                     }
                 }),
-                vertex_masses: compute_vertex_masses(&tetmesh, density),
+                vertex_masses: compute_vertex_masses(&solid.tetmesh, density),
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),

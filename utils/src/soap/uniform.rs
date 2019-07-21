@@ -19,6 +19,24 @@ pub struct UniChunked<S, N> {
     pub(crate) chunks: N,
 }
 
+macro_rules! impl_from_grouped_vec {
+    ($nty:ty, $n:expr) => {
+        impl<T> UniChunked<Vec<T>, $nty> {
+            /// Create a `UniChunked` collection from a `Vec` of arrays.
+            pub fn from_grouped_vec(data: Vec<[T; $n]>) -> UniChunked<Vec<T>, $nty> {
+                use num::Unsigned;
+                UniChunked {
+                    chunks: <$nty>::new(),
+                    data: reinterpret::reinterpret_vec(data),
+                }
+            }
+        }
+    }
+}
+
+impl_from_grouped_vec!(num::U2, 2);
+impl_from_grouped_vec!(num::U3, 3);
+
 impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     /// Create a `UniChunked` collection that groups the elements of the
     /// original set into uniformly sized groups at compile time.

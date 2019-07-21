@@ -212,11 +212,11 @@ impl SolverBuilder {
         let mut mesh = solids[0].clone();
 
         // We need this quantity to compute the tolerance.
-        let max_vol = mesh
+        let max_size = mesh
             .tet_iter()
             .map(Volume::volume)
             .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
-            .expect("Given TetMesh is empty");
+            .expect("Given TetMesh is empty").cbrt();
 
         // Prepare deformable solid for simulation.
         Self::prepare_mesh_attributes(&mut mesh)?;
@@ -324,9 +324,10 @@ impl SolverBuilder {
         // response which depends on mu and lambda as well as per tet volume:
         // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
         // should reflect these properties.
-        let tol = f64::from(params.tolerance) * max_vol * lambda.max(mu);
+        let max_area = max_size * max_size;
+        let tol = f64::from(params.tolerance) * max_area * lambda.max(mu);
         params.tolerance = tol as f32;
-        params.outer_tolerance *= (max_vol * lambda.max(mu)) as f32;
+        params.outer_tolerance *= (max_area * lambda.max(mu)) as f32;
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);

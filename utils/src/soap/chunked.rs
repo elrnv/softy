@@ -171,7 +171,7 @@ impl<S, O> ToOwned for Chunked<S, O>
 where S: ToOwned,
       O: ToOwned,
 {
-    type Owned = Chunked<<S as ToOwned>::Owned, <O as ToOwned>::Owned>;
+    type Owned = Chunked<S::Owned, O::Owned>;
 
     fn to_owned(self) -> Self::Owned {
         Chunked {
@@ -246,12 +246,15 @@ where
  * Indexing
  */
 
-impl<'o, 'i: 'o, S> GetIndex<'i, 'o, Chunked<S>> for usize
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for usize
 where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, usize, Output=&'o usize>,
 {
-    type Output = <S as Get<'i, 'o, std::ops::Range<usize>>>::Output;
-    fn get(self, chunked: &'i Chunked<S>) -> Option<Self::Output> {
-        if self < chunked.len() {
+    type Output = S::Output;
+
+    /// Get a n element of the given `Chunked` collection.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        if self <= chunked.len() {
             let begin = *chunked.chunks.get(self);
             let end = *chunked.chunks.get(self + 1);
             Some(chunked.data.get(begin..end))
@@ -261,55 +264,152 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
     }
 }
 
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::Range<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[begin..end)` subview of the given `Chunked` collection.
+    fn get(mut self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        if self.start <= self.end && self.end <= chunked.len() {
+            self.end += 1;
+            let chunks = chunked.chunks.get(self);
+            let data = chunked.data.get(*chunks.first().unwrap()..*chunks.last().unwrap());
+            Some(Chunked {
+                chunks,
+                data,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFrom<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[begin..)` subview of the given `Chunked` collection.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        (self.start..chunked.len()).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeTo<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[..end)` subview of the given `Chunked` collection.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        (0..self.end).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFull
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a view of the given `Chunked` collection. This is synonymous with
+    /// `chunked.view()`.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        (0..chunked.len()).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeInclusive<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[begin..end]` (including the element at `end`) subview of the
+    /// given `Chunked` collection.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() { None }
+        else {(*self.start()..*self.end() + 1).get(chunked) }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeToInclusive<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[..end]` (including the element at `end`) subview of the given
+    /// `Chunked` collection.
+    fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
+        (0..=self.end).get(chunked)
+    }
+}
+
 impl<'o, 'i: 'o, S, O, I> Get<'i, 'o, I> for Chunked<S, O>
-where S: Get<'i, 'o, std::ops::Range<usize>>,
-      I: GetIndex<'i, 'o, Self>
+where I: GetIndex<'i, 'o, Self>
 {
     type Output = I::Output;
-    /// Get the element at index `idx` from this `Chunked` collection.
+    /// Get a subview from this `Chunked` collection according to the given
+    /// range. If the range is a single index, then a single chunk is returned
+    /// instead.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
     /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
-    /// assert_eq!(s.get(2), &s[2]);
+    ///
+    /// assert_eq!(s.get(2), &s[2]); // Single index
+    ///
+    /// let r = s.get(1..3);         // Range
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[4][..]), iter.next());
+    /// assert_eq!(Some(&[5,6][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(3..);         // RangeFrom
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[7,8,9][..]), iter.next());
+    /// assert_eq!(Some(&[10,11][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(..2);         // RangeTo
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
+    /// assert_eq!(Some(&[4][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// assert_eq!(s.view(), s.get(..)); // RangeFull
+    /// assert_eq!(s.view(), s.view().get(..));
+    ///
+    /// let r = s.get(1..=2);         // RangeInclusive
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[4][..]), iter.next());
+    /// assert_eq!(Some(&[5,6][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(..=1);         // RangeToInclusive
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
+    /// assert_eq!(Some(&[4][..]), iter.next());
+    /// assert_eq!(None, iter.next());
     /// ```
-    fn get(&'i self, idx: I) -> I::Output {
-        idx.get(self).expect("Index out of bounds")
+    fn get(&'i self, range: I) -> I::Output {
+        range.get(self).expect("Index out of bounds")
     }
 }
-
-//impl<S> GetIndex<Chunked<S, &[usize]>> for usize
-//where S: View<'a>,
-//<S as View<'a>>::Type: Get<usize>,
-//{
-//    type Output = <S as View<'a>>::Type;
-//    fn get(self, chunked: &Chunked<S>) -> Option<Self::Output> {
-//        Chunked::from_offsets(&chunked.chunks[self], &chunked.data[
-//        }
-//        }
-
-//impl<S, N> GetIndex<Chunked<S, N>> for usize
-//where
-//    S: Set + ReinterpretSet<N>,
-//{
-//    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
-//    fn get(self, set: &S) -> Option<&Self::Output> {
-//        Some()
-//    }
-//    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
-//        Some()
-//    }
-//}
-
 
 impl<S, O> std::ops::Index<usize> for Chunked<S, O>
 where S: std::ops::Index<std::ops::Range<usize>>,
       O: std::ops::Index<usize, Output=usize>
 {
-    type Output = <S as std::ops::Index<std::ops::Range<usize>>>::Output;
+    type Output = S::Output;
     /// Get the chunk at the given index. Note that this works for `Chunked`
     /// collections that are themselves not `Chunked`, since the item at the
     /// index of a doubly `Chunked` collection is itself `Chunked`, which cannot
@@ -708,7 +808,7 @@ where
     O: std::borrow::Borrow<[usize]>,
     <S as View<'a>>::Type: Set,
 {
-    type Type = Chunked<<S as View<'a>>::Type, &'a [usize]>;
+    type Type = Chunked<S::Type, &'a [usize]>;
 
     /// Create a contiguous immutable (shareable) view into this set.
     ///
@@ -739,7 +839,7 @@ where
     <S as ViewMut<'a>>::Type: Set,
     O: std::borrow::Borrow<[usize]>,
 {
-    type Type = Chunked<<S as ViewMut<'a>>::Type, &'a [usize]>;
+    type Type = Chunked<S::Type, &'a [usize]>;
 
     /// Create a contiguous mutable (unique) view into this set.
     ///
@@ -763,7 +863,7 @@ where
 
 
 impl<S: IntoFlat> IntoFlat for Chunked<S> {
-    type FlatType = <S as IntoFlat>::FlatType;
+    type FlatType = S::FlatType;
     /// Strip all organizational information from this set, returning the
     /// underlying storage type.
     ///

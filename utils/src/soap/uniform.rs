@@ -282,19 +282,6 @@ macro_rules! impl_grouped {
 impl_grouped!(num::U2, 2);
 impl_grouped!(num::U3, 3);
 
-
-//impl<'a, S, N> Get<'a, usize> for UniChunked<S, N>
-//where
-//    S: Set + Get<'a, usize>,
-//    N: num::Unsigned,
-//    <S as Set>::Elem: Grouped<N>,
-//{
-//    type Output = <S as Set>::Elem;
-//    fn get(&self, idx: usize) -> Self::Output {
-//        self.data.[idx]
-//    }
-//}
-
 impl<T> std::borrow::Borrow<[T]> for UniChunked<&[T], num::U1> {
     fn borrow(&self) -> &[T] {
         self.data
@@ -365,6 +352,168 @@ where S: ToOwned,
 /*
  * Indexing
  */
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for usize
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = S::Output;
+
+    /// Get a n element of the given `UniChunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        if self <= chunked.len() {
+            Some(chunked.data.get(N::value()*self..N::value()*(self+1)))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::Range<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a `[begin..end)` subview of the given `UniChunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        if self.start <= self.end && self.end <= chunked.len() {
+            Some(UniChunked {
+                data: chunked.data.get(N::value()*self.start..N::value()*self.end),
+                chunks: N::new()
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a `[begin..)` subview of the given `UniChunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        (self.start..chunked.len()).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a `[..end)` subview of the given `Chunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        (0..self.end).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a view of the given `UniChunked` collection. This is synonymous with
+    /// `chunked.view()`.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        (0..chunked.len()).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a `[begin..end]` (including the element at `end`) subview of the
+    /// given `UniChunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() { None }
+        else {(*self.start()..*self.end() + 1).get(chunked) }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a `[..end]` (including the element at `end`) subview of the given
+    /// `Chunked` collection.
+    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
+        (0..=self.end).get(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N, I> Get<'i, 'o, I> for UniChunked<S, N>
+where I: GetIndex<'i, 'o, Self>,
+{
+    type Output = I::Output;
+    /// Get a subview from this `UniChunked` collection according to the given
+    /// range. If the range is a single index, then a single chunk is returned
+    /// instead.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3, 4,5,6, 7,8,9, 10,11,12];
+    /// let s = UniChunked::<_, num::U3>::from_flat(v);
+    ///
+    /// assert_eq!(s.get(2), &[7,8,9]); // Single index
+    /// assert_eq!(s.get(2), &s[2]);
+    ///
+    /// let r = s.get(1..3);         // Range
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(Some(&[7,8,9]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(2..);         // RangeFrom
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[7,8,9]), iter.next());
+    /// assert_eq!(Some(&[10,11,12]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(..2);         // RangeTo
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[1,2,3]), iter.next());
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// assert_eq!(s.view(), s.get(..)); // RangeFull
+    /// assert_eq!(s.view(), s.view().get(..));
+    ///
+    /// let r = s.get(1..=2);         // RangeInclusive
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(Some(&[7,8,9]), iter.next());
+    /// assert_eq!(None, iter.next());
+    ///
+    /// let r = s.get(..=1);         // RangeToInclusive
+    /// let mut iter = r.iter();
+    /// assert_eq!(Some(&[1,2,3]), iter.next());
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn get(&'i self, range: I) -> I::Output {
+        range.get(self).expect("Index out of bounds")
+    }
+}
 
 impl<S, N> std::ops::Index<usize> for UniChunked<S, N>
 where S: std::ops::Index<std::ops::Range<usize>>,

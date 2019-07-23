@@ -58,7 +58,7 @@ pub trait ToOwned where Self: Sized {
 /// Blanked implementation of `ToOwned` for references of types that are already
 /// `std::borrow::ToOwned`.
 impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &S {
-    type Owned = <S as std::borrow::ToOwned>::Owned;
+    type Owned = S::Owned;
     fn to_owned(self) -> Self::Owned {
         std::borrow::ToOwned::to_owned(self)
     }
@@ -67,7 +67,7 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &S {
 /// Blanked implementation of `ToOwned` for mutable references of types that are
 /// already `std::borrow::ToOwned`.
 impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
-    type Owned = <S as std::borrow::ToOwned>::Owned;
+    type Owned = S::Owned;
     fn to_owned(self) -> Self::Owned {
         std::borrow::ToOwned::to_owned(self)
     }
@@ -77,6 +77,12 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
 pub trait GetIndex<'i, 'o, S> {
     type Output;
     fn get(self, set: &'i S) -> Option<Self::Output>;
+}
+
+/// A helper trait like `GetIndex` but for mutable references.
+pub trait GetMutIndex<'i, 'o, S> {
+    type Output;
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output>;
 }
 
 /// An index trait for `Set` types.
@@ -119,6 +125,18 @@ where I: std::slice::SliceIndex<[T]>,
     /// ```
     fn get(&'i self, idx: I) -> Self::Output {
         std::ops::Index::index(self, idx)
+    }
+}
+
+impl<'o, 'i: 'o, S, I> Get<'i, 'o, I> for &'i S
+where
+    S: Get<'i, 'o, I> + ?Sized,
+{
+    type Output = S::Output;
+    /// Index into any borrowed collection `S`, which itself implements
+    /// `Get<'i, 'o, I>`.
+    fn get(&'i self, idx: I) -> Self::Output {
+        (*self).get(idx)
     }
 }
 

@@ -515,6 +515,137 @@ where I: GetIndex<'i, 'o, Self>,
     }
 }
 
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for usize
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = S::Output;
+
+    /// Get a mutable chunk reference of the given `UniChunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        if self <= chunked.len() {
+            Some(chunked.data.get_mut(N::value()*self..N::value()*(self+1)))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::Range<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable `[begin..end)` subview of the given `UniChunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        if self.start <= self.end && self.end <= chunked.len() {
+            Some(UniChunked {
+                data: chunked.data.get_mut(N::value()*self.start..N::value()*self.end),
+                chunks: N::new()
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable `[begin..)` subview of the given `UniChunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        (self.start..chunked.len()).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable `[..end)` subview of the given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        (0..self.end).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable view of the given `UniChunked` collection. This is
+    /// synonymous with `chunked.view_mut()`.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        (0..chunked.len()).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable `[begin..end]` (including the element at `end`) subview of
+    /// the given `UniChunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() { None }
+        else {(*self.start()..*self.end() + 1).get_mut(chunked) }
+    }
+}
+
+impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      <S as Set>::Elem: Grouped<N>,
+      N: num::Unsigned,
+{
+    type Output = UniChunked<S::Output, N>;
+
+    /// Get a mutable `[..end]` (including the element at `end`) subview of the
+    /// given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+        (0..=self.end).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, N, I> GetMut<'i, 'o, I> for UniChunked<S, N>
+where I: GetMutIndex<'i, 'o, Self>,
+{
+    type Output = I::Output;
+    /// Get a mutable subview from this `UniChunked` collection according to the
+    /// given range. If the range is a single index, then a single chunk is
+    /// returned instead.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
+    /// let mut s = UniChunked::<_, num::U3>::from_flat(v.as_mut_slice());
+    ///
+    /// s.get_mut(2).copy_from_slice(&[7,8,9]);
+    /// assert_eq!(s.get(2), &[7,8,9]); // Single index
+    /// assert_eq!(v, vec![1,2,3, 4,5,6, 7,8,9, 10,11,12]);
+    /// ```
+    fn get_mut(&'i mut self, range: I) -> I::Output {
+        range.get_mut(self).expect("Index out of bounds")
+    }
+}
+
 impl<S, N> std::ops::Index<usize> for UniChunked<S, N>
 where S: std::ops::Index<std::ops::Range<usize>>,
       N: num::Unsigned

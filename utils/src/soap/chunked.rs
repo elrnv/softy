@@ -405,16 +405,143 @@ where I: GetIndex<'i, 'o, Self>
     }
 }
 
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for usize
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, usize, Output=&'o usize>,
+{
+    type Output = S::Output;
+
+    /// Get a mutable reference to a chunk of the given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        if self <= chunked.len() {
+            let begin = *chunked.chunks.get(self);
+            let end = *chunked.chunks.get(self + 1);
+            Some(chunked.data.get_mut(begin..end))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::Range<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a mutable `[begin..end)` subview of the given `Chunked` collection.
+    fn get_mut(mut self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        if self.start <= self.end && self.end <= chunked.len() {
+            self.end += 1;
+            let chunks = chunked.chunks.get(self);
+            let data = chunked.data.get_mut(*chunks.first().unwrap()..*chunks.last().unwrap());
+            Some(Chunked {
+                chunks,
+                data,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFrom<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[begin..)` subview of the given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        (self.start..chunked.len()).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeTo<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[..end)` subview of the given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        (0..self.end).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFull
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a view of the given `Chunked` collection. This is synonymous with
+    /// `chunked.view()`.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        (0..chunked.len()).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeInclusive<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[begin..end]` (including the element at `end`) subview of the
+    /// given `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() { None }
+        else {(*self.start()..*self.end() + 1).get_mut(chunked) }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeToInclusive<usize>
+where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+{
+    type Output = Chunked<S::Output, &'o [usize]>;
+
+    /// Get a `[..end]` (including the element at `end`) subview of the given
+    /// `Chunked` collection.
+    fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
+        (0..=self.end).get_mut(chunked)
+    }
+}
+
+impl<'o, 'i: 'o, S, O, I> GetMut<'i, 'o, I> for Chunked<S, O>
+where I: GetMutIndex<'i, 'o, Self>
+{
+    type Output = I::Output;
+    /// Get a mutable subview from this `Chunked` collection according to the
+    /// given range. If the range is a single index, then a single mutable chunk
+    /// reference is returned instead.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
+    /// let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    ///
+    /// s.get_mut(2).copy_from_slice(&[5,6]);        // Single index
+    /// assert_eq!(s.data(), &vec![1,2,3,4,5,6,7,8,9,10,11]);
+    /// ```
+    fn get_mut(&'i mut self, range: I) -> I::Output {
+        range.get_mut(self).expect("Index out of bounds")
+    }
+}
+
 impl<S, O> std::ops::Index<usize> for Chunked<S, O>
 where S: std::ops::Index<std::ops::Range<usize>>,
       O: std::ops::Index<usize, Output=usize>
 {
     type Output = S::Output;
-    /// Get the chunk at the given index. Note that this works for `Chunked`
-    /// collections that are themselves not `Chunked`, since the item at the
-    /// index of a doubly `Chunked` collection is itself `Chunked`, which cannot
-    /// be represented by a single borrow. For more complex indexing use the
-    /// `get` method provided by the `Get` trait.
+    /// Get reference to a chunk at the given index. Note that this works for
+    /// `Chunked` collections that are themselves NOT `Chunked`, since a chunk
+    /// of a doubly `Chunked` collection is itself `Chunked`, which cannot be
+    /// represented by a single borrow. For more complex indexing use the `get`
+    /// method provided by the `Get` trait.
     ///
     /// # Example
     ///

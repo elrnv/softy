@@ -85,10 +85,20 @@ pub trait GetMutIndex<'i, 'o, S> {
     fn get_mut(self, set: &'i mut S) -> Option<Self::Output>;
 }
 
-/// An index trait for `Set` types.
+/// An index trait for `Chunked` types.
+/// Here `'i` indicates the lifetime of the input while `'o` indicates that of
+/// the output.
 pub trait Get<'i, 'o, I> {
     type Output;
     fn get(&'i self, idx: I) -> Self::Output;
+}
+
+/// An index trait for mutable `Chunked` types.
+/// Here `'i` indicates the lifetime of the input while `'o` indicates that of
+/// the output.
+pub trait GetMut<'i, 'o, I> {
+    type Output;
+    fn get_mut(&'i mut self, idx: I) -> Self::Output;
 }
 
 impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for [T]
@@ -116,6 +126,8 @@ where I: std::slice::SliceIndex<[T]>,
 {
     type Output = &'o I::Output;
     /// Index into a `Vec` using the `Get` trait.
+    /// This function is not intended to be used directly, but it allows getters
+    /// for chunked collections to work.
     ///
     /// # Example
     ///
@@ -128,7 +140,72 @@ where I: std::slice::SliceIndex<[T]>,
     }
 }
 
-impl<'o, 'i: 'o, S, I> Get<'i, 'o, I> for &'i S
+impl<'o, 'i: 'o, T, I> GetMut<'i, 'o, I> for [T]
+where
+    I: std::slice::SliceIndex<[T]>,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+{
+    type Output = &'o mut <[T] as std::ops::Index<I>>::Output;
+    /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
+    /// This function is not intended to be used directly, but it allows getters
+    /// for chunked collections to work.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut v = vec![1,2,3,4,5];
+    /// *utils::soap::GetMut::get_mut(v.as_mut_slice(), 2) = 100;
+    /// assert_eq!(v, vec![1,2,100,4,5]);
+    /// ```
+    fn get_mut(&'i mut self, idx: I) -> Self::Output {
+        std::ops::IndexMut::index_mut(self, idx)
+    }
+}
+
+impl<'o, 'i: 'o, T, I> GetMut<'i, 'o, I> for Vec<T>
+where I: std::slice::SliceIndex<[T]>,
+      <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+      T: Clone,
+{
+    type Output = &'o mut I::Output;
+    /// Index into a `Vec` using the `Get` trait.
+    /// This function is not intended to be used directly, but it allows getters
+    /// for chunked collections to work.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut v = vec![1,2,3,4,5];
+    /// *utils::soap::GetMut::get_mut(&mut v, 2) = 100;
+    /// assert_eq!(v, vec![1,2,100,4,5]);
+    /// ```
+    fn get_mut(&'i mut self, idx: I) -> Self::Output {
+        std::ops::IndexMut::index_mut(self, idx)
+    }
+}
+
+impl<'o, 'i: 'o, S, I> GetMut<'i, 'o, I> for &mut S
+where
+    S: GetMut<'i, 'o, I> + ?Sized,
+{
+    type Output = S::Output;
+    /// Index into any borrowed collection `S`, which itself implements
+    /// `Get<'i, 'o, I>`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut s = v.as_mut_slice();
+    /// *utils::soap::GetMut::get_mut(&mut s, 2) = 100;
+    /// assert_eq!(v, vec![1,2,100,4,5]);
+    /// ```
+    fn get_mut(&'i mut self, idx: I) -> Self::Output {
+        (*self).get_mut(idx)
+    }
+}
+
+impl<'o, 'i: 'o, S, I> Get<'i, 'o, I> for &S
 where
     S: Get<'i, 'o, I> + ?Sized,
 {
@@ -137,6 +214,18 @@ where
     /// `Get<'i, 'o, I>`.
     fn get(&'i self, idx: I) -> Self::Output {
         (*self).get(idx)
+    }
+}
+
+impl<'o, 'i: 'o, S, I> Get<'i, 'o, I> for &mut S
+where
+    S: Get<'i, 'o, I> + ?Sized,
+{
+    type Output = S::Output;
+    /// Index into any borrowed collection `S`, which itself implements
+    /// `Get<'i, 'o, I>`.
+    fn get(&'i self, idx: I) -> Self::Output {
+        (**self).get(idx)
     }
 }
 
@@ -154,13 +243,13 @@ impl<T> Set for [T] {
     }
 }
 
-impl<'a, S: Set + ?Sized> Set for &'a S {
+impl<S: Set + ?Sized> Set for &S {
     type Elem = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
 }
-impl<'a, S: Set + ?Sized> Set for &'a mut S {
+impl<S: Set + ?Sized> Set for &mut S {
     type Elem = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)

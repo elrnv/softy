@@ -167,6 +167,20 @@ impl<'a, S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for Chunked<
     }
 }
 
+impl<S, O> ToOwned for Chunked<S, O>
+where S: ToOwned,
+      O: ToOwned,
+{
+    type Owned = Chunked<<S as ToOwned>::Owned, <O as ToOwned>::Owned>;
+
+    fn to_owned(self) -> Self::Owned {
+        Chunked {
+            chunks: self.chunks.to_owned(),
+            data: self.data.to_owned(),
+        }
+    }
+}
+
 // NOTE: There is currently no way to split ownership of a Vec without
 // allocating. For this reason we opt to use a slice and defer allocation to
 // a later step when the results may be collected into another Vec. This saves
@@ -228,11 +242,68 @@ where
     }
 }
 
-//impl<'a, S: std::ops::Index<> + Clone> GetElem<'a> for Chunked<S> {
-//    fn get(&'a self, idx: usize) -> Self::Elem {
-//        self.data[self.chunks[idx]..self.chunks[idx+1]].collect()
+/*
+ * Indexing
+ */
+
+//impl<S> GetIndex<Chunked<S>> for usize
+//where S: Get<usize>,
+//{
+//    type OutRef = <S as Get<std::ops::Range<usize>>>::OutRef;
+//    fn get(self, chunked: &Chunked<S>) -> Option<Self::OutRef> {
+//        chunked.get(self)
 //    }
 //}
+
+//impl<S> GetIndex<Chunked<S, &[usize]>> for usize
+//where S: View<'a>,
+//<S as View<'a>>::Type: Get<usize>,
+//{
+//    type OutRef = <S as View<'a>>::Type;
+//    fn get(self, chunked: &Chunked<S>) -> Option<Self::Output> {
+//        Chunked::from_offsets(&chunked.chunks[self], &chunked.data[
+//        }
+//        }
+
+        //impl<S, N> GetIndex<Chunked<S, N>> for usize
+        //where
+        //    S: Set + ReinterpretSet<N>,
+        //{
+        //    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
+        //    fn get(self, set: &S) -> Option<&Self::Output> {
+        //        Some()
+        //    }
+        //    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
+        //        Some()
+        //    }
+        //}
+
+
+impl<S, O> std::ops::Index<usize> for Chunked<S, O>
+where S: std::ops::Index<std::ops::Range<usize>>,
+      O: std::ops::Index<usize, Output=usize>
+{
+    type Output = <S as std::ops::Index<std::ops::Range<usize>>>::Output;
+    /// Get the chunk at the given index. Note that this works for `Chunked`
+    /// collections that are themselves not `Chunked`, since the item at the
+    /// index of a doubly `Chunked` collection is itself `Chunked`, which cannot
+    /// be represented by a single borrow. For more complex indexing use the
+    /// `get` method provided by the `Get` trait.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// assert_eq!(&[5,6], &s[2]);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        let begin = self.chunks[idx];
+        let end = self.chunks[idx+1];
+        &self.data[begin..end]
+    }
+}
 
 impl<S> Chunked<S>
 where
@@ -664,34 +735,13 @@ where
     }
 }
 
-/*
- * Utility traits intended to expose the necessary behaviour to implement `Chunked` types.
- */
-
-pub trait ExtendFromSlice {
-    type Item;
-    fn extend_from_slice(&mut self, other: &[Self::Item]);
-}
-
-/// A helper trait to convert a set view into a slice.
-pub trait IntoSlice<'a> {
-    type Item;
-    fn into_slice(self) -> &'a [Self::Item];
-}
-
-/// A mutable version of the `IntoSlice` trait.
-pub trait IntoMutSlice<'a>: IntoSlice<'a> {
-    fn into_mut_slice(self) -> &'a mut [Self::Item];
-}
-
-/*
- * Implement helper traits for supported `Set` types
- */
 
 impl<S: IntoFlat> IntoFlat for Chunked<S> {
     type FlatType = <S as IntoFlat>::FlatType;
     /// Strip all organizational information from this set, returning the
     /// underlying storage type.
+    ///
+    /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
@@ -706,44 +756,24 @@ impl<S: IntoFlat> IntoFlat for Chunked<S> {
     }
 }
 
+
+/*
+ * Utility traits intended to expose the necessary behaviour to implement `Chunked` types.
+ */
+
+pub trait ExtendFromSlice {
+    type Item;
+    fn extend_from_slice(&mut self, other: &[Self::Item]);
+}
+
+/*
+ * Implement helper traits for supported `Set` types
+ */
+
 impl<T: Clone> ExtendFromSlice for Vec<T> {
     type Item = T;
     fn extend_from_slice(&mut self, other: &[Self::Item]) {
         Vec::extend_from_slice(self, other);
-    }
-}
-
-impl<'a, T> IntoSlice<'a> for &'a [T] {
-    type Item = T;
-    fn into_slice(self) -> &'a [Self::Item] {
-        self
-    }
-}
-impl<'a, T> IntoSlice<'a> for &'a mut [T] {
-    type Item = T;
-    fn into_slice(self) -> &'a [Self::Item] {
-        self
-    }
-}
-impl<'a, T> IntoMutSlice<'a> for &'a mut [T] {
-    fn into_mut_slice(self) -> &'a mut [Self::Item] {
-        self
-    }
-}
-
-impl<'a, S> IntoSlice<'a> for Chunked<S, &'a [usize]>
-    where S: IntoSlice<'a>,
-{
-    type Item = <S as IntoSlice<'a>>::Item;
-    fn into_slice(self) -> &'a [Self::Item] {
-        self.data.into_slice()
-    }
-}
-impl<'a, S> IntoMutSlice<'a> for Chunked<S, &'a [usize]>
-    where S: IntoMutSlice<'a>,
-{
-    fn into_mut_slice(self) -> &'a mut [Self::Item] {
-        self.data.into_mut_slice()
     }
 }
 
@@ -813,5 +843,41 @@ impl<T> Dummy for &[T] {
 impl<T> Dummy for &mut [T] {
     fn dummy() -> Self {
         &mut []
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_length_chunk() {
+        let empty: Vec<usize> = vec![];
+        // In the beginning
+        let s = Chunked::from_offsets(vec![0,0,3,4,6], vec![1,2,3,4,5,6]);
+        let mut iter = s.iter();
+        assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
+        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(vec![4], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(None, iter.next());
+
+        // In the middle
+        let s = Chunked::from_offsets(vec![0,3,3,4,6], vec![1,2,3,4,5,6]);
+        let mut iter = s.iter();
+        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
+        assert_eq!(vec![4], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(None, iter.next());
+
+        // At the end
+        let s = Chunked::from_offsets(vec![0,3,4,6,6], vec![1,2,3,4,5,6]);
+        let mut iter = s.iter();
+        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(vec![4], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
+        assert_eq!(None, iter.next());
     }
 }

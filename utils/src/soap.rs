@@ -46,45 +46,38 @@ pub trait Set {
     }
 }
 
-pub trait SetView<'a>: Set {
-    type ElemRef;
-    type ElemMut;
+/// An analog to the `ToOwned` trait from `std` that works for chunked views.
+pub trait ToOwned where Self: Sized {
+    type Owned;
+    fn to_owned(self) -> Self::Owned;
+    fn clone_into(self, target: &mut Self::Owned) {
+        *target = self.to_owned();
+    }
+}
+
+/// Blanked implementation of `ToOwned` for references of types that are already
+/// `std::borrow::ToOwned`.
+impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &S {
+    type Owned = <S as std::borrow::ToOwned>::Owned;
+    fn to_owned(self) -> Self::Owned {
+        std::borrow::ToOwned::to_owned(self)
+    }
+}
+
+/// Blanked implementation of `ToOwned` for mutable references of types that are
+/// already `std::borrow::ToOwned`.
+impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
+    type Owned = <S as std::borrow::ToOwned>::Owned;
+    fn to_owned(self) -> Self::Owned {
+        std::borrow::ToOwned::to_owned(self)
+    }
 }
 
 /// A helper trait analogous to `SliceIndex` from the standard library.
-pub trait GetIndex<T> {
-    type Output: ?Sized;
-    fn get(self, set: &T) -> Option<&Self::Output>;
-    fn get_mut(self, set: &mut T) -> Option<&mut Self::Output>;
+pub trait GetIndex<S> {
+    type OutRef;
+    fn get(self, set: &S) -> Option<Self::OutRef>;
 }
-
-/// Blanket implementation of `GetIndex` for all std index types over slices.
-impl<I, S> GetIndex<S> for I
-where
-    I: std::slice::SliceIndex<S>,
-    S: std::ops::Index<I> + std::ops::IndexMut<I>,
-{
-    type Output = <S as std::ops::Index<I>>::Output;
-    fn get(self, set: &S) -> Option<&Self::Output> {
-        Some(set.index(self))
-    }
-    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
-        Some(set.index_mut(self))
-    }
-}
-//
-//impl<S, N> GetIndex<Chunked<S, N>> for usize
-//where
-//    S: Set + ReinterpretSet<N>,
-//{
-//    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
-//    fn get(self, set: &S) -> Option<&Self::Output> {
-//        Some()
-//    }
-//    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
-//        Some()
-//    }
-//}
 
 /// An index trait for `Set` types.
 pub trait Get<'a, I> {
@@ -148,12 +141,6 @@ impl<'a, S: Set + ?Sized> Set for &'a mut S {
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
-}
-
-/// The element of a set is a view into the set of size one.
-impl<'a, S: Set + View<'a> + ViewMut<'a>> SetView<'a> for S {
-    type ElemRef = <S as View<'a>>::Type;
-    type ElemMut = <S as ViewMut<'a>>::Type;
 }
 
 /// Abstraction for pushing elements of type `T` onto a collection.

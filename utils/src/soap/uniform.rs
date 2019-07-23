@@ -336,26 +336,65 @@ macro_rules! impl_borrow_chunked {
 impl_borrow_chunked!(num::U2, 2);
 impl_borrow_chunked!(num::U3, 3);
 
+
+impl<S, N> ToOwned for UniChunked<S, N>
+where S: ToOwned,
+      N: num::Unsigned,
+{
+    type Owned = UniChunked<<S as ToOwned>::Owned, N>;
+
+    /// Convert this `UniChunked` collection to an owned one.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let s_view = UniChunked::<_, num::U3>::from_flat(v.as_slice());
+    /// let s_owned = UniChunked::<_, num::U3>::from_flat(v.clone());
+    /// assert_eq!(utils::soap::ToOwned::to_owned(s_view), s_owned);
+    /// ```
+    fn to_owned(self) -> Self::Owned {
+        UniChunked {
+            data: self.data.to_owned(),
+            chunks: N::new(),
+        }
+    }
+}
+
 /*
- * Indexing operators for convenience. Users familiar with indexing by `usize`
- * may find these implementations convenient.
+ * Indexing
  */
 
-//impl<S: std::ops::Index<usize>, N> std::ops::Index<usize> for UniChunked<S, N> {
-//    type Output = <UniChunked<S, N> as Set>::Elem;
-//    /// Immutably index the subset.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// use utils::soap::*;
-//    /// let s = UniChunked::<_, num::U3>::from_flat(vec![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]);
-//    /// assert_eq!([7,8,9], s[2]);
-//    /// ```
-//    fn index(&self, idx: usize) -> &Self::Output {
-//        self.data.index(idx)
-//    }
-//}
+impl<S, N> std::ops::Index<usize> for UniChunked<S, N>
+where S: std::ops::Index<std::ops::Range<usize>>,
+      N: num::Unsigned
+{
+    type Output = <S as std::ops::Index<std::ops::Range<usize>>>::Output;
+
+    /// Immutably index the `UniChunked` collection by `usize`. Note that this
+    /// works for chunked collections that are themselves not chunked, since the
+    /// item at the index of a doubly chunked collection is itself chunked,
+    /// which cannot be represented by a single borrow. For more complex
+    /// indexing use the `get` method provided by the `Get` trait.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = UniChunked::<_, num::U3>::from_flat(vec![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]);
+    /// assert_eq!([7,8,9], s[2]);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        let begin = N::value()*idx;
+        let end = N::value()*(idx+1);
+        &self.data[begin..end]
+    }
+}
+
+/*
+ * Iteration
+ */
 
 impl<'a, S, N> UniChunked<S, N>
 where

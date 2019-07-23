@@ -74,45 +74,51 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
 }
 
 /// A helper trait analogous to `SliceIndex` from the standard library.
-pub trait GetIndex<S> {
-    type OutRef;
-    fn get(self, set: &S) -> Option<Self::OutRef>;
+pub trait GetIndex<'i, 'o, S> {
+    type Output;
+    fn get(self, set: &'i S) -> Option<Self::Output>;
 }
 
 /// An index trait for `Set` types.
-pub trait Get<'a, I> {
+pub trait Get<'i, 'o, I> {
     type Output;
-    fn get(&'a self, idx: I) -> Self::Output;
+    fn get(&'i self, idx: I) -> Self::Output;
 }
 
-impl<'a, S, I> Get<'a, I> for &'a S
+impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for [T]
 where
-    S: std::ops::Index<I> + ?Sized,
-    <S as std::ops::Index<I>>::Output: 'a,
-    I: std::slice::SliceIndex<S>,
+    I: std::slice::SliceIndex<[T]>,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
 {
-    type Output = &'a <S as std::ops::Index<I>>::Output;
-    fn get(&'a self, idx: I) -> Self::Output {
-        self.index(idx)
+    type Output = &'o <[T] as std::ops::Index<I>>::Output;
+    /// Index into a standard slice `[T]` using the `Get` trait.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// assert_eq!(*utils::soap::Get::get(&[1,2,3,4,5][..], 2), 3);
+    /// ```
+    fn get(&'i self, idx: I) -> Self::Output {
+        std::ops::Index::index(self, idx)
     }
 }
 
-impl<'a, S, I> Get<'a, I> for &'a mut S
-where
-    S: std::ops::Index<I> + ?Sized,
-    <S as std::ops::Index<I>>::Output: 'a,
-    I: std::slice::SliceIndex<S>,
+impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for Vec<T>
+where I: std::slice::SliceIndex<[T]>,
+      <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+      T: Clone,
 {
-    type Output = &'a <S as std::ops::Index<I>>::Output;
-    fn get(&'a self, idx: I) -> Self::Output {
-        self.index(idx)
-    }
-}
-
-impl<T: Clone> Get<'_, usize> for Vec<T> {
-    type Output = T;
-    fn get(&self, idx: usize) -> Self::Output {
-        self[idx].clone()
+    type Output = &'o I::Output;
+    /// Index into a `Vec` using the `Get` trait.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let v = vec![1,2,3,4,5];
+    /// assert_eq!(*utils::soap::Get::get(&v, 2), 3);
+    /// ```
+    fn get(&'i self, idx: I) -> Self::Output {
+        std::ops::Index::index(self, idx)
     }
 }
 

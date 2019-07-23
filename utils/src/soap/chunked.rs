@@ -246,37 +246,63 @@ where
  * Indexing
  */
 
-//impl<S> GetIndex<Chunked<S>> for usize
-//where S: Get<usize>,
-//{
-//    type OutRef = <S as Get<std::ops::Range<usize>>>::OutRef;
-//    fn get(self, chunked: &Chunked<S>) -> Option<Self::OutRef> {
-//        chunked.get(self)
-//    }
-//}
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, Chunked<S>> for usize
+where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+{
+    type Output = <S as Get<'i, 'o, std::ops::Range<usize>>>::Output;
+    fn get(self, chunked: &'i Chunked<S>) -> Option<Self::Output> {
+        if self < chunked.len() {
+            let begin = *chunked.chunks.get(self);
+            let end = *chunked.chunks.get(self + 1);
+            Some(chunked.data.get(begin..end))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, O, I> Get<'i, 'o, I> for Chunked<S, O>
+where S: Get<'i, 'o, std::ops::Range<usize>>,
+      I: GetIndex<'i, 'o, Self>
+{
+    type Output = I::Output;
+    /// Get the element at index `idx` from this `Chunked` collection.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// assert_eq!(s.get(2), &s[2]);
+    /// ```
+    fn get(&'i self, idx: I) -> I::Output {
+        idx.get(self).expect("Index out of bounds")
+    }
+}
 
 //impl<S> GetIndex<Chunked<S, &[usize]>> for usize
 //where S: View<'a>,
 //<S as View<'a>>::Type: Get<usize>,
 //{
-//    type OutRef = <S as View<'a>>::Type;
+//    type Output = <S as View<'a>>::Type;
 //    fn get(self, chunked: &Chunked<S>) -> Option<Self::Output> {
 //        Chunked::from_offsets(&chunked.chunks[self], &chunked.data[
 //        }
 //        }
 
-        //impl<S, N> GetIndex<Chunked<S, N>> for usize
-        //where
-        //    S: Set + ReinterpretSet<N>,
-        //{
-        //    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
-        //    fn get(self, set: &S) -> Option<&Self::Output> {
-        //        Some()
-        //    }
-        //    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
-        //        Some()
-        //    }
-        //}
+//impl<S, N> GetIndex<Chunked<S, N>> for usize
+//where
+//    S: Set + ReinterpretSet<N>,
+//{
+//    type Output = <<S as Set>::Elem as Grouped<N>>::Type;
+//    fn get(self, set: &S) -> Option<&Self::Output> {
+//        Some()
+//    }
+//    fn get_mut(self, set: &mut S) -> Option<&mut Self::Output> {
+//        Some()
+//    }
+//}
 
 
 impl<S, O> std::ops::Index<usize> for Chunked<S, O>

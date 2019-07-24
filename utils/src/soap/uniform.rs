@@ -19,7 +19,7 @@ pub struct UniChunked<S, N> {
     pub(crate) chunks: N,
 }
 
-macro_rules! impl_from_grouped_vec {
+macro_rules! impl_from_grouped {
     ($nty:ty, $n:expr) => {
         impl<T> UniChunked<Vec<T>, $nty> {
             /// Create a `UniChunked` collection from a `Vec` of arrays.
@@ -30,12 +30,28 @@ macro_rules! impl_from_grouped_vec {
                     data: reinterpret::reinterpret_vec(data),
                 }
             }
+            /// Create a `UniChunked` collection from a slice of arrays.
+            pub fn from_grouped_slice(data: &[[T; $n]]) -> UniChunked<&[T], $nty> {
+                use num::Unsigned;
+                UniChunked {
+                    chunks: <$nty>::new(),
+                    data: reinterpret::reinterpret_slice(data),
+                }
+            }
+            /// Create a `UniChunked` collection from a mutable slice of arrays.
+            pub fn from_grouped_mut_slice(data: &mut [[T; $n]]) -> UniChunked<&mut [T], $nty> {
+                use num::Unsigned;
+                UniChunked {
+                    chunks: <$nty>::new(),
+                    data: reinterpret::reinterpret_mut_slice(data),
+                }
+            }
         }
     }
 }
 
-impl_from_grouped_vec!(num::U2, 2);
-impl_from_grouped_vec!(num::U3, 3);
+impl_from_grouped!(num::U2, 2);
+impl_from_grouped!(num::U3, 3);
 
 /// Define aliases for common uniform chunked types.
 pub type Chunked3<S> = UniChunked<S, num::U3>;
@@ -939,16 +955,6 @@ where
     }
 }
 
-macro_rules! impl_split_at_fn {
-    ($self:ident, $split_fn:ident, $n:ty, $mid:expr) => {
-        {
-            let (l, r) = $self.data.$split_fn($mid * <$n>::value());
-            (UniChunked::from_flat(l), UniChunked::from_flat(r))
-        }
-    }
-}
-
-
 impl<S: SplitAt + Set, N: num::Unsigned> SplitAt for UniChunked<S, N> {
     /// Split the current set into two distinct sets at the given index `mid`.
     ///
@@ -962,19 +968,8 @@ impl<S: SplitAt + Set, N: num::Unsigned> SplitAt for UniChunked<S, N> {
     /// assert_eq!(r, UniChunked::<_, num::U2>::from_flat(vec![2,3]));
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at, N, mid)
-    }
-}
-
-impl<T, N: num::Unsigned> SplitAt for UniChunked<&[T], N> {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at, N, mid)
-    }
-}
-
-impl<T, N: num::Unsigned> SplitAt for UniChunked<&mut [T], N> {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at_mut, N, mid)
+        let (l, r) = self.data.split_at(mid * N::value());
+        (UniChunked::from_flat(l), UniChunked::from_flat(r))
     }
 }
 

@@ -802,32 +802,12 @@ where
     }
 }
 
-macro_rules! impl_split_at_fn {
-    ($self:ident, $split_fn:ident, $mid:expr) => {
-        {
-            let (offsets_l, offsets_r, off) = split_offsets_at($self.chunks, $mid);
-            let (data_l, data_r) = $self.data.$split_fn(off);
-            ( Chunked { chunks: offsets_l, data: data_l },
-              Chunked { chunks: offsets_r, data: data_r } )
-        }
-    }
-}
-
 impl<V: SplitAt + Set> SplitAt for Chunked<V, &[usize]> {
     fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at, mid)
-    }
-}
-
-impl<T> SplitAt for Chunked<&[T], &[usize]> {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at, mid)
-    }
-}
-
-impl<T> SplitAt for Chunked<&mut [T], &[usize]> {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        impl_split_at_fn!(self, split_at_mut, mid)
+        let (offsets_l, offsets_r, off) = split_offsets_at(self.chunks, mid);
+        let (data_l, data_r) = self.data.split_at(off);
+        ( Chunked { chunks: offsets_l, data: data_l },
+          Chunked { chunks: offsets_r, data: data_r } )
     }
 }
 
@@ -895,19 +875,6 @@ where V: SplitAt + Set + Dummy,
     }
 }
 
-impl<'a, T> Iterator for VarIter<'a, &'a [T]>
-{
-    type Item = &'a [T];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        pop_offset(&mut self.offsets).map(|n| {
-            let (l, r) = self.data.split_at(n);
-            self.data = r;
-            l
-        })
-    }
-}
-
 /// Mutable variant of `VarIter`.
 pub struct VarIterMut<'a, S> {
     offsets: &'a [usize],
@@ -925,21 +892,6 @@ where V: SplitAt + Set + Dummy,
 
         pop_offset(&mut self.offsets).map(move |n| {
             let (l, r) = data_slice.split_at(n);
-            self.data = r;
-            l
-        })
-    }
-}
-
-impl<'a, T: 'a> Iterator for VarIterMut<'a, &'a mut [T]> {
-    type Item = &'a mut [T];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Get a unique mutable reference for the data.
-        let data_slice = std::mem::replace(&mut self.data, &mut []);
-
-        pop_offset(&mut self.offsets).map(move |n| {
-            let (l, r) = data_slice.split_at_mut(n);
             self.data = r;
             l
         })
@@ -1176,17 +1128,6 @@ impl<S: Default> Default for Chunked<S> {
 impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
     fn dummy() -> Self {
         Chunked { data: Dummy::dummy(), chunks: Dummy::dummy() }
-    }
-}
-impl<T> Dummy for &[T] {
-    fn dummy() -> Self {
-        &[]
-    }
-}
-
-impl<T> Dummy for &mut [T] {
-    fn dummy() -> Self {
-        &mut []
     }
 }
 

@@ -285,6 +285,11 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
+pub trait SplitFirst where Self: Sized {
+    type First;
+    fn split_first(self) -> Option<(Self::First, Self)>;
+}
+
 
 /// Convert a collection into its underlying representation, effectively
 /// stripping any organizational info.
@@ -323,10 +328,34 @@ impl<T> SplitAt for Vec<T> {
     }
 }
 
+impl<'a, T> SplitAt for &mut [T] {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        self.split_at_mut(mid)
+    }
+}
+
+impl<'a, T> SplitAt for &[T] {
+    fn split_at(self, mid: usize) -> (Self, Self) {
+        self.split_at(mid)
+    }
+}
+
 /// A helper trait for constructing placeholder sets for use in `std::mem::replace`.
 /// These don't necessarily have to correspond to bona-fide sets.
 pub trait Dummy {
     fn dummy() -> Self;
+}
+
+impl<T> Dummy for &[T] {
+    fn dummy() -> Self {
+        &[]
+    }
+}
+
+impl<T> Dummy for &mut [T] {
+    fn dummy() -> Self {
+        &mut []
+    }
 }
 
 #[cfg(test)]

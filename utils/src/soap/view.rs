@@ -1,3 +1,7 @@
+use super::Chunked;
+
+pub type ChunkedView<'a, S> = Chunked<S, &'a [usize]>;
+
 /// A trait defining a collection that can be accessed via an
 /// immutable (shared) view. This type of view can be cloned and copied.
 pub trait View<'a> {

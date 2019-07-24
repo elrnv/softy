@@ -651,9 +651,10 @@ where I: GetMutIndex<'i, 'o, Self>,
 }
 
 impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, N>
-where N: num::Unsigned
+where N: num::Unsigned,
+      T: Grouped<N>,
 {
-    type Output = <Vec<T> as std::ops::Index<std::ops::Range<usize>>>::Output;
+    type Output = T::Type;
 
     /// Index the `UniChunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
@@ -669,14 +670,15 @@ where N: num::Unsigned
     /// assert_eq!([7,8,9], s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        let begin = N::value()*idx;
-        let end = N::value()*(idx+1);
-        &self.data[begin..end]
+        ReinterpretSet::<N>::reinterpret_set(&self.data).index(idx)
     }
 }
 
-impl<T, N: num::Unsigned> std::ops::Index<usize> for UniChunked<&[T], N> {
-    type Output = <[T] as std::ops::Index<std::ops::Range<usize>>>::Output;
+impl<T, N> std::ops::Index<usize> for UniChunked<&[T], N>
+where N: num::Unsigned,
+      T: Grouped<N>,
+{
+    type Output = T::Type;
 
     /// Immutably index the `UniChunked` borrowed slice by `usize`. Note
     /// that this works for chunked collections that are themselves not chunked,
@@ -692,14 +694,15 @@ impl<T, N: num::Unsigned> std::ops::Index<usize> for UniChunked<&[T], N> {
     /// assert_eq!([7,8,9], s.view()[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        let begin = N::value()*idx;
-        let end = N::value()*(idx+1);
-        &self.data[begin..end]
+        ReinterpretSet::<N>::reinterpret_set(self.data).index(idx)
     }
 }
 
-impl<T, N: num::Unsigned> std::ops::Index<usize> for UniChunked<&mut [T], N> {
-    type Output = <[T] as std::ops::Index<std::ops::Range<usize>>>::Output;
+impl<T, N> std::ops::Index<usize> for UniChunked<&mut [T], N>
+where N: num::Unsigned,
+      T: Grouped<N>,
+{
+    type Output = T::Type;
 
     /// Immutably index the `UniChunked` mutably borrowed slice by `usize`. Note
     /// that this works for chunked collections that are themselves not chunked,
@@ -715,13 +718,14 @@ impl<T, N: num::Unsigned> std::ops::Index<usize> for UniChunked<&mut [T], N> {
     /// assert_eq!([7,8,9], s.view_mut()[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        let begin = N::value()*idx;
-        let end = N::value()*(idx+1);
-        &self.data[begin..end]
+        ReinterpretSet::<N>::reinterpret_set(&*self.data).index(idx)
     }
 }
 
-impl<T, N: num::Unsigned> std::ops::IndexMut<usize> for UniChunked<Vec<T>, N> {
+impl<T, N> std::ops::IndexMut<usize> for UniChunked<Vec<T>, N>
+where N: num::Unsigned,
+      T: Grouped<N>,
+{
     /// Mutably index the `UniChunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
     /// item at the index of a doubly chunked collection is itself chunked,
@@ -734,17 +738,18 @@ impl<T, N: num::Unsigned> std::ops::IndexMut<usize> for UniChunked<Vec<T>, N> {
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5,6,0,0,0,10,11,12];
     /// let mut s = Chunked3::from_flat(v);
-    /// s[2].copy_from_slice(&[7,8,9]);
+    /// s[2] = [7,8,9];
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11,12], s.into_flat().to_vec());
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        let begin = N::value()*idx;
-        let end = N::value()*(idx+1);
-        &mut self.data[begin..end]
+        ReinterpretSet::<N>::reinterpret_set(&mut self.data).index_mut(idx)
     }
 }
 
-impl<T, N: num::Unsigned> std::ops::IndexMut<usize> for UniChunked<&mut [T], N> {
+impl<T, N> std::ops::IndexMut<usize> for UniChunked<&mut [T], N>
+where N: num::Unsigned,
+      T: Grouped<N>,
+{
     /// Mutably index the `UniChunked` mutably borrowed slice by `usize`.
     /// Note that this works for chunked collections that are themselves not
     /// chunked, since the item at the index of a doubly chunked collection is
@@ -757,13 +762,11 @@ impl<T, N: num::Unsigned> std::ops::IndexMut<usize> for UniChunked<&mut [T], N> 
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5,6,0,0,0,10,11,12];
     /// let mut s = Chunked3::from_flat(v.as_mut_slice());
-    /// s[2].copy_from_slice(&[7,8,9]);
+    /// s[2] = [7,8,9];
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11,12], v);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        let begin = N::value()*idx;
-        let end = N::value()*(idx+1);
-        &mut self.data[begin..end]
+        ReinterpretSet::<N>::reinterpret_set(&mut *self.data).index_mut(idx)
     }
 }
 

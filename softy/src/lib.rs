@@ -27,11 +27,14 @@ pub type TriMesh = geo::mesh::TriMesh<f64>;
 pub use self::contact::*;
 pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{
-    ElasticityParameters, InnerSolveResult, Material, MuStrategy, SimParams, SolveResult,
+    InnerSolveResult, MuStrategy, SimParams, SolveResult,
 };
+pub use self::objects::material::*;
 pub use self::friction::*;
 use geo::mesh::attrib;
 pub use index::Index;
+
+pub use attrib_defines::{SourceIndexType, SOURCE_INDEX_ATTRIB};
 
 pub use implicits::KernelType;
 
@@ -52,6 +55,7 @@ pub enum Error {
     FrictionSolveError(ipopt::SolveStatus),
     SolverCreateError(ipopt::CreateError),
     InvalidParameter(String),
+    MissingSourceIndex,
     MissingDensityParam,
     MissingElasticityParams,
     MissingContactParams,
@@ -125,6 +129,9 @@ impl From<Error> for SimResult {
             )),
             Error::FrictionSolveError(e) => {
                 SimResult::Error(format!("Friction Solve failed: {:?}", e))
+            }
+            Error::MissingSourceIndex => {
+                SimResult::Error("Missing source index vertex attribute".to_string())
             }
             Error::MissingDensityParam => {
                 SimResult::Error("Missing density parameter or per-element density attribute".to_string())

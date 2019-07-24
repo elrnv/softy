@@ -1,19 +1,28 @@
-use crate::TetMesh;
+use crate::{TetMesh, TriMesh};
 use crate::objects::Material;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
 /// physical material properties that govern how it behaves.
+/// Additionally this struct may precompute its own surface topology on demand, which is
+/// useful in contact problems.
 pub struct TetMeshSolid {
     pub tetmesh: TetMesh,
     pub material: SolidMaterial,
+    pub surface: RefCell<Option<TetMeshSurface>>,
 }
 
 impl TetMeshSolid {
     pub fn new(tetmesh: TetMesh, material: SolidMaterial) -> TetMeshSolid {
         TetMeshSolid {
             tetmesh,
-            material
+            material,
+            surface: None,
         }
+    }
+
+    pub fn surface(&self) -> &TetMeshSurface {
+        let mut surface = self.surface.borrow_mut();
+        &surface.unwrap_or_else(move || surface = TetMeshSurface::from(&self.tetmesh))
     }
 }
 
@@ -35,9 +44,26 @@ impl<'a> Gravity<TetMeshGravity<'a>> for TetMeshSolid {
     }
 }
 
-
-/// A subset of vertices of a `TetMesh` (or `TetMeshSolid`) on the surface of the mesh.
-pub struct TetMeshSurface {
-    /// Vertex indices into the original mesh.
+pub(crate) struct TetMeshSurface {
     indices: Vec<usize>,
+    trimesh: TriMesh,
+}
+
+impl From<&TetMesh> for TetMeshSurface {
+    /// Extract the triangle surface of this tetmesh. The returned trimesh
+    /// maintains a link to the original tetmesh via the.
+    fn from(solid: &TetMesh) -> TetMeshSurface {
+        let mut trimesh = solid.tetmesh.surface_trimesh_with_mapping(TETMESH_VERTEX_INDEX_ATTRIB, None, None, None);
+        let indices = trimesh
+            .remove_attrib::<VertexIndex>(TETMESH_VERTEX_INDEX_ATTRIB)
+            .expect("Failed to map indices.")
+            .into_buffer()
+            .into_vec::<usize>()
+            .expect("Incorrect index type: not usize");
+
+        TetMeshSurface {
+            indices,
+            trimesh,
+        }
+    }
 }

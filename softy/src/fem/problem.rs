@@ -103,6 +103,22 @@ impl Solution {
     //}
 }
 
+/// The index of the object subject to the appropriate contact constraint.
+/// This enum helps us map from the particular contact constraint to the
+/// originating simulation object (shell or solid).
+pub enum SourceIndex {
+    Solid(usize),
+    Shell(usize),
+}
+
+/// A struct that keeps track of which objects are being affected by the contact
+/// constraints.
+pub struct FrictionalContact {
+    pub object: SourceIndex,
+    pub collider: SourceIndex,
+    pub constraint: Box<dyn ContactConstraint>,
+}
+
 /// A `Vertex` is a single element of the `VertexSet`.
 #[derive(Clone, Debug)]
 pub struct Vertex {
@@ -144,7 +160,7 @@ pub(crate) struct NonLinearProblem {
     /// Constraint on the total volume.
     pub volume_constraints: Vec<(usize, VolumeConstraint)>,
     /// One way contact constraints between a pair of objects.
-    pub frictional_contacts: Vec<Box<dyn ContactConstraint>>,
+    pub frictional_contacts: Vec<FrictionalContact>,
     /// Displacement bounds. This controls how big of a step we can take per vertex position
     /// component. In other words the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,

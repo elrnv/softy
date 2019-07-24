@@ -96,8 +96,8 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
     sim_params: SimParams,
-    solids: Vec<(TetMesh, Material)>,
-    shells: Vec<(PolyMesh, Material)>,
+    solids: Vec<(TetMesh, SolidMaterial)>,
+    shells: Vec<(PolyMesh, ShellMaterial)>,
     frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
 }
 
@@ -114,27 +114,215 @@ impl SolverBuilder {
     }
 
     /// Add a tetmesh representing a soft solid (e.g. soft tissue).
-    pub fn add_solid(&mut self, mesh: TetMesh, mat: Material) -> &mut Self {
+    pub fn add_solid(&mut self, mesh: TetMesh, mat: SolidMaterial) -> &mut Self {
         self.solids.push((mesh, mat));
         self
     }
 
     /// Add a polygon mesh representing a shell (e.g. cloth).
-    pub fn add_shell(&mut self, shell: PolyMesh, mat: Material) -> &mut Self {
+    pub fn add_shell(&mut self, shell: PolyMesh, mat: ShellMaterial) -> &mut Self {
         self.shells.push((mesh, mat));
         self
     }
 
     /// Set parameters for frictional contact problems. The given two material IDs determine which
     /// materials should experience frictional contact described by the given parameters. To add
-    /// self-contact, simply set the two ids to be equal.
-    pub fn add_frictional_contact(&mut self, params: FrictionalContactParams, mat_ids: (usize, usize)) -> &mut Self {
+    /// self-contact, simply set the two ids to be equal. For one-directional
+    /// models, the first index corresponds to the object (affected) while the
+    /// second index corresponds to the collider (unaffected). Some
+    /// bi-directional constraints treat the two objects differently, and
+    /// changing the order of the indices may change the behaviour. In these
+    /// cases, the first index corresponds to the `object` (primary) and the second to the
+    /// `collider` (secondary).
+    pub fn add_frictional_contact(&mut self,
+                                  params: FrictionalContactParams,
+                                  mat_ids: (usize, usize)) -> &mut Self {
         self.frictional_contacts.push((params, mat_ids));
         self
     }
 
-    /// Build the simulation solver.
-    pub fn build(&self) -> Result<Solver, Error> {
+    /// Helper function to ensure that the given meshes have the expected attributes.
+    /// In particular, we expect the meshes to have a source index attribute
+    /// named `"src_idx"` that maps the given mesh vertices to their position in
+    /// the point cloud that will be used to update the mesh vertex positions in
+    /// `update_solid_vertices` and `update_shell_vertices`.
+    fn validate_input_mesh<M: Attrib>(mesh: M) -> Result<(), Error> {
+        mesh.attrib_check::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB).map_err(|err| {
+            Error::MissingSourceIndex
+        })
+    }
+
+    /// Helper function to compute a set of frictional contacts.
+    fn build_frictional_contacts(solids: &[TetMeshSolid],
+                                 shells: &[TriMeshShell],
+                                 frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>)
+                                 -> Vec<FrictionalContact>
+    {
+        use crate::constraints::build_contact_constraint;
+
+        // Build a mapping to mesh indices in their respective slices.
+        let mut material_source = Vec::new();
+        material_source.extend((0..solids.len()).map(|i| SourceIndex::Solid(i)));
+        material_source.extend((0..shells.len()).map(|i| SourceIndex::Shell(i)));
+
+        // Sort materials by material id.
+        let to_mat_id = |k| {
+            match k {
+                SourceIndex::Solid(i) => solids[i].material.id,
+                SourceIndex::Shell(i) => shells[i].material.id,
+            }
+        };
+        material_source.sort_unstable_by_key(to_mat_id);
+
+        // Assemble material source indices into a chunked array where each
+        // chunk represents a unique id. This means some chunks are empty.
+        let mut id = 0;
+        let mut off = 0;
+        let mut offsets = vec![0];
+        for cur_id in material_source.map(to_mat_id) {
+            while id < cur_id {
+                offsets.push(off);
+                id += 1;
+            }
+            off += 1;
+        }
+        offsets.push(off);
+
+        let material_source = Chunked::from_offsets(offsets, material_source);
+
+        // Convert frictional contact parameters into frictional contact constraints.
+        frictional_contacts.into_iter().map(|(params, ids)| {
+            for m0 in material_source[ids.0] {
+                match m0 {
+                    SourceIndex::Solid(i) => {
+                        for m1 in material_source[ids.1] {
+                            FrictionalContact {
+                                object: m0,
+                                collider: m1,
+                                constraint: match m1 {
+                                    SourceIndex::Solid(j) =>
+                                        build_contact_constraint(&solids[i].surface().trimesh, &solids[j].surface().trimesh, params),
+                                    SourceIndex::Shell(j) =>
+                                        build_contact_constraint(&solids[i].surface().trimesh, &shells[j].trimesh, params),
+                                },
+                            }
+                        }
+                    }
+                    SourceIndex::Shell(i) => {
+                        for m1 in material_source[ids.1] {
+                            FrictionalContact {
+                                object: m0,
+                                collider: m1,
+                                constraint: match m1 {
+                                    SourceIndex::Solid(j) =>
+                                        build_contact_constraint(&shells[i].trimesh, &solids[j].surface().trimesh, params),
+                                    SourceIndex::Shell(j) =>
+                                        build_contact_constraint(&shells[i].trimesh, &shells[j].trimesh, params),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }).collect()
+    }
+
+    /// Helper function to initialize volume constraints from a set of solids.
+    fn build_volume_constraints(solids: &[TetMeshSolid]) -> Vec<(usize, VolumeConstraint)> {
+        // Initialize volume constraint
+        solids
+            .iter()
+            .enumerate()
+            .filter(|&&(_, solid)| solid.material.properties.volume_preservation)
+            .map(|&(idx, solid)| volume_constraints.push((idx, VolumeConstraint::new(solid.tetmesh))))
+            .collect()
+    }
+
+    /// Helper function to build an array of solids with associated material properties and attributes.
+    fn build_solids(solids: Vec<(TetMesh, SolidMaterial)>) -> Result<(Vec<TetMeshSolid>, VertexSet), Error> {
+        let mut prev_pos = Chunked::new();
+        let mut prev_vel = Chunked::new();
+
+        for (mesh, _) in solids.iter() {
+
+            // Get previous position vector from the tetmesh.
+            let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
+            prev_pos.push(mesh_prev_pos);
+            let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+            prev_vel.push(mesh_prev_vel);
+        }
+
+        let vertex_set = VertexSet {
+            prev_pos: prev_pos.clone(),
+            prev_vel: prev_vel.clone(),
+            cur_pos: RefCell::new(prev_pos.clone()),
+            scaled_vel: RefCell::new(prev_vel.clone()),
+        };
+
+        // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
+        let solids = solids.into_iter().map(|(mut tetmesh, material)| {
+            // Prepare deformable solid for simulation.
+            Self::prepare_solid_attributes(TetMeshSolid { tetmesh, material })?
+        }).collect::Vec<_>();
+
+        (solids, vertex_set)
+    }
+
+    /// Helper function to build a list of shells with associated material properties and attributes.
+    fn build_shells(shells: Vec<(TriMesh, ShellMaterial)>) -> Result<(Vec<TriMeshShell>, VertexSet), Error> {
+        let mut prev_pos = Chunked::new();
+        let mut prev_vel = Chunked::new();
+
+        for (mesh, _) in shells.iter() {
+            let mesh = TriMesh::from(mesh); // Triangulate mesh.
+
+            // Get previous position vector from the tetmesh.
+            let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
+            prev_pos.push(mesh_prev_pos);
+            let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+            prev_vel.push(mesh_prev_vel);
+        }
+
+        let vertex_set = VertexSet {
+            prev_pos: prev_pos.clone(),
+            prev_vel: prev_vel.clone(),
+            cur_pos: RefCell::new(prev_pos.clone()),
+            scaled_vel: RefCell::new(prev_vel.clone()),
+        };
+
+        // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
+        let shells = shells.into_iter().map(|(mut trimesh, material)| {
+            // Prepare shell for simulation.
+            Self::prepare_shell_attributes(TriMeshShell { trimesh, material })?
+        }).collect::Vec<_>();
+
+        (shells, vertex_set)
+    }
+
+    /// Helper to compute max element size. This is used for normalizing tolerances.
+    fn compute_max_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        let mut max_size = 0.0;
+
+        for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
+            max_size = max_size.max(tetmesh
+                                  .tet_iter()
+                                  .map(Volume::volume)
+                                  .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
+                                  .expect("Given TetMesh is empty").cbrt());
+        }
+
+        for TriMeshShell { ref trimesh, .. } in shells.iter() {
+            max_size = max_size.max(trimesh
+                                    .tri_iter()
+                                    .map(Area::area)
+                                    .max_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
+                                    .expect("Given TriMesh is empty").sqrt());
+        }
+
+        max_size
+    }
+
+    fn build_problem(&self) -> NonLinearProblem {
         let SolverBuilder {
             sim_params: mut params,
             solids,
@@ -142,106 +330,14 @@ impl SolverBuilder {
             frictional_contacts,
         } = self.clone();
 
-        let mut max_size = 0.0;
-
-        // Prepare solids
-        let (solids, solid_vertex_set) = {
-            let mut prev_pos = Chunked::new();
-            let mut prev_vel = Chunked::new();
-
-            for (mesh, _) in solids.iter() {
-                // We need this quantity to compute the tolerance.
-                let mut max_vol = 0.0;
-                max_vol = max_vol.max(mesh
-                            .tet_iter()
-                            .map(Volume::volume)
-                            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
-                            .expect("Given TetMesh is empty"));
-                max_size = max_size.max(max_vol.cbrt());
-
-                // Get previous position vector from the tetmesh.
-                let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
-                prev_pos.push(mesh_prev_pos);
-                let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
-                prev_vel.push(mesh_prev_vel);
-            }
-
-            // Initialize volume constraint
-            let mut volume_constraints = Vec::new();
-            for (id, (mesh, material)) in solids.iter().enumerate() {
-                if material.volume_preservation {
-                    volume_constraints.push((id, VolumeConstraint::new(mesh)));
-                }
-            }
-
-            let vertex_set = VertexSet {
-                prev_pos: prev_pos.clone(),
-                prev_vel: prev_vel.clone(),
-                cur_pos: RefCell::new(prev_pos.clone()),
-                scaled_vel: RefCell::new(prev_vel.clone()),
-            };
-
-            // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
-            let solids = solids.into_iter().map(|(mut tetmesh, material)| {
-                // Prepare deformable solid for simulation.
-                Self::prepare_mesh_attributes(&mut tetmesh, material)?;
-                TetMeshSolid { tetmesh, material }
-            }).collect::Vec<_>();
-
-            (solids, vertex_set)
+        for (mesh, _) in solids.iter() {
+            validate_input_mesh(mesh)?;
         }
 
-        // Prepare shells
-        let shells = {
-            let mut prev_pos = Chunked::new();
-            let mut prev_vel = Chunked::new();
+        let (solids, solid_vertex_set) = build_solids(solids);
+        let (shells, shell_vertex_set) = build_shells(shells);
 
-            for (mesh, _) in shells.iter() {
-                let mesh = TriMesh::from(mesh); // Triangulate mesh.
-
-                // We need this quantity to compute the tolerance.
-                let mut max_area = 0.0;
-                max_area = max_area.max(mesh
-                            .tri_iter()
-                            .map(Area::area)
-                            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
-                            .expect("Given TriMesh is empty"));
-
-                max_size = max_size.max(max_area.sqrt());
-
-
-                // Get previous position vector from the tetmesh.
-                let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
-                prev_pos.push(mesh_prev_pos);
-                let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
-                prev_vel.push(mesh_prev_vel);
-            }
-
-            // Initialize volume constraint
-            let mut volume_constraints = Vec::new();
-            for (id, (mesh, material)) in solids.iter().enumerate() {
-                if material.volume_preservation {
-                    volume_constraints.push((id, VolumeConstraint::new(mesh)));
-                }
-            }
-
-            let vertex_set = VertexSet {
-                prev_pos: prev_pos.clone(),
-                prev_vel: prev_vel.clone(),
-                cur_pos: RefCell::new(prev_pos.clone()),
-                scaled_vel: RefCell::new(prev_vel.clone()),
-            };
-
-            // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
-            let solids = solids.into_iter().map(|(mut tetmesh, material)| {
-                // Prepare deformable solid for simulation.
-                Self::prepare_mesh_attributes(&mut tetmesh, material)?;
-                TetMeshSolid { tetmesh, material }
-            }).collect::Vec<_>();
-
-            (solids, vertex_set)
-
-        }
+        let volume_constraints = build_volume_constraints(&solids);
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -251,24 +347,7 @@ impl SolverBuilder {
 
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
 
-        let mut solid_surfaces = vec![None; solids.len()];
-
-        // Convert frictional contact parameters into frictional contact constraints.
-        for frictional_contacts = frictional_contacts.into_iter().map(|(params, ids)| {
-            if let Some(solid) = solids.iter().find(|&&solid| solid.material.id == ids.0) {
-            crate::constraints::build_contact_constraint(solids, shell, params)
-
-        }).collect();
-        let = kinematic_object.as_ref().and_then(|trimesh| {
-            crate::constraints::build_contact_constraint(
-                &mesh,
-                &trimesh,
-                cparams,
-                density,
-                time_step,
-            )
-            .ok()
-        });
+        let frictional_contacts = Self::build_frictional_contacts(&solids, &shells, frictional_contacts);
 
         let displacement_bound = None;
         //let displacement_bound = smooth_contact_params.map(|scp| {
@@ -276,34 +355,45 @@ impl SolverBuilder {
         //    // bound).
         //    scp.max_step / 3.0f64.sqrt()
         //});
-        //
-        let mut problem = NonLinearProblem {
+
+        NonLinearProblem {
             vertex_set,
             time_step,
             solids,
-            solid_surfaces,
             shells,
             volume_constraints,
+            frictional_contacts,
             gravity,
-            smooth_contact_constraint,
             displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
             warm_start: Solution::default(),
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
-        };
+        }
+    }
+
+    /// Build the simulation solver.
+    pub fn build(&self) -> Result<Solver, Error> {
+
+        let mut problem = self.build_problem();
+
+        let max_size = Self::compute_max_size(&problem.solids, &problem.shells);
 
         // Note that we don't need the solution field to get the number of variables and
         // constraints. This means we can use these functions to initialize solution.
         problem.reset_warm_start();
 
+        // Construct the Ipopt solver.
         let mut ipopt = Ipopt::new(problem)?;
 
-        // Determine the true force tolerance. To start we base this tolerance on the elastic
-        // response which depends on mu and lambda as well as per tet volume:
-        // Larger stiffnesses and volumes cause proportionally larger gradients. Thus our tolerance
-        // should reflect these properties.
+        // Setup ipopt paramters using the input simulation params.
+        let mut params = self.sim_params;
+
+        // Determine the true force tolerance. To start we base this tolerance
+        // on the elastic response which depends on mu and lambda as well as per
+        // tet volume: Larger stiffnesses and volumes cause proportionally
+        // larger gradients. Thus our tolerance should reflect these properties.
         let max_area = max_size * max_size;
         let tol = f64::from(params.tolerance) * max_area * lambda.max(mu);
         params.tolerance = tol as f32;
@@ -356,7 +446,6 @@ impl SolverBuilder {
             step_count: 0,
             inner_iterations: 0,
             sim_params: params,
-            solid_material: Some(solid_material),
             max_step: 0.0,
             old_active_set: Vec::new(),
         })
@@ -386,17 +475,8 @@ impl SolverBuilder {
             .collect()
     }
 
-    /// Precompute attributes necessary for FEM simulation on the given mesh.
-    pub(crate) fn prepare_mesh_attributes(mesh: &mut TetMesh, material: Material)
-        -> Result<&mut TetMesh, Error>
-    {
-        let verts = mesh.vertex_positions().to_vec();
-
-        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
-            verts.as_slice(),
-        )?;
-
+    /// A helper function to populate vertex attributes for simulation on a dynamic mesh.
+    fn prepare_dynamic_mesh_vertex_attributes<M: VertexPositions + Attrib>(mesh: &mut M) -> Result<(), Error> {
         mesh.attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
 
         // If this attribute doesn't exist, assume no vertices are fixed. This function will
@@ -417,6 +497,42 @@ impl SolverBuilder {
             mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::from_vec(fixed))?;
         }
 
+        Ok(())
+    }
+
+    /// A helper function to populate vertex attributes for simulation on a deformable mesh.
+    fn prepare_deformable_mesh_vertex_attributes<M: VertexPositions + Attrib>(mesh: &mut M) -> Result<(), Error> {
+
+        // Deformable meshes are dynamic. Prepare dynamic attributes first.
+        prepare_dynamic_mesh_vertex_attributes(mesh)?;
+
+        let verts = mesh.vertex_positions().to_vec();
+
+        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
+            REFERENCE_POSITION_ATTRIB,
+            verts.as_slice(),
+        )?;
+
+        {
+            // Add elastic elastic force attributes.
+            // These will be computed at the end of the time step.
+            mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+        }
+
+        Ok(())
+    }
+
+    /// Precompute attributes necessary for FEM simulation on the given mesh.
+    pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid)
+        -> Result<TetMeshSolid, Error>
+    {
+        let TetMeshSolid {
+            tetmesh: ref mut mesh,
+            material,
+        } = &mut solid;
+
+        prepare_deformable_mesh_vertex_attributes(mesh)?;
+
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
         mesh.set_attrib_data::<RefVolType, CellIndex>(
             REFERENCE_VOLUME_ATTRIB,
@@ -433,7 +549,6 @@ impl SolverBuilder {
             // Add elastic strain energy and elastic force attributes.
             // These will be computed at the end of the time step.
             mesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
-            mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
 
         // Below we prepare attributes that give elasticity and density parameters. If such were
@@ -442,7 +557,7 @@ impl SolverBuilder {
         // accurate and probably determined from a data driven method.
 
         // Prepare elasticity parameters
-        if let Some(elasticity) = material.elasticity {
+        if let Some(elasticity) = material.properties.deformable.elasticity {
             match mesh.add_attrib_data::<LambdaType, CellIndex>(
                 LAMBDA_ATTRIB,
                 vec![elasticity.lambda; mesh.num_cells()]
@@ -471,7 +586,7 @@ impl SolverBuilder {
         }
 
         // Prepare density parameter
-        if let Some(density) = material.density {
+        if let Some(density) = material.propertites.deformable.density {
             match mesh.add_attrib_data::<LambdaType, CellIndex>(
                 LAMBDA_ATTRIB,
                 vec![elasticity.lambda; mesh.num_cells()]
@@ -488,7 +603,102 @@ impl SolverBuilder {
             }
         }
 
-        Ok(mesh)
+        Ok(solid)
+    }
+
+    /// Precompute attributes necessary for FEM simulation on the given mesh.
+    pub(crate) fn prepare_shell_attributes(mut shell: TriMeshShell)
+        -> Result<TriMeshShell, Error>
+    {
+        let TriMeshShell {
+            trimesh: ref mut mesh,
+            material
+        } = &mut shell;
+
+        match material.properties {
+            ShellMaterial::Static => {
+                // Nothing to be done, static meshes don't have material properties.
+            },
+            ShellMaterial::Rigid { .. } => {
+                prepare_dynamic_mesh_vertex_attributes(mesh)?;
+            },
+            ShellMaterial::Deformable { deformable } => {
+                prepare_deformable_mesh_vertex_attributes(mesh)?;
+
+                // TODO: Implement the equivalent for shells
+                //let ref_areas = Self::compute_ref_tet_signed_volumes(mesh)?;
+                //mesh.set_attrib_data::<RefVolType, FaceIndex>(
+                //    REFERENCE_AREA_ATTRIB,
+                //    ref_volumes.as_slice(),
+                //)?;
+
+                //let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
+                //mesh.set_attrib_data::<_, FaceIndex>(
+                //    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                //    ref_shape_mtx_inverses.as_slice(),
+                //)?;
+
+                {
+                    // Add elastic strain energy attribute.
+                    // This will be computed at the end of the time step.
+                    mesh.set_attrib::<StrainEnergyType, FaceIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+                }
+
+                // Below we prepare attributes that give elasticity and density parameters. If such were
+                // already provided on the mesh, then any given global parameters are ignored. This
+                // behaviour is justified because variable material properties are most likely more
+                // accurate and probably determined from a data driven method.
+
+                // Prepare elasticity parameters
+                if let Some(elasticity) = material.elasticity {
+                    match mesh.add_attrib_data::<LambdaType, FaceIndex>(
+                        LAMBDA_ATTRIB,
+                        vec![elasticity.lambda; mesh.num_faces()]
+                    ) {
+                        Err(e) => return Err(e);
+                        // if ok or already exists, everything is ok.
+                        Err(Error::AlreadyExists(_)) => { }
+                        _ => {}
+                    }
+                    match mesh.add_attrib_data::<MuType, FaceIndex>(
+                        MU_ATTRIB,
+                        vec![elasticity.mu; mesh.num_faces()]
+                    ) {
+                        Err(e) => return Err(e);
+                        // if ok or already exists, everything is ok.
+                        Err(Error::AlreadyExists(_)) => { }
+                        _ => {}
+                    }
+                } else {
+                    // No global elasticity parameters were given. Check that the mesh has the right
+                    // parameters.
+                    if mesh.attrib_check::<LambdaType, FaceIndex>(LAMBDA_ATTRIB).is_err()
+                        || mesh.attrib_check::<MuType, FaceIndex>(MU_ATTRIB).is_err() {
+                            return Err(Error::MissingElasticityParams)
+                        }
+                }
+
+                // Prepare density parameter
+                if let Some(density) = material.density {
+                    match mesh.add_attrib_data::<LambdaType, FaceIndex>(
+                        LAMBDA_ATTRIB,
+                        vec![elasticity.lambda; mesh.num_faces()]
+                    ) {
+                        Err(e) => return Err(e);
+                        // if ok or already exists, everything is ok.
+                        Err(Error::AlreadyExists(_)) => { }
+                        _ => {} 
+                    }
+                } else {
+                    // No global density parameter was given. Check that it exists on the mesh itself.
+                    if mesh.attrib_check::<DensityType, FaceIndex>(DENSITY_ATTRIB).is_err() {
+                        return Err(Error::MissingDensityParam)
+                    }
+                }
+            },
+        };
+
+        Ok(shell)
     }
 }
 
@@ -501,16 +711,13 @@ pub struct Solver {
     step_count: usize,
     /// Total number of Ipopt iterations taken by this solver.
     inner_iterations: usize,
-    /// Simulation paramters. This is kept around for convenience.
+    /// Simulation parameters. This is kept around for convenience.
     sim_params: SimParams,
-    /// Solid material properties.
-    solid_material: Option<Material>,
-    /// Maximal displaement length. Used to limit displacement which is necessary in contact
+    /// Maximal displacement length. Used to limit displacement which is necessary in contact
     /// scenarios because it defines how far a step we can take before the constraint Jacobian
     /// sparsity pattern changes. If zero, then no limit is applied but constraint Jacobian is kept
     /// sparse.
     max_step: f64,
-
     /// A set of active constraints from the previous time step. This set is used to update the set
     /// of constraints for the new time steps after vertex positions have changed.
     old_active_set: Vec<usize>,

@@ -1,6 +1,7 @@
 pub mod soap;
 pub mod transform;
 pub mod zip;
+pub mod aref;
 
 /**
  * This crate provides convenience functions for building common meshes.

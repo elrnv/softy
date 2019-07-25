@@ -9,7 +9,6 @@ pub struct Chunked<S, O = Vec<usize>> {
     pub(crate) data: S,
 }
 
-
 impl<S, C> Chunked<S, C> {
     /// Get a immutable reference to the underlying data.
     ///
@@ -67,8 +66,14 @@ impl<S: Set, O: Buffer<usize>> Chunked<S, O> {
     /// ```
     pub fn from_offsets(offsets: O, data: S) -> Self {
         assert!(!offsets.is_empty());
-        assert_eq!(*offsets.last().unwrap(), data.len() + *offsets.first().unwrap());
-        Chunked { chunks: offsets, data }
+        assert_eq!(
+            *offsets.last().unwrap(),
+            data.len() + *offsets.first().unwrap()
+        );
+        Chunked {
+            chunks: offsets,
+            data,
+        }
     }
 
     pub fn offsets(&self) -> &O {
@@ -92,14 +97,10 @@ impl<S: Set, O: Buffer<usize>> Chunked<S, O> {
     /// ```
     /// storage type (second output).
     pub fn into_inner(self) -> (O, S) {
-        let Chunked {
-            chunks,
-            data
-        } = self;
+        let Chunked { chunks, data } = self;
         (chunks, data)
     }
 }
-
 
 impl<S> Chunked<S>
 where
@@ -125,7 +126,9 @@ where
 }
 
 impl<S, O> Set for Chunked<S, O>
-where S: Set, O: Set
+where
+    S: Set,
+    O: Set,
 {
     type Elem = Vec<S::Elem>;
 
@@ -168,8 +171,9 @@ impl<'a, S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for Chunked<
 }
 
 impl<S, O> ToOwned for Chunked<S, O>
-where S: ToOwned,
-      O: ToOwned,
+where
+    S: ToOwned,
+    O: ToOwned,
 {
     type Owned = Chunked<S::Owned, O::Owned>;
 
@@ -247,8 +251,9 @@ where
  */
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for usize
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, usize, Output=&'o usize>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, usize, Output = &'o usize>,
 {
     type Output = S::Output;
 
@@ -265,8 +270,9 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::Range<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -275,11 +281,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
         if self.start <= self.end && self.end <= chunked.len() {
             self.end += 1;
             let chunks = chunked.chunks.get(self);
-            let data = chunked.data.get(*chunks.first().unwrap()..*chunks.last().unwrap());
-            Some(Chunked {
-                chunks,
-                data,
-            })
+            let data = chunked
+                .data
+                .get(*chunks.first().unwrap()..*chunks.last().unwrap());
+            Some(Chunked { chunks, data })
         } else {
             None
         }
@@ -287,8 +292,9 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFrom<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -299,8 +305,9 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeTo<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -311,8 +318,9 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFull
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -324,22 +332,27 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeInclusive<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
     /// Get a `[begin..end]` (including the element at `end`) subview of the
     /// given `Chunked` collection.
     fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() { None }
-        else {(*self.start()..*self.end() + 1).get(chunked) }
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get(chunked)
+        }
     }
 }
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeToInclusive<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -351,7 +364,8 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O, I> Get<'i, 'o, I> for Chunked<S, O>
-where I: GetIndex<'i, 'o, Self>
+where
+    I: GetIndex<'i, 'o, Self>,
 {
     type Output = I::Output;
     /// Get a subview from this `Chunked` collection according to the given
@@ -406,8 +420,9 @@ where I: GetIndex<'i, 'o, Self>
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for usize
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, usize, Output=&'o usize>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, usize, Output = &'o usize>,
 {
     type Output = S::Output;
 
@@ -424,8 +439,9 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::Range<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -434,11 +450,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
         if self.start <= self.end && self.end <= chunked.len() {
             self.end += 1;
             let chunks = chunked.chunks.get(self);
-            let data = chunked.data.get_mut(*chunks.first().unwrap()..*chunks.last().unwrap());
-            Some(Chunked {
-                chunks,
-                data,
-            })
+            let data = chunked
+                .data
+                .get_mut(*chunks.first().unwrap()..*chunks.last().unwrap());
+            Some(Chunked { chunks, data })
         } else {
             None
         }
@@ -446,8 +461,9 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFrom<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -458,8 +474,9 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeTo<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -470,8 +487,9 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeFull
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -483,22 +501,27 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeInclusive<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
     /// Get a `[begin..end]` (including the element at `end`) subview of the
     /// given `Chunked` collection.
     fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() { None }
-        else {(*self.start()..*self.end() + 1).get_mut(chunked) }
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get_mut(chunked)
+        }
     }
 }
 
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Chunked<S, O>> for std::ops::RangeToInclusive<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      O: Set + Get<'i, 'o, std::ops::Range<usize>, Output=&'o [usize]>,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>,
 {
     type Output = Chunked<S::Output, &'o [usize]>;
 
@@ -510,7 +533,8 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, O, I> GetMut<'i, 'o, I> for Chunked<S, O>
-where I: GetMutIndex<'i, 'o, Self>
+where
+    I: GetMutIndex<'i, 'o, Self>,
 {
     type Output = I::Output;
     /// Get a mutable subview from this `Chunked` collection according to the
@@ -533,7 +557,8 @@ where I: GetMutIndex<'i, 'o, Self>
 }
 
 impl<T, O> std::ops::Index<usize> for Chunked<Vec<T>, O>
-where O: std::ops::Index<usize, Output=usize>
+where
+    O: std::ops::Index<usize, Output = usize>,
 {
     type Output = <[T] as std::ops::Index<std::ops::Range<usize>>>::Output;
     /// Get reference to a chunk at the given index. Note that this works for
@@ -551,12 +576,13 @@ where O: std::ops::Index<usize, Output=usize>
     /// assert_eq!(&[5,6], &s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        &self.data[self.chunks[idx]..self.chunks[idx+1]]
+        &self.data[self.chunks[idx]..self.chunks[idx + 1]]
     }
 }
 
 impl<T, O> std::ops::Index<usize> for Chunked<&[T], O>
-where O: std::ops::Index<usize, Output=usize>
+where
+    O: std::ops::Index<usize, Output = usize>,
 {
     type Output = <[T] as std::ops::Index<std::ops::Range<usize>>>::Output;
 
@@ -575,12 +601,13 @@ where O: std::ops::Index<usize, Output=usize>
     /// assert_eq!(&[5,6], &s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        &self.data[self.chunks[idx]..self.chunks[idx+1]]
+        &self.data[self.chunks[idx]..self.chunks[idx + 1]]
     }
 }
 
 impl<T, O> std::ops::Index<usize> for Chunked<&mut [T], O>
-where O: std::ops::Index<usize, Output=usize>
+where
+    O: std::ops::Index<usize, Output = usize>,
 {
     type Output = <[T] as std::ops::Index<std::ops::Range<usize>>>::Output;
 
@@ -599,12 +626,13 @@ where O: std::ops::Index<usize, Output=usize>
     /// assert_eq!(&[5,6], &s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        &self.data[self.chunks[idx]..self.chunks[idx+1]]
+        &self.data[self.chunks[idx]..self.chunks[idx + 1]]
     }
 }
 
 impl<T, O> std::ops::IndexMut<usize> for Chunked<Vec<T>, O>
-where O: std::ops::Index<usize, Output=usize>
+where
+    O: std::ops::Index<usize, Output = usize>,
 {
     /// Mutably index the `Chunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
@@ -622,12 +650,13 @@ where O: std::ops::Index<usize, Output=usize>
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11], s.into_flat());
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        &mut self.data[self.chunks[idx]..self.chunks[idx+1]]
+        &mut self.data[self.chunks[idx]..self.chunks[idx + 1]]
     }
 }
 
 impl<T, O> std::ops::IndexMut<usize> for Chunked<&mut [T], O>
-where O: std::ops::Index<usize, Output=usize>
+where
+    O: std::ops::Index<usize, Output = usize>,
 {
     /// Mutably index the `Chunked` mutably borrowed slice by `usize`.
     /// Note that this works for chunked collections that are themselves not
@@ -645,14 +674,14 @@ where O: std::ops::Index<usize, Output=usize>
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11], v);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        &mut self.data[self.chunks[idx]..self.chunks[idx+1]]
+        &mut self.data[self.chunks[idx]..self.chunks[idx + 1]]
     }
 }
 
 impl<S> Chunked<S>
 where
     S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
-    <S as Set>::Elem: Sized
+    <S as Set>::Elem: Sized,
 {
     /// Push a slice of elements onto this `Chunked`.
     ///
@@ -684,8 +713,9 @@ impl<'a, T> IntoIterator for Chunked<&'a [T], &'a [usize]> {
 }
 
 impl<'a, S, O> Chunked<S, O>
-where S: View<'a>,
-      O: std::borrow::Borrow<[usize]>,
+where
+    S: View<'a>,
+    O: std::borrow::Borrow<[usize]>,
 {
     /// Produce an iterator over elements (borrowed slices) of a `Chunked`.
     ///
@@ -737,7 +767,6 @@ where S: View<'a>,
         }
     }
 }
-
 
 impl<'a, S, O> Chunked<S, O>
 where
@@ -806,8 +835,16 @@ impl<V: SplitAt + Set> SplitAt for Chunked<V, &[usize]> {
     fn split_at(self, mid: usize) -> (Self, Self) {
         let (offsets_l, offsets_r, off) = split_offsets_at(self.chunks, mid);
         let (data_l, data_r) = self.data.split_at(off);
-        ( Chunked { chunks: offsets_l, data: data_l },
-          Chunked { chunks: offsets_r, data: data_r } )
+        (
+            Chunked {
+                chunks: offsets_l,
+                data: data_l,
+            },
+            Chunked {
+                chunks: offsets_r,
+                data: data_r,
+            },
+        )
     }
 }
 
@@ -828,7 +865,7 @@ pub struct VarIter<'a, S> {
 fn split_offsets_at(offsets: &[usize], mid: usize) -> (&[usize], &[usize], usize) {
     debug_assert!(!offsets.is_empty());
     debug_assert!(mid < offsets.len());
-    let l = &offsets[..mid+1];
+    let l = &offsets[..mid + 1];
     let r = &offsets[mid..];
     // Skip bounds checking here since this function is not exposed to the user.
     let off = unsafe { *r.get_unchecked(0) - *l.get_unchecked(0) };
@@ -838,10 +875,10 @@ fn split_offsets_at(offsets: &[usize], mid: usize) -> (&[usize], &[usize], usize
 /// Test for the `split_offset_at` helper function.
 #[test]
 fn split_offset_at_test() {
-    let offsets = vec![0,1,2,3,4,5];
+    let offsets = vec![0, 1, 2, 3, 4, 5];
     let (l, r, off) = split_offsets_at(offsets.as_slice(), 3);
-    assert_eq!(l, &[0,1,2,3]);
-    assert_eq!(r, &[3,4,5]);
+    assert_eq!(l, &[0, 1, 2, 3]);
+    assert_eq!(r, &[3, 4, 5]);
     assert_eq!(off, 3);
 }
 
@@ -850,7 +887,10 @@ fn split_offset_at_test() {
 /// iterators over `Chunked` types.
 /// This function panics if offsets is empty.
 fn pop_offset(offsets: &mut &[usize]) -> Option<usize> {
-    debug_assert!(!offsets.is_empty(), "Chunked is corrupted and cannot be iterated.");
+    debug_assert!(
+        !offsets.is_empty(),
+        "Chunked is corrupted and cannot be iterated."
+    );
     offsets.split_first().and_then(|(head, tail)| {
         if tail.is_empty() {
             return None;
@@ -861,7 +901,8 @@ fn pop_offset(offsets: &mut &[usize]) -> Option<usize> {
 }
 
 impl<'a, V> Iterator for VarIter<'a, V>
-where V: SplitAt + Set + Dummy,
+where
+    V: SplitAt + Set + Dummy,
 {
     type Item = V;
 
@@ -882,7 +923,8 @@ pub struct VarIterMut<'a, S> {
 }
 
 impl<'a, V: 'a> Iterator for VarIterMut<'a, V>
-where V: SplitAt + Set + Dummy,
+where
+    V: SplitAt + Set + Dummy,
 {
     type Item = V;
 
@@ -912,7 +954,8 @@ pub struct VarIntoIter<S> {
 }
 
 impl<S> Iterator for VarIntoIter<S>
-    where S: SplitOff + Set
+where
+    S: SplitOff + Set,
 {
     type Item = S;
 
@@ -938,7 +981,7 @@ impl<S: SplitOff + Set> SplitOff for Chunked<S> {
         assert!(!self.chunks.is_empty());
         assert!(mid < self.chunks.len());
         let off = self.chunks[mid] - self.chunks[0];
-        let offsets_l = self.chunks[..mid+1].to_vec();
+        let offsets_l = self.chunks[..mid + 1].to_vec();
         let offsets_r = self.chunks[mid..].to_vec();
         self.chunks = offsets_l;
         let data_r = self.data.split_off(off);
@@ -952,7 +995,6 @@ impl<T> SplitOff for Vec<T> {
     }
 }
 
-
 impl<S> IntoIterator for Chunked<S>
 where
     S: SplitOff + Set,
@@ -961,10 +1003,7 @@ where
     type IntoIter = VarIntoIter<S>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let Chunked {
-            chunks,
-            data,
-        } = self;
+        let Chunked { chunks, data } = self;
         VarIntoIter {
             offsets: chunks.into_iter().peekable(),
             data: data,
@@ -1031,7 +1070,6 @@ where
     }
 }
 
-
 impl<S: IntoFlat> IntoFlat for Chunked<S> {
     type FlatType = S::FlatType;
     /// Strip all organizational information from this set, returning the
@@ -1051,7 +1089,6 @@ impl<S: IntoFlat> IntoFlat for Chunked<S> {
         self.data.into_flat()
     }
 }
-
 
 /*
  * Utility traits intended to expose the necessary behaviour to implement `Chunked` types.
@@ -1127,7 +1164,10 @@ impl<S: Default> Default for Chunked<S> {
 
 impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
     fn dummy() -> Self {
-        Chunked { data: Dummy::dummy(), chunks: Dummy::dummy() }
+        Chunked {
+            data: Dummy::dummy(),
+            chunks: Dummy::dummy(),
+        }
     }
 }
 
@@ -1139,29 +1179,29 @@ mod tests {
     fn zero_length_chunk() {
         let empty: Vec<usize> = vec![];
         // In the beginning
-        let s = Chunked::from_offsets(vec![0,0,3,4,6], vec![1,2,3,4,5,6]);
+        let s = Chunked::from_offsets(vec![0, 0, 3, 4, 6], vec![1, 2, 3, 4, 5, 6]);
         let mut iter = s.iter();
         assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
-        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(vec![1, 2, 3], iter.next().unwrap().to_vec());
         assert_eq!(vec![4], iter.next().unwrap().to_vec());
-        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5, 6], iter.next().unwrap().to_vec());
         assert_eq!(None, iter.next());
 
         // In the middle
-        let s = Chunked::from_offsets(vec![0,3,3,4,6], vec![1,2,3,4,5,6]);
+        let s = Chunked::from_offsets(vec![0, 3, 3, 4, 6], vec![1, 2, 3, 4, 5, 6]);
         let mut iter = s.iter();
-        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(vec![1, 2, 3], iter.next().unwrap().to_vec());
         assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
         assert_eq!(vec![4], iter.next().unwrap().to_vec());
-        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5, 6], iter.next().unwrap().to_vec());
         assert_eq!(None, iter.next());
 
         // At the end
-        let s = Chunked::from_offsets(vec![0,3,4,6,6], vec![1,2,3,4,5,6]);
+        let s = Chunked::from_offsets(vec![0, 3, 4, 6, 6], vec![1, 2, 3, 4, 5, 6]);
         let mut iter = s.iter();
-        assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+        assert_eq!(vec![1, 2, 3], iter.next().unwrap().to_vec());
         assert_eq!(vec![4], iter.next().unwrap().to_vec());
-        assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+        assert_eq!(vec![5, 6], iter.next().unwrap().to_vec());
         assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
         assert_eq!(None, iter.next());
     }

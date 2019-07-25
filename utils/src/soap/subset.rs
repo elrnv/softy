@@ -73,7 +73,10 @@ impl<'a, S: Set> Subset<S> {
         indices.sort_unstable();
         indices.dedup();
 
-        Self::validate(Subset { indices: Some(indices), data })
+        Self::validate(Subset {
+            indices: Some(indices),
+            data,
+        })
     }
 
     /// Create a subset with all elements from the original set.
@@ -137,8 +140,9 @@ impl<S: Set, I: Set> Set for Subset<S, I> {
 
 /// Required for `Chunked` and `UniChunked` subsets.
 impl<'a, S> View<'a> for Subset<S>
-where S: Set + View<'a>,
-      <S as View<'a>>::Type: Set + SplitAt,
+where
+    S: Set + View<'a>,
+    <S as View<'a>>::Type: Set + SplitAt,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -159,19 +163,18 @@ where S: Set + View<'a>,
                     }
                 }
             }
-            None => {
-                Subset {
-                    indices: None,
-                    data: self.data.view(),
-                }
-            }
+            None => Subset {
+                indices: None,
+                data: self.data.view(),
+            },
         }
     }
 }
 
 impl<'a, S> View<'a> for Subset<S, &'a [usize]>
-where S: Set + View<'a>,
-      <S as View<'a>>::Type: Set,
+where
+    S: Set + View<'a>,
+    <S as View<'a>>::Type: Set,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -186,40 +189,37 @@ where S: Set + View<'a>,
 }
 
 macro_rules! impl_view_mut {
-    ($self:ident, $split_at_fn:ident) => {
-        {
-            // Converting to index slices requires us to chop the beginning of the
-            // data set before the first index.
-            match $self.indices {
-                Some(ref indices) => {
-                    if let Some(first) = indices.first() {
-                        let (_, data_view) = $self.data.view_mut().$split_at_fn(*first);
-                        Subset {
-                            indices: Some(indices.as_slice()),
-                            data: data_view,
-                        }
-                    } else {
-                        Subset {
-                            indices: Some(indices.as_slice()),
-                            data: $self.data.view_mut(),
-                        }
-                    }
-                }
-                None => {
+    ($self:ident, $split_at_fn:ident) => {{
+        // Converting to index slices requires us to chop the beginning of the
+        // data set before the first index.
+        match $self.indices {
+            Some(ref indices) => {
+                if let Some(first) = indices.first() {
+                    let (_, data_view) = $self.data.view_mut().$split_at_fn(*first);
                     Subset {
-                        indices: None,
+                        indices: Some(indices.as_slice()),
+                        data: data_view,
+                    }
+                } else {
+                    Subset {
+                        indices: Some(indices.as_slice()),
                         data: $self.data.view_mut(),
                     }
                 }
             }
+            None => Subset {
+                indices: None,
+                data: $self.data.view_mut(),
+            },
         }
-    }
+    }};
 }
 
 /// Required for mutable `Chunked` and `UniChunked` subsets.
 impl<'a, S> ViewMut<'a> for Subset<S>
-where S: Set + ViewMut<'a>,
-      <S as ViewMut<'a>>::Type: Set + SplitAt,
+where
+    S: Set + ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set + SplitAt,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     /// Create a mutable view into this subset.
@@ -242,8 +242,9 @@ where S: Set + ViewMut<'a>,
 }
 
 impl<'a, S> ViewMut<'a> for Subset<S, &'a [usize]>
-where S: Set + ViewMut<'a>,
-      <S as ViewMut<'a>>::Type: Set,
+where
+    S: Set + ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     fn view_mut(&'a mut self) -> Self::Type {
@@ -258,29 +259,45 @@ where S: Set + ViewMut<'a>,
 }
 
 macro_rules! impl_split_at_fn {
-    ($self:ident, $split_fn:ident, $mid:expr) => {
-        {
-            if let Some(ref indices) = $self.indices {
-                let (indices_l, indices_r) = indices.split_at($mid);
-                let n = $self.data.len();
-                let offset = indices_r.first().map(|first| {
-                    *first - *indices_l.first().unwrap_or(first)
-                }).unwrap_or(n);
-                let (data_l, data_r) = $self.data.$split_fn(offset);
-                ( Subset { indices: Some(indices_l), data: data_l },
-                  Subset { indices: Some(indices_r), data: data_r } )
-            } else {
-                let (data_l, data_r) = $self.data.$split_fn($mid);
-                ( Subset { indices: None, data: data_l },
-                  Subset { indices: None, data: data_r } )
-            }
+    ($self:ident, $split_fn:ident, $mid:expr) => {{
+        if let Some(ref indices) = $self.indices {
+            let (indices_l, indices_r) = indices.split_at($mid);
+            let n = $self.data.len();
+            let offset = indices_r
+                .first()
+                .map(|first| *first - *indices_l.first().unwrap_or(first))
+                .unwrap_or(n);
+            let (data_l, data_r) = $self.data.$split_fn(offset);
+            (
+                Subset {
+                    indices: Some(indices_l),
+                    data: data_l,
+                },
+                Subset {
+                    indices: Some(indices_r),
+                    data: data_r,
+                },
+            )
+        } else {
+            let (data_l, data_r) = $self.data.$split_fn($mid);
+            (
+                Subset {
+                    indices: None,
+                    data: data_l,
+                },
+                Subset {
+                    indices: None,
+                    data: data_r,
+                },
+            )
         }
-    }
+    }};
 }
 
 /// This impl enables `Chunked` `Subset`s
 impl<V> SplitAt for Subset<V, &[usize]>
-where V: Set + SplitAt + std::fmt::Debug
+where
+    V: Set + SplitAt + std::fmt::Debug,
 {
     fn split_at(self, mid: usize) -> (Self, Self) {
         impl_split_at_fn!(self, split_at, mid)
@@ -317,7 +334,8 @@ impl<'a, S: std::ops::Index<usize> + ?Sized> std::ops::Index<usize> for Subset<&
     /// assert_eq!(3, subset[1]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
+        self.data
+            .index(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
     }
 }
 
@@ -334,7 +352,8 @@ impl<'a, S: std::ops::Index<usize> + ?Sized> std::ops::Index<usize> for Subset<&
     /// assert_eq!(3, subset[1]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
+        self.data
+            .index(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
     }
 }
 
@@ -354,7 +373,8 @@ impl<'a, S: std::ops::IndexMut<usize> + ?Sized> std::ops::IndexMut<usize> for Su
     /// assert_eq!(subset[2], 5);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data.index_mut(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
+        self.data
+            .index_mut(self.indices.as_ref().map_or(idx, |indices| indices[idx]))
     }
 }
 
@@ -379,7 +399,6 @@ impl<'a, S: std::ops::IndexMut<usize> + ?Sized> std::ops::IndexMut<usize> for Su
  * Iteration
  */
 
-
 impl<S: Set> Subset<S> {
     pub fn iter<'o, 'i: 'o>(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output>
     where
@@ -387,12 +406,14 @@ impl<S: Set> Subset<S> {
         <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
     {
         let iters = match self.indices {
-            Some(ref indices) => {
-                (None, Some(indices.iter().map(move |&i| self.data.get(i))))
-            }
-            None => (Some(self.data.view().into_iter()), None)
+            Some(ref indices) => (None, Some(indices.iter().map(move |&i| self.data.get(i)))),
+            None => (Some(self.data.view().into_iter()), None),
         };
-        iters.0.into_iter().flatten().chain(iters.1.into_iter().flatten())
+        iters
+            .0
+            .into_iter()
+            .flatten()
+            .chain(iters.1.into_iter().flatten())
     }
 }
 
@@ -405,52 +426,53 @@ impl<S: Set> Subset<S, &[usize]> {
         let iters = match self.indices {
             Some(indices) => {
                 let first = *indices.first().unwrap_or(&0);
-                (None, Some(indices.iter().map(move |&i| self.data.get(i - first))))
+                (
+                    None,
+                    Some(indices.iter().map(move |&i| self.data.get(i - first))),
+                )
             }
-            None => (Some(self.data.view().into_iter()), None)
+            None => (Some(self.data.view().into_iter()), None),
         };
-        iters.0.into_iter().flatten().chain(iters.1.into_iter().flatten())
+        iters
+            .0
+            .into_iter()
+            .flatten()
+            .chain(iters.1.into_iter().flatten())
     }
 }
 
 pub struct SubsetIter<'a, V> {
     indices: Option<&'a [usize]>,
-    data: V
+    data: V,
 }
 
 impl<'a, V: 'a> Iterator for SubsetIter<'a, V>
-where V: SplitAt + SplitFirst + Set + Dummy,
+where
+    V: SplitAt + SplitFirst + Set + Dummy,
 {
     type Item = V::First;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIter {
-            indices,
-            data,
-        } = self;
+        let SubsetIter { indices, data } = self;
         let data_slice = std::mem::replace(data, Dummy::dummy());
         match indices {
-            Some(ref mut indices) => {
-                indices.split_first().map(|(first, rest)| {
-                    let (item, right) = data_slice.split_first().expect("Corrupt subset");
-                    if let Some((second, _)) = rest.split_first() {
-                        let (_, r) = right.split_at(*second - *first - 1);
-                        *data = r;
-                    } else {
-                        let n = data.len();
-                        let (_, r) = right.split_at(n);
-                        *data = r;
-                    }
-                    *indices = rest;
-                    item
-                })
-            }
-            None => {
-                data_slice.split_first().map(|(item, rest)| {
-                    *data = rest;
-                    item
-                })
-            }
+            Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
+                let (item, right) = data_slice.split_first().expect("Corrupt subset");
+                if let Some((second, _)) = rest.split_first() {
+                    let (_, r) = right.split_at(*second - *first - 1);
+                    *data = r;
+                } else {
+                    let n = data.len();
+                    let (_, r) = right.split_at(n);
+                    *data = r;
+                }
+                *indices = rest;
+                item
+            }),
+            None => data_slice.split_first().map(|(item, rest)| {
+                *data = rest;
+                item
+            }),
         }
     }
 }
@@ -459,37 +481,30 @@ impl<'a, T: 'a + std::fmt::Debug> Iterator for SubsetIter<'a, &'a mut [T]> {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIter {
-            indices,
-            data,
-        } = self;
+        let SubsetIter { indices, data } = self;
         let data_slice = std::mem::replace(data, &mut []);
         match indices {
-            Some(ref mut indices) => {
-                indices.split_first().map(move |(first, rest)| {
-                    let (item, right) = data_slice.split_first_mut().expect("Corrupt subset");
-                    if let Some((second, _)) = rest.split_first() {
-                        dbg!(&right);
-                        dbg!(first);
-                        dbg!(second);
-                        dbg!(*second - *first - 1);
-                        let (_, r) = right.split_at_mut(*second - *first - 1);
-                        *data = r;
-                    } else {
-                        let n = data.len();
-                        let (_, r) = right.split_at_mut(n);
-                        *data = r;
-                    }
-                    *indices = rest;
-                    item
-                })
-            }
-            None => {
-                data_slice.split_first_mut().map(|(item, rest)| {
-                    *data = rest;
-                    item
-                })
-            }
+            Some(ref mut indices) => indices.split_first().map(move |(first, rest)| {
+                let (item, right) = data_slice.split_first_mut().expect("Corrupt subset");
+                if let Some((second, _)) = rest.split_first() {
+                    dbg!(&right);
+                    dbg!(first);
+                    dbg!(second);
+                    dbg!(*second - *first - 1);
+                    let (_, r) = right.split_at_mut(*second - *first - 1);
+                    *data = r;
+                } else {
+                    let n = data.len();
+                    let (_, r) = right.split_at_mut(n);
+                    *data = r;
+                }
+                *indices = rest;
+                item
+            }),
+            None => data_slice.split_first_mut().map(|(item, rest)| {
+                *data = rest;
+                item
+            }),
         }
     }
 }
@@ -522,6 +537,9 @@ where
 
 impl<S: Dummy, I> Dummy for Subset<S, I> {
     fn dummy() -> Self {
-        Subset { data: Dummy::dummy(), indices: None }
+        Subset {
+            data: Dummy::dummy(),
+            indices: None,
+        }
     }
 }

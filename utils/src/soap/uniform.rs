@@ -47,7 +47,7 @@ macro_rules! impl_from_grouped {
                 }
             }
         }
-    }
+    };
 }
 
 impl_from_grouped!(num::U2, 2);
@@ -343,10 +343,10 @@ macro_rules! impl_borrow_chunked {
 impl_borrow_chunked!(num::U2, 2);
 impl_borrow_chunked!(num::U3, 3);
 
-
 impl<S, N> ToOwned for UniChunked<S, N>
-where S: ToOwned,
-      N: num::Unsigned,
+where
+    S: ToOwned,
+    N: num::Unsigned,
 {
     type Owned = UniChunked<<S as ToOwned>::Owned, N>;
 
@@ -374,16 +374,17 @@ where S: ToOwned,
  */
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for usize
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = S::Output;
 
     /// Get a n element of the given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(chunked.data.get(N::value()*self..N::value()*(self+1)))
+            Some(chunked.data.get(N::value() * self..N::value() * (self + 1)))
         } else {
             None
         }
@@ -391,9 +392,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::Range<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -401,8 +403,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             Some(UniChunked {
-                data: chunked.data.get(N::value()*self.start..N::value()*self.end),
-                chunks: N::new()
+                data: chunked
+                    .data
+                    .get(N::value() * self.start..N::value() * self.end),
+                chunks: N::new(),
             })
         } else {
             None
@@ -411,9 +415,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -424,9 +429,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -437,9 +443,10 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -451,24 +458,29 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
     /// Get a `[begin..end]` (including the element at `end`) subview of the
     /// given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() { None }
-        else {(*self.start()..*self.end() + 1).get(chunked) }
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get(chunked)
+        }
     }
 }
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
-where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -480,7 +492,8 @@ where S: Set + Get<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N, I> Get<'i, 'o, I> for UniChunked<S, N>
-where I: GetIndex<'i, 'o, Self>,
+where
+    I: GetIndex<'i, 'o, Self>,
 {
     type Output = I::Output;
     /// Get a subview from this `UniChunked` collection according to the given
@@ -535,18 +548,22 @@ where I: GetIndex<'i, 'o, Self>,
     }
 }
 
-
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for usize
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = S::Output;
 
     /// Get a mutable chunk reference of the given `UniChunked` collection.
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(chunked.data.get_mut(N::value()*self..N::value()*(self+1)))
+            Some(
+                chunked
+                    .data
+                    .get_mut(N::value() * self..N::value() * (self + 1)),
+            )
         } else {
             None
         }
@@ -554,9 +571,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::Range<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -564,8 +582,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             Some(UniChunked {
-                data: chunked.data.get_mut(N::value()*self.start..N::value()*self.end),
-                chunks: N::new()
+                data: chunked
+                    .data
+                    .get_mut(N::value() * self.start..N::value() * self.end),
+                chunks: N::new(),
             })
         } else {
             None
@@ -574,9 +594,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -587,9 +608,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -600,9 +622,10 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -614,24 +637,29 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
     /// Get a mutable `[begin..end]` (including the element at `end`) subview of
     /// the given `UniChunked` collection.
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() { None }
-        else {(*self.start()..*self.end() + 1).get_mut(chunked) }
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get_mut(chunked)
+        }
     }
 }
 
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
-where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-      <S as Set>::Elem: Grouped<N>,
-      N: num::Unsigned,
+where
+    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    <S as Set>::Elem: Grouped<N>,
+    N: num::Unsigned,
 {
     type Output = UniChunked<S::Output, N>;
 
@@ -643,7 +671,8 @@ where S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
 }
 
 impl<'o, 'i: 'o, S, N, I> GetMut<'i, 'o, I> for UniChunked<S, N>
-where I: GetMutIndex<'i, 'o, Self>,
+where
+    I: GetMutIndex<'i, 'o, Self>,
 {
     type Output = I::Output;
     /// Get a mutable subview from this `UniChunked` collection according to the
@@ -667,8 +696,9 @@ where I: GetMutIndex<'i, 'o, Self>,
 }
 
 impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, N>
-where N: num::Unsigned,
-      T: Grouped<N>,
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
 {
     type Output = T::Type;
 
@@ -691,8 +721,9 @@ where N: num::Unsigned,
 }
 
 impl<T, N> std::ops::Index<usize> for UniChunked<&[T], N>
-where N: num::Unsigned,
-      T: Grouped<N>,
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
 {
     type Output = T::Type;
 
@@ -715,8 +746,9 @@ where N: num::Unsigned,
 }
 
 impl<T, N> std::ops::Index<usize> for UniChunked<&mut [T], N>
-where N: num::Unsigned,
-      T: Grouped<N>,
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
 {
     type Output = T::Type;
 
@@ -739,8 +771,9 @@ where N: num::Unsigned,
 }
 
 impl<T, N> std::ops::IndexMut<usize> for UniChunked<Vec<T>, N>
-where N: num::Unsigned,
-      T: Grouped<N>,
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
 {
     /// Mutably index the `UniChunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
@@ -763,8 +796,9 @@ where N: num::Unsigned,
 }
 
 impl<T, N> std::ops::IndexMut<usize> for UniChunked<&mut [T], N>
-where N: num::Unsigned,
-      T: Grouped<N>,
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
 {
     /// Mutably index the `UniChunked` mutably borrowed slice by `usize`.
     /// Note that this works for chunked collections that are themselves not
@@ -892,7 +926,6 @@ where
     }
 }
 
-
 impl<'a, S, N> View<'a> for UniChunked<S, N>
 where
     S: Set + View<'a>,
@@ -973,10 +1006,12 @@ impl<S: SplitAt + Set, N: num::Unsigned> SplitAt for UniChunked<S, N> {
     }
 }
 
-
 impl<S: Dummy, N: num::Unsigned> Dummy for UniChunked<S, N> {
     fn dummy() -> Self {
-        UniChunked { data: Dummy::dummy(), chunks: N::new() }
+        UniChunked {
+            data: Dummy::dummy(),
+            chunks: N::new(),
+        }
     }
 }
 

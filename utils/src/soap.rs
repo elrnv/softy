@@ -1,10 +1,10 @@
-mod subset;
 mod chunked;
+mod subset;
 mod uniform;
 mod view;
 
-pub use subset::*;
 pub use chunked::*;
+pub use subset::*;
 pub use uniform::*;
 pub use view::*;
 
@@ -47,7 +47,10 @@ pub trait Set {
 }
 
 /// An analog to the `ToOwned` trait from `std` that works for chunked views.
-pub trait ToOwned where Self: Sized {
+pub trait ToOwned
+where
+    Self: Sized,
+{
     type Owned;
     fn to_owned(self) -> Self::Owned;
     fn clone_into(self, target: &mut Self::Owned) {
@@ -120,9 +123,10 @@ where
 }
 
 impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for Vec<T>
-where I: std::slice::SliceIndex<[T]>,
-      <I as std::slice::SliceIndex<[T]>>::Output: 'o,
-      T: Clone,
+where
+    I: std::slice::SliceIndex<[T]>,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    T: Clone,
 {
     type Output = &'o I::Output;
     /// Index into a `Vec` using the `Get` trait.
@@ -163,9 +167,10 @@ where
 }
 
 impl<'o, 'i: 'o, T, I> GetMut<'i, 'o, I> for Vec<T>
-where I: std::slice::SliceIndex<[T]>,
-      <I as std::slice::SliceIndex<[T]>>::Output: 'o,
-      T: Clone,
+where
+    I: std::slice::SliceIndex<[T]>,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    T: Clone,
 {
     type Output = &'o mut I::Output;
     /// Index into a `Vec` using the `Get` trait.
@@ -269,7 +274,10 @@ impl<T> Push<T> for Vec<T> {
 
 /// A helper trait to split a set into two sets at a given index.
 /// This trait is used to implement iteration over `ChunkedView`s.
-pub trait SplitAt where Self: Sized {
+pub trait SplitAt
+where
+    Self: Sized,
+{
     /// Split self into two sets at the given midpoint.
     /// This function is analogous to `<[T]>::split_at`.
     fn split_at(self, mid: usize) -> (Self, Self);
@@ -285,11 +293,13 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
-pub trait SplitFirst where Self: Sized {
+pub trait SplitFirst
+where
+    Self: Sized,
+{
     type First;
     fn split_first(self) -> Option<(Self::First, Self)>;
 }
-
 
 /// Convert a collection into its underlying representation, effectively
 /// stripping any organizational info.
@@ -366,23 +376,23 @@ mod tests {
     #[test]
     fn var_of_uni_iter_test() {
         let u0 = UniChunked::<_, num::U2>::from_flat((1..=12).collect::<Vec<_>>());
-        let v1 = Chunked::from_offsets(vec![0,2,3,6], u0);
+        let v1 = Chunked::from_offsets(vec![0, 2, 3, 6], u0);
 
         let mut iter1 = v1.iter();
         let v0 = iter1.next().unwrap();
         let mut iter0 = v0.iter();
-        assert_eq!(Some(&[1,2]), iter0.next());
-        assert_eq!(Some(&[3,4]), iter0.next());
+        assert_eq!(Some(&[1, 2]), iter0.next());
+        assert_eq!(Some(&[3, 4]), iter0.next());
         assert_eq!(None, iter0.next());
         let v0 = iter1.next().unwrap();
         let mut iter0 = v0.iter();
-        assert_eq!(Some(&[5,6]), iter0.next());
+        assert_eq!(Some(&[5, 6]), iter0.next());
         assert_eq!(None, iter0.next());
         let v0 = iter1.next().unwrap();
         let mut iter0 = v0.iter();
-        assert_eq!(Some(&[7,8]), iter0.next());
-        assert_eq!(Some(&[9,10]), iter0.next());
-        assert_eq!(Some(&[11,12]), iter0.next());
+        assert_eq!(Some(&[7, 8]), iter0.next());
+        assert_eq!(Some(&[9, 10]), iter0.next());
+        assert_eq!(Some(&[11, 12]), iter0.next());
         assert_eq!(None, iter0.next());
     }
 }

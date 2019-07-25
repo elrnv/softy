@@ -238,60 +238,67 @@ impl SolverBuilder {
             .collect()
     }
 
-    /// Helper function to build an array of solids with associated material properties and attributes.
-    fn build_solids(solids: Vec<(TetMesh, SolidMaterial)>) -> Result<(Vec<TetMeshSolid>, VertexSet), Error> {
+    /// Helper function to build a global array of vertex data. This is stacked
+    /// vertex positions and velocities used by the solver to deform all meshes
+    /// at the same time.
+    fn build_vertex_set(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<VertexSet, Error> {
         let mut prev_pos = Chunked::new();
         let mut prev_vel = Chunked::new();
 
-        for (mesh, _) in solids.iter() {
-
+        for TetMeshSolid { tetmesh: ref mesh, .. } in solids.iter() {
             // Get previous position vector from the tetmesh.
-            let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
-            prev_pos.push(mesh_prev_pos);
+            prev_pos.push(UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec()));
             let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
             prev_vel.push(mesh_prev_vel);
         }
 
-        let vertex_set = VertexSet {
+        let mut num_static_shells = 0;
+        for TriMeshShell { trimesh: ref mesh, material } in shells.iter() {
+            match material.properties {
+                ShellProperties::Rigid => {
+                    let translation = trimesh.centroid();
+                    let rotation = [0.0; 3];
+                    prev_pos.push(UniChunked::from_grouped_vec(vec![translation, rotation]));
+                    prev_vel.push(UniChunked::from_grouped_vec(vec![[0.0; 3], [0.0; 3]]));
+                },
+                ShellProperties::Deformable { .. } => {
+                    prev_pos.push(UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec()));
+                    let mesh_prev_vel = mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                    prev_vel.push(UniChunked::from_grouped_vec(mesh_prev_vel));
+                }
+                ShellProperties::Static => {
+                    num_static_shells += 1;
+                    // Static meshes are not simulated
+                }
+            }
+        }
+
+        let num_meshes = solids.len() + shell.len() - num_static_shells;
+        let prev_pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_pos);
+        let prev_vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_vel);
+
+        VertexSet {
             prev_pos: prev_pos.clone(),
             prev_vel: prev_vel.clone(),
             cur_pos: RefCell::new(prev_pos.clone()),
             scaled_vel: RefCell::new(prev_vel.clone()),
-        };
+        }
+    }
 
+    /// Helper function to build an array of solids with associated material properties and attributes.
+    fn build_solids(solids: Vec<(TetMesh, SolidMaterial)>, vertex_set: &mut VertexSet) -> Result<Vec<TetMeshSolid>, Error> {
         // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
-        let solids = solids.into_iter().map(|(mut tetmesh, material)| {
+        solids.into_iter().map(|(mut tetmesh, material)| {
             // Prepare deformable solid for simulation.
             Self::prepare_solid_attributes(TetMeshSolid { tetmesh, material })?
-        }).collect::Vec<_>();
-
-        (solids, vertex_set)
+        }).collect::Vec<_>()
     }
 
     /// Helper function to build a list of shells with associated material properties and attributes.
     fn build_shells(shells: Vec<(TriMesh, ShellMaterial)>) -> Result<(Vec<TriMeshShell>, VertexSet), Error> {
-        let mut prev_pos = Chunked::new();
-        let mut prev_vel = Chunked::new();
-
-        for (mesh, _) in shells.iter() {
-            let mesh = TriMesh::from(mesh); // Triangulate mesh.
-
-            // Get previous position vector from the tetmesh.
-            let mesh_prev_pos = UniChunked::from_grouped_vec(mesh.vertex_positions().to_vec());
-            prev_pos.push(mesh_prev_pos);
-            let mesh_prev_vel = UniChunked::from_grouped_vec(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
-            prev_vel.push(mesh_prev_vel);
-        }
-
-        let vertex_set = VertexSet {
-            prev_pos: prev_pos.clone(),
-            prev_vel: prev_vel.clone(),
-            cur_pos: RefCell::new(prev_pos.clone()),
-            scaled_vel: RefCell::new(prev_vel.clone()),
-        };
-
-        // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
-        let shells = shells.into_iter().map(|(mut trimesh, material)| {
+        // Equip `PolyMesh`es with physics parameters, making them bona-fide shells.
+        let shells = shells.into_iter().map(|(polymesh, material)| {
+            let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
             Self::prepare_shell_attributes(TriMeshShell { trimesh, material })?
         }).collect::Vec<_>();
@@ -334,8 +341,10 @@ impl SolverBuilder {
             validate_input_mesh(mesh)?;
         }
 
-        let (solids, solid_vertex_set) = build_solids(solids);
-        let (shells, shell_vertex_set) = build_shells(shells);
+        let solids = build_solids(solids);
+        let shells = build_shells(shells);
+
+        let vertex_set = build_vertex_set(&solids, &shells);
 
         let volume_constraints = build_volume_constraints(&solids);
 
@@ -358,11 +367,11 @@ impl SolverBuilder {
 
         NonLinearProblem {
             vertex_set,
-            time_step,
             solids,
             shells,
-            volume_constraints,
             frictional_contacts,
+            volume_constraints,
+            time_step,
             gravity,
             displacement_bound,
             interrupt_checker: Box::new(|| false),
@@ -522,6 +531,51 @@ impl SolverBuilder {
         Ok(())
     }
 
+    /// Compute vertex masses on the given solid. The solid is assumed to have
+    /// volume and density attributes already.
+    pub fn compute_solid_vertex_masses(solid: &mut TetMeshSolid) {
+        let tetmesh = &mut solid.tetmesh;
+        let mut masses = vec![0.0; tetmesh.num_vertices()];
+
+        for (&vol, &density, cell) in zip!(
+            tetmesh
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tetmesh.cell_iter())
+        {
+            for i in 0..4 {
+                masses[cell[i]] += 0.25 * vol * density;
+            }
+        }
+
+        tetmesh.add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses);
+    }
+
+    /// Compute vertex masses on the given shell. The shell is assumed to have
+    /// area and density attributes already.
+    pub fn compute_shell_vertex_masses(shell: &mut TriMeshShell) {
+        let trimesh = &mut shell.trimesh;
+        let mut masses = vec![0.0; trimesh.num_vertices()];
+
+        for (&area, density, face) in zip!(trimesh 
+            .attrib_iter::<RefAreaType, CellIndex>(REFERENCE_AREA_ATTRIB)
+            .unwrap(),
+            tetmesh
+            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+            .unwrap(),
+            trimesh.face_iter())
+        {
+            for i in 0..3 {
+                masses[face[i]] += area * density / 3.0;
+            }
+        }
+
+        trimesh.add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses);
+    }
+
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid)
         -> Result<TetMeshSolid, Error>
@@ -575,7 +629,7 @@ impl SolverBuilder {
                 // if ok or already exists, everything is ok.
                 Err(Error::AlreadyExists(_)) => { }
                 _ => {} 
-            }
+ 
         } else {
             // No global elasticity parameters were given. Check that the mesh has the right
             // parameters.
@@ -587,9 +641,9 @@ impl SolverBuilder {
 
         // Prepare density parameter
         if let Some(density) = material.propertites.deformable.density {
-            match mesh.add_attrib_data::<LambdaType, CellIndex>(
-                LAMBDA_ATTRIB,
-                vec![elasticity.lambda; mesh.num_cells()]
+            match mesh.add_attrib_data::<DensityType, CellIndex>(
+                DENSITY_ATTRIB,
+                vec![density; mesh.num_cells()]
             ) {
                 Err(e) => return Err(e);
                 // if ok or already exists, everything is ok.
@@ -602,6 +656,9 @@ impl SolverBuilder {
                 return Err(Error::MissingDensityParam)
             }
         }
+
+        // Compute vertex masses.
+        compute_solid_vertex_masses(solid);
 
         Ok(solid)
     }
@@ -680,9 +737,9 @@ impl SolverBuilder {
 
                 // Prepare density parameter
                 if let Some(density) = material.density {
-                    match mesh.add_attrib_data::<LambdaType, FaceIndex>(
-                        LAMBDA_ATTRIB,
-                        vec![elasticity.lambda; mesh.num_faces()]
+                    match mesh.add_attrib_data::<DensityType, FaceIndex>(
+                        DENSITY_ATTRIB,
+                        vec![density; mesh.num_faces()]
                     ) {
                         Err(e) => return Err(e);
                         // if ok or already exists, everything is ok.
@@ -695,6 +752,9 @@ impl SolverBuilder {
                         return Err(Error::MissingDensityParam)
                     }
                 }
+
+                // Compute vertex masses.
+                //compute_shell_vertex_masses(shell);
             },
         };
 
@@ -734,15 +794,6 @@ impl Solver {
         self.problem_mut().interrupt_checker = checker;
     }
 
-    /// Get an immutable borrow for the underlying `TriMesh` of the kinematic object.
-    pub fn try_borrow_kinematic_mesh(&self) -> Option<Ref<'_, TriMesh>> {
-        self.problem().kinematic_object.as_ref().map(|x| x.borrow())
-        //match &self.solver.solver_data().problem.kinematic_object {
-        //    Some(x) => Some(x.borrow()),
-        //    None => None,
-        //}
-    }
-
     /// Get an immutable reference to the underlying problem.
     fn problem(&self) -> &NonLinearProblem {
         self.solver.solver_data().problem
@@ -754,7 +805,7 @@ impl Solver {
     }
 
     /// Get an immutable borrow for the underlying `TetMesh`.
-    pub fn borrow_mesh(&self) -> Ref<'_, TetMesh> {
+    pub fn borrow_solid_mesh(&self, index: usize) -> Ref<'_, TetMesh> {
         self.problem().tetmesh.borrow()
     }
 
@@ -766,11 +817,6 @@ impl Solver {
     /// Get simulation parameters.
     pub fn params(&self) -> SimParams {
         self.sim_params.clone()
-    }
-
-    /// Get the solid material model (if any).
-    pub fn solid_material(&self) -> Option<Material> {
-        self.solid_material
     }
 
     /// Update the maximal displacement allowed. If zero, no limit is applied.
@@ -1154,84 +1200,84 @@ impl Solver {
         res
     }
 
-    /// Revert previously committed solution. We just subtract step here.
-    fn revert_solution(
-        problem: &mut NonLinearProblem,
-        solution: Solution,
-        old_prev_pos: Vec<Vector3<f64>>,
-        old_prev_vel: Vec<Vector3<f64>>,
-    ) {
-        problem.revert_to(solution, old_prev_pos, old_prev_vel);
-        //problem.reset_warm_start();
-    }
+    ///// Revert previously committed solution. We just subtract step here.
+    //fn revert_solution(
+    //    problem: &mut NonLinearProblem,
+    //    solution: Solution,
+    //    old_prev_pos: Vec<Vector3<f64>>,
+    //    old_prev_vel: Vec<Vector3<f64>>,
+    //) {
+    //    problem.revert_to(solution, old_prev_pos, old_prev_vel);
+    //    //problem.reset_warm_start();
+    //}
 
-    fn output_meshes(&self, iter: u32) {
-        let mesh = self.borrow_mesh();
-        geo::io::save_tetmesh(
-            &mesh,
-            &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter + 1)),
-        )
-        .expect("Couldn't write to output tetrahedron mesh.");
-        if let Some(mesh) = self.try_borrow_kinematic_mesh() {
-            let polymesh = PolyMesh::from(mesh.clone());
-            geo::io::save_polymesh(
-                &polymesh,
-                &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter + 1)),
-            )
-            .expect("Couldn't write to output triangle lmesh.");
-        }
-    }
+    //fn output_meshes(&self, iter: u32) {
+    //    let mesh = self.borrow_mesh();
+    //    geo::io::save_tetmesh(
+    //        &mesh,
+    //        &std::path::PathBuf::from(format!("out/mesh_{}.vtk", iter + 1)),
+    //    )
+    //    .expect("Couldn't write to output tetrahedron mesh.");
+    //    if let Some(mesh) = self.try_borrow_kinematic_mesh() {
+    //        let polymesh = PolyMesh::from(mesh.clone());
+    //        geo::io::save_polymesh(
+    //            &polymesh,
+    //            &std::path::PathBuf::from(format!("out/trimesh_{}.vtk", iter + 1)),
+    //        )
+    //        .expect("Couldn't write to output triangle lmesh.");
+    //    }
+    //}
 
-    fn compute_objective(&self) -> f64 {
-        self.compute_objective_dx(self.solver.solver_data().solution.primal_variables)
-    }
+    //fn compute_objective(&self) -> f64 {
+    //    self.compute_objective_dx(self.solver.solver_data().solution.primal_variables)
+    //}
 
-    fn compute_objective_dx(&self, dx: &[f64]) -> f64 {
-        self.problem().objective_value(dx)
-    }
+    //fn compute_objective_dx(&self, dx: &[f64]) -> f64 {
+    //    self.problem().objective_value(dx)
+    //}
 
-    fn model_l1(&self) -> f64 {
-        self.model_l1_dx(self.solver.solver_data().solution.primal_variables)
-    }
+    //fn model_l1(&self) -> f64 {
+    //    self.model_l1_dx(self.solver.solver_data().solution.primal_variables)
+    //}
 
-    fn model_l1_dx(&self, dx: &[f64]) -> f64 {
-        self.problem().linearized_constraint_violation_model_l1(dx)
-    }
+    //fn model_l1_dx(&self, dx: &[f64]) -> f64 {
+    //    self.problem().linearized_constraint_violation_model_l1(dx)
+    //}
 
-    fn merit_l1(&self) -> f64 {
-        self.merit_l1_dx(self.solver.solver_data().solution.primal_variables)
-    }
+    //fn merit_l1(&self) -> f64 {
+    //    self.merit_l1_dx(self.solver.solver_data().solution.primal_variables)
+    //}
 
-    fn merit_l1_dx(&self, _dx: &[f64]) -> f64 {
-        0.0
-        //self.problem().linearized_constraint_violation_l1(dx)
-    }
+    //fn merit_l1_dx(&self, _dx: &[f64]) -> f64 {
+    //    0.0
+    //    //self.problem().linearized_constraint_violation_l1(dx)
+    //}
 
-    fn compute_residual(&self, residual: &mut Vec<f64>) -> f64 {
-        use ipopt::{BasicProblem, ConstrainedProblem};
-        let num_variables = self.problem().num_variables();
-        let num_constraints = self.problem().num_constraints();
+    //fn compute_residual(&self, residual: &mut Vec<f64>) -> f64 {
+    //    use ipopt::{BasicProblem, ConstrainedProblem};
+    //    let num_variables = self.problem().num_variables();
+    //    let num_constraints = self.problem().num_constraints();
 
-        // Reset the residual.
-        residual.clear();
-        residual.resize(num_variables + num_constraints, 0.0);
+    //    // Reset the residual.
+    //    residual.clear();
+    //    residual.resize(num_variables + num_constraints, 0.0);
 
-        let (objective_residual, constraint_violation) = residual.split_at_mut(num_variables);
+    //    let (objective_residual, constraint_violation) = residual.split_at_mut(num_variables);
 
-        self.compute_objective_gradient(objective_residual);
-        self.add_constraint_jacobian_product(objective_residual);
-        self.compute_constraint_violation(constraint_violation);
+    //    self.compute_objective_gradient(objective_residual);
+    //    self.add_constraint_jacobian_product(objective_residual);
+    //    self.compute_constraint_violation(constraint_violation);
 
-        let constraint_violation_norm = inf_norm(constraint_violation.iter().cloned());
-        let residual_norm = inf_norm(residual.iter().cloned());
+    //    let constraint_violation_norm = inf_norm(constraint_violation.iter().cloned());
+    //    let residual_norm = inf_norm(residual.iter().cloned());
 
-        println!(
-            "residual = {:?}, cv = {:?}",
-            residual_norm, constraint_violation_norm
-        );
+    //    println!(
+    //        "residual = {:?}, cv = {:?}",
+    //        residual_norm, constraint_violation_norm
+    //    );
 
-        residual_norm
-    }
+    //    residual_norm
+    //}
 
     fn initial_residual_error(&self) -> f64 {
         self.problem().initial_residual_error
@@ -1342,24 +1388,6 @@ impl Solver {
 
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        // TODO: This doesn't actually work because Ipopt holds a lock to the logfile, so we can
-        // fix this by either writing to a different log file, or prepending this info to the
-        // beginning of the solve before ipopt gets the lock since this info won't change between
-        // solves.
-        if let Some(ref log) = self.sim_params.log_file {
-            if let Ok(ref mut file) = std::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(log)
-            {
-                use std::io::Write;
-                writeln!(file, "Params = {:#?}", self.sim_params)?;
-                writeln!(file, "Material = {:#?}", self.solid_material)?;
-            }
-        }
-
-        println!("Params = {:#?}", self.sim_params);
-        println!("Material = {:#?}", self.solid_material);
 
         // Initialize the result of this function.
         let mut result = SolveResult {
@@ -1463,198 +1491,202 @@ impl Solver {
         dbg!(self.inner_iterations);
 
         // On success, update the mesh with new positions and useful metrics.
-        let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
 
-        // Write back friction impulses
-        self.add_friction_impulses_attrib();
-        self.add_contact_impulses_attrib();
+        for solid in self.solids.iter_mut() {
+            let ElasticityParameters { lambda, mu } =
+                solid.material.properties.deformable.unnormalized().elasticity;
+
+            // Write back friction impulses
+            self.add_friction_impulses_attrib(solid);
+            self.add_contact_impulses_attrib(solid);
+
+            let mut mesh = self.borrow_mut_mesh();
+
+            // Write back elastic strain energy for visualization.
+            Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
+
+            // Write back elastic forces on each node.
+            Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
+        }
 
         // Clear friction forces.
         self.problem_mut().clear_friction_impulses();
 
-        let mut mesh = self.borrow_mut_mesh();
-
-        // Write back elastic strain energy for visualization.
-        Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
-
-        // Write back elastic forces on each node.
-        Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
-
         Ok(result)
     }
 
-    /// Run the optimization solver on one time step. This method uses the trust region method to
-    /// resolve linearized constraints.
-    pub fn step_tr(&mut self) -> Result<SolveResult, Error> {
-        use ipopt::BasicProblem;
-
-        println!("params = {:?}", self.sim_params);
-        println!("material = {:?}", self.solid_material);
-
-        // Initialize the result of this function.
-        let mut result = SolveResult {
-            max_inner_iterations: 0,
-            inner_iterations: 0,
-            iterations: 0,
-            objective_value: 0.0,
-        };
-
-        let mut residual = Vec::new();
-        let mut residual_norm = self.compute_residual(&mut residual);
-        let mut objective_gradient = vec![0.0; self.problem().num_variables()];
-
-        let zero_dx = vec![0.0; self.dx().len()];
-
-        let rho = 0.1;
-
-        self.output_meshes(0);
-
-        // We should iterate until a relative residual goes to zero.
-        for iter in 0..self.sim_params.max_outer_iterations {
-            let step_result = self.inner_step();
-
-            let f_k = self.compute_objective_dx(&zero_dx);
-            let c_k = self.merit_l1_dx(&zero_dx);
-            assert_relative_eq!(c_k, self.model_l1_dx(&zero_dx));
-
-            let mu = if relative_eq!(c_k, 0.0) {
-                0.0
-            } else {
-                let fdx = self.compute_objective_gradient_product(&mut objective_gradient);
-                println!("fdx = {:?}", fdx);
-                (fdx / ((1.0 - rho) * c_k)).max(0.0)
-            };
-            println!("mu = {:?}", mu);
-
-            let prev_merit = f_k + mu * c_k;
-            let prev_model = prev_merit;
-
-            let f_k1 = self.compute_objective();
-
-            let merit_model = f_k1 + mu * self.model_l1();
-            let merit_value = f_k1 + mu * self.merit_l1();
-
-            // Since we are using linearized constraints, we compute the true
-            // residual and iterate until it vanishes. For unconstrained problems or problems with
-            // no linearized constraints, only one step is needed.
-            residual_norm = self.compute_residual(&mut residual);
-
-            // Commit the solution whether or not there is an error. In case of error we will be
-            // able to investigate the result.
-            let (old_sol, old_prev_pos, old_prev_vel) = self.commit_solution(true);
-
-            self.output_meshes(iter + 1);
-
-            // Update output result with new data.
-            match step_result {
-                Ok(step_result) => {
-                    result = result.combine_inner_result(&step_result);
-                }
-                Err(Error::InnerSolveError {
-                    status,
-                    iterations,
-                    objective_value,
-                }) => {
-                    // If the problem is infeasible, it may be that our step size is too small,
-                    // Try to increase it (but not past max_step) and try again:
-                    if status == ipopt::SolveStatus::InfeasibleProblemDetected {
-                        let max_step = self.max_step;
-                        let problem = self.problem_mut();
-                        if let Some(disp) = problem.displacement_bound {
-                            problem.displacement_bound.replace(max_step.min(1.5 * disp));
-                            continue;
-                        }
-                    } else {
-                        // Otherwise we don't know what else to do so return an error.
-                        result = result.combine_inner_step_data(iterations, objective_value);
-                        return Err(Error::SolveError(status, result));
-                    }
-                }
-                Err(e) => {
-                    // Unknown error: Reset warm start and return.
-                    self.solver.set_option("warm_start_init_point", "no");
-                    return Err(e);
-                }
-            }
-
-            if residual_norm <= f64::from(self.sim_params.outer_tolerance) {
-                break;
-            }
-
-            // Check that the objective is actually lowered. Trust region method for constraints.
-            // The justification is that our constraint violation estimate is much worse than the
-            // energy estimate from the solve of the inner problem. As such we will iterate on the
-            // infinity norm of all violated linearized constraints (constraint points outside the
-            // feasible domain).
-            {
-                let max_step = self.max_step;
-                let SolverDataMut {
-                    problem, solution, ..
-                } = self.solver.solver_data_mut();
-
-                if max_step > 0.0 {
-                    if let Some(disp) = problem.displacement_bound {
-                        println!(
-                            "f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
-                            prev_merit, merit_value, prev_model, merit_model
-                        );
-                        let reduction = (prev_merit - merit_value) / (prev_model - merit_model);
-                        println!("reduction = {:?}", reduction);
-
-                        let step_size = inf_norm(solution.primal_variables.iter().cloned());
-
-                        if reduction < 0.25 {
-                            if step_size < 1e-5 * max_step {
-                                break; // Reducing the step wont help at this point
-                            }
-                            // The constraint violation is not decreasing, roll back and reduce the step size.
-                            println!("step size taken {:?}", step_size);
-                            problem.displacement_bound.replace(0.25 * step_size);
-                            println!("reducing step to {:?}", problem.displacement_bound.unwrap());
-                        } else {
-                            println!("step size = {:?} vs. disp = {:?}", step_size, disp);
-                            if reduction > 0.75 && relative_eq!(step_size, disp) {
-                                // we took a full step
-                                // The linearized constraints are a good model of the actual constraints,
-                                // increase the step size and continue.
-                                problem.displacement_bound.replace(max_step.min(2.0 * disp));
-                                println!(
-                                    "increase step to {:?}",
-                                    problem.displacement_bound.unwrap()
-                                );
-                            } // Otherwise keep the step size the same.
-                        }
-                        if reduction < 0.15 {
-                            // Otherwise constraint violation is not properly decreasing
-                            Self::revert_solution(problem, old_sol, old_prev_pos, old_prev_vel);
-                        }
-                    }
-                }
-            }
-        }
-
-        if result.iterations > self.sim_params.max_outer_iterations {
-            eprintln!(
-                "WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
-                result.iterations, residual_norm
-            );
-        }
-
-        self.step_count += 1;
-
-        // On success, update the mesh with new positions and useful metrics.
-        let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
-
-        let mut mesh = self.borrow_mut_mesh();
-
-        // Write back elastic strain energy for visualization.
-        Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
-
-        // Write back elastic forces on each node.
-        Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
-
-        Ok(result)
-    }
+//    /// Run the optimization solver on one time step. This method uses the trust region method to
+//    /// resolve linearized constraints.
+//    pub fn step_tr(&mut self) -> Result<SolveResult, Error> {
+//        use ipopt::BasicProblem;
+//
+//        println!("params = {:?}", self.sim_params);
+//        println!("material = {:?}", self.solid_material);
+//
+//        // Initialize the result of this function.
+//        let mut result = SolveResult {
+//            max_inner_iterations: 0,
+//            inner_iterations: 0,
+//            iterations: 0,
+//            objective_value: 0.0,
+//        };
+//
+//        let mut residual = Vec::new();
+//        let mut residual_norm = self.compute_residual(&mut residual);
+//        let mut objective_gradient = vec![0.0; self.problem().num_variables()];
+//
+//        let zero_dx = vec![0.0; self.dx().len()];
+//
+//        let rho = 0.1;
+//
+//        self.output_meshes(0);
+//
+//        // We should iterate until a relative residual goes to zero.
+//        for iter in 0..self.sim_params.max_outer_iterations {
+//            let step_result = self.inner_step();
+//
+//            let f_k = self.compute_objective_dx(&zero_dx);
+//            let c_k = self.merit_l1_dx(&zero_dx);
+//            assert_relative_eq!(c_k, self.model_l1_dx(&zero_dx));
+//
+//            let mu = if relative_eq!(c_k, 0.0) {
+//                0.0
+//            } else {
+//                let fdx = self.compute_objective_gradient_product(&mut objective_gradient);
+//                println!("fdx = {:?}", fdx);
+//                (fdx / ((1.0 - rho) * c_k)).max(0.0)
+//            };
+//            println!("mu = {:?}", mu);
+//
+//            let prev_merit = f_k + mu * c_k;
+//            let prev_model = prev_merit;
+//
+//            let f_k1 = self.compute_objective();
+//
+//            let merit_model = f_k1 + mu * self.model_l1();
+//            let merit_value = f_k1 + mu * self.merit_l1();
+//
+//            // Since we are using linearized constraints, we compute the true
+//            // residual and iterate until it vanishes. For unconstrained problems or problems with
+//            // no linearized constraints, only one step is needed.
+//            residual_norm = self.compute_residual(&mut residual);
+//
+//            // Commit the solution whether or not there is an error. In case of error we will be
+//            // able to investigate the result.
+//            let (old_sol, old_prev_pos, old_prev_vel) = self.commit_solution(true);
+//
+//            self.output_meshes(iter + 1);
+//
+//            // Update output result with new data.
+//            match step_result {
+//                Ok(step_result) => {
+//                    result = result.combine_inner_result(&step_result);
+//                }
+//                Err(Error::InnerSolveError {
+//                    status,
+//                    iterations,
+//                    objective_value,
+//                }) => {
+//                    // If the problem is infeasible, it may be that our step size is too small,
+//                    // Try to increase it (but not past max_step) and try again:
+//                    if status == ipopt::SolveStatus::InfeasibleProblemDetected {
+//                        let max_step = self.max_step;
+//                        let problem = self.problem_mut();
+//                        if let Some(disp) = problem.displacement_bound {
+//                            problem.displacement_bound.replace(max_step.min(1.5 * disp));
+//                            continue;
+//                        }
+//                    } else {
+//                        // Otherwise we don't know what else to do so return an error.
+//                        result = result.combine_inner_step_data(iterations, objective_value);
+//                        return Err(Error::SolveError(status, result));
+//                    }
+//                }
+//                Err(e) => {
+//                    // Unknown error: Reset warm start and return.
+//                    self.solver.set_option("warm_start_init_point", "no");
+//                    return Err(e);
+//                }
+//            }
+//
+//            if residual_norm <= f64::from(self.sim_params.outer_tolerance) {
+//                break;
+//            }
+//
+//            // Check that the objective is actually lowered. Trust region method for constraints.
+//            // The justification is that our constraint violation estimate is much worse than the
+//            // energy estimate from the solve of the inner problem. As such we will iterate on the
+//            // infinity norm of all violated linearized constraints (constraint points outside the
+//            // feasible domain).
+//            {
+//                let max_step = self.max_step;
+//                let SolverDataMut {
+//                    problem, solution, ..
+//                } = self.solver.solver_data_mut();
+//
+//                if max_step > 0.0 {
+//                    if let Some(disp) = problem.displacement_bound {
+//                        println!(
+//                            "f_k = {:?}, f_k+1 = {:?}, m_k = {:?}, m_k+1 = {:?}",
+//                            prev_merit, merit_value, prev_model, merit_model
+//                        );
+//                        let reduction = (prev_merit - merit_value) / (prev_model - merit_model);
+//                        println!("reduction = {:?}", reduction);
+//
+//                        let step_size = inf_norm(solution.primal_variables.iter().cloned());
+//
+//                        if reduction < 0.25 {
+//                            if step_size < 1e-5 * max_step {
+//                                break; // Reducing the step wont help at this point
+//                            }
+//                            // The constraint violation is not decreasing, roll back and reduce the step size.
+//                            println!("step size taken {:?}", step_size);
+//                            problem.displacement_bound.replace(0.25 * step_size);
+//                            println!("reducing step to {:?}", problem.displacement_bound.unwrap());
+//                        } else {
+//                            println!("step size = {:?} vs. disp = {:?}", step_size, disp);
+//                            if reduction > 0.75 && relative_eq!(step_size, disp) {
+//                                // we took a full step
+//                                // The linearized constraints are a good model of the actual constraints,
+//                                // increase the step size and continue.
+//                                problem.displacement_bound.replace(max_step.min(2.0 * disp));
+//                                println!(
+//                                    "increase step to {:?}",
+//                                    problem.displacement_bound.unwrap()
+//                                );
+//                            } // Otherwise keep the step size the same.
+//                        }
+//                        if reduction < 0.15 {
+//                            // Otherwise constraint violation is not properly decreasing
+//                            Self::revert_solution(problem, old_sol, old_prev_pos, old_prev_vel);
+//                        }
+//                    }
+//                }
+//            }
+//        }
+//
+//        if result.iterations > self.sim_params.max_outer_iterations {
+//            eprintln!(
+//                "WARNING: Reached max outer iterations: {:?}\nResidual is: {:?}",
+//                result.iterations, residual_norm
+//            );
+//        }
+//
+//        self.step_count += 1;
+//
+//        // On success, update the mesh with new positions and useful metrics.
+//        let (lambda, mu) = self.solid_material.unwrap().elasticity.lame_parameters();
+//
+//        let mut mesh = self.borrow_mut_mesh();
+//
+//        // Write back elastic strain energy for visualization.
+//        Self::compute_strain_energy_attrib(&mut mesh, lambda, mu);
+//
+//        // Write back elastic forces on each node.
+//        Self::compute_elastic_forces_attrib(&mut mesh, lambda, mu);
+//
+//        Ok(result)
+//    }
 }
 #[cfg(test)]
 mod tests {

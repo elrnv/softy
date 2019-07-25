@@ -113,9 +113,9 @@ pub enum SourceIndex {
 
 /// A struct that keeps track of which objects are being affected by the contact
 /// constraints.
-pub struct FrictionalContact {
-    pub object: SourceIndex,
-    pub collider: SourceIndex,
+pub struct FrictionalContactConstraint {
+    pub object_index: SourceIndex,
+    pub collider_index: SourceIndex,
     pub constraint: Box<dyn ContactConstraint>,
 }
 
@@ -128,44 +128,45 @@ pub struct Vertex {
     cur_vel: [f64; 3],
 }
 
+/// This set collects all simulated vertex data. Meshes that are not simulated are excluded.
+/// The data is chunked into solids/shells, then into a subset of individual
+/// meshes, and finally into x,y,z coordinates. Rigid shells have 6 degrees of
+/// freedom, 3 for position and 3 for rotation, so a rigid shell will correspond
+/// to 6 floats in each of these vectors. This can be more generally
+/// interpreted as generalized coordinates.
 #[derive(Clone, Debug)]
 pub struct VertexSet {
     /// Position from the previous time step. We need to keep track of previous positions
     /// and shared with other solver components like energies and constraints.
-    prev_pos: Chunked<UniChunked<Vec<f64>, num::U3>>,
+    prev_pos: Chunked<Chunked<Chunked3<Vec<f64>>>>,
     /// Velocity from the previous time step.
-    prev_vel: Chunked<UniChunked<Vec<f64>, num::U3>>,
+    prev_vel: Chunked<Chunked<Chunked3<Vec<f64>>>>,
     /// Workspace vector to compute intermediate displacements.
-    cur_pos: RefCell<Chunked<UniChunked<Vec<f64>, num::U3>>>,
+    cur_pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
     /// Workspace vector to rescale variable values before performing computations on them.
-    cur_vel: RefCell<Chunked<UniChunked<Vec<f64>, num::U3>>>,
+    cur_vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 pub(crate) struct NonLinearProblem {
-    /// A set of solid vertices with attached data per vertex.
-    pub solid_vertex_set: VertexSet,
-    /// A set of shell vertices with attached data per vertex.
-    pub shell_vertex_set: VertexSet,
+    /// A set of vertices with attached data per vertex for all simulated meshes combined.
+    pub vertex_set: VertexSet,
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub solids: Vec<TetMeshSolid>,
-    /// A vector of solid surfaces corresponding to each solid in `solids. These
-    /// are generated for solids with a contact constraint.
-    pub solid_surfaces: Vec<Option<TetMeshSurface>>,
     /// Shell object represented by a triangle mesh.
     pub shells: Vec<TriMeshShell>,
-    /// Gravitational potential energy.
-    pub gravity: [f64; 3],
+    /// One way contact constraints between a pair of objects.
+    pub frictional_contacts: Vec<FrictionalContactConstraint>,
     /// Constraint on the total volume.
     pub volume_constraints: Vec<(usize, VolumeConstraint)>,
-    /// One way contact constraints between a pair of objects.
-    pub frictional_contacts: Vec<FrictionalContact>,
+    /// Gravitational potential energy.
+    pub gravity: [f64; 3],
+    /// The time step defines the amount of time elapsed between steps (calls to `advance`).
+    pub time_step: f64,
     /// Displacement bounds. This controls how big of a step we can take per vertex position
     /// component. In other words the bounds on the inf norm for each vertex displacement.
     pub displacement_bound: Option<f64>,
-    /// The time step defines the amount of time elapsed between steps (calls to `advance`).
-    pub time_step: f64,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: Box<FnMut() -> bool>,
@@ -177,18 +178,19 @@ pub(crate) struct NonLinearProblem {
     pub iter_counter: RefCell<usize>,
 }
 
-impl fmt::Debug for NonLinearProblem {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "NonLinearProblem {{ energy_model: {:?}, volume_constraint: {:?}, \
-             iterations: {:?} }}",
-            self.energy_model, self.volume_constraint, self.iterations
-        )
-    }
-}
-
 impl NonLinearProblem {
+    /// Given an `index` into the stacked array of vertex coordinates for the
+    /// contact mesh at the given `SourceIndex`, return the corresponding index
+    /// in the original source mesh. For instance if the source is a `TetMesh`,
+    /// then the index is remapped to be from the stacked vector of tetmesh
+    /// vertex coordinates.
+    pub(crate) fn source_coordinate_index(&self, obj_idx: SourceIndex, index: usize) -> usize {
+        match obj_idx {
+            SourceIndex::Solid(i) => 3 * self.solids[i].surface().indices[index / 3] + index % 3,
+            SourceIndex::Shell(i) => index,
+        }
+    }
+
     pub fn scale(&self) -> f64 {
         if self.time_step > 0.0 {
             1.0 / self.time_step
@@ -241,14 +243,14 @@ impl NonLinearProblem {
 
     /// Compute the set of currently active constraints into the given `Vec`.
     pub fn compute_active_constraint_set(&self, active_set: &mut Vec<usize>) {
-        if self.volume_constraint.is_some() {
-            active_set.push(0);
+        for i in 0..self.volume_constraints.len() {
+            active_set.push(i);
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let scc_active_constraints = scc.active_constraint_indices().unwrap_or_default();
+        for FrictionalContactConstraint { ref constraint, .. } in self.frictional_contacts.iter() {
+            let fc_active_constraints = constraint.active_constraint_indices().unwrap_or_default();
             let offset = active_set.len();
-            for c in scc_active_constraints.into_iter() {
+            for c in fc_active_constraints.into_iter() {
                 active_set.push(c + offset);
             }
         }
@@ -261,8 +263,8 @@ impl NonLinearProblem {
     }
 
     pub fn clear_friction_impulses(&mut self) {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.clear_frictional_contact_impulse();
+        for fc in self.frictional_contacts.iter() {
+            fc.constraint.clear_frictional_contact_impulse();
         }
     }
 
@@ -287,19 +289,35 @@ impl NonLinearProblem {
     pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
 
-        if self.smooth_contact_constraint.is_some() {
-            let prev_pos = self.vertex_set.prev_pos.data();
-            let cur_pos = self.vertex_set.cur_pos.data().borrow_mut();
-            let x = if let Some(uv) = solution.map(|sol| sol.primal_variables) {
-                let v = &self.scale_variables(uv);
-                self.integrate_step(v, &mut cur_pos);
-                cur_pos.as_slice()
-            } else {
-                prev_pos.as_slice()
-            };
+        // Update positions with the given solution (if any).
+        let x = if let Some(uv) = solution.map(|sol| sol.primal_variables) {
+            let v = &self.scale_variables(uv);
+            let cur_pos = self.vertex_set.cur_pos.borrow_mut().view_mut().into_flat();
+            let prev_pos = self.vertex_set.prev_pos.view().into_flat();
+            self.integrate_step(v, prev_pos, cur_pos);
+            ARef::Cell(self.vertex_set.cur_pos.borrow())
+        } else {
+            ARef::Plain(&self.vertex_set.prev_pos)
+        };
 
-            let scc = self.smooth_contact_constraint.as_mut().unwrap();
-            changed |= scc.update_cache(Some(x));
+        for FrictionalContactConstraint { object_index, collider_index, constraint } in frictional_contacts.iter() {
+            let object_pos = match object_index {
+                SourceIndex::Solid(i) => {
+                    Subset::from_indices(solids[i].surface().indices.clone(), x[0][i])
+                }
+                SourceIndex::Shell(i) => {
+                    Subset::all(x[1][i])
+                }
+            };
+            let collider_pos = match collider_index {
+                SourceIndex::Solid(i) => {
+                    Subset::from_indices(solids[i].surface().indices.clone(), x[0][i])
+                }
+                SourceIndex::Shell(i) => {
+                    Subset::all(x[1][i])
+                }
+            };
+            changed |= constraint.update_cache(object_pos, collider_pos);
         }
 
         changed
@@ -321,15 +339,20 @@ impl NonLinearProblem {
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
 
         // Remap friction forces (if any)
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            if self.volume_constraint.is_some() {
-                // Consume the first constraint if any.
-                old_constraint_set.next();
-                new_constraint_set.next();
+        for _ in self.volume_constraints.iter() {
+            // Consume the volume constraints if any.
+            old_constraint_set.next();
+            new_constraint_set.next();
+        }
+
+        for fc in self.frictional_contacts.iter_mut() {
+            let mut old_set = Vec::new();
+            let mut new_set = Vec::new();
+            for _ in 0..fc.constraint.num_contacts() {
+                old_set.push(old_constraint_set.next());
+                new_set.push(new_constraint_set.next());
             }
-            let old_set: Vec<_> = old_constraint_set.collect();
-            let new_set: Vec<_> = new_constraint_set.collect();
-            scc.remap_frictional_contact(&old_set, &new_set);
+            fc.constraint.remap_frictional_contact(&old_set, &new_set);
         }
     }
 
@@ -369,23 +392,27 @@ impl NonLinearProblem {
     //    changed
     //}
 
-    pub fn apply_frictional_contact_impulse(&self, vel: &mut [f64]) {
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.add_mass_weighted_frictional_contact_impulse(vel);
+    pub fn apply_frictional_contact_impulse(&self, vel: Chunked<Chunked<Chunked3<&mut [f64]>>>) {
+        for fc in self.frictional_contacts.iter() {
+            match fc.object_index {
+                SourceIndex::Solid(i) => {
+                    fc.constraint.add_mass_weighted_frictional_contact_impulse(vel[0][i]);
         }
     }
 
     /// Helper function to compute new positions from a given slice of unscaled velocities.
     /// This function is used for debugging.
     #[allow(dead_code)]
-    pub fn compute_step_from_unscaled_velocities(&self, uv: &[f64]) -> std::cell::Ref<'_, [Vector3<f64>]> {
+    pub fn compute_step_from_unscaled_velocities(&self, uv: &[f64])
+                -> std::cell::Ref< '_, Chunked<Chunked<Chunked3<Vec<f64>>>> >
+    {
         let cur_vel = &self.scale_variables(uv);
-        let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
         {
-            let mut x1 = self.vertex_set.cur_pos.data().borrow_mut();
-            self.integrate_step(reinterpret_slice(cur_vel), &mut x1);
+            let mut x1 = self.vertex_set.cur_pos.borrow_mut().view_mut().into_flat();
+            let mut x0 = self.vertex_set.prev_pos.view().into_flat();
+            self.integrate_step(cur_vel, x0, x1);
         }
-        std::cell::Ref::map(self.vertex_set.cur_pos.data().borrow(), |p| reinterpret_slice(p))
+        self.vertex_set.cur_pos.borrow()
     }
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
@@ -398,9 +425,7 @@ impl NonLinearProblem {
         and_warm_start: bool,
     ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
         let (old_warm_start, old_prev_pos, old_prev_vel) = {
-            let mut cur_vel = self.vertex_set.cur_vel.data().borrow_mut();
-            cur_vel.clear();
-            cur_vel.extend(self.scaled_variables_iter(uv));
+            let cur_vel = self.scale_variables(uv));
             self.apply_frictional_contact_impulse(&mut cur_vel);
 
             let cur_vel: &[Vector3<f64>] = reinterpret_slice(&cur_vel);
@@ -461,42 +486,42 @@ impl NonLinearProblem {
     }
 
     pub fn update_max_step(&mut self, step: f64) {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.update_max_step(step);
+        for fc in self.frictional_contacts.iter_mut() {
+            fc.constraint.update_max_step(step);
         }
     }
     pub fn update_radius_multiplier(&mut self, rad_mult: f64) {
-        if let Some(ref mut scc) = self.smooth_contact_constraint {
-            scc.update_radius_multiplier(rad_mult);
+        for fc in self.frictional_contacts.iter_mut() {
+            fc.constraint.update_radius_multiplier(rad_mult);
         }
     }
 
-    /// Revert to the given old solution by the given displacement.
-    pub fn revert_to(
-        &mut self,
-        solution: Solution,
-        old_prev_pos: Vec<Vector3<f64>>,
-        old_prev_vel: Vec<Vector3<f64>>,
-    ) {
-        {
-            // Reinterpret solver variables as positions in 3D space.
-            let mut prev_pos = self.vertex_set.prev_pos.data().borrow_mut();
-            let mut prev_vel = self.vertex_set.prev_vel.data().borrow_mut();
+    ///// Revert to the given old solution by the given displacement.
+    //pub fn revert_to(
+    //    &mut self,
+    //    solution: Solution,
+    //    old_prev_pos: Vec<Vector3<f64>>,
+    //    old_prev_vel: Vec<Vector3<f64>>,
+    //) {
+    //    {
+    //        // Reinterpret solver variables as positions in 3D space.
+    //        let mut prev_pos = self.vertex_set.prev_pos.data().borrow_mut();
+    //        let mut prev_vel = self.vertex_set.prev_vel.data().borrow_mut();
 
-            std::mem::replace(&mut *prev_vel, old_prev_vel);
-            std::mem::replace(&mut *prev_pos, old_prev_pos);
+    //        std::mem::replace(&mut *prev_vel, old_prev_vel);
+    //        std::mem::replace(&mut *prev_pos, old_prev_pos);
 
-            let mut tetmesh = self.tetmesh.borrow_mut();
-            let verts = tetmesh.vertex_positions_mut();
-            verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
+    //        let mut tetmesh = self.tetmesh.borrow_mut();
+    //        let verts = tetmesh.vertex_positions_mut();
+    //        verts.copy_from_slice(reinterpret_slice(prev_pos.as_slice()));
 
-            std::mem::replace(&mut self.warm_start, solution);
-        }
+    //        std::mem::replace(&mut self.warm_start, solution);
+    //    }
 
-        // Since we transformed the mesh, we need to invalidate its neighbour data so it's
-        // recomputed at the next time step (if applicable).
-        //self.update_constraints();
-    }
+    //    // Since we transformed the mesh, we need to invalidate its neighbour data so it's
+    //    // recomputed at the next time step (if applicable).
+    //    //self.update_constraints();
+    //}
 
     fn compute_constraint_violation(&self, unscaled_vel: &[f64], constraint: &mut [f64]) {
         use ipopt::ConstrainedProblem;
@@ -576,69 +601,71 @@ impl NonLinearProblem {
     //    value
     //}
 
-    /// Linearized constraint model violation measure.
-    pub fn linearized_constraint_violation_model_l1(&self, dx: &[f64]) -> f64 {
-        let mut value = 0.0;
+    ///// Linearized constraint model violation measure.
+    //pub fn linearized_constraint_violation_model_l1(&self, dx: &[f64]) -> f64 {
+    //    let mut value = 0.0;
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let prev_pos = self.vertex_set.prev_pos.data().borrow();
-            let x: &[Number] = prev_pos.as_slice();
+    //    if let Some(ref scc) = self.smooth_contact_constraint {
+    //        let prev_pos = self.vertex_set.prev_pos.data().borrow();
+    //        let x: &[Number] = prev_pos.as_slice();
 
-            let n = scc.constraint_size();
+    //        let n = scc.constraint_size();
 
-            let mut g = vec![0.0; n];
-            scc.constraint(x, dx, &mut g);
+    //        let mut g = vec![0.0; n];
+    //        scc.constraint(x, dx, &mut g);
 
-            let (g_l, g_u) = scc.constraint_bounds();
-            assert_eq!(g_l.len(), n);
-            assert_eq!(g_u.len(), n);
+    //        let (g_l, g_u) = scc.constraint_bounds();
+    //        assert_eq!(g_l.len(), n);
+    //        assert_eq!(g_u.len(), n);
 
-            value += g
-                .into_iter()
-                .zip(g_l.into_iter().zip(g_u.into_iter()))
-                .map(|(c, (l, u))| {
-                    assert!(l <= u);
-                    if c < l {
-                        // below lower bound
-                        l - c
-                    } else if c > u {
-                        // above upper bound
-                        c - u
-                    } else {
-                        // Constraint not violated
-                        0.0
-                    }
-                })
-                .sum::<f64>();
-        }
+    //        value += g
+    //            .into_iter()
+    //            .zip(g_l.into_iter().zip(g_u.into_iter()))
+    //            .map(|(c, (l, u))| {
+    //                assert!(l <= u);
+    //                if c < l {
+    //                    // below lower bound
+    //                    l - c
+    //                } else if c > u {
+    //                    // above upper bound
+    //                    c - u
+    //                } else {
+    //                    // Constraint not violated
+    //                    0.0
+    //                }
+    //            })
+    //            .sum::<f64>();
+    //    }
 
-        value
-    }
+    //    value
+    //}
 
-    fn integrate_step(&self, v: &[Number], x: &mut Vec<Vector3<Number>>) {
-        let vel: &[Vector3<Number>] = reinterpret_slice(v);
-        let x0 = self.vertex_set.prev_pos.data().borrow();
+    fn integrate_step(&self, v: &[Number], x0: &[Number], x: &mut [Number]) {
         // In static simulations, velocity is simply displacement.
         let dt = if self.time_step > 0.0 {
             self.time_step
         } else {
             1.0
         };
-        x.resize(vel.len(), Vector3::zeros());
+        assert_eq!(v.len(), x.len());
+        assert_eq!(x0.len(), x.len());
         x.iter_mut()
-            .zip(x0.iter().zip(vel.iter()))
+            .zip(x0.iter().zip(v.iter()))
             .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
     }
 
     /// A convenience function to integrate the given velocity by the internal time step. For
     /// implicit itegration this boils down to a simple multiply by the time step.
-    pub fn compute_step(&self, v: &[Number]) -> std::cell::Ref<'_, [Number]> {
+    pub fn compute_step(&self, v: &[Number])
+                        -> std::cell::Ref< '_, Chunked<Chunked<Chunked3<Vec<f64>>>> >
+    {
         {
-            let mut x1 = self.vertex_set.cur_pos.data().borrow_mut();
-            self.integrate_step(v, &mut x1);
+            let mut x1 = self.vertex_set.cur_pos.borrow_mut().view_mut().into_flat();
+            let mut x0 = self.vertex_set.prev_pos.view().into_flat();
+            self.integrate_step(v, x0, x1);
         }
-        std::cell::Ref::map(self.vertex_set.cur_pos.data().borrow(), |pos| {
-            reinterpret::reinterpret_slice(pos)
+        std::cell::Ref::map(self.vertex_set.cur_pos.borrow(), |pos| {
+            pos.view().into_flat()
         })
     }
 
@@ -648,22 +675,28 @@ impl NonLinearProblem {
         unscaled_var.iter().map(move |&val| val * scale)
     }
 
-    pub fn scale_variables(&self, v: &[Number]) -> std::cell::Ref<'_, [Number]> {
+    pub fn scale_variables(&self, v: &[Number])
+            -> std::cell::Ref< '_, Chunked<Chunked<Chunked3<Vec<f64>>>> >
+    {
         {
-            let mut sv = self.vertex_set.cur_vel.data().borrow_mut();
-            sv.clear();
-            sv.extend(self.scaled_variables_iter(v));
+            let mut sv = self.vertex_set.cur_vel.borrow_mut().view_mut().into_flat();
+            for (output, input) in sv.iter_mut().zip(self.scaled_variables_iter(v)) {
+                *output = input;
+            }
         }
-        std::cell::Ref::map(self.vertex_set.cur_vel.data().borrow(), |val| val.as_slice())
+        self.vertex_set.cur_vel.borrow()
     }
 
     /// Compute and return the objective value.
     pub fn objective_value(&self, v: &[Number]) -> f64 {
         let x1 = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.data().borrow();
-        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let solids_prev_pos = self.vertex_set.prev_pos.borrow();
 
-        let mut obj = self.energy_model.energy(x0, x1);
+        let mut obj = 0.0;
+
+        for solid in self.solids.iter() {
+            obj += self.energy_model.energy(x0, x1);
+        }
 
         obj += self.gravity.energy(x0, x1);
 
@@ -1001,11 +1034,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn num_constraint_jacobian_non_zeros(&self) -> usize {
         let mut num = 0;
-        if let Some(ref vc) = self.volume_constraint {
+        for (_, vc) in self.volume_constraints.iter() {
             num += vc.constraint_jacobian_size();
         }
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            num += scc.constraint_jacobian_size();
+        for fc in self.frictional_contacts.iter() {
+            num += fc.constraint.constraint_jacobian_size();
             //println!("scc jac size = {:?}", num);
         }
         num
@@ -1026,22 +1059,22 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
         let v = &self.scale_variables(uv);
         let x = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.data().borrow();
-        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let prev_pos = self.vertex_set.prev_pos.view();
+        let x0 = prev_pos.into_flat();
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
         let mut i = 0; // Counter.
 
-        if let Some(ref vc) = self.volume_constraint {
+        for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_size();
             vc.constraint(x0, x, &mut g[i..i + n]);
             i += n;
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let n = scc.constraint_size();
-            scc.constraint(x0, x, &mut g[i..i + n]);
+        for fc in self.frictional_contacts.iter() {
+            let n = fc.constraint.constraint_size();
+            fc.constraint.constraint(x0, x, &mut g[i..i + n]);
         }
 
         true
@@ -1087,9 +1120,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
+        for fc in self.frictional_contacts.iter() {
             use ipopt::BasicProblem;
-            let nrows = scc.constraint_size();
+            let nrows = fc.constraint.constraint_size();
             let ncols = self.num_variables();
             let mut jac = vec![vec![0; nrows]; ncols]; // col major
 

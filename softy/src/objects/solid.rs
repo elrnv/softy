@@ -22,7 +22,10 @@ impl TetMeshSolid {
 
     pub fn surface(&self) -> &TetMeshSurface {
         let mut surface = self.surface.borrow_mut();
-        &surface.unwrap_or_else(move || surface = TetMeshSurface::from(&self.tetmesh))
+        surface.as_ref().unwrap_or_else(move || {
+            *surface = Some(TetMeshSurface::from(&self.tetmesh));
+            surface.as_ref().unwrap()
+        })
     }
 }
 
@@ -45,8 +48,8 @@ impl<'a> Gravity<TetMeshGravity<'a>> for TetMeshSolid {
 }
 
 pub(crate) struct TetMeshSurface {
-    indices: Vec<usize>,
-    trimesh: TriMesh,
+    pub indices: Vec<usize>,
+    pub trimesh: TriMesh,
 }
 
 impl From<&TetMesh> for TetMeshSurface {

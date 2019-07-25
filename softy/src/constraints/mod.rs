@@ -22,33 +22,35 @@ pub use self::implicit_contact::*;
 pub use self::point_contact::*;
 pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
+use utils::soap::*;
+use utils::aref::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
 pub fn build_contact_constraint(
-    solid: &TetMeshSolid,
-    shell: &TriMeshShell,
+    object: &TriMesh,
+    collider: &TriMesh,
     params: FrictionalContactParams,
     time_step: f64,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
         ContactType::SPImplicit => Box::new(SPImplicitContactConstraint::new(
-            solid,
-            shell,
+            object,
+            collider,
             params.kernel,
             params.friction_params,
         )?),
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
-            solid,
-            shell,
+            object,
+            collider,
             params.kernel,
             params.friction_params,
             time_step,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
-            solid,
-            shell,
+            object,
+            collider,
             params.kernel,
             params.friction_params,
         )?),
@@ -133,43 +135,10 @@ fn remap_values_complex_test() {
     assert_eq!(new_values, vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]);
 }
 
-/// Return a vector of masses per simulation mesh vertex.
-pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
-    let mut all_masses = vec![0.0; tetmesh.num_vertices()];
-
-    for (&vol, cell) in tetmesh
-        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-        .unwrap()
-        .zip(tetmesh.cell_iter())
-    {
-        for i in 0..4 {
-            all_masses[cell[i]] += 0.25 * vol * density;
-        }
-    }
-
-    all_masses
-}
-
-/// A reference abstracting over borrowed cell refs and plain old & style refs.
-pub enum ARef<'a, T: ?Sized> {
-    Plain(&'a T),
-    Cell(std::cell::Ref<'a, T>),
-}
-
-impl<'a, T: ?Sized> std::ops::Deref for ARef<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            ARef::Plain(r) => r,
-            ARef::Cell(r) => r,
-        }
-    }
-}
-
 pub trait ContactConstraint:
     Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
 {
+    fn num_constraints(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
     /// Provide the frictional contact mutable data.
@@ -198,17 +167,17 @@ pub trait ContactConstraint:
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,
-        contact_force: &[f64],
-        x: &[[f64; 3]],
-        dx: &[[f64; 3]],
+        contact_force: Chunked3<&[f64]>,
+        x: Chunked3<&[f64]>,
+        dx: Chunked3<&[f64]>,
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]);
+    fn add_mass_weighted_frictional_contact_impulse(&self, x: Subset<Chunked3<&mut [f64]>>);
+
     /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
-        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+    fn add_friction_impulse(&self, grad: Chunked3<&mut [f64]>, multiplier: f64) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -240,13 +209,12 @@ pub trait ContactConstraint:
                 };
 
                 let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                grad[vertex_idx] += Vector3(r_t.into()) * multiplier;
+                grad[vertex_idx] = (Vector3(grad[vertex_idx]) + r_t * multiplier).into();
             }
         }
     }
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
-        let vel: &[Vector3<f64>] = reinterpret_slice(v);
+    fn frictional_dissipation(&self, vel: Chunked3<&[f64]>) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
@@ -280,7 +248,7 @@ pub trait ContactConstraint:
                 };
 
                 let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                dissipation += vel[vertex_idx].dot(r_t);
+                dissipation += Vector3(vel[vertex_idx]).dot(r_t);
             }
         }
         dissipation
@@ -291,12 +259,12 @@ pub trait ContactConstraint:
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], impulse: &mut [[f64; 3]]);
+    fn compute_contact_impulse(&self, x: Chunked3<&[f64]>, contact_force: Chunked3<&[f64]>, impulse: Chunked3<&mut [f64]>);
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self, x: &[f64]) -> Result<Vec<[f64; 3]>, crate::Error>;
+    fn contact_normals(&self, x: Chunked3<&[f64]>) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
@@ -308,7 +276,7 @@ pub trait ContactConstraint:
     /// Note that this function doesn't remap any data corresponding to the old neighbourhood
     /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
     /// old data needed to perform the remapping of any user data.
-    fn update_cache(&mut self, x: Option<&[f64]>) -> bool;
+    fn update_cache(&mut self, object_pos: Subset<Chunked3<&[f64]>>, collider_pos: Subset<Chunked3<&[f64]>>) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser

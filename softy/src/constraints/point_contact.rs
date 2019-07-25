@@ -15,6 +15,7 @@ use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
 use utils::zip;
+use utils::soap::*;
 
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
@@ -24,11 +25,10 @@ pub struct PointContactConstraint {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
     /// Points where collision and contact occurs.
-    pub contact_points: RefCell<UniChunked<Vec<f64>, num::U3>>,
+    pub contact_points: RefCell<Chunked3<Vec<f64>>,
 
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
-    pub vertex_masses: Vec<f64>,
 
     /// Store the indices to the Hessian here. These will be served through the constraint
     /// interface.
@@ -49,17 +49,9 @@ impl PointContactConstraint {
         friction_params: FrictionParams,
         density: f64,
     ) -> Result<Self, Error> {
-        let mut surf_mesh = solid.tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
-        let sim_verts = surf_mesh
-            .remove_attrib::<VertexIndex>("i")
-            .expect("Failed to map indices.")
-            .into_buffer()
-            .into_vec::<usize>()
-            .expect("Incorrect index type: not usize");
-
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
-            .trimesh(&surf_mesh)
+            .trimesh(object)
             .kernel(kernel)
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
@@ -68,12 +60,11 @@ impl PointContactConstraint {
             });
 
         if let Some(surface) = surface_builder.build() {
-            let query_points = shell.trimesh.vertex_positions();
+            let query_points = collider.vertex_positions();
 
             let constraint = PointContactConstraint {
-                sim_verts,
                 implicit_surface: RefCell::new(surface),
-                collision_object: Rc::clone(trimesh_rc),
+                contact_points: RefCell::new(Chunked3::from_grouped_slice(query_points.to_vec())),
                 frictional_contact: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
                         Some(FrictionalContact::new(fparams))
@@ -81,7 +72,6 @@ impl PointContactConstraint {
                         None
                     }
                 }),
-                vertex_masses: compute_vertex_masses(&solid.tetmesh, density),
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -269,6 +259,9 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
+    fn num_contacts(&self) -> usize {
+        self.contact_points.len()
+    }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
     }
@@ -575,15 +568,14 @@ impl ContactConstraint for PointContactConstraint {
         friction_steps - 1
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]) {
+    fn add_mass_weighted_frictional_contact_impulse(&self, vel: Subset<Chunked3<&mut [f64]>>) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
             }
-            assert_eq!(self.sim_verts.len(), frictional_contact.impulse.len());
-            for (&i, f) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
+            for (v, f, m) in zip!(vel.iter_mut(), frictional_contact.impulse.iter(), self.vertex_masses.iter()) {
                 for j in 0..3 {
-                    x[3 * i + j] += f[j] / self.vertex_masses[i];
+                    v[j] += f[j] / m;
                 }
             }
         }
@@ -728,17 +720,12 @@ impl ContactConstraint for PointContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self, x: Option<&[f64]>) -> bool {
-        let mesh = self.collision_object.borrow();
-        let query_points = reinterpret_slice::<_, [f64; 3]>(mesh.vertex_positions());
-        if let Some(x) = x {
-            let pos: &[[f64; 3]] = reinterpret_slice(x);
-            let points_iter = self.sim_verts.iter().map(|&i| pos[i]);
-            self.implicit_surface.borrow_mut().update(points_iter);
-        } // Else don't update the surface at all.
+    fn update_cache(&mut self, object_pos: Subset<Chunked3<&[f64]>>, collider_pos: Subset<Chunked3<&[f64]>>) -> bool {
+        self.implicit_surface.borrow_mut().update(object_pos.iter());
+
         let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_query_neighbourhood();
-        surf.cache_neighbours(query_points)
+        surf.cache_neighbours(collider_pos.into())
     }
 
     fn cached_neighbourhood_indices(&self) -> Vec<Index> {

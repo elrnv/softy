@@ -13,6 +13,7 @@ use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
 use utils::soap::*;
+use objects::*;
 
 use crate::TetMesh;
 use crate::TriMesh;

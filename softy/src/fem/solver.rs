@@ -18,6 +18,7 @@ use std::{
     rc::Rc,
 };
 use utils::soap::*;
+use objects::*;
 
 use approx::*;
 

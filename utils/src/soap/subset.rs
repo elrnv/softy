@@ -101,6 +101,12 @@ impl<'a, S: Set> Subset<S> {
 }
 
 impl<'a, S: Set, I> Subset<S, I> {
+    /// Get a references to the underlying indices. If `None` is returned, then
+    /// this subset spans the entire domain `data`.
+    pub fn indices(&self) -> Option<&I> {
+        self.indices.as_ref()
+    }
+
     /// Return the superset of this `Subset`. This is just the set it was created with.
     pub fn into_super(self) -> S {
         self.data

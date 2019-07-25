@@ -1,6 +1,6 @@
-mod tet_nh;
-mod tet_inv_nh;
-mod tri_nh;
+pub mod tet_nh;
+pub mod tet_inv_nh;
+pub mod tri_nh;
 
 use crate::energy::Energy;
 

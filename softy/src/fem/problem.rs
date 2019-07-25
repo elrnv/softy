@@ -13,7 +13,7 @@ use reinterpret::*;
 use std::fmt;
 use std::{cell::RefCell, rc::Rc};
 use utils::soap::*;
-use objects::*;
+use crate::objects::*;
 
 use crate::TetMesh;
 use crate::TriMesh;
@@ -676,7 +676,7 @@ impl NonLinearProblem {
         unscaled_var.iter().map(move |&val| val * scale)
     }
 
-    pub fn scale_variables(&self, v: &[Number])
+    pub fn update_velocity(&self, v: &[Number])
             -> std::cell::Ref< '_, Chunked<Chunked<Chunked3<Vec<f64>>>> >
     {
         {
@@ -731,17 +731,20 @@ impl NonLinearProblem {
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32 {
-        if self.smooth_contact_constraint.is_some() {
+        if self.frictional_contacts.is_empty() {
+            return 0;
+        }
+
+        for fc in self.frictional_contacts.iter() {
             self.scale_variables(solution.primal_variables);
             let NonLinearProblem {
                 vertex_set,
                 volume_constraint,
-                smooth_contact_constraint,
+                frictional_contacts,
                 time_step,
                 ..
             } = self;
-            let prev_pos = vertex_set.prev_pos.data().borrow();
-            let position: &[[f64; 3]] = reinterpret::reinterpret_slice(prev_pos.as_slice());
+            let prev_pos = vertex_set.prev_pos.borrow();
             let offset = if volume_constraint.is_some() { 1 } else { 0 };
             let contact_impulse = Self::contact_impulse_magnitudes(
                 &solution.constraint_multipliers[offset..],
@@ -755,13 +758,11 @@ impl NonLinearProblem {
                 .unwrap()
                 .update_frictional_contact_impulse(
                     &contact_impulse,
-                    position,
+                    prev_pos,
                     reinterpret_slice(velocity),
                     potential_values,
                     friction_steps,
                 )
-        } else {
-            0
         }
     }
 

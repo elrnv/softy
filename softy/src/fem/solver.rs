@@ -18,12 +18,11 @@ use std::{
     rc::Rc,
 };
 use utils::soap::*;
-use objects::*;
+use crate::objects::{TetMeshSolid, TriMeshShell};
 
 use approx::*;
 
 use crate::inf_norm;
-use crate::mask_iter::*;
 
 use super::{MuStrategy, NonLinearProblem, SimParams, Solution};
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};

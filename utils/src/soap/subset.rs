@@ -54,6 +54,9 @@ pub struct Subset<S, I = Vec<usize>> {
     pub(crate) data: S,
 }
 
+/// A borrowed subset.
+pub type SubsetView<'a, S> = Subset<S, &'a [usize]>;
+
 impl<'a, S: Set> Subset<S> {
     /// Create a subset of elements from the original set given at the specified indices.
     ///
@@ -79,6 +82,34 @@ impl<'a, S: Set> Subset<S> {
         })
     }
 
+    /// collection of indices to be in sorted order and have no duplicates.
+    ///
+    /// # Panics
+    ///
+    /// This function panics when given a collection of unsorted indices.
+    /// It also panics when indices are repeated.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3];
+    /// let subset = Subset::from_indices(vec![0,2], v.as_slice());
+    /// assert_eq!(1, subset[0]);
+    /// assert_eq!(3, subset[1]);
+    /// ```
+    pub fn from_uniqe_ordered_indices(indices: Vec<usize>, data: S) -> Self {
+        // Ensure that indices are sorted and there are no duplicates.
+
+        assert!(Self::is_sorted(&indices));
+        assert!(!Self::has_duplicates(&indices));
+
+        Self::validate(Subset {
+            indices: Some(indices),
+            data,
+        })
+    }
+
     /// Create a subset with all elements from the original set.
     ///
     /// # Example
@@ -93,10 +124,59 @@ impl<'a, S: Set> Subset<S> {
     /// assert_eq!(None, subset_iter.next());
     /// ```
     pub fn all(data: S) -> Self {
-        Self::validate(Subset {
+        Subset {
             indices: None,
             data,
-        })
+        }
+    }
+}
+
+impl<'a, S, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
+    /// A helper function that checks if a given collection of indices has duplicates.
+    /// It is assumed that the given indices are already in sorted order.
+    fn has_duplicates(indices: &I) -> bool {
+        let mut index_iter = indices.borrow().iter().cloned();
+        if let Some(mut prev) = index_iter.next() {
+            for cur in index_iter {
+                if cur == prev {
+                    return true;
+                } else {
+                    prev = cur;
+                }
+            }
+        }
+        false
+    }
+
+    /// Checks that the given set of indices are sorted.
+    // TODO: replace this with std version when RFC 2351 lands
+    // (https://github.com/rust-lang/rust/issues/53485)
+    fn is_sorted(indices: &I) -> bool {
+        Self::is_sorted_by(indices, |a, b| a.partial_cmp(b))
+    }
+
+    /// Checks that the given set of indices are sorted by the given compare function.
+    fn is_sorted_by<F>(indices: &I, mut compare: F) -> bool
+    where
+        F: FnMut(&usize, &usize) -> Option<std::cmp::Ordering>,
+    {
+        let mut iter = indices.borrow().iter();
+        let mut last = match iter.next() {
+            Some(e) => e,
+            None => return true,
+        };
+
+        while let Some(curr) = iter.next() {
+            if compare(&last, &curr)
+                .map(|o| o == std::cmp::Ordering::Greater)
+                .unwrap_or(true)
+            {
+                return false;
+            }
+            last = curr;
+        }
+
+        true
     }
 }
 

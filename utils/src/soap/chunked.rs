@@ -9,7 +9,7 @@ pub struct Chunked<S, O = Vec<usize>> {
     pub(crate) data: S,
 }
 
-impl<S, C> Chunked<S, C> {
+impl<S, O> Chunked<S, O> {
     /// Get a immutable reference to the underlying data.
     ///
     /// # Example

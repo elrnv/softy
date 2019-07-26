@@ -381,7 +381,7 @@ where
 {
     type Output = S::Output;
 
-    /// Get a n element of the given `UniChunked` collection.
+    /// Get an element of the given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
             Some(chunked.data.get(N::value() * self..N::value() * (self + 1)))
@@ -1020,5 +1020,12 @@ impl<S: IntoFlat, N> IntoFlat for UniChunked<S, N> {
     /// Strip away the uniform organization of the underlying data, and return the underlying data.
     fn into_flat(self) -> Self::FlatType {
         self.data.into_flat()
+    }
+}
+
+/// Required for building `Subset`s of `UniChunked` types.
+impl<S: RemovePrefix, N: num::Unsigned> RemovePrefix for UniChunked<S, N> {
+    fn remove_prefix(&mut self, n: usize) {
+        self.data.remove_prefix(n * N::value());
     }
 }

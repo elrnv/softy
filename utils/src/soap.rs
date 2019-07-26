@@ -368,6 +368,48 @@ impl<T> Dummy for &mut [T] {
     }
 }
 
+/// A helper trait used to help implement the Subset. This trait allows
+/// abstract collections to remove a number of elements from the
+/// beginning, which is what we need for subsets.
+pub trait RemovePrefix {
+    /// Remove `n` elements from the beginning.
+    fn remove_prefix(&mut self, n: usize);
+}
+
+impl<T> RemovePrefix for Vec<T> {
+    fn remove_prefix(&mut self, n: usize) {
+        self.rotate_left(n);
+        self.truncate(self.len() - n);
+    }
+}
+
+impl<T> RemovePrefix for &[T] {
+    fn remove_prefix(&mut self, n: usize) {
+        let (_, r) = self.split_at(n);
+        *self = r;
+    }
+}
+
+impl<T> RemovePrefix for &mut [T] {
+    /// Remove a prefix of size `n` from this mutable slice.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use::utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut s = v.as_mut_slice();
+    /// s.remove_prefix(2);
+    /// assert_eq!(&[3,4,5], s);
+    /// ```
+    fn remove_prefix(&mut self, n: usize) {
+        let data = std::mem::replace(self, &mut []);
+
+        let (_, r) = data.split_at_mut(n);
+        *self = r;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

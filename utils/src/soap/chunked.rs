@@ -1171,6 +1171,33 @@ impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
     }
 }
 
+/// Required for subsets of chunked collections.
+impl<S: RemovePrefix, O: RemovePrefix + std::borrow::Borrow<[usize]>> RemovePrefix
+    for Chunked<S, O>
+{
+    /// Remove a prefix of size `n` from a chunked collection.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+    /// s.remove_prefix(2);
+    /// let mut iter = s.iter();
+    /// assert_eq!(Some(&[4,5][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn remove_prefix(&mut self, n: usize) {
+        let chunks = self.chunks.borrow();
+        assert!(n < chunks.len());
+        let offset = *chunks.first().unwrap();
+
+        self.chunks.remove_prefix(n);
+        let data_offset = *self.chunks.borrow().first().unwrap() - offset;
+        self.data.remove_prefix(data_offset);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -136,11 +136,11 @@ where
 
 impl<S, N> IntoIterator for UniChunked<S, N>
 where
-    S: Set + ReinterpretSet<N>,
+    S: Set + ReinterpretAsGrouped<N>,
     N: num::Unsigned,
 {
-    type Item = <<S as ReinterpretSet<N>>::Output as IntoIterator>::Item;
-    type IntoIter = <<S as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter;
+    type Item = <<S as ReinterpretAsGrouped<N>>::Output as IntoIterator>::Item;
+    type IntoIter = <<S as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter;
 
     /// Convert a `UniChunked` collection into an iterator over grouped elements.
     ///
@@ -155,7 +155,7 @@ where
     /// assert_eq!(None, iter.next());
     /// ```
     fn into_iter(self) -> Self::IntoIter {
-        self.data.reinterpret_set().into_iter()
+        self.data.reinterpret_as_grouped().into_iter()
     }
 }
 
@@ -197,75 +197,89 @@ impl<S: Set + Default, N: num::Unsigned> Default for UniChunked<S, N> {
     }
 }
 
-pub trait ReinterpretSet<N> {
+pub trait ReinterpretAsGrouped<N> {
     type Output: IntoIterator;
-    fn reinterpret_set(self) -> Self::Output;
+    fn reinterpret_as_grouped(self) -> Self::Output;
 }
 
-impl<'a, S, N: num::Unsigned, M: num::Unsigned> ReinterpretSet<N> for UniChunked<S, M>
+impl<'a, S, N: num::Unsigned, M: num::Unsigned> ReinterpretAsGrouped<N> for UniChunked<S, M>
 where
-    S: ReinterpretSet<M>,
-    <S as ReinterpretSet<M>>::Output: ReinterpretSet<N>,
+    S: ReinterpretAsGrouped<M>,
+    <S as ReinterpretAsGrouped<M>>::Output: ReinterpretAsGrouped<N>,
 {
-    type Output = <<S as ReinterpretSet<M>>::Output as ReinterpretSet<N>>::Output;
+    type Output = <<S as ReinterpretAsGrouped<M>>::Output as ReinterpretAsGrouped<N>>::Output;
     #[inline]
-    fn reinterpret_set(self) -> Self::Output {
-        self.data.reinterpret_set().reinterpret_set()
+    fn reinterpret_as_grouped(self) -> Self::Output {
+        self.data.reinterpret_as_grouped().reinterpret_as_grouped()
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for Vec<T>
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for Vec<T>
 where
     <T as Grouped<N>>::Type: 'a,
 {
     type Output = Vec<<T as Grouped<N>>::Type>;
     #[inline]
-    fn reinterpret_set(self) -> Self::Output {
+    fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_vec(self)
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a Vec<T>
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a [T]
 where
     <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a [<T as Grouped<N>>::Type];
     #[inline]
-    fn reinterpret_set(self) -> Self::Output {
-        reinterpret::reinterpret_slice(self.as_slice())
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut Vec<T>
-where
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a mut [<T as Grouped<N>>::Type];
-    #[inline]
-    fn reinterpret_set(self) -> Self::Output {
-        reinterpret::reinterpret_mut_slice(self.as_mut_slice())
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a [T]
-where
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a [<T as Grouped<N>>::Type];
-    #[inline]
-    fn reinterpret_set(self) -> Self::Output {
+    fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_slice(self)
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretSet<N> for &'a mut [T]
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut [T]
 where
     <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a mut [<T as Grouped<N>>::Type];
     #[inline]
-    fn reinterpret_set(self) -> Self::Output {
+    fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self)
+    }
+}
+
+//impl<'a, S, N> ReinterpretAsGrouped<N> for &'a S
+//where
+//    S: Set,
+//    T: Grouped<N>,
+//    <T as Grouped<N>>::Type: 'a,
+//    N: num::Unsigned
+//{
+//    type Output = &'a [<T as Grouped<N>>::Type];
+//    #[inline]
+//    fn reinterpret_as_grouped(self) -> Self::Output {
+//        reinterpret::reinterpret_slice(self.as_slice())
+//    }
+//}
+
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a Vec<T>
+where
+    <T as Grouped<N>>::Type: 'a,
+{
+    type Output = &'a [<T as Grouped<N>>::Type];
+    #[inline]
+    fn reinterpret_as_grouped(self) -> Self::Output {
+        reinterpret::reinterpret_slice(self.as_slice())
+    }
+}
+
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut Vec<T>
+where
+    <T as Grouped<N>>::Type: 'a,
+{
+    type Output = &'a mut [<T as Grouped<N>>::Type];
+    #[inline]
+    fn reinterpret_as_grouped(self) -> Self::Output {
+        reinterpret::reinterpret_mut_slice(self.as_mut_slice())
     }
 }
 
@@ -302,19 +316,19 @@ macro_rules! impl_grouped {
 impl_grouped!(num::U2, 2);
 impl_grouped!(num::U3, 3);
 
-impl<T> std::borrow::Borrow<[T]> for UniChunked<&[T], num::U1> {
+impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&[T], N> {
     fn borrow(&self) -> &[T] {
         self.data
     }
 }
 
-impl<T> std::borrow::Borrow<[T]> for UniChunked<&mut [T], num::U1> {
+impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&mut [T], N> {
     fn borrow(&self) -> &[T] {
         self.data
     }
 }
 
-impl<T> std::borrow::BorrowMut<[T]> for UniChunked<&mut [T], num::U1> {
+impl<T, N> std::borrow::BorrowMut<[T]> for UniChunked<&mut [T], N> {
     fn borrow_mut(&mut self) -> &mut [T] {
         self.data
     }
@@ -375,7 +389,7 @@ where
 
 impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for usize
 where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    S: Set + Get<'i, 'o, StaticRange<N>>,
     <S as Set>::Elem: Grouped<N>,
     N: num::Unsigned,
 {
@@ -384,7 +398,7 @@ where
     /// Get an element of the given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(chunked.data.get(N::value() * self..N::value() * (self + 1)))
+            Some(chunked.data.get(StaticRange::new(self * N::value())))
         } else {
             None
         }
@@ -411,83 +425,6 @@ where
         } else {
             None
         }
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
-where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a `[begin..)` subview of the given `UniChunked` collection.
-    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        (self.start..chunked.len()).get(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
-where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a `[..end)` subview of the given `Chunked` collection.
-    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        (0..self.end).get(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
-where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a view of the given `UniChunked` collection. This is synonymous with
-    /// `chunked.view()`.
-    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        (0..chunked.len()).get(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
-where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a `[begin..end]` (including the element at `end`) subview of the
-    /// given `UniChunked` collection.
-    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() {
-            None
-        } else {
-            (*self.start()..*self.end() + 1).get(chunked)
-        }
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
-where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a `[..end]` (including the element at `end`) subview of the given
-    /// `Chunked` collection.
-    fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
-        (0..=self.end).get(chunked)
     }
 }
 
@@ -548,9 +485,31 @@ where
     }
 }
 
+//impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for usize
+//where
+//    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+//    <S as Set>::Elem: Grouped<N>,
+//    N: num::Unsigned,
+//{
+//    type Output = S::Output;
+//
+//    /// Get a mutable chunk reference of the given `UniChunked` collection.
+//    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
+//        if self <= chunked.len() {
+//            Some(
+//                chunked
+//                    .data
+//                    .get_mut(N::value() * self..N::value() * (self + 1)),
+//            )
+//        } else {
+//            None
+//        }
+//    }
+//}
+
 impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for usize
 where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
+    S: Set + GetMut<'i, 'o, StaticRange<N>>,
     <S as Set>::Elem: Grouped<N>,
     N: num::Unsigned,
 {
@@ -559,11 +518,7 @@ where
     /// Get a mutable chunk reference of the given `UniChunked` collection.
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(
-                chunked
-                    .data
-                    .get_mut(N::value() * self..N::value() * (self + 1)),
-            )
+            Some(chunked.data.get_mut(StaticRange::new(self * N::value())))
         } else {
             None
         }
@@ -593,83 +548,6 @@ where
     }
 }
 
-impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFrom<usize>
-where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a mutable `[begin..)` subview of the given `UniChunked` collection.
-    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        (self.start..chunked.len()).get_mut(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeTo<usize>
-where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a mutable `[..end)` subview of the given `Chunked` collection.
-    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        (0..self.end).get_mut(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeFull
-where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a mutable view of the given `UniChunked` collection. This is
-    /// synonymous with `chunked.view_mut()`.
-    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        (0..chunked.len()).get_mut(chunked)
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeInclusive<usize>
-where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a mutable `[begin..end]` (including the element at `end`) subview of
-    /// the given `UniChunked` collection.
-    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        if *self.end() == usize::max_value() {
-            None
-        } else {
-            (*self.start()..*self.end() + 1).get_mut(chunked)
-        }
-    }
-}
-
-impl<'o, 'i: 'o, S, N> GetMutIndex<'i, 'o, UniChunked<S, N>> for std::ops::RangeToInclusive<usize>
-where
-    S: Set + GetMut<'i, 'o, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
-{
-    type Output = UniChunked<S::Output, N>;
-
-    /// Get a mutable `[..end]` (including the element at `end`) subview of the
-    /// given `Chunked` collection.
-    fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
-        (0..=self.end).get_mut(chunked)
-    }
-}
-
 impl<'o, 'i: 'o, S, N, I> GetMut<'i, 'o, I> for UniChunked<S, N>
 where
     I: GetMutIndex<'i, 'o, Self>,
@@ -684,7 +562,7 @@ where
     /// ```rust
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
-    /// let mut s = UniChunked::<_, num::U3>::from_flat(v.as_mut_slice());
+    /// let mut s = Chunked3::from_flat(v.as_mut_slice());
     ///
     /// s.get_mut(2).copy_from_slice(&[7,8,9]);
     /// assert_eq!(s.get(2), &[7,8,9]); // Single index
@@ -716,7 +594,7 @@ where
     /// assert_eq!([7,8,9], s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        ReinterpretSet::<N>::reinterpret_set(&self.data).index(idx)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&self.data).index(idx)
     }
 }
 
@@ -741,7 +619,7 @@ where
     /// assert_eq!([7,8,9], s.view()[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        ReinterpretSet::<N>::reinterpret_set(self.data).index(idx)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data).index(idx)
     }
 }
 
@@ -766,7 +644,7 @@ where
     /// assert_eq!([7,8,9], s.view_mut()[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        ReinterpretSet::<N>::reinterpret_set(&*self.data).index(idx)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&*self.data).index(idx)
     }
 }
 
@@ -791,7 +669,7 @@ where
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11,12], s.into_flat().to_vec());
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        ReinterpretSet::<N>::reinterpret_set(&mut self.data).index_mut(idx)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut self.data).index_mut(idx)
     }
 }
 
@@ -816,7 +694,7 @@ where
     /// assert_eq!(vec![1,2,3,4,5,6,7,8,9,10,11,12], v);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        ReinterpretSet::<N>::reinterpret_set(&mut *self.data).index_mut(idx)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut *self.data).index_mut(idx)
     }
 }
 
@@ -827,7 +705,7 @@ where
 impl<'a, S, N> UniChunked<S, N>
 where
     S: View<'a>,
-    <S as View<'a>>::Type: ReinterpretSet<N>,
+    <S as View<'a>>::Type: ReinterpretAsGrouped<N>,
     N: num::Unsigned,
 {
     /// Produce an iterator over borrowed grouped elements of the `UniChunked`.
@@ -865,15 +743,16 @@ where
     /// ```
     pub fn iter(
         &'a self,
-    ) -> <<<S as View<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        self.data.view().reinterpret_set().into_iter()
+    ) -> <<<S as View<'a>>::Type as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter
+    {
+        self.data.view().reinterpret_as_grouped().into_iter()
     }
 }
 
 impl<'a, S, N> UniChunked<S, N>
 where
     S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: ReinterpretSet<N>,
+    <S as ViewMut<'a>>::Type: ReinterpretAsGrouped<N>,
     N: num::Unsigned,
 {
     /// Produce an iterator over mutably borrowed grouped elements of `UniChunked`.
@@ -921,8 +800,9 @@ where
     /// ```
     pub fn iter_mut(
         &'a mut self,
-    ) -> <<<S as ViewMut<'a>>::Type as ReinterpretSet<N>>::Output as IntoIterator>::IntoIter {
-        self.data.view_mut().reinterpret_set().into_iter()
+    ) -> <<<S as ViewMut<'a>>::Type as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter
+    {
+        self.data.view_mut().reinterpret_as_grouped().into_iter()
     }
 }
 

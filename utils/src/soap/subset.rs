@@ -31,8 +31,8 @@ use super::*;
 ///     assert_eq!(Some(&[13,14,15]), subset_iter.next());
 ///     assert_eq!(None, subset_iter.next());
 /// }
-/// subset[1] = [0; 3];
-/// assert_eq!([0,0,0], subset[1]);
+/// *subset.get_mut(1) = [0; 3];
+/// assert_eq!(&[0,0,0], subset.get(1));
 /// ```
 // A note about translation independence:
 // ======================================
@@ -308,7 +308,7 @@ where
 /// This impl enables `Chunked` `Subset`s
 impl<V> SplitAt for Subset<V, &[usize]>
 where
-    V: Set + SplitAt + std::fmt::Debug,
+    V: Set + SplitAt,
 {
     /// Split this subset into two at the given index `mid`.
     ///
@@ -321,7 +321,7 @@ where
     /// let subset = Subset::from_unique_ordered_indices(indices.as_slice(), v.as_slice());
     /// let (l, r) = subset.split_at(1);
     /// let mut iter_l = l.iter();
-    /// assert_eq!(Some(&0), iter_l.next());
+    /// assert_eq!(Some(&1), iter_l.next());
     /// assert_eq!(None, iter_l.next());
     /// let mut iter_r = r.iter();
     /// assert_eq!(Some(&3), iter_r.next());
@@ -367,6 +367,62 @@ where
  * Indexing operators for convenience. Users familiar with indexing by `usize`
  * may find these implementations convenient.
  */
+
+impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Subset<S, O>> for usize
+where
+    O: Get<'i, 'o, usize, Output = &'o usize>,
+    usize: GetIndex<'i, 'o, S>,
+{
+    type Output = <usize as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, subset: &'i Subset<S, O>) -> Option<Self::Output> {
+        // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
+        if let Some(ref indices) = subset.indices {
+            GetIndex::get(*indices.get(self), &subset.data)
+        } else {
+            GetIndex::get(self, &subset.data)
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Subset<S, O>> for usize
+where
+    O: Get<'i, 'o, usize, Output = &'o usize>,
+    usize: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <usize as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, subset: &'i mut Subset<S, O>) -> Option<Self::Output> {
+        // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
+        if let Some(ref indices) = subset.indices {
+            GetMutIndex::get_mut(*indices.get(self), &mut subset.data)
+        } else {
+            GetMutIndex::get_mut(self, &mut subset.data)
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, I, O> Get<'i, 'o, I> for Subset<S, O>
+where
+    I: GetIndex<'i, 'o, Self>,
+{
+    type Output = I::Output;
+
+    fn get(&'i self, range: I) -> Self::Output {
+        range.get(self).expect("Index out of bounds")
+    }
+}
+
+impl<'o, 'i: 'o, S, I, O> GetMut<'i, 'o, I> for Subset<S, O>
+where
+    I: GetMutIndex<'i, 'o, Self>,
+{
+    type Output = I::Output;
+
+    fn get_mut(&'i mut self, range: I) -> Self::Output {
+        range.get_mut(self).expect("Index out of bounds")
+    }
+}
 
 impl<'a, S, I> std::ops::Index<usize> for Subset<&'a S, I>
 where
@@ -462,28 +518,10 @@ where
  * Iteration
  */
 
-//impl<S: Set> Subset<S> {
-//    pub fn iter<'o, 'i: 'o>(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output>
-//    where
-//        S: Get<'i, 'o, usize> + View<'i>,
-//        <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
-//    {
-//        let iters = match self.indices {
-//            Some(ref indices) => (None, Some(indices.iter().map(move |&i| self.data.get(i)))),
-//            None => (Some(self.data.view().into_iter()), None),
-//        };
-//        iters
-//            .0
-//            .into_iter()
-//            .flatten()
-//            .chain(iters.1.into_iter().flatten())
-//    }
-//}
-
-impl<S: Set, I> Subset<S, I> {
+impl<S, I> Subset<S, I> {
     pub fn iter<'o, 'i: 'o>(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output>
     where
-        S: Get<'i, 'o, usize> + View<'i> + std::fmt::Debug,
+        S: Set + Get<'i, 'o, usize> + View<'i>,
         I: std::borrow::Borrow<[usize]>,
         <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
     {
@@ -542,7 +580,7 @@ where
     }
 }
 
-impl<'a, T: 'a + std::fmt::Debug> Iterator for SubsetIter<'a, &'a mut [T]> {
+impl<'a, T: 'a> Iterator for SubsetIter<'a, &'a mut [T]> {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<Self::Item> {

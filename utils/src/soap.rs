@@ -76,14 +76,76 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
     }
 }
 
+/// A type of range whose size is determined at compile time.
+/// This represents a range `[start..start + N::value()]`.
+/// This aids `UniChunked` types when indexing.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct StaticRange<N> {
+    pub start: usize,
+    pub phantom: std::marker::PhantomData<N>,
+}
+
+impl<N> StaticRange<N> {
+    fn new(start: usize) -> Self {
+        StaticRange {
+            start,
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<N: num::Unsigned> StaticRange<N> {
+    fn start(&self) -> usize {
+        self.start
+    }
+    fn end(&self) -> usize {
+        self.start + N::value()
+    }
+}
+
+macro_rules! impl_static_range {
+    ($nty:ty, $n:expr) => {
+        impl<'o, 'i: 'o, T: 'o> GetIndex<'i, 'o, [T]> for StaticRange<$nty> {
+            type Output = &'o [T; $n];
+            fn get(self, set: &'i [T]) -> Option<Self::Output> {
+                if self.end() <= set.len() {
+                    Some(unsafe { &*(set.as_ptr().add(self.start()) as *const [T; $n]) })
+                } else {
+                    None
+                }
+            }
+        }
+        impl<'o, 'i: 'o, T: 'o> GetMutIndex<'i, 'o, [T]> for StaticRange<$nty> {
+            type Output = &'o mut [T; $n];
+            fn get_mut(self, set: &'i mut [T]) -> Option<Self::Output> {
+                if self.end() <= set.len() {
+                    Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut [T; $n]) })
+                } else {
+                    None
+                }
+            }
+        }
+    };
+}
+
+impl_static_range!(num::U1, 1);
+impl_static_range!(num::U2, 2);
+impl_static_range!(num::U3, 3);
+
 /// A helper trait analogous to `SliceIndex` from the standard library.
-pub trait GetIndex<'i, 'o, S> {
+pub trait GetIndex<'i, 'o, S>
+where
+    S: ?Sized,
+{
     type Output;
     fn get(self, set: &'i S) -> Option<Self::Output>;
 }
 
 /// A helper trait like `GetIndex` but for mutable references.
-pub trait GetMutIndex<'i, 'o, S> {
+pub trait GetMutIndex<'i, 'o, S>
+where
+    S: ?Sized,
+{
     type Output;
     fn get_mut(self, set: &'i mut S) -> Option<Self::Output>;
 }
@@ -91,7 +153,10 @@ pub trait GetMutIndex<'i, 'o, S> {
 /// An index trait for `Chunked` types.
 /// Here `'i` indicates the lifetime of the input while `'o` indicates that of
 /// the output.
-pub trait Get<'i, 'o, I> {
+pub trait Get<'i, 'o, I>
+where
+    I: ?Sized,
+{
     type Output;
     fn get(&'i self, idx: I) -> Self::Output;
 }
@@ -99,17 +164,165 @@ pub trait Get<'i, 'o, I> {
 /// An index trait for mutable `Chunked` types.
 /// Here `'i` indicates the lifetime of the input while `'o` indicates that of
 /// the output.
-pub trait GetMut<'i, 'o, I> {
+pub trait GetMut<'i, 'o, I>
+where
+    I: ?Sized,
+{
     type Output;
     fn get_mut(&'i mut self, idx: I) -> Self::Output;
 }
 
-impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for [T]
+impl<'o, 'i: 'o, T, I> GetIndex<'i, 'o, [T]> for I
 where
     I: std::slice::SliceIndex<[T]>,
-    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    <[T] as std::ops::Index<I>>::Output: 'o,
 {
     type Output = &'o <[T] as std::ops::Index<I>>::Output;
+    fn get(self, set: &'i [T]) -> Option<Self::Output> {
+        Some(std::ops::Index::<I>::index(set, self))
+    }
+}
+
+impl<'o, 'i: 'o, T, I> GetMutIndex<'i, 'o, [T]> for I
+where
+    I: std::slice::SliceIndex<[T]>,
+    <[T] as std::ops::Index<I>>::Output: 'o,
+{
+    type Output = &'o mut <[T] as std::ops::Index<I>>::Output;
+    fn get_mut(self, set: &'i mut [T]) -> Option<Self::Output> {
+        Some(std::ops::IndexMut::<I>::index_mut(set, self))
+    }
+}
+
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, S> for std::ops::RangeFrom<usize>
+where
+    S: Set,
+    std::ops::Range<usize>: GetIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, set: &'i S) -> Option<Self::Output> {
+        (self.start..set.len()).get(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, S> for std::ops::RangeTo<usize>
+where
+    std::ops::Range<usize>: GetIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, set: &'i S) -> Option<Self::Output> {
+        (0..self.end).get(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, S> for std::ops::RangeFull
+where
+    S: Set,
+    std::ops::Range<usize>: GetIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, set: &'i S) -> Option<Self::Output> {
+        (0..set.len()).get(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, S> for std::ops::RangeInclusive<usize>
+where
+    std::ops::Range<usize>: GetIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, set: &'i S) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get(set)
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S> GetIndex<'i, 'o, S> for std::ops::RangeToInclusive<usize>
+where
+    std::ops::Range<usize>: GetIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'i, 'o, S>>::Output;
+
+    fn get(self, set: &'i S) -> Option<Self::Output> {
+        (0..=self.end).get(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetMutIndex<'i, 'o, S> for std::ops::RangeFrom<usize>
+where
+    S: Set,
+    std::ops::Range<usize>: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output> {
+        (self.start..set.len()).get_mut(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetMutIndex<'i, 'o, S> for std::ops::RangeTo<usize>
+where
+    std::ops::Range<usize>: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output> {
+        (0..self.end).get_mut(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetMutIndex<'i, 'o, S> for std::ops::RangeFull
+where
+    S: Set,
+    std::ops::Range<usize>: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output> {
+        (0..set.len()).get_mut(set)
+    }
+}
+
+impl<'o, 'i: 'o, S> GetMutIndex<'i, 'o, S> for std::ops::RangeInclusive<usize>
+where
+    S: Set,
+    std::ops::Range<usize>: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output> {
+        if *self.end() == usize::max_value() {
+            None
+        } else {
+            (*self.start()..*self.end() + 1).get_mut(set)
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S> GetMutIndex<'i, 'o, S> for std::ops::RangeToInclusive<usize>
+where
+    S: Set,
+    std::ops::Range<usize>: GetMutIndex<'i, 'o, S>,
+{
+    type Output = <std::ops::Range<usize> as GetMutIndex<'i, 'o, S>>::Output;
+
+    fn get_mut(self, set: &'i mut S) -> Option<Self::Output> {
+        (0..=self.end).get_mut(set)
+    }
+}
+
+impl<'o, 'i: 'o, T: 'o, I> Get<'i, 'o, I> for [T]
+where
+    I: GetIndex<'i, 'o, [T]>,
+{
+    type Output = I::Output;
     /// Index into a standard slice `[T]` using the `Get` trait.
     ///
     /// # Example
@@ -118,17 +331,17 @@ where
     /// assert_eq!(*utils::soap::Get::get(&[1,2,3,4,5][..], 2), 3);
     /// ```
     fn get(&'i self, idx: I) -> Self::Output {
-        std::ops::Index::index(self, idx)
+        let res = GetIndex::get(idx, self);
+        res.expect("Index out of bounds")
     }
 }
 
-impl<'o, 'i: 'o, T, I> Get<'i, 'o, I> for Vec<T>
+impl<'o, 'i: 'o, T: 'o, I> Get<'i, 'o, I> for Vec<T>
 where
-    I: std::slice::SliceIndex<[T]>,
-    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    I: GetIndex<'i, 'o, [T]>,
     T: Clone,
 {
-    type Output = &'o I::Output;
+    type Output = I::Output;
     /// Index into a `Vec` using the `Get` trait.
     /// This function is not intended to be used directly, but it allows getters
     /// for chunked collections to work.
@@ -140,16 +353,15 @@ where
     /// assert_eq!(*utils::soap::Get::get(&v, 2), 3);
     /// ```
     fn get(&'i self, idx: I) -> Self::Output {
-        std::ops::Index::index(self, idx)
+        GetIndex::get(idx, self.as_slice()).expect("Index out of bounds")
     }
 }
 
-impl<'o, 'i: 'o, T, I> GetMut<'i, 'o, I> for [T]
+impl<'o, 'i: 'o, T: 'o, I> GetMut<'i, 'o, I> for [T]
 where
-    I: std::slice::SliceIndex<[T]>,
-    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    I: GetMutIndex<'i, 'o, [T]>,
 {
-    type Output = &'o mut <[T] as std::ops::Index<I>>::Output;
+    type Output = I::Output;
     /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
     /// This function is not intended to be used directly, but it allows getters
     /// for chunked collections to work.
@@ -162,17 +374,16 @@ where
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
     fn get_mut(&'i mut self, idx: I) -> Self::Output {
-        std::ops::IndexMut::index_mut(self, idx)
+        GetMutIndex::get_mut(idx, self).expect("Index out of bounds")
     }
 }
 
-impl<'o, 'i: 'o, T, I> GetMut<'i, 'o, I> for Vec<T>
+impl<'o, 'i: 'o, T: 'o, I> GetMut<'i, 'o, I> for Vec<T>
 where
-    I: std::slice::SliceIndex<[T]>,
-    <I as std::slice::SliceIndex<[T]>>::Output: 'o,
+    I: GetMutIndex<'i, 'o, [T]>,
     T: Clone,
 {
-    type Output = &'o mut I::Output;
+    type Output = I::Output;
     /// Index into a `Vec` using the `Get` trait.
     /// This function is not intended to be used directly, but it allows getters
     /// for chunked collections to work.
@@ -185,7 +396,7 @@ where
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
     fn get_mut(&'i mut self, idx: I) -> Self::Output {
-        std::ops::IndexMut::index_mut(self, idx)
+        GetMutIndex::get_mut(idx, self).expect("Index out of bounds")
     }
 }
 
@@ -230,7 +441,7 @@ where
     /// Index into any borrowed collection `S`, which itself implements
     /// `Get<'i, 'o, I>`.
     fn get(&'i self, idx: I) -> Self::Output {
-        (**self).get(idx)
+        (**self).get(idx) // Borrows S by &'i reference.
     }
 }
 

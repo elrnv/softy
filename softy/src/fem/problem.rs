@@ -745,6 +745,10 @@ impl NonLinearProblem {
         forces.iter().map(|&cf| cf * dt).collect()
     }
 
+    pub fn num_frictional_contacts(&self) -> usize {
+        self.frictional_contacts.len()
+    }
+
     /// Return the number of friction steps remaining. I.e. friction_steps minus the number of
     /// friction steps consumed. If there is no contact constraint, then there is no friction, so
     /// we simply return 0 since there's nothing else left to do.

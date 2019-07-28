@@ -624,7 +624,7 @@ impl ContactConstraint for PointContactConstraint {
     /// For visualization purposes.
     fn compute_contact_impulse(
         &self,
-        x: Chunked3<&[f64]>,
+        x: SubsetView<Chunked3<&[f64]>>,
         contact_impulse: &[f64],
         impulse: Chunked3<&mut [f64]>,
     ) {

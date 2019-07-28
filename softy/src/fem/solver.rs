@@ -1011,10 +1011,10 @@ impl Solver {
     }
 
     /// Given a tetmesh, compute the elastic forces per vertex.
-    fn compute_elastic_forces(forces: &mut [Vector3<f64>], mesh: &TetMesh, lambda: f64, mu: f64) {
+    fn compute_elastic_forces(forces: Chunked3<&mut [f64]>, mesh: &TetMesh, lambda: f64, mu: f64) {
         // Reset forces
         for f in forces.iter_mut() {
-            *f = Vector3::zeros();
+            *f = [0.0; 3];
         }
 
         let grad_iter = mesh
@@ -1034,7 +1034,8 @@ impl Solver {
 
         for (grad, cell) in grad_iter.zip(mesh.cells().iter()) {
             for j in 0..4 {
-                forces[cell[j]] -= grad[j];
+                let mut f = Vector3(forces[cell[j]]);
+                forces[cell[j]] = (f - grad[j]).into();
             }
         }
     }
@@ -1046,8 +1047,8 @@ impl Solver {
             .unwrap();
 
         {
-            let forces: &mut [Vector3<f64>] =
-                reinterpret_mut_slice(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+            let forces =
+                Chunked3::from_grouped_mut_slice(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
 
             Self::compute_elastic_forces(forces, mesh, lambda, mu);
         }

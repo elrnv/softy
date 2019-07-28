@@ -217,7 +217,10 @@ pub trait EnergyHessian {
         let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
         self.energy_hessian_indices(indices.as_mut_slice());
 
-        let (rows, cols) = indices.into_iter().map(|MatrixElementIndex { row, col }| (row, col)).unzip();
+        let (rows, cols) = indices
+            .into_iter()
+            .map(|MatrixElementIndex { row, col }| (row, col))
+            .unzip();
 
         let mut values = vec![0.0; nnz];
         self.energy_hessian_values(x, dx, scale, &mut values);

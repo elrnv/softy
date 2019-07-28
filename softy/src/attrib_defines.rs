@@ -1,11 +1,11 @@
 use geo::math::Matrix3;
 
-pub const SOURCE_INDEX_ATTRIB : &str = "src_idx";
-pub(crate) const TETMESH_VERTEX_INDEX_ATTRIB : &str = "_i";
-pub(crate) const MASS_ATTRIB : &str = "mass";
-pub(crate) const DENSITY_ATTRIB : &str = "density";
-pub(crate) const MU_ATTRIB : &str = "mu";
-pub(crate) const LAMBDA_ATTRIB : &str = "lambda";
+pub const SOURCE_INDEX_ATTRIB: &str = "src_idx";
+pub(crate) const TETMESH_VERTEX_INDEX_ATTRIB: &str = "_i";
+pub(crate) const MASS_ATTRIB: &str = "mass";
+pub(crate) const DENSITY_ATTRIB: &str = "density";
+pub(crate) const MU_ATTRIB: &str = "mu";
+pub(crate) const LAMBDA_ATTRIB: &str = "lambda";
 pub(crate) const FIXED_ATTRIB: &str = "fixed";
 pub(crate) const VELOCITY_ATTRIB: &str = "vel";
 pub(crate) const REFERENCE_POSITION_ATTRIB: &str = "ref";

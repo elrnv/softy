@@ -1,6 +1,8 @@
+pub mod elasticity;
 pub mod gravity;
 pub mod inertia;
-pub mod elasticity;
+
+pub use elasticity::*;
 
 #[cfg(test)]
 pub(crate) mod test_utils {

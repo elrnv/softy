@@ -197,11 +197,17 @@ impl EnergyHessian for TetMeshInertia {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TetMesh;
     use crate::energy_models::test_utils::*;
+    use crate::TetMesh;
 
     fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
-        TetMeshSolid { tetmesh, material: Material { density: 1000.0, ..Material::default() } }
+        TetMeshSolid {
+            tetmesh,
+            material: Material {
+                density: 1000.0,
+                ..Material::default()
+            },
+        }
     }
 
     #[test]

@@ -12,7 +12,10 @@ use std::{cell::RefCell, rc::Rc};
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
 /// object.
-pub trait Gravity<E, T> where E: Energy<T> + EnergyGradient<T> + EnergyHessian {
+pub trait Gravity<E, T>
+where
+    E: Energy<T> + EnergyGradient<T> + EnergyHessian,
+{
     fn gravity(&self, g: [f64; 3]) -> E;
 }
 
@@ -173,7 +176,13 @@ mod tests {
     use crate::TetMesh;
 
     fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
-        TetMeshSolid { tetmesh, material: Material { density: 1000.0, ..Material::default() } }
+        TetMeshSolid {
+            tetmesh,
+            material: Material {
+                density: 1000.0,
+                ..Material::default()
+            },
+        }
     }
 
     #[test]

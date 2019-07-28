@@ -1,10 +1,10 @@
 mod solver;
 
 use crate::friction::FrictionParams;
-use utils::zip;
-use reinterpret::*;
 use na::{Matrix3, Matrix3x2, Real, Vector2, Vector3};
+use reinterpret::*;
 pub use solver::ContactSolver;
+use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -223,21 +223,25 @@ impl ContactBasis {
         let mut rows = vec![[0; 3]; n];
         let mut cols = vec![[0; 3]; n];
         let mut bases = vec![[0.0; 3]; n];
-        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+        for (contact_idx, (m, r, c)) in
+            zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
+        {
             let mtx = self.contact_basis_matrix(contact_idx);
             *m = mtx.column(0).into();
 
-            *r = row_mtx.add_scalar(3*contact_idx).into();
+            *r = row_mtx.add_scalar(3 * contact_idx).into();
             *c = col_mtx.add_scalar(contact_idx).into();
         }
-        
-        let num_rows = 3*n;
+
+        let num_rows = 3 * n;
         let num_cols = n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
             reinterpret_vec(rows),
             reinterpret_vec(cols),
-            reinterpret_vec(bases)).to_csr()
+            reinterpret_vec(bases),
+        )
+        .to_csr()
     }
 
     pub fn tangent_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
@@ -246,25 +250,29 @@ impl ContactBasis {
         // A vector of column major change of basis matrices
         let row_mtx = Matrix3x2::new(0, 0, 1, 1, 2, 2);
         let col_mtx = Matrix3x2::new(0, 1, 0, 1, 0, 1);
-        let mut rows = vec![[[0;3];2]; n];
-        let mut cols = vec![[[0;3];2]; n];
-        let mut bases = vec![[[0.0;3];2]; n];
-        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+        let mut rows = vec![[[0; 3]; 2]; n];
+        let mut cols = vec![[[0; 3]; 2]; n];
+        let mut bases = vec![[[0.0; 3]; 2]; n];
+        for (contact_idx, (m, r, c)) in
+            zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
+        {
             let mtx = self.contact_basis_matrix(contact_idx);
             m[0] = mtx.column(1).into();
             m[1] = mtx.column(2).into();
 
-            *r = row_mtx.add_scalar(3*contact_idx).into();
-            *c = col_mtx.add_scalar(2*contact_idx).into();
+            *r = row_mtx.add_scalar(3 * contact_idx).into();
+            *c = col_mtx.add_scalar(2 * contact_idx).into();
         }
-        
-        let num_rows = 3*n;
-        let num_cols = 2*n;
+
+        let num_rows = 3 * n;
+        let num_cols = 2 * n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
             reinterpret_vec(rows),
             reinterpret_vec(cols),
-            reinterpret_vec(bases)).to_csr()
+            reinterpret_vec(bases),
+        )
+        .to_csr()
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of

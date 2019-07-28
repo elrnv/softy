@@ -263,7 +263,9 @@ trait ConstraintHessianMatrix: ConstraintHessian<f64> {
         scale: f64,
     ) -> Result<sprs::CsMat<f64>, Error> {
         let indices_iter = self.constraint_hessian_indices_iter()?;
-        let (rows, cols) = indices_iter.map(|MatrixElementIndex { row, col }| (row, col)).unzip();
+        let (rows, cols) = indices_iter
+            .map(|MatrixElementIndex { row, col }| (row, col))
+            .unzip();
 
         let mut values = vec![0.0; self.constraint_hessian_size()];
         self.constraint_hessian_values(x, dx, lambda, scale, &mut values)?;

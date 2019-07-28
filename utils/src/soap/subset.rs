@@ -237,7 +237,7 @@ impl<'a, S: Set, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
 // Set, Vew, ReinterpretSet (this needs to be refined)
 
 /// Required for `Chunked` and `UniChunked` subsets.
-impl<S: Set, I: Set> Set for Subset<S, I> {
+impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
     type Elem = S::Elem;
     /// Get the length of this subset.
     ///
@@ -252,7 +252,7 @@ impl<S: Set, I: Set> Set for Subset<S, I> {
     fn len(&self) -> usize {
         self.indices
             .as_ref()
-            .map_or(self.data.len(), |indices| indices.len())
+            .map_or(self.data.len(), |indices| indices.borrow().len())
     }
 }
 
@@ -359,6 +359,46 @@ where
                     data: data_r,
                 },
             )
+        }
+    }
+}
+
+impl<'o, 'i: 'o, S, I> Subset<S, I>
+where
+    S: Set + Get<'i, 'o, usize, Output = &'o <S as Set>::Elem> + View<'i>,
+    I: std::borrow::Borrow<[usize]>,
+    <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
+    <S as Set>::Elem: 'o,
+{
+    /// The typical way to use this function is to clone from a `SubsetView`
+    /// into an owned `S` type.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `other` has a length unequal to `self.len()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5];
+    /// let indices = vec![0,2,4];
+    /// let subset = Subset::from_unique_ordered_indices(indices.as_slice(), v.as_slice());
+    /// let mut owned = vec![0; 4];
+    /// subset.clone_into_other(&mut owned[..3]); // Need 3 elements to avoid panics.
+    /// let mut iter_owned = owned.iter();
+    /// assert_eq!(owned, vec![1,3,5,0]);
+    /// ```
+    pub fn clone_into_other<'a, V>(&'i self, other: &'a mut V)
+    where
+        V: ViewMut<'a> + ?Sized,
+        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'o mut <S as Set>::Elem>,
+        <S as Set>::Elem: Clone,
+    {
+        let other_view = other.view_mut();
+        assert_eq!(other_view.len(), self.len());
+        for (theirs, mine) in other_view.into_iter().zip(self.iter()) {
+            theirs.clone_from(&mine);
         }
     }
 }
@@ -518,13 +558,13 @@ where
  * Iteration
  */
 
-impl<S, I> Subset<S, I> {
-    pub fn iter<'o, 'i: 'o>(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output>
-    where
-        S: Set + Get<'i, 'o, usize> + View<'i>,
-        I: std::borrow::Borrow<[usize]>,
-        <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
-    {
+impl<'o, 'i: 'o, S, I> Subset<S, I>
+where
+    S: Set + Get<'i, 'o, usize> + View<'i>,
+    I: std::borrow::Borrow<[usize]>,
+    <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
+{
+    pub fn iter(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output> {
         let iters = match self.indices.as_ref() {
             Some(indices) => {
                 let indices = indices.borrow();

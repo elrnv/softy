@@ -47,6 +47,22 @@ macro_rules! impl_from_grouped {
                 }
             }
         }
+
+        impl<T: Clone> Into<Vec<[T; $n]>> for Chunked3<Vec<T>> {
+            fn into(self) -> Vec<[T; $n]> {
+                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
+            }
+        }
+        impl<'a, T: Clone> Into<&'a [[T; $n]]> for Chunked3<&'a [T]> {
+            fn into(self) -> &'a [[T; $n]] {
+                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
+            }
+        }
+        impl<'a, T: Clone> Into<&'a mut [[T; $n]]> for Chunked3<&'a mut [T]> {
+            fn into(self) -> &'a mut [[T; $n]] {
+                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
+            }
+        }
     };
 }
 
@@ -82,6 +98,25 @@ impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     /// Convert this `UniChunked` collection into its inner representation.
     pub fn into_inner(self) -> S {
         self.data
+    }
+}
+
+impl<T, N> UniChunked<Vec<T>, N> {
+    /// This function panics if `src` has doesn't have a length equal to `self.len()*N::value()`.
+    pub fn copy_from_flat(&mut self, src: &[T])
+    where
+        T: Copy,
+    {
+        assert_eq!(src.len(), self.data.len());
+        self.data.copy_from_slice(src);
+    }
+    /// This function panics if `src` has doesn't have a length equal to `self.len()*N::value()`.
+    pub fn clone_from_flat(&mut self, src: &[T])
+    where
+        T: Clone,
+    {
+        assert_eq!(src.len(), self.data.len());
+        self.data.clone_from_slice(src);
     }
 }
 

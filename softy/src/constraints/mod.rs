@@ -22,8 +22,8 @@ pub use self::implicit_contact::*;
 pub use self::point_contact::*;
 pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
-use utils::soap::*;
 use utils::aref::*;
+use utils::soap::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.
@@ -106,24 +106,46 @@ fn remap_values_identity_test() {
     let old_indices = vec![284, 288, 572, 573, 574, 575];
     let new_indices = vec![284, 288, 572, 573, 574, 575];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
     assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
 }
 
 #[test]
 fn remap_values_more_new_test() {
     let old_indices = vec![284, 288, 572, 573, 574, 575];
-    let new_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let new_indices = vec![
+        284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575,
+    ];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
-    assert_eq!(new_values, vec![284.0, 288.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 572.0, 573.0, 574.0, 575.0]);
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
+    assert_eq!(
+        new_values,
+        vec![284.0, 288.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 572.0, 573.0, 574.0, 575.0]
+    );
 }
 #[test]
 fn remap_values_more_old_test() {
-    let old_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let old_indices = vec![
+        284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575,
+    ];
     let new_indices = vec![284, 288, 572, 573, 574, 575];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
     assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
 }
 #[test]
@@ -131,8 +153,16 @@ fn remap_values_complex_test() {
     let old_indices = vec![1, 2, 6, 7, 10, 11];
     let new_indices = vec![0, 1, 3, 4, 5, 6, 7, 8, 11, 12];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
-    assert_eq!(new_values, vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]);
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
+    assert_eq!(
+        new_values,
+        vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]
+    );
 }
 
 pub trait ContactConstraint:
@@ -168,13 +198,13 @@ pub trait ContactConstraint:
     fn update_frictional_contact_impulse(
         &mut self,
         contact_force: Chunked3<&[f64]>,
-        x: Chunked3<&[f64]>,
-        dx: Chunked3<&[f64]>,
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        dx: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: Subset<Chunked3<&mut [f64]>>);
+    fn add_mass_weighted_frictional_contact_impulse(&self, x: SubsetView<Chunked3<&mut [f64]>>);
 
     /// Add the frictional impulse to the given gradient vector.
     fn add_friction_impulse(&self, grad: Chunked3<&mut [f64]>, multiplier: f64) {
@@ -214,7 +244,10 @@ pub trait ContactConstraint:
         }
     }
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(&self, vel: Chunked3<&[f64]>) -> f64 {
+    fn frictional_dissipation(
+        &self,
+        vel: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+    ) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
@@ -259,12 +292,20 @@ pub trait ContactConstraint:
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-    fn compute_contact_impulse(&self, x: Chunked3<&[f64]>, contact_force: Chunked3<&[f64]>, impulse: Chunked3<&mut [f64]>);
+    fn compute_contact_impulse(
+        &self,
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        contact_force: Chunked3<&[f64]>,
+        impulse: Chunked3<&mut [f64]>,
+    );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self, x: Chunked3<&[f64]>) -> Result<Chunked3<Vec<f64>>, crate::Error>;
+    fn contact_normals(
+        &self,
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+    ) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
@@ -276,7 +317,11 @@ pub trait ContactConstraint:
     /// Note that this function doesn't remap any data corresponding to the old neighbourhood
     /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
     /// old data needed to perform the remapping of any user data.
-    fn update_cache(&mut self, object_pos: Subset<Chunked3<&[f64]>>, collider_pos: Subset<Chunked3<&[f64]>>) -> bool;
+    fn update_cache(
+        &mut self,
+        object_pos: Subset<Chunked3<&[f64]>>,
+        collider_pos: Subset<Chunked3<&[f64]>>,
+    ) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser

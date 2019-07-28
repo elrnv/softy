@@ -1,5 +1,6 @@
-use crate::{TetMesh, TriMesh};
+use crate::energy_models::elasticity::TetMeshNeoHookean;
 use crate::objects::Material;
+use crate::{TetMesh, TriMesh};
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
 /// physical material properties that govern how it behaves.
@@ -43,7 +44,10 @@ impl<'a> Inertia<TetMeshInertia<'a>> for TetMeshSolid {
 
 impl<'a> Gravity<TetMeshGravity<'a>> for TetMeshSolid {
     fn gravity(&'a self, g: [f64; 3]) -> TetMeshGravity<'a> {
-        TetMeshGravity { solid: self, g: g.into() }
+        TetMeshGravity {
+            solid: self,
+            g: g.into(),
+        }
     }
 }
 
@@ -56,7 +60,12 @@ impl From<&TetMesh> for TetMeshSurface {
     /// Extract the triangle surface of this tetmesh. The returned trimesh
     /// maintains a link to the original tetmesh via the.
     fn from(solid: &TetMesh) -> TetMeshSurface {
-        let mut trimesh = solid.tetmesh.surface_trimesh_with_mapping(TETMESH_VERTEX_INDEX_ATTRIB, None, None, None);
+        let mut trimesh = solid.tetmesh.surface_trimesh_with_mapping(
+            TETMESH_VERTEX_INDEX_ATTRIB,
+            None,
+            None,
+            None,
+        );
         let indices = trimesh
             .remove_attrib::<VertexIndex>(TETMESH_VERTEX_INDEX_ATTRIB)
             .expect("Failed to map indices.")
@@ -64,9 +73,6 @@ impl From<&TetMesh> for TetMeshSurface {
             .into_vec::<usize>()
             .expect("Incorrect index type: not usize");
 
-        TetMeshSurface {
-            indices,
-            trimesh,
-        }
+        TetMeshSurface { indices, trimesh }
     }
 }

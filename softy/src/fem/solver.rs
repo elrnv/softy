@@ -252,7 +252,6 @@ impl SolverBuilder {
             prev_vel.push(mesh_prev_vel);
         }
 
-        let mut num_static_shells = 0;
         for TriMeshShell { trimesh: ref mesh, material } in shells.iter() {
             match material.properties {
                 ShellProperties::Rigid => {
@@ -267,13 +266,16 @@ impl SolverBuilder {
                     prev_vel.push(UniChunked::from_grouped_vec(mesh_prev_vel));
                 }
                 ShellProperties::Static => {
-                    num_static_shells += 1;
-                    // Static meshes are not simulated
+                    // Static meshes are not simulated so we leave an empty set
+                    // here to maintain indexing consistency with the global
+                    // shell array.
+                    prev_pos.push(vec![]);
+                    prev_vel.push(vec![]);
                 }
             }
         }
 
-        let num_meshes = solids.len() + shell.len() - num_static_shells;
+        let num_meshes = solids.len() + shell.len();
         let prev_pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_pos);
         let prev_vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_vel);
 
@@ -290,7 +292,7 @@ impl SolverBuilder {
         // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
         solids.into_iter().map(|(mut tetmesh, material)| {
             // Prepare deformable solid for simulation.
-            Self::prepare_solid_attributes(TetMeshSolid { tetmesh, material })?
+            Self::prepare_solid_attributes(TetMeshSolid::new(tetmesh, material))?
         }).collect::Vec<_>()
     }
 
@@ -1169,16 +1171,16 @@ impl Solver {
     fn commit_solution(
         &mut self,
         and_warm_start: bool,
-    ) -> (Solution, Vec<Vector3<f64>>, Vec<Vector3<f64>>) {
-        let res = {
+    ) {
+        {
             let and_velocity = !self.sim_params.clear_velocity;
             let SolverDataMut {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
 
             // Advance internal state (positions and velocities) of the problem.
-            problem.advance(solution.primal_variables, and_velocity, and_warm_start)
-        };
+            problem.advance(solution.primal_variables, and_velocity, and_warm_start);
+        }
 
         // Comitting solution. Reduce max_step for next iteration.
         let dt = self.time_step();
@@ -1197,7 +1199,6 @@ impl Solver {
                 problem.reset_constraint_set();
             }
         }
-        res
     }
 
     ///// Revert previously committed solution. We just subtract step here.

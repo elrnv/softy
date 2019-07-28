@@ -65,8 +65,10 @@ impl ImplicitContactConstraint {
             });
 
         if let Some(surface) = surface_builder.build() {
-
-            let mut surf_mesh = solid.tetmesh.surface_trimesh_with_mapping(Some("i"), None, None, None);
+            let mut surf_mesh =
+                solid
+                    .tetmesh
+                    .surface_trimesh_with_mapping(Some("i"), None, None, None);
             let sim_verts = surf_mesh
                 .remove_attrib::<VertexIndex>("i")
                 .expect("Failed to map indices.")
@@ -82,12 +84,11 @@ impl ImplicitContactConstraint {
                 implicit_surface: RefCell::new(surface),
                 sim_verts,
                 contact_points: RefCell::new(contact_points.to_vec()),
-                frictional_contact:
-                    if friction_params.dynamic_friction > 0.0 {
-                        Some(FrictionalContact::new(friction_params))
-                    } else {
-                        None
-                    },
+                frictional_contact: if friction_params.dynamic_friction > 0.0 {
+                    Some(FrictionalContact::new(friction_params))
+                } else {
+                    None
+                },
                 vertex_masses,
                 constraint_buffer: RefCell::new(vec![0.0; contact_points.len()]),
                 time_step,
@@ -321,43 +322,47 @@ impl ContactConstraint for ImplicitContactConstraint {
 
             if true {
                 // Implicit Friction
-                
+
                 let mut solver = FrictionSolver::without_contact_jacobian(
                     &velocity_t,
                     &contact_impulse,
                     &frictional_contact.contact_basis,
                     &contact_masses,
-                    frictional_contact.params
+                    frictional_contact.params,
                 );
 
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
 
-                frictional_contact.impulse.append(&mut frictional_contact.contact_basis.from_tangent_space(reinterpret_vec(r_t)));
+                frictional_contact.impulse.append(
+                    &mut frictional_contact
+                        .contact_basis
+                        .from_tangent_space(reinterpret_vec(r_t)),
+                );
 
-                //// This contact jacobian is a selection matrix or a mapping from contact vertices to
-                //// simulation vertices, because contacts are colocated with a subset of  simulation
-                //// vertices on the surface.
-                //let contact_jacobian_indices: Vec<_> = surf_indices.map(|idx| sim_verts[idx]).collect();
-                //let elastic_energy = crate::friction::ElasticEnergyParams {
-                //    energy_model: energy_model.clone(),
-                //    time_step,
-                //};
+            //// This contact jacobian is a selection matrix or a mapping from contact vertices to
+            //// simulation vertices, because contacts are colocated with a subset of  simulation
+            //// vertices on the surface.
+            //let contact_jacobian_indices: Vec<_> = surf_indices.map(|idx| sim_verts[idx]).collect();
+            //let elastic_energy = crate::friction::ElasticEnergyParams {
+            //    energy_model: energy_model.clone(),
+            //    time_step,
+            //};
 
-                //let solver = ElasticFrictionSolver::selection_contact_jacobian(
-                //    v,
-                //    &contact_impulse,
-                //    &frictional_contact.contact_basis,
-                //    &vertex_masses,
-                //    frictional_contact.params,
-                //    &contact_jacobian_indices,
-                //    Some(elastic_energy),
-                //);
+            //let solver = ElasticFrictionSolver::selection_contact_jacobian(
+            //    v,
+            //    &contact_impulse,
+            //    &frictional_contact.contact_basis,
+            //    &vertex_masses,
+            //    frictional_contact.params,
+            //    &contact_jacobian_indices,
+            //    Some(elastic_energy),
+            //);
 
-                //eprintln!("#### Solving Friction");
-                //let r = solver.step();
+            //eprintln!("#### Solving Friction");
+            //let r = solver.step();
 
-                //frictional_contact.impulse.append(&mut reinterpret_vec(r));
+            //frictional_contact.impulse.append(&mut reinterpret_vec(r));
             } else {
                 // Explicit Friction
                 for (contact_idx, (&v_t, &cr)) in
@@ -488,7 +493,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self, sim_pos: &[f64;3], col_pos: &[f64; 3]) -> bool {
+    fn update_cache(&mut self, sim_pos: &[f64; 3], col_pos: &[f64; 3]) -> bool {
         // Recall: Here, implicit surface is generated by the collision mesh, and query points are
         // coming from the simulation mesh.
         self.update_query_points_with_mesh_pos(reinterpret_slice(sim_pos));

@@ -19,19 +19,31 @@ impl TriMeshShell {
 
 impl<'a> Elasticity<TriMeshNeoHookean<'a>> for TriMeshShell {
     fn elasticity(&'a self) -> TriMeshNeoHookean<'a> {
-        TriMeshNeoHookean(self)
+        match self.material.properties {
+            ShellMaterial::Deformable => unimplemented!(),// TriMeshNeoHookean(self),
+            ShellMaterial::Rigid => unimplemented!(),
+            ShellMaterial::Static => unimplemented!(),
+        }
     }
 }
 
 impl<'a> Inertia<TriMeshInertia<'a>> for TriMeshShell {
     fn inertia(&'a self) -> TriMeshInertia<'a> {
-        TriMeshInertia(self)
+        match self.material.properties {
+            ShellMaterial::Deformable => unimplemented!(), //TriMeshInertia(self),
+            ShellMaterial::Rigid => unimplemented!(),
+            ShellMaterial::Static => unimplemented!(),
+        }
     }
 }
 
 impl<'a> Gravity<TriMeshGravity<'a>> for TriMeshShell {
     fn gravity(&'a self, g: [f64; 3]) -> TriMeshGravity<'a> {
-        TriMeshGravity { solid: self, g: g.into() }
+        match self.material.properties {
+            ShellMaterial::Deformable => TriMeshGravity { shell: self, g: g.into() },
+            ShellMaterial::Rigid => TriMeshGravity { shell: self, g: g.into() },
+            ShellMaterial::Static => unimplemented!(),
+        }
     }
 }
 

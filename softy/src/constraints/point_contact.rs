@@ -14,9 +14,8 @@ use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use utils::zip;
 use utils::soap::*;
-
+use utils::zip;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -25,7 +24,7 @@ pub struct PointContactConstraint {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
     /// Points where collision and contact occurs.
-    pub contact_points: RefCell<Chunked3<Vec<f64>>,
+    pub contact_points: RefCell<Chunked3<Vec<f64>>>,
 
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
@@ -573,7 +572,11 @@ impl ContactConstraint for PointContactConstraint {
             if frictional_contact.impulse.is_empty() {
                 return;
             }
-            for (v, f, m) in zip!(vel.iter_mut(), frictional_contact.impulse.iter(), self.vertex_masses.iter()) {
+            for (v, f, m) in zip!(
+                vel.iter_mut(),
+                frictional_contact.impulse.iter(),
+                self.vertex_masses.iter()
+            ) {
                 for j in 0..3 {
                     v[j] += f[j] / m;
                 }
@@ -621,9 +624,9 @@ impl ContactConstraint for PointContactConstraint {
     /// For visualization purposes.
     fn compute_contact_impulse(
         &self,
-        x: &[f64],
+        x: Chunked3<&[f64]>,
         contact_impulse: &[f64],
-        impulse: &mut [[f64; 3]],
+        impulse: Chunked3<&mut [f64]>,
     ) {
         let normals = self
             .contact_normals(x)
@@ -673,7 +676,7 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn contact_normals(&self, x: &[f64]) -> Result<Vec<[f64; 3]>, Error> {
+    fn contact_normals(&self, x: Chunked3<&[f64]>) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at the vertex positions of the colliding mesh.
         self.update_surface_with_mesh_pos(x);
 
@@ -720,7 +723,11 @@ impl ContactConstraint for PointContactConstraint {
             .map_err(|_| Error::InvalidImplicitSurface)
     }
 
-    fn update_cache(&mut self, object_pos: Subset<Chunked3<&[f64]>>, collider_pos: Subset<Chunked3<&[f64]>>) -> bool {
+    fn update_cache(
+        &mut self,
+        object_pos: Subset<Chunked3<&[f64]>>,
+        collider_pos: Subset<Chunked3<&[f64]>>,
+    ) -> bool {
         self.implicit_surface.borrow_mut().update(object_pos.iter());
 
         let surf = self.implicit_surface.borrow_mut();

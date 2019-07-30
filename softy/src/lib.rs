@@ -15,6 +15,7 @@ mod friction;
 mod index;
 pub mod mask_iter;
 mod matrix;
+mod objects;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -176,16 +177,16 @@ impl Into<SimResult> for Result<SolveResult, Error> {
 
 pub fn sim(
     tetmesh: Option<TetMesh>,
-    material: Material,
+    material: SolidMaterial,
     polymesh: Option<PolyMesh>,
     sim_params: SimParams,
     interrupter: Option<Box<FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
         let mut builder = fem::SolverBuilder::new(sim_params);
-        builder.add_solid(mesh).solid_material(material);
+        builder.add_solid(mesh, material);
         if let Some(shell_mesh) = polymesh {
-            builder.add_shell(shell_mesh);
+            builder.add_fixed(shell_mesh);
         }
         match builder.build() {
             Ok(mut engine) => {

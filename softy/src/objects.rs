@@ -1,7 +1,7 @@
-pub mod solid;
-pub mod shell;
 pub mod material;
+pub mod shell;
+pub mod solid;
 
-pub use solid::*;
-pub use shell::*;
 pub use material::*;
+pub use shell::*;
+pub use solid::*;

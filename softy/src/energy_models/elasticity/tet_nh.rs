@@ -5,7 +5,7 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::objects::solid::*;
+use crate::objects::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
@@ -14,7 +14,6 @@ use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
 use utils::zip;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
@@ -212,7 +211,7 @@ impl<T: Real> TetEnergy<T> for NeoHookeanTetEnergy<T> {
 
 /// A possibly non-linear elastic energy for tetrahedral meshes.
 /// This type wraps a `TetMeshSolid` to provide an interfce for computing a hyperelastic energy.
-pub struct TetMeshNeoHookean<'a>(&'a TetMeshSolid);
+pub struct TetMeshNeoHookean<'a>(pub &'a TetMeshSolid);
 
 impl TetMeshNeoHookean<'_> {
     const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 78; // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
@@ -258,8 +257,11 @@ impl<T: Real> Energy<T> for TetMeshNeoHookean<'_> {
     fn energy(&self, x0: &[T], x1: &[T]) -> T {
         let TetMeshSolid {
             ref tetmesh,
-            material: Material { damping, .. },
+            material,
+            ..
         } = *self.0;
+
+        let damping = material.damping();
 
         let pos0: &[Vector3<T>] = reinterpret_slice(x0);
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
@@ -277,7 +279,7 @@ impl<T: Real> Energy<T> for TetMeshNeoHookean<'_> {
                 .unwrap(),
             tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap()
         )
-        .map(|(&vol, &DX_inv, cell, lambda, mu)| {
+        .map(|(&vol, &DX_inv, cell, &lambda, &mu)| {
             let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
             let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
             let Dx = tet_x1.shape_matrix();
@@ -306,8 +308,11 @@ impl<T: Real> EnergyGradient<T> for TetMeshNeoHookean<'_> {
     fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
         let TetMeshSolid {
             ref tetmesh,
-            material: Material { damping, .. },
+            material,
+            ..
         } = *self.0;
+
+        let damping = material.damping();
 
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
@@ -318,7 +323,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshNeoHookean<'_> {
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, &DX_inv, cell, lambda, mu) in zip!(
+        for (&vol, &DX_inv, cell, &lambda, &mu) in zip!(
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
@@ -364,7 +369,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshNeoHookean<'_> {
 
 impl EnergyHessian for TetMeshNeoHookean<'_> {
     fn energy_hessian_size(&self) -> usize {
-        Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.tetmesh.num_cells()
+        Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.0.tetmesh.num_cells()
     }
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
         &self,
@@ -390,7 +395,7 @@ impl EnergyHessian for TetMeshNeoHookean<'_> {
                 .zip(tetmesh.cells().par_iter());
 
             hess_iter.for_each(|((tet_hess_rows, tet_hess_cols), cell)| {
-                hessian_for_each(
+                Self::hessian_for_each(
                     |_, _| (),
                     |i, (n, k), (row, col), _| {
                         let mut global_row = 3 * cell[n] + row;
@@ -424,7 +429,7 @@ impl EnergyHessian for TetMeshNeoHookean<'_> {
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 
             hess_iter.for_each(|(tet_hess, cell)| {
-                hessian_for_each(
+                Self::hessian_for_each(
                     |_, _| (),
                     |i, (n, k), (row, col), _| {
                         let mut global_row = 3 * cell[n] + row;
@@ -504,7 +509,7 @@ impl EnergyHessian for TetMeshNeoHookean<'_> {
 
                 let local_hessians = tet_energy.elastic_energy_hessian();
 
-                hessian_for_each(
+                Self::hessian_for_each(
                     |n, k| local_hessians[k][n] * factor,
                     |i, _, (row, col), h| tet_hess[i] = h[col][row],
                 );
@@ -522,10 +527,14 @@ mod tests {
     fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
         TetMeshSolid {
             tetmesh,
-            material: Material::new().elasticity(ElasticityParameters {
-                lambda: 5.4,
-                mu: 263.1,
-            }),
+            material: Material::solid(
+                0,
+                DeformableProperties::default().elasticity(ElasticityParameters {
+                    lambda: 5.4,
+                    mu: 263.1,
+                }),
+                false,
+            ),
         }
     }
 

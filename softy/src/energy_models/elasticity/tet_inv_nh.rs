@@ -66,10 +66,10 @@ impl<T: Real> InvertibleNHTetEnergy<T> {
         let F = self.deformation_gradient();
         let I = F.norm_squared(); // tr(F^TF)
         let J = F.determinant();
+        let half = T::from(0.5).unwrap();
 
         let E = if J <= eps {
             let log_eps = eps.ln();
-            let half = T::from(0.5).unwrap();
             let two = T::from(2.0).unwrap();
             let J_eps = (J - eps) / eps;
             let logJ_approx = log_eps + J_eps - half * J_eps * J_eps;
@@ -78,7 +78,6 @@ impl<T: Real> InvertibleNHTetEnergy<T> {
             half * lambda * logJ2_approx - mu * logJ_approx
         } else {
             let logJ = J.ln();
-            let half = T::from(0.5).unwrap();
             half * lambda * logJ * logJ - mu * logJ
         };
 
@@ -192,6 +191,7 @@ impl<T: Real> TetEnergy<T> for InvertibleNHTetEnergy<T> {
             volume,
             lambda,
             mu,
+            epsilon: T::from(0.2).unwrap(),
         }
     }
 

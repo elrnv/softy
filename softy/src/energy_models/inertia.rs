@@ -1,7 +1,7 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::objects::solids::*;
+use crate::objects::solid::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
@@ -9,9 +9,8 @@ use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
 
-pub trait Inertia<E, T> {
+pub trait Inertia<E> {
     fn inertia(&self) -> E;
 }
 
@@ -52,7 +51,7 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TetMeshInertia {
+impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
         let TetMeshSolid {
@@ -85,7 +84,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia {
     }
 }
 
-impl EnergyHessian for TetMeshInertia {
+impl EnergyHessian for TetMeshInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.tetmesh.num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
@@ -178,11 +177,16 @@ impl EnergyHessian for TetMeshInertia {
             .unwrap()
             .par_iter();
 
+        let density_iter = tetmesh
+            .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+            .unwrap()
+            .par_iter();
+
         // The momentum hessian is a diagonal matrix.
         hess_chunks
             .par_iter_mut()
-            .zip(vol_iter)
-            .for_each(|(tet_hess, &vol)| {
+            .zip(vol_iter.zip(density_iter))
+            .for_each(|(tet_hess, (&vol, &density))| {
                 for vi in 0..4 {
                     // vertex index
                     for j in 0..3 {
@@ -198,15 +202,13 @@ impl EnergyHessian for TetMeshInertia {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
+    use crate::objects::material::*;
     use crate::TetMesh;
 
     fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
         TetMeshSolid {
             tetmesh,
-            material: Material {
-                density: 1000.0,
-                ..Material::default()
-            },
+            material: Material::solid(0, DeformableProperties::default().density(1000.0), false),
         }
     }
 

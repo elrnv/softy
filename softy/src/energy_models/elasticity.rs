@@ -1,14 +1,13 @@
-pub mod tet_inv_nh;
-pub mod tet_nh;
-pub mod tri_nh;
+//mod tet_inv_nh;
+mod tet_nh;
+mod tri_nh;
 
-use crate::energy::Energy;
+pub use tet_nh::*;
+//pub use tet_inv_nh::*;
+//pub use tri_nh::*;
 
 /// This trait defines an accessor for an elastic energy model. Elastic objects can implement this
 /// trait to have a unified method for getting an elastic energy model.
-pub trait Elasticity<E, T>
-where
-    E: Energy<T> + EnergyGradient<T> + EnergyHessian,
-{
+pub trait Elasticity<E> {
     fn elasticity(&self) -> E;
 }

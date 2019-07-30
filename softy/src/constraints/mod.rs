@@ -1,26 +1,18 @@
 pub mod implicit_contact;
 pub mod point_contact;
-pub mod sp_implicit_contact;
+//pub mod sp_implicit_contact;
 pub mod volume;
 
 use crate::attrib_defines::*;
-use crate::constraint::*;
 use crate::contact::*;
-use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
 use crate::friction::FrictionalContact;
 use crate::Index;
-use crate::TetMesh;
 use crate::TriMesh;
-use geo::{
-    math::Vector3,
-    mesh::{topology::*, Attrib},
-};
-use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
+use geo::math::Vector3;
 
 pub use self::implicit_contact::*;
 pub use self::point_contact::*;
-pub use self::sp_implicit_contact::*;
+//pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
 use utils::aref::*;
 use utils::soap::*;
@@ -35,12 +27,16 @@ pub fn build_contact_constraint(
     time_step: f64,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::SPImplicit => Box::new(SPImplicitContactConstraint::new(
-            object,
-            collider,
-            params.kernel,
-            params.friction_params,
-        )?),
+        ContactType::SPImplicit =>
+        //    Box::new(SPImplicitContactConstraint::new(
+        //    object,
+        //    collider,
+        //    params.kernel,
+        //    params.friction_params,
+        //    )?)
+        {
+            unimplemented!()
+        }
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
             object,
             collider,
@@ -165,19 +161,12 @@ fn remap_values_complex_test() {
     );
 }
 
-pub trait ContactConstraint:
-    Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
-{
-    fn num_constraints(&self) -> usize;
+pub trait ContactConstraint {
+    fn num_contacts(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
     /// Provide the frictional contact mutable data.
     fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact>;
-
-    /// Return a slice that maps from a given surface vertex index to a corresponding simulation
-    /// mesh vertex.
-    fn vertex_index_mapping(&self) -> Option<&[usize]>;
-
     /// Return a set of surface vertex indices that could be in contact.
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]>;
 
@@ -197,7 +186,7 @@ pub trait ContactConstraint:
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,
-        contact_force: Chunked3<&[f64]>,
+        contact_impulse: &[f64],
         x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         dx: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         constraint_values: &[f64],
@@ -207,7 +196,14 @@ pub trait ContactConstraint:
     fn add_mass_weighted_frictional_contact_impulse(&self, x: SubsetView<Chunked3<&mut [f64]>>);
 
     /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(&self, grad: Chunked3<&mut [f64]>, multiplier: f64) {
+    fn add_friction_impulse(
+        &self,
+        grad: (
+            SubsetView<Chunked3<&mut [f64]>>,
+            SubsetView<Chunked3<&mut [f64]>>,
+        ),
+        multiplier: f64,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -238,11 +234,11 @@ pub trait ContactConstraint:
                     Vector3::zeros()
                 };
 
-                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                grad[vertex_idx] = (Vector3(grad[vertex_idx]) + r_t * multiplier).into();
+                grad.0[i] = (Vector3(grad.0[i]) + r_t * multiplier).into();
             }
         }
     }
+
     /// Compute the frictional energy dissipation.
     fn frictional_dissipation(
         &self,
@@ -280,8 +276,7 @@ pub trait ContactConstraint:
                     Vector3::zeros()
                 };
 
-                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                dissipation += Vector3(vel[vertex_idx]).dot(r_t);
+                dissipation += Vector3(vel.0[i]).dot(r_t);
             }
         }
         dissipation
@@ -295,7 +290,7 @@ pub trait ContactConstraint:
     fn compute_contact_impulse(
         &self,
         x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
-        contact_force: Chunked3<&[f64]>,
+        contact_impulse: &[f64],
         impulse: Chunked3<&mut [f64]>,
     );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
@@ -319,8 +314,8 @@ pub trait ContactConstraint:
     /// old data needed to perform the remapping of any user data.
     fn update_cache(
         &mut self,
-        object_pos: Subset<Chunked3<&[f64]>>,
-        collider_pos: Subset<Chunked3<&[f64]>>,
+        object_pos: SubsetView<Chunked3<&[f64]>>,
+        collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve

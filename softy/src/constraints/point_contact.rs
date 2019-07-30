@@ -1,19 +1,17 @@
 use super::*;
 use crate::constraint::*;
-use crate::constraints::compute_vertex_masses;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::Index;
-use crate::TetMesh;
 use crate::TriMesh;
 use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
 use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 use utils::soap::*;
 use utils::zip;
 
@@ -28,6 +26,8 @@ pub struct PointContactConstraint {
 
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
+    /// A mass for each vertex in the object mesh.
+    pub vertex_masses: Vec<f64>,
 
     /// Store the indices to the Hessian here. These will be served through the constraint
     /// interface.
@@ -45,8 +45,7 @@ impl PointContactConstraint {
         // Collision object consisting of points pushing against the solid object.
         collider: &TriMesh,
         kernel: KernelType,
-        friction_params: FrictionParams,
-        density: f64,
+        friction_params: Option<FrictionParams>,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
@@ -59,11 +58,21 @@ impl PointContactConstraint {
             });
 
         if let Some(surface) = surface_builder.build() {
+            // Sanity check that the surface is built correctly.
+            assert_eq!(
+                surface.surface_vertex_positions().len(),
+                object.num_vertices()
+            );
+
             let query_points = collider.vertex_positions();
+
+            let vertex_masses = object
+                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)?
+                .to_vec();
 
             let constraint = PointContactConstraint {
                 implicit_surface: RefCell::new(surface),
-                contact_points: RefCell::new(Chunked3::from_grouped_slice(query_points.to_vec())),
+                contact_points: RefCell::new(Chunked3::from_grouped_vec(query_points.to_vec())),
                 frictional_contact: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
                         Some(FrictionalContact::new(fparams))
@@ -71,6 +80,7 @@ impl PointContactConstraint {
                         None
                     }
                 }),
+                vertex_masses,
                 surface_hessian_rows: RefCell::new(Vec::new()),
                 surface_hessian_cols: RefCell::new(Vec::new()),
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -87,18 +97,11 @@ impl PointContactConstraint {
         }
     }
 
-    /// Given an index into the surface point position coordinates, return the corresponding index
-    /// into the original `TetMesh`.
-    pub fn tetmesh_coordinate_index(&self, idx: usize) -> usize {
-        3 * self.sim_verts[idx / 3] + idx % 3
-    }
-
     /// Update implicit surface using the given position data from mesh vertices.
-    pub fn update_surface_with_mesh_pos(&self, x: &[f64]) {
-        let pos: &[[f64; 3]] = reinterpret_slice(x);
-        let points_iter = self.sim_verts.iter().map(|&i| pos[i].into());
-
-        self.implicit_surface.borrow_mut().update(points_iter);
+    pub fn update_surface_with_mesh_pos(&self, pos: SubsetView<Chunked3<&[f64]>>) {
+        self.implicit_surface
+            .borrow_mut()
+            .update(pos.iter().cloned());
     }
 
     ///// Update implicit surface using the given position and displacement data.
@@ -259,7 +262,7 @@ impl PointContactConstraint {
 
 impl ContactConstraint for PointContactConstraint {
     fn num_contacts(&self) -> usize {
-        self.contact_points.len()
+        self.contact_points.borrow().len()
     }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
@@ -267,26 +270,25 @@ impl ContactConstraint for PointContactConstraint {
     fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact> {
         self.frictional_contact.as_mut()
     }
-    fn vertex_index_mapping(&self) -> Option<&[usize]> {
-        None
-    }
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
-        ARef::Plain(&self.sim_verts)
+        ARef::Plain(&[])
     }
 
     fn contact_jacobian_af(&self) -> af::Array<f64> {
         // Compute contact jacobian
         let surf = self.implicit_surface.borrow();
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        let query_points = self.contact_points.borrow();
 
         let mut cj_values = vec![
             0.0;
             surf.num_contact_jacobian_entries()
                 .expect("Failed to get contact Jacobian size.")
         ];
-        surf.contact_jacobian_values(query_points, reinterpret_mut_slice(&mut cj_values))
-            .expect("Failed to compute contact Jacobian.");
+        surf.contact_jacobian_values(
+            query_points.view().into(),
+            reinterpret_mut_slice(&mut cj_values),
+        )
+        .expect("Failed to compute contact Jacobian.");
         let cj_indices_iter = surf
             .contact_jacobian_indices_iter()
             .expect("Failed to get contact Jacobian indices.");
@@ -300,12 +302,10 @@ impl ContactConstraint for PointContactConstraint {
             *c = col as i32;
         }
 
-        let collider = self.collision_object.borrow();
-
         // Build ArrayFire matrix
         let nnz = nnz as u64;
-        let num_rows = self.sim_verts.len() as u64;
-        let num_cols = collider.num_vertices() as u64;
+        let num_rows = query_points.len() as u64;
+        let num_cols = surf.surface_vertex_positions().len() as u64;
 
         let values = af::Array::new(&cj_values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -324,26 +324,26 @@ impl ContactConstraint for PointContactConstraint {
     fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
         // Compute contact jacobian
         let surf = self.implicit_surface.borrow();
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        let query_points = self.contact_points.borrow();
 
         let mut cj_values = vec![
             0.0;
             surf.num_contact_jacobian_entries()
                 .expect("Failed to get contact Jacobian size.")
         ];
-        surf.contact_jacobian_values(query_points, reinterpret_mut_slice(&mut cj_values))
-            .expect("Failed to compute contact Jacobian.");
+        surf.contact_jacobian_values(
+            query_points.view().into(),
+            reinterpret_mut_slice(&mut cj_values),
+        )
+        .expect("Failed to compute contact Jacobian.");
         let cj_indices_iter = surf
             .contact_jacobian_indices_iter()
             .expect("Failed to get contact Jacobian indices.");
 
         let (rows, cols) = cj_indices_iter.unzip();
 
-        let collider = self.collision_object.borrow();
-
-        let num_cols = self.sim_verts.len();
-        let num_rows = collider.num_vertices();
+        let num_cols = surf.surface_vertex_positions().len();
+        let num_rows = query_points.len();
 
         sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, cj_values).to_csr()
     }
@@ -351,8 +351,8 @@ impl ContactConstraint for PointContactConstraint {
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
-        x: &[[f64; 3]],
-        v: &[[f64; 3]],
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        v: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         potential_values: &[f64],
         friction_steps: u32,
     ) -> u32 {
@@ -361,7 +361,7 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         let normals = self
-            .contact_normals(reinterpret_slice(x))
+            .contact_normals(x)
             .expect("Failed to compute contact normals.");
         let query_indices = self
             .active_constraint_indices()
@@ -375,10 +375,9 @@ impl ContactConstraint for PointContactConstraint {
             params,
         } = self.frictional_contact.as_mut().unwrap();
 
-        contact_basis.update_from_normals(normals);
+        contact_basis.update_from_normals(normals.into());
 
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        let query_points = self.contact_points.borrow();
 
         // Compute contact jacobian
         let surf = self.implicit_surface.borrow();
@@ -388,8 +387,11 @@ impl ContactConstraint for PointContactConstraint {
             surf.num_contact_jacobian_matrices()
                 .expect("Failed to get contact Jacobian size.")
         ];
-        surf.contact_jacobian_matrices(query_points, reinterpret_mut_slice(&mut cj_matrices))
-            .expect("Failed to compute contact Jacobian.");
+        surf.contact_jacobian_matrices(
+            query_points.view().into(),
+            reinterpret_mut_slice(&mut cj_matrices),
+        )
+        .expect("Failed to compute contact Jacobian.");
         let cj_indices_iter = surf
             .contact_jacobian_matrix_indices_iter()
             .expect("Failed to get contact Jacobian indices.");
@@ -402,8 +404,7 @@ impl ContactConstraint for PointContactConstraint {
         // Compute product J*u to produce velocities (displacements) at each point of contact in
         // physical space.
         for ((r, c), &m) in cj_indices_iter.clone().zip(cj_matrices.iter()) {
-            let vtx_idx = self.sim_verts[c];
-            velocity[r] += m * Vector3(v[vtx_idx]);
+            velocity[r] += m * Vector3(v.0[c]);
         }
 
         assert_eq!(query_indices.len(), contact_impulse.len());
@@ -556,7 +557,7 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         vertex_friction_impulse.clear();
-        vertex_friction_impulse.resize(self.sim_verts.len(), [0.0; 3]);
+        vertex_friction_impulse.resize(surf.surface_vertex_positions().len(), [0.0; 3]);
 
         // Copute transpose product J^T*f
         for ((r, c), &m) in cj_indices_iter.zip(cj_matrices.iter()) {
@@ -567,15 +568,16 @@ impl ContactConstraint for PointContactConstraint {
         friction_steps - 1
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, vel: Subset<Chunked3<&mut [f64]>>) {
+    fn add_mass_weighted_frictional_contact_impulse(&self, vel: SubsetView<Chunked3<&mut [f64]>>) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
             }
-            for (v, f, m) in zip!(
-                vel.iter_mut(),
-                frictional_contact.impulse.iter(),
-                self.vertex_masses.iter()
+            for (v, (f, m)) in vel.iter_mut().zip(
+                frictional_contact
+                    .impulse
+                    .iter()
+                    .zip(self.vertex_masses.iter()),
             ) {
                 for j in 0..3 {
                     v[j] += f[j] / m;
@@ -584,26 +586,34 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
-        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+    fn add_friction_impulse(
+        &self,
+        grad: (
+            SubsetView<Chunked3<&mut [f64]>>,
+            SubsetView<Chunked3<&mut [f64]>>,
+        ),
+        multiplier: f64,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
                 return;
             }
 
-            assert_eq!(self.sim_verts.len(), frictional_contact.impulse.len());
-            for (&i, &r) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
-                grad[i] += Vector3(r) * multiplier;
+            for (i, &r) in frictional_contact.impulse.iter().enumerate() {
+                grad.0[i] = (Vector3(grad.0[i]) + Vector3(r) * multiplier).into();
             }
         }
     }
 
-    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
+    fn frictional_dissipation(
+        &self,
+        v: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+    ) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact {
-            for (&i, f) in self.sim_verts.iter().zip(frictional_contact.impulse.iter()) {
+            for (i, f) in frictional_contact.impulse.iter().enumerate() {
                 for j in 0..3 {
-                    dissipation += v[3 * i + j] * f[j];
+                    dissipation += v.0[i][j] * f[j];
                 }
             }
         }
@@ -624,7 +634,7 @@ impl ContactConstraint for PointContactConstraint {
     /// For visualization purposes.
     fn compute_contact_impulse(
         &self,
-        x: SubsetView<Chunked3<&[f64]>>,
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         contact_impulse: &[f64],
         impulse: Chunked3<&mut [f64]>,
     ) {
@@ -638,8 +648,7 @@ impl ContactConstraint for PointContactConstraint {
         assert_eq!(contact_impulse.len(), normals.len());
         assert_eq!(surf_indices.len(), normals.len());
 
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        let query_points = self.contact_points.borrow();
 
         let surf = self.implicit_surface.borrow();
         let mut cj_matrices = vec![
@@ -647,11 +656,10 @@ impl ContactConstraint for PointContactConstraint {
             surf.num_contact_jacobian_matrices()
                 .expect("Failed to get contact jacobian size")
         ];
-        surf.contact_jacobian_matrices(query_points, &mut cj_matrices)
+        surf.contact_jacobian_matrices(query_points.view().into(), &mut cj_matrices)
             .expect("Failed to compute contact jacobian");
 
-        let collider = self.collision_object.borrow();
-        let mut surface_impulse = vec![Vector3::zeros(); collider.num_vertices()];
+        let mut surface_impulse = vec![Vector3::zeros(); query_points.len()];
 
         for (surf_idx, nml, &cf) in zip!(
             surf_indices.into_iter(),
@@ -670,36 +678,38 @@ impl ContactConstraint for PointContactConstraint {
             .expect("Failed to get contact jacobian indices");
 
         for ((r, c), m) in cj_indices_iter.zip(cj_matrices.into_iter()) {
-            let vtx_idx = self.sim_verts[c];
-            impulse[vtx_idx] =
-                (Vector3(impulse[vtx_idx]) + Matrix3(m).transpose() * surface_impulse[r]).into()
+            impulse[c] = (Vector3(impulse[c]) + Matrix3(m).transpose() * surface_impulse[r]).into()
         }
     }
 
-    fn contact_normals(&self, x: Chunked3<&[f64]>) -> Result<Chunked3<Vec<f64>>, Error> {
+    fn contact_normals(
+        &self,
+        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+    ) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at the vertex positions of the colliding mesh.
-        self.update_surface_with_mesh_pos(x);
+        self.update_surface_with_mesh_pos(x.0);
 
         let surf = self.implicit_surface.borrow();
 
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        let mut contact_points = self.contact_points.borrow_mut();
+        x.1.clone_into_other(&mut *contact_points);
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
-        surf.query_jacobian_values(&query_points, &mut normal_coords)?;
-        let mut normals: Vec<Vector3<f64>> = reinterpret_vec(normal_coords);
+        surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords)?;
+        let mut normals = Chunked3::from_flat(normal_coords);
 
         // Normalize normals
         // Contact normals point away from the surface being collided against.
         // In this case the gradient is opposite of this direction.
         for n in normals.iter_mut() {
-            let len = n.norm();
+            let nml = Vector3(*n);
+            let len = nml.norm();
             if len > 0.0 {
-                *n /= -len;
+                *n = (nml / -len).into();
             }
         }
 
-        Ok(reinterpret_vec(normals))
+        Ok(normals)
     }
 
     fn contact_radius(&self) -> f64 {
@@ -725,14 +735,19 @@ impl ContactConstraint for PointContactConstraint {
 
     fn update_cache(
         &mut self,
-        object_pos: Subset<Chunked3<&[f64]>>,
-        collider_pos: Subset<Chunked3<&[f64]>>,
+        object_pos: SubsetView<Chunked3<&[f64]>>,
+        collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) -> bool {
-        self.implicit_surface.borrow_mut().update(object_pos.iter());
+        self.implicit_surface
+            .borrow_mut()
+            .update(object_pos.iter().cloned());
+
+        let mut contact_points = self.contact_points.borrow_mut();
+        collider_pos.clone_into_other(&mut *contact_points);
 
         let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_query_neighbourhood();
-        surf.cache_neighbours(collider_pos.into())
+        surf.cache_neighbours(contact_points.view().into())
     }
 
     fn cached_neighbourhood_indices(&self) -> Vec<Index> {
@@ -761,7 +776,12 @@ impl ContactConstraint for PointContactConstraint {
     }
 }
 
-impl Constraint<f64> for PointContactConstraint {
+impl<'a> Constraint<'a, f64> for PointContactConstraint {
+    type Input = (
+        SubsetView<'a, Chunked3<&'a [f64]>>, // Object vertices
+        SubsetView<'a, Chunked3<&'a [f64]>>, // Collider vertices
+    );
+
     #[inline]
     fn constraint_size(&self) -> usize {
         self.implicit_surface
@@ -777,17 +797,18 @@ impl Constraint<f64> for PointContactConstraint {
     }
 
     #[inline]
-    fn constraint(&self, _x0: &[f64], x1: &[f64], value: &mut [f64]) {
+    fn constraint(&self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        self.update_surface_with_mesh_pos(x1);
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        self.update_surface_with_mesh_pos(x1.0);
+
+        let contact_points = self.contact_points.borrow_mut();
+        x1.1.clone_into_other(&mut *contact_points);
 
         let mut cbuf = self.constraint_buffer.borrow_mut();
         let radius = self.contact_radius();
 
         let surf = self.implicit_surface.borrow();
-        for (val, q) in cbuf.iter_mut().zip(query_points.iter()) {
+        for (val, q) in cbuf.iter_mut().zip(contact_points.iter()) {
             // Clear potential value.
             let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
             if closest_sample.nml.dot(Vector3(*q) - closest_sample.pos) > 0.0 {
@@ -797,7 +818,8 @@ impl Constraint<f64> for PointContactConstraint {
             }
         }
 
-        surf.potential(query_points, &mut cbuf).unwrap();
+        surf.potential(contact_points.view().into(), &mut cbuf)
+            .unwrap();
 
         //let bg_pts = self.background_points();
         //let collider_mesh = self.collision_object.borrow();
@@ -824,7 +846,7 @@ impl Constraint<f64> for PointContactConstraint {
     }
 }
 
-impl ConstraintJacobian<f64> for PointContactConstraint {
+impl<'a> ConstraintJacobian<'a, f64> for PointContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
         self.implicit_surface
@@ -832,9 +854,9 @@ impl ConstraintJacobian<f64> for PointContactConstraint {
             .num_surface_jacobian_entries()
             .unwrap_or(0)
     }
-    fn constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+    fn constraint_jacobian_indices_iter(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
             surf.surface_jacobian_indices_iter()?
@@ -845,29 +867,30 @@ impl ConstraintJacobian<f64> for PointContactConstraint {
             assert!(cached_neighbourhood_indices[row].is_valid());
             MatrixElementIndex {
                 row: cached_neighbourhood_indices[row].unwrap(),
-                col: self.tetmesh_coordinate_index(col),
+                col,
             }
         })))
     }
 
     fn constraint_jacobian_values(
         &self,
-        _x0: &[f64],
-        x1: &[f64],
+        _x0: Self::Input,
+        x1: Self::Input,
         values: &mut [f64],
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
-        self.update_surface_with_mesh_pos(x1);
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
+        self.update_surface_with_mesh_pos(x1.0);
+        let contact_points = self.contact_points.borrow_mut();
+        x1.1.clone_into_other(&mut *contact_points);
         Ok(self
             .implicit_surface
             .borrow()
-            .surface_jacobian_values(query_points, values)?)
+            .surface_jacobian_values(contact_points.view().into(), values)?)
     }
 }
 
-impl ConstraintHessian<f64> for PointContactConstraint {
+impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
+    type InputDual = &'a [f64];
     #[inline]
     fn constraint_hessian_size(&self) -> usize {
         let num = self
@@ -892,31 +915,34 @@ impl ConstraintHessian<f64> for PointContactConstraint {
         num
     }
 
-    fn constraint_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+    fn constraint_hessian_indices_iter(
+        &self,
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
         let surf = self.implicit_surface.borrow();
-        Ok(Box::new(surf.surface_hessian_product_indices_iter()?.map(
-            move |(row, col)| MatrixElementIndex {
-                row: self.tetmesh_coordinate_index(row),
-                col: self.tetmesh_coordinate_index(col),
-            },
-        )))
+        Ok(Box::new(
+            surf.surface_hessian_product_indices_iter()?
+                .map(move |(row, col)| MatrixElementIndex { row, col }),
+        ))
     }
 
     fn constraint_hessian_values(
         &self,
-        _x0: &[f64],
-        x1: &[f64],
-        lambda: &[f64],
+        _x0: Self::Input,
+        x1: Self::Input,
+        lambda: Self::InputDual,
         scale: f64,
         values: &mut [f64],
     ) -> Result<(), Error> {
-        self.update_surface_with_mesh_pos(x1);
+        self.update_surface_with_mesh_pos(x1.0);
         let surf = self.implicit_surface.borrow();
-        let collider = self.collision_object.borrow();
-        let query_points = collider.vertex_positions();
-        surf.surface_hessian_product_scaled_values(query_points, lambda, scale, values)?;
+        let contact_points = self.contact_points.borrow_mut();
+        x1.1.clone_into_other(&mut *contact_points);
+        surf.surface_hessian_product_scaled_values(
+            contact_points.view().into(),
+            lambda,
+            scale,
+            values,
+        )?;
         Ok(())
     }
 }
@@ -976,7 +1002,7 @@ mod tests {
 
     /// Pinch a box between two probes.
     /// Given sufficient friction, the box should not fall.
-    fn pinch_tester(sc_params: SmoothContactParams) -> Result<(), Error> {
+    fn pinch_tester(fc_params: FrictionalContactParams) -> Result<(), Error> {
         use geo::mesh::topology::*;
 
         let params = SimParams {
@@ -999,10 +1025,9 @@ mod tests {
         box_mesh.remove_attrib::<VertexIndex>("fixed")?;
 
         let mut solver = fem::SolverBuilder::new(params.clone())
-            .solid_material(material)
-            .add_solid(box_mesh)
-            .add_shell(clamps)
-            .smooth_contact_params(sc_params)
+            .add_solid(box_mesh, material)
+            .add_fixed(clamps)
+            .smooth_contact_params(fc_params)
             .build()?;
 
         for iter in 0..50 {
@@ -1030,7 +1055,7 @@ mod tests {
     /// Pinch a box against a couple of implicit surfaces.
     #[allow(dead_code)]
     fn pinch_against_implicit() -> Result<(), Error> {
-        let sc_params = SmoothContactParams {
+        let fc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Cubic {
                 radius_multiplier: 1.5,

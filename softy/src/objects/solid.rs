@@ -1,6 +1,11 @@
-use crate::energy_models::elasticity::TetMeshNeoHookean;
-use crate::objects::Material;
+use crate::attrib_defines::*;
+use crate::energy_models::elasticity::*;
+use crate::energy_models::gravity::*;
+use crate::energy_models::inertia::*;
+use crate::objects::material::*;
 use crate::{TetMesh, TriMesh};
+use geo::mesh::topology::*;
+use std::cell::RefCell;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
 /// physical material properties that govern how it behaves.
@@ -31,19 +36,19 @@ impl TetMeshSolid {
 }
 
 impl<'a> Elasticity<TetMeshNeoHookean<'a>> for TetMeshSolid {
-    fn elasticity(&'a self) -> TetMeshNeoHookean<'a> {
+    fn elasticity(&self) -> TetMeshNeoHookean<'a> {
         TetMeshNeoHookean(self)
     }
 }
 
 impl<'a> Inertia<TetMeshInertia<'a>> for TetMeshSolid {
-    fn inertia(&'a self) -> TetMeshInertia<'a> {
+    fn inertia(&self) -> TetMeshInertia<'a> {
         TetMeshInertia(self)
     }
 }
 
 impl<'a> Gravity<TetMeshGravity<'a>> for TetMeshSolid {
-    fn gravity(&'a self, g: [f64; 3]) -> TetMeshGravity<'a> {
+    fn gravity(&self, g: [f64; 3]) -> TetMeshGravity<'a> {
         TetMeshGravity {
             solid: self,
             g: g.into(),

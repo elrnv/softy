@@ -1,21 +1,17 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::objects::solid::*;
+use crate::objects::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
-use geo::prim::Tetrahedron;
+use geo::prim::{Tetrahedron, Triangle};
 use geo::Real;
 use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
 /// object.
-pub trait Gravity<E, T>
-where
-    E: Energy<T> + EnergyGradient<T> + EnergyHessian,
-{
+pub trait Gravity<E> {
     fn gravity(&self, g: [f64; 3]) -> E;
 }
 
@@ -25,8 +21,8 @@ pub struct TetMeshGravity<'a> {
     g: Vector3<f64>,
 }
 
-impl TetMeshGravity {
-    pub fn new(solid: &TetMeshSolid, gravity: &[f64; 3]) -> Gravity {
+impl<'a> TetMeshGravity<'a> {
+    pub fn new(solid: &TetMeshSolid, gravity: &[f64; 3]) -> Gravity<TetMeshGravity<'a>> {
         TetMeshGravity {
             solid,
             g: (*gravity).into(),
@@ -36,7 +32,7 @@ impl TetMeshGravity {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
-impl<T: Real> Energy<T> for TetMeshGravity {
+impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
@@ -60,7 +56,7 @@ impl<T: Real> Energy<T> for TetMeshGravity {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TetMeshGravity {
+impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
@@ -84,7 +80,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity {
     }
 }
 
-impl EnergyHessian for TetMeshGravity {
+impl EnergyHessian for TetMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
@@ -102,8 +98,8 @@ pub struct TriMeshGravity<'a> {
     g: Vector3<f64>,
 }
 
-impl TriMeshGravity {
-    pub fn new(shell: &TriMeshSolid, gravity: &[f64; 3]) -> Gravity {
+impl<'a> TriMeshGravity<'a> {
+    pub fn new(shell: &TriMeshShell, gravity: &[f64; 3]) -> Gravity<TriMeshGravity<'a>> {
         TriMeshGravity {
             shell,
             g: (*gravity).into(),
@@ -113,11 +109,11 @@ impl TriMeshGravity {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
-impl<T: Real> Energy<T> for TriMeshGravity {
+impl<T: Real> Energy<T> for TriMeshGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
-        let tetmesh = self.shell.trimesh;
+        let trimesh = self.shell.trimesh;
         let tri_iter = trimesh
             .face_iter()
             .map(|face| Triangle::from_indexed_slice(face, pos1));
@@ -137,7 +133,7 @@ impl<T: Real> Energy<T> for TriMeshGravity {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TriMeshGravity {
+impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
@@ -155,13 +151,13 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity {
         {
             for i in 0..3 {
                 // Energy gradient is in opposite direction to the force hence minus here.
-                gradient[face[i]] -= g * T::from(0.25 * vol * self.density).unwrap();
+                gradient[face[i]] -= g * T::from(0.25 * area * self.density).unwrap();
             }
         }
     }
 }
 
-impl EnergyHessian for TriMeshGravity {
+impl EnergyHessian for TriMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
@@ -173,15 +169,13 @@ impl EnergyHessian for TriMeshGravity {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
+    use crate::objects::*;
     use crate::TetMesh;
 
     fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
         TetMeshSolid {
             tetmesh,
-            material: Material {
-                density: 1000.0,
-                ..Material::default()
-            },
+            material: Material::solid(0, DeformableProperties::default().density(1000.0), false),
         }
     }
 

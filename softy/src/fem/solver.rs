@@ -2,29 +2,21 @@ use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::energy::*;
-use crate::energy_models::{
-    elasticity::tet_nh::{NeoHookeanTetEnergy, TetMeshNeoHookean},
-    gravity::TetMeshGravity,
-    inertia::TetMeshInertia,
-};
-use crate::objects::{TetMeshSolid, TriMeshShell};
+use crate::energy_models::elasticity::NeoHookeanTetEnergy;
+use crate::friction::*;
+use crate::objects::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib, VertexPositions};
-use geo::ops::{ShapeMatrix, Volume};
+use geo::ops::{Area, ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use reinterpret::*;
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    rc::Rc,
-};
-use utils::soap::*;
-
-use approx::*;
+use std::cell::{Ref, RefCell, RefMut};
+use utils::{soap::*, zip};
 
 use crate::inf_norm;
 
-use super::{MuStrategy, NonLinearProblem, SimParams, Solution};
+use super::{MuStrategy, NonLinearProblem, SimParams, Solution, SourceIndex, VertexSet};
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 /// Result from one inner simulation step.
@@ -121,7 +113,19 @@ impl SolverBuilder {
 
     /// Add a polygon mesh representing a shell (e.g. cloth).
     pub fn add_shell(&mut self, shell: PolyMesh, mat: ShellMaterial) -> &mut Self {
-        self.shells.push((mesh, mat));
+        self.shells.push((shell, mat));
+        self
+    }
+
+    /// Add a static polygon mesh representing an immovable solid.
+    pub fn add_fixed(&mut self, shell: PolyMesh) -> &mut Self {
+        self.shells.push((shell, ShellMaterial::fixed()));
+        self
+    }
+
+    /// Add a rigid polygon mesh representing an rigid solid.
+    pub fn add_rigid(&mut self, shell: PolyMesh, density: f64) -> &mut Self {
+        self.shells.push((shell, ShellMaterial::rigid(density)));
         self
     }
 
@@ -159,8 +163,6 @@ impl SolverBuilder {
         shells: &[TriMeshShell],
         frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
     ) -> Vec<FrictionalContact> {
-        use crate::constraints::build_contact_constraint;
-
         // Build a mapping to mesh indices in their respective slices.
         let mut material_source = Vec::new();
         material_source.extend((0..solids.len()).map(|i| SourceIndex::Solid(i)));
@@ -248,9 +250,7 @@ impl SolverBuilder {
             .iter()
             .enumerate()
             .filter(|&&(_, solid)| solid.material.properties.volume_preservation)
-            .map(|&(idx, solid)| {
-                volume_constraints.push((idx, VolumeConstraint::new(solid.tetmesh)))
-            })
+            .map(|&(idx, solid)| (idx, VolumeConstraint::new(solid.tetmesh)))
             .collect()
     }
 
@@ -284,8 +284,8 @@ impl SolverBuilder {
         } in shells.iter()
         {
             match material.properties {
-                ShellProperties::Rigid => {
-                    let translation = trimesh.centroid();
+                ShellProperties::Rigid { .. } => {
+                    let translation = mesh.centroid();
                     let rotation = [0.0; 3];
                     prev_pos.push(UniChunked::from_grouped_vec(vec![translation, rotation]));
                     prev_vel.push(UniChunked::from_grouped_vec(vec![[0.0; 3], [0.0; 3]]));
@@ -298,7 +298,7 @@ impl SolverBuilder {
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
                     prev_vel.push(UniChunked::from_grouped_vec(mesh_prev_vel));
                 }
-                ShellProperties::Static => {
+                ShellProperties::Fixed => {
                     // Static meshes are not simulated so we leave an empty set
                     // here to maintain indexing consistency with the global
                     // shell array.
@@ -308,7 +308,7 @@ impl SolverBuilder {
             }
         }
 
-        let num_meshes = solids.len() + shell.len();
+        let num_meshes = solids.len() + shells.len();
         let prev_pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_pos);
         let prev_vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_vel);
 
@@ -336,20 +336,16 @@ impl SolverBuilder {
     }
 
     /// Helper function to build a list of shells with associated material properties and attributes.
-    fn build_shells(
-        shells: Vec<(TriMesh, ShellMaterial)>,
-    ) -> Result<(Vec<TriMeshShell>, VertexSet), Error> {
+    fn build_shells(shells: Vec<(TriMesh, ShellMaterial)>) -> Result<Vec<TriMeshShell>, Error> {
         // Equip `PolyMesh`es with physics parameters, making them bona-fide shells.
-        let shells = shells
+        shells
             .into_iter()
             .map(|(polymesh, material)| {
                 let trimesh = TriMesh::from(polymesh);
                 // Prepare shell for simulation.
                 Self::prepare_shell_attributes(TriMeshShell { trimesh, material })?
             })
-            .collect::<Vec<_>>();
-
-        (shells, vertex_set)
+            .collect::<Vec<_>>()
     }
 
     /// Helper to compute max element size. This is used for normalizing tolerances.
@@ -381,6 +377,46 @@ impl SolverBuilder {
         max_size
     }
 
+    /// Helper function to compute the maximum elastic modulus of all given meshes.
+    /// This aids in figuring out the correct scaling for the convergence tolerances.
+    fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        let mut max_modulus = 0.0;
+
+        for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
+            max_modulus = max_modulus
+                .max(
+                    tetmesh
+                        .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
+                        .expect("Given TetMesh is empty"),
+                )
+                .max(
+                    tetmesh
+                        .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
+                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
+                        .expect("Given TetMesh is empty"),
+                );
+        }
+
+        for TriMeshShell { ref trimesh, .. } in shells.iter() {
+            max_modulus = max_modulus
+                .max(
+                    trimesh
+                        .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
+                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
+                        .expect("Given TriMesh is empty"),
+                )
+                .max(
+                    trimesh
+                        .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)
+                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
+                        .expect("Given TriMesh is empty"),
+                );
+        }
+
+        max_modulus
+    }
+
     fn build_problem(&self) -> NonLinearProblem {
         let SolverBuilder {
             sim_params: mut params,
@@ -390,15 +426,15 @@ impl SolverBuilder {
         } = self.clone();
 
         for (mesh, _) in solids.iter() {
-            validate_input_mesh(mesh)?;
+            Self::validate_input_mesh(mesh)?;
         }
 
-        let solids = build_solids(solids);
-        let shells = build_shells(shells);
+        let solids = Self::build_solids(solids);
+        let shells = Self::build_shells(shells);
 
-        let vertex_set = build_vertex_set(&solids, &shells);
+        let vertex_set = Self::build_vertex_set(&solids, &shells);
 
-        let volume_constraints = build_volume_constraints(&solids);
+        let volume_constraints = Self::build_volume_constraints(&solids);
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -456,9 +492,10 @@ impl SolverBuilder {
         // tet volume: Larger stiffnesses and volumes cause proportionally
         // larger gradients. Thus our tolerance should reflect these properties.
         let max_area = max_size * max_size;
-        let tol = f64::from(params.tolerance) * max_area * lambda.max(mu);
+        let max_modulus = Self::compute_max_modulus(&problem.solids, &problem.shells);
+        let tol = f64::from(params.tolerance) * max_area * max_modulus;
         params.tolerance = tol as f32;
-        params.outer_tolerance *= (max_area * lambda.max(mu)) as f32;
+        params.outer_tolerance *= (max_area * max_modulus) as f32;
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
@@ -568,7 +605,7 @@ impl SolverBuilder {
         mesh: &mut M,
     ) -> Result<(), Error> {
         // Deformable meshes are dynamic. Prepare dynamic attributes first.
-        prepare_dynamic_mesh_vertex_attributes(mesh)?;
+        Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
 
         let verts = mesh.vertex_positions().to_vec();
 
@@ -619,7 +656,7 @@ impl SolverBuilder {
             trimesh
                 .attrib_iter::<RefAreaType, CellIndex>(REFERENCE_AREA_ATTRIB)
                 .unwrap(),
-            tetmesh
+            trimesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
                 .unwrap(),
             trimesh.face_iter()
@@ -639,7 +676,7 @@ impl SolverBuilder {
             material,
         } = &mut solid;
 
-        prepare_deformable_mesh_vertex_attributes(mesh)?;
+        Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
         mesh.set_attrib_data::<RefVolType, CellIndex>(
@@ -718,7 +755,7 @@ impl SolverBuilder {
         }
 
         // Compute vertex masses.
-        compute_solid_vertex_masses(solid);
+        Self::compute_solid_vertex_masses(solid);
 
         Ok(solid)
     }
@@ -735,10 +772,10 @@ impl SolverBuilder {
                 // Nothing to be done, static meshes don't have material properties.
             }
             ShellMaterial::Rigid { .. } => {
-                prepare_dynamic_mesh_vertex_attributes(mesh)?;
+                Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
             }
             ShellMaterial::Deformable { deformable } => {
-                prepare_deformable_mesh_vertex_attributes(mesh)?;
+                Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
                 // TODO: Implement the equivalent for shells
                 //let ref_areas = Self::compute_ref_tet_signed_volumes(mesh)?;
@@ -906,7 +943,7 @@ impl Solver {
         // TODO: Move this implementation to the problem.
         let problem = self.problem_mut();
 
-        let mut prev_pos = problem.solid_vertex_set.prev_pos.borrow_mut();
+        let mut prev_pos = problem.solid_vertex_set.prev_pos.view_mut();
 
         // All solids are simulated, so the input point set must have the same
         // size as our internal vertex set. If these are mismatched, then there
@@ -929,7 +966,7 @@ impl Solver {
             let source_index_iter = solid
                 .tetmesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let pts_iter = source_index_iter.map(|&idx| new_pos[src_idx]);
+            let pts_iter = source_index_iter.map(|&idx| new_pos[idx]);
 
             // Only update fixed vertices, if no such attribute exists, return an error.
             let fixed_iter = solid
@@ -950,7 +987,7 @@ impl Solver {
         // TODO: Move this implementation to the problem.
         let problem = self.problem_mut();
 
-        let mut prev_pos = problem.shell_vertex_set.prev_pos.borrow_mut();
+        let mut prev_pos = problem.shell_vertex_set.prev_pos.view_mut();
 
         let new_pos = pts.vertex_positions();
 
@@ -964,7 +1001,7 @@ impl Solver {
             let source_index_iter = shell
                 .trimesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let pts_iter = source_index_iter.map(|&idx| new_pos[src_idx]);
+            let pts_iter = source_index_iter.map(|&idx| new_pos[idx]);
 
             // Only update fixed vertices, if no such attribute exists, return an error.
             let fixed_iter = shell
@@ -1766,6 +1803,7 @@ mod tests {
     use super::*;
     use crate::test_utils::*;
     use crate::KernelType;
+    use approx::*;
     use geo;
     use std::path::PathBuf;
     use utils::*;

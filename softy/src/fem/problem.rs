@@ -2,21 +2,14 @@ use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
 use crate::energy::*;
-use crate::energy_models::{
-    elasticity::tet_nh::TetMeshNeoHookean, gravity::TetMeshGravity, inertia::TetMeshInertia,
-};
 use crate::matrix::*;
 use crate::objects::*;
-use geo::math::Vector3;
+//use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
 use reinterpret::*;
-use std::fmt;
-use std::{cell::RefCell, rc::Rc};
-use utils::soap::*;
-
-use crate::TetMesh;
-use crate::TriMesh;
+use std::cell::RefCell;
+use utils::{aref::*, soap::*};
 
 #[derive(Clone)]
 pub struct Solution {
@@ -109,6 +102,14 @@ impl Solution {
 pub enum SourceIndex {
     Solid(usize),
     Shell(usize),
+}
+
+impl SourceIndex {
+    fn unwrap(&self) -> usize {
+        match self {
+            SourceIndex::Solid(idx) | SourceIndex::Shell(idx) => idx,
+        }
+    }
 }
 
 /// A struct that keeps track of which objects are being affected by the contact
@@ -283,6 +284,61 @@ impl NonLinearProblem {
                 .all(|(cur, &other)| cur == other)
     }
 
+    /// Translate a surface mesh coordinate index into the corresponding
+    /// simulation coordinate index in our global array.
+    fn source_coordinates(
+        &self,
+        object_index: SourceIndex,
+        collider_index: SourceIndex,
+        coord: usize,
+    ) -> usize {
+        let surf_vtx_idx = coord / 3;
+
+        // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
+        let tetmesh_coordinates = |mesh_index| {
+            let offset = self.vertex_set.prev_vel[0].offset_value(mesh_index);
+            3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
+        };
+
+        // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
+        let trimesh_coordinates =
+            |mesh_index| 3 * self.vertex_set.prev_vel[1].offset_value(mesh_index) + coord;
+
+        let num_object_surface_indices: usize;
+
+        match object_index {
+            SourceIndex::Solid(obj_i) => {
+                num_object_surface_indices = self.solids[obj_i].surface().indices.len();
+                if surf_vtx_idx < num_object_surface_indices {
+                    return tetmesh_coordinates(obj_i);
+                }
+            }
+            SourceIndex::Shell(obj_i) => {
+                num_object_surface_indices = self.shells[obj_i].trimesh.num_vertices();
+                if surf_vtx_idx < num_object_surface_indices {
+                    return trimesh_coordinates(obj_i);
+                }
+            }
+        }
+
+        // If we haven't returned yet, this means that surf_vtx_idx corresponds
+        // to collider surface.
+
+        // Adjust surf_vtx_idx to be in the right range:
+        let surf_vtx_idx = surf_vtx_idx - num_object_surface_indices;
+
+        match collider_index {
+            SourceIndex::Solid(coll_i) => {
+                assert!(surf_vtx_idx < self.solids[coll_i].surface().indices.len());
+                tetmesh_coordinates(coll_i)
+            }
+            SourceIndex::Shell(coll_i) => {
+                assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
+                trimesh_coordinates(coll_i)
+            }
+        }
+    }
+
     /// Index into a chunked set of per vertex data as defined in `vertex_set` for a single mesh.
     fn mesh_vertex_subset(
         &self,
@@ -291,9 +347,17 @@ impl NonLinearProblem {
     ) -> SubsetView<Chunked3<&[f64]>> {
         match source {
             SourceIndex::Solid(i) => {
-                Subset::from_unique_ordered_indices(&solids[i].surface().indices, x[0][i])
+                Subset::from_unique_ordered_indices(&self.solids[i].surface().indices, x[0][i])
             }
             SourceIndex::Shell(i) => Subset::all(x[1][i]),
+        }
+    }
+
+    /// The offset of the given mesh in the global array of positions (not coordinates).
+    fn mesh_vertex_offset(&self, source: SourceIndex) -> usize {
+        match source {
+            SourceIndex::Solid(i) => self.vertex_set.prev_vel[0].offset_value(i),
+            SourceIndex::Shell(i) => self.vertex_set.prev_vel[1].offset_value(i),
         }
     }
 
@@ -318,7 +382,7 @@ impl NonLinearProblem {
             object_index,
             collider_index,
             constraint,
-        } in frictional_contacts.iter()
+        } in self.frictional_contacts.iter()
         {
             let object_pos = self.mesh_vertex_subset(x, object_index);
             let collider_pos = self.mesh_vertex_subset(x, collider_index);
@@ -470,11 +534,11 @@ impl NonLinearProblem {
             }
             for (i, shell) in self.shells.iter().enumerate() {
                 match shell.material.properties {
-                    ShellProperties::Deformable => {
+                    ShellProperties::Deformable { .. } => {
                         let verts = shell.trimesh.vertex_positions_mut();
                         verts.copy_from_slice(prev_pos[1][i].data());
                     }
-                    ShellProperties::Rigid => {
+                    ShellProperties::Rigid { .. } => {
                         unimplemented!();
                     }
                     ShellProperties::Static => {
@@ -667,7 +731,7 @@ impl NonLinearProblem {
     /// implicit itegration this boils down to a simple multiply by the time step.
     pub fn compute_step(
         &self,
-        v: ChunkedView<ChunkedView<Chuned3<&[Number]>>>,
+        v: ChunkedView<ChunkedView<Chunked3<&[Number]>>>,
     ) -> std::cell::Ref<'_, Chunked<Chunked<Chunked3<Vec<f64>>>>> {
         {
             let mut x1 = self.vertex_set.cur_pos.borrow_mut().view_mut().into_flat();
@@ -730,8 +794,8 @@ impl NonLinearProblem {
         // there cannot be friction.
         if self.time_step > 0.0 {
             for fc in self.frictional_contacts.iter() {
-                let obj_v = self.mesh_vertex_subset(v, object_index);
-                let col_v = self.mesh_vertex_subset(v, collider_index);
+                let obj_v = self.mesh_vertex_subset(v, fc.object_index);
+                let col_v = self.mesh_vertex_subset(v, fc.collider_index);
                 obj -= fc.constraint.frictional_dissipation(obj_v, col_v);
             }
         }
@@ -766,10 +830,10 @@ impl NonLinearProblem {
             self.update_current_velocity(solution.primal_variables);
             let prev_pos = self.vertex_set.prev_pos.view();
             let vel = self.vertex_set.cur_vel.borrow().view();
-            let obj_prev_pos = self.mesh_vertex_subset(prev_pos, object_index);
-            let col_prev_pos = self.mesh_vertex_subset(prev_pos, collider_index);
-            let obj_vel = self.mesh_vertex_subset(vel, object_index);
-            let col_vel = self.mesh_vertex_subset(vel, collider_index);
+            let obj_prev_pos = self.mesh_vertex_subset(prev_pos, fc.object_index);
+            let col_prev_pos = self.mesh_vertex_subset(prev_pos, fc.collider_index);
+            let obj_vel = self.mesh_vertex_subset(vel, fc.object_index);
+            let col_vel = self.mesh_vertex_subset(vel, fc.collider_index);
 
             let offset = self.volume_constraints.len();
 
@@ -789,15 +853,15 @@ impl NonLinearProblem {
         }
     }
 
-    /// Return the stacked friction impulses: one for each vertex.
-    pub fn friction_impulse(&self) -> Chunked3<Vec<f64>> {
-        use ipopt::BasicProblem;
-        let mut impulse = Chunked3::from_flat(vec![0.0; self.num_variables()]);
-        for fc in self.frictional_contacts {
-            fc.constraint.add_friction_impulse(&mut impulse, 1.0);
-        }
-        impulse
-    }
+    ///// Return the stacked friction impulses: one for each vertex.
+    //pub fn friction_impulse(&self) -> Chunked3<Vec<f64>> {
+    //    use ipopt::BasicProblem;
+    //    let mut impulse = Chunked3::from_flat(vec![0.0; self.num_variables()]);
+    //    for fc in self.frictional_contacts {
+    //        fc.constraint.add_friction_impulse(&mut impulse, 1.0);
+    //    }
+    //    impulse
+    //}
 
     /// Return the stacked contact impulses: one for each vertex.
     pub fn contact_impulse(&self) -> Chunked3<Vec<f64>> {
@@ -1012,13 +1076,40 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
     fn objective_grad(&self, uv: &[Number], grad_f: &mut [Number]) -> bool {
         grad_f.iter_mut().for_each(|x| *x = 0.0); // clear gradient vector
-        let v = &self.update_current_velocity(uv);
-        let x = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.data().borrow();
-        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
 
-        self.energy_model.add_energy_gradient(x0, x, grad_f);
-        self.gravity.add_energy_gradient(x0, x, grad_f);
+        let v = &self.update_current_velocity(uv);
+
+        // Copy the chunked structure from our vertex_set.
+        // TODO: Refactor this into a function for Chunked and UniChunked types.
+        let grad = Chunked::from_offsets(
+            v.offsets(),
+            Chunked::from_offsets(v.data().offsets(), Chunked3::from_flat(grad_f)),
+        );
+
+        let x1 = &self.compute_step(v);
+        let x0 = self.vertex_set.prev_pos.view();
+        let v0 = self.vertex_set.prev_vel.view();
+
+        for (i, solid) in self.solids.iter().enumerate() {
+            let x0 = x0[0][i].into_flat();
+            let x1 = x1[0][i].into_flat();
+            let v0 = v0[0][i].into_flat();
+            let v = v[0][i].into_flat();
+            let g = grad[0][i].into_flat();
+            solid.elasticity().add_energy_gradient(x0, x1, g);
+            solid.gravity(self.gravity).energy_gradient(x0, x1, g);
+            solid.inertia().energy_gradient(v0, v, g);
+        }
+
+        for (i, shell) in self.shells.iter().enumerate() {
+            let x0 = x0[1][i].into_flat();
+            let x1 = x1[1][i].into_flat();
+            let v0 = v0[1][i].into_flat();
+            let g = grad[1][i].into_flat();
+            //shell.elasticity().energy(x0, x1, g);
+            shell.gravity(self.gravity).energy_gradient(x0, x1, g);
+            //shell.inertia().energy(v0, v, g);
+        }
 
         let dt = self.time_step;
         if dt > 0.0 {
@@ -1027,14 +1118,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
             grad_f.iter_mut().for_each(|g| *g *= dt);
         }
 
-        if let Some(ref mp) = self.momentum_potential {
-            let prev_vel = self.vertex_set.prev_vel.data().borrow();
-            let v0: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            mp.add_energy_gradient(v0, v, grad_f);
-        }
-
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            scc.add_friction_impulse(grad_f, -1.0);
+        for fc in self.frictional_contacts.iter() {
+            let obj_g = Self::mesh_vertex_subset(grad, fc.object_index);
+            let coll_g = Self::mesh_vertex_subset(grad, fc.collider_index);
+            fc.constraint.add_friction_impulse((obj_g, coll_g), -1.0);
         }
 
         let scale = self.scale();
@@ -1084,8 +1171,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
         let v = &self.update_current_velocity(uv);
         let x = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.view();
-        let x0 = prev_pos.into_flat();
+        let x0 = self.vertex_set.prev_pos.view();
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
@@ -1093,13 +1179,20 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_size();
-            vc.constraint(x0, x, &mut g[i..i + n]);
+            vc.constraint(x0.into_flat(), x.into_flat(), &mut g[i..i + n]);
             i += n;
         }
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.constraint_size();
-            fc.constraint.constraint(x0, x, &mut g[i..i + n]);
+            let obj_x0 = self.mesh_vertex_subset(x0, fc.object_index);
+            let coll_x0 = self.mesh_vertex_subset(x0, fc.collider_index);
+            let obj_x = self.mesh_vertex_subset(x, fc.object_index);
+            let coll_x = self.mesh_vertex_subset(x, fc.collider_index);
+
+            fc.constraint
+                .constraint((obj_x0, coll_x0), (obj_x, coll_x), &mut g[i..i + n]);
+            i += n;
         }
 
         true
@@ -1115,11 +1208,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             i += n;
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let mut bounds = scc.constraint_bounds();
-            let n = scc.constraint_size();
+        for fc in self.frictional_contacts.iter() {
+            let mut bounds = fc.constraint.constraint_bounds();
+            let n = fc.constraint.constraint_size();
             g_l[i..i + n].swap_with_slice(&mut bounds.0);
             g_u[i..i + n].swap_with_slice(&mut bounds.1);
+            i += n;
         }
         true
     }
@@ -1132,17 +1226,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0; // counter
 
         let mut row_offset = 0;
-        if let Some(ref vc) = self.volume_constraint {
-            if let Ok(iter) = vc.constraint_jacobian_indices_iter() {
-                for MatrixElementIndex { row, col } in iter {
-                    rows[i] = row as ipopt::Index;
-                    cols[i] = col as ipopt::Index;
-                    i += 1;
-
-                    row_offset = row_offset.max(row + 1);
-                }
-                assert_eq!(row_offset, 1); // volume constraint should be just one constraint
+        for (_, vc) in self.volume_constraints.iter() {
+            let mut iter = vc.constraint_jacobian_indices_iter().unwrap();
+            for MatrixElementIndex { row, col } in iter {
+                rows[i] = (row + row_offset) as ipopt::Index;
+                cols[i] = col as ipopt::Index;
+                i += 1;
             }
+            row_offset += 1;
         }
 
         for fc in self.frictional_contacts.iter() {
@@ -1151,27 +1242,28 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let ncols = self.num_variables();
             let mut jac = vec![vec![0; nrows]; ncols]; // col major
 
-            if let Ok(iter) = scc.constraint_jacobian_indices_iter() {
-                for MatrixElementIndex { row, col } in iter {
-                    rows[i] = (row + row_offset) as ipopt::Index;
-                    cols[i] = col as ipopt::Index;
-                    jac[col][row] = 1;
-                    i += 1;
-                }
-
-                //println!("jac = ");
-                //for r in 0..nrows {
-                //    for c in 0..ncols {
-                //        if jac[c][r] == 1 {
-                //            print!(".");
-                //        } else {
-                //            print!(" ");
-                //        }
-                //    }
-                //    println!("");
-                //}
-                //println!("");
+            let mut iter = fc.constraint.constraint_jacobian_indices_iter().unwrap();
+            for MatrixElementIndex { row, col } in iter {
+                rows[i] = (row + row_offset) as ipopt::Index;
+                cols[i] = Self::source_coordinates(fc.object_index, fc.collider_index, col)
+                    as ipopt::Index;
+                jac[col][row] = 1;
+                i += 1;
             }
+            row_offset += nrows;
+
+            //println!("jac = ");
+            //for r in 0..nrows {
+            //    for c in 0..ncols {
+            //        if jac[c][r] == 1 {
+            //            print!(".");
+            //        } else {
+            //            print!(" ");
+            //        }
+            //    }
+            //    println!("");
+            //}
+            //println!("");
         }
 
         true
@@ -1180,21 +1272,26 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint_jacobian_values(&self, uv: &[Number], vals: &mut [Number]) -> bool {
         let v = &self.update_current_velocity(uv);
         let x = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.data().borrow();
-        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x0 = self.vertex_set.prev_pos.view();
 
         let mut i = 0;
 
-        if let Some(ref vc) = self.volume_constraint {
+        for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x0, x, &mut vals[i..i + n])
+            vc.constraint_jacobian_values(x0.into_flat(), x.into_flat(), &mut vals[i..i + n])
                 .ok();
             i += n;
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let n = scc.constraint_jacobian_size();
-            scc.constraint_jacobian_values(x0, x, &mut vals[i..i + n])
+        for fc in self.frictional_contacts.iter() {
+            let n = fc.constraint.constraint_jacobian_size();
+            let obj_x0 = self.mesh_vertex_subset(x0, fc.object_index);
+            let coll_x0 = self.mesh_vertex_subset(x0, fc.collider_index);
+            let obj_x = self.mesh_vertex_subset(x, fc.object_index);
+            let coll_x = self.mesh_vertex_subset(x, fc.collider_index);
+
+            fc.constraint
+                .constraint_jacobian_values((obj_x0, coll_x0), (obj_x, coll_x), &mut vals[i..i + n])
                 .ok();
             //println!("jac g vals = {:?}", &vals[i..i+n]);
         }
@@ -1213,15 +1310,18 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn num_hessian_non_zeros(&self) -> usize {
-        let mut num = self.energy_model.energy_hessian_size();
-        if let Some(ref mp) = self.momentum_potential {
-            num += mp.energy_hessian_size();
+        let mut num = 0;
+        for solid in self.solids.iter() {
+            num += solid.elasticity().energy_hessian_size() + solid.inertia().energy_hessian_size();
         }
-        if let Some(ref vc) = self.volume_constraint {
+        for shell in self.shells.iter() {
+            num += shell.inertia().energy_hessian_size();
+        }
+        for (_, vc) in self.volume_constraints.iter() {
             num += vc.constraint_hessian_size();
         }
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            num += scc.constraint_hessian_size();
+        for fc in self.frictional_contacts.iter() {
+            num += fc.constraint.constraint_hessian_size();
         }
         num
     }
@@ -1230,32 +1330,44 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut i = 0;
 
         // Add energy indices
-        let n = self.energy_model.energy_hessian_size();
-        self.energy_model
-            .energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
-        i += n;
+        for solid in self.solids.iter() {
+            let elasticity = solid.elasticity();
+            let n = elasticity.energy_hessian_size();
+            elasticity.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
+            i += n;
 
-        if let Some(ref mp) = self.momentum_potential {
-            let n = mp.energy_hessian_size();
-            mp.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
+            let inertia = solid.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
+            i += n;
+        }
+
+        for shell in self.shells.iter() {
+            let inertia = shell.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
             i += n;
         }
 
         // Add volume constraint indices
-        if let Some(ref vc) = self.volume_constraint {
+        for (solid_idx, vc) in self.volume_constraints.iter() {
+            let offset = self.vertex_set.prev_vel[0].offset_value(solid_idx);
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
-                rows[i] = row as ipopt::Index;
-                cols[i] = col as ipopt::Index;
+                rows[i] = (row + offset) as ipopt::Index;
+                cols[i] = (col + offset) as ipopt::Index;
                 i += 1;
             }
         }
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            if let Ok(iter) = scc.constraint_hessian_indices_iter() {
-                for MatrixElementIndex { row, col } in iter {
-                    rows[i] = row as ipopt::Index;
-                    cols[i] = col as ipopt::Index;
-                    i += 1;
-                }
+
+        for fc in self.frictional_contacts.iter() {
+            let mut iter = fc.constraint.constraint_hessian_indices_iter().unwrap();
+            let solid = &self.solids[fc.object_index.unwrap()];
+            for MatrixElementIndex { row, col } in iter {
+                rows[i] = Self::source_coordinates(fc.object_index, fc.collider_index, row)
+                    as ipopt::Index;
+                cols[i] = Self::source_coordinates(fc.object_index, fc.collider_index, row)
+                    as ipopt::Index;
+                i += 1;
             }
         }
 
@@ -1269,9 +1381,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         vals: &mut [Number],
     ) -> bool {
         let v = &self.update_current_velocity(uv);
-        let x = &self.compute_step(v);
-        let prev_pos = self.vertex_set.prev_pos.data().borrow();
-        let x0: &[Number] = reinterpret_slice(prev_pos.as_slice());
+        let x1 = &self.compute_step(v);
+        let x0 = self.vertex_set.prev_pos.view();
+        let v0 = self.vertex_set.prev_vel.view();
 
         if cfg!(debug_assertions) {
             // Initialize vals in debug builds.
@@ -1280,25 +1392,37 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
-        let mut i = 0;
-        let n = self.energy_model.energy_hessian_size();
-
         // Correction to make the above hessian wrt velocity instead of displacement.
         let dt = if self.time_step > 0.0 {
             self.time_step
         } else {
             1.0
         };
-        self.energy_model
-            .energy_hessian_values(x0, x, dt * dt, &mut vals[i..i + n]);
 
-        i += n;
+        let mut i = 0;
 
-        if let Some(ref mp) = self.momentum_potential {
-            let n = mp.energy_hessian_size();
-            let prev_vel = self.vertex_set.prev_vel.data().borrow();
-            let v0: &[Number] = reinterpret_slice(prev_vel.as_slice());
-            mp.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
+        for (solid_idx, solid) in self.solids.iter().enumerate() {
+            let x0 = x0[0][solid_idx].into_flat();
+            let x1 = x1[0][solid_idx].into_flat();
+            let v0 = v0[0][solid_idx].into_flat();
+            let v = v[0][solid_idx].into_flat();
+            let elasticity = solid.elasticity();
+            let n = elasticity.energy_hessian_size();
+            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[i..i + n]);
+            i += n;
+
+            let inertia = solid.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
+            i += n;
+        }
+
+        for (shell_idx, shell) in self.shells.iter().enumerate() {
+            let v0 = v0[1][shell_idx].into_flat();
+            let v = v[1][shell_idx].into_flat();
+            let inertia = shell.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
             i += n;
         }
 
@@ -1312,34 +1436,43 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let c_scale = self.scale() * self.scale() * dt * dt;
 
-        if let Some(ref vc) = self.volume_constraint {
+        for (solid_idx, vc) in self.volume_constraints.iter() {
+            let x0 = x0[0][solid_idx].into_flat();
+            let x1 = x1[0][solid_idx].into_flat();
             let nc = vc.constraint_size();
             let nh = vc.constraint_hessian_size();
-            if let Ok(()) = vc.constraint_hessian_values(
+            vc.constraint_hessian_values(
                 x0,
-                x,
+                x1,
                 &lambda[coff..coff + nc],
                 c_scale,
                 &mut vals[i..i + nh],
-            ) {
-                i += nh;
-                coff += nc;
-            }
+            )
+            .unwrap();
+
+            i += nh;
+            coff += nc;
         }
 
-        if let Some(ref scc) = self.smooth_contact_constraint {
-            let nc = scc.constraint_size();
-            let nh = scc.constraint_hessian_size();
-            if let Ok(()) = scc.constraint_hessian_values(
-                x0,
-                x,
-                &lambda[coff..coff + nc],
-                c_scale,
-                &mut vals[i..i + nh],
-            ) {
-                i += nh;
-                coff += nc;
-            }
+        for fc in self.frictional_contacts.iter() {
+            let obj_x0 = self.mesh_vertex_subset(x0, fc.object_index);
+            let coll_x0 = self.mesh_vertex_subset(x0, fc.collider_index);
+            let obj_x = self.mesh_vertex_subset(x1, fc.object_index);
+            let coll_x = self.mesh_vertex_subset(x1, fc.collider_index);
+            let nc = fc.constraint.constraint_size();
+            let nh = fc.constraint.constraint_hessian_size();
+            fc.constraint
+                .constraint_hessian_values(
+                    (obj_x0, coll_x0),
+                    (obj_x, coll_x),
+                    &lambda[coff..coff + nc],
+                    c_scale,
+                    &mut vals[i..i + nh],
+                )
+                .unwrap();
+
+            i += nh;
+            coff += nc;
         }
 
         assert_eq!(i, vals.len());

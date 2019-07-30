@@ -433,7 +433,7 @@ where
     /// Get an element of the given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(chunked.data.get(StaticRange::new(self * N::value())))
+            chunked.data.get(StaticRange::new(self * N::value()))
         } else {
             None
         }
@@ -451,12 +451,13 @@ where
     /// Get a `[begin..end)` subview of the given `UniChunked` collection.
     fn get(self, chunked: &'i UniChunked<S, N>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
-            Some(UniChunked {
-                data: chunked
-                    .data
-                    .get(N::value() * self.start..N::value() * self.end),
-                chunks: N::new(),
-            })
+            chunked
+                .data
+                .get(N::value() * self.start..N::value() * self.end)
+                .map(|data| UniChunked {
+                    data,
+                    chunks: N::new(),
+                })
         } else {
             None
         }
@@ -479,44 +480,44 @@ where
     /// let v = vec![1,2,3, 4,5,6, 7,8,9, 10,11,12];
     /// let s = UniChunked::<_, num::U3>::from_flat(v);
     ///
-    /// assert_eq!(s.get(2), &[7,8,9]); // Single index
-    /// assert_eq!(s.get(2), &s[2]);
+    /// assert_eq!(s.get(2), Some(&[7,8,9])); // Single index
+    /// assert_eq!(s.get(2), Some(&s[2]));
     ///
-    /// let r = s.get(1..3);         // Range
+    /// let r = s.get(1..3).unwrap();         // Range
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(Some(&[7,8,9]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(2..);         // RangeFrom
+    /// let r = s.get(2..).unwrap();         // RangeFrom
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[7,8,9]), iter.next());
     /// assert_eq!(Some(&[10,11,12]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(..2);         // RangeTo
+    /// let r = s.get(..2).unwrap();         // RangeTo
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[1,2,3]), iter.next());
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// assert_eq!(s.view(), s.get(..)); // RangeFull
-    /// assert_eq!(s.view(), s.view().get(..));
+    /// assert_eq!(s.view(), s.get(..).unwrap()); // RangeFull
+    /// assert_eq!(s.view(), s.view().get(..).unwrap());
     ///
-    /// let r = s.get(1..=2);         // RangeInclusive
+    /// let r = s.get(1..=2).unwrap();       // RangeInclusive
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(Some(&[7,8,9]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(..=1);         // RangeToInclusive
+    /// let r = s.get(..=1).unwrap();        // RangeToInclusive
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[1,2,3]), iter.next());
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    fn get(&'i self, range: I) -> I::Output {
-        range.get(self).expect("Index out of bounds")
+    fn get(&'i self, range: I) -> Option<I::Output> {
+        range.get(self)
     }
 }
 
@@ -553,7 +554,7 @@ where
     /// Get a mutable chunk reference of the given `UniChunked` collection.
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            Some(chunked.data.get_mut(StaticRange::new(self * N::value())))
+            chunked.data.get_mut(StaticRange::new(self * N::value()))
         } else {
             None
         }
@@ -571,12 +572,13 @@ where
     /// Get a mutable `[begin..end)` subview of the given `UniChunked` collection.
     fn get_mut(self, chunked: &'i mut UniChunked<S, N>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
-            Some(UniChunked {
-                data: chunked
-                    .data
-                    .get_mut(N::value() * self.start..N::value() * self.end),
-                chunks: N::new(),
-            })
+            chunked
+                .data
+                .get_mut(N::value() * self.start..N::value() * self.end)
+                .map(|data| UniChunked {
+                    data,
+                    chunks: N::new(),
+                })
         } else {
             None
         }
@@ -599,12 +601,12 @@ where
     /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
     /// let mut s = Chunked3::from_flat(v.as_mut_slice());
     ///
-    /// s.get_mut(2).copy_from_slice(&[7,8,9]);
-    /// assert_eq!(s.get(2), &[7,8,9]); // Single index
+    /// s.get_mut(2).unwrap().copy_from_slice(&[7,8,9]);
+    /// assert_eq!(s.get(2), Some(&[7,8,9])); // Single index
     /// assert_eq!(v, vec![1,2,3, 4,5,6, 7,8,9, 10,11,12]);
     /// ```
-    fn get_mut(&'i mut self, range: I) -> I::Output {
-        range.get_mut(self).expect("Index out of bounds")
+    fn get_mut(&'i mut self, range: I) -> Option<I::Output> {
+        range.get_mut(self)
     }
 }
 
@@ -918,6 +920,15 @@ impl<S: SplitAt + Set, N: num::Unsigned> SplitAt for UniChunked<S, N> {
     fn split_at(self, mid: usize) -> (Self, Self) {
         let (l, r) = self.data.split_at(mid * N::value());
         (UniChunked::from_flat(l), UniChunked::from_flat(r))
+    }
+}
+
+impl<S: SplitPrefix<N> + Set, N: num::Unsigned> SplitPrefix<num::U1> for UniChunked<S, N> {
+    type Prefix = S::Prefix;
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        self.data
+            .split_prefix()
+            .map(|(prefix, rest)| (prefix, UniChunked::from_flat(rest)))
     }
 }
 

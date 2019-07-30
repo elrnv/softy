@@ -31,8 +31,8 @@ use super::*;
 ///     assert_eq!(Some(&[13,14,15]), subset_iter.next());
 ///     assert_eq!(None, subset_iter.next());
 /// }
-/// *subset.get_mut(1) = [0; 3];
-/// assert_eq!(&[0,0,0], subset.get(1));
+/// *subset.at_mut(1) = [0; 3];
+/// assert_eq!(&[0,0,0], subset.at(1));
 /// ```
 // A note about translation independence:
 // ======================================
@@ -411,16 +411,20 @@ where
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Subset<S, O>> for usize
 where
     O: Get<'i, 'o, usize, Output = &'o usize>,
-    usize: GetIndex<'i, 'o, S>,
+    S: Get<'i, 'o, usize>,
 {
-    type Output = <usize as GetIndex<'i, 'o, S>>::Output;
+    type Output = <S as Get<'i, 'o, usize>>::Output;
 
     fn get(self, subset: &'i Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         if let Some(ref indices) = subset.indices {
-            GetIndex::get(*indices.get(self), &subset.data)
+            indices.get(0).and_then(|&first| {
+                indices
+                    .get(self)
+                    .and_then(|&cur| Get::get(&subset.data, cur - first))
+            })
         } else {
-            GetIndex::get(self, &subset.data)
+            Get::get(&subset.data, self)
         }
     }
 }
@@ -428,16 +432,21 @@ where
 impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Subset<S, O>> for usize
 where
     O: Get<'i, 'o, usize, Output = &'o usize>,
-    usize: GetMutIndex<'i, 'o, S>,
+    S: GetMut<'i, 'o, usize>,
 {
-    type Output = <usize as GetMutIndex<'i, 'o, S>>::Output;
+    type Output = <S as GetMut<'i, 'o, usize>>::Output;
 
     fn get_mut(self, subset: &'i mut Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
-        if let Some(ref indices) = subset.indices {
-            GetMutIndex::get_mut(*indices.get(self), &mut subset.data)
+        let Subset { indices, data } = subset;
+        if let Some(ref indices) = indices {
+            indices.get(0).and_then(move |&first| {
+                indices
+                    .get(self)
+                    .and_then(move |&cur| GetMut::get_mut(data, cur - first))
+            })
         } else {
-            GetMutIndex::get_mut(self, &mut subset.data)
+            GetMut::get_mut(data, self)
         }
     }
 }
@@ -448,8 +457,22 @@ where
 {
     type Output = I::Output;
 
-    fn get(&'i self, range: I) -> Self::Output {
-        range.get(self).expect("Index out of bounds")
+    /// Get a reference to a range of elements of this subset.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the range is out of bounds or if the subset is empty.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// assert_eq!(&3, subset.get(1).unwrap());
+    /// ```
+    fn get(&'i self, range: I) -> Option<Self::Output> {
+        range.get(self)
     }
 }
 
@@ -459,17 +482,29 @@ where
 {
     type Output = I::Output;
 
-    fn get_mut(&'i mut self, range: I) -> Self::Output {
-        range.get_mut(self).expect("Index out of bounds")
+    fn get_mut(&'i mut self, range: I) -> Option<Self::Output> {
+        range.get_mut(self)
     }
 }
 
-impl<'a, S, I> std::ops::Index<usize> for Subset<&'a S, I>
+macro_rules! impl_index_fn {
+    ($self:ident, $idx:ident, $index_fn:ident) => {
+        $self
+            .data
+            .$index_fn($self.indices.as_ref().map_or($idx, |indices| {
+                let indices = indices.borrow();
+                indices[$idx] - *indices.first().unwrap()
+            }))
+    };
+}
+
+impl<'a, S, I> std::ops::Index<usize> for Subset<S, I>
 where
-    S: std::ops::Index<usize> + ?Sized,
+    S: std::ops::Index<usize> + Set + Owned,
     I: std::borrow::Borrow<[usize]>,
 {
     type Output = S::Output;
+
     /// Immutably index the subset.
     ///
     /// # Panics
@@ -480,51 +515,20 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_slice());
-    /// assert_eq!(3, subset[1]);
+    /// let c = Chunked2::from_flat((1..=12).collect::<Vec<_>>());
+    /// let subset = Subset::from_indices(vec![0,2,4], c.view());
+    /// assert_eq!([1,2], subset[0]);
+    /// assert_eq!([5,6], subset[1]);
+    /// assert_eq!([9,10], subset[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data
-            .index(self.indices.as_ref().map_or(idx, |indices| {
-                let indices = indices.borrow();
-                indices[idx] - *indices.first().unwrap()
-            }))
+        impl_index_fn!(self, idx, index)
     }
 }
 
-impl<'a, S, I> std::ops::Index<usize> for Subset<&'a mut S, I>
+impl<'a, S, I> std::ops::IndexMut<usize> for Subset<S, I>
 where
-    S: std::ops::Index<usize> + ?Sized,
-    I: std::borrow::Borrow<[usize]>,
-{
-    type Output = S::Output;
-    /// Immutably index the subset.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the index is out of bounds or if the subset is empty.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
-    /// assert_eq!(3, subset[1]);
-    /// ```
-    fn index(&self, idx: usize) -> &Self::Output {
-        self.data
-            .index(self.indices.as_ref().map_or(idx, |indices| {
-                let indices = indices.borrow();
-                indices[idx] - *indices.first().unwrap()
-            }))
-    }
-}
-
-impl<'a, S, I> std::ops::IndexMut<usize> for Subset<&'a mut S, I>
-where
-    S: std::ops::IndexMut<usize> + ?Sized,
+    S: std::ops::IndexMut<usize> + Set + Owned,
     I: std::borrow::Borrow<[usize]>,
 {
     /// Mutably index the subset.
@@ -546,11 +550,82 @@ where
     /// assert_eq!(subset[2], 5);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data
-            .index_mut(self.indices.as_ref().map_or(idx, |indices| {
-                let indices = indices.borrow();
-                indices[idx] - *indices.first().unwrap()
-            }))
+        impl_index_fn!(self, idx, index_mut)
+    }
+}
+
+impl<'a, T, I> std::ops::Index<usize> for Subset<&'a [T], I>
+where
+    I: std::borrow::Borrow<[usize]>,
+{
+    type Output = T;
+    /// Immutably index the subset.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the index is out of bounds or if the subset is empty.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5];
+    /// let subset = Subset::from_indices(vec![0,2,4], v.as_slice());
+    /// assert_eq!(3, subset[1]);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        impl_index_fn!(self, idx, index)
+    }
+}
+
+impl<'a, T, I> std::ops::Index<usize> for Subset<&'a mut [T], I>
+where
+    I: std::borrow::Borrow<[usize]>,
+{
+    type Output = T;
+    /// Immutably index the subset.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the index is out of bounds or if the subset is empty.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// assert_eq!(3, subset[1]);
+    /// ```
+    fn index(&self, idx: usize) -> &Self::Output {
+        impl_index_fn!(self, idx, index)
+    }
+}
+
+impl<'a, T, I> std::ops::IndexMut<usize> for Subset<&'a mut [T], I>
+where
+    I: std::borrow::Borrow<[usize]>,
+{
+    /// Mutably index the subset.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the index is out of bounds or if the subset is empty.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// assert_eq!(subset[1], 3);
+    /// subset[1] = 100;
+    /// assert_eq!(subset[0], 1);
+    /// assert_eq!(subset[1], 100);
+    /// assert_eq!(subset[2], 5);
+    /// ```
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        impl_index_fn!(self, idx, index_mut)
     }
 }
 
@@ -571,7 +646,11 @@ where
                 let first = *indices.first().unwrap_or(&0);
                 (
                     None,
-                    Some(indices.iter().map(move |&i| self.data.get(i - first))),
+                    Some(
+                        indices
+                            .iter()
+                            .filter_map(move |&i| self.data.get(i - first)),
+                    ),
                 )
             }
             None => (Some(self.data.view().into_iter()), None),
@@ -584,19 +663,19 @@ where
     }
 }
 
-pub struct SubsetIter<'a, V> {
+pub struct SubsetIterMut<'a, V> {
     indices: Option<&'a [usize]>,
     data: V,
 }
 
-impl<'a, V: 'a> Iterator for SubsetIter<'a, V>
+impl<'a, V: 'a> Iterator for SubsetIterMut<'a, V>
 where
     V: SplitAt + SplitFirst + Set + Dummy,
 {
     type Item = V::First;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIter { indices, data } = self;
+        let SubsetIterMut { indices, data } = self;
         let data_slice = std::mem::replace(data, Dummy::dummy());
         match indices {
             Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
@@ -613,34 +692,6 @@ where
                 item
             }),
             None => data_slice.split_first().map(|(item, rest)| {
-                *data = rest;
-                item
-            }),
-        }
-    }
-}
-
-impl<'a, T: 'a> Iterator for SubsetIter<'a, &'a mut [T]> {
-    type Item = &'a mut T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIter { indices, data } = self;
-        let data_slice = std::mem::replace(data, &mut []);
-        match indices {
-            Some(ref mut indices) => indices.split_first().map(move |(first, rest)| {
-                let (item, right) = data_slice.split_first_mut().expect("Corrupt subset");
-                if let Some((second, _)) = rest.split_first() {
-                    let (_, r) = right.split_at_mut(*second - *first - 1);
-                    *data = r;
-                } else {
-                    let n = data.len();
-                    let (_, r) = right.split_at_mut(n);
-                    *data = r;
-                }
-                *indices = rest;
-                item
-            }),
-            None => data_slice.split_first_mut().map(|(item, rest)| {
                 *data = rest;
                 item
             }),
@@ -666,8 +717,8 @@ where
     /// }
     /// assert_eq!(v, vec![2,2,4,4,6]);
     /// ```
-    pub fn iter_mut(&'a mut self) -> SubsetIter<'a, <S as ViewMut<'a>>::Type> {
-        SubsetIter {
+    pub fn iter_mut(&'a mut self) -> SubsetIterMut<'a, <S as ViewMut<'a>>::Type> {
+        SubsetIterMut {
             indices: self.indices.as_ref().map(|indices| indices.borrow()),
             data: self.data.view_mut(),
         }

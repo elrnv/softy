@@ -77,6 +77,45 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
         }
     }
 
+    /// Return the offset into `data` of the element at the given index.
+    /// This function returns the total length of `data` if `index` is equal to
+    /// `self.len()`.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `index` is larger than `self.len()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = Chunked::from_offsets(vec![2,5,6,8], vec![1,2,3,4,5,6]);
+    /// assert_eq!(0, s.offset(0));
+    /// assert_eq!(3, s.offset(1));
+    /// assert_eq!(4, s.offset(2));
+    /// ```
+    pub fn offset(&self, index: usize) -> usize {
+        self.chunks.borrow()[index] - self.chunks.borrow()[0]
+    }
+
+    /// Return the raw offset value of the element at the given index.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `index` is larger than `self.len()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = Chunked::from_offsets(vec![2,5,6,8], vec![1,2,3,4,5,6]);
+    /// assert_eq!(2, s.offset_value(0));
+    /// assert_eq!(5, s.offset_value(1));
+    /// assert_eq!(6, s.offset_value(2));
+    /// ```
+    pub fn offset_value(&self, index: usize) -> usize {
+        self.chunks.borrow()[index]
+    }
     pub fn offsets(&self) -> &O {
         &self.chunks
     }
@@ -265,16 +304,21 @@ where
     /// use utils::soap::*;
     /// let v = vec![0, 1, 4, 6];
     /// let s = Chunked::from_offsets(v.as_slice(), (1..=6).collect::<Vec<_>>());
-    /// assert_eq!(&[1][..], s.get(0));
-    /// assert_eq!(&[2,3,4][..], s.get(1));
-    /// assert_eq!(&[5,6][..], s.get(2));
+    /// assert_eq!(Some(&[1][..]), s.get(0));
+    /// assert_eq!(Some(&[2,3,4][..]), s.get(1));
+    /// assert_eq!(Some(&[5,6][..]), s.get(2));
     /// ```
     fn get(self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            let first = chunked.chunks.get(0);
-            let begin = *chunked.chunks.get(self) - first;
-            let end = *chunked.chunks.get(self + 1) - first;
-            Some(chunked.data.get(begin..end))
+            chunked.chunks.get(0).and_then(|&first| {
+                chunked.chunks.get(self).and_then(|&cur| {
+                    chunked.chunks.get(self + 1).and_then(|&next| {
+                        let begin = cur - first;
+                        let end = next - first;
+                        chunked.data.get(begin..end)
+                    })
+                })
+            })
         } else {
             None
         }
@@ -299,19 +343,21 @@ where
     /// let data = (1..=6).collect::<Vec<_>>();
     /// let offsets = vec![1, 2, 5, 7]; // Offsets don't have to start at 0
     /// let s = Chunked::from_offsets(offsets.as_slice(), data);
-    /// let v = s.get(1..3);
-    /// assert_eq!(&[2,3,4][..], v.get(0));
-    /// assert_eq!(&[5,6][..], v.get(1));
+    /// let v = s.get(1..3).unwrap();
+    /// assert_eq!(Some(&[2,3,4][..]), v.get(0));
+    /// assert_eq!(Some(&[5,6][..]), v.get(1));
     /// ```
     fn get(mut self, chunked: &'i Chunked<S, O>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             self.end += 1;
-            let first = chunked.chunks.get(0);
-            let chunks = chunked.chunks.get(self);
-            let data = chunked
-                .data
-                .get(*chunks.first().unwrap() - first..*chunks.last().unwrap() - first);
-            Some(Chunked { chunks, data })
+            chunked.chunks.get(0).and_then(|&first| {
+                chunked.chunks.get(self).and_then(|chunks| {
+                    chunked
+                        .data
+                        .get(*chunks.first().unwrap() - first..*chunks.last().unwrap() - first)
+                        .map(|data| Chunked { chunks, data })
+                })
+            })
         } else {
             None
         }
@@ -334,43 +380,43 @@ where
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
     /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
     ///
-    /// assert_eq!(s.get(2), &s[2]); // Single index
+    /// assert_eq!(s.get(2), Some(&s[2])); // Single index
     ///
-    /// let r = s.get(1..3);         // Range
+    /// let r = s.get(1..3).unwrap();         // Range
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[4][..]), iter.next());
     /// assert_eq!(Some(&[5,6][..]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(3..);         // RangeFrom
+    /// let r = s.get(3..).unwrap();         // RangeFrom
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[7,8,9][..]), iter.next());
     /// assert_eq!(Some(&[10,11][..]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(..2);         // RangeTo
+    /// let r = s.get(..2).unwrap();         // RangeTo
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[1,2,3][..]), iter.next());
     /// assert_eq!(Some(&[4][..]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// assert_eq!(s.view(), s.get(..)); // RangeFull
-    /// assert_eq!(s.view(), s.view().get(..));
+    /// assert_eq!(s.view(), s.get(..).unwrap()); // RangeFull
+    /// assert_eq!(s.view(), s.view().get(..).unwrap());
     ///
-    /// let r = s.get(1..=2);         // RangeInclusive
+    /// let r = s.get(1..=2).unwrap();         // RangeInclusive
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[4][..]), iter.next());
     /// assert_eq!(Some(&[5,6][..]), iter.next());
     /// assert_eq!(None, iter.next());
     ///
-    /// let r = s.get(..=1);         // RangeToInclusive
+    /// let r = s.get(..=1).unwrap();         // RangeToInclusive
     /// let mut iter = r.iter();
     /// assert_eq!(Some(&[1,2,3][..]), iter.next());
     /// assert_eq!(Some(&[4][..]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    fn get(&'i self, range: I) -> I::Output {
-        range.get(self).expect("Index out of bounds")
+    fn get(&'i self, range: I) -> Option<I::Output> {
+        range.get(self)
     }
 }
 
@@ -384,9 +430,12 @@ where
     /// Get a mutable reference to a chunk of the given `Chunked` collection.
     fn get_mut(self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            let begin = *chunked.chunks.get(self);
-            let end = *chunked.chunks.get(self + 1);
-            Some(chunked.data.get_mut(begin..end))
+            let Chunked { ref chunks, data } = chunked;
+            chunks.get(self).and_then(move |&begin| {
+                chunks
+                    .get(self + 1)
+                    .and_then(move |&end| data.get_mut(begin..end))
+            })
         } else {
             None
         }
@@ -403,12 +452,16 @@ where
     /// Get a mutable `[begin..end)` subview of the given `Chunked` collection.
     fn get_mut(mut self, chunked: &'i mut Chunked<S, O>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
+            let Chunked { ref chunks, data } = chunked;
             self.end += 1;
-            let chunks = chunked.chunks.get(self);
-            let data = chunked
-                .data
-                .get_mut(*chunks.first().unwrap()..*chunks.last().unwrap());
-            Some(Chunked { chunks, data })
+            chunks.get(self).and_then(move |chunks| {
+                chunks.first().and_then(move |&first| {
+                    chunks.last().and_then(move |&last| {
+                        data.get_mut(first..last)
+                            .map(|data| Chunked { chunks, data })
+                    })
+                })
+            })
         } else {
             None
         }
@@ -431,11 +484,11 @@ where
     /// let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
     /// let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
     ///
-    /// s.get_mut(2).copy_from_slice(&[5,6]);        // Single index
+    /// s.get_mut(2).unwrap().copy_from_slice(&[5,6]);        // Single index
     /// assert_eq!(s.data(), &vec![1,2,3,4,5,6,7,8,9,10,11]);
     /// ```
-    fn get_mut(&'i mut self, range: I) -> I::Output {
-        range.get_mut(self).expect("Index out of bounds")
+    fn get_mut(&'i mut self, range: I) -> Option<I::Output> {
+        range.get_mut(self)
     }
 }
 

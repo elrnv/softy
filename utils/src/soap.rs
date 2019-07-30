@@ -34,6 +34,14 @@ pub mod num {
     def_num!((U1, 1), (U2, 2), (U3, 3));
 }
 
+/// An marker trait to indicate an owned collection type. This is to distinguish
+/// them from borrowed slices, which essential to resolve implementation collisions.
+pub trait Owned {}
+impl<S, I> Owned for Subset<S, I> {}
+impl<S, I> Owned for Chunked<S, I> {}
+impl<S, N> Owned for UniChunked<S, N> {}
+impl<T> Owned for Vec<T> {}
+
 /// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
 /// positions.
@@ -139,6 +147,7 @@ where
 {
     type Output;
     fn get(self, set: &'i S) -> Option<Self::Output>;
+    //unsafe fn get_unchecked(self, set: &'i S) -> Self::Output;
 }
 
 /// A helper trait like `GetIndex` but for mutable references.
@@ -148,28 +157,45 @@ where
 {
     type Output;
     fn get_mut(self, set: &'i mut S) -> Option<Self::Output>;
+    //unsafe fn get_unchecked_mut(self, set: &'i mut S) -> Self::Output;
 }
 
-/// An index trait for `Chunked` types.
+/// An index trait for collection types.
 /// Here `'i` indicates the lifetime of the input while `'o` indicates that of
 /// the output.
-pub trait Get<'i, 'o, I>
-where
-    I: ?Sized,
-{
+pub trait Get<'i, 'o, I> {
     type Output;
-    fn get(&'i self, idx: I) -> Self::Output;
+    //unsafe fn get_unchecked(&'i self, idx: I) -> Self::Output;
+    fn get(&'i self, idx: I) -> Option<Self::Output>;
+    /// Return a value at the given index. This is provided as the checked
+    /// version of `get` that will panic if the equivalent `get` call is `None`,
+    /// which typically means that the given index is out of bounds.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `self.get(idx)` returns `None`.
+    fn at(&'i self, idx: I) -> Self::Output {
+        self.get(idx).expect("Index out of bounds")
+    }
 }
 
-/// An index trait for mutable `Chunked` types.
+/// An index trait for mutable collection types.
 /// Here `'i` indicates the lifetime of the input while `'o` indicates that of
 /// the output.
-pub trait GetMut<'i, 'o, I>
-where
-    I: ?Sized,
-{
+pub trait GetMut<'i, 'o, I> {
     type Output;
-    fn get_mut(&'i mut self, idx: I) -> Self::Output;
+    //unsafe fn get_unchecked_mut(&'i self, idx: I) -> Self::Output;
+    fn get_mut(&'i mut self, idx: I) -> Option<Self::Output>;
+    /// Return a value at the given index. This is provided as the checked
+    /// version of `get` that will panic if the equivalent `get` call is `None`,
+    /// which typically means that the given index is out of bounds.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `self.get(idx)` returns `None`.
+    fn at_mut(&'i mut self, idx: I) -> Self::Output {
+        self.get_mut(idx).expect("Index out of bounds")
+    }
 }
 
 impl<'o, 'i: 'o, T, I> GetIndex<'i, 'o, [T]> for I
@@ -328,11 +354,10 @@ where
     /// # Example
     ///
     /// ```rust
-    /// assert_eq!(*utils::soap::Get::get(&[1,2,3,4,5][..], 2), 3);
+    /// assert_eq!(utils::soap::Get::get(&[1,2,3,4,5][..], 2), Some(&3));
     /// ```
-    fn get(&'i self, idx: I) -> Self::Output {
-        let res = GetIndex::get(idx, self);
-        res.expect("Index out of bounds")
+    fn get(&'i self, idx: I) -> Option<Self::Output> {
+        GetIndex::get(idx, self)
     }
 }
 
@@ -350,10 +375,10 @@ where
     ///
     /// ```rust
     /// let v = vec![1,2,3,4,5];
-    /// assert_eq!(*utils::soap::Get::get(&v, 2), 3);
+    /// assert_eq!(utils::soap::Get::get(&v, 2), Some(&3));
     /// ```
-    fn get(&'i self, idx: I) -> Self::Output {
-        GetIndex::get(idx, self.as_slice()).expect("Index out of bounds")
+    fn get(&'i self, idx: I) -> Option<Self::Output> {
+        GetIndex::get(idx, self.as_slice())
     }
 }
 
@@ -370,11 +395,11 @@ where
     ///
     /// ```rust
     /// let mut v = vec![1,2,3,4,5];
-    /// *utils::soap::GetMut::get_mut(v.as_mut_slice(), 2) = 100;
+    /// *utils::soap::GetMut::get_mut(v.as_mut_slice(), 2).unwrap() = 100;
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
-    fn get_mut(&'i mut self, idx: I) -> Self::Output {
-        GetMutIndex::get_mut(idx, self).expect("Index out of bounds")
+    fn get_mut(&'i mut self, idx: I) -> Option<Self::Output> {
+        GetMutIndex::get_mut(idx, self)
     }
 }
 
@@ -392,11 +417,11 @@ where
     ///
     /// ```rust
     /// let mut v = vec![1,2,3,4,5];
-    /// *utils::soap::GetMut::get_mut(&mut v, 2) = 100;
+    /// *utils::soap::GetMut::get_mut(&mut v, 2).unwrap() = 100;
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
-    fn get_mut(&'i mut self, idx: I) -> Self::Output {
-        GetMutIndex::get_mut(idx, self).expect("Index out of bounds")
+    fn get_mut(&'i mut self, idx: I) -> Option<Self::Output> {
+        GetMutIndex::get_mut(idx, self)
     }
 }
 
@@ -413,10 +438,10 @@ where
     /// ```rust
     /// let mut v = vec![1,2,3,4,5];
     /// let mut s = v.as_mut_slice();
-    /// *utils::soap::GetMut::get_mut(&mut s, 2) = 100;
+    /// *utils::soap::GetMut::get_mut(&mut s, 2).unwrap() = 100;
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
-    fn get_mut(&'i mut self, idx: I) -> Self::Output {
+    fn get_mut(&'i mut self, idx: I) -> Option<Self::Output> {
         (*self).get_mut(idx)
     }
 }
@@ -428,7 +453,7 @@ where
     type Output = S::Output;
     /// Index into any borrowed collection `S`, which itself implements
     /// `Get<'i, 'o, I>`.
-    fn get(&'i self, idx: I) -> Self::Output {
+    fn get(&'i self, idx: I) -> Option<Self::Output> {
         (*self).get(idx)
     }
 }
@@ -440,7 +465,7 @@ where
     type Output = S::Output;
     /// Index into any borrowed collection `S`, which itself implements
     /// `Get<'i, 'o, I>`.
-    fn get(&'i self, idx: I) -> Self::Output {
+    fn get(&'i self, idx: I) -> Option<Self::Output> {
         (**self).get(idx) // Borrows S by &'i reference.
     }
 }
@@ -504,12 +529,105 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
+pub trait SplitPrefix<N>
+where
+    Self: Sized,
+{
+    type Prefix;
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)>;
+}
+
+/// `SplitFirst` is an alias for `SplitPrefix<num::U1>`.
 pub trait SplitFirst
 where
     Self: Sized,
 {
     type First;
     fn split_first(self) -> Option<(Self::First, Self)>;
+}
+
+impl<T> SplitFirst for T
+where
+    T: SplitPrefix<num::U1>,
+{
+    type First = T::Prefix;
+    fn split_first(self) -> Option<(Self::First, Self)> {
+        self.split_prefix()
+    }
+}
+
+impl<T, N> SplitPrefix<N> for Vec<T>
+where
+    T: Grouped<N>,
+    <T as Grouped<N>>::Type: Default,
+    N: num::Unsigned,
+{
+    type Prefix = T::Type;
+
+    fn split_prefix(mut self) -> Option<(Self::Prefix, Self)> {
+        if self.len() < N::value() {
+            return None;
+        }
+        // Note: This is inefficient ( as is the implementation for `remove_prefix` ).
+        // As such it shouldn't be used when iterating over `Subset`s of
+        // `Vec<T>` or `Subset`s of any other chunked collection that uses
+        // `Vec<T>` for storage. We should be able to specialize the
+        // implementation of subsets of `Vec<T>` types for better performance.
+        self.rotate_left(N::value());
+        let at = self.len() - N::value();
+        let mut out: T::Type = Default::default();
+        unsafe {
+            self.set_len(at);
+            std::ptr::copy_nonoverlapping(
+                self.as_ptr().add(at),
+                &mut out as *mut T::Type as *mut T,
+                N::value(),
+            );
+        }
+        Some((out, self))
+    }
+}
+
+impl<'a, T, N> SplitPrefix<N> for &'a [T]
+where
+    T: Grouped<N>,
+    <T as Grouped<N>>::Type: 'a,
+    N: num::Unsigned,
+{
+    type Prefix = &'a T::Type;
+
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        if self.len() < N::value() {
+            return None;
+        }
+
+        let (prefix, rest) = unsafe {
+            let prefix = self.as_ptr() as *const T::Type;
+            (&*prefix, &self[N::value()..])
+        };
+        Some((prefix, rest))
+    }
+}
+
+impl<'a, T, N> SplitPrefix<N> for &'a mut [T]
+where
+    T: Grouped<N>,
+    <T as Grouped<N>>::Type: 'a,
+    N: num::Unsigned,
+{
+    type Prefix = &'a mut T::Type;
+
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        if self.len() < N::value() {
+            return None;
+        }
+
+        let (prefix, rest) = unsafe {
+            let prefix = self.as_mut_ptr() as *mut T::Type;
+            (&mut *prefix, &mut self[N::value()..])
+        };
+        Some((prefix, rest))
+    }
 }
 
 /// Convert a collection into its underlying representation, effectively

@@ -291,8 +291,8 @@ where
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for usize
 where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>> + std::fmt::Debug,
-    O: Set + Get<'i, 'o, usize, Output = &'o usize> + std::fmt::Debug,
+    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    O: Set + Get<'i, 'o, usize, Output = &'o usize>,
 {
     type Output = S::Output;
 
@@ -1006,7 +1006,7 @@ where
     }
 }
 
-impl<S: IntoFlat> IntoFlat for Chunked<S> {
+impl<S: IntoFlat, O> IntoFlat for Chunked<S, O> {
     type FlatType = S::FlatType;
     /// Strip all organizational information from this set, returning the
     /// underlying storage type.

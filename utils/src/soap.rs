@@ -34,13 +34,19 @@ pub mod num {
     def_num!((U1, 1), (U2, 2), (U3, 3));
 }
 
-/// An marker trait to indicate an owned collection type. This is to distinguish
+/// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
 pub trait Owned {}
 impl<S, I> Owned for Subset<S, I> {}
 impl<S, I> Owned for Chunked<S, I> {}
 impl<S, N> Owned for UniChunked<S, N> {}
 impl<T> Owned for Vec<T> {}
+
+/// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
+pub trait Chunkable<'a>: Set + Get<'a, 'a, std::ops::Range<usize>> + RemovePrefix {}
+impl<'a, T: Clone> Chunkable<'a> for &'a [T] {}
+impl<'a, T: Clone> Chunkable<'a> for &'a mut [T] {}
+impl<'a, T: Clone + 'a> Chunkable<'a> for Vec<T> {}
 
 /// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex
@@ -111,34 +117,36 @@ impl<N: num::Unsigned> StaticRange<N> {
     }
 }
 
-macro_rules! impl_static_range {
-    ($nty:ty, $n:expr) => {
-        impl<'o, 'i: 'o, T: 'o> GetIndex<'i, 'o, [T]> for StaticRange<$nty> {
-            type Output = &'o [T; $n];
-            fn get(self, set: &'i [T]) -> Option<Self::Output> {
-                if self.end() <= set.len() {
-                    Some(unsafe { &*(set.as_ptr().add(self.start()) as *const [T; $n]) })
-                } else {
-                    None
-                }
-            }
+impl<'o, 'i: 'o, T, N> GetIndex<'i, 'o, [T]> for StaticRange<N>
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
+    <T as Grouped<N>>::Type: 'o,
+{
+    type Output = &'o T::Type;
+    fn get(self, set: &'i [T]) -> Option<Self::Output> {
+        if self.end() <= set.len() {
+            Some(unsafe { &*(set.as_ptr().add(self.start()) as *const T::Type) })
+        } else {
+            None
         }
-        impl<'o, 'i: 'o, T: 'o> GetMutIndex<'i, 'o, [T]> for StaticRange<$nty> {
-            type Output = &'o mut [T; $n];
-            fn get_mut(self, set: &'i mut [T]) -> Option<Self::Output> {
-                if self.end() <= set.len() {
-                    Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut [T; $n]) })
-                } else {
-                    None
-                }
-            }
-        }
-    };
+    }
 }
-
-impl_static_range!(num::U1, 1);
-impl_static_range!(num::U2, 2);
-impl_static_range!(num::U3, 3);
+impl<'o, 'i: 'o, T, N> GetMutIndex<'i, 'o, [T]> for StaticRange<N>
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
+    <T as Grouped<N>>::Type: 'o,
+{
+    type Output = &'o mut T::Type;
+    fn get_mut(self, set: &'i mut [T]) -> Option<Self::Output> {
+        if self.end() <= set.len() {
+            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut T::Type) })
+        } else {
+            None
+        }
+    }
+}
 
 /// A helper trait analogous to `SliceIndex` from the standard library.
 pub trait GetIndex<'i, 'o, S>

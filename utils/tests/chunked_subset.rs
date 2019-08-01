@@ -22,44 +22,6 @@ fn chunked_subset() {
 }
 
 #[test]
-fn chunked_unichunked() {
-    let v: Vec<usize> = (1..13).collect();
-    let uni = Chunked3::from_flat(v);
-    let chunked = Chunked::from_offsets(vec![0, 1, 4], uni);
-    let mut chunked_iter = chunked.iter();
-    let uni = chunked_iter.next().unwrap();
-    let mut uni_iter = uni.iter();
-    assert_eq!(Some(&[1, 2, 3]), uni_iter.next());
-    assert_eq!(None, uni_iter.next());
-    let uni = chunked_iter.next().unwrap();
-    let mut uni_iter = uni.iter();
-    assert_eq!(Some(&[4, 5, 6]), uni_iter.next());
-    assert_eq!(Some(&[7, 8, 9]), uni_iter.next());
-    assert_eq!(Some(&[10, 11, 12]), uni_iter.next());
-    assert_eq!(None, uni_iter.next());
-}
-
-//#[test]
-//fn unichunked_chunked() {
-//    let v: Vec<usize> = (1..13).collect();
-//    let chunked = Chunked::from_offsets(vec![0, 1, 3, 6, 8, 10, 13], v);
-//    let uni = Chunked3::from_flat(chunked);
-//    let mut uni_iter = uni.iter();
-//    let chunked = uni_iter.next().unwrap();
-//    let mut chunked_iter = uni.iter();
-//    assert_eq!(Some(&[1][..]), chunked_iter.next());
-//    assert_eq!(Some(&[1, 2][..]), chunked_iter.next());
-//    assert_eq!(Some(&[3, 4, 5][..]), chunked_iter.next());
-//    assert_eq!(None, chunked_iter.next());
-//    let chunked = uni_iter.next().unwrap();
-//    let mut chunked_iter = uni.iter();
-//    assert_eq!(Some(&[6, 7][..]), chunked_iter.next());
-//    assert_eq!(Some(&[8, 9][..]), chunked_iter.next());
-//    assert_eq!(Some(&[10, 11, 12][..]), chunked_iter.next());
-//    assert_eq!(None, chunked_iter.next());
-//}
-
-#[test]
 fn subset_chunked() {
     let v: Vec<usize> = (1..12).collect();
     let chunked = Chunked::from_offsets(vec![0, 2, 4, 7, 10, 11], v);
@@ -168,3 +130,14 @@ fn subset_unichunked_index() {
     assert_eq!([0, 0, 0], subset[1]);
     assert_eq!([13, 14, 15], subset[2]);
 }
+
+// Test that we can create a subset of a substructure of a nested chunked set
+fn subset<'a, 'b>(
+    indices: &'a [usize],
+    x: ChunkedView<'b, ChunkedView<'b, Chunked3<&'b [usize]>>>,
+) -> SubsetView<'a, Chunked3<&'b [usize]>> {
+    Subset::from_unique_ordered_indices(indices, x.at(1).at(1))
+}
+
+#[test]
+fn subset_nested_chunked() {}

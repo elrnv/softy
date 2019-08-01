@@ -43,10 +43,13 @@ impl<S, N> Owned for UniChunked<S, N> {}
 impl<T> Owned for Vec<T> {}
 
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
-pub trait Chunkable<'a>: Set + Get<'a, 'a, std::ops::Range<usize>> + RemovePrefix {}
-impl<'a, T: Clone> Chunkable<'a> for &'a [T] {}
-impl<'a, T: Clone> Chunkable<'a> for &'a mut [T] {}
-impl<'a, T: Clone + 'a> Chunkable<'a> for Vec<T> {}
+pub trait Chunkable<'a>:
+    Set + Get<'a, 'a, std::ops::Range<usize>> + RemovePrefix + View<'a> + PartialEq
+{
+}
+impl<'a, T: Clone + PartialEq> Chunkable<'a> for &'a [T] {}
+impl<'a, T: Clone + PartialEq> Chunkable<'a> for &'a mut [T] {}
+impl<'a, T: Clone + PartialEq + 'a> Chunkable<'a> for Vec<T> {}
 
 /// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
 /// anything. For example a buffer of floats can represent a set of vertex colours or vertex

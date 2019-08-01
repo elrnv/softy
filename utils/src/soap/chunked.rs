@@ -9,6 +9,8 @@ pub struct Chunked<S, O = Vec<usize>> {
     pub(crate) data: S,
 }
 
+pub type ChunkedView<'a, S> = Chunked<S, &'a [usize]>;
+
 impl<S, O> Chunked<S, O> {
     /// Get a immutable reference to the underlying data.
     ///
@@ -139,6 +141,13 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     pub fn into_inner(self) -> (O, S) {
         let Chunked { chunks, data } = self;
         (chunks, data)
+    }
+}
+
+impl<S: Default> Chunked<S> {
+    /// Construct an empty `Chunked` type.
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -291,7 +300,7 @@ where
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for usize
 where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    S: Set + View<'o> + Get<'i, 'o, std::ops::Range<usize>, Output = <S as View<'o>>::Type>,
     O: Set + Get<'i, 'o, usize, Output = &'o usize>,
 {
     type Output = S::Output;
@@ -327,7 +336,7 @@ where
 
 impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Chunked<S, O>> for std::ops::Range<usize>
 where
-    S: Set + Get<'i, 'o, std::ops::Range<usize>>,
+    S: Set + View<'o> + Get<'i, 'o, std::ops::Range<usize>, Output = <S as View<'o>>::Type>,
     O: Set
         + Get<'i, 'o, std::ops::Range<usize>, Output = &'o [usize]>
         + Get<'i, 'o, usize, Output = &'o usize>,
@@ -338,7 +347,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let data = (1..=6).collect::<Vec<_>>();
     /// let offsets = vec![1, 2, 5, 7]; // Offsets don't have to start at 0
@@ -375,7 +384,7 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
     /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
@@ -509,6 +518,7 @@ where
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
     /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// assert_eq!(2, (&s[2]).len());
     /// assert_eq!(&[5,6], &s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {

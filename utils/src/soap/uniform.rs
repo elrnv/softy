@@ -48,17 +48,17 @@ macro_rules! impl_from_grouped {
             }
         }
 
-        impl<T: Clone> Into<Vec<[T; $n]>> for Chunked3<Vec<T>> {
+        impl<T: Clone> Into<Vec<[T; $n]>> for UniChunked<Vec<T>, $nty> {
             fn into(self) -> Vec<[T; $n]> {
                 ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
             }
         }
-        impl<'a, T: Clone> Into<&'a [[T; $n]]> for Chunked3<&'a [T]> {
+        impl<'a, T: Clone> Into<&'a [[T; $n]]> for UniChunked<&'a [T], $nty> {
             fn into(self) -> &'a [[T; $n]] {
                 ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
             }
         }
-        impl<'a, T: Clone> Into<&'a mut [[T; $n]]> for Chunked3<&'a mut [T]> {
+        impl<'a, T: Clone> Into<&'a mut [[T; $n]]> for UniChunked<&'a mut [T], $nty> {
             fn into(self) -> &'a mut [[T; $n]] {
                 ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
             }
@@ -72,6 +72,37 @@ impl_from_grouped!(num::U3, 3);
 /// Define aliases for common uniform chunked types.
 pub type Chunked3<S> = UniChunked<S, num::U3>;
 pub type Chunked2<S> = UniChunked<S, num::U2>;
+
+impl<S, N> UniChunked<S, N> {
+    /// Get a immutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let s = Chunked3::from_flat(v.clone());
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data(&self) -> &S {
+        &self.data
+    }
+    /// Get a mutable reference to the underlying data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6];
+    /// let mut s = Chunked3::from_flat(v.clone());
+    /// v[2] = 100;
+    /// s.data_mut()[2] = 100;
+    /// assert_eq!(&v, s.data());
+    /// ```
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
+}
 
 impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     /// Create a `UniChunked` collection that groups the elements of the

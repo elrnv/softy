@@ -45,7 +45,7 @@ use super::*;
 // data below the first index to ensure that the first index serves as an offset
 // to the rest of the indices, making the entire index array translation
 // independent.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Subset<S, I = Vec<usize>> {
     /// An optional set of indices. When this is `None`, the subset is
     /// considered to be entire. Empty subsets are represented by a zero length

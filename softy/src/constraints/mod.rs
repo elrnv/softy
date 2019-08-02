@@ -91,7 +91,7 @@ pub fn remap_values<T: Copy>(
 
                 break;
             }
-            return default;
+            default
         })
         .collect()
 }
@@ -190,8 +190,8 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
-        dx: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        dx: [SubsetView<Chunked3<&[f64]>>; 2],
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;
@@ -242,7 +242,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     /// Compute the frictional energy dissipation.
     fn frictional_dissipation(
         &self,
-        vel: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        vel: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
@@ -276,7 +276,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
                     Vector3::zeros()
                 };
 
-                dissipation += Vector3(vel.0[i]).dot(r_t);
+                dissipation += Vector3(vel[0][i]).dot(r_t);
             }
         }
         dissipation
@@ -289,7 +289,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn add_contact_impulse(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         impulse: [Chunked3<&mut [f64]>; 2],
     );
@@ -299,7 +299,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     /// there are no cached query points.
     fn contact_normals(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;

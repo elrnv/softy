@@ -7,11 +7,9 @@ pub(crate) mod test_utils {
     use crate::energy::*;
     use crate::fem::SolverBuilder;
     use crate::test_utils::*;
-    use crate::TetMesh;
     use crate::objects::*;
     use approx::*;
     use autodiff::F;
-    use geo::mesh::VertexPositions;
     use num_traits::Zero;
     use reinterpret::*;
 

@@ -908,7 +908,7 @@ impl NonLinearProblem {
             for fc in self.frictional_contacts.iter() {
                 let obj_v = Self::mesh_vertex_subset(&self.solids, v, fc.object_index);
                 let col_v = Self::mesh_vertex_subset(&self.solids, v, fc.collider_index);
-                obj -= fc.constraint.frictional_dissipation((obj_v.view(), col_v.view()));
+                obj -= fc.constraint.frictional_dissipation([obj_v.view(), col_v.view()]);
             }
         }
 
@@ -970,8 +970,8 @@ impl NonLinearProblem {
             let potential_values = &constraint_values[offset..];
             fc.constraint.update_frictional_contact_impulse(
                 &contact_impulse,
-                (obj_prev_pos.view(), col_prev_pos.view()),
-                (obj_vel.view(), col_vel.view()),
+                [obj_prev_pos.view(), col_prev_pos.view()],
+                [obj_vel.view(), col_vel.view()],
                 potential_values,
                 friction_steps[fc_idx],
             );
@@ -1145,7 +1145,7 @@ impl NonLinearProblem {
             let obj_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.object_index);
             let coll_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.collider_index);
             fc.constraint.add_contact_impulse(
-                (obj_x0.view(), coll_x0.view()),
+                [obj_x0.view(), coll_x0.view()],
                 &contact_impulse,
                 [Chunked3::from_flat(obj_imp.as_mut_slice()),
                  Chunked3::from_flat(coll_imp.as_mut_slice())],
@@ -1516,19 +1516,19 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
-        let v = self.update_current_velocity(uv);
-        let cur_pos = self.compute_step(v.view());
+        let cur_vel = self.update_current_velocity(uv);
+        let cur_pos = self.compute_step(cur_vel.view());
         let x = cur_pos.view();
         let x0 = self.vertex_set.prev_pos.view();
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
-        let mut i = 0; // Counter.
+        let mut count = 0; // Constraint counter
 
         for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_size();
-            vc.constraint(x0.into_flat(), x.into_flat(), &mut g[i..i + n]);
-            i += n;
+            vc.constraint(x0.into_flat(), x.into_flat(), &mut g[count..count + n]);
+            count += n;
         }
 
         for fc in self.frictional_contacts.iter() {
@@ -1539,29 +1539,29 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let coll_x =  Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
 
             fc.constraint
-                .constraint([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut g[i..i + n]);
-            i += n;
+                .constraint([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut g[count..count + n]);
+            count += n;
         }
 
         true
     }
 
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-        let mut i = 0;
+        let mut count = 0; // Constraint counter
         for (_, vc) in self.volume_constraints.iter() {
             let mut bounds = vc.constraint_bounds();
             let n = vc.constraint_size();
-            g_l[i..i + n].swap_with_slice(&mut bounds.0);
-            g_u[i..i + n].swap_with_slice(&mut bounds.1);
-            i += n;
+            g_l[count..count + n].swap_with_slice(&mut bounds.0);
+            g_u[count..count + n].swap_with_slice(&mut bounds.1);
+            count += n;
         }
 
         for fc in self.frictional_contacts.iter() {
             let mut bounds = fc.constraint.constraint_bounds();
             let n = fc.constraint.constraint_size();
-            g_l[i..i + n].swap_with_slice(&mut bounds.0);
-            g_u[i..i + n].swap_with_slice(&mut bounds.1);
-            i += n;
+            g_l[count..count + n].swap_with_slice(&mut bounds.0);
+            g_u[count..count + n].swap_with_slice(&mut bounds.1);
+            count += n;
         }
         true
     }
@@ -1571,15 +1571,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         rows: &mut [ipopt::Index],
         cols: &mut [ipopt::Index],
     ) -> bool {
-        let mut i = 0; // counter
+        let mut count = 0; // Constraint counter
 
         let mut row_offset = 0;
         for (_, vc) in self.volume_constraints.iter() {
             let iter = vc.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
-                rows[i] = (row + row_offset) as ipopt::Index;
-                cols[i] = col as ipopt::Index;
-                i += 1;
+                rows[count] = (row + row_offset) as ipopt::Index;
+                cols[count] = col as ipopt::Index;
+                count += 1;
             }
             row_offset += 1;
         }
@@ -1592,11 +1592,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
             let iter = fc.constraint.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
-                rows[i] = (row + row_offset) as ipopt::Index;
-                cols[i] = self.source_coordinates(fc.object_index, fc.collider_index, col)
+                rows[count] = (row + row_offset) as ipopt::Index;
+                cols[count] = self.source_coordinates(fc.object_index, fc.collider_index, col)
                     as ipopt::Index;
                 jac[col][row] = 1;
-                i += 1;
+                count += 1;
             }
             row_offset += nrows;
 
@@ -1623,13 +1623,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let x = cur_pos.view();
         let x0 = self.vertex_set.prev_pos.view();
 
-        let mut i = 0;
+        let mut count = 0; // Constraint counter
 
         for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x0.into_flat(), x.into_flat(), &mut vals[i..i + n])
+            vc.constraint_jacobian_values(x0.into_flat(), x.into_flat(), &mut vals[count..count + n])
                 .ok();
-            i += n;
+            count += n;
         }
 
         for fc in self.frictional_contacts.iter() {
@@ -1640,9 +1640,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let coll_x =  Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
 
             fc.constraint
-                .constraint_jacobian_values([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut vals[i..i + n])
+                .constraint_jacobian_values([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut vals[count..count + n])
                 .ok();
-            //println!("jac g vals = {:?}", &vals[i..i+n]);
+            //println!("jac g vals = {:?}", &vals[count..count+n]);
         }
         let dt = if self.time_step > 0.0 {
             self.time_step
@@ -1676,46 +1676,46 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn hessian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
-        let mut i = 0;
+        let mut count = 0; // Constraint counter
 
         // Add energy indices
         for solid in self.solids.iter() {
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
-            i += n;
+            elasticity.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            count += n;
 
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
-            i += n;
+            inertia.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            count += n;
         }
 
         //for shell in self.shells.iter() {
         //    let inertia = shell.inertia();
         //    let n = inertia.energy_hessian_size();
-        //    inertia.energy_hessian_rows_cols(&mut rows[i..i + n], &mut cols[i..i + n]);
-        //    i += n;
+        //    inertia.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+        //    count += n;
         //}
 
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let offset = self.vertex_set.prev_vel.view().at(0).offset_value(*solid_idx);
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
-                rows[i] = (row + offset) as ipopt::Index;
-                cols[i] = (col + offset) as ipopt::Index;
-                i += 1;
+                rows[count] = (row + offset) as ipopt::Index;
+                cols[count] = (col + offset) as ipopt::Index;
+                count += 1;
             }
         }
 
         for fc in self.frictional_contacts.iter() {
             let iter = fc.constraint.constraint_hessian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
-                rows[i] = self.source_coordinates(fc.object_index, fc.collider_index, row)
+                rows[count] = self.source_coordinates(fc.object_index, fc.collider_index, row)
                     as ipopt::Index;
-                cols[i] = self.source_coordinates(fc.object_index, fc.collider_index, col)
+                cols[count] = self.source_coordinates(fc.object_index, fc.collider_index, col)
                     as ipopt::Index;
-                i += 1;
+                count += 1;
             }
         }
 
@@ -1749,7 +1749,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             1.0
         };
 
-        let mut i = 0;
+        let mut count = 0; // Constraint counter
 
         for (solid_idx, solid) in self.solids.iter().enumerate() {
             let x0 = x0.at(0).at(solid_idx).into_flat();
@@ -1758,13 +1758,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let v = v.at(0).at(solid_idx).into_flat();
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[i..i + n]);
-            i += n;
+            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[count..count + n]);
+            count += n;
 
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
-            i += n;
+            inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+            count += n;
         }
 
         //for (shell_idx, shell) in self.shells.iter().enumerate() {
@@ -1772,13 +1772,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //    let v = v.at(1).at(shell_idx).into_flat();
         //    let inertia = shell.inertia();
         //    let n = inertia.energy_hessian_size();
-        //    inertia.energy_hessian_values(v0, v, 1.0, &mut vals[i..i + n]);
-        //    i += n;
+        //    inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+        //    count += n;
         //}
 
         // Multiply energy hessian by objective factor.
         let factor = obj_factor * self.scale() * self.scale();
-        for v in vals[0..i].iter_mut() {
+        for v in vals[0..count].iter_mut() {
             *v *= factor;
         }
 
@@ -1796,11 +1796,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 x1,
                 &lambda[coff..coff + nc],
                 c_scale,
-                &mut vals[i..i + nh],
+                &mut vals[count..count + nh],
             )
             .unwrap();
 
-            i += nh;
+            count += nh;
             coff += nc;
         }
 
@@ -1817,15 +1817,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                     [obj_x.view(), coll_x.view()],
                     &lambda[coff..coff + nc],
                     c_scale,
-                    &mut vals[i..i + nh],
+                    &mut vals[count..count + nh],
                 )
                 .unwrap();
 
-            i += nh;
+            count += nh;
             coff += nc;
         }
 
-        assert_eq!(i, vals.len());
+        assert_eq!(count, vals.len());
         assert_eq!(coff, lambda.len());
         //self.print_hessian_svd(vals);
 

@@ -272,25 +272,23 @@ impl DeformableProperties {
             scale = elasticity.normalize();
             density = density.map(|d| d * scale);
             damping *= scale;
-        } else {
-            if let Some(ref mut density) = density {
-                scale = if *density > 0.0 {
-                    1.0 / *density
-                } else if damping > 0.0 {
-                    1.0 / damping
-                } else {
-                    1.0
-                };
-                *density *= scale;
-                damping *= scale;
+        } else if let Some(ref mut density) = density {
+            scale = if *density > 0.0 {
+                1.0 / *density
+            } else if damping > 0.0 {
+                1.0 / damping
             } else {
-                scale = if damping > 0.0 {
-                    1.0 / damping
-                } else {
-                    1.0
-                };
-                damping *= scale;
-            }
+                1.0
+            };
+            *density *= scale;
+            damping *= scale;
+        } else {
+            scale = if damping > 0.0 {
+                1.0 / damping
+            } else {
+                1.0
+            };
+            damping *= scale;
         }
 
         DeformableProperties {

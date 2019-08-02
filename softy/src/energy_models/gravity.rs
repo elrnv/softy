@@ -181,7 +181,7 @@ impl EnergyHessian for TriMeshGravity<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::energy_models::{gravity::*, test_utils::*};
+    use crate::energy_models::{test_utils::*};
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {

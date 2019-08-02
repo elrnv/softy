@@ -173,8 +173,8 @@ impl ContactConstraint for ImplicitContactConstraint {
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
-        v: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        v: [SubsetView<Chunked3<&[f64]>>; 2],
         _constraint_values: &[f64],
         mut friction_steps: u32,
     ) -> u32 {
@@ -218,7 +218,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .map(|(contact_idx, &surf_idx)| {
                     let v = frictional_contact
                         .contact_basis
-                        .to_cylindrical_contact_coordinates(v.0[surf_idx], contact_idx);
+                        .to_cylindrical_contact_coordinates(v[0][surf_idx], contact_idx);
                     v.tangent
                 })
                 .collect();
@@ -281,7 +281,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .map(|(contact_idx, &surf_idx)| {
                     let v = frictional_contact
                         .contact_basis
-                        .to_contact_coordinates(v.0[surf_idx], contact_idx);
+                        .to_contact_coordinates(v[0][surf_idx], contact_idx);
                     [v[1], v[2]]
                 })
                 .collect();
@@ -393,7 +393,7 @@ impl ContactConstraint for ImplicitContactConstraint {
     /// For visualization purposes.
     fn add_contact_impulse(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
@@ -441,13 +441,13 @@ impl ContactConstraint for ImplicitContactConstraint {
 
     fn contact_normals(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();
-        self.update_contact_points(x.0);
+        self.update_contact_points(x[0]);
         let mut contact_points = self.contact_points.borrow_mut();
-        x.1.clone_into_other(&mut *contact_points);
+        x[1].clone_into_other(&mut *contact_points);
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords)?;

@@ -351,8 +351,8 @@ impl ContactConstraint for PointContactConstraint {
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
-        v: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        v: [SubsetView<Chunked3<&[f64]>>; 2],
         potential_values: &[f64],
         friction_steps: u32,
     ) -> u32 {
@@ -404,7 +404,7 @@ impl ContactConstraint for PointContactConstraint {
         // Compute product J*u to produce velocities (displacements) at each point of contact in
         // physical space.
         for ((r, c), &m) in cj_indices_iter.clone().zip(cj_matrices.iter()) {
-            velocity[r] += m * Vector3(v.0[c]);
+            velocity[r] += m * Vector3(v[0][c]);
         }
 
         assert_eq!(query_indices.len(), contact_impulse.len());
@@ -604,13 +604,13 @@ impl ContactConstraint for PointContactConstraint {
 
     fn frictional_dissipation(
         &self,
-        v: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        v: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact {
             for (i, f) in frictional_contact.impulse.iter().enumerate() {
                 for j in 0..3 {
-                    dissipation += v.0[i][j] * f[j];
+                    dissipation += v[0][i][j] * f[j];
                 }
             }
         }
@@ -631,7 +631,7 @@ impl ContactConstraint for PointContactConstraint {
     /// For visualization purposes.
     fn add_contact_impulse(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
@@ -679,15 +679,15 @@ impl ContactConstraint for PointContactConstraint {
 
     fn contact_normals(
         &self,
-        x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at the vertex positions of the colliding mesh.
-        self.update_surface_with_mesh_pos(x.0);
+        self.update_surface_with_mesh_pos(x[0]);
 
         let surf = self.implicit_surface.borrow();
 
         let mut contact_points = self.contact_points.borrow_mut();
-        x.1.clone_into_other(&mut *contact_points);
+        x[1].clone_into_other(&mut *contact_points);
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords)?;

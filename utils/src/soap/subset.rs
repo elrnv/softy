@@ -412,25 +412,18 @@ where
 
 impl<'a, S, O> GetIndex<'a, Subset<S, O>> for usize
 where
-    O: std::borrow::Borrow<[usize]> + std::fmt::Debug,
-    S: Get<'a, usize> + std::fmt::Debug,
+    O: std::borrow::Borrow<[usize]>,
+    S: Get<'a, usize>,
 {
     type Output = <S as Get<'a, usize>>::Output;
 
     fn get(self, subset: &Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         if let Some(ref indices) = subset.indices {
-            dbg!(&subset);
-            dbg!(&indices.borrow());
-            dbg!(&self);
             indices.borrow().get(0).and_then(|&first| {
-                dbg!(first);
                 indices.borrow()
                     .get(self)
                     .and_then(|&cur| {
-                        dbg!(cur);
-                        dbg!(&subset);
-                        dbg!(cur - first);
                         Get::get(&subset.data, cur - first)
                     })
             })

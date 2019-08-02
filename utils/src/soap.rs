@@ -237,7 +237,7 @@ where
     }
 }
 
-impl<'a, T: std::fmt::Debug, I: std::fmt::Debug> GetIndex<'a, &'a mut [T]> for I
+impl<'a, T, I> GetIndex<'a, &'a mut [T]> for I
 where
     I: std::slice::SliceIndex<[T]>,
     <[T] as std::ops::Index<I>>::Output: 'a,

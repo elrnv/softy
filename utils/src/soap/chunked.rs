@@ -337,7 +337,7 @@ where
     }
 }
 
-impl<'a, S: std::fmt::Debug> GetIndex<'a, Chunked<S, &'a [usize]>> for std::ops::Range<usize>
+impl<'a, S> GetIndex<'a, Chunked<S, &'a [usize]>> for std::ops::Range<usize>
 where
     S: Set + View<'a> + Get<'a, std::ops::Range<usize>, Output = <S as View<'a>>::Type>,
 {
@@ -359,8 +359,6 @@ where
     fn get(mut self, chunked: &Chunked<S, &'a [usize]>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             let Chunked { chunks, data } = chunked;
-            dbg!(&chunks);
-            dbg!(&data);
             self.end += 1;
             chunks.get(0).and_then(move |&first| {
                 chunks.get(self).and_then(move |chunks| {

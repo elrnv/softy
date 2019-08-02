@@ -2,9 +2,9 @@ use crate::attrib_defines::*;
 use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
-use crate::objects::material::*;
+use crate::objects::{material::*, Object};
 use crate::{TetMesh, TriMesh};
-use geo::mesh::{Attrib, topology::*};
+use geo::mesh::{topology::*, Attrib};
 use std::cell::{Ref, RefCell};
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
@@ -15,6 +15,28 @@ pub struct TetMeshSolid {
     pub tetmesh: TetMesh,
     pub material: SolidMaterial,
     pub(crate) surface: RefCell<Option<TetMeshSurface>>,
+}
+
+// TODO: This impl can be automated with a derive macro
+impl Object for TetMeshSolid {
+    type Mesh = TetMesh;
+    type Material = SolidMaterial;
+    type ElementIndex = CellIndex;
+    fn num_elements(&self) -> usize {
+        self.tetmesh.num_cells()
+    }
+    fn mesh(&self) -> &TetMesh {
+        &self.tetmesh
+    }
+    fn material(&self) -> &SolidMaterial {
+        &self.material
+    }
+    fn mesh_mut(&mut self) -> &mut TetMesh {
+        &mut self.tetmesh
+    }
+    fn material_mut(&mut self) -> &mut SolidMaterial {
+        &mut self.material
+    }
 }
 
 impl TetMeshSolid {

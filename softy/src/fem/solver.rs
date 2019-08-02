@@ -1,15 +1,19 @@
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
+use crate::fem::problem::FrictionalContactConstraint;
 use crate::objects::*;
 use geo::math::{Matrix3, Vector3};
-use geo::mesh::{topology::*, attrib::{self, VertexAttrib}, Attrib, VertexPositions};
+use geo::mesh::{
+    attrib::{self, VertexAttrib},
+    topology::*,
+    Attrib, VertexPositions,
+};
 use geo::ops::{Area, ShapeMatrix, Volume};
 use geo::prim::{Tetrahedron, Triangle};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
-use std::cell::{RefCell};
+use std::cell::RefCell;
 use utils::{soap::*, zip};
-use crate::fem::problem::FrictionalContactConstraint;
 
 use crate::inf_norm;
 
@@ -178,12 +182,10 @@ impl SolverBuilder {
 
         let material_source = Chunked::from_offsets(offsets, material_source);
 
-        let construct_friction_constraint = |m0, m1, constraint| {
-            FrictionalContactConstraint {
-                object_index: m0,
-                collider_index: m1,
-                constraint
-            }
+        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
+            object_index: m0,
+            collider_index: m1,
+            constraint,
         };
 
         // Convert frictional contact parameters into frictional contact constraints.
@@ -194,8 +196,8 @@ impl SolverBuilder {
                 let material_source_coll = &material_source[coll_id];
                 material_source_obj.iter().flat_map(move |&m0| {
                     let (solid_iter, shell_iter) = match m0 {
-                        SourceIndex::Solid(i) => {
-                            (Some(material_source_coll.iter().flat_map(move |&m1| {
+                        SourceIndex::Solid(i) => (
+                            Some(material_source_coll.iter().flat_map(move |&m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         &solids[i].surface().trimesh,
@@ -207,11 +209,16 @@ impl SolverBuilder {
                                         &shells[j].trimesh,
                                         params,
                                     ),
-                                }.map(|c| construct_friction_constraint(m0, m1, c)).ok().into_iter()
-                            })), None)
-                        }
-                        SourceIndex::Shell(i) => {
-                            (None, Some(material_source_coll.iter().flat_map(move |&m1| {
+                                }
+                                .map(|c| construct_friction_constraint(m0, m1, c))
+                                .ok()
+                                .into_iter()
+                            })),
+                            None,
+                        ),
+                        SourceIndex::Shell(i) => (
+                            None,
+                            Some(material_source_coll.iter().flat_map(move |&m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         &shells[i].trimesh,
@@ -223,11 +230,17 @@ impl SolverBuilder {
                                         &shells[j].trimesh,
                                         params,
                                     ),
-                                }.map(|c| construct_friction_constraint(m0, m1, c)).ok().into_iter()
-                            })))
-                        }
+                                }
+                                .map(|c| construct_friction_constraint(m0, m1, c))
+                                .ok()
+                                .into_iter()
+                            })),
+                        ),
                     };
-                    solid_iter.into_iter().flatten().chain(shell_iter.into_iter().flatten())
+                    solid_iter
+                        .into_iter()
+                        .flatten()
+                        .chain(shell_iter.into_iter().flatten())
                 })
             })
             .collect()
@@ -249,8 +262,11 @@ impl SolverBuilder {
         let mut com = Vector3::zeros();
         let mut total_mass = 0.0;
 
-        for (&v, &m) in mesh.vertex_position_iter().zip(mesh.attrib_iter::<MassType, VertexIndex>(MASS_ATTRIB).unwrap()) {
-            com += Vector3(v)*m;
+        for (&v, &m) in mesh.vertex_position_iter().zip(
+            mesh.attrib_iter::<MassType, VertexIndex>(MASS_ATTRIB)
+                .unwrap(),
+        ) {
+            com += Vector3(v) * m;
             total_mass += m;
         }
         (com / total_mass).into()
@@ -272,9 +288,7 @@ impl SolverBuilder {
         {
             // Get previous position vector from the tetmesh.
             prev_pos.push(mesh.vertex_positions().to_vec());
-            prev_vel.push(
-                mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?,
-            );
+            prev_vel.push(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
         }
 
         for TriMeshShell {
@@ -318,14 +332,14 @@ impl SolverBuilder {
     }
 
     /// Helper function to build an array of solids with associated material properties and attributes.
-    fn build_solids(
-        solids: Vec<(TetMesh, SolidMaterial)>,
-    ) -> Result<Vec<TetMeshSolid>, Error> {
+    fn build_solids(solids: Vec<(TetMesh, SolidMaterial)>) -> Result<Vec<TetMeshSolid>, Error> {
         // Equip `TetMesh`es with physics parameters, making them bona-fide solids.
         let mut out = Vec::new();
         for (tetmesh, material) in solids.into_iter() {
             // Prepare deformable solid for simulation.
-            out.push(Self::prepare_solid_attributes(TetMeshSolid::new(tetmesh, material))?);
+            out.push(Self::prepare_solid_attributes(TetMeshSolid::new(
+                tetmesh, material,
+            ))?);
         }
 
         Ok(out)
@@ -336,9 +350,12 @@ impl SolverBuilder {
         // Equip `PolyMesh`es with physics parameters, making them bona-fide shells.
         let mut out = Vec::new();
         for (polymesh, material) in shells.into_iter() {
-                let trimesh = TriMesh::from(polymesh);
-                // Prepare shell for simulation.
-                out.push(Self::prepare_shell_attributes(TriMeshShell { trimesh, material })?)
+            let trimesh = TriMesh::from(polymesh);
+            // Prepare shell for simulation.
+            out.push(Self::prepare_shell_attributes(TriMeshShell {
+                trimesh,
+                material,
+            })?)
         }
 
         Ok(out)
@@ -551,10 +568,7 @@ impl SolverBuilder {
 
         let ref_tri = |indices| Triangle::from_indexed_slice(indices, ref_pos);
 
-        Ok(mesh
-            .face_iter()
-            .map(|face| ref_tri(face).area())
-            .collect())
+        Ok(mesh.face_iter().map(|face| ref_tri(face).area()).collect())
     }
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
@@ -609,10 +623,9 @@ impl SolverBuilder {
     }
 
     /// A helper function to populate vertex attributes for simulation on a deformable mesh.
-    fn prepare_deformable_mesh_vertex_attributes<M>(
-        mesh: &mut M,
-    ) -> Result<(), Error>
-    where M: NumVertices + VertexPositions<Element = [f64;3]> + VertexAttrib + Attrib
+    pub(crate) fn prepare_deformable_mesh_vertex_attributes<M>(mesh: &mut M) -> Result<(), Error>
+    where
+        M: NumVertices + VertexPositions<Element = [f64; 3]> + VertexAttrib + Attrib,
     {
         // Deformable meshes are dynamic. Prepare dynamic attributes first.
         Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
@@ -653,7 +666,9 @@ impl SolverBuilder {
             }
         }
 
-        tetmesh.add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses).unwrap();
+        tetmesh
+            .add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
+            .unwrap();
     }
 
     /// Compute vertex masses on the given shell. The shell is assumed to have
@@ -676,7 +691,123 @@ impl SolverBuilder {
             }
         }
 
-        trimesh.add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses).unwrap();
+        trimesh
+            .add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
+            .unwrap();
+    }
+
+    pub(crate) fn prepare_density_attribute<Obj: Object>(object: &mut Obj) -> Result<(), Error> {
+        // Prepare density parameter
+        if let Some(density) = object.material().scaled_density() {
+            let num_elements = object.num_elements();
+            match object
+                .mesh_mut()
+                .add_attrib_data::<DensityType, Obj::ElementIndex>(
+                    DENSITY_ATTRIB,
+                    vec![density; num_elements],
+                ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {}
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        } else {
+            // No global density parameter was given. Check that it exists on the mesh itself.
+            if object
+                .mesh()
+                .attrib_check::<DensityType, Obj::ElementIndex>(DENSITY_ATTRIB)
+                .is_err()
+            {
+                return Err(Error::MissingDensityParam);
+            }
+
+            // Scale the mesh parameter so that it is consistent with the rest
+            // of the material.
+
+            let scale = object.material().scale();
+            for density in object
+                .mesh_mut()
+                .attrib_iter_mut::<DensityType, Obj::ElementIndex>(DENSITY_ATTRIB)?
+            {
+                *density *= scale;
+            }
+        }
+        Ok(())
+    }
+
+    /// Transfer parameters `lambda` and `mu` from the object material to the
+    /// mesh if it hasn't already been populated on the input.
+    pub(crate) fn prepare_elasticity_attributes<Obj: Object>(obj: &mut Obj) -> Result<(), Error> {
+        if let Some(elasticity) = obj.material().scaled_elasticity() {
+            let num_elements = obj.num_elements();
+            match obj
+                .mesh_mut()
+                .add_attrib_data::<LambdaType, Obj::ElementIndex>(
+                    LAMBDA_ATTRIB,
+                    vec![elasticity.lambda; num_elements],
+                ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {}
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+            match obj.mesh_mut().add_attrib_data::<MuType, Obj::ElementIndex>(
+                MU_ATTRIB,
+                vec![elasticity.mu; num_elements],
+            ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {}
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        } else {
+            // No global elasticity parameters were given. Check that the mesh has the right
+            // parameters.
+            if obj
+                .mesh()
+                .attrib_check::<LambdaType, Obj::ElementIndex>(LAMBDA_ATTRIB)
+                .is_err()
+                || obj
+                    .mesh()
+                    .attrib_check::<MuType, Obj::ElementIndex>(MU_ATTRIB)
+                    .is_err()
+            {
+                return Err(Error::MissingElasticityParams);
+            }
+
+            // Scale the mesh parameters so that they are consistent with the
+            // rest of the material.
+
+            let scale = obj.material().scale();
+            for lambda in obj
+                .mesh_mut()
+                .attrib_iter_mut::<LambdaType, Obj::ElementIndex>(LAMBDA_ATTRIB)?
+            {
+                *lambda *= scale;
+            }
+            for mu in obj
+                .mesh_mut()
+                .attrib_iter_mut::<MuType, Obj::ElementIndex>(MU_ATTRIB)?
+            {
+                *mu *= scale;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
+        let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
+        mesh.set_attrib_data::<RefVolType, CellIndex>(
+            REFERENCE_VOLUME_ATTRIB,
+            ref_volumes.as_slice(),
+        )?;
+
+        let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
+        mesh.set_attrib_data::<_, CellIndex>(
+            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+            ref_shape_mtx_inverses.as_slice(),
+        )?;
+        Ok(())
     }
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
@@ -691,17 +822,7 @@ impl SolverBuilder {
 
         Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
-        let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
-        mesh.set_attrib_data::<RefVolType, CellIndex>(
-            REFERENCE_VOLUME_ATTRIB,
-            ref_volumes.as_slice(),
-        )?;
-
-        let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
-        mesh.set_attrib_data::<_, CellIndex>(
-            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-            ref_shape_mtx_inverses.as_slice(),
-        )?;
+        Self::prepare_deformable_tetmesh_attributes(mesh)?;
 
         {
             // Add elastic strain energy and elastic force attributes.
@@ -714,75 +835,9 @@ impl SolverBuilder {
         // behaviour is justified because variable material properties are most likely more
         // accurate and probably determined from a data driven method.
 
-        // Prepare elasticity parameters
-        if let Some(elasticity) = material.scaled_elasticity() {
-            match mesh.add_attrib_data::<LambdaType, CellIndex>(
-                LAMBDA_ATTRIB,
-                vec![elasticity.lambda; mesh.num_cells()],
-            ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-            match mesh.add_attrib_data::<MuType, CellIndex>(
-                MU_ATTRIB,
-                vec![elasticity.mu; mesh.num_cells()],
-            ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // No global elasticity parameters were given. Check that the mesh has the right
-            // parameters.
-            if mesh
-                .attrib_check::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                .is_err()
-                || mesh.attrib_check::<MuType, CellIndex>(MU_ATTRIB).is_err()
-            {
-                return Err(Error::MissingElasticityParams);
-            }
+        Self::prepare_elasticity_attributes(&mut solid)?;
 
-            // Scale the mesh parameters so that they are consistent with the
-            // rest of the material.
-
-            for lambda in mesh.attrib_iter_mut::<LambdaType, CellIndex>(LAMBDA_ATTRIB)? {
-                *lambda *= material.scale();
-            }
-            for mu in mesh.attrib_iter_mut::<MuType, CellIndex>(MU_ATTRIB)? {
-                *mu *= material.scale();
-            }
-        }
-
-        // Prepare density parameter
-        if let Some(density) = material.scaled_density() {
-            match mesh.add_attrib_data::<DensityType, CellIndex>(
-                DENSITY_ATTRIB,
-                vec![density; mesh.num_cells()],
-            ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // No global density parameter was given. Check that it exists on the mesh itself.
-            if mesh
-                .attrib_check::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .is_err()
-            {
-                return Err(Error::MissingDensityParam);
-            }
-
-            // Scale the mesh parameter so that it is consistent with the rest
-            // of the material.
-
-            for density in mesh.attrib_iter_mut::<DensityType, CellIndex>(DENSITY_ATTRIB)? {
-                *density *= material.scale();
-            }
-        }
+        Self::prepare_density_attribute(&mut solid)?;
 
         // Compute vertex masses.
         Self::compute_solid_vertex_masses(&mut solid);
@@ -797,6 +852,8 @@ impl SolverBuilder {
             material,
         } = &mut shell;
 
+        *material = material.normalized();
+
         match material.properties {
             ShellProperties::Fixed => {
                 // Nothing to be done, static meshes don't have material properties.
@@ -804,7 +861,7 @@ impl SolverBuilder {
             ShellProperties::Rigid { .. } => {
                 Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
             }
-            ShellProperties::Deformable { deformable } => {
+            ShellProperties::Deformable { .. } => {
                 Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
                 let ref_areas = Self::compute_ref_tri_areas(mesh)?;
@@ -824,75 +881,9 @@ impl SolverBuilder {
                 // behaviour is justified because variable material properties are most likely more
                 // accurate and probably determined from a data driven method.
 
-                // Prepare elasticity parameters
-                if let Some(elasticity) = deformable.elasticity {
-                    match mesh.add_attrib_data::<LambdaType, FaceIndex>(
-                        LAMBDA_ATTRIB,
-                        vec![elasticity.lambda; mesh.num_faces()],
-                    ) {
-                        // if ok or already exists, everything is ok.
-                        Err(attrib::Error::AlreadyExists(_)) => {}
-                        Err(e) => return Err(e.into()),
-                        _ => {}
-                    }
-                    match mesh.add_attrib_data::<MuType, FaceIndex>(
-                        MU_ATTRIB,
-                        vec![elasticity.mu; mesh.num_faces()],
-                    ) {
-                        // if ok or already exists, everything is ok.
-                        Err(attrib::Error::AlreadyExists(_)) => {}
-                        Err(e) => return Err(e.into()),
-                        _ => {}
-                    }
-                } else {
-                    // No global elasticity parameters were given. Check that the mesh has the right
-                    // parameters.
-                    if mesh
-                        .attrib_check::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
-                        .is_err()
-                        || mesh.attrib_check::<MuType, FaceIndex>(MU_ATTRIB).is_err()
-                    {
-                        return Err(Error::MissingElasticityParams);
-                    }
+                Self::prepare_elasticity_attributes(&mut shell)?;
 
-                    // Scale the mesh parameters so that they are consistent with the
-                    // rest of the material.
-
-                    for lambda in mesh.attrib_iter_mut::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)? {
-                        *lambda *= deformable.scale();
-                    }
-                    for mu in mesh.attrib_iter_mut::<MuType, FaceIndex>(MU_ATTRIB)? {
-                        *mu *= deformable.scale();
-                    }
-                }
-
-                // Prepare density parameter
-                if let Some(density) = deformable.density {
-                    match mesh.add_attrib_data::<DensityType, FaceIndex>(
-                        DENSITY_ATTRIB,
-                        vec![density; mesh.num_faces()],
-                    ) {
-                        // if ok or already exists, everything is ok.
-                        Err(attrib::Error::AlreadyExists(_)) => {}
-                        Err(e) => return Err(e.into()),
-                        _ => {}
-                    }
-                } else {
-                    // No global density parameter was given. Check that it exists on the mesh itself.
-                    if mesh
-                        .attrib_check::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                        .is_err()
-                    {
-                        return Err(Error::MissingDensityParam);
-                    }
-
-                    // Scale the mesh parameter so that it is consistent with the rest
-                    // of the material.
-
-                    for density in mesh.attrib_iter_mut::<DensityType, FaceIndex>(DENSITY_ATTRIB)? {
-                        *density *= deformable.scale();
-                    }
-                }
+                Self::prepare_density_attribute(&mut shell)?;
 
                 // Compute vertex masses.
                 Self::compute_shell_vertex_masses(&mut shell);
@@ -1350,7 +1341,11 @@ impl Solver {
 
     /// Compute the friction impulse in the problem and return `true` if it has been updated and
     /// `false` otherwise. If friction is disabled, this function will return `false`.
-    fn compute_friction_impulse(&mut self, constraint_values: &[f64], friction_steps: &mut [u32]) -> bool {
+    fn compute_friction_impulse(
+        &mut self,
+        constraint_values: &[f64],
+        friction_steps: &mut [u32],
+    ) -> bool {
         // Select constraint multipliers responsible for the contact force.
         let SolverDataMut {
             problem, solution, ..
@@ -1796,8 +1791,7 @@ mod tests {
     fn one_tet_volume_constraint_test() -> Result<(), Error> {
         let mesh = make_one_deformed_tet_mesh();
 
-        let material = SOLID_MATERIAL
-            .with_volume_preservation(true);
+        let material = SOLID_MATERIAL.with_volume_preservation(true);
 
         let mut solver = SolverBuilder::new(STATIC_PARAMS)
             .add_solid(mesh, material)
@@ -1857,8 +1851,7 @@ mod tests {
     #[test]
     fn three_tets_dynamic_volume_constraint_test() -> Result<(), Error> {
         let mesh = make_three_tet_mesh();
-        let material = SOLID_MATERIAL
-            .with_volume_preservation(true);
+        let material = SOLID_MATERIAL.with_volume_preservation(true);
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .add_solid(mesh, material)
             .build()?;
@@ -1909,8 +1902,7 @@ mod tests {
         ];
         let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-        let incompressible_material =
-            SOLID_MATERIAL.with_volume_preservation(true);
+        let incompressible_material = SOLID_MATERIAL.with_volume_preservation(true);
 
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .add_solid(mesh, incompressible_material)
@@ -1936,8 +1928,7 @@ mod tests {
     };
 
     fn medium_solid_material() -> SolidMaterial {
-        SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
     }
 
     #[test]
@@ -1959,8 +1950,7 @@ mod tests {
 
     #[test]
     fn box_stretch_volume_constraint_test() -> Result<(), Error> {
-        let incompressible_material = medium_solid_material()
-            .with_volume_preservation(true);
+        let incompressible_material = medium_solid_material().with_volume_preservation(true);
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
         let mut solver = SolverBuilder::new(SimParams {
             print_level: 0,
@@ -2163,11 +2153,14 @@ mod tests {
         let mut solver = SolverBuilder::new(params.clone())
             .add_solid(tetmesh.clone(), medium_solid_material().with_id(0))
             .add_fixed(trimesh.clone(), 1)
-            .add_frictional_contact(FrictionalContactParams {
-                contact_type: ContactType::Point,
-                kernel,
-                friction_params: None,
-            }, (0, 1))
+            .add_frictional_contact(
+                FrictionalContactParams {
+                    contact_type: ContactType::Point,
+                    kernel,
+                    friction_params: None,
+                },
+                (0, 1),
+            )
             .build()?;
 
         let solve_result = solver.step()?;
@@ -2210,7 +2203,8 @@ mod tests {
         ];
 
         for (pos, exp_pos) in solver
-            .solid(0).tetmesh
+            .solid(0)
+            .tetmesh
             .vertex_position_iter()
             .zip(offset_verts.iter())
         {
@@ -2253,7 +2247,8 @@ mod tests {
 
     #[test]
     fn ball_tri_push_test() -> Result<(), Error> {
-        let material = SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
+        let material =
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
         let fc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
             kernel: KernelType::Approximate {
@@ -2336,8 +2331,8 @@ mod tests {
 
     #[test]
     fn ball_bounce_on_points_test() -> Result<(), Error> {
-        let material = SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
+        let material =
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
 
         let sc_params = FrictionalContactParams {
             contact_type: ContactType::Point,
@@ -2377,8 +2372,8 @@ mod tests {
     /// local implicit surface.
     #[test]
     fn tet_bounce_on_implicit_test() -> Result<(), Error> {
-        let material = SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
+        let material =
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
         let sc_params = FrictionalContactParams {
             contact_type: ContactType::Implicit,
@@ -2397,8 +2392,8 @@ mod tests {
     /// Ball bouncing on an implicit surface.
     #[test]
     fn ball_bounce_on_implicit_test() -> Result<(), Error> {
-        let material = SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
+        let material =
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
         let sc_params = FrictionalContactParams {
             contact_type: ContactType::Implicit,
@@ -2438,8 +2433,8 @@ mod tests {
     /// Ball bouncing on an implicit surface with staggered projections friction.
     #[test]
     fn ball_bounce_on_sp_implicit_test() -> Result<(), Error> {
-        let material = SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
+        let material =
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
         let sc_params = FrictionalContactParams {
             contact_type: ContactType::SPImplicit,
@@ -2465,8 +2460,7 @@ mod tests {
      */
 
     fn stiff_material() -> SolidMaterial {
-        SOLID_MATERIAL
-            .with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
+        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
     }
 
     #[cfg(not(debug_assertions))]
@@ -2477,7 +2471,7 @@ mod tests {
             print_level: 0,
             ..DYNAMIC_PARAMS
         })
-            .add_solid(mesh, stiff_material())
+        .add_solid(mesh, stiff_material())
         .build()
         .unwrap();
         solver.step()?;

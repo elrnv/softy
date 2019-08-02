@@ -44,19 +44,21 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
 
         let g = self.g.map(|x| T::from(x).unwrap());
 
-        zip!(tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap(),
-        tetmesh
-            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-            .unwrap(),
-            tet_iter)
-            .map(|(&vol, &density, tet)| {
-                // We really want mass here. Since mass is conserved we can rely on reference
-                // volume and density.
-                g.dot(tet.centroid()) * T::from(-vol * density).unwrap()
-            })
-            .sum()
+        zip!(
+            tetmesh
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tet_iter
+        )
+        .map(|(&vol, &density, tet)| {
+            // We really want mass here. Since mass is conserved we can rely on reference
+            // volume and density.
+            g.dot(tet.centroid()) * T::from(-vol * density).unwrap()
+        })
+        .sum()
     }
 }
 
@@ -71,14 +73,15 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
         let g = self.g.map(|x| T::from(x).unwrap());
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, &density, cell) in zip!(tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap(),
+        for (&vol, &density, cell) in zip!(
             tetmesh
-            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-            .unwrap(),
-            tetmesh.cell_iter())
-        {
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tetmesh.cell_iter()
+        ) {
             for i in 0..4 {
                 // Energy gradient is in opposite direction to the force hence minus here.
                 gradient[cell[i]] -= g * T::from(0.25 * vol * density).unwrap();
@@ -127,19 +130,21 @@ impl<T: Real> Energy<T> for TriMeshGravity<'_> {
 
         let g = self.g.map(|x| T::from(x).unwrap());
 
-        zip!(trimesh
-            .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
-            .unwrap(),
+        zip!(
             trimesh
-            .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-            .unwrap(),
-            tri_iter)
-            .map(|(&area, &density, tri)| {
-                // We really want mass here. Since mass is conserved we can rely on reference
-                // volume and density.
-                g.dot(tri.centroid()) * T::from(-area * density).unwrap()
-            })
-            .sum()
+                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                .unwrap(),
+            trimesh
+                .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tri_iter
+        )
+        .map(|(&area, &density, tri)| {
+            // We really want mass here. Since mass is conserved we can rely on reference
+            // volume and density.
+            g.dot(tri.centroid()) * T::from(-area * density).unwrap()
+        })
+        .sum()
     }
 }
 
@@ -154,14 +159,15 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
         let g = self.g.map(|x| T::from(x).unwrap());
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&area, &density, face) in zip!(trimesh
-            .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
-            .unwrap(),
+        for (&area, &density, face) in zip!(
             trimesh
-            .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-            .unwrap(),
-            trimesh.face_iter())
-        {
+                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                .unwrap(),
+            trimesh
+                .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            trimesh.face_iter()
+        ) {
             for i in 0..3 {
                 // Energy gradient is in opposite direction to the force hence minus here.
                 gradient[face[i]] -= g * T::from(0.25 * area * density).unwrap();
@@ -181,34 +187,51 @@ impl EnergyHessian for TriMeshGravity<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::energy_models::{test_utils::*};
+    use crate::energy_models::test_utils::*;
+    use crate::fem::SolverBuilder;
+    use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0).with_density(1000.0)
     }
 
+    fn test_solids() -> Vec<TetMeshSolid> {
+        let material = material();
+
+        test_meshes()
+            .into_iter()
+            .map(|mut tetmesh| {
+                // Prepare attributes relevant for elasticity computations.
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
+                let mut solid = TetMeshSolid::new(tetmesh, material);
+                SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                solid
+            })
+            .collect()
+    }
+
     fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshGravity, Vec<[f64; 3]>)> {
-        solids.iter().map(|solid| {
-            (solid.gravity([0.0, -9.81, 0.0]), solid.tetmesh.vertex_positions().to_vec())
-        }).collect()
+        solids
+            .iter()
+            .map(|solid| {
+                (
+                    solid.gravity([0.0, -9.81, 0.0]),
+                    solid.tetmesh.vertex_positions().to_vec(),
+                )
+            })
+            .collect()
     }
 
     #[test]
     fn gradient() {
-        let solids = test_solids(material());
-        gradient_tester(
-            build_energies(&solids),
-            EnergyType::Position,
-        );
+        let solids = test_solids();
+        gradient_tester(build_energies(&solids), EnergyType::Position);
     }
 
     #[test]
     fn hessian() {
-        let solids = test_solids(material());
-        hessian_tester(
-            build_energies(&solids),
-            EnergyType::Position,
-        );
+        let solids = test_solids();
+        hessian_tester(build_energies(&solids), EnergyType::Position);
     }
 }

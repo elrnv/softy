@@ -568,7 +568,10 @@ impl ContactConstraint for PointContactConstraint {
         friction_steps - 1
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, mut vel: SubsetView<Chunked3<&mut [f64]>>) {
+    fn add_mass_weighted_frictional_contact_impulse(
+        &self,
+        mut vel: SubsetView<Chunked3<&mut [f64]>>,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -586,11 +589,7 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_friction_impulse(
-        &self,
-        mut grad: SubsetView<Chunked3<&mut [f64]>>,
-        multiplier: f64,
-    ) {
+    fn add_friction_impulse(&self, mut grad: SubsetView<Chunked3<&mut [f64]>>, multiplier: f64) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -602,10 +601,7 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn frictional_dissipation(
-        &self,
-        v: [SubsetView<Chunked3<&[f64]>>; 2],
-    ) -> f64 {
+    fn frictional_dissipation(&self, v: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact {
             for (i, f) in frictional_contact.impulse.iter().enumerate() {
@@ -672,8 +668,7 @@ impl ContactConstraint for PointContactConstraint {
 
         for ((row, col), jac) in cj_indices_iter.zip(cj_matrices.into_iter()) {
             let imp = Vector3(impulse[0][col]);
-            impulse[0][col] =
-                (imp + Matrix3(jac).transpose() * Vector3(impulse[1][row])).into()
+            impulse[0][col] = (imp + Matrix3(jac).transpose() * Vector3(impulse[1][row])).into()
         }
     }
 
@@ -772,7 +767,7 @@ impl ContactConstraint for PointContactConstraint {
 }
 
 impl<'a> Constraint<'a, f64> for PointContactConstraint {
-    type Input = [SubsetView<'a, Chunked3<&'a [f64]>>;2]; // Object and collider vertices
+    type Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]; // Object and collider vertices
 
     #[inline]
     fn constraint_size(&self) -> usize {

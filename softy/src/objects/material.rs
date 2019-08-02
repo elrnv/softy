@@ -69,6 +69,30 @@ pub struct SolidProperties {
     pub deformable: DeformableProperties,
 }
 
+/// A trait for materials capable of deforming. This helps generalize over Solid and Shell materials.
+/// If the output is `Option`al, it means that the object doesn't have that
+/// material set. If it is set to be some default value the option should not be
+/// `None`. This helps distinguish between variable and uniform material properties.
+pub trait Deformable {
+    /// Scale used to adjust internal material properties to be closer to 1.0.
+    fn scale(&self) -> f64;
+    /// The exact elasticity parameters used by solver. These are typically
+    /// scaled to be closer to 1.0.
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
+    /// The exact damping parameter used by solver. This is typically scaled to
+    /// be closer to 1.0.
+    fn scaled_damping(&self) -> Option<f64>;
+    /// The exact density parameter used by solver. This is typically scaled to
+    /// be closer to 1.0.
+    fn scaled_density(&self) -> Option<f64>;
+    /// The elasticity parameters provided in the input.
+    fn elasticity(&self) -> Option<ElasticityParameters>;
+    /// The damping parameter provided in the input.
+    fn damping(&self) -> Option<f64>;
+    /// The density parameter provided in the input.
+    fn density(&self) -> Option<f64>;
+}
+
 impl Default for SolidProperties {
     fn default() -> Self {
         SolidProperties {
@@ -107,21 +131,53 @@ impl ShellMaterial {
                 *deformable = deformable.normalized();
                 self
             }
-            _ => self
+            _ => self,
         }
     }
+}
 
-    pub fn damping(&self) -> Option<f64> {
+impl Deformable for ShellMaterial {
+    fn scale(&self) -> f64 {
         match self.properties {
-            ShellProperties::Rigid { .. } => None,
-            ShellProperties::Deformable { deformable } => Some(deformable.damping),
-            ShellProperties::Fixed => None,
+            ShellProperties::Deformable { deformable } => deformable.scale(),
+            _ => 1.0,
         }
     }
-    pub fn density(&self) -> Option<f64> {
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.elasticity,
+            _ => None,
+        }
+    }
+    fn scaled_damping(&self) -> Option<f64> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => Some(deformable.damping),
+            _ => None,
+        }
+    }
+    fn scaled_density(&self) -> Option<f64> {
         match self.properties {
             ShellProperties::Rigid { density } => Some(density),
             ShellProperties::Deformable { deformable } => deformable.density,
+            ShellProperties::Fixed => None,
+        }
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.unnormalized().elasticity,
+            _ => None,
+        }
+    }
+    fn damping(&self) -> Option<f64> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => Some(deformable.unnormalized().damping),
+            _ => None,
+        }
+    }
+    fn density(&self) -> Option<f64> {
+        match self.properties {
+            ShellProperties::Rigid { density } => Some(density),
+            ShellProperties::Deformable { deformable } => deformable.unnormalized().density,
             ShellProperties::Fixed => None,
         }
     }
@@ -160,45 +216,44 @@ impl SolidMaterial {
         self
     }
 
-    /// Scale used to adjust internal material properties to be closer to 1.0.
-    pub fn scale(&self) -> f64 {
-        self.properties.deformable.scale()
+    pub fn volume_preservation(&self) -> bool {
+        self.properties.volume_preservation
     }
-    /// The exact elasticity parameters used by solver. These are typically
-    /// scaled to be closer to 1.0.
-    pub fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.properties.deformable.elasticity
-    }
-    /// The exact damping parameter used by solver. This is typically scaled to
-    /// be closer to 1.0.
     pub fn scaled_damping(&self) -> f64 {
         self.properties.deformable.damping
     }
-    /// The exact density parameter used by solver. This is typically scaled to
-    /// be closer to 1.0.
-    pub fn scaled_density(&self) -> Option<f64> {
+}
+
+impl Deformable for SolidMaterial {
+    fn scale(&self) -> f64 {
+        self.properties.deformable.scale()
+    }
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.properties.deformable.elasticity
+    }
+    fn scaled_damping(&self) -> Option<f64> {
+        Some(self.properties.deformable.damping)
+    }
+    fn scaled_density(&self) -> Option<f64> {
         self.properties.deformable.density
     }
-    /// The elasticity parameters provided in the input.
-    pub fn elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity(&self) -> Option<ElasticityParameters> {
         self.properties.deformable.unnormalized().elasticity
     }
-    /// The damping parameter provided in the input.
-    pub fn damping(&self) -> f64 {
-        self.properties.deformable.unnormalized().damping
+    fn damping(&self) -> Option<f64> {
+        Some(self.properties.deformable.unnormalized().damping)
     }
-    /// The density parameter provided in the input.
-    pub fn density(&self) -> Option<f64> {
+    fn density(&self) -> Option<f64> {
         self.properties.deformable.unnormalized().density
-    }
-    pub fn volume_preservation(&self) -> bool {
-        self.properties.volume_preservation
     }
 }
 
 impl<P: Default> Material<P> {
     pub fn new(id: usize) -> Material<P> {
-        Material { id, properties: Default::default() }
+        Material {
+            id,
+            properties: Default::default(),
+        }
     }
 }
 
@@ -283,11 +338,7 @@ impl DeformableProperties {
             *density *= scale;
             damping *= scale;
         } else {
-            scale = if damping > 0.0 {
-                1.0 / damping
-            } else {
-                1.0
-            };
+            scale = if damping > 0.0 { 1.0 / damping } else { 1.0 };
             damping *= scale;
         }
 
@@ -309,7 +360,7 @@ impl DeformableProperties {
         } = self;
 
         if let Some(ref mut elasticity) = elasticity {
-            *elasticity = elasticity.scaled(1.0/scale);
+            *elasticity = elasticity.scaled(1.0 / scale);
         }
 
         if let Some(ref mut density) = density {

@@ -31,25 +31,25 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
 
         zip!(
             tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap(),
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
                 .unwrap(),
-             tetmesh.cell_iter(),
+            tetmesh.cell_iter(),
         )
-            .map(|(&vol, &density, cell)| {
-                let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
-                let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
-                let tet_dv = tet_v1 - tet_v0;
+        .map(|(&vol, &density, cell)| {
+            let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+            let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
+            let tet_dv = tet_v1 - tet_v0;
 
-                T::from(0.5).unwrap() * {
-                    let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
-                    // momentum
-                    T::from(0.25 * vol * density).unwrap() * dvTdv
-                }
-            })
-            .sum()
+            T::from(0.5).unwrap() * {
+                let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
+                // momentum
+                T::from(0.25 * vol * density).unwrap() * dvTdv
+            }
+        })
+        .sum()
     }
 }
 
@@ -66,14 +66,15 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, &density, cell) in zip!(tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap(),
+        for (&vol, &density, cell) in zip!(
             tetmesh
-            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-            .unwrap(),
-            tetmesh.cell_iter())
-        {
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tetmesh.cell_iter()
+        ) {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
             let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
             let tet_dv = (tet_v1 - tet_v0).into_array();
@@ -205,34 +206,46 @@ impl EnergyHessian for TetMeshInertia<'_> {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
+    use crate::fem::SolverBuilder;
     use crate::objects::material::*;
+    use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0).with_density(1000.0)
     }
 
+    fn test_solids() -> Vec<TetMeshSolid> {
+        let material = material();
+
+        test_meshes()
+            .into_iter()
+            .map(|mut tetmesh| {
+                // Prepare attributes relevant for elasticity computations.
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
+                let mut solid = TetMeshSolid::new(tetmesh, material);
+                SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                solid
+            })
+            .collect()
+    }
+
     fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshInertia, Vec<[f64; 3]>)> {
-        solids.iter().map(|solid| {
-            (solid.inertia(), solid.tetmesh.vertex_positions().to_vec())
-        }).collect()
+        solids
+            .iter()
+            .map(|solid| (solid.inertia(), solid.tetmesh.vertex_positions().to_vec()))
+            .collect()
     }
 
     #[test]
     fn gradient() {
-        let solids = test_solids(material());
-        gradient_tester(
-            build_energies(&solids),
-            EnergyType::Velocity,
-        );
+        let solids = test_solids();
+        gradient_tester(build_energies(&solids), EnergyType::Velocity);
     }
 
     #[test]
     fn hessian() {
-        let solids = test_solids(material());
-        hessian_tester(
-            build_energies(&solids),
-            EnergyType::Velocity,
-        );
+        let solids = test_solids();
+        hessian_tester(build_energies(&solids), EnergyType::Velocity);
     }
 }

@@ -1,12 +1,35 @@
 use crate::energy_models::gravity::*;
 use crate::objects::*;
 use crate::TriMesh;
+use geo::mesh::topology::*;
 
 /// A soft shell represented by a trimesh. It is effectively a triangle mesh decorated by
 /// physical material properties that govern how it behaves.
 pub struct TriMeshShell {
     pub trimesh: TriMesh,
     pub material: ShellMaterial,
+}
+
+// TODO: This impl can be automated with a derive macro
+impl Object for TriMeshShell {
+    type Mesh = TriMesh;
+    type Material = ShellMaterial;
+    type ElementIndex = FaceIndex;
+    fn num_elements(&self) -> usize {
+        self.trimesh.num_faces()
+    }
+    fn mesh(&self) -> &TriMesh {
+        &self.trimesh
+    }
+    fn material(&self) -> &ShellMaterial {
+        &self.material
+    }
+    fn mesh_mut(&mut self) -> &mut TriMesh {
+        &mut self.trimesh
+    }
+    fn material_mut(&mut self) -> &mut ShellMaterial {
+        &mut self.material
+    }
 }
 
 impl TriMeshShell {

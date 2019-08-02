@@ -5,12 +5,12 @@ use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
+use crate::PointCloud;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
 use std::cell::RefCell;
 use utils::{aref::*, soap::*, zip};
-use crate::PointCloud;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -235,7 +235,9 @@ impl NonLinearProblem {
     /// Get the minimum contact radius among all contact problems. If there are
     /// no contacts, simply return `None`.
     pub fn min_contact_radius(&self) -> Option<f64> {
-        self.frictional_contacts.iter().map(|fc| fc.constraint.contact_radius())
+        self.frictional_contacts
+            .iter()
+            .map(|fc| fc.constraint.contact_radius())
             .min_by(|a, b| a.partial_cmp(b).expect("Detected NaN contact radius"))
     }
 
@@ -312,7 +314,6 @@ impl NonLinearProblem {
         Ok(())
     }
 
-
     /// Compute the set of currently active constraints into the given `Vec`.
     pub fn compute_active_constraint_set(&self, active_set: &mut Vec<usize>) {
         for i in 0..self.volume_constraints.len() {
@@ -367,13 +368,25 @@ impl NonLinearProblem {
 
         // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
         let tetmesh_coordinates = |mesh_index| {
-            let offset = self.vertex_set.prev_vel.view().at(0).offset_value(mesh_index);
+            let offset = self
+                .vertex_set
+                .prev_vel
+                .view()
+                .at(0)
+                .offset_value(mesh_index);
             3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
         };
 
         // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
-        let trimesh_coordinates =
-            |mesh_index| 3 * self.vertex_set.prev_vel.view().at(1).offset_value(mesh_index) + coord;
+        let trimesh_coordinates = |mesh_index| {
+            3 * self
+                .vertex_set
+                .prev_vel
+                .view()
+                .at(1)
+                .offset_value(mesh_index)
+                + coord
+        };
 
         let num_object_surface_indices: usize;
 
@@ -565,7 +578,8 @@ impl NonLinearProblem {
         mut vel: ChunkedView<ChunkedView<Chunked3<&mut [f64]>>>,
     ) {
         for fc in self.frictional_contacts.iter() {
-            let mut object_vel = Self::mesh_vertex_subset_mut(&self.solids, vel.view_mut(), fc.object_index);
+            let mut object_vel =
+                Self::mesh_vertex_subset_mut(&self.solids, vel.view_mut(), fc.object_index);
             fc.constraint
                 .add_mass_weighted_frictional_contact_impulse(object_vel.view_mut());
         }
@@ -602,7 +616,11 @@ impl NonLinearProblem {
             }
 
             let VertexSet {
-                prev_pos, prev_vel, cur_vel, cur_pos, ..
+                prev_pos,
+                prev_vel,
+                cur_vel,
+                cur_pos,
+                ..
             } = &mut self.vertex_set;
 
             let cur_vel = cur_vel.borrow();
@@ -908,7 +926,9 @@ impl NonLinearProblem {
             for fc in self.frictional_contacts.iter() {
                 let obj_v = Self::mesh_vertex_subset(&self.solids, v, fc.object_index);
                 let col_v = Self::mesh_vertex_subset(&self.solids, v, fc.collider_index);
-                obj -= fc.constraint.frictional_dissipation([obj_v.view(), col_v.view()]);
+                obj -= fc
+                    .constraint
+                    .frictional_dissipation([obj_v.view(), col_v.view()]);
             }
         }
 
@@ -1087,21 +1107,35 @@ impl NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             obj_imp.clear();
-            obj_imp.resize(Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index), 0.0);
+            obj_imp.resize(
+                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index),
+                0.0,
+            );
 
             coll_imp.clear();
-            coll_imp.resize(Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index), 0.0);
+            coll_imp.resize(
+                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index),
+                0.0,
+            );
             // TODO: Finish this
             //fc.constraint.add_friction_impulse(
             //    [Chunked3::from_flat(obj_imp.as_mut_slice()), Chunked3::from_flat(coll_imp.as_mut_slice())], 1.0);
 
-            let mut imp = Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
-            for (imp, obj_imp) in imp.iter_mut().zip(Chunked3::from_flat(obj_imp.view_mut()).iter()) {
+            let mut imp =
+                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
+            for (imp, obj_imp) in imp
+                .iter_mut()
+                .zip(Chunked3::from_flat(obj_imp.view_mut()).iter())
+            {
                 *imp = *obj_imp;
             }
 
-            let mut imp = Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
-            for (imp, coll_imp) in imp.iter_mut().zip(Chunked3::from_flat(coll_imp.view_mut()).iter()) {
+            let mut imp =
+                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
+            for (imp, coll_imp) in imp
+                .iter_mut()
+                .zip(Chunked3::from_flat(coll_imp.view_mut()).iter())
+            {
                 *imp = *coll_imp;
             }
         }
@@ -1137,27 +1171,43 @@ impl NonLinearProblem {
             offset += n;
 
             obj_imp.clear();
-            obj_imp.resize(Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index), 0.0);
+            obj_imp.resize(
+                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index),
+                0.0,
+            );
 
             coll_imp.clear();
-            coll_imp.resize(Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index), 0.0);
+            coll_imp.resize(
+                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index),
+                0.0,
+            );
 
             let obj_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.object_index);
             let coll_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.collider_index);
             fc.constraint.add_contact_impulse(
                 [obj_x0.view(), coll_x0.view()],
                 &contact_impulse,
-                [Chunked3::from_flat(obj_imp.as_mut_slice()),
-                 Chunked3::from_flat(coll_imp.as_mut_slice())],
+                [
+                    Chunked3::from_flat(obj_imp.as_mut_slice()),
+                    Chunked3::from_flat(coll_imp.as_mut_slice()),
+                ],
             );
 
-            let mut imp = Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
-            for (imp, obj_imp) in imp.iter_mut().zip(Chunked3::from_flat(obj_imp.view_mut()).iter()) {
+            let mut imp =
+                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
+            for (imp, obj_imp) in imp
+                .iter_mut()
+                .zip(Chunked3::from_flat(obj_imp.view_mut()).iter())
+            {
                 *imp = *obj_imp;
             }
 
-            let mut imp = Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
-            for (imp, coll_imp) in imp.iter_mut().zip(Chunked3::from_flat(coll_imp.view_mut()).iter()) {
+            let mut imp =
+                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
+            for (imp, coll_imp) in imp
+                .iter_mut()
+                .zip(Chunked3::from_flat(coll_imp.view_mut()).iter())
+            {
                 *imp = *coll_imp;
             }
         }
@@ -1363,12 +1413,15 @@ impl ipopt::BasicProblem for NonLinearProblem {
         );
 
         for (i, solid) in self.solids.iter().enumerate() {
-            if let Ok(fixed_verts) = solid.tetmesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            if let Ok(fixed_verts) = solid
+                .tetmesh
+                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
                 let mut x_l = x_l.at_mut(0).at_mut(i);
                 let mut x_u = x_u.at_mut(0).at_mut(i);
                 // Find and set fixed vertices.
-                x_l.iter_mut().zip(x_u.iter_mut())
+                x_l.iter_mut()
+                    .zip(x_u.iter_mut())
                     .zip(fixed_verts.iter())
                     .filter(|&(_, &fixed)| fixed != 0)
                     .for_each(|((l, u), _)| {
@@ -1379,12 +1432,15 @@ impl ipopt::BasicProblem for NonLinearProblem {
         }
 
         for (i, shell) in self.shells.iter().enumerate() {
-            if let Ok(fixed_verts) = shell.trimesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            if let Ok(fixed_verts) = shell
+                .trimesh
+                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
                 let mut x_l = x_l.at_mut(1).at_mut(i);
                 let mut x_u = x_u.at_mut(1).at_mut(i);
                 // Find and set fixed vertices.
-                x_l.iter_mut().zip(x_u.iter_mut())
+                x_l.iter_mut()
+                    .zip(x_u.iter_mut())
                     .zip(fixed_verts.iter())
                     .filter(|&(_, &fixed)| fixed != 0)
                     .for_each(|((l, u), _)| {
@@ -1467,7 +1523,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
         );
 
         for fc in self.frictional_contacts.iter() {
-            let mut obj_g = Self::mesh_vertex_subset_mut(&self.solids, grad.view_mut(), fc.object_index);
+            let mut obj_g =
+                Self::mesh_vertex_subset_mut(&self.solids, grad.view_mut(), fc.object_index);
             fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
         }
 
@@ -1533,13 +1590,16 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.constraint_size();
-            let obj_x0 =  Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
+            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
             let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x =   Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
-            let coll_x =  Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
+            let obj_x = Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
+            let coll_x = Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
 
-            fc.constraint
-                .constraint([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut g[count..count + n]);
+            fc.constraint.constraint(
+                [obj_x0.view(), coll_x0.view()],
+                [obj_x.view(), coll_x.view()],
+                &mut g[count..count + n],
+            );
             count += n;
         }
 
@@ -1627,20 +1687,28 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for (_, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(x0.into_flat(), x.into_flat(), &mut vals[count..count + n])
-                .ok();
+            vc.constraint_jacobian_values(
+                x0.into_flat(),
+                x.into_flat(),
+                &mut vals[count..count + n],
+            )
+            .ok();
             count += n;
         }
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.constraint_jacobian_size();
-            let obj_x0 =  Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
+            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
             let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x =   Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
-            let coll_x =  Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
+            let obj_x = Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
+            let coll_x = Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
 
             fc.constraint
-                .constraint_jacobian_values([obj_x0.view(), coll_x0.view()], [obj_x.view(), coll_x.view()], &mut vals[count..count + n])
+                .constraint_jacobian_values(
+                    [obj_x0.view(), coll_x0.view()],
+                    [obj_x.view(), coll_x.view()],
+                    &mut vals[count..count + n],
+                )
                 .ok();
             //println!("jac g vals = {:?}", &vals[count..count+n]);
         }
@@ -1682,12 +1750,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for solid in self.solids.iter() {
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            elasticity
+                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
             count += n;
 
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            inertia
+                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
             count += n;
         }
 
@@ -1700,7 +1770,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let offset = self.vertex_set.prev_vel.view().at(0).offset_value(*solid_idx);
+            let offset = self
+                .vertex_set
+                .prev_vel
+                .view()
+                .at(0)
+                .offset_value(*solid_idx);
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
                 rows[count] = (row + offset) as ipopt::Index;
                 cols[count] = (col + offset) as ipopt::Index;
@@ -1805,10 +1880,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let obj_x0 =  Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
+            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
             let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x =   Self::mesh_vertex_subset(&self.solids, x1, fc.object_index);
-            let coll_x =  Self::mesh_vertex_subset(&self.solids, x1, fc.collider_index);
+            let obj_x = Self::mesh_vertex_subset(&self.solids, x1, fc.object_index);
+            let coll_x = Self::mesh_vertex_subset(&self.solids, x1, fc.collider_index);
             let nc = fc.constraint.constraint_size();
             let nh = fc.constraint.constraint_hessian_size();
             fc.constraint

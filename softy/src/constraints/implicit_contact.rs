@@ -6,7 +6,7 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
-use geo::math::{Vector2, Vector3, Matrix3};
+use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -354,7 +354,10 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction_steps
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, mut vel: SubsetView<Chunked3<&mut [f64]>>) {
+    fn add_mass_weighted_frictional_contact_impulse(
+        &self,
+        mut vel: SubsetView<Chunked3<&mut [f64]>>,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -434,8 +437,7 @@ impl ContactConstraint for ImplicitContactConstraint {
 
         for ((row, col), jac) in cj_indices_iter.zip(cj_matrices.into_iter()) {
             let imp = Vector3(impulse[1][col]);
-            impulse[1][col] =
-                (imp + Matrix3(jac).transpose() * Vector3(impulse[0][row])).into()
+            impulse[1][col] = (imp + Matrix3(jac).transpose() * Vector3(impulse[0][row])).into()
         }
     }
 

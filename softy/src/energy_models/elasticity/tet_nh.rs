@@ -261,7 +261,7 @@ impl<T: Real> Energy<T> for TetMeshNeoHookean<'_> {
             ..
         } = *self.0;
 
-        let damping = material.damping();
+        let damping = material.scaled_damping();
 
         let pos0: &[Vector3<T>] = reinterpret_slice(x0);
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
@@ -312,7 +312,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshNeoHookean<'_> {
             ..
         } = *self.0;
 
-        let damping = material.damping();
+        let damping = material.scaled_damping();
 
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
@@ -460,7 +460,7 @@ impl EnergyHessian for TetMeshNeoHookean<'_> {
             ..
         } = *self.0;
 
-        let damping = material.damping();
+        let damping = material.scaled_damping();
 
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 
@@ -521,33 +521,54 @@ mod tests {
     use super::*;
     use crate::energy_models::elasticity::*;
     use crate::energy_models::test_utils::*;
+    use crate::fem::SolverBuilder;
+    use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {
-        Material::new(0).with_elasticity(ElasticityParameters {lambda: 5.4, mu: 263.1 })
+        Material::new(0).with_elasticity(ElasticityParameters {
+            lambda: 5.4,
+            mu: 263.1,
+        })
+    }
+
+    fn test_solids() -> Vec<TetMeshSolid> {
+        let material = material();
+
+        test_meshes()
+            .into_iter()
+            .map(|mut tetmesh| {
+                // Prepare attributes relevant for elasticity computations.
+                SolverBuilder::prepare_deformable_mesh_vertex_attributes(&mut tetmesh).unwrap();
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
+                let mut solid = TetMeshSolid::new(tetmesh, material);
+                SolverBuilder::prepare_elasticity_attributes(&mut solid).unwrap();
+                solid
+            })
+            .collect()
     }
 
     fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshNeoHookean, Vec<[f64; 3]>)> {
-        solids.iter().map(|solid| {
-            (solid.elasticity(), solid.tetmesh.vertex_positions().to_vec())
-        }).collect()
+        solids
+            .iter()
+            .map(|solid| {
+                (
+                    solid.elasticity(),
+                    solid.tetmesh.vertex_positions().to_vec(),
+                )
+            })
+            .collect()
     }
 
     #[test]
     fn gradient() {
-        let solids = test_solids(material());
-        gradient_tester(
-            build_energies(&solids),
-            EnergyType::Position,
-        );
+        let solids = test_solids();
+        gradient_tester(build_energies(&solids), EnergyType::Position);
     }
 
     #[test]
     fn hessian() {
-        let solids = test_solids(material());
-        hessian_tester(
-            build_energies(&solids),
-            EnergyType::Position,
-        );
+        let solids = test_solids();
+        hessian_tester(build_energies(&solids), EnergyType::Position);
     }
 }

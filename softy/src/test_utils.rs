@@ -1,7 +1,7 @@
 use crate::attrib_defines::*;
+use crate::objects::material::*;
 use crate::TetMesh;
 use crate::{ElasticityParameters, MuStrategy, SimParams};
-use crate::objects::material::*;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
@@ -56,8 +56,8 @@ pub(crate) const SOLID_MATERIAL: SolidMaterial = Material {
             density: Some(1000.0),
             damping: 0.0,
             scale: 1.0,
-        }
-    }
+        },
+    },
 };
 
 pub(crate) fn make_one_tet_mesh() -> TetMesh {

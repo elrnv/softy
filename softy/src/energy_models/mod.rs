@@ -6,23 +6,32 @@ pub mod inertia;
 pub(crate) mod test_utils {
     use crate::energy::*;
     use crate::fem::SolverBuilder;
-    use crate::test_utils::*;
     use crate::objects::*;
+    use crate::test_utils::*;
+    use crate::TetMesh;
     use approx::*;
     use autodiff::F;
     use num_traits::Zero;
     use reinterpret::*;
 
-    /// Prepare test meshes
-    pub(crate) fn test_solids(material: SolidMaterial) -> Vec<TetMeshSolid> {
-        let mut meshes = vec![
+    pub(crate) fn test_meshes() -> Vec<TetMesh> {
+        vec![
             make_one_tet_mesh(),
             make_one_deformed_tet_mesh(),
             make_three_tet_mesh(),
-        ];
-        meshes.into_iter().map(|tetmesh| {
-            SolverBuilder::prepare_solid_attributes(TetMeshSolid::new(tetmesh, material)).unwrap()
-        }).collect()
+        ]
+    }
+
+    /// Prepare test meshes
+    pub(crate) fn test_solids(material: SolidMaterial) -> Vec<TetMeshSolid> {
+        let meshes = test_meshes();
+        meshes
+            .into_iter()
+            .map(|tetmesh| {
+                SolverBuilder::prepare_solid_attributes(TetMeshSolid::new(tetmesh, material))
+                    .unwrap()
+            })
+            .collect()
     }
 
     fn random_displacement(n: usize) -> Vec<F> {
@@ -59,7 +68,7 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn gradient_tester<E>(configurations: Vec<(E, Vec<[f64;3]>)>, ty: EnergyType)
+    pub(crate) fn gradient_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
         E: Energy<F> + EnergyGradient<F>,
     {
@@ -83,7 +92,7 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64;3]>)>, ty: EnergyType)
+    pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
         E: EnergyGradient<F> + EnergyHessian,
     {

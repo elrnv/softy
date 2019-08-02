@@ -251,9 +251,11 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(match sim(Some(mesh), material(), None, STATIC_PARAMS, None) {
-            SimResult::Success(_) => true,
-            _ => false,
-        });
+        assert!(
+            match sim(Some(mesh), material(), None, STATIC_PARAMS, None) {
+                SimResult::Success(_) => true,
+                _ => false,
+            }
+        );
     }
 }

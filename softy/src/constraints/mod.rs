@@ -3,8 +3,8 @@ pub mod point_contact;
 //pub mod sp_implicit_contact;
 pub mod volume;
 
-use crate::constraint::*;
 use crate::attrib_defines::*;
+use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::FrictionalContact;
 use crate::Index;
@@ -161,9 +161,9 @@ fn remap_values_complex_test() {
 }
 
 pub trait ContactConstraint:
-for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
+    for<'a> Constraint<'a, f64, Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     + for<'a> ConstraintJacobian<'a, f64>
-    + for<'a> ConstraintHessian<'a, f64, InputDual=&'a [f64]>
+    + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
 {
     fn num_contacts(&self) -> usize;
     /// Provide the frictional contact data.
@@ -199,11 +199,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     fn add_mass_weighted_frictional_contact_impulse(&self, x: SubsetView<Chunked3<&mut [f64]>>);
 
     /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(
-        &self,
-        mut grad: SubsetView<Chunked3<&mut [f64]>>,
-        multiplier: f64,
-    ) {
+    fn add_friction_impulse(&self, mut grad: SubsetView<Chunked3<&mut [f64]>>, multiplier: f64) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -240,10 +236,7 @@ for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     }
 
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(
-        &self,
-        vel: [SubsetView<Chunked3<&[f64]>>; 2],
-    ) -> f64 {
+    fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.impulse.is_empty() {

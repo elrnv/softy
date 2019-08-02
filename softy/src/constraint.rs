@@ -141,7 +141,7 @@ pub trait ConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
 /// the true Hessian of the constraint function.
 /// The "Hessian" matrix is provided by a series of sparse indices and values via two separate
 /// functions.
-pub trait ConstraintHessian<'a, T: Scalar>: Constraint<'a, T> {
+pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
     type InputDual;
     /// The number of non-zeros in the Hessian matrix of the constraint.
     fn constraint_hessian_size(&self) -> usize;

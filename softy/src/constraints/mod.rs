@@ -3,6 +3,7 @@ pub mod point_contact;
 //pub mod sp_implicit_contact;
 pub mod volume;
 
+use crate::constraint::*;
 use crate::attrib_defines::*;
 use crate::contact::*;
 use crate::friction::FrictionalContact;
@@ -24,7 +25,6 @@ pub fn build_contact_constraint(
     object: &TriMesh,
     collider: &TriMesh,
     params: FrictionalContactParams,
-    time_step: f64,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
         ContactType::SPImplicit =>
@@ -42,7 +42,6 @@ pub fn build_contact_constraint(
             collider,
             params.kernel,
             params.friction_params,
-            time_step,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
             object,
@@ -161,7 +160,11 @@ fn remap_values_complex_test() {
     );
 }
 
-pub trait ContactConstraint {
+pub trait ContactConstraint:
+for<'a> Constraint<'a, f64, Input=[SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
+    + for<'a> ConstraintJacobian<'a, f64>
+    + for<'a> ConstraintHessian<'a, f64, InputDual=&'a [f64]>
+{
     fn num_contacts(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
@@ -198,10 +201,7 @@ pub trait ContactConstraint {
     /// Add the frictional impulse to the given gradient vector.
     fn add_friction_impulse(
         &self,
-        grad: (
-            SubsetView<Chunked3<&mut [f64]>>,
-            SubsetView<Chunked3<&mut [f64]>>,
-        ),
+        mut grad: SubsetView<Chunked3<&mut [f64]>>,
         multiplier: f64,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
@@ -234,7 +234,7 @@ pub trait ContactConstraint {
                     Vector3::zeros()
                 };
 
-                grad.0[i] = (Vector3(grad.0[i]) + r_t * multiplier).into();
+                grad[i] = (Vector3(grad[i]) + r_t * multiplier).into();
             }
         }
     }
@@ -287,11 +287,11 @@ pub trait ContactConstraint {
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-    fn compute_contact_impulse(
+    fn add_contact_impulse(
         &self,
         x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         contact_impulse: &[f64],
-        impulse: Chunked3<&mut [f64]>,
+        impulse: [Chunked3<&mut [f64]>; 2],
     );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point

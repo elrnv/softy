@@ -180,13 +180,15 @@ pub fn sim(
     material: SolidMaterial,
     polymesh: Option<PolyMesh>,
     sim_params: SimParams,
-    interrupter: Option<Box<FnMut() -> bool>>,
+    interrupter: Option<Box<dyn FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
         let mut builder = fem::SolverBuilder::new(sim_params);
         builder.add_solid(mesh, material);
         if let Some(shell_mesh) = polymesh {
-            builder.add_fixed(shell_mesh);
+            // The fixed shell is a distinct material
+            let material_id = material.id + 1;
+            builder.add_fixed(shell_mesh, material_id);
         }
         match builder.build() {
             Ok(mut engine) => {
@@ -218,13 +220,9 @@ mod tests {
     use geo::mesh::{topology::*, Attrib, TetMesh};
     use test_utils::*;
 
-    const MATERIAL: Material = Material {
-        elasticity: ElasticityParameters {
-            bulk_modulus: 1750e6,
-            shear_modulus: 10e6,
-        },
-        ..SOLID_MATERIAL
-    };
+    fn material() -> SolidMaterial {
+        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
+    }
 
     #[test]
     fn sim_test() {
@@ -253,7 +251,7 @@ mod tests {
         mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
             .unwrap();
 
-        assert!(match sim(Some(mesh), MATERIAL, None, STATIC_PARAMS, None) {
+        assert!(match sim(Some(mesh), material(), None, STATIC_PARAMS, None) {
             SimResult::Success(_) => true,
             _ => false,
         });

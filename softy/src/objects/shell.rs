@@ -35,18 +35,12 @@ impl TriMeshShell {
 //    }
 //}
 
-impl<'a> Gravity<TriMeshGravity<'a>> for TriMeshShell {
-    fn gravity(&self, g: [f64; 3]) -> TriMeshGravity<'a> {
+impl<'a> Gravity<'a, TriMeshGravity<'a>> for TriMeshShell {
+    fn gravity(&'a self, g: [f64; 3]) -> TriMeshGravity<'a> {
         match self.material.properties {
-            ShellMaterial::Deformable => TriMeshGravity {
-                shell: self,
-                g: g.into(),
-            },
-            ShellMaterial::Rigid => TriMeshGravity {
-                shell: self,
-                g: g.into(),
-            },
-            ShellMaterial::Static => unimplemented!(),
+            ShellProperties::Deformable { .. } => TriMeshGravity::new(self, g),
+            ShellProperties::Rigid { .. } => TriMeshGravity::new(self, g),
+            ShellProperties::Fixed => unimplemented!(),
         }
     }
 }

@@ -6,7 +6,7 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
-use geo::math::{Vector2, Vector3};
+use geo::math::{Vector2, Vector3, Matrix3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -31,8 +31,6 @@ pub struct ImplicitContactConstraint {
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
 
-    time_step: f64,
-
     /// Worspace vector to keep track of active constraint indices.
     active_constraint_indices: RefCell<Vec<usize>>,
 }
@@ -47,7 +45,6 @@ impl ImplicitContactConstraint {
         collider: &TriMesh,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
-        time_step: f64,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         surface_builder
@@ -78,7 +75,6 @@ impl ImplicitContactConstraint {
                 }),
                 vertex_masses,
                 constraint_buffer: RefCell::new(vec![0.0; contact_points.len()]),
-                time_step,
                 active_constraint_indices: RefCell::new(Vec::new()),
             };
 
@@ -201,8 +197,6 @@ impl ContactConstraint for ImplicitContactConstraint {
 
         let ImplicitContactConstraint {
             ref mut frictional_contact,
-            //time_step,
-            //ref vertex_masses,
             ..
         } = *self;
 
@@ -360,7 +354,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         friction_steps
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, vel: SubsetView<Chunked3<&mut [f64]>>) {
+    fn add_mass_weighted_frictional_contact_impulse(&self, mut vel: SubsetView<Chunked3<&mut [f64]>>) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.impulse.is_empty() {
                 return;
@@ -397,25 +391,51 @@ impl ContactConstraint for ImplicitContactConstraint {
     }
 
     /// For visualization purposes.
-    fn compute_contact_impulse(
+    fn add_contact_impulse(
         &self,
         x: (SubsetView<Chunked3<&[f64]>>, SubsetView<Chunked3<&[f64]>>),
         contact_impulse: &[f64],
-        impulse: Chunked3<&mut [f64]>,
+        mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
         let normals = self
             .contact_normals(x)
             .expect("Failed to retrieve contact normals.");
-        let indices = self
+        let surf_indices = self
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
+
         assert_eq!(contact_impulse.len(), normals.len());
-        assert_eq!(indices.len(), normals.len());
-        for (i, (n, &f)) in indices
-            .into_iter()
-            .zip(normals.into_iter().zip(contact_impulse.iter()))
-        {
-            impulse[i] = (Vector3(n) * f).into();
+        assert_eq!(surf_indices.len(), normals.len());
+
+        for (surf_idx, nml, &cr) in zip!(
+            surf_indices.into_iter(),
+            normals.into_iter(),
+            contact_impulse.iter()
+        ) {
+            impulse[0][surf_idx] = (Vector3(nml) * cr).into();
+        }
+
+        let query_points = self.contact_points.borrow();
+        assert_eq!(impulse[0].len(), query_points.len());
+
+        let surf = self.implicit_surface.borrow();
+        let mut cj_matrices = vec![
+            [[0.0; 3]; 3];
+            surf.num_contact_jacobian_matrices()
+                .expect("Failed to get contact jacobian size")
+        ];
+
+        surf.contact_jacobian_matrices(query_points.view().into(), &mut cj_matrices)
+            .expect("Failed to compute contact Jacobian");
+
+        let cj_indices_iter = surf
+            .contact_jacobian_matrix_indices_iter()
+            .expect("Failed to get contact Jacobian indices");
+
+        for ((row, col), jac) in cj_indices_iter.zip(cj_matrices.into_iter()) {
+            let imp = Vector3(impulse[1][col]);
+            impulse[1][col] =
+                (imp + Matrix3(jac).transpose() * Vector3(impulse[0][row])).into()
         }
     }
 
@@ -517,10 +537,7 @@ impl ContactConstraint for ImplicitContactConstraint {
 }
 
 impl<'a> Constraint<'a, f64> for ImplicitContactConstraint {
-    type Input = (
-        SubsetView<'a, Chunked3<&'a [f64]>>, // Object vertices
-        SubsetView<'a, Chunked3<&'a [f64]>>, // Collider vertices
-    );
+    type Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]; // Object and Collider vertices
 
     #[inline]
     fn constraint_size(&self) -> usize {
@@ -539,7 +556,7 @@ impl<'a> Constraint<'a, f64> for ImplicitContactConstraint {
     #[inline]
     fn constraint(&self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        self.update_contact_points(x1.0);
+        self.update_contact_points(x1[0]);
 
         let contact_points = self.contact_points.borrow();
         let mut cbuf = self.constraint_buffer.borrow_mut();
@@ -584,7 +601,7 @@ impl<'a> Constraint<'a, f64> for ImplicitContactConstraint {
     }
 }
 
-impl<'a> ConstraintJacobian<'a, f64> for ImplicitContactConstraint {
+impl ConstraintJacobian<'_, f64> for ImplicitContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
         self.implicit_surface
@@ -618,7 +635,7 @@ impl<'a> ConstraintJacobian<'a, f64> for ImplicitContactConstraint {
         values: &mut [f64],
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
-        self.update_contact_points(x1.0);
+        self.update_contact_points(x1[0]);
         let contact_points = self.contact_points.borrow();
 
         Ok(self
@@ -657,7 +674,7 @@ impl<'a> ConstraintHessian<'a, f64> for ImplicitContactConstraint {
         scale: f64,
         values: &mut [f64],
     ) -> Result<(), Error> {
-        self.update_contact_points(x1.0);
+        self.update_contact_points(x1[0]);
         let contact_points = self.contact_points.borrow();
 
         Ok(self

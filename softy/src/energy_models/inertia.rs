@@ -9,9 +9,10 @@ use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
+use utils::zip;
 
-pub trait Inertia<E> {
-    fn inertia(&self) -> E;
+pub trait Inertia<'a, E> {
+    fn inertia(&'a self) -> E;
 }
 
 pub struct TetMeshInertia<'a>(pub &'a TetMeshSolid);
@@ -23,20 +24,21 @@ impl TetMeshInertia<'_> {
 impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
-        let TetMeshSolid {
-            ref tetmesh,
-            density,
-            ..
-        } = *self.0;
+        let tetmesh = &self.0.tetmesh;
 
         let vel0: &[Vector3<T>] = reinterpret_slice(v0);
         let vel1: &[Vector3<T>] = reinterpret_slice(v1);
 
-        tetmesh
+        zip!(
+            tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .zip(tetmesh.cell_iter())
-            .map(|(&vol, cell)| {
+            .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+             tetmesh.cell_iter(),
+        )
+            .map(|(&vol, &density, cell)| {
                 let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
                 let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
                 let tet_dv = tet_v1 - tet_v0;
@@ -54,11 +56,7 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
 impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
-        let TetMeshSolid {
-            ref tetmesh,
-            density,
-            ..
-        } = *self.0;
+        let tetmesh = &self.0.tetmesh;
 
         let vel0: &[Vector3<T>] = reinterpret_slice(v0);
         let vel1: &[Vector3<T>] = reinterpret_slice(v1);
@@ -68,10 +66,13 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, cell) in tetmesh
+        for (&vol, &density, cell) in zip!(tetmesh
             .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .zip(tetmesh.cell_iter())
+            .unwrap(),
+            tetmesh
+            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+            .unwrap(),
+            tetmesh.cell_iter())
         {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
             let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
@@ -101,9 +102,9 @@ impl EnergyHessian for TetMeshInertia<'_> {
         let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_row_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_row_chunks: &mut [[I; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(rows);
-        let hess_col_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_col_chunks: &mut [[I; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(cols);
 
         // The momentum hessian is a diagonal matrix.
@@ -135,7 +136,7 @@ impl EnergyHessian for TetMeshInertia<'_> {
         let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_chunks: &mut [[MatrixElementIndex; 12]] =//Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(indices);
 
         // The momentum hessian is a diagonal matrix.
@@ -166,18 +167,20 @@ impl EnergyHessian for TetMeshInertia<'_> {
     ) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
-        let TetMeshInertia(ref tetmesh) = *self;
+        let TetMeshInertia(ref solid) = *self;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[T; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_chunks: &mut [[T; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(values);
 
-        let vol_iter = tetmesh
+        let vol_iter = solid
+            .tetmesh
             .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
             .par_iter();
 
-        let density_iter = tetmesh
+        let density_iter = solid
+            .tetmesh
             .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
             .unwrap()
             .par_iter();
@@ -203,27 +206,32 @@ mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
     use crate::objects::material::*;
-    use crate::TetMesh;
+    use geo::mesh::VertexPositions;
 
-    fn make_tetmesh_solid(tetmesh: TetMesh) -> TetMeshSolid {
-        TetMeshSolid {
-            tetmesh,
-            material: Material::solid(0, DeformableProperties::default().density(1000.0), false),
-        }
+    fn material() -> SolidMaterial {
+        SolidMaterial::new(0).with_density(1000.0)
+    }
+
+    fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshInertia, Vec<[f64; 3]>)> {
+        solids.iter().map(|solid| {
+            (solid.inertia(), solid.tetmesh.vertex_positions().to_vec())
+        }).collect()
     }
 
     #[test]
     fn gradient() {
+        let solids = test_solids(material());
         gradient_tester(
-            |mesh| make_tetmesh_solid(mesh).inertia(),
+            build_energies(&solids),
             EnergyType::Velocity,
         );
     }
 
     #[test]
     fn hessian() {
+        let solids = test_solids(material());
         hessian_tester(
-            |mesh| make_tetmesh_solid(mesh).inertia(),
+            build_energies(&solids),
             EnergyType::Velocity,
         );
     }

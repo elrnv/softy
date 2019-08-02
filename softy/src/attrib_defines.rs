@@ -17,7 +17,7 @@ pub(crate) const ELASTIC_FORCE_ATTRIB: &str = "elastic_force";
 pub(crate) const FRICTION_ATTRIB: &str = "friction";
 pub(crate) const CONTACT_ATTRIB: &str = "contact";
 
-pub type SourceIndexType = u32;
+pub type SourceIndexType = usize;
 pub(crate) type TetMeshVertexIndexType = usize;
 pub(crate) type MassType = f64;
 pub(crate) type DensityType = f64;

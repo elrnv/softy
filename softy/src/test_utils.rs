@@ -1,6 +1,7 @@
 use crate::attrib_defines::*;
 use crate::TetMesh;
-use crate::{ElasticityParameters, Material, MuStrategy, SimParams};
+use crate::{ElasticityParameters, MuStrategy, SimParams};
+use crate::objects::material::*;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
@@ -43,14 +44,20 @@ pub(crate) const DYNAMIC_PARAMS: SimParams = SimParams {
 // produce highly oscillatory configurations and keep the solver from converging fast.
 // As an example if we increase the moduli below by 1000, the solver can't converge, even in
 // 300 steps.
-pub(crate) const SOLID_MATERIAL: Material = Material {
-    elasticity: ElasticityParameters {
-        bulk_modulus: 100e3,
-        shear_modulus: 10e3,
-    },
-    incompressibility: false,
-    density: 1000.0,
-    damping: 0.0,
+pub(crate) const SOLID_MATERIAL: SolidMaterial = Material {
+    id: 0,
+    properties: SolidProperties {
+        volume_preservation: false,
+        deformable: DeformableProperties {
+            elasticity: Some(ElasticityParameters {
+                lambda: 93333.33,
+                mu: 10e3,
+            }),
+            density: Some(1000.0),
+            damping: 0.0,
+            scale: 1.0,
+        }
+    }
 };
 
 pub(crate) fn make_one_tet_mesh() -> TetMesh {

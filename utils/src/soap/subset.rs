@@ -129,7 +129,7 @@ impl<S: Set + RemovePrefix, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
     }
 }
 
-impl<S: Set + RemovePrefix> Subset<S, &[usize]> {
+impl<S: Set + RemovePrefix, O> Subset<S, O> {
     /// Create a subset with all elements from the original set.
     ///
     /// # Example

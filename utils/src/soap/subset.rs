@@ -137,7 +137,8 @@ impl<S: Set + RemovePrefix> Subset<S, &[usize]> {
     /// ```rust
     /// use utils::soap::*;
     /// let subset = Subset::all(vec![1,2,3]);
-    /// let mut subset_iter = subset.iter();
+    /// let subset_view = subset.view();
+    /// let mut subset_iter = subset_view.iter();
     /// assert_eq!(Some(&1), subset_iter.next());
     /// assert_eq!(Some(&2), subset_iter.next());
     /// assert_eq!(Some(&3), subset_iter.next());
@@ -176,6 +177,7 @@ impl<'a, S, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
     }
 
     /// Checks that the given set of indices are sorted by the given compare function.
+    #[allow(clippy::while_let_on_iterator)]
     fn is_sorted_by<F>(indices: &I, mut compare: F) -> bool
     where
         F: FnMut(&usize, &usize) -> Option<std::cmp::Ordering>,
@@ -363,12 +365,12 @@ where
     }
 }
 
-impl<'o, 'i: 'o, S, I> Subset<S, I>
+impl<'a, S, I> Subset<S, I>
 where
-    S: Set + Get<'i, 'o, usize, Output = &'o <S as Set>::Elem> + View<'i>,
+    S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
-    <S as Set>::Elem: 'o,
+    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
+    <S as Set>::Elem: 'a,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
     /// into an owned `S` type.
@@ -389,10 +391,10 @@ where
     /// let mut iter_owned = owned.iter();
     /// assert_eq!(owned, vec![1,3,5,0]);
     /// ```
-    pub fn clone_into_other<'a, V>(&'i self, other: &'a mut V)
+    pub fn clone_into_other<V>(&'a self, other: &'a mut V)
     where
         V: ViewMut<'a> + ?Sized,
-        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'o mut <S as Set>::Elem>,
+        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'a mut <S as Set>::Elem>,
         <S as Set>::Elem: Clone,
     {
         let other_view = other.view_mut();
@@ -408,20 +410,29 @@ where
  * may find these implementations convenient.
  */
 
-impl<'o, 'i: 'o, S, O> GetIndex<'i, 'o, Subset<S, O>> for usize
+impl<'a, S, O> GetIndex<'a, Subset<S, O>> for usize
 where
-    O: Get<'i, 'o, usize, Output = &'o usize>,
-    S: Get<'i, 'o, usize>,
+    O: std::borrow::Borrow<[usize]> + std::fmt::Debug,
+    S: Get<'a, usize> + std::fmt::Debug,
 {
-    type Output = <S as Get<'i, 'o, usize>>::Output;
+    type Output = <S as Get<'a, usize>>::Output;
 
-    fn get(self, subset: &'i Subset<S, O>) -> Option<Self::Output> {
+    fn get(self, subset: &Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         if let Some(ref indices) = subset.indices {
-            indices.get(0).and_then(|&first| {
-                indices
+            dbg!(&subset);
+            dbg!(&indices.borrow());
+            dbg!(&self);
+            indices.borrow().get(0).and_then(|&first| {
+                dbg!(first);
+                indices.borrow()
                     .get(self)
-                    .and_then(|&cur| Get::get(&subset.data, cur - first))
+                    .and_then(|&cur| {
+                        dbg!(cur);
+                        dbg!(&subset);
+                        dbg!(cur - first);
+                        Get::get(&subset.data, cur - first)
+                    })
             })
         } else {
             Get::get(&subset.data, self)
@@ -429,19 +440,19 @@ where
     }
 }
 
-impl<'o, 'i: 'o, S, O> GetMutIndex<'i, 'o, Subset<S, O>> for usize
+impl<'a, S, O> GetMutIndex<'a, Subset<S, O>> for usize
 where
-    O: Get<'i, 'o, usize, Output = &'o usize>,
-    S: GetMut<'i, 'o, usize>,
+    O: std::borrow::Borrow<[usize]>,
+    S: GetMut<'a, usize>,
 {
-    type Output = <S as GetMut<'i, 'o, usize>>::Output;
+    type Output = <S as GetMut<'a, usize>>::Output;
 
-    fn get_mut(self, subset: &'i mut Subset<S, O>) -> Option<Self::Output> {
+    fn get_mut(self, subset: &mut Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         let Subset { indices, data } = subset;
         if let Some(ref indices) = indices {
-            indices.get(0).and_then(move |&first| {
-                indices
+            indices.borrow().get(0).and_then(move |&first| {
+                indices.borrow()
                     .get(self)
                     .and_then(move |&cur| GetMut::get_mut(data, cur - first))
             })
@@ -451,9 +462,9 @@ where
     }
 }
 
-impl<'o, 'i: 'o, S, I, O> Get<'i, 'o, I> for Subset<S, O>
+impl<'a, S, I, O> Get<'a, I> for Subset<S, O>
 where
-    I: GetIndex<'i, 'o, Self>,
+    I: GetIndex<'a, Self>,
 {
     type Output = I::Output;
 
@@ -471,18 +482,18 @@ where
     /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
     /// assert_eq!(&3, subset.get(1).unwrap());
     /// ```
-    fn get(&'i self, range: I) -> Option<Self::Output> {
+    fn get(&self, range: I) -> Option<Self::Output> {
         range.get(self)
     }
 }
 
-impl<'o, 'i: 'o, S, I, O> GetMut<'i, 'o, I> for Subset<S, O>
+impl<'a, S, I, O> GetMut<'a, I> for Subset<S, O>
 where
-    I: GetMutIndex<'i, 'o, Self>,
+    I: GetMutIndex<'a, Self>,
 {
     type Output = I::Output;
 
-    fn get_mut(&'i mut self, range: I) -> Option<Self::Output> {
+    fn get_mut(&mut self, range: I) -> Option<Self::Output> {
         range.get_mut(self)
     }
 }
@@ -633,13 +644,13 @@ where
  * Iteration
  */
 
-impl<'o, 'i: 'o, S, I> Subset<S, I>
+impl<'a, S, I> Subset<S, I>
 where
-    S: Set + Get<'i, 'o, usize> + View<'i>,
+    S: Set + Get<'a, usize> + View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'i>>::Type: IntoIterator<Item = S::Output>,
+    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
-    pub fn iter(&'i self) -> impl Iterator<Item = <S as Get<'i, 'o, usize>>::Output> {
+    pub fn iter(&'a self) -> impl Iterator<Item = <S as Get<'a, usize>>::Output> {
         let iters = match self.indices.as_ref() {
             Some(indices) => {
                 let indices = indices.borrow();

@@ -2,6 +2,57 @@
 use utils::soap::*;
 
 #[test]
+fn chunked_index() {
+    let v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    let s = s.view();
+
+    assert_eq!(s.get(2), Some(&s[2])); // Single index
+
+    let r = s.get(1..3).unwrap();         // Range
+    let mut iter = r.iter();
+    assert_eq!(Some(&[4][..]), iter.next());
+    assert_eq!(Some(&[5,6][..]), iter.next());
+    assert_eq!(None, iter.next());
+
+    let r = s.get(3..).unwrap();         // RangeFrom
+    let mut iter = r.iter();
+    assert_eq!(Some(&[7,8,9][..]), iter.next());
+    assert_eq!(Some(&[10,11][..]), iter.next());
+    assert_eq!(None, iter.next());
+
+    let r = s.get(..2).unwrap();         // RangeTo
+    let mut iter = r.iter();
+    assert_eq!(Some(&[1,2,3][..]), iter.next());
+    assert_eq!(Some(&[4][..]), iter.next());
+    assert_eq!(None, iter.next());
+
+    assert_eq!(s.view(), s.get(..).unwrap()); // RangeFull
+    assert_eq!(s.view(), s.view().get(..).unwrap());
+
+    let r = s.get(1..=2).unwrap();         // RangeInclusive
+    let mut iter = r.iter();
+    assert_eq!(Some(&[4][..]), iter.next());
+    assert_eq!(Some(&[5,6][..]), iter.next());
+    assert_eq!(None, iter.next());
+
+    let r = s.get(..=1).unwrap();         // RangeToInclusive
+    let mut iter = r.iter();
+    assert_eq!(Some(&[1,2,3][..]), iter.next());
+    assert_eq!(Some(&[4][..]), iter.next());
+    assert_eq!(None, iter.next());
+}
+
+#[test]
+fn chunked_index_mut() {
+    let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
+    let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.view_mut());
+
+    s.get_mut(2).unwrap().copy_from_slice(&[5,6]);        // Single index
+    assert_eq!(*s.data(), vec![1,2,3,4,5,6,7,8,9,10,11].as_slice());
+}
+
+#[test]
 fn chunked_subset() {
     let v: Vec<usize> = (1..12).collect();
     let subset = Subset::from_indices(vec![1, 3, 5, 7, 9, 10], v);
@@ -26,6 +77,7 @@ fn subset_chunked() {
     let v: Vec<usize> = (1..12).collect();
     let chunked = Chunked::from_offsets(vec![0, 2, 4, 7, 10, 11], v);
     let subset = Subset::from_indices(vec![1, 3, 4], chunked);
+    let subset = subset.view();
     let mut iter = subset.iter();
     assert_eq!(Some(&[3, 4][..]), iter.next());
     assert_eq!(Some(&[8, 9, 10][..]), iter.next());
@@ -38,6 +90,7 @@ fn subset_unichunked_clone_into() {
     let v: Vec<usize> = (1..=15).collect();
     let uni = Chunked3::from_flat(v);
     let subset = Subset::from_indices(vec![1, 3, 4], uni);
+    let subset = subset.view();
     let mut other = Chunked3::from_flat(vec![0; 9]);
     subset.clone_into_other(&mut other);
     assert_eq!(other.into_inner(), vec![4, 5, 6, 10, 11, 12, 13, 14, 15]);
@@ -47,7 +100,7 @@ fn subset_unichunked_clone_into() {
 fn subset_unichunked_const() {
     let v: Vec<usize> = (1..=15).collect();
     let uni = Chunked3::from_flat(v.clone());
-    let subset = Subset::from_indices(vec![1, 3, 4], uni);
+    let subset = Subset::from_indices(vec![1, 3, 4], uni.view());
     let mut iter = subset.iter();
     assert_eq!(Some(&[4, 5, 6]), iter.next());
     assert_eq!(Some(&[10, 11, 12]), iter.next());
@@ -104,7 +157,7 @@ fn subset_unichunked_mut() {
 fn subset_unichunked_index() {
     let v: Vec<usize> = (1..=15).collect();
     let uni = Chunked3::from_flat(v);
-    let subset = Subset::from_indices(vec![1, 3, 4], uni);
+    let subset = Subset::from_indices(vec![1, 3, 4], uni.view());
     assert_eq!(Some(&[4, 5, 6]), subset.get(0));
     assert_eq!(Some(&[10, 11, 12]), subset.get(1));
     assert_eq!(Some(&[13, 14, 15]), subset.get(2));
@@ -116,9 +169,9 @@ fn subset_unichunked_index() {
     assert_eq!([13, 14, 15], subset[2]);
 
     let v: Vec<usize> = (1..=15).collect();
-    let uni = Chunked3::from_flat(v);
+    let mut uni = Chunked3::from_flat(v);
     let indices = vec![1, 3, 4];
-    let mut subset = Subset::from_unique_ordered_indices(indices.as_slice(), uni);
+    let mut subset = Subset::from_unique_ordered_indices(indices.as_slice(), uni.view_mut());
     subset[1] = [0, 0, 0];
     assert_eq!(Some(&[4, 5, 6]), subset.get(0));
     assert_eq!(Some(&[0, 0, 0]), subset.get(1));
@@ -131,13 +184,19 @@ fn subset_unichunked_index() {
     assert_eq!([13, 14, 15], subset[2]);
 }
 
+// TODO: Make this more ergonomic
+fn get<'a>(x: ChunkedView<'a, &'a [usize]>) -> &'a [usize] {
+    x.at(1)
+}
+
 // Test that we can create a subset of a substructure of a nested chunked set
 fn subset<'a, 'b>(
     indices: &'a [usize],
-    x: ChunkedView<'b, ChunkedView<'b, Chunked3<&'b [usize]>>>,
+    x: &'b ChunkedView<'b, ChunkedView<'b, Chunked3<&'b [usize]>>>,
 ) -> SubsetView<'a, Chunked3<&'b [usize]>> {
-    Subset::from_unique_ordered_indices(indices, x.at(1).at(1))
+    Subset::from_unique_ordered_indices(indices, Get::<'b, usize>::at(&Get::<'b, usize>::at(x, 1), 1))
 }
 
 #[test]
-fn subset_nested_chunked() {}
+fn subset_nested_chunked() {
+}

@@ -8,6 +8,8 @@ fn subset_index() {
     assert_eq!(2, subset[0]);
     assert_eq!(4, subset[1]);
     assert_eq!(5, subset[2]);
+
+    let subset = subset.view();
     assert_eq!(Some(&2), subset.get(0));
     assert_eq!(Some(&4), subset.get(1));
     assert_eq!(Some(&5), subset.get(2));

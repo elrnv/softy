@@ -411,20 +411,25 @@ impl SolverBuilder {
                 );
         }
 
-        for TriMeshShell { ref trimesh, .. } in shells.iter() {
-            max_modulus = max_modulus
-                .max(
-                    *trimesh
-                        .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)?
-                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
-                        .expect("Given TriMesh is empty"),
-                )
-                .max(
-                    *trimesh
-                        .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)?
-                        .max_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
-                        .expect("Given TriMesh is empty"),
-                );
+        for TriMeshShell { ref trimesh, material } in shells.iter() {
+            match material.properties {
+                ShellProperties::Deformable { .. } => {
+                    max_modulus = max_modulus
+                        .max(
+                            *trimesh
+                                .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)?
+                                .max_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
+                                .expect("Given TriMesh is empty"),
+                        )
+                        .max(
+                            *trimesh
+                                .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)?
+                                .max_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
+                                .expect("Given TriMesh is empty"),
+                        );
+                }
+                _ => {}
+            }
         }
 
         Ok(max_modulus)
@@ -810,6 +815,23 @@ impl SolverBuilder {
         Ok(())
     }
 
+    pub(crate) fn prepare_source_index_attribute<M>(mesh: &mut M) -> Result<(), Error>
+        where M: NumVertices + Attrib + VertexAttrib
+    {
+        // Need source index for meshes so that their vertices can be updated.
+        // If this index is missing, it is assumed that the source is coincident
+        // with the provided mesh.
+        let num_verts = mesh.num_vertices();
+        match mesh.add_attrib_data::<SourceIndexType, VertexIndex>(
+            SOURCE_INDEX_ATTRIB,
+            (0..num_verts).collect::<Vec<_>>())
+        {
+            Err(attrib::Error::AlreadyExists(_)) => Ok(()),
+            Err(e) => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
         let TetMeshSolid {
@@ -819,6 +841,8 @@ impl SolverBuilder {
         } = &mut solid;
 
         *material = material.normalized();
+
+        Self::prepare_source_index_attribute(mesh)?;
 
         Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
@@ -853,6 +877,8 @@ impl SolverBuilder {
         } = &mut shell;
 
         *material = material.normalized();
+
+        Self::prepare_source_index_attribute(mesh)?;
 
         match material.properties {
             ShellProperties::Fixed => {
@@ -2459,40 +2485,43 @@ mod tests {
      * More complex tests
      */
 
-    fn stiff_material() -> SolidMaterial {
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
-    }
-
     #[cfg(not(debug_assertions))]
-    #[test]
-    fn torus_medium_test() -> Result<(), Error> {
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
-        let mut solver = SolverBuilder::new(SimParams {
-            print_level: 0,
-            ..DYNAMIC_PARAMS
-        })
-        .add_solid(mesh, stiff_material())
-        .build()
-        .unwrap();
-        solver.step()?;
-        Ok(())
-    }
+    mod complex_tests {
+        use super::*;
 
-    #[cfg(not(debug_assertions))]
-    #[test]
-    fn torus_long_test() -> Result<(), Error> {
-        let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
-        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-            .add_solid(mesh, stiff_material())
-            .build()?;
-
-        for _i in 0..10 {
-            //geo::io::save_tetmesh_ascii(
-            //    &solver.borrow_mesh(),
-            //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
-            //    ).unwrap();
-            solver.step()?;
+        fn stiff_material() -> SolidMaterial {
+            SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
         }
-        Ok(())
+
+        #[test]
+        fn torus_medium_test() -> Result<(), Error> {
+            let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
+            let mut solver = SolverBuilder::new(SimParams {
+                print_level: 0,
+                ..DYNAMIC_PARAMS
+            })
+                .add_solid(mesh, stiff_material())
+                .build()
+                .unwrap();
+            solver.step()?;
+            Ok(())
+        }
+
+        #[test]
+        fn torus_long_test() -> Result<(), Error> {
+            let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
+            let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+                .add_solid(mesh, stiff_material())
+                .build()?;
+
+            for _i in 0..10 {
+                //geo::io::save_tetmesh_ascii(
+                //    &solver.borrow_mesh(),
+                //    &PathBuf::from(format!("./out/mesh_{}.vtk", 1)),
+                //    ).unwrap();
+                solver.step()?;
+            }
+            Ok(())
+        }
     }
 }

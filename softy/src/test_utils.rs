@@ -26,12 +26,12 @@ pub(crate) const STATIC_PARAMS: SimParams = SimParams {
     log_file: None,
 };
 
-pub(crate) const QUASI_STATIC_PARAMS: SimParams = SimParams {
-    gravity: [0.0f32, 0.0, 0.0],
-    time_step: Some(0.01),
-    clear_velocity: true,
-    ..STATIC_PARAMS
-};
+//pub(crate) const QUASI_STATIC_PARAMS: SimParams = SimParams {
+//    gravity: [0.0f32, 0.0, 0.0],
+//    time_step: Some(0.01),
+//    clear_velocity: true,
+//    ..STATIC_PARAMS
+//};
 
 pub(crate) const DYNAMIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, 0.0, 0.0],

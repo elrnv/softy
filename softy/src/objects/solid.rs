@@ -49,10 +49,12 @@ impl TetMeshSolid {
     }
 
     pub(crate) fn surface(&self) -> Ref<TetMeshSurface> {
-        let mut surface = self.surface.borrow_mut();
+        {
+            let mut surface = self.surface.borrow_mut();
 
-        if surface.is_none() {
-            *surface = Some(TetMeshSurface::from(&self.tetmesh));
+            if surface.is_none() {
+                *surface = Some(TetMeshSurface::from(&self.tetmesh));
+            }
         }
 
         let surface = self.surface.borrow();
@@ -94,12 +96,17 @@ impl From<&TetMesh> for TetMeshSurface {
             None,
             None,
         );
-        let indices = trimesh
+
+        let mut indices = trimesh
             .remove_attrib::<VertexIndex>(TETMESH_VERTEX_INDEX_ATTRIB)
             .expect("Failed to map indices.")
             .into_buffer()
             .into_vec::<TetMeshVertexIndexType>()
             .expect("Incorrect index type: not usize");
+
+        trimesh.sort_vertices_by_key(|k| indices[k]);
+
+        indices.sort_unstable();
 
         TetMeshSurface { indices, trimesh }
     }

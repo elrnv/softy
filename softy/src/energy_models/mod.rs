@@ -2,24 +2,31 @@ pub mod elasticity;
 pub mod gravity;
 pub mod inertia;
 
+use crate::energy::*;
+use crate::matrix::MatrixElementIndex;
+use geo::Real;
+
 /// Define a null energy, which is used to represent zero energies. For example
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
 pub struct NullEnergy;
 
-impl Energy<T: Real> for NullEnergy {
-    fn energy(&self, _: &[T], _: &[T]) -> T { T::zero() }
+impl<T: Real> Energy<T> for NullEnergy {
+    fn energy(&self, _: &[T], _: &[T]) -> T {
+        T::zero()
+    }
 }
 
-impl EnergyGradient<T: Real> for NullEnergy {
-    fn add_energy_gradient(&self, _: &[T], _: &[T], _: &mut [T]) { }
+impl<T: Real> EnergyGradient<T> for NullEnergy {
+    fn add_energy_gradient(&self, _: &[T], _: &[T], _: &mut [T]) {}
 }
 
-impl EnergyHessian<T: Real> for NullEnergy {
-    fn energy_hessian_size(&self) -> usize { 0 }
+impl EnergyHessian for NullEnergy {
+    fn energy_hessian_size(&self) -> usize {
+        0
+    }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
     fn energy_hessian_values<T: Real>(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
-
 
 #[cfg(test)]
 pub(crate) mod test_utils {

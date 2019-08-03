@@ -141,27 +141,26 @@ pub struct Vertex {
 pub struct VertexSet {
     /// Generalized coordinates from the previous time step. Sometimes referred
     /// to as `q` in literature.
-    pub prev_x: Chunked<Chunked<Chunked3<Vec<f64>>>>,
+    pub prev_pos: Chunked<Chunked<Chunked3<Vec<f64>>>>,
     /// Generalized coordinate derivative from the previous time step. Referred
     /// to as `\dot{q}` in literature.
-    pub prev_v: Chunked<Chunked<Chunked3<Vec<f64>>>>,
+    pub prev_vel: Chunked<Chunked<Chunked3<Vec<f64>>>>,
     /// Workspace vector to compute intermediate displacements.
-    pub cur_x: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    pub cur_pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
     /// Workspace vector to rescale variable values before performing computations on them.
-    pub cur_v: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
-
-    /// Workspace positions for all meshes. These are used to pass concrete
-    /// positions (as opposed to generalized coordinates) to constraint functions.
-    /// If the positions coincide with generalized coordinates for a particular
-    /// object, then these variables may be omitted and `prev_x` or `cur_x` are
-    /// used directly.
-    pub pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
-    /// Workspace velocities for all meshes. These are used to pass concrete
-    /// velocities (as opposed to generalized coordinates) to constraint functions.
-    /// If the positions coincide with generalized coordinates for a particular
-    /// object, then these variables may be omitted and `prev_v` or `cur_v` are
-    /// used directly.
-    pub vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    pub cur_vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    ///// Workspace positions for all meshes. These are used to pass concrete
+    ///// positions (as opposed to generalized coordinates) to constraint functions.
+    ///// If the positions coincide with generalized coordinates for a particular
+    ///// object, then these variables may be omitted and `prev_x` or `cur_x` are
+    ///// used directly.
+    //pub pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    ///// Workspace velocities for all meshes. These are used to pass concrete
+    ///// velocities (as opposed to generalized coordinates) to constraint functions.
+    ///// If the positions coincide with generalized coordinates for a particular
+    ///// object, then these variables may be omitted and `prev_v` or `cur_v` are
+    ///// used directly.
+    //pub vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
@@ -258,7 +257,7 @@ impl NonLinearProblem {
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
         // All solids have prev_x coincident with pos so we use prev_x directly here.
-        let mut prev_pos = self.vertex_set.prev_x.view_mut().at_mut(0);
+        let mut prev_pos = self.vertex_set.prev_pos.view_mut().at_mut(0);
 
         // All solids are simulated, so the input point set must have the same
         // size as our internal vertex set. If these are mismatched, then there

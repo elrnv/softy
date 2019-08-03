@@ -1,3 +1,8 @@
+//! This module defines the uniform material assigned to every physical object.
+//! Any material property set to `None` typically indicates that this property
+//! is defined on the mesh itself. This allows us to define variable material
+//! properties.
+//!
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Material<P> {
     /// Material unique identifier.
@@ -81,14 +86,14 @@ pub trait Deformable {
     fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
     /// The exact damping parameter used by solver. This is typically scaled to
     /// be closer to 1.0.
-    fn scaled_damping(&self) -> Option<f64>;
+    fn scaled_damping(&self) -> f64;
     /// The exact density parameter used by solver. This is typically scaled to
     /// be closer to 1.0.
     fn scaled_density(&self) -> Option<f64>;
     /// The elasticity parameters provided in the input.
     fn elasticity(&self) -> Option<ElasticityParameters>;
     /// The damping parameter provided in the input.
-    fn damping(&self) -> Option<f64>;
+    fn damping(&self) -> f64;
     /// The density parameter provided in the input.
     fn density(&self) -> Option<f64>;
 }
@@ -136,68 +141,7 @@ impl ShellMaterial {
     }
 }
 
-impl Deformable for ShellMaterial {
-    fn scale(&self) -> f64 {
-        match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.scale(),
-            _ => 1.0,
-        }
-    }
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.elasticity,
-            _ => None,
-        }
-    }
-    fn scaled_damping(&self) -> Option<f64> {
-        match self.properties {
-            ShellProperties::Deformable { deformable } => Some(deformable.damping),
-            _ => None,
-        }
-    }
-    fn scaled_density(&self) -> Option<f64> {
-        match self.properties {
-            ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable } => deformable.density,
-            ShellProperties::Fixed => None,
-        }
-    }
-    fn elasticity(&self) -> Option<ElasticityParameters> {
-        match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.unnormalized().elasticity,
-            _ => None,
-        }
-    }
-    fn damping(&self) -> Option<f64> {
-        match self.properties {
-            ShellProperties::Deformable { deformable } => Some(deformable.unnormalized().damping),
-            _ => None,
-        }
-    }
-    fn density(&self) -> Option<f64> {
-        match self.properties {
-            ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable } => deformable.unnormalized().density,
-            ShellProperties::Fixed => None,
-        }
-    }
-}
-
 impl SolidMaterial {
-    pub fn solid(id: usize, deformable: DeformableProperties, volume_preservation: bool) -> Self {
-        Material {
-            id,
-            properties: SolidProperties {
-                deformable,
-                volume_preservation,
-            },
-        }
-    }
-
-    pub fn with_id(mut self, id: usize) -> SolidMaterial {
-        self.id = id;
-        self
-    }
     pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> SolidMaterial {
         self.properties.deformable.elasticity = Some(elasticity);
         self
@@ -210,41 +154,15 @@ impl SolidMaterial {
         self.properties.volume_preservation = volume_preservation;
         self
     }
-
     pub fn normalized(mut self) -> SolidMaterial {
         self.properties.deformable = self.properties.deformable.normalized();
         self
     }
-
     pub fn volume_preservation(&self) -> bool {
         self.properties.volume_preservation
     }
     pub fn scaled_damping(&self) -> f64 {
         self.properties.deformable.damping
-    }
-}
-
-impl Deformable for SolidMaterial {
-    fn scale(&self) -> f64 {
-        self.properties.deformable.scale()
-    }
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.properties.deformable.elasticity
-    }
-    fn scaled_damping(&self) -> Option<f64> {
-        Some(self.properties.deformable.damping)
-    }
-    fn scaled_density(&self) -> Option<f64> {
-        self.properties.deformable.density
-    }
-    fn elasticity(&self) -> Option<ElasticityParameters> {
-        self.properties.deformable.unnormalized().elasticity
-    }
-    fn damping(&self) -> Option<f64> {
-        Some(self.properties.deformable.unnormalized().damping)
-    }
-    fn density(&self) -> Option<f64> {
-        self.properties.deformable.unnormalized().density
     }
 }
 
@@ -255,29 +173,11 @@ impl<P: Default> Material<P> {
             properties: Default::default(),
         }
     }
-}
-
-impl SolidProperties {
-    pub fn deformable(self, deformable: DeformableProperties) -> SolidProperties {
-        SolidProperties { deformable, ..self }
-    }
-    pub fn volume_preservation(self, volume_preservation: bool) -> SolidProperties {
-        SolidProperties {
-            volume_preservation,
-            ..self
-        }
-    }
-}
-
-impl ShellProperties {
-    pub fn fixed() -> ShellProperties {
-        ShellProperties::Fixed
-    }
-    pub fn rigid(density: f64) -> ShellProperties {
-        ShellProperties::Rigid { density }
-    }
-    pub fn deformable(deformable: DeformableProperties) -> ShellProperties {
-        ShellProperties::Deformable { deformable }
+    /// Overrides the preset id. This is useful for incrementing the material id
+    /// when building on top of an existing material.
+    pub fn with_id(mut self, id: usize) -> Material<P> {
+        self.id = id;
+        self
     }
 }
 
@@ -423,6 +323,104 @@ impl ElasticityParameters {
             lambda: young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson),
             mu: young / (2.0 * (1.0 + poisson)),
         }
+    }
+}
+
+/*
+ * Deformable implementations
+ */
+
+impl Deformable for DeformableProperties {
+    fn scale(&self) -> f64 {
+        DeformableProperties::scale(self)
+    }
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.elasticity
+    }
+    fn scaled_damping(&self) -> f64 {
+        self.damping
+    }
+    fn scaled_density(&self) -> Option<f64> {
+        self.density
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        self.unnormalized().elasticity
+    }
+    fn damping(&self) -> f64 {
+        self.unnormalized().damping
+    }
+    fn density(&self) -> Option<f64> {
+        self.unnormalized().density
+    }
+}
+
+impl Deformable for ShellMaterial {
+    fn scale(&self) -> f64 {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.scale(),
+            _ => 1.0,
+        }
+    }
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.scaled_elasticity(),
+            _ => None,
+        }
+    }
+    fn scaled_damping(&self) -> f64 {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.scaled_damping(),
+            _ => 0.0,
+        }
+    }
+    fn scaled_density(&self) -> Option<f64> {
+        match self.properties {
+            ShellProperties::Rigid { density } => Some(density),
+            ShellProperties::Deformable { deformable } => deformable.scaled_density(),
+            ShellProperties::Fixed => None,
+        }
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.elasticity(),
+            _ => None,
+        }
+    }
+    fn damping(&self) -> f64 {
+        match self.properties {
+            ShellProperties::Deformable { deformable } => deformable.damping(),
+            _ => 0.0,
+        }
+    }
+    fn density(&self) -> Option<f64> {
+        match self.properties {
+            ShellProperties::Rigid { density } => Some(density),
+            ShellProperties::Deformable { deformable } => deformable.density(),
+            ShellProperties::Fixed => None,
+        }
+    }
+}
+impl Deformable for SolidMaterial {
+    fn scale(&self) -> f64 {
+        self.properties.deformable.scale()
+    }
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.properties.deformable.scaled_elasticity()
+    }
+    fn scaled_damping(&self) -> f64 {
+        self.properties.deformable.scaled_damping()
+    }
+    fn scaled_density(&self) -> Option<f64> {
+        self.properties.deformable.scaled_density()
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        self.properties.deformable.elasticity()
+    }
+    fn damping(&self) -> f64 {
+        self.properties.deformable.damping()
+    }
+    fn density(&self) -> Option<f64> {
+        self.properties.deformable.density()
     }
 }
 

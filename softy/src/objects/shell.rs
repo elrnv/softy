@@ -63,7 +63,7 @@ impl<'a> Gravity<'a, TriMeshGravity<'a>> for TriMeshShell {
         match self.material.properties {
             ShellProperties::Deformable { .. } => TriMeshGravity::new(self, g),
             ShellProperties::Rigid { .. } => TriMeshGravity::new(self, g),
-            ShellProperties::Fixed => NullEnergy,
+            ShellProperties::Fixed => unimplemented!(), //NullEnergy,
         }
     }
 }

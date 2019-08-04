@@ -301,7 +301,7 @@ where
 impl<'a, S, O> GetIndex<'a, Chunked<S, O>> for usize
 where
     S: Set + View<'a> + Get<'a, std::ops::Range<usize>, Output = <S as View<'a>>::Type>,
-    O: std::borrow::Borrow<[usize]>
+    O: std::borrow::Borrow<[usize]>,
 {
     type Output = S::Output;
 
@@ -362,8 +362,7 @@ where
             self.end += 1;
             chunks.get(0).and_then(move |&first| {
                 chunks.get(self).and_then(move |chunks| {
-                    data
-                        .get(*chunks.first().unwrap() - first..*chunks.last().unwrap() - first)
+                    data.get(*chunks.first().unwrap() - first..*chunks.last().unwrap() - first)
                         .map(move |data| Chunked { chunks, data })
                 })
             })
@@ -442,10 +441,14 @@ where
         if self <= chunked.len() {
             let Chunked { ref chunks, data } = chunked;
             let chunks = chunks.borrow();
-            chunks.get(self).and_then(move |&begin| {
-                chunks
-                    .get(self + 1)
-                    .and_then(move |&end| data.get_mut(begin..end))
+            chunks.get(0).and_then(|&first| {
+                chunks.get(self).and_then(move |&cur| {
+                    chunks.get(self + 1).and_then(move |&next| {
+                        let begin = cur - first;
+                        let end = next - first;
+                        data.get_mut(begin..end)
+                    })
+                })
             })
         } else {
             None
@@ -464,11 +467,13 @@ where
         if self.start <= self.end && self.end <= chunked.len() {
             let Chunked { chunks, data } = chunked;
             self.end += 1;
-            chunks.get(self).and_then(move |chunks| {
-                chunks.first().and_then(move |&first| {
-                    chunks.last().and_then(move |&last| {
-                        data.get_mut(first..last)
-                            .map(|data| Chunked { chunks, data })
+            chunks.get(0).and_then(move |&first| {
+                chunks.get(self).and_then(move |chunks| {
+                    chunks.first().and_then(move |&cur| {
+                        chunks.last().and_then(move |&next| {
+                            data.get_mut(cur - first..next - first)
+                                .map(|data| Chunked { chunks, data })
+                        })
                     })
                 })
             })

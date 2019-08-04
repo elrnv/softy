@@ -244,9 +244,7 @@ where
 {
     type Output = &'a <[T] as std::ops::Index<I>>::Output;
     fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-        let slice = unsafe {
-            std::slice::from_raw_parts(set.as_ptr(), set.len())
-        };
+        let slice = unsafe { std::slice::from_raw_parts(set.as_ptr(), set.len()) };
         Some(std::ops::Index::<I>::index(slice, self))
     }
 }
@@ -258,9 +256,7 @@ where
 {
     type Output = &'a mut <[T] as std::ops::Index<I>>::Output;
     fn get_mut(self, set: &mut &'a mut [T]) -> Option<Self::Output> {
-        let slice = unsafe {
-            std::slice::from_raw_parts_mut(set.as_mut_ptr(), set.len())
-        };
+        let slice = unsafe { std::slice::from_raw_parts_mut(set.as_mut_ptr(), set.len()) };
         Some(std::ops::IndexMut::<I>::index_mut(slice, self))
     }
 }
@@ -549,6 +545,20 @@ impl<S: Set + ?Sized> Set for &S {
     }
 }
 impl<S: Set + ?Sized> Set for &mut S {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+
+impl<S: Set + ?Sized> Set for std::cell::Ref<'_, S> {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+
+impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
     type Elem = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)

@@ -136,7 +136,7 @@ impl<S: Set + RemovePrefix, O> Subset<S, O> {
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let subset = Subset::all(vec![1,2,3]);
+    /// let subset = Subset::<_, Vec<_>>::all(vec![1,2,3]);
     /// let subset_view = subset.view();
     /// let mut subset_iter = subset_view.iter();
     /// assert_eq!(Some(&1), subset_iter.next());
@@ -421,11 +421,10 @@ where
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         if let Some(ref indices) = subset.indices {
             indices.borrow().get(0).and_then(|&first| {
-                indices.borrow()
+                indices
+                    .borrow()
                     .get(self)
-                    .and_then(|&cur| {
-                        Get::get(&subset.data, cur - first)
-                    })
+                    .and_then(|&cur| Get::get(&subset.data, cur - first))
             })
         } else {
             Get::get(&subset.data, self)
@@ -445,7 +444,8 @@ where
         let Subset { indices, data } = subset;
         if let Some(ref indices) = indices {
             indices.borrow().get(0).and_then(move |&first| {
-                indices.borrow()
+                indices
+                    .borrow()
                     .get(self)
                     .and_then(move |&cur| GetMut::get_mut(data, cur - first))
             })

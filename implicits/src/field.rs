@@ -462,7 +462,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
 
             // Count the number of points with values less than iso_value.
-            let count_violations = potential.iter()
+            let count_violations = potential
+                .iter()
                 .zip(nml_sizes.iter())
                 .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
                 .count();
@@ -472,13 +473,12 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             }
 
             // Compute initial step directions
-            for (step, &norm, &value) in
-                zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter()).filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
+            for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
+                .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
             {
                 let nml = Vector3(*step);
                 let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
                 *step = (nml * (multiplier * offset)).into();
-
             }
 
             for j in 0..max_binary_search_iters {
@@ -507,8 +507,9 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     potential.iter(),
                     candidate_potential.iter()
                 )
-                .filter(|(_, &norm, &old, &new)| old < iso_value && new > iso_value + epsilon && norm != T::zero())
-                {
+                .filter(|(_, &norm, &old, &new)| {
+                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
+                }) {
                     *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
                     count_overshoots += 1;
                 }
@@ -754,10 +755,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_potential);
 
-        for Sample {
-            pos, vel, nml, ..
-        } in samples.iter()
-        {
+        for Sample { pos, vel, nml, .. } in samples.iter() {
             out_field += Self::sample_contact_jacobian_product_at(
                 q,
                 pos,
@@ -964,7 +962,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                                 grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
 
                             // Compute vector interpolation
-                            let grad_phi = Self::query_jacobian_at(q, view, Some(*closest), kernel, bg_field_params);
+                            let grad_phi = Self::query_jacobian_at(
+                                q,
+                                view,
+                                Some(*closest),
+                                kernel,
+                                bg_field_params,
+                            );
 
                             let nml_dot_grad = nml.dot(grad_phi);
                             // Handle degenerate case when nml and grad are exactly opposing. In
@@ -972,7 +976,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             let rot = if nml_dot_grad != -T::one() {
                                 let u = nml.cross(grad_phi);
                                 let ux = u.skew();
-                                Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+                                Matrix3::identity() + ux + (ux * ux) / (T::one() + nml_dot_grad)
                             } else {
                                 // TODO: take a convenient unit vector u that is
                                 // orthogonal to nml and compute the rotation as
@@ -1493,7 +1497,8 @@ mod tests {
         };
 
         let surface: ImplicitSurface<f64> = {
-            let mut file = std::fs::File::open("assets/torus_surf.json").expect("Failed to open torus surface file");
+            let mut file = std::fs::File::open("assets/torus_surf.json")
+                .expect("Failed to open torus surface file");
             let mut contents = String::new();
             file.read_to_string(&mut contents)
                 .expect("Failed to read torus surface json.");
@@ -1514,7 +1519,11 @@ mod tests {
         let mut final_potential = vec![0.0; init_potential.len()];
         surface.potential(&query_points, &mut final_potential)?;
 
-        for (i, (&old, &new)) in init_potential.iter().zip(final_potential.iter()).enumerate() {
+        for (i, (&old, &new)) in init_potential
+            .iter()
+            .zip(final_potential.iter())
+            .enumerate()
+        {
             // Check that all vertices are outside the implicit solid.
             assert!(new >= 0.0, "new = {}, old = {}, i = {}", new, old, i);
             if old < 0.0 {

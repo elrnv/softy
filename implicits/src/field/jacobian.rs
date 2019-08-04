@@ -554,7 +554,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let rot = if nml_dot_grad != -T::one() {
             let u = sample_nml.cross(grad_phi);
             let ux = u.skew();
-            Matrix3::identity() + ux + (ux*ux) / (T::one() + nml_dot_grad)
+            Matrix3::identity() + ux + (ux * ux) / (T::one() + nml_dot_grad)
         } else {
             // TODO: take a convenient unit vector u and compute the rotation
             // as
@@ -584,7 +584,15 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy,
     {
-        let jac = Self::sample_contact_jacobian_at(q, sample_pos, sample_nml, kernel, grad_phi, weight_sum_inv, closest_d);
+        let jac = Self::sample_contact_jacobian_at(
+            q,
+            sample_pos,
+            sample_nml,
+            kernel,
+            grad_phi,
+            weight_sum_inv,
+            closest_d,
+        );
         jac * multiplier
 
         //let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
@@ -1763,11 +1771,10 @@ mod tests {
                 radius_multiplier: 2.0,
                 tolerance: 1e-5,
             },
-            background_field:
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::DistanceBased,
-                    weighted: false,
-                },
+            background_field: BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: false,
+            },
             sample_type: SampleType::Vertex,
             max_step: 0.0,
         };
@@ -1814,18 +1821,17 @@ mod tests {
         };
         let surf_params = Params {
             kernel,
-            background_field:
-                BackgroundFieldParams {
-                    field_type: BackgroundFieldType::DistanceBased,
-                    weighted: false,
-                },
+            background_field: BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: false,
+            },
             sample_type: SampleType::Vertex,
             max_step: 0.0,
         };
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
         let test_vector = Vector3([1.5, 0.3, 0.5]);
-        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into();3])?;
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into(); 3])?;
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
 
         let surf = surface_from_trimesh(&trimesh, surf_params).unwrap();

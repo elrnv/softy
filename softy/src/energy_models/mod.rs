@@ -6,26 +6,50 @@ use crate::energy::*;
 use crate::matrix::MatrixElementIndex;
 use geo::Real;
 
-/// Define a null energy, which is used to represent zero energies. For example
+/// Define a nullable energy, which is used to represent zero energies. For example
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
-pub struct NullEnergy;
 
-impl<T: Real> Energy<T> for NullEnergy {
-    fn energy(&self, _: &[T], _: &[T]) -> T {
-        T::zero()
+impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
+    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+        self.as_ref().map_or(T::zero(), |e| e.energy(x0, x1))
     }
 }
 
-impl<T: Real> EnergyGradient<T> for NullEnergy {
-    fn add_energy_gradient(&self, _: &[T], _: &[T], _: &mut [T]) {}
+impl<T: Real, E: EnergyGradient<T>> EnergyGradient<T> for Option<E> {
+    fn add_energy_gradient(&self, x0: &[T], x1: &[T], g: &mut [T]) {
+        match self {
+            Some(e) => e.add_energy_gradient(x0, x1, g),
+            None => {}
+        }
+    }
 }
 
-impl EnergyHessian for NullEnergy {
+impl<E: EnergyHessian> EnergyHessian for Option<E> {
     fn energy_hessian_size(&self) -> usize {
-        0
+        self.as_ref().map_or(0, |e| e.energy_hessian_size())
     }
-    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values<T: Real>(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+    fn energy_hessian_indices_offset(
+        &self,
+        off: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
+        match self {
+            Some(e) => e.energy_hessian_indices_offset(off, indices),
+            None => {}
+        }
+    }
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        x0: &[T],
+        x1: &[T],
+        scale: T,
+        vals: &mut [T],
+    ) {
+        match self {
+            Some(e) => e.energy_hessian_values(x0, x1, scale, vals),
+            None => {}
+        }
+    }
 }
 
 #[cfg(test)]

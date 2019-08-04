@@ -5,6 +5,7 @@ use geo::mesh::topology::*;
 
 /// A soft shell represented by a trimesh. It is effectively a triangle mesh decorated by
 /// physical material properties that govern how it behaves.
+#[derive(Clone, Debug)]
 pub struct TriMeshShell {
     pub trimesh: TriMesh,
     pub material: ShellMaterial,
@@ -58,12 +59,11 @@ impl TriMeshShell {
 //    }
 //}
 
-impl<'a> Gravity<'a, TriMeshGravity<'a>> for TriMeshShell {
-    fn gravity(&'a self, g: [f64; 3]) -> TriMeshGravity<'a> {
+impl<'a> Gravity<'a, Option<TriMeshGravity<'a>>> for TriMeshShell {
+    fn gravity(&'a self, g: [f64; 3]) -> Option<TriMeshGravity<'a>> {
         match self.material.properties {
-            ShellProperties::Deformable { .. } => TriMeshGravity::new(self, g),
-            ShellProperties::Rigid { .. } => TriMeshGravity::new(self, g),
-            ShellProperties::Fixed => unimplemented!(), //NullEnergy,
+            ShellProperties::Fixed => None,
+            _ => Some(TriMeshGravity::new(self, g)),
         }
     }
 }

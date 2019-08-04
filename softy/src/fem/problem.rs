@@ -10,7 +10,7 @@ use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
 use std::cell::RefCell;
-use utils::{aref::*, soap::*, zip};
+use utils::{soap::*, zip};
 
 #[derive(Clone)]
 pub struct Solution {
@@ -131,47 +131,553 @@ pub struct Vertex {
     cur_vel: [f64; 3],
 }
 
+pub type MeshVertexData<T> = Subset<Chunked3<T>>;
+pub type VertexData<D> = Chunked<Chunked<Chunked3<D>>>;
+pub type VertexView<'i, D> = ChunkedView<'i, ChunkedView<'i, Chunked3<D>>>;
+
 /// This set collects all simulated vertex data. Meshes that are not simulated are excluded.
 /// The data is chunked into solids/shells, then into a subset of individual
 /// meshes, and finally into x,y,z coordinates. Rigid shells have 6 degrees of
 /// freedom, 3 for position and 3 for rotation, so a rigid shell will correspond
 /// to 6 floats in each of these vectors. This can be more generally
 /// interpreted as generalized coordinates.
+/// This struct is responsible for mapping between input mesh vertices and
+/// generalized coordinates.
+// TODO: Factor out common chunking structure so it's not repeated for each
+// chunked collection.
 #[derive(Clone, Debug)]
-pub struct VertexSet {
+pub struct ObjectData {
     /// Generalized coordinates from the previous time step. Sometimes referred
     /// to as `q` in literature.
-    pub prev_pos: Chunked<Chunked<Chunked3<Vec<f64>>>>,
+    pub prev_x: VertexData<Vec<f64>>,
     /// Generalized coordinate derivative from the previous time step. Referred
     /// to as `\dot{q}` in literature.
-    pub prev_vel: Chunked<Chunked<Chunked3<Vec<f64>>>>,
+    pub prev_v: VertexData<Vec<f64>>,
     /// Workspace vector to compute intermediate displacements.
-    pub cur_pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    pub cur_x: RefCell<VertexData<Vec<f64>>>,
     /// Workspace vector to rescale variable values before performing computations on them.
-    pub cur_vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
-    ///// Workspace positions for all meshes. These are used to pass concrete
-    ///// positions (as opposed to generalized coordinates) to constraint functions.
-    ///// If the positions coincide with generalized coordinates for a particular
-    ///// object, then these variables may be omitted and `prev_x` or `cur_x` are
-    ///// used directly.
-    //pub pos: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
-    ///// Workspace velocities for all meshes. These are used to pass concrete
-    ///// velocities (as opposed to generalized coordinates) to constraint functions.
-    ///// If the positions coincide with generalized coordinates for a particular
-    ///// object, then these variables may be omitted and `prev_v` or `cur_v` are
-    ///// used directly.
-    //pub vel: RefCell<Chunked<Chunked<Chunked3<Vec<f64>>>>>,
+    pub cur_v: RefCell<VertexData<Vec<f64>>>,
+
+    /// Workspace positions for all meshes for which the generalized coordinates
+    /// don't coincide with vertex positions. These are used to pass concrete
+    /// positions (as opposed to generalized coordinates) to constraint
+    /// functions.
+    pub pos: VertexData<Vec<f64>>,
+    /// Workspace velocities for all meshes for which the generalized
+    /// coordinates don't coincide with vertex positions. These are used to pass
+    /// concrete velocities (as opposed to generalized coordinates) to
+    /// constraint functions.
+    pub vel: VertexData<Vec<f64>>,
+
+    /// Tetrahedron mesh representing a soft solid computational domain.
+    pub solids: Vec<TetMeshSolid>,
+    /// Shell object represented by a triangle mesh.
+    pub shells: Vec<TriMeshShell>,
+}
+
+impl ObjectData {
+    /// Build a `VertexData` struct with an zero entry for each vertex of each
+    /// mesh.
+    pub fn build_vertex_data(&self) -> VertexData<Vec<f64>> {
+        let num_vertices = self.num_total_vertices();
+
+        let out = Chunked3::from_grouped_vec(vec![[0.0; 3]; num_vertices]);
+        let mut mesh_offsets = vec![0];
+        mesh_offsets.extend(self.solids.iter().map(|solid| solid.tetmesh.num_vertices()));
+        mesh_offsets.extend(self.shells.iter().map(|shell| shell.trimesh.num_vertices()));
+
+        let out = Chunked::from_offsets(mesh_offsets, out);
+        let num_solids = self.solids.len();
+        let num_shells = self.shells.len();
+
+        Chunked::from_offsets(vec![0, num_solids, num_solids + num_shells], out)
+    }
+
+    pub fn cur_pos<'x>(
+        &'x self,
+        cur_x: VertexView<'x, &'x [f64]>,
+        src_idx: SourceIndex,
+    ) -> MeshVertexData<&'x [f64]> {
+        // First determine which variable set to use for the current pos.
+        // E.g. rigid meshes use the `pos` set, while deformable meshes use the
+        // `cur_x` field.
+        let ObjectData {
+            pos,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_impl(cur_x, pos.view(), src_idx, solids, shells)
+    }
+
+    pub fn prev_pos(&self, src_idx: SourceIndex) -> MeshVertexData<&[f64]> {
+        let ObjectData {
+            prev_x,
+            pos,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_impl(prev_x.view(), pos.view(), src_idx, solids, shells)
+    }
+
+    pub fn cur_vel<'x>(
+        &'x self,
+        cur_v: VertexView<'x, &'x [f64]>,
+        src_idx: SourceIndex,
+    ) -> MeshVertexData<&'x [f64]> {
+        // First determine which variable set to use for the current pos.
+        // E.g. rigid meshes use the `pos` set, while deformable meshes use the
+        // `cur_x` field.
+        let ObjectData {
+            vel,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_impl(cur_v, vel.view(), src_idx, solids, shells)
+    }
+
+    pub fn prev_vel(&self, src_idx: SourceIndex) -> MeshVertexData<&[f64]> {
+        let ObjectData {
+            prev_v,
+            vel,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_impl(prev_v.view(), vel.view(), src_idx, solids, shells)
+    }
+
+    pub fn cur_pos_mut<'x>(
+        &'x mut self,
+        cur_x: VertexView<'x, &'x mut [f64]>,
+        alt_x: VertexView<'x, &'x mut [f64]>,
+        src_idx: SourceIndex,
+    ) -> MeshVertexData<&'x mut [f64]> {
+        let ObjectData { solids, shells, .. } = self;
+        Self::mesh_vertex_subset_mut_impl(cur_x, alt_x, src_idx, solids, shells)
+    }
+
+    pub fn prev_pos_mut(&mut self, src_idx: SourceIndex) -> MeshVertexData<&mut [f64]> {
+        let ObjectData {
+            prev_x,
+            pos,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_mut_impl(
+            prev_x.view_mut(),
+            pos.view_mut(),
+            src_idx,
+            solids,
+            shells,
+        )
+    }
+
+    pub fn cur_vel_mut<'x>(
+        &'x mut self,
+        cur_v: VertexView<'x, &'x mut [f64]>,
+        alt_v: VertexView<'x, &'x mut [f64]>,
+        src_idx: SourceIndex,
+    ) -> MeshVertexData<&'x mut [f64]> {
+        // First determine which variable set to use for the current pos.
+        // E.g. rigid meshes use the `pos` set, while deformable meshes use the
+        // `cur_x` field.
+        let ObjectData { solids, shells, .. } = self;
+        Self::mesh_vertex_subset_mut_impl(cur_v, alt_v, src_idx, solids, shells)
+    }
+
+    pub fn prev_vel_mut(&mut self, src_idx: SourceIndex) -> Subset<Chunked3<&mut [f64]>> {
+        let ObjectData {
+            prev_v,
+            vel,
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_mut_impl(
+            prev_v.view_mut(),
+            vel.view_mut(),
+            src_idx,
+            solids,
+            shells,
+        )
+    }
+
+    pub fn mesh_vertex_subset<'s, 'x, T: Clone + 'x>(
+        &self,
+        x: VertexView<'x, &'x [T]>,
+        alt: VertexView<'x, &'x [T]>,
+        source: SourceIndex,
+    ) -> Subset<Chunked3<&'x [T]>> {
+        Self::mesh_vertex_subset_impl(x, alt, source, &self.solids, &self.shells)
+    }
+
+    pub fn mesh_vertex_subset_mut<'s, 'x, T: Clone + 'x, Alt>(
+        &self,
+        x: VertexView<'x, &'x mut [T]>,
+        alt: Alt,
+        source: SourceIndex,
+    ) -> Subset<Chunked3<&'x mut [T]>>
+    where
+        Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
+    {
+        Self::mesh_vertex_subset_mut_impl(x, alt, source, &self.solids, &self.shells)
+    }
+
+    fn mesh_vertex_subset_impl<'x, T: Clone + 'x>(
+        x: VertexView<'x, &'x [T]>,
+        alt: VertexView<'x, &'x [T]>,
+        source: SourceIndex,
+        solids: &[TetMeshSolid],
+        shells: &[TriMeshShell],
+    ) -> Subset<Chunked3<&'x [T]>> {
+        match source {
+            SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
+                solids[i].surface().indices.to_vec(),
+                x.at(0).at(i),
+            ),
+            SourceIndex::Shell(i) => {
+                let x = match shells[i].material.properties {
+                    ShellProperties::Deformable { .. } => x,
+                    _ => alt,
+                };
+                Subset::all(x.at(1).at(i))
+            }
+        }
+    }
+
+    // TODO: refactor this function together with the function above.
+    fn mesh_vertex_subset_mut_impl<'x, T: Clone + 'x, Alt>(
+        mut x: VertexView<'x, &'x mut [T]>,
+        alt: Alt,
+        source: SourceIndex,
+        solids: &[TetMeshSolid],
+        shells: &[TriMeshShell],
+    ) -> Subset<Chunked3<&'x mut [T]>>
+    where
+        Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
+    {
+        match source {
+            SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
+                solids[i].surface().indices.to_vec(),
+                x.at_mut(0).at_mut(i),
+            ),
+            SourceIndex::Shell(i) => {
+                let mut x = match shells[i].material.properties {
+                    ShellProperties::Deformable { .. } => x,
+                    _ => alt.into().unwrap_or(x),
+                };
+                Subset::all(x.at_mut(1).at_mut(i))
+            }
+        }
+    }
+
+    pub fn num_solid_vertices(&self) -> usize {
+        self.prev_x.view().at(0).data().len()
+    }
+
+    pub fn num_shell_vertices(&self) -> usize {
+        self.prev_x.view().at(1).data().len()
+    }
+
+    pub fn num_total_vertices(&self) -> usize {
+        self.num_solid_vertices() + self.num_shell_vertices()
+    }
+
+    pub fn mesh_surface_vertex_count(&self, source: SourceIndex) -> usize {
+        match source {
+            SourceIndex::Solid(i) => self.solids[i].surface().indices.len(),
+            SourceIndex::Shell(i) => self.shells[i].trimesh.num_vertices(),
+        }
+    }
+
+    /// Translate a surface mesh coordinate index into the corresponding
+    /// simulation coordinate index in our global array.
+    pub fn source_coordinates(
+        &self,
+        object_index: SourceIndex,
+        collider_index: SourceIndex,
+        coord: usize,
+    ) -> usize {
+        let surf_vtx_idx = coord / 3;
+
+        // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
+        let tetmesh_coordinates = |mesh_index| {
+            let offset = self.prev_v.view().at(0).offset_value(mesh_index);
+            3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
+        };
+
+        // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
+        let trimesh_coordinates = |mesh_index| {
+            let prev_v = self.prev_v.view().at(1);
+            assert!(!prev_v.is_empty());
+            3 * prev_v.offset_value(mesh_index) + coord
+        };
+
+        let num_object_surface_indices: usize;
+
+        match object_index {
+            SourceIndex::Solid(obj_i) => {
+                num_object_surface_indices = self.solids[obj_i].surface().indices.len();
+                if surf_vtx_idx < num_object_surface_indices {
+                    return tetmesh_coordinates(obj_i);
+                }
+            }
+            SourceIndex::Shell(obj_i) => {
+                num_object_surface_indices = self.shells[obj_i].trimesh.num_vertices();
+                if surf_vtx_idx < num_object_surface_indices {
+                    return trimesh_coordinates(obj_i);
+                }
+            }
+        }
+
+        // If we haven't returned yet, this means that surf_vtx_idx corresponds
+        // to collider surface.
+
+        // Adjust surf_vtx_idx to be in the right range:
+        let surf_vtx_idx = surf_vtx_idx - num_object_surface_indices;
+
+        match collider_index {
+            SourceIndex::Solid(coll_i) => {
+                assert!(surf_vtx_idx < self.solids[coll_i].surface().indices.len());
+                tetmesh_coordinates(coll_i)
+            }
+            SourceIndex::Shell(coll_i) => {
+                assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
+                trimesh_coordinates(coll_i)
+            }
+        }
+    }
+
+    /// Produce an iterator over the given slice of scaled variables.
+    pub(crate) fn scaled_variables_iter<'a>(
+        unscaled_var: &'a [Number],
+        scale: Number,
+    ) -> impl Iterator<Item = Number> + 'a {
+        unscaled_var.iter().map(move |&val| val * scale)
+    }
+
+    pub fn update_current_velocity(
+        &self,
+        uv: &[Number],
+        scale: f64,
+    ) -> std::cell::Ref<'_, VertexData<Vec<f64>>> {
+        {
+            let mut sv = self.cur_v.borrow_mut();
+            let sv = sv.view_mut().into_flat();
+            for (output, input) in sv.iter_mut().zip(Self::scaled_variables_iter(uv, scale)) {
+                *output = input;
+            }
+        }
+        self.cur_v.borrow()
+    }
+
+    // Update `cur_x` using implicit integration with the given velocity `v`.
+    fn integrate_step(&self, v: VertexView<&[f64]>, time_step: f64) {
+        let ObjectData { cur_x, prev_x, .. } = self;
+        let mut cur_x = cur_x.borrow_mut();
+        let cur_x = cur_x.view_mut().into_flat();
+        let v = v.view().into_flat();
+        let prev_x = prev_x.view().into_flat();
+        // In static simulations, velocity is simply displacement.
+        let dt = if time_step > 0.0 { time_step } else { 1.0 };
+        debug_assert_eq!(v.len(), cur_x.len());
+        debug_assert_eq!(prev_x.len(), cur_x.len());
+        cur_x
+            .iter_mut()
+            .zip(prev_x.iter().zip(v.iter()))
+            .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
+    }
+
+    /// Update the solid meshes with the given global array of vertex positions
+    /// and velocities for all solids.
+    pub fn update_solid_vertices(&mut self, new_pos: Chunked3<&[f64]>) -> Result<(), crate::Error> {
+        // All solids have prev_x coincident with pos so we use prev_x directly here.
+        let mut prev_x = self.prev_x.view_mut().at_mut(0);
+
+        // All solids are simulated, so the input point set must have the same
+        // size as our internal vertex set. If these are mismatched, then there
+        // was an issue with constructing the solid meshes. This may not
+        // necessarily be an error, we are just being conservative here.
+        if new_pos.len() != prev_x.view().data().len() {
+            // We got an invalid point cloud
+            return Err(crate::Error::SizeMismatch);
+        }
+
+        // Get the tetmesh and prev_pos so we can update the fixed vertices.
+        for (solid, mut prev_pos) in self.solids.iter().zip(prev_x.iter_mut()) {
+            // Get the vertex index of the original vertex (point in given point cloud).
+            // This is done because meshes can be reordered when building the
+            // solver. This attribute maintains the link between the caller and
+            // the internal mesh representation. This way the user can still
+            // update internal meshes as needed between solves.
+            let source_index_iter = solid
+                .tetmesh
+                .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos[idx]);
+
+            // Only update fixed vertices, if no such attribute exists, return an error.
+            let fixed_iter = solid
+                .tetmesh
+                .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+            prev_pos
+                .iter_mut()
+                .zip(new_pos_iter)
+                .zip(fixed_iter)
+                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
+                .for_each(|(pos, new_pos)| *pos = new_pos);
+
+            // TODO: Compute new velocity from previous step. This is an explicit velocity estimate.
+            // TODO: determine if this is sufficient, or do we need the user to
+            // specify a more accurate velocity estimate for fixed vertices.
+        }
+        Ok(())
+    }
+
+    /// Update the shell meshes with the given global array of vertex positions
+    /// and velocities for all shells.
+    pub fn update_shell_vertices(&mut self, new_pos: Chunked3<&[f64]>) -> Result<(), crate::Error> {
+        // Some shells are simulated on a per vertex level, some are rigid or
+        // fixed, so we will update `prev_x` for the former and `pos` for the
+        // latter.
+        let ObjectData { prev_x, pos, .. } = self;
+
+        let mut prev_x = prev_x.view_mut().at_mut(1);
+        let mut pos = pos.view_mut().at_mut(1);
+
+        // Get the trimesh and prev_x/pos so we can update the fixed vertices.
+        for (shell, (mut prev_x, mut pos)) in self
+            .shells
+            .iter()
+            .zip(prev_x.iter_mut().zip(pos.iter_mut()))
+        {
+            // Get the vertex index of the original vertex (point in given point cloud).
+            // This is done because meshes can be reordered when building the
+            // solver. This attribute maintains the link between the caller and
+            // the internal mesh representation. This way the user can still
+            // update internal meshes as needed between solves.
+            let source_index_iter = shell
+                .trimesh
+                .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos[idx]);
+
+            match shell.material.properties {
+                ShellProperties::Deformable { .. } => {
+                    // Only update fixed vertices, if no such attribute exists, return an error.
+                    let fixed_iter = shell
+                        .trimesh
+                        .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+                    prev_x
+                        .iter_mut()
+                        .zip(new_pos_iter)
+                        .zip(fixed_iter)
+                        .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
+                        .for_each(|(pos, new_pos)| *pos = new_pos);
+                }
+                ShellProperties::Rigid { .. } => {
+                    // A rigid mesh has different degrees of freedom than its vertex positions.
+                    // Here we extract a rigid motion from the fixed vertices
+                    // and apply it to the rest of the mesh.
+
+                    // TODO: do a least squares fit for a rotation from current
+                    // configuration to the given configuration of fixed
+                    // vertices.
+
+                    // Steps:
+                    // 1. Apply the current rigid transform (prev_x/prev_v) to
+                    //    `shell` and store in `pos/vel` to figure out the
+                    //    current vertex positions.
+                    // 2. Compute the rigid rotation between that and the given
+                    //    set of fixed points.
+                    // 3. Add this rotation and translation to (prev_x/prev_v)
+                    return Err(crate::Error::UnimplementedFeature(String::from(
+                        "Rigid body update",
+                    )));
+                }
+                ShellProperties::Fixed => {
+                    // This mesh is fixed and doesn't obey any physics. Simply
+                    // copy the positions and velocities over.
+                    pos.iter_mut()
+                        .zip(new_pos_iter)
+                        .for_each(|(pos, new_pos)| *pos = new_pos);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Advance prev_* variables to cur_* variables and update the referenced meshes.
+    pub fn advance(&mut self, and_velocity: bool) {
+        let ObjectData {
+            prev_x,
+            prev_v,
+            cur_v,
+            cur_x,
+            solids,
+            shells,
+            ..
+        } = self;
+
+        let cur_v = cur_v.borrow();
+        let cur_x = cur_x.borrow();
+
+        {
+            let prev_x_flat_view = prev_x.view_mut().into_flat();
+            let prev_v_flat_view = prev_v.view_mut().into_flat();
+
+            // Update prev pos
+            prev_x_flat_view
+                .iter_mut()
+                .zip(cur_x.view().into_flat().iter())
+                .for_each(|(prev, &cur)| *prev = cur);
+
+            // Update prev vel
+            if and_velocity {
+                prev_v_flat_view
+                    .iter_mut()
+                    .zip(cur_v.view().into_flat().iter())
+                    .for_each(|(prev, &cur)| *prev = cur);
+            } else {
+                // Clear velocities. This ensures that any non-zero initial velocities are cleared
+                // for subsequent steps.
+                prev_v_flat_view.iter_mut().for_each(|v| *v = 0.0);
+            }
+        }
+
+        let prev_x = prev_x.view().view();
+
+        // Update mesh vertex positions
+        for (i, solid) in solids.iter_mut().enumerate() {
+            let verts = solid.tetmesh.vertex_positions_mut();
+            verts.copy_from_slice(prev_x.at(0).at(i).into());
+        }
+        for (i, shell) in shells.iter_mut().enumerate() {
+            match shell.material.properties {
+                ShellProperties::Deformable { .. } => {
+                    let verts = shell.trimesh.vertex_positions_mut();
+                    verts.copy_from_slice(prev_x.at(1).at(i).into());
+                }
+                ShellProperties::Rigid { .. } => {
+                    unimplemented!();
+                }
+                ShellProperties::Fixed => {
+                    // Nothing to do here, fixed meshes aren't moved by
+                    // simulation.
+                }
+            }
+        }
+    }
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 pub(crate) struct NonLinearProblem {
-    /// A set of vertices with attached data per vertex for all simulated meshes combined.
-    pub vertex_set: VertexSet,
-    /// Tetrahedron mesh representing a soft solid computational domain.
-    pub solids: Vec<TetMeshSolid>,
-    /// Shell object represented by a triangle mesh.
-    pub shells: Vec<TriMeshShell>,
+    /// A model of the current problem. This includes all primal variables and
+    /// any additional mesh data required for simulation.
+    pub object_data: ObjectData,
     /// One way contact constraints between a pair of objects.
     pub frictional_contacts: Vec<FrictionalContactConstraint>,
     /// Constraint on the total volume.
@@ -201,6 +707,14 @@ impl NonLinearProblem {
         } else {
             1.0
         }
+    }
+
+    /// Produce an iterator over the given slice of scaled variables.
+    pub fn scaled_variables_iter<'a>(
+        &self,
+        unscaled_var: &'a [Number],
+    ) -> impl Iterator<Item = Number> + 'a {
+        ObjectData::scaled_variables_iter(unscaled_var, self.scale())
     }
 
     /// Save Ipopt solution for warm starts.
@@ -256,76 +770,21 @@ impl NonLinearProblem {
 
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
-        // All solids have prev_x coincident with pos so we use prev_x directly here.
-        let mut prev_pos = self.vertex_set.prev_pos.view_mut().at_mut(0);
-
-        // All solids are simulated, so the input point set must have the same
-        // size as our internal vertex set. If these are mismatched, then there
-        // was an issue with constructing the solid meshes. This may not
-        // necessarily be an error, we are just being conservative here.
-        if pts.num_vertices() != prev_pos.view().data().len() {
-            // We got an invalid point cloud
-            return Err(crate::Error::SizeMismatch);
-        }
-
-        let new_pos = pts.vertex_positions();
-
-        // Get the tetmesh and prev_pos so we can update the fixed vertices.
-        for (solid, mut prev_pos) in self.solids.iter().zip(prev_pos.iter_mut()) {
-            // Get the vertex index of the original vertex (point in given point cloud).
-            // This is done because meshes can be reordered when building the
-            // solver. This attribute maintains the link between the caller and
-            // the internal mesh representation. This way the user can still
-            // update internal meshes as needed between solves.
-            let source_index_iter = solid
-                .tetmesh
-                .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let pts_iter = source_index_iter.map(|&idx| new_pos[idx]);
-
-            // Only update fixed vertices, if no such attribute exists, return an error.
-            let fixed_iter = solid
-                .tetmesh
-                .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
-            prev_pos
-                .iter_mut()
-                .zip(pts_iter)
-                .zip(fixed_iter)
-                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                .for_each(|(pos, new_pos)| *pos = new_pos);
-        }
-        Ok(())
+        let new_pos = Chunked3::from_grouped_slice(pts.vertex_positions());
+        self.object_data.update_solid_vertices(new_pos.view())
     }
 
     /// Update the shell meshes with the given points.
     pub fn update_shell_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
-        let mut prev_pos = self.vertex_set.prev_pos.view_mut().at_mut(1);
+        let new_pos = Chunked3::from_grouped_slice(pts.vertex_positions());
+        self.object_data.update_shell_vertices(new_pos.view())
+    }
 
-        let new_pos = pts.vertex_positions();
-
-        // Get the tetmesh and prev_pos so we can update the fixed vertices.
-        for (shell, mut prev_pos) in self.shells.iter().zip(prev_pos.iter_mut()) {
-            // Get the vertex index of the original vertex (point in given point cloud).
-            // This is done because meshes can be reordered when building the
-            // solver. This attribute maintains the link between the caller and
-            // the internal mesh representation. This way the user can still
-            // update internal meshes as needed between solves.
-            let source_index_iter = shell
-                .trimesh
-                .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let pts_iter = source_index_iter.map(|&idx| new_pos[idx]);
-
-            // Only update fixed vertices, if no such attribute exists, return an error.
-            let fixed_iter = shell
-                .trimesh
-                .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
-            prev_pos
-                .iter_mut()
-                .zip(pts_iter)
-                .zip(fixed_iter)
-                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                .for_each(|(pos, new_pos)| *pos = new_pos);
-        }
-        Ok(())
+    pub fn update_current_velocity(
+        &self,
+        uv: &[Number],
+    ) -> std::cell::Ref<'_, VertexData<Vec<f64>>> {
+        self.object_data.update_current_velocity(uv, self.scale())
     }
 
     /// Compute the set of currently active constraints into the given `Vec`.
@@ -370,139 +829,27 @@ impl NonLinearProblem {
                 .all(|(cur, &other)| cur == other)
     }
 
-    /// Translate a surface mesh coordinate index into the corresponding
-    /// simulation coordinate index in our global array.
-    fn source_coordinates(
-        &self,
-        object_index: SourceIndex,
-        collider_index: SourceIndex,
-        coord: usize,
-    ) -> usize {
-        let surf_vtx_idx = coord / 3;
-
-        // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
-        let tetmesh_coordinates = |mesh_index| {
-            let offset = self
-                .vertex_set
-                .prev_vel
-                .view()
-                .at(0)
-                .offset_value(mesh_index);
-            3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
-        };
-
-        // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
-        let trimesh_coordinates = |mesh_index| {
-            3 * self
-                .vertex_set
-                .prev_vel
-                .view()
-                .at(1)
-                .offset_value(mesh_index)
-                + coord
-        };
-
-        let num_object_surface_indices: usize;
-
-        match object_index {
-            SourceIndex::Solid(obj_i) => {
-                num_object_surface_indices = self.solids[obj_i].surface().indices.len();
-                if surf_vtx_idx < num_object_surface_indices {
-                    return tetmesh_coordinates(obj_i);
-                }
-            }
-            SourceIndex::Shell(obj_i) => {
-                num_object_surface_indices = self.shells[obj_i].trimesh.num_vertices();
-                if surf_vtx_idx < num_object_surface_indices {
-                    return trimesh_coordinates(obj_i);
-                }
-            }
-        }
-
-        // If we haven't returned yet, this means that surf_vtx_idx corresponds
-        // to collider surface.
-
-        // Adjust surf_vtx_idx to be in the right range:
-        let surf_vtx_idx = surf_vtx_idx - num_object_surface_indices;
-
-        match collider_index {
-            SourceIndex::Solid(coll_i) => {
-                assert!(surf_vtx_idx < self.solids[coll_i].surface().indices.len());
-                tetmesh_coordinates(coll_i)
-            }
-            SourceIndex::Shell(coll_i) => {
-                assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
-                trimesh_coordinates(coll_i)
-            }
-        }
-    }
-
-    /// Index into a chunked set of per vertex data as defined in `vertex_set` for a single mesh.
-    fn mesh_vertex_subset<'s, 'x, T: Clone + 'x>(
-        solids: &'s [TetMeshSolid],
-        x: ChunkedView<'x, ChunkedView<'x, Chunked3<&'x [T]>>>,
-        source: SourceIndex,
-    ) -> Subset<Chunked3<&'x [T]>> {
-        match source {
-            SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
-                solids[i].surface().indices.to_vec(),
-                x.at(0).at(i),
-            ),
-            SourceIndex::Shell(i) => Subset::all(x.at(1).at(i)),
-        }
-    }
-
-    // TODO: refactor this function together with the function above.
-    fn mesh_vertex_subset_mut<'s, 'x, T: Clone + 'x>(
-        solids: &'s [TetMeshSolid],
-        mut x: ChunkedView<'x, ChunkedView<'x, Chunked3<&'x mut [T]>>>,
-        source: SourceIndex,
-    ) -> Subset<Chunked3<&'x mut [T]>> {
-        match source {
-            SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
-                solids[i].surface().indices.to_vec(),
-                x.at_mut(0).at_mut(i),
-            ),
-            SourceIndex::Shell(i) => Subset::all(x.at_mut(1).at_mut(i)),
-        }
-    }
-
-    fn mesh_surface_vertex_count(
-        solids: &[TetMeshSolid],
-        shells: &[TriMeshShell],
-        source: SourceIndex,
-    ) -> usize {
-        match source {
-            SourceIndex::Solid(i) => solids[i].surface().indices.len(),
-            SourceIndex::Shell(i) => shells[i].trimesh.num_vertices(),
-        }
-    }
-
     /// Update all stateful constraints with the most recent data.
     /// Return an estimate if any constraints have changed, though this estimate may have false
     /// negatives.
     pub fn update_constraint_set(&mut self, solution: Option<ipopt::Solution>) -> bool {
         let mut changed = false; // Report if anything has changed to the caller.
 
-        // Update positions with the given solution (if any).
-        let x = if let Some(uv) = solution.map(|sol| sol.primal_variables) {
-            let v = self.update_current_velocity(uv);
-            let mut cur_pos = self.vertex_set.cur_pos.borrow_mut();
-
-            let v = v.view().into_flat();
-            let cur_pos = cur_pos.view_mut().into_flat();
-            let prev_pos = self.vertex_set.prev_pos.view().into_flat();
-            self.integrate_step(v, prev_pos, cur_pos);
-            ARef::Cell(self.vertex_set.cur_pos.borrow())
-        } else {
-            ARef::Plain(&self.vertex_set.prev_pos)
-        };
+        let scale = self.scale();
 
         let NonLinearProblem {
-            solids,
-            frictional_contacts,
+            ref mut frictional_contacts,
+            ref object_data,
+            time_step,
             ..
-        } = self;
+        } = *self;
+
+        // Update positions with the given solution (if any).
+        let x = solution.map(|sol| {
+            let v = object_data.update_current_velocity(sol.primal_variables, scale);
+            object_data.integrate_step(v.view(), time_step);
+            object_data.cur_x.borrow()
+        });
 
         for FrictionalContactConstraint {
             object_index,
@@ -510,9 +857,15 @@ impl NonLinearProblem {
             constraint,
         } in frictional_contacts.iter_mut()
         {
-            let object_pos = Self::mesh_vertex_subset(solids, x.view(), *object_index);
-            let collider_pos = Self::mesh_vertex_subset(solids, x.view(), *collider_index);
-            changed |= constraint.update_cache(object_pos.view(), collider_pos.view());
+            if let Some(x) = x.as_ref() {
+                let object_pos = object_data.cur_pos((*x).view(), *object_index);
+                let collider_pos = object_data.cur_pos((*x).view(), *collider_index);
+                changed |= constraint.update_cache(object_pos.view(), collider_pos.view());
+            } else {
+                let object_pos = object_data.prev_pos(*object_index);
+                let collider_pos = object_data.prev_pos(*collider_index);
+                changed |= constraint.update_cache(object_pos.view(), collider_pos.view());
+            }
         }
 
         changed
@@ -587,112 +940,50 @@ impl NonLinearProblem {
     //    changed
     //}
 
-    pub fn apply_frictional_contact_impulse(
-        &self,
-        mut vel: ChunkedView<ChunkedView<Chunked3<&mut [f64]>>>,
-    ) {
-        for fc in self.frictional_contacts.iter() {
-            let mut object_vel =
-                Self::mesh_vertex_subset_mut(&self.solids, vel.view_mut(), fc.object_index);
+    pub fn apply_frictional_contact_impulse(&mut self) {
+        let NonLinearProblem {
+            frictional_contacts,
+            object_data:
+                ObjectData {
+                    vel,
+                    cur_v,
+                    solids,
+                    shells,
+                    ..
+                },
+            ..
+        } = self;
+
+        let mut cur_v = cur_v.borrow_mut();
+        for fc in frictional_contacts.iter() {
+            // TODO: It is unfortunate that we have to leak abstraction here.
+            // Possibly we have to hide object_data behind a RefCell and use
+            // borrow splitting.
+            let mut object_vel = ObjectData::mesh_vertex_subset_mut_impl(
+                cur_v.view_mut(),
+                vel.view_mut(),
+                fc.object_index,
+                solids,
+                shells,
+            );
             fc.constraint
                 .add_mass_weighted_frictional_contact_impulse(object_vel.view_mut());
         }
-    }
-
-    /// Helper function to compute new positions from a given slice of unscaled velocities.
-    /// This function is used for debugging.
-    #[allow(dead_code)]
-    pub fn compute_step_from_unscaled_velocities(
-        &self,
-        uv: &[f64],
-    ) -> std::cell::Ref<'_, Chunked<Chunked<Chunked3<Vec<f64>>>>> {
-        let cur_vel = self.update_current_velocity(uv);
-        let mut x1 = self.vertex_set.cur_pos.borrow_mut();
-
-        let cur_vel = cur_vel.view().into_flat();
-        let x1 = x1.view_mut().into_flat();
-        let x0 = self.vertex_set.prev_pos.view().into_flat();
-        self.integrate_step(cur_vel, x0, x1);
-        self.vertex_set.cur_pos.borrow()
     }
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
     /// If `and_velocity` is `false`, then only positions are advance, and velocities are reset.
     /// This emulates a critically damped, or quasi-static simulation.
     pub fn advance(&mut self, uv: &[f64], and_velocity: bool, and_warm_start: bool) {
-        let (_old_warm_start, _old_prev_pos, _old_prev_vel) = {
-            self.update_current_velocity(uv);
-            {
-                let mut cur_vel = self.vertex_set.cur_vel.borrow_mut();
-                self.apply_frictional_contact_impulse(cur_vel.view_mut());
+        self.update_current_velocity(uv);
+        {
+            self.apply_frictional_contact_impulse();
 
-                self.compute_step(cur_vel.view());
-            }
+            let cur_v = self.object_data.cur_v.borrow();
+            self.compute_step(cur_v.view());
+        }
 
-            let VertexSet {
-                prev_pos,
-                prev_vel,
-                cur_vel,
-                cur_pos,
-                ..
-            } = &mut self.vertex_set;
-
-            let cur_vel = cur_vel.borrow();
-            let cur_pos = cur_pos.borrow();
-
-            let old_prev_pos = prev_pos.clone();
-            let old_prev_vel = prev_vel.clone();
-
-            {
-                let prev_pos_flat_view = prev_pos.view_mut().into_flat();
-                let prev_vel_flat_view = prev_vel.view_mut().into_flat();
-
-                // Update prev pos
-                prev_pos_flat_view
-                    .iter_mut()
-                    .zip(cur_pos.view().into_flat().iter())
-                    .for_each(|(prev, &cur)| *prev = cur);
-
-                // Update prev vel
-                if and_velocity {
-                    prev_vel_flat_view
-                        .iter_mut()
-                        .zip(cur_vel.view().into_flat().iter())
-                        .for_each(|(prev, &cur)| *prev = cur);
-                } else {
-                    // Clear velocities. This ensures that any non-zero initial velocities are cleared
-                    // for subsequent steps.
-                    prev_vel_flat_view.iter_mut().for_each(|v| *v = 0.0);
-                }
-            }
-
-            let prev_pos = prev_pos.view().view();
-
-            // Update mesh vertex positions
-            for (i, solid) in self.solids.iter_mut().enumerate() {
-                let verts = solid.tetmesh.vertex_positions_mut();
-                verts.copy_from_slice(prev_pos.at(0).at(i).into());
-            }
-            for (i, shell) in self.shells.iter_mut().enumerate() {
-                match shell.material.properties {
-                    ShellProperties::Deformable { .. } => {
-                        let verts = shell.trimesh.vertex_positions_mut();
-                        verts.copy_from_slice(prev_pos.at(1).at(i).into());
-                    }
-                    ShellProperties::Rigid { .. } => {
-                        unimplemented!();
-                    }
-                    ShellProperties::Fixed => {
-                        // Nothing to do here, fixed meshes aren't moved by
-                        // simulation.
-                    }
-                }
-            }
-
-            let old_warm_start = self.warm_start.clone();
-
-            (old_warm_start, old_prev_pos, old_prev_vel)
-        };
+        self.object_data.advance(and_velocity);
 
         if !and_warm_start {
             self.reset_warm_start();
@@ -719,8 +1010,8 @@ impl NonLinearProblem {
     //) {
     //    {
     //        // Reinterpret solver variables as positions in 3D space.
-    //        let mut prev_pos = self.vertex_set.prev_pos.data().borrow_mut();
-    //        let mut prev_vel = self.vertex_set.prev_vel.data().borrow_mut();
+    //        let mut prev_pos = self.object_data.prev_pos.data().borrow_mut();
+    //        let mut prev_vel = self.object_data.prev_vel.data().borrow_mut();
 
     //        std::mem::replace(&mut *prev_vel, old_prev_vel);
     //        std::mem::replace(&mut *prev_pos, old_prev_pos);
@@ -820,7 +1111,7 @@ impl NonLinearProblem {
     //    let mut value = 0.0;
 
     //    if let Some(ref scc) = self.smooth_contact_constraint {
-    //        let prev_pos = self.vertex_set.prev_pos.data().borrow();
+    //        let prev_pos = self.object_data.prev_pos.data().borrow();
     //        let x: &[Number] = prev_pos.as_slice();
 
     //        let n = scc.constraint_size();
@@ -854,68 +1145,26 @@ impl NonLinearProblem {
     //    value
     //}
 
-    fn integrate_step(&self, v: &[Number], x0: &[Number], x: &mut [Number]) {
-        // In static simulations, velocity is simply displacement.
-        let dt = if self.time_step > 0.0 {
-            self.time_step
-        } else {
-            1.0
-        };
-        assert_eq!(v.len(), x.len());
-        assert_eq!(x0.len(), x.len());
-        x.iter_mut()
-            .zip(x0.iter().zip(v.iter()))
-            .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
-    }
-
     /// A convenience function to integrate the given velocity by the internal time step. For
-    /// implicit itegration this boils down to a simple multiply by the time step.
+    /// implicit integration this boils down to a simple multiply by the time step.
     pub fn compute_step(
         &self,
-        v: ChunkedView<ChunkedView<Chunked3<&[Number]>>>,
-    ) -> std::cell::Ref<'_, Chunked<Chunked<Chunked3<Vec<f64>>>>> {
-        {
-            let mut cur_pos = self.vertex_set.cur_pos.borrow_mut();
-            let x1 = cur_pos.view_mut().into_flat();
-            let x0 = self.vertex_set.prev_pos.view().into_flat();
-            self.integrate_step(v.into_flat(), x0, x1);
-        }
-        self.vertex_set.cur_pos.borrow()
-    }
-
-    /// Produce an iterator over the given slice of scaled variables.
-    pub fn scaled_variables_iter<'a>(
-        &self,
-        unscaled_var: &'a [Number],
-    ) -> impl Iterator<Item = Number> + 'a {
-        let scale = self.scale();
-        unscaled_var.iter().map(move |&val| val * scale)
-    }
-
-    pub fn update_current_velocity(
-        &self,
-        v: &[Number],
-    ) -> std::cell::Ref<'_, Chunked<Chunked<Chunked3<Vec<f64>>>>> {
-        {
-            let mut cur_vel = self.vertex_set.cur_vel.borrow_mut();
-            let sv = cur_vel.view_mut().into_flat();
-            for (output, input) in sv.iter_mut().zip(self.scaled_variables_iter(v)) {
-                *output = input;
-            }
-        }
-        self.vertex_set.cur_vel.borrow()
+        v: VertexView<&[Number]>,
+    ) -> std::cell::Ref<'_, VertexData<Vec<f64>>> {
+        self.object_data.integrate_step(v, self.time_step);
+        self.object_data.cur_x.borrow()
     }
 
     /// Compute and return the objective value.
-    pub fn objective_value(&self, v: ChunkedView<ChunkedView<Chunked3<&[Number]>>>) -> f64 {
-        let cur_pos = self.compute_step(v);
-        let x1 = cur_pos.view();
-        let x0 = self.vertex_set.prev_pos.view();
-        let v0 = self.vertex_set.prev_vel.view();
+    pub fn objective_value(&self, v: VertexView<&[Number]>) -> f64 {
+        let cur_x = self.compute_step(v);
+        let x1 = cur_x.view();
+        let x0 = self.object_data.prev_x.view();
+        let v0 = self.object_data.prev_v.view();
 
         let mut obj = 0.0;
 
-        for (i, solid) in self.solids.iter().enumerate() {
+        for (i, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(i).into_flat();
             let x1 = x1.at(0).at(i).into_flat();
             let v0 = v0.at(0).at(i).into_flat();
@@ -925,7 +1174,7 @@ impl NonLinearProblem {
             obj += solid.inertia().energy(v0, v);
         }
 
-        for (i, shell) in self.shells.iter().enumerate() {
+        for (i, shell) in self.object_data.shells.iter().enumerate() {
             let x0 = x0.at(1).at(i).into_flat();
             let x1 = x1.at(1).at(i).into_flat();
             //let v0 = v0.at(1).at(i).into_flat();
@@ -938,8 +1187,8 @@ impl NonLinearProblem {
         // there cannot be friction.
         if self.time_step > 0.0 {
             for fc in self.frictional_contacts.iter() {
-                let obj_v = Self::mesh_vertex_subset(&self.solids, v, fc.object_index);
-                let col_v = Self::mesh_vertex_subset(&self.solids, v, fc.collider_index);
+                let obj_v = self.object_data.cur_vel(v, fc.object_index);
+                let col_v = self.object_data.cur_vel(v, fc.collider_index);
                 obj -= fc
                     .constraint
                     .frictional_dissipation([obj_v.view(), col_v.view()]);
@@ -977,21 +1226,19 @@ impl NonLinearProblem {
         let NonLinearProblem {
             ref mut frictional_contacts,
             ref volume_constraints,
-            ref solids,
-            ref vertex_set,
+            ref object_data,
             time_step,
             ..
         } = *self;
 
-        let prev_pos = vertex_set.prev_pos.view();
-        let cur_vel = vertex_set.cur_vel.borrow();
+        let cur_v = object_data.cur_v.borrow();
 
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
-            let vel = cur_vel.view();
-            let obj_prev_pos = Self::mesh_vertex_subset(&solids, prev_pos, fc.object_index);
-            let col_prev_pos = Self::mesh_vertex_subset(&solids, prev_pos, fc.collider_index);
-            let obj_vel = Self::mesh_vertex_subset(&solids, vel, fc.object_index);
-            let col_vel = Self::mesh_vertex_subset(&solids, vel, fc.collider_index);
+            let v = cur_v.view();
+            let obj_prev_pos = self.object_data.prev_pos(fc.object_index);
+            let col_prev_pos = self.object_data.prev_pos(fc.collider_index);
+            let obj_vel = self.object_data.cur_vel(v, fc.object_index);
+            let col_vel = self.object_data.cur_vel(v, fc.collider_index);
 
             let offset = volume_constraints.len();
 
@@ -1104,52 +1351,52 @@ impl NonLinearProblem {
     }
 
     /// Return the stacked friction impulses: one for each vertex.
-    pub fn friction_impulse(&self) -> Chunked<Chunked<Chunked3<Vec<f64>>>> {
-        let prev_pos = self.vertex_set.prev_pos.view();
+    pub fn friction_impulse(&self) -> VertexData<Vec<f64>> {
+        let NonLinearProblem {
+            object_data,
+            frictional_contacts,
+            ..
+        } = self;
 
-        // Copy vertex structure from the `vertex_set`
-        let mut impulse = Chunked::from_offsets(
-            prev_pos.offsets().to_vec(),
-            Chunked::from_offsets(
-                prev_pos.data().offsets().to_vec(),
-                Chunked3::from_flat(vec![0.0; prev_pos.into_flat().len()]),
-            ),
-        );
+        // Create a chunked collection for the output. This essentially combines
+        // the structure in `pos`, which involved vertices that are not degrees
+        // of freedom and `prev_x` which involves vertices that ARE degrees of
+        // freedom.
+        let mut impulse = object_data.build_vertex_data();
 
         let mut obj_imp = Vec::new();
         let mut coll_imp = Vec::new();
 
-        for fc in self.frictional_contacts.iter() {
+        for fc in frictional_contacts.iter() {
             obj_imp.clear();
             obj_imp.resize(
-                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index),
-                0.0,
+                object_data.mesh_surface_vertex_count(fc.object_index),
+                [0.0; 3],
             );
 
             coll_imp.clear();
             coll_imp.resize(
-                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index),
-                0.0,
+                object_data.mesh_surface_vertex_count(fc.collider_index),
+                [0.0; 3],
             );
+
+            let obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
+            let coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
+
             // TODO: Finish this
             //fc.constraint.add_friction_impulse(
-            //    [Chunked3::from_flat(obj_imp.as_mut_slice()), Chunked3::from_flat(coll_imp.as_mut_slice())], 1.0);
+            //    [Chunked3::from_flat(obj_imp.as_mut_slice()),
+            //     Chunked3::from_flat(coll_imp.as_mut_slice())], 1.0);
 
             let mut imp =
-                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
-            for (imp, obj_imp) in imp
-                .iter_mut()
-                .zip(Chunked3::from_flat(obj_imp.view_mut()).iter())
-            {
+                object_data.mesh_vertex_subset_mut(impulse.view_mut(), None, fc.object_index);
+            for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {
                 *imp = *obj_imp;
             }
 
             let mut imp =
-                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
-            for (imp, coll_imp) in imp
-                .iter_mut()
-                .zip(Chunked3::from_flat(coll_imp.view_mut()).iter())
-            {
+                object_data.mesh_vertex_subset_mut(impulse.view_mut(), None, fc.collider_index);
+            for (imp, coll_imp) in imp.iter_mut().zip(coll_imp.iter()) {
                 *imp = *coll_imp;
             }
         }
@@ -1158,70 +1405,68 @@ impl NonLinearProblem {
 
     /// Return the stacked contact impulses: one for each vertex.
     pub fn contact_impulse(&self) -> Chunked<Chunked<Chunked3<Vec<f64>>>> {
-        let prev_pos = self.vertex_set.prev_pos.view();
+        let NonLinearProblem {
+            object_data,
+            frictional_contacts,
+            volume_constraints,
+            warm_start,
+            time_step,
+            ..
+        } = self;
 
-        let mut offset = self.volume_constraints.len();
+        let mut impulse = object_data.build_vertex_data();
 
-        // Copy vertex structure from the `vertex_set`
-        let mut impulse = Chunked::from_offsets(
-            prev_pos.offsets().to_vec(),
-            Chunked::from_offsets(
-                prev_pos.data().offsets().to_vec(),
-                Chunked3::from_flat(vec![0.0; prev_pos.into_flat().len()]),
-            ),
-        );
+        let mut offset = volume_constraints.len();
 
         let mut obj_imp = Vec::new();
         let mut coll_imp = Vec::new();
 
-        for fc in self.frictional_contacts.iter() {
+        for fc in frictional_contacts.iter() {
             // Get contact force from the warm start.
             let n = fc.constraint.num_contacts();
             let contact_impulse = Self::contact_impulse_magnitudes(
-                &self.warm_start.constraint_multipliers[offset..offset + n],
-                self.time_step,
+                &warm_start.constraint_multipliers[offset..offset + n],
+                *time_step,
             );
 
             offset += n;
 
             obj_imp.clear();
             obj_imp.resize(
-                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.object_index),
-                0.0,
+                object_data.mesh_surface_vertex_count(fc.object_index),
+                [0.0; 3],
             );
 
             coll_imp.clear();
             coll_imp.resize(
-                Self::mesh_surface_vertex_count(&self.solids, &self.shells, fc.collider_index),
-                0.0,
+                object_data.mesh_surface_vertex_count(fc.collider_index),
+                [0.0; 3],
             );
 
-            let obj_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.object_index);
-            let coll_x0 = Self::mesh_vertex_subset(&self.solids, prev_pos, fc.collider_index);
+            let mut obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
+            let mut coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
+
+            let obj_x0 = object_data.prev_pos(fc.object_index);
+            let coll_x0 = object_data.prev_pos(fc.collider_index);
+
             fc.constraint.add_contact_impulse(
                 [obj_x0.view(), coll_x0.view()],
                 &contact_impulse,
-                [
-                    Chunked3::from_flat(obj_imp.as_mut_slice()),
-                    Chunked3::from_flat(coll_imp.as_mut_slice()),
-                ],
+                [obj_imp.view_mut(), coll_imp.view_mut()],
             );
 
+            let obj_imp_view = obj_imp.view();
+            let coll_imp_view = coll_imp.view();
+
             let mut imp =
-                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.object_index);
-            for (imp, obj_imp) in imp
-                .iter_mut()
-                .zip(Chunked3::from_flat(obj_imp.view_mut()).iter())
-            {
+                object_data.mesh_vertex_subset_mut(impulse.view_mut(), None, fc.object_index);
+            for (imp, obj_imp) in imp.iter_mut().zip(obj_imp_view.iter()) {
                 *imp = *obj_imp;
             }
 
             let mut imp =
-                Self::mesh_vertex_subset_mut(&self.solids, impulse.view_mut(), fc.collider_index);
-            for (imp, coll_imp) in imp
-                .iter_mut()
-                .zip(Chunked3::from_flat(coll_imp.view_mut()).iter())
-            {
+                object_data.mesh_vertex_subset_mut(impulse.view_mut(), None, fc.collider_index);
+            for (imp, coll_imp) in imp.iter_mut().zip(coll_imp_view.iter()) {
                 *imp = *coll_imp;
             }
         }
@@ -1232,7 +1477,7 @@ impl NonLinearProblem {
     pub fn update_mesh_data(&mut self) {
         let contact_impulse = self.contact_impulse();
         let friction_impulse = self.friction_impulse();
-        for (idx, solid) in self.solids.iter_mut().enumerate() {
+        for (idx, solid) in self.object_data.solids.iter_mut().enumerate() {
             // Write back friction and contact impulses
             solid
                 .tetmesh
@@ -1400,7 +1645,7 @@ impl NonLinearProblem {
 /// Prepare the problem for Newton iterations.
 impl ipopt::BasicProblem for NonLinearProblem {
     fn num_variables(&self) -> usize {
-        self.vertex_set.prev_vel.view().into_flat().len()
+        self.object_data.prev_v.view().into_flat().len()
     }
 
     fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
@@ -1416,7 +1661,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         x_l.iter_mut().for_each(|x| *x = -bound);
         x_u.iter_mut().for_each(|x| *x = bound);
 
-        let x0 = self.vertex_set.prev_pos.view();
+        let x0 = self.object_data.prev_x.view();
         let mut x_l = Chunked::from_offsets(
             *x0.offsets(),
             Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(x_l)),
@@ -1426,7 +1671,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(x_u)),
         );
 
-        for (i, solid) in self.solids.iter().enumerate() {
+        for (i, solid) in self.object_data.solids.iter().enumerate() {
             if let Ok(fixed_verts) = solid
                 .tetmesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
@@ -1445,7 +1690,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             }
         }
 
-        for (i, shell) in self.shells.iter().enumerate() {
+        for (i, shell) in self.object_data.shells.iter().enumerate() {
             if let Ok(fixed_verts) = shell
                 .trimesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
@@ -1489,7 +1734,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let v = self.update_current_velocity(uv);
         let v = v.view();
 
-        // Copy the chunked structure from our vertex_set.
+        // Copy the chunked structure from our object_data.
         // TODO: Refactor this into a function for Chunked and UniChunked types.
         let mut grad = Chunked::from_offsets(
             *v.offsets(),
@@ -1498,10 +1743,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         let cur_pos = self.compute_step(v.view());
         let x1 = cur_pos.view();
-        let x0 = self.vertex_set.prev_pos.view();
-        let v0 = self.vertex_set.prev_vel.view();
+        let x0 = self.object_data.prev_x.view();
+        let v0 = self.object_data.prev_v.view();
 
-        for (i, solid) in self.solids.iter().enumerate() {
+        for (i, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(i).into_flat();
             let x1 = x1.at(0).at(i).into_flat();
             let v0 = v0.at(0).at(i).into_flat();
@@ -1512,7 +1757,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             solid.inertia().add_energy_gradient(v0, v, g);
         }
 
-        for (i, shell) in self.shells.iter().enumerate() {
+        for (i, shell) in self.object_data.shells.iter().enumerate() {
             let x0 = x0.at(1).at(i).into_flat();
             let x1 = x1.at(1).at(i).into_flat();
             //let v0 = v0.at(1).at(i).into_flat();
@@ -1537,8 +1782,20 @@ impl ipopt::BasicProblem for NonLinearProblem {
         );
 
         for fc in self.frictional_contacts.iter() {
+            // Since add_fricton_impulse is looking for a valid gradient, this
+            // must involve only vertices that can change.
+            assert!(match fc.object_index {
+                SourceIndex::Solid(_) => true,
+                SourceIndex::Shell(i) => match self.object_data.shells[i].material.properties {
+                    ShellProperties::Fixed => false,
+                    ShellProperties::Rigid { .. } => false,
+                    _ => true,
+                },
+            });
+
             let mut obj_g =
-                Self::mesh_vertex_subset_mut(&self.solids, grad.view_mut(), fc.object_index);
+                self.object_data
+                    .mesh_vertex_subset_mut(grad.view_mut(), None, fc.object_index);
             fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
         }
 
@@ -1587,10 +1844,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
-        let cur_vel = self.update_current_velocity(uv);
-        let cur_pos = self.compute_step(cur_vel.view());
-        let x = cur_pos.view();
-        let x0 = self.vertex_set.prev_pos.view();
+        let cur_v = self.update_current_velocity(uv);
+        let cur_x = self.compute_step(cur_v.view());
+        let x = cur_x.view();
+        let x0 = self.object_data.prev_x.view();
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
 
@@ -1604,10 +1861,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.constraint_size();
-            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
-            let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x = Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
-            let coll_x = Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
+            let obj_x0 = self.object_data.prev_pos(fc.object_index);
+            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
+            let obj_x = self.object_data.cur_pos(x, fc.object_index);
+            let coll_x = self.object_data.cur_pos(x, fc.collider_index);
 
             fc.constraint.constraint(
                 [obj_x0.view(), coll_x0.view()],
@@ -1667,8 +1924,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let iter = fc.constraint.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
                 rows[count] = (row + row_offset) as ipopt::Index;
-                cols[count] = self.source_coordinates(fc.object_index, fc.collider_index, col)
-                    as ipopt::Index;
+                cols[count] =
+                    self.object_data
+                        .source_coordinates(fc.object_index, fc.collider_index, col)
+                        as ipopt::Index;
                 jac[col][row] = 1;
                 count += 1;
             }
@@ -1695,7 +1954,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let v = self.update_current_velocity(uv);
         let cur_pos = self.compute_step(v.view());
         let x = cur_pos.view();
-        let x0 = self.vertex_set.prev_pos.view();
+        let x0 = self.object_data.prev_x.view();
 
         let mut count = 0; // Constraint counter
 
@@ -1712,10 +1971,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.constraint_jacobian_size();
-            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
-            let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x = Self::mesh_vertex_subset(&self.solids, x, fc.object_index);
-            let coll_x = Self::mesh_vertex_subset(&self.solids, x, fc.collider_index);
+            let obj_x0 = self.object_data.prev_pos(fc.object_index);
+            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
+            let obj_x = self.object_data.cur_pos(x, fc.object_index);
+            let coll_x = self.object_data.cur_pos(x, fc.collider_index);
 
             fc.constraint
                 .constraint_jacobian_values(
@@ -1742,7 +2001,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn num_hessian_non_zeros(&self) -> usize {
         let mut num = 0;
-        for solid in self.solids.iter() {
+        for solid in self.object_data.solids.iter() {
             num += solid.elasticity().energy_hessian_size() + solid.inertia().energy_hessian_size();
         }
         //for shell in self.shells.iter() {
@@ -1761,7 +2020,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut count = 0; // Constraint counter
 
         // Add energy indices
-        for solid in self.solids.iter() {
+        for solid in self.object_data.solids.iter() {
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
             elasticity
@@ -1785,8 +2044,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let offset = self
-                .vertex_set
-                .prev_vel
+                .object_data
+                .prev_v
                 .view()
                 .at(0)
                 .offset_value(*solid_idx);
@@ -1800,10 +2059,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for fc in self.frictional_contacts.iter() {
             let iter = fc.constraint.constraint_hessian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
-                rows[count] = self.source_coordinates(fc.object_index, fc.collider_index, row)
-                    as ipopt::Index;
-                cols[count] = self.source_coordinates(fc.object_index, fc.collider_index, col)
-                    as ipopt::Index;
+                rows[count] =
+                    self.object_data
+                        .source_coordinates(fc.object_index, fc.collider_index, row)
+                        as ipopt::Index;
+                cols[count] =
+                    self.object_data
+                        .source_coordinates(fc.object_index, fc.collider_index, col)
+                        as ipopt::Index;
                 count += 1;
             }
         }
@@ -1821,8 +2084,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let v = cur_vel.view();
         let cur_pos = self.compute_step(v.view());
         let x1 = cur_pos.view();
-        let x0 = self.vertex_set.prev_pos.view();
-        let v0 = self.vertex_set.prev_vel.view();
+        let x0 = self.object_data.prev_x.view();
+        let v0 = self.object_data.prev_v.view();
 
         if cfg!(debug_assertions) {
             // Initialize vals in debug builds.
@@ -1840,7 +2103,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut count = 0; // Constraint counter
 
-        for (solid_idx, solid) in self.solids.iter().enumerate() {
+        for (solid_idx, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(solid_idx).into_flat();
             let x1 = x1.at(0).at(solid_idx).into_flat();
             let v0 = v0.at(0).at(solid_idx).into_flat();
@@ -1894,10 +2157,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let obj_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.object_index);
-            let coll_x0 = Self::mesh_vertex_subset(&self.solids, x0, fc.collider_index);
-            let obj_x = Self::mesh_vertex_subset(&self.solids, x1, fc.object_index);
-            let coll_x = Self::mesh_vertex_subset(&self.solids, x1, fc.collider_index);
+            let obj_x0 = self.object_data.prev_pos(fc.object_index);
+            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
+            let obj_x = self.object_data.cur_pos(x1, fc.object_index);
+            let coll_x = self.object_data.cur_pos(x1, fc.collider_index);
             let nc = fc.constraint.constraint_size();
             let nh = fc.constraint.constraint_hessian_size();
             fc.constraint

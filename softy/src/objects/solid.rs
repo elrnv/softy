@@ -11,6 +11,7 @@ use std::cell::{Ref, RefCell};
 /// physical material properties that govern how it behaves.
 /// Additionally this struct may precompute its own surface topology on demand, which is
 /// useful in contact problems.
+#[derive(Clone, Debug)]
 pub struct TetMeshSolid {
     pub tetmesh: TetMesh,
     pub material: SolidMaterial,
@@ -81,6 +82,7 @@ impl<'a> Gravity<'a, TetMeshGravity<'a>> for TetMeshSolid {
     }
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct TetMeshSurface {
     pub indices: Vec<usize>,
     pub trimesh: TriMesh,

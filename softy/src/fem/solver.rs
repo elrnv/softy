@@ -17,7 +17,7 @@ use utils::{soap::*, zip};
 
 use crate::inf_norm;
 
-use super::{MuStrategy, NonLinearProblem, SimParams, Solution, SourceIndex, VertexSet};
+use super::{MuStrategy, NonLinearProblem, ObjectData, SimParams, Solution, SourceIndex};
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 /// Result from one inner simulation step.
@@ -258,7 +258,7 @@ impl SolverBuilder {
     }
 
     /// Assuming `mesh` has prepopulated vertex masses, this function computes its center of mass.
-    fn compute_center_of_mass(mesh: &TriMesh) -> [f64; 3] {
+    fn compute_centre_of_mass(mesh: &TriMesh) -> [f64; 3] {
         let mut com = Vector3::zeros();
         let mut total_mass = 0.0;
 
@@ -275,20 +275,27 @@ impl SolverBuilder {
     /// Helper function to build a global array of vertex data. This is stacked
     /// vertex positions and velocities used by the solver to deform all meshes
     /// at the same time.
-    fn build_vertex_set(
-        solids: &[TetMeshSolid],
-        shells: &[TriMeshShell],
-    ) -> Result<VertexSet, Error> {
-        let mut prev_pos = Chunked::<Chunked3<Vec<f64>>>::new();
-        let mut prev_vel = Chunked::<Chunked3<Vec<f64>>>::new();
+    fn build_object_data(
+        solids: Vec<TetMeshSolid>,
+        shells: Vec<TriMeshShell>,
+    ) -> Result<ObjectData, Error> {
+        // Generalized coordinates and their derivatives.
+        let mut prev_x = Chunked::<Chunked3<Vec<f64>>>::new();
+        let mut prev_v = Chunked::<Chunked3<Vec<f64>>>::new();
+
+        // Vertex position and velocities.
+        let mut pos = Chunked::<Chunked3<Vec<f64>>>::new();
+        let mut vel = Chunked::<Chunked3<Vec<f64>>>::new();
 
         for TetMeshSolid {
             tetmesh: ref mesh, ..
         } in solids.iter()
         {
             // Get previous position vector from the tetmesh.
-            prev_pos.push(mesh.vertex_positions().to_vec());
-            prev_vel.push(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+            prev_x.push(mesh.vertex_positions().to_vec());
+            prev_v.push(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+            pos.push(vec![]);
+            vel.push(vec![]);
         }
 
         for TriMeshShell {
@@ -298,36 +305,52 @@ impl SolverBuilder {
         {
             match material.properties {
                 ShellProperties::Rigid { .. } => {
-                    let translation = Self::compute_center_of_mass(mesh);
+                    let translation = Self::compute_centre_of_mass(mesh);
                     let rotation = [0.0; 3];
-                    prev_pos.push(vec![translation, rotation]);
-                    prev_vel.push(vec![[0.0; 3], [0.0; 3]]);
+                    prev_x.push(vec![translation, rotation]);
+                    prev_v.push(vec![[0.0; 3], [0.0; 3]]);
+
+                    pos.push(mesh.vertex_positions().to_vec());
+                    let mesh_vel =
+                        mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                    vel.push(mesh_vel);
                 }
                 ShellProperties::Deformable { .. } => {
-                    prev_pos.push(mesh.vertex_positions().to_vec());
+                    prev_x.push(mesh.vertex_positions().to_vec());
                     let mesh_prev_vel =
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-                    prev_vel.push(mesh_prev_vel);
+                    prev_v.push(mesh_prev_vel);
+                    pos.push(vec![]);
+                    vel.push(vec![]);
                 }
                 ShellProperties::Fixed => {
-                    // Static meshes are not simulated so we leave an empty set
-                    // here to maintain indexing consistency with the global
-                    // shell array.
-                    prev_pos.push(vec![]);
-                    prev_vel.push(vec![]);
+                    prev_x.push(vec![]);
+                    prev_v.push(vec![]);
+                    pos.push(mesh.vertex_positions().to_vec());
+                    let mesh_vel =
+                        mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                    vel.push(mesh_vel);
                 }
             }
         }
 
         let num_meshes = solids.len() + shells.len();
-        let prev_pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_pos);
-        let prev_vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_vel);
+        let prev_x = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_x);
+        let prev_v = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_v);
+        let pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], pos);
+        let vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vel);
 
-        Ok(VertexSet {
-            prev_pos: prev_pos.clone(),
-            prev_vel: prev_vel.clone(),
-            cur_pos: RefCell::new(prev_pos.clone()),
-            cur_vel: RefCell::new(prev_vel.clone()),
+        Ok(ObjectData {
+            prev_x: prev_x.clone(),
+            prev_v: prev_v.clone(),
+            cur_x: RefCell::new(prev_x.clone()),
+            cur_v: RefCell::new(prev_v.clone()),
+
+            pos: pos.clone(),
+            vel: vel.clone(),
+
+            solids,
+            shells,
         })
     }
 
@@ -411,14 +434,20 @@ impl SolverBuilder {
                 );
         }
 
-        for TriMeshShell { ref trimesh, material } in shells.iter() {
+        for TriMeshShell {
+            ref trimesh,
+            material,
+        } in shells.iter()
+        {
             match material.properties {
                 ShellProperties::Deformable { .. } => {
                     max_modulus = max_modulus
                         .max(
                             *trimesh
                                 .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)?
-                                .max_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
+                                .max_by(|a, b| {
+                                    a.partial_cmp(b).expect("Invalid First Lame Parameter")
+                                })
                                 .expect("Given TriMesh is empty"),
                         )
                         .max(
@@ -446,9 +475,9 @@ impl SolverBuilder {
         let solids = Self::build_solids(solids)?;
         let shells = Self::build_shells(shells)?;
 
-        let vertex_set = Self::build_vertex_set(&solids, &shells)?;
+        let object_data = Self::build_object_data(solids, shells)?;
 
-        let volume_constraints = Self::build_volume_constraints(&solids);
+        let volume_constraints = Self::build_volume_constraints(&object_data.solids);
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -458,8 +487,11 @@ impl SolverBuilder {
 
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
 
-        let frictional_contacts =
-            Self::build_frictional_contacts(&solids, &shells, frictional_contacts);
+        let frictional_contacts = Self::build_frictional_contacts(
+            &object_data.solids,
+            &object_data.shells,
+            frictional_contacts,
+        );
 
         let displacement_bound = None;
         //let displacement_bound = smooth_contact_params.map(|scp| {
@@ -469,9 +501,7 @@ impl SolverBuilder {
         //});
 
         Ok(NonLinearProblem {
-            vertex_set,
-            solids,
-            shells,
+            object_data,
             frictional_contacts,
             volume_constraints,
             time_step,
@@ -489,13 +519,15 @@ impl SolverBuilder {
     pub fn build(&self) -> Result<Solver, Error> {
         let mut problem = self.build_problem()?;
 
-        let max_size = Self::compute_max_size(&problem.solids, &problem.shells);
+        let max_size =
+            Self::compute_max_size(&problem.object_data.solids, &problem.object_data.shells);
 
         // Note that we don't need the solution field to get the number of variables and
         // constraints. This means we can use these functions to initialize solution.
         problem.reset_warm_start();
 
-        let max_modulus = Self::compute_max_modulus(&problem.solids, &problem.shells)?;
+        let max_modulus =
+            Self::compute_max_modulus(&problem.object_data.solids, &problem.object_data.shells)?;
 
         // Construct the Ipopt solver.
         let mut ipopt = Ipopt::new(problem)?;
@@ -600,11 +632,18 @@ impl SolverBuilder {
             .collect()
     }
 
+    fn prepare_kinematic_mesh_vertex_attributes<M: NumVertices + VertexAttrib + Attrib>(
+        mesh: &mut M,
+    ) -> Result<(), Error> {
+        mesh.attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
+        Ok(())
+    }
+
     /// A helper function to populate vertex attributes for simulation on a dynamic mesh.
     fn prepare_dynamic_mesh_vertex_attributes<M: NumVertices + VertexAttrib + Attrib>(
         mesh: &mut M,
     ) -> Result<(), Error> {
-        mesh.attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
+        Self::prepare_kinematic_mesh_vertex_attributes(mesh)?;
 
         // If this attribute doesn't exist, assume no vertices are fixed. This function will
         // return an error if there is an existing Fixed attribute with the wrong type.
@@ -816,7 +855,8 @@ impl SolverBuilder {
     }
 
     pub(crate) fn prepare_source_index_attribute<M>(mesh: &mut M) -> Result<(), Error>
-        where M: NumVertices + Attrib + VertexAttrib
+    where
+        M: NumVertices + Attrib + VertexAttrib,
     {
         // Need source index for meshes so that their vertices can be updated.
         // If this index is missing, it is assumed that the source is coincident
@@ -824,8 +864,8 @@ impl SolverBuilder {
         let num_verts = mesh.num_vertices();
         match mesh.add_attrib_data::<SourceIndexType, VertexIndex>(
             SOURCE_INDEX_ATTRIB,
-            (0..num_verts).collect::<Vec<_>>())
-        {
+            (0..num_verts).collect::<Vec<_>>(),
+        ) {
             Err(attrib::Error::AlreadyExists(_)) => Ok(()),
             Err(e) => Err(e.into()),
             _ => Ok(()),
@@ -882,7 +922,8 @@ impl SolverBuilder {
 
         match material.properties {
             ShellProperties::Fixed => {
-                // Nothing to be done, static meshes don't have material properties.
+                // Kinematic meshes don't have material properties.
+                Self::prepare_kinematic_mesh_vertex_attributes(mesh)?;
             }
             ShellProperties::Rigid { .. } => {
                 Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
@@ -964,22 +1005,22 @@ impl Solver {
 
     /// Get an immutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid(&self, index: usize) -> &TetMeshSolid {
-        &self.problem().solids[index]
+        &self.problem().object_data.solids[index]
     }
 
     /// Get a mutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid_mut(&mut self, index: usize) -> &mut TetMeshSolid {
-        &mut self.problem_mut().solids[index]
+        &mut self.problem_mut().object_data.solids[index]
     }
 
     /// Get an immutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell(&self, index: usize) -> &TriMeshShell {
-        &self.problem().shells[index]
+        &self.problem().object_data.shells[index]
     }
 
     /// Get a mutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell_mut(&mut self, index: usize) -> &mut TriMeshShell {
-        &mut self.problem_mut().shells[index]
+        &mut self.problem_mut().object_data.shells[index]
     }
 
     /// Get simulation parameters.
@@ -2500,9 +2541,9 @@ mod tests {
                 print_level: 0,
                 ..DYNAMIC_PARAMS
             })
-                .add_solid(mesh, stiff_material())
-                .build()
-                .unwrap();
+            .add_solid(mesh, stiff_material())
+            .build()
+            .unwrap();
             solver.step()?;
             Ok(())
         }

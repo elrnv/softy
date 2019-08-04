@@ -66,6 +66,7 @@ pub enum Error {
     FileIOError(std::io::ErrorKind),
     InvalidImplicitSurface,
     ImplicitsError(implicits::Error),
+    UnimplementedFeature(String),
 }
 
 impl From<std::io::Error> for Error {
@@ -161,6 +162,9 @@ impl From<Error> for SimResult {
             }
             Error::ImplicitsError(err) => {
                 SimResult::Error(format!("Error computing implicit surface: {:?}", err))
+            }
+            Error::UnimplementedFeature(err) => {
+                SimResult::Error(format!("Unimplemented feature: {:?}", err))
             }
         }
     }

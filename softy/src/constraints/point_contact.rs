@@ -104,6 +104,11 @@ impl PointContactConstraint {
             .update(pos.iter().cloned());
     }
 
+    pub fn update_contact_points(&self, x: SubsetView<Chunked3<&[f64]>>) {
+        let mut contact_points = self.contact_points.borrow_mut();
+        x.clone_into_other(&mut *contact_points);
+    }
+
     ///// Update implicit surface using the given position and displacement data.
     //pub fn update_surface_with_displacement(&self, x: &[f64], dx: &[f64]) {
     //    let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
@@ -681,8 +686,8 @@ impl ContactConstraint for PointContactConstraint {
 
         let surf = self.implicit_surface.borrow();
 
-        let mut contact_points = self.contact_points.borrow_mut();
-        x[1].clone_into_other(&mut *contact_points);
+        self.update_contact_points(x[1]);
+        let contact_points = self.contact_points.borrow_mut();
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords)?;
@@ -732,8 +737,8 @@ impl ContactConstraint for PointContactConstraint {
             .borrow_mut()
             .update(object_pos.iter().cloned());
 
-        let mut contact_points = self.contact_points.borrow_mut();
-        collider_pos.clone_into_other(&mut *contact_points);
+        self.update_contact_points(collider_pos);
+        let contact_points = self.contact_points.borrow_mut();
 
         let surf = self.implicit_surface.borrow_mut();
         surf.invalidate_query_neighbourhood();
@@ -788,8 +793,8 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
         debug_assert_eq!(value.len(), self.constraint_size());
         self.update_surface_with_mesh_pos(x1[0]);
 
-        let mut contact_points = self.contact_points.borrow_mut();
-        x1[1].clone_into_other(&mut *contact_points);
+        self.update_contact_points(x1[1]);
+        let contact_points = self.contact_points.borrow_mut();
 
         let mut cbuf = self.constraint_buffer.borrow_mut();
         let radius = self.contact_radius();
@@ -867,8 +872,8 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
         self.update_surface_with_mesh_pos(x1[0]);
-        let mut contact_points = self.contact_points.borrow_mut();
-        x1[1].clone_into_other(&mut *contact_points);
+        self.update_contact_points(x1[1]);
+        let contact_points = self.contact_points.borrow_mut();
         Ok(self
             .implicit_surface
             .borrow()
@@ -922,8 +927,8 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
     ) -> Result<(), Error> {
         self.update_surface_with_mesh_pos(x1[0]);
         let surf = self.implicit_surface.borrow();
-        let mut contact_points = self.contact_points.borrow_mut();
-        x1[1].clone_into_other(&mut *contact_points);
+        self.update_contact_points(x1[1]);
+        let contact_points = self.contact_points.borrow_mut();
         surf.surface_hessian_product_scaled_values(
             contact_points.view().into(),
             lambda,

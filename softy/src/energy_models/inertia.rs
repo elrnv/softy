@@ -65,7 +65,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
-        // Transfer forces from cell-vertices to vertices themeselves
+        // Transfer forces from cell-vertices to vertices themselves
         for (&vol, &density, cell) in zip!(
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)

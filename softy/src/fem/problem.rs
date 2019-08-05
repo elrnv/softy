@@ -685,6 +685,7 @@ pub(crate) struct NonLinearProblem {
     /// Gravitational potential energy.
     pub gravity: [f64; 3],
     /// The time step defines the amount of time elapsed between steps (calls to `advance`).
+    /// If the time step is zero, objects don't exhibit inertia.
     pub time_step: f64,
     /// Displacement bounds. This controls how big of a step we can take per vertex position
     /// component. In other words the bounds on the inf norm for each vertex displacement.
@@ -707,6 +708,12 @@ impl NonLinearProblem {
         } else {
             1.0
         }
+    }
+
+    /// Check if this problem represents a static simulation. In this case
+    /// inertia is ignored and velocities are treated as displacements.
+    fn is_static(&self) -> bool {
+        self.time_step == 0.0
     }
 
     /// Produce an iterator over the given slice of scaled variables.
@@ -1171,7 +1178,9 @@ impl NonLinearProblem {
             let v = v.at(0).at(i).into_flat();
             obj += solid.elasticity().energy(x0, x1);
             obj += solid.gravity(self.gravity).energy(x0, x1);
-            obj += solid.inertia().energy(v0, v);
+            if !self.is_static() {
+                obj += solid.inertia().energy(v0, v);
+            }
         }
 
         for (i, shell) in self.object_data.shells.iter().enumerate() {
@@ -1185,7 +1194,7 @@ impl NonLinearProblem {
 
         // If time_step is 0.0, this is a pure static solve, which means that
         // there cannot be friction.
-        if self.time_step > 0.0 {
+        if !self.is_static() {
             for fc in self.frictional_contacts.iter() {
                 let obj_v = self.object_data.cur_vel(v, fc.object_index);
                 let col_v = self.object_data.cur_vel(v, fc.collider_index);
@@ -1749,12 +1758,9 @@ impl ipopt::BasicProblem for NonLinearProblem {
         for (i, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(i).into_flat();
             let x1 = x1.at(0).at(i).into_flat();
-            let v0 = v0.at(0).at(i).into_flat();
-            let v = v.at(0).at(i).into_flat();
             let g = grad.at_mut(0).at_mut(i).into_flat();
             solid.elasticity().add_energy_gradient(x0, x1, g);
             solid.gravity(self.gravity).add_energy_gradient(x0, x1, g);
-            solid.inertia().add_energy_gradient(v0, v, g);
         }
 
         for (i, shell) in self.object_data.shells.iter().enumerate() {
@@ -1764,39 +1770,42 @@ impl ipopt::BasicProblem for NonLinearProblem {
             let g = grad.at_mut(1).at_mut(i).into_flat();
             //shell.elasticity().energy(x0, x1, g);
             shell.gravity(self.gravity).add_energy_gradient(x0, x1, g);
-            //shell.inertia().energy(v0, v, g);
         }
 
-        let grad_f = grad.into_flat();
 
-        let dt = self.time_step;
-        if dt > 0.0 {
-            // This is a correction to transform the above energy gradients to velocity gradients
-            // from displacement or position gradients.
-            grad_f.iter_mut().for_each(|g| *g *= dt);
-        }
+        if !self.is_static() {
+            {
+                let grad_flat = grad.view_mut().into_flat();
+                // This is a correction to transform the above energy derivatives to
+                // velocity gradients from position gradients.
+                grad_flat.iter_mut().for_each(|g| *g *= self.time_step);
+            }
 
-        let mut grad = Chunked::from_offsets(
-            *v.offsets(),
-            Chunked::from_offsets(*v.data().offsets(), Chunked3::from_flat(grad_f)),
-        );
+            // Finally add inertia terms
+            for (i, solid) in self.object_data.solids.iter().enumerate() {
+                let v0 = v0.at(0).at(i).into_flat();
+                let v = v.at(0).at(i).into_flat();
+                let g = grad.at_mut(0).at_mut(i).into_flat();
+                solid.inertia().add_energy_gradient(v0, v, g);
+            }
 
-        for fc in self.frictional_contacts.iter() {
-            // Since add_fricton_impulse is looking for a valid gradient, this
-            // must involve only vertices that can change.
-            assert!(match fc.object_index {
-                SourceIndex::Solid(_) => true,
-                SourceIndex::Shell(i) => match self.object_data.shells[i].material.properties {
-                    ShellProperties::Fixed => false,
-                    ShellProperties::Rigid { .. } => false,
-                    _ => true,
-                },
-            });
+            for fc in self.frictional_contacts.iter() {
+                // Since add_fricton_impulse is looking for a valid gradient, this
+                // must involve only vertices that can change.
+                assert!(match fc.object_index {
+                    SourceIndex::Solid(_) => true,
+                    SourceIndex::Shell(i) => match self.object_data.shells[i].material.properties {
+                        ShellProperties::Fixed => false,
+                        ShellProperties::Rigid { .. } => false,
+                        _ => true,
+                    },
+                });
 
-            let mut obj_g =
-                self.object_data
+                let mut obj_g =
+                    self.object_data
                     .mesh_vertex_subset_mut(grad.view_mut(), None, fc.object_index);
-            fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
+                fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
+            }
         }
 
         let scale = self.scale();
@@ -2002,7 +2011,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn num_hessian_non_zeros(&self) -> usize {
         let mut num = 0;
         for solid in self.object_data.solids.iter() {
-            num += solid.elasticity().energy_hessian_size() + solid.inertia().energy_hessian_size();
+            num += solid.elasticity().energy_hessian_size()
+                + if !self.is_static() { solid.inertia().energy_hessian_size() } else { 0 };
         }
         //for shell in self.shells.iter() {
         //    num += shell.inertia().energy_hessian_size();
@@ -2027,11 +2037,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
             count += n;
 
-            let inertia = solid.inertia();
-            let n = inertia.energy_hessian_size();
-            inertia
-                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
-            count += n;
+            if !self.is_static() {
+                let inertia = solid.inertia();
+                let n = inertia.energy_hessian_size();
+                inertia
+                    .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+                count += n;
+            }
         }
 
         //for shell in self.shells.iter() {
@@ -2113,10 +2125,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[count..count + n]);
             count += n;
 
-            let inertia = solid.inertia();
-            let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
-            count += n;
+            if !self.is_static() {
+                let inertia = solid.inertia();
+                let n = inertia.energy_hessian_size();
+                inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+                count += n;
+            }
         }
 
         //for (shell_idx, shell) in self.shells.iter().enumerate() {

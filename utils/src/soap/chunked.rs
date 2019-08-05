@@ -1160,6 +1160,14 @@ impl<S: RemovePrefix, O: RemovePrefix + std::borrow::Borrow<[usize]>> RemovePref
     }
 }
 
+impl<S: Clear> Clear for Chunked<S> {
+    fn clear(&mut self) {
+        self.chunks.clear();
+        self.chunks.push(0);
+        self.data.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

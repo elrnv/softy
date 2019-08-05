@@ -93,6 +93,18 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
     }
 }
 
+pub trait Clear {
+    /// Remove all elements from the current set without necessarily
+    /// deallocating the space previously used.
+    fn clear(&mut self);
+}
+
+impl<T> Clear for Vec<T> {
+    fn clear(&mut self) {
+        Vec::<T>::clear(self);
+    }
+}
+
 /// A type of range whose size is determined at compile time.
 /// This represents a range `[start..start + N::value()]`.
 /// This aids `UniChunked` types when indexing.

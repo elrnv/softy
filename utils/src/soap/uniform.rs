@@ -986,3 +986,9 @@ impl<S: RemovePrefix, N: num::Unsigned> RemovePrefix for UniChunked<S, N> {
         self.data.remove_prefix(n * N::value());
     }
 }
+
+impl<S: Clear, N> Clear for UniChunked<S, N> {
+    fn clear(&mut self) {
+        self.data.clear();
+    }
+}

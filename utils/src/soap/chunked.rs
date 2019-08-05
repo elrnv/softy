@@ -168,7 +168,9 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     pub fn offsets_mut(&mut self) -> &mut O {
         &mut self.chunks
     }
+}
 
+impl<S: Set, O> Chunked<S, O> {
     /// Convert this `Chunked` into its inner representation, which consists of a
     /// collection of offsets (first output) along with the underlying data
     ///
@@ -183,6 +185,12 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     /// ```
     /// storage type (second output).
     pub fn into_inner(self) -> (O, S) {
+        let Chunked { chunks, data } = self;
+        (chunks, data)
+    }
+
+    /// This function mutably borrows the inner structure of the chunked collection.
+    pub fn as_inner_mut(&mut self) -> (&mut O, &mut S) {
         let Chunked { chunks, data } = self;
         (chunks, data)
     }

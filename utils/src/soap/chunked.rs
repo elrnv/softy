@@ -42,6 +42,50 @@ impl<S, O> Chunked<S, O> {
     }
 }
 
+impl<S: Set> Chunked<S> {
+    /// Construct a `Chunked` collection of elements from a set of `sizes` that
+    /// determine the number of elements in each chunk. The sum of the sizes
+    /// must not be greater than the given collection `data`.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the sum of all given sizes is greater than
+    /// `data.len()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let s = Chunked::from_sizes(vec![3,1,2], vec![1,2,3,4,5,6]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(vec![1,2,3], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![4], iter.next().unwrap().to_vec());
+    /// assert_eq!(vec![5,6], iter.next().unwrap().to_vec());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    pub fn from_sizes<L>(sizes: L, data: S) -> Self
+    where L: std::borrow::Borrow<[usize]>
+    {
+        let sizes = sizes.borrow();
+        assert_eq!(
+            sizes.iter().sum::<usize>(),
+            data.len()
+        );
+
+        let mut offsets = Vec::with_capacity(sizes.len() + 1);
+        offsets.push(0);
+        offsets.extend(sizes.iter().scan(0, |prev_off, &x| {
+            *prev_off += x;
+            Some(*prev_off)
+        }));
+
+        Chunked {
+            chunks: offsets,
+            data,
+        }
+    }
+}
+
 impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     /// Construct a `Chunked` collection of elements given a collection of
     /// offsets into `S`. This is the most efficient constructor for creating
@@ -1111,6 +1155,22 @@ impl<S: RemovePrefix, O: RemovePrefix + std::borrow::Borrow<[usize]>> RemovePref
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sizes_constructor() {
+        let empty: Vec<u32> = vec![];
+        let s = Chunked::from_sizes(vec![], Vec::<u32>::new());
+        assert_eq!(s.len(), 0);
+
+        let s = Chunked::from_sizes(vec![0], Vec::<u32>::new());
+        assert_eq!(s.len(), 1);
+        assert_eq!(empty.as_slice(), s.view().at(0));
+
+        let s = Chunked::from_sizes(vec![0, 0, 0], vec![]);
+        assert_eq!(s.len(), 3);
+        for chunk in s.iter() {
+            assert_eq!(empty.as_slice(), chunk);
+        }
+    }
 
     #[test]
     fn zero_length_chunk() {

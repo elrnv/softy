@@ -47,28 +47,28 @@ impl<'a, T: 'a> ViewMut<'a> for [T] {
 }
 
 /// Blanket implementation of `View` for all immutable borrows.
-impl<'a, S: ?Sized + 'a> View<'a> for &S {
-    type Type = &'a S;
+impl<'a, S: ?Sized + 'a + View<'a>> View<'a> for &S {
+    type Type = S::Type;
 
     fn view(&'a self) -> Self::Type {
-        *self
+        <S as View<'a>>::view(*self)
     }
 }
 
 /// Blanket implementation of `View` for all mutable borrows.
-impl<'a, S: ?Sized + 'a> View<'a> for &mut S {
-    type Type = &'a S;
+impl<'a, S: ?Sized + 'a + View<'a>> View<'a> for &mut S {
+    type Type = S::Type;
 
     fn view(&'a self) -> Self::Type {
-        *self
+        <S as View<'a>>::view(*self)
     }
 }
 
 /// Blanket implementation of `ViewMut` for all mutable borrows.
-impl<'a, S: ?Sized + 'a> ViewMut<'a> for &mut S {
-    type Type = &'a mut S;
+impl<'a, S: ?Sized + 'a + ViewMut<'a>> ViewMut<'a> for &mut S {
+    type Type = S::Type;
 
     fn view_mut(&'a mut self) -> Self::Type {
-        *self
+        <S as ViewMut<'a>>::view_mut(*self)
     }
 }

@@ -146,7 +146,7 @@ impl SolverBuilder {
     ) -> &mut Self {
         // We can already weed out frictional contacts for pure static sims
         // since we already have the `SimParams`.
-        if self.sim_params.time_step.is_some() {
+        if !params.friction_params.is_some() || self.sim_params.time_step.is_some() {
             self.frictional_contacts.push((params, mat_ids));
         }
         self
@@ -1455,6 +1455,7 @@ impl Solver {
         // The number of friction solves to do.
         let mut friction_steps =
             vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
+        let total_friction_steps = friction_steps.iter().sum::<u32>();
         for _ in 0..self.sim_params.max_outer_iterations {
             // Remap contacts from the initial constraint reset above, or if the constraints were
             // updated after advection.
@@ -1492,7 +1493,7 @@ impl Solver {
                     self.problem_mut().reset_constraint_set();
 
                     if step_acceptable {
-                        if !friction_steps.is_empty() {
+                        if !friction_steps.is_empty() && total_friction_steps > 0 {
                             debug_assert!(self
                                 .problem()
                                 .is_same_as_constraint_set(&self.old_active_set));

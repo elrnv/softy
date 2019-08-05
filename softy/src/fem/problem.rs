@@ -179,14 +179,12 @@ impl ObjectData {
     /// Build a `VertexData` struct with an zero entry for each vertex of each
     /// mesh.
     pub fn build_vertex_data(&self) -> VertexData<Vec<f64>> {
-        let num_vertices = self.num_total_vertices();
+        let mut mesh_sizes = Vec::new();
+        mesh_sizes.extend(self.solids.iter().map(|solid| solid.tetmesh.num_vertices()));
+        mesh_sizes.extend(self.shells.iter().map(|shell| shell.trimesh.num_vertices()));
+        let out = Chunked3::from_grouped_vec(vec![[0.0; 3]; mesh_sizes.iter().sum::<usize>()]);
 
-        let out = Chunked3::from_grouped_vec(vec![[0.0; 3]; num_vertices]);
-        let mut mesh_offsets = vec![0];
-        mesh_offsets.extend(self.solids.iter().map(|solid| solid.tetmesh.num_vertices()));
-        mesh_offsets.extend(self.shells.iter().map(|shell| shell.trimesh.num_vertices()));
-
-        let out = Chunked::from_offsets(mesh_offsets, out);
+        let out = Chunked::from_sizes(mesh_sizes, out);
         let num_solids = self.solids.len();
         let num_shells = self.shells.len();
 
@@ -373,18 +371,6 @@ impl ObjectData {
                 Subset::all(x.at_mut(1).at_mut(i))
             }
         }
-    }
-
-    pub fn num_solid_vertices(&self) -> usize {
-        self.prev_x.view().at(0).data().len()
-    }
-
-    pub fn num_shell_vertices(&self) -> usize {
-        self.prev_x.view().at(1).data().len()
-    }
-
-    pub fn num_total_vertices(&self) -> usize {
-        self.num_solid_vertices() + self.num_shell_vertices()
     }
 
     pub fn mesh_surface_vertex_count(&self, source: SourceIndex) -> usize {

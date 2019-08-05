@@ -361,7 +361,7 @@ impl ContactConstraint for PointContactConstraint {
         potential_values: &[f64],
         friction_steps: u32,
     ) -> u32 {
-        if self.frictional_contact.is_none() {
+        if self.frictional_contact.is_none() || friction_steps == 0 {
             return 0;
         }
 
@@ -778,8 +778,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
     fn constraint_size(&self) -> usize {
         self.implicit_surface
             .borrow()
-            .num_cached_neighbourhoods()
-            .unwrap_or(0)
+            .num_cached_neighbourhoods().unwrap_or(0)
     }
 
     #[inline]

@@ -633,7 +633,7 @@ impl ObjectData {
             }
         }
 
-        let prev_x = prev_x.view().view();
+        let prev_x = prev_x.view();
 
         // Update mesh vertex positions
         for (i, solid) in solids.iter_mut().enumerate() {
@@ -780,10 +780,14 @@ impl NonLinearProblem {
         self.object_data.update_current_velocity(uv, self.scale())
     }
 
-    /// Compute the set of currently active constraints into the given `Vec`.
-    pub fn compute_active_constraint_set(&self, active_set: &mut Vec<usize>) {
+    /// Compute the set of currently active constraints into the given `Chunked` `Vec`.
+    pub fn compute_active_constraint_set(&self, active_set: &mut Chunked<Vec<usize>>) {
+        // Disassemble chunked collection.
+        let (offsets, active_set) = active_set.as_inner_mut();
+
         for i in 0..self.volume_constraints.len() {
             active_set.push(i);
+            offsets.push(active_set.len());
         }
 
         for FrictionalContactConstraint { ref constraint, .. } in self.frictional_contacts.iter() {
@@ -792,11 +796,13 @@ impl NonLinearProblem {
             for c in fc_active_constraints.into_iter() {
                 active_set.push(c + offset);
             }
+            offsets.push(active_set.len());
         }
     }
+
     /// Get the set of currently active constraints.
-    pub fn active_constraint_set(&self) -> Vec<usize> {
-        let mut active_set = Vec::new();
+    pub fn active_constraint_set(&self) -> Chunked<Vec<usize>> {
+        let mut active_set = Chunked::new();
         self.compute_active_constraint_set(&mut active_set);
         active_set
     }
@@ -813,8 +819,9 @@ impl NonLinearProblem {
     }
 
     /// Check if the given constraint set is the same as the current one.
-    pub fn is_same_as_constraint_set(&self, other_set: &[usize]) -> bool {
-        let cur_set = self.active_constraint_set();
+    pub fn is_same_as_constraint_set(&self, other_set: ChunkedView<&[usize]>) -> bool {
+        let cur_set = self.active_constraint_set().into_flat();
+        let other_set = other_set.into_flat();
         cur_set.len() == other_set.len()
             && cur_set
                 .into_iter()
@@ -866,16 +873,20 @@ impl NonLinearProblem {
 
     /// Build a new set of multipliers from the old set and replace warm start multipliers with the
     /// new set.
-    pub fn remap_contacts(&mut self, mut old_constraint_set: impl Iterator<Item = usize> + Clone) {
+    pub fn remap_contacts(&mut self, old_constraint_set: ChunkedView<&[usize]>) {
         use crate::constraints::remap_values;
-        let mut new_constraint_set = self.active_constraint_set().into_iter();
+        let active_set = self.active_constraint_set();
+        let new_values = active_set.data();
+        let old_values = old_constraint_set.data();
+        let mut new_constraint_set = active_set.view().into_iter();
+        let mut old_constraint_set = old_constraint_set.iter();
 
         // Remap multipliers
         let new_multipliers = remap_values(
             self.warm_start.constraint_multipliers.iter().cloned(),
             0.0,
-            old_constraint_set.clone(),
-            new_constraint_set.clone(),
+            old_values.iter().cloned(),
+            new_values.iter().cloned(),
         );
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
 
@@ -887,13 +898,10 @@ impl NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter_mut() {
-            let mut old_set = Vec::new();
-            let mut new_set = Vec::new();
-            for _ in 0..fc.constraint.num_contacts() {
-                old_set.push(old_constraint_set.next().unwrap());
-                new_set.push(new_constraint_set.next().unwrap());
-            }
-            fc.constraint.remap_frictional_contact(&old_set, &new_set);
+            let old_set = old_constraint_set.next().unwrap();
+            let new_set = new_constraint_set.next().unwrap();
+
+            fc.constraint.remap_frictional_contact(old_set, new_set);
         }
     }
 
@@ -1418,7 +1426,7 @@ impl NonLinearProblem {
 
         for fc in frictional_contacts.iter() {
             // Get contact force from the warm start.
-            let n = fc.constraint.num_contacts();
+            let n = fc.constraint.constraint_size();
             let contact_impulse = Self::contact_impulse_magnitudes(
                 &warm_start.constraint_multipliers[offset..offset + n],
                 *time_step,

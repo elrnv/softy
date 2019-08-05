@@ -596,7 +596,7 @@ impl SolverBuilder {
             inner_iterations: 0,
             sim_params: params,
             max_step: 0.0,
-            old_active_set: Vec::new(),
+            old_active_set: Chunked::<Vec<usize>>::new(),
         })
     }
 
@@ -983,7 +983,9 @@ pub struct Solver {
     max_step: f64,
     /// A set of active constraints from the previous time step. This set is used to update the set
     /// of constraints for the new time steps after vertex positions have changed.
-    old_active_set: Vec<usize>,
+    /// The set is chunked by constraints. Each constraint chunk represents the
+    /// active set for that constraint.
+    old_active_set: Chunked<Vec<usize>>,
 }
 
 impl Solver {
@@ -1435,7 +1437,7 @@ impl Solver {
         solver
             .solver_data_mut()
             .problem
-            .remap_contacts(old_active_set.iter().cloned());
+            .remap_contacts(old_active_set.view());
     }
 
     /// Run the optimization solver on one time step.
@@ -1496,7 +1498,7 @@ impl Solver {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
                             debug_assert!(self
                                 .problem()
-                                .is_same_as_constraint_set(&self.old_active_set));
+                                .is_same_as_constraint_set(self.old_active_set.view()));
                             let is_finished = self.compute_friction_impulse(
                                 &step_result.constraint_values,
                                 &mut friction_steps,
@@ -2318,7 +2320,7 @@ mod tests {
         Ok(())
     }
 
-    //#[test]
+    #[test]
     fn ball_tri_push_test() -> Result<(), Error> {
         let material =
             SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
@@ -2334,7 +2336,7 @@ mod tests {
         ball_tri_push_tester(material, fc_params)
     }
 
-    //#[test]
+    #[test]
     fn ball_tri_push_volume_constraint_test() -> Result<(), Error> {
         let material = SOLID_MATERIAL
             .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
@@ -2504,7 +2506,8 @@ mod tests {
     }
 
     /// Ball bouncing on an implicit surface with staggered projections friction.
-    #[test]
+    //#[test]
+    #[allow(dead_code)]
     fn ball_bounce_on_sp_implicit_test() -> Result<(), Error> {
         let material =
             SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));

@@ -96,9 +96,6 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
-    fn num_contacts(&self) -> usize {
-        self.contact_points.borrow().len()
-    }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
     }
@@ -132,10 +129,12 @@ impl ContactConstraint for ImplicitContactConstraint {
         let rows: Vec<_> = (0i32..nnz as i32).collect();
         let cols: Vec<_> = surf_indices.iter().map(|&i| i as i32).collect();
 
+        let num_contacts = self.contact_points.borrow().len();
+
         // Build ArrayFire matrix
         let nnz = nnz as u64;
         let num_rows = nnz as u64;
-        let num_cols = self.num_contacts() as u64;
+        let num_cols = num_contacts as u64;
 
         let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
         let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
@@ -165,7 +164,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         let cols: Vec<_> = surf_indices;
 
         let num_rows = nnz;
-        let num_cols = self.num_contacts();
+        let num_cols = self.contact_points.borrow().len();
 
         sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }
@@ -448,8 +447,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();
         self.update_contact_points(x[0]);
-        let mut contact_points = self.contact_points.borrow_mut();
-        x[1].clone_into_other(&mut *contact_points);
+        let contact_points = self.contact_points.borrow_mut();
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords)?;

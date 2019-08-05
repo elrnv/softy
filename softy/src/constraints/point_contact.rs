@@ -266,9 +266,6 @@ impl PointContactConstraint {
 }
 
 impl ContactConstraint for PointContactConstraint {
-    fn num_contacts(&self) -> usize {
-        self.contact_points.borrow().len()
-    }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
     }

@@ -165,7 +165,6 @@ pub trait ContactConstraint:
     + for<'a> ConstraintJacobian<'a, f64>
     + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
 {
-    fn num_contacts(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
     /// Provide the frictional contact mutable data.

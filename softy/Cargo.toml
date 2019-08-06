@@ -6,12 +6,12 @@ edition = "2018"
 
 [dependencies]
 na = { package = "nalgebra", version = "0.17" }
-ipopt = { git = "ssh://git@gitlab.com/elrnv/ipopt-rs.git" }
-geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
+ipopt = { git = "https://gitlab.com/elrnv/ipopt-rs.git" }
+geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rayon = "1.0"
 reinterpret = "0.1"
 implicits = { path = "../implicits" }
-unroll = { git = "ssh://git@gitlab.com/elrnv/unroll.git" }
+unroll = "0.1"
 approx = "0.3"
 num-traits = "0.2"
 jemallocator = "0.3"
@@ -20,7 +20,7 @@ utils = { path = "../utils" }
 is_sorted = "0.1"
 sprs = "0.6.4"
 ndarray = "0.12.1"
-af = { package = "arrayfire", git = "ssh://git@github.com/elrnv/arrayfire-rust.git" }
+af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git" }
 
 [dev-dependencies]
 criterion = { version = "0.2" }

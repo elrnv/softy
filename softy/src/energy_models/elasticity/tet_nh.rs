@@ -526,7 +526,7 @@ mod tests {
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {
-        Material::new(0).with_elasticity(ElasticityParameters {
+        SolidMaterial::new(0).with_elasticity(ElasticityParameters {
             lambda: 5.4,
             mu: 263.1,
         })

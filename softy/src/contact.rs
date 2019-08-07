@@ -1,7 +1,7 @@
 mod solver;
 
 use crate::friction::FrictionParams;
-use na::{Matrix3, Matrix3x2, Real, Vector2, Vector3};
+use na::{Matrix3, Matrix3x2, RealField, Vector2, Vector3};
 use reinterpret::*;
 pub use solver::ContactSolver;
 use utils::zip;
@@ -22,7 +22,7 @@ pub struct FrictionalContactParams {
 
 /// A two dimensional vector in polar coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Polar2<T: Real> {
+pub struct Polar2<T: RealField> {
     pub radius: T,
     pub angle: T,
 }
@@ -30,12 +30,12 @@ pub struct Polar2<T: Real> {
 /// An annotated set of Cylindrical coordinates. The standard Vector3 struct is not applicable here
 /// because arithmetic is different in cylindrical coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct VectorCyl<T: Real> {
+pub struct VectorCyl<T: RealField> {
     pub normal: T,
     pub tangent: Polar2<T>,
 }
 
-impl<T: Real> VectorCyl<T> {
+impl<T: RealField> VectorCyl<T> {
     pub fn new(normal: T, radius: T, angle: T) -> VectorCyl<T> {
         VectorCyl {
             normal,
@@ -70,19 +70,19 @@ impl<T: Real> VectorCyl<T> {
     }
 }
 
-impl<T: Real> From<Polar2<T>> for VectorCyl<T> {
+impl<T: RealField> From<Polar2<T>> for VectorCyl<T> {
     fn from(v: Polar2<T>) -> Self {
         Self::from_polar_tangent(v)
     }
 }
 
-impl<T: Real> From<Vector3<T>> for VectorCyl<T> {
+impl<T: RealField> From<Vector3<T>> for VectorCyl<T> {
     fn from(v: Vector3<T>) -> Self {
         Self::from_euclidean(v)
     }
 }
 
-impl<T: Real> Into<Vector3<T>> for VectorCyl<T> {
+impl<T: RealField> Into<Vector3<T>> for VectorCyl<T> {
     fn into(self) -> Vector3<T> {
         Self::to_euclidean(self)
     }

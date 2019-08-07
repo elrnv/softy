@@ -5,7 +5,7 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-na = { package = "nalgebra", version = "0.17" }
+na = { package = "nalgebra", version = "0.18" }
 ipopt = "0.5"
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rayon = "1.0"

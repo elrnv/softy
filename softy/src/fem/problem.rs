@@ -1766,7 +1766,6 @@ impl ipopt::BasicProblem for NonLinearProblem {
             shell.gravity(self.gravity).add_energy_gradient(x0, x1, g);
         }
 
-
         if !self.is_static() {
             {
                 let grad_flat = grad.view_mut().into_flat();
@@ -1797,7 +1796,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
                 let mut obj_g =
                     self.object_data
-                    .mesh_vertex_subset_mut(grad.view_mut(), None, fc.object_index);
+                        .mesh_vertex_subset_mut(grad.view_mut(), None, fc.object_index);
                 fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
             }
         }
@@ -2006,7 +2005,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut num = 0;
         for solid in self.object_data.solids.iter() {
             num += solid.elasticity().energy_hessian_size()
-                + if !self.is_static() { solid.inertia().energy_hessian_size() } else { 0 };
+                + if !self.is_static() {
+                    solid.inertia().energy_hessian_size()
+                } else {
+                    0
+                };
         }
         //for shell in self.shells.iter() {
         //    num += shell.inertia().energy_hessian_size();
@@ -2034,8 +2037,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             if !self.is_static() {
                 let inertia = solid.inertia();
                 let n = inertia.energy_hessian_size();
-                inertia
-                    .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+                inertia.energy_hessian_rows_cols(
+                    &mut rows[count..count + n],
+                    &mut cols[count..count + n],
+                );
                 count += n;
             }
         }

@@ -1009,6 +1009,16 @@ impl Solver {
         self.solver.solver_data_mut().problem
     }
 
+    /// Get a slice of solid objects represented in this solver.
+    pub fn solids(&self) -> &[TetMeshSolid] {
+        &self.problem().object_data.solids
+    }
+
+    /// Get a slice of shell objects represented in this solver.
+    pub fn shells(&self) -> &[TriMeshShell] {
+        &self.problem().object_data.shells
+    }
+
     /// Get an immutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid(&self, index: usize) -> &TetMeshSolid {
         &self.problem().object_data.solids[index]

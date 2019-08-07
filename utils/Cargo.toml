@@ -5,7 +5,7 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
+geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rand = "0.5"
 reinterpret = "0.1"
 

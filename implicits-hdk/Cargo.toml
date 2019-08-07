@@ -9,7 +9,7 @@ name = "implicitshdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git" }
 implicits = { path = "../implicits" }
 hdkrs = { path = "../hdkrs" }
 

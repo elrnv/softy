@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 na = { package = "nalgebra", version = "0.17" }
-ipopt = { git = "https://gitlab.com/elrnv/ipopt-rs.git" }
+ipopt = "0.5"
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rayon = "1.0"
 reinterpret = "0.1"

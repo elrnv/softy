@@ -9,7 +9,7 @@ name = "vtkiohdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git" }
+geometry = { git = "https://gitlab.com/elrnv/geometry.git" }
 hdkrs = { path = "../hdkrs" }
 
 [build-dependencies]

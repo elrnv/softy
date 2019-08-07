@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, RwLock};
 mod solver;
 
 pub use self::solver::*;
+use super::*;
 
 /// A registry for solvers to be used as a global instance. We use a `HashMap` instead of `Vec` to
 /// avoid dealing with fragmentation.
@@ -34,6 +35,7 @@ lazy_static! {
 pub(crate) enum Error {
     RegistryFull,
     MissingSolverAndMesh,
+    MaterialObjectMismatch { material_id: u32, object_type: ObjectType },
     SolverCreate(softy::Error),
 }
 
@@ -69,17 +71,20 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
         let EL_SoftySimParams {
             time_step,
             gravity,
+            log_file,
+
+            friction_iterations,
+
             clear_velocity,
             tolerance,
             max_iterations,
             outer_tolerance,
             max_outer_iterations,
-            friction_iterations,
+
             print_level,
             derivative_test,
             mu_strategy,
             max_gradient_scaling,
-            log_file,
             ..
         } = self;
         softy::SimParams {
@@ -98,8 +103,8 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
             print_level,
             derivative_test,
             mu_strategy: match mu_strategy {
-                0 => softy::MuStrategy::Monotone,
-                _ => softy::MuStrategy::Adaptive,
+                EL_SoftyMuStrategy::Monotone => softy::MuStrategy::Monotone,
+                EL_SoftyMuStrategy::Adaptive => softy::MuStrategy::Adaptive,
             },
             max_gradient_scaling,
             log_file: unsafe {
@@ -112,30 +117,95 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
     }
 }
 
-impl Into<softy::Material> for EL_SoftySimParams {
-    fn into(self) -> softy::Material {
+fn get_solid_material(params: EL_SoftySimParams, material_id: u32) -> Result<softy::SolidMaterial, Error> {
+    let EL_SoftySimParams {
+        materials,
+        volume_constraint,
+        time_step,
+        ..
+    } = self;
+
+    match materials.as_slice().get(material_id as usize) {
+        Some(EL_SoftyMaterialProperties {
+            object_type,
+            bulk_modulus,
+            shear_modulus,
+            density,
+            damping,
+        }) => {
+            if object_type != EL_SoftyObjectType::Solid {
+                return Err(Error::MaterialObjectMismatch);
+            }
+            softy::SolidMaterial::new(material_id as usize)
+                .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                    bulk_modulus as f64,
+                    shear_modulus as f64,
+                ))
+                .with_volume_preservation(volume_constraint)
+                .with_density(density as f64)
+                .with_damping(damping as f64, time_step as f64)
+        }
+        None => softy::SolidMaterial::new(0)
+    }
+}
+
+fn get_shell_material(params: EL_SoftySimParams, material_id: u32) -> Result<softy::ShellMaterial, Error> {
+    let EL_SoftySimParams {
+        materials,
+        volume_constraint,
+        time_step,
+        ..
+    } = self;
+
+    match materials.as_slice().get(material_id as usize) {
+        Some(EL_SoftyMaterialProperties {
+            object_type,
+            bulk_modulus,
+            shear_modulus,
+            density,
+            damping,
+        }) => {
+            if object_type != EL_SoftyObjectType::Solid {
+                return Err(Error::MaterialObjectMismatch);
+            }
+            softy::ShellMaterial::new(material_id as usize)
+                .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                    bulk_modulus as f64,
+                    shear_modulus as f64,
+                ))
+                .with_density(density as f64)
+                .with_damping(damping as f64, time_step as f64)
+        }
+        None => softy::ShellMaterial::new(1)
+    }
+}
+impl Into<softy::ShellMaterial> for EL_SoftySimParams {
+    fn into(self) -> softy::ShellMaterial {
         let EL_SoftySimParams {
             material:
                 EL_SoftyMaterialProperties {
+                    object_type,
                     bulk_modulus,
                     shear_modulus,
                     density,
                     damping,
                 },
-            volume_constraint,
+            time_step,
             ..
         } = self;
-        softy::Material {
-            elasticity: softy::ElasticityParameters::from_bulk_shear(bulk_modulus, shear_modulus),
-            volume_preservation: volume_constraint,
-            density,
-            damping,
-        }
+        assert_eq!(object_type, EL_SoftyObjectType::Shell);
+        softy::ShellMaterial::new(1)
+            .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                bulk_modulus as f64,
+                shear_modulus as f64,
+            ))
+            .with_density(density as f64)
+            .with_damping(damping as f64, time_step as f64)
     }
 }
 
-impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
-    fn into(self) -> softy::SmoothContactParams {
+impl Into<softy::FrictionalContactParams> for EL_SoftySimParams {
+    fn into(self) -> softy::FrictionalContactParams {
         let EL_SoftySimParams {
             contact_kernel,
             contact_type,
@@ -148,7 +218,7 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
         } = self;
         let radius_multiplier = f64::from(contact_radius_multiplier);
         let tolerance = f64::from(smoothness_tolerance);
-        softy::SmoothContactParams {
+        softy::FrictionalContactParams {
             kernel: match contact_kernel {
                 0 => softy::KernelType::Interpolating { radius_multiplier },
                 1 => softy::KernelType::Approximate {
@@ -160,8 +230,7 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             },
             contact_type: match contact_type {
                 0 => softy::ContactType::Implicit,
-                1 => softy::ContactType::Point,
-                _ => softy::ContactType::SPImplicit,
+                _ => softy::ContactType::Point,
             },
             friction_params: Some(softy::FrictionParams {
                 dynamic_friction: f64::from(dynamic_friction),
@@ -171,6 +240,33 @@ impl Into<softy::SmoothContactParams> for EL_SoftySimParams {
             }),
         }
     }
+}
+
+/// Given a slice of integers, compute the mode and return it along with its
+/// frequency.
+/// If the slice is empty just return 0.
+fn mode(data: &[u32]) -> (u32, usize) {
+    let max_int = data.iter().cloned().max().map(|x| x + 1).unwrap_or(0) as usize;
+    let mut bins = vec![0; max_int];
+    for &x in data.iter() {
+        bins[x] += 1;
+    }
+    bins.iter()
+        .cloned()
+        .enumerate()
+        .max_by_key(|&(_, f)| f)
+        .map(|(m, f)| (m as u32, f))
+        .unwrap_or((0u32, 0))
+}
+
+#[test]
+fn mode_test() {
+    let v = vec![1u32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
+    assert_eq!(mode(v.into_iter(), (1, 6));
+    let v = vec![];
+    assert_eq!(mode(v.into_iter(), (0, 0)));
+    let v = vec![0u32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+    assert_eq!(mode(v.into_iter(), (1, 4)));
 }
 
 /// Register a new solver in the registry. (Rust side)
@@ -187,17 +283,21 @@ pub(crate) fn register_new_solver(
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
     for mesh in tetmesh.split_into_connected_components() {
-        solver_builder.add_solid(mesh);
+        let material_id = mesh
+            .attrib_as_slice::<u32, CellIndex>()
+            .map(|slice| mode(slice).0)
+            .unwrap_or(0);
+        let solid_material = get_solid_material(params, material_id);
+        solver_builder.add_solid(mesh, solid_material);
     }
-
-    solver_builder.solid_material(params.into());
 
     // Add a shell if one was given.
     if let Some(polymesh) = shell {
         for mesh in (*polymesh).reversed().split_into_connected_components() {
-            solver_builder.add_shell(mesh);
+            solver_builder.add_shell(mesh, params.into());
         }
-        solver_builder.smooth_contact_params(params.into());
+        //TODO:
+        //solver_builder.add_frictional_contact(params.into());
     }
 
     let solver = match solver_builder.build() {
@@ -237,7 +337,7 @@ pub(crate) fn register_new_solver(
 /// Perform one solve step given a solver.
 #[inline]
 pub(crate) fn step<F>(
-    solver: &mut Solver,
+    solver: &mut dyn Solver,
     tetmesh_points: Option<Box<PointCloud<f64>>>,
     polymesh_points: Option<Box<PointCloud<f64>>>,
     check_interrupt: F,
@@ -253,7 +353,7 @@ where
             Err(softy::Error::SizeMismatch) =>
                 return (None, None, CookResult::Error(
                         format!("Input points ({}) don't coincide with solver TetMesh ({}).",
-                        (*pts).num_vertices(), solver.borrow_mesh().num_vertices()))),
+                        (*pts).num_vertices(), solver.num_solid_vertices()))),
             Err(softy::Error::AttribError(err)) =>
                 return (None, None, CookResult::Warning(
                         format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
@@ -273,10 +373,7 @@ where
                     CookResult::Error(format!(
                         "Input points ({}) don't coincide with solver PolyMesh ({}).",
                         (*pts).num_vertices(),
-                        solver
-                            .try_borrow_kinematic_mesh()
-                            .map(|x| x.num_vertices() as isize)
-                            .unwrap_or(-1)
+                        solver.num_shell_vertices()
                     )),
                 )
             }
@@ -299,11 +396,9 @@ where
     }
 
     let cook_result = convert_to_cookresult(solver.solve().into());
-    let solver_trimesh = solver
-        .try_borrow_kinematic_mesh()
-        .map(|x| PolyMesh::from(x.clone()));
-    let solver_tetmesh = solver.borrow_mesh().clone();
-    (Some(solver_tetmesh), solver_trimesh, cook_result)
+    let solver_polymesh = PolyMesh::from(solver.shell_mesh());
+    let solver_tetmesh = solver.solid_mesh();
+    (Some(solver_tetmesh), Some(solver_polymesh), cook_result)
 }
 
 /// Clear all solvers from the registry and reset the counter.
@@ -334,7 +429,7 @@ where
             let mut solver = solver.lock().unwrap();
             solver.set_interrupter(Box::new(check_interrupt));
             let cook_result = convert_to_cookresult(solver.solve().into());
-            let solver_tetmesh = solver.borrow_mesh().clone();
+            let solver_tetmesh = solver.solid_mesh();
             (Some((solver_id, solver_tetmesh)), cook_result)
         }
         Err(err) => (

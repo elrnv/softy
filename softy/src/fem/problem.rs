@@ -503,7 +503,7 @@ impl ObjectData {
             let source_index_iter = solid
                 .tetmesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let new_pos_iter = source_index_iter.map(|&idx| new_pos[idx]);
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx));
 
             // Only update fixed vertices, if no such attribute exists, return an error.
             let fixed_iter = solid
@@ -514,7 +514,13 @@ impl ObjectData {
                 .zip(new_pos_iter)
                 .zip(fixed_iter)
                 .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                .for_each(|(pos, new_pos)| *pos = new_pos);
+                .for_each(|(pos, new_pos)| {
+                    // Update the vertices we find in the given `new_pos` collection, not all may
+                    // still be there.
+                    if let Some(&new_pos) = new_pos {
+                        *pos = new_pos;
+                    }
+                });
 
             // TODO: Compute new velocity from previous step. This is an explicit velocity estimate.
             // TODO: determine if this is sufficient, or do we need the user to
@@ -548,7 +554,7 @@ impl ObjectData {
             let source_index_iter = shell
                 .trimesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let new_pos_iter = source_index_iter.map(|&idx| new_pos[idx]);
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx));
 
             match shell.material.properties {
                 ShellProperties::Deformable { .. } => {
@@ -561,7 +567,14 @@ impl ObjectData {
                         .zip(new_pos_iter)
                         .zip(fixed_iter)
                         .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                        .for_each(|(pos, new_pos)| *pos = new_pos);
+                        .for_each(|(pos, new_pos)| {
+                            // It's possible that the new vector of positions is missing some
+                            // vertices that were fixed before, so we try to update those we
+                            // actually find in the `new_pos` collection.
+                            if let Some(&new_pos) = new_pos {
+                                *pos = new_pos;
+                            }
+                        });
                 }
                 ShellProperties::Rigid { .. } => {
                     // A rigid mesh has different degrees of freedom than its vertex positions.
@@ -588,7 +601,11 @@ impl ObjectData {
                     // copy the positions and velocities over.
                     pos.iter_mut()
                         .zip(new_pos_iter)
-                        .for_each(|(pos, new_pos)| *pos = new_pos);
+                        .for_each(|(pos, new_pos)| {
+                            if let Some(&new_pos) = new_pos {
+                                *pos = new_pos;
+                            }
+                        });
                 }
             }
         }
@@ -1236,6 +1253,8 @@ impl NonLinearProblem {
 
         let cur_v = object_data.cur_v.borrow();
 
+        let mut is_finished = true;
+
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let v = cur_v.view();
             let obj_prev_pos = self.object_data.prev_pos(fc.object_index);
@@ -1252,16 +1271,18 @@ impl NonLinearProblem {
 
             dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
             let potential_values = &constraint_values[offset..];
-            fc.constraint.update_frictional_contact_impulse(
+            let remaining_steps = fc.constraint.update_frictional_contact_impulse(
                 &contact_impulse,
                 [obj_prev_pos.view(), col_prev_pos.view()],
                 [obj_vel.view(), col_vel.view()],
                 potential_values,
                 friction_steps[fc_idx],
             );
+
+            is_finished &= remaining_steps == 0;
         }
 
-        false
+        is_finished
     }
 
     /// Given a tetmesh, compute the strain energy per tetrahedron.

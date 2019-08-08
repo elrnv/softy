@@ -17,8 +17,13 @@ pub mod mask_iter;
 mod matrix;
 mod objects;
 
-#[cfg(test)]
-pub(crate) mod test_utils;
+// TODO: This should be feature gated. Unfortunately this makes it tedious to
+// run tests without passing the feature explicitly via the `--features` flag.
+// Doing this automatically in Cargo.toml is blocked on this issue:
+// https://github.com/rust-lang/cargo/issues/2911, for which there is a
+// potential solution drafted in https://github.com/rust-lang/rfcs/pull/1956,
+// which is also blocked at the time of this writing.
+pub mod test_utils;
 
 pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
@@ -27,13 +32,13 @@ pub type TriMesh = geo::mesh::TriMesh<f64>;
 
 pub use self::contact::*;
 pub use self::contact::{ContactType, FrictionalContactParams};
-pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult};
+pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::material::*;
 use geo::mesh::attrib;
 pub use index::Index;
 
-pub use attrib_defines::{SourceIndexType, SOURCE_INDEX_ATTRIB};
+pub use attrib_defines::*;
 
 pub use implicits::KernelType;
 
@@ -216,50 +221,4 @@ where
         .map(|x| x.abs())
         .max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
         .unwrap_or(0.0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use geo::mesh::{topology::*, Attrib, TetMesh};
-    use test_utils::*;
-
-    fn material() -> SolidMaterial {
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
-    }
-
-    #[test]
-    fn sim_test() {
-        let verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 0.0, 2.0],
-        ];
-        let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
-        let mut mesh = TetMesh::new(verts, indices);
-        mesh.add_attrib_data::<i8, VertexIndex>("fixed", vec![0, 0, 1, 1, 0, 0])
-            .unwrap();
-
-        let ref_verts = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-        ];
-
-        mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
-            .unwrap();
-
-        assert!(
-            match sim(Some(mesh), material(), None, STATIC_PARAMS, None) {
-                SimResult::Success(_) => true,
-                _ => false,
-            }
-        );
-    }
 }

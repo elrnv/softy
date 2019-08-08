@@ -206,8 +206,8 @@ fn get_frictional_contacts(
         .iter()
         .map(|&frictional_contact| {
             let EL_SoftyFrictionalContactParams {
-                material_id0,
-                material_id1,
+                object_material_id,
+                collider_material_id,
                 kernel,
                 contact_type,
                 radius_multiplier,
@@ -242,7 +242,7 @@ fn get_frictional_contacts(
                         print_level: 5,
                     }),
                 },
-                (material_id0 as usize, material_id1 as usize),
+                (object_material_id as usize, collider_material_id as usize),
             )
         })
         .collect()
@@ -307,10 +307,10 @@ pub(crate) fn register_new_solver(
             let shell_material = get_shell_material(params, material_id)?;
             solver_builder.add_shell(mesh, shell_material);
         }
+    }
 
-        for (frictional_contact, indices) in get_frictional_contacts(&params) {
-            solver_builder.add_frictional_contact(frictional_contact, indices);
-        }
+    for (frictional_contact, indices) in get_frictional_contacts(&params) {
+        solver_builder.add_frictional_contact(frictional_contact, indices);
     }
 
     let solver = match solver_builder.build() {

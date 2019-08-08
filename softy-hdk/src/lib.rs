@@ -49,8 +49,8 @@ pub struct EL_SoftyMaterialProperties {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyFrictionalContactParams {
-    pub material_id0: u32,
-    pub material_id1: u32,
+    pub object_material_id: u32,
+    pub collider_material_id: u32,
     pub kernel: EL_SoftyKernel,
     pub contact_type: EL_SoftyContactType,
     pub radius_multiplier: f32,

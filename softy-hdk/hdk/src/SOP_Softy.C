@@ -198,12 +198,20 @@ static const char *theDsFile = R"THEDSFILE(
             default 0
 
             parm {
-                name "materialids#"
-                cppname "MaterialIds"
-                label "Material Ids"
-                type intvector2
-                size 2
-                default { "0" "1" }
+                name "objectmaterialid#"
+                cppname "ObjectMaterialId"
+                label "Object Material Id"
+                type integer
+                default { "0" }
+                range { 0! 1 }
+            }
+
+            parm {
+                name "collidermaterialid#"
+                cppname "ColliderMaterialId"
+                label "Collider Material Id"
+                type integer
+                default { "1" }
                 range { 0! 1 }
             }
 
@@ -509,6 +517,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     std::vector<EL_SoftyFrictionalContactParams> frictional_contact_vec;
     for (const auto & sop_fc: sop_frictional_contacts) {
         EL_SoftyFrictionalContactParams fc_params;
+        fc_params.object_material_id = sop_fc.objectmaterialid;
+        fc_params.collider_material_id = sop_fc.collidermaterialid;
+        
         switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel)) {
             case SOP_SoftyEnums::Kernel::INTERPOLATING:
                 fc_params.kernel = EL_SoftyKernel::Interpolating;
@@ -534,7 +545,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         }
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
-        fc_params.dynamic_cof= sop_fc.dynamiccof;
+        fc_params.dynamic_cof = sop_fc.dynamiccof;
         fc_params.friction_tolerance = sop_fc.frictiontolerance;
         fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
         frictional_contact_vec.push_back(fc_params);

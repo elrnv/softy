@@ -1,5 +1,6 @@
 use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams};
-use geo::mesh::{PointCloud, PolyMesh, TetMesh};
+use geo::mesh::topology::*;
+use geo::mesh::{attrib::*, PointCloud, PolyMesh, TetMesh};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::{self, fem};
@@ -35,7 +36,10 @@ lazy_static! {
 pub(crate) enum Error {
     RegistryFull,
     MissingSolverAndMesh,
-    MaterialObjectMismatch { material_id: u32, object_type: ObjectType },
+    MaterialObjectMismatch {
+        material_id: u32,
+        object_type: EL_SoftyObjectType,
+    },
     SolverCreate(softy::Error),
 }
 
@@ -117,16 +121,20 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
     }
 }
 
-fn get_solid_material(params: EL_SoftySimParams, material_id: u32) -> Result<softy::SolidMaterial, Error> {
+/// Build a material from the given parameters and set it to the specified id.
+fn get_solid_material(
+    params: EL_SoftySimParams,
+    material_id: u32,
+) -> Result<softy::SolidMaterial, Error> {
     let EL_SoftySimParams {
         materials,
         volume_constraint,
         time_step,
         ..
-    } = self;
+    } = params;
 
     match materials.as_slice().get(material_id as usize) {
-        Some(EL_SoftyMaterialProperties {
+        Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,
             shear_modulus,
@@ -134,31 +142,37 @@ fn get_solid_material(params: EL_SoftySimParams, material_id: u32) -> Result<sof
             damping,
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
-                return Err(Error::MaterialObjectMismatch);
+                return Err(Error::MaterialObjectMismatch {
+                    material_id,
+                    object_type,
+                });
             }
-            softy::SolidMaterial::new(material_id as usize)
+            Ok(softy::SolidMaterial::new(material_id as usize)
                 .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
                     bulk_modulus as f64,
                     shear_modulus as f64,
                 ))
                 .with_volume_preservation(volume_constraint)
                 .with_density(density as f64)
-                .with_damping(damping as f64, time_step as f64)
+                .with_damping(damping as f64, time_step as f64))
         }
-        None => softy::SolidMaterial::new(0)
+        None => Ok(softy::SolidMaterial::new(material_id as usize)),
     }
 }
 
-fn get_shell_material(params: EL_SoftySimParams, material_id: u32) -> Result<softy::ShellMaterial, Error> {
+/// Build a shell material from the given parameters and set it to the specified id.
+fn get_shell_material(
+    params: EL_SoftySimParams,
+    material_id: u32,
+) -> Result<softy::ShellMaterial, Error> {
     let EL_SoftySimParams {
         materials,
-        volume_constraint,
         time_step,
         ..
-    } = self;
+    } = params;
 
     match materials.as_slice().get(material_id as usize) {
-        Some(EL_SoftyMaterialProperties {
+        Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,
             shear_modulus,
@@ -166,80 +180,72 @@ fn get_shell_material(params: EL_SoftySimParams, material_id: u32) -> Result<sof
             damping,
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
-                return Err(Error::MaterialObjectMismatch);
+                return Err(Error::MaterialObjectMismatch {
+                    material_id,
+                    object_type,
+                });
             }
-            softy::ShellMaterial::new(material_id as usize)
+            Ok(softy::ShellMaterial::new(material_id as usize)
                 .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
                     bulk_modulus as f64,
                     shear_modulus as f64,
                 ))
                 .with_density(density as f64)
-                .with_damping(damping as f64, time_step as f64)
+                .with_damping(damping as f64, time_step as f64))
         }
-        None => softy::ShellMaterial::new(1)
-    }
-}
-impl Into<softy::ShellMaterial> for EL_SoftySimParams {
-    fn into(self) -> softy::ShellMaterial {
-        let EL_SoftySimParams {
-            material:
-                EL_SoftyMaterialProperties {
-                    object_type,
-                    bulk_modulus,
-                    shear_modulus,
-                    density,
-                    damping,
-                },
-            time_step,
-            ..
-        } = self;
-        assert_eq!(object_type, EL_SoftyObjectType::Shell);
-        softy::ShellMaterial::new(1)
-            .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
-                bulk_modulus as f64,
-                shear_modulus as f64,
-            ))
-            .with_density(density as f64)
-            .with_damping(damping as f64, time_step as f64)
+        None => Ok(softy::ShellMaterial::new(material_id as usize)),
     }
 }
 
-impl Into<softy::FrictionalContactParams> for EL_SoftySimParams {
-    fn into(self) -> softy::FrictionalContactParams {
-        let EL_SoftySimParams {
-            contact_kernel,
-            contact_type,
-            contact_radius_multiplier,
-            smoothness_tolerance,
-            dynamic_friction,
-            friction_inner_iterations,
-            friction_tolerance,
-            ..
-        } = self;
-        let radius_multiplier = f64::from(contact_radius_multiplier);
-        let tolerance = f64::from(smoothness_tolerance);
-        softy::FrictionalContactParams {
-            kernel: match contact_kernel {
-                0 => softy::KernelType::Interpolating { radius_multiplier },
-                1 => softy::KernelType::Approximate {
-                    tolerance,
-                    radius_multiplier,
+fn get_frictional_contacts(
+    params: &EL_SoftySimParams,
+) -> Vec<(softy::FrictionalContactParams, (usize, usize))> {
+    params
+        .frictional_contacts
+        .as_slice()
+        .iter()
+        .map(|&frictional_contact| {
+            let EL_SoftyFrictionalContactParams {
+                material_id0,
+                material_id1,
+                kernel,
+                contact_type,
+                radius_multiplier,
+                smoothness_tolerance,
+                dynamic_cof,
+                friction_tolerance,
+                friction_inner_iterations,
+            } = frictional_contact;
+            let radius_multiplier = f64::from(radius_multiplier);
+            let tolerance = f64::from(smoothness_tolerance);
+            (
+                softy::FrictionalContactParams {
+                    kernel: match kernel {
+                        EL_SoftyKernel::Interpolating => {
+                            softy::KernelType::Interpolating { radius_multiplier }
+                        }
+                        EL_SoftyKernel::Approximate => softy::KernelType::Approximate {
+                            tolerance,
+                            radius_multiplier,
+                        },
+                        EL_SoftyKernel::Cubic => softy::KernelType::Cubic { radius_multiplier },
+                        EL_SoftyKernel::Global => softy::KernelType::Global { tolerance },
+                    },
+                    contact_type: match contact_type {
+                        EL_SoftyContactType::Implicit => softy::ContactType::Implicit,
+                        EL_SoftyContactType::Point => softy::ContactType::Point,
+                    },
+                    friction_params: Some(softy::FrictionParams {
+                        dynamic_friction: f64::from(dynamic_cof),
+                        inner_iterations: friction_inner_iterations as usize,
+                        tolerance: f64::from(friction_tolerance),
+                        print_level: 5,
+                    }),
                 },
-                2 => softy::KernelType::Cubic { radius_multiplier },
-                _ => softy::KernelType::Global { tolerance },
-            },
-            contact_type: match contact_type {
-                0 => softy::ContactType::Implicit,
-                _ => softy::ContactType::Point,
-            },
-            friction_params: Some(softy::FrictionParams {
-                dynamic_friction: f64::from(dynamic_friction),
-                inner_iterations: friction_inner_iterations as usize,
-                tolerance: f64::from(friction_tolerance),
-                print_level: 5,
-            }),
-        }
-    }
+                (material_id0 as usize, material_id1 as usize),
+            )
+        })
+        .collect()
 }
 
 /// Given a slice of integers, compute the mode and return it along with its
@@ -249,7 +255,7 @@ fn mode(data: &[u32]) -> (u32, usize) {
     let max_int = data.iter().cloned().max().map(|x| x + 1).unwrap_or(0) as usize;
     let mut bins = vec![0; max_int];
     for &x in data.iter() {
-        bins[x] += 1;
+        bins[x as usize] += 1;
     }
     bins.iter()
         .cloned()
@@ -262,11 +268,11 @@ fn mode(data: &[u32]) -> (u32, usize) {
 #[test]
 fn mode_test() {
     let v = vec![1u32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
-    assert_eq!(mode(v.into_iter(), (1, 6));
+    assert_eq!(mode(&v), (1, 6));
     let v = vec![];
-    assert_eq!(mode(v.into_iter(), (0, 0)));
+    assert_eq!(mode(&v), (0, 0));
     let v = vec![0u32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
-    assert_eq!(mode(v.into_iter(), (1, 4)));
+    assert_eq!(mode(&v), (1, 4));
 }
 
 /// Register a new solver in the registry. (Rust side)
@@ -284,20 +290,27 @@ pub(crate) fn register_new_solver(
 
     for mesh in tetmesh.split_into_connected_components() {
         let material_id = mesh
-            .attrib_as_slice::<u32, CellIndex>()
+            .attrib_as_slice::<u32, CellIndex>("mtl_id")
             .map(|slice| mode(slice).0)
             .unwrap_or(0);
-        let solid_material = get_solid_material(params, material_id);
+        let solid_material = get_solid_material(params, material_id)?;
         solver_builder.add_solid(mesh, solid_material);
     }
 
     // Add a shell if one was given.
     if let Some(polymesh) = shell {
         for mesh in (*polymesh).reversed().split_into_connected_components() {
-            solver_builder.add_shell(mesh, params.into());
+            let material_id = mesh
+                .attrib_as_slice::<u32, FaceIndex>("mtl_id")
+                .map(|slice| mode(slice).0)
+                .unwrap_or(1);
+            let shell_material = get_shell_material(params, material_id)?;
+            solver_builder.add_shell(mesh, shell_material);
         }
-        //TODO:
-        //solver_builder.add_frictional_contact(params.into());
+
+        for (frictional_contact, indices) in get_frictional_contacts(&params) {
+            solver_builder.add_frictional_contact(frictional_contact, indices);
+        }
     }
 
     let solver = match solver_builder.build() {

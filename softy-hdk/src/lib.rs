@@ -7,21 +7,21 @@ use hdkrs::{cffi, interop};
 use std::sync::{Arc, Mutex};
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyObjectType {
     Solid,
     Shell,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyContactType {
     Point,
     Implicit,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyKernel {
     Interpolating,
     Approximate,
@@ -30,14 +30,14 @@ pub enum EL_SoftyKernel {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyMuStrategy {
     Monotone,
     Adaptive,
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyMaterialProperties {
     pub object_type: EL_SoftyObjectType,
     pub density: f32,
@@ -47,7 +47,7 @@ pub struct EL_SoftyMaterialProperties {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyFrictionalContactParams {
     pub material_id0: u32,
     pub material_id1: u32,
@@ -86,7 +86,7 @@ pub struct EL_SoftyFrictionalContacts {
 
 impl AsSlice for EL_SoftyMaterials {
     type T = EL_SoftyMaterialProperties;
-    fn ptr(&self) -> *const T {
+    fn ptr(&self) -> *const Self::T {
         self.ptr
     }
     fn size(&self) -> usize {
@@ -96,7 +96,7 @@ impl AsSlice for EL_SoftyMaterials {
 
 impl AsSlice for EL_SoftyFrictionalContacts {
     type T = EL_SoftyFrictionalContactParams;
-    fn ptr(&self) -> *const T {
+    fn ptr(&self) -> *const Self::T {
         self.ptr
     }
     fn size(&self) -> usize {

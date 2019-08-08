@@ -193,12 +193,13 @@ static const char *theDsFile = R"THEDSFILE(
 
         multiparm {
             name    "frictionalcontacts"
+            cppname "FrictionalContacts"
             label    "Frictional Contacts"
             default 0
-            disablewhen "{ hasinput(1) == 0 }"
 
             parm {
                 name "materialids#"
+                cppname "MaterialIds"
                 label "Material Ids"
                 type intvector2
                 size 2
@@ -251,19 +252,18 @@ static const char *theDsFile = R"THEDSFILE(
 
             parm {
                 name "friction#"
-                cppname "Friction"
                 label "Friction"
                 type toggle
                 default { "off" }
             }
 
-            group {
+            groupsimple {
                 name "frictionparams#"
                 label "Friction Parameters"
                 grouptag { "group_type" "simple" }
 
                 parm {
-                    name "dynamiccof#
+                    name "dynamiccof#"
                     cppname "DynamicCof"
                     label "Dynamic Coefficient"
                     type float
@@ -279,7 +279,7 @@ static const char *theDsFile = R"THEDSFILE(
                     range { 0.0 1.0 }
                 }
                 parm {
-                    name "frictioninneriterations#
+                    name "frictioninneriterations#"
                     cppname "FrictionInnerIterations"
                     label "Inner Iterations"
                     type integer
@@ -459,48 +459,105 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.gravity = sopparms.getGravity();
     sim_params.log_file = sopparms.getLogFile().c_str();
 
+    // Get material properties.
+    const auto &sop_materials = sopparms.getMaterials();
+    std::vector<EL_SoftyMaterialProperties> materials_vec;
+    for (const auto & sop_mtl : sop_materials) {
+        EL_SoftyMaterialProperties mtl_props;
+        auto sop_objtype = static_cast<SOP_SoftyEnums::ObjectType>(sop_mtl.objtype);
+        switch (sop_objtype) {
+            case SOP_SoftyEnums::ObjectType::SOLID:
+                mtl_props.object_type = EL_SoftyObjectType::Solid;
+                break;
+            case SOP_SoftyEnums::ObjectType::SHELL:
+                mtl_props.object_type = EL_SoftyObjectType::Shell;
+                break;
+        }
 
-    UT_Array materials = sopparms.getMaterials();
-    for (int i = 0; i < materials.entries(); ++i) {
-
-        sim_params.material.damping = sopparms.getObjectType();
-
-        if (sopparms.getStiffnessType() == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
-            sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e3;
-            sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e3;
+        auto sop_stiffnesstype = static_cast<SOP_SoftyEnums::StiffnessType>(sop_mtl.stiffnesstype);
+        if (sop_stiffnesstype == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
+            mtl_props.bulk_modulus = sop_mtl.volumestiffness*1e3;
+            mtl_props.shear_modulus = sop_mtl.shapestiffness*1e3;
         } else {
             // K = E / 3(1-2v)
             // G = E / 2(1+v)
-            auto nu = sopparms.getPoissonRatio();
-            auto E = sopparms.getYoungModulus()*1e3;
-            sim_params.material.bulk_modulus = E / (3.0*(1.0 - 2.0*nu));
-            sim_params.material.shear_modulus = E / (2.0*(1.0 + nu));
+            auto nu = sop_mtl.poissonratio;
+            auto E = sop_mtl.youngmodulus*1e3;
+            mtl_props.bulk_modulus = E / (3.0*(1.0 - 2.0*nu));
+            mtl_props.shear_modulus = E / (2.0*(1.0 + nu));
         }
 
-        sim_params.material.damping = sopparms.getDamping();
-        sim_params.material.density = sopparms.getDensity();
+        mtl_props.damping = sop_mtl.damping;
+        mtl_props.density = sop_mtl.density;
+        materials_vec.push_back(mtl_props);
     }
+
+    sim_params.materials
+        = EL_SoftyMaterials{ materials_vec.data(), materials_vec.size() };
     
-    //    sim_params.clear_velocity = sopparms.getClearVelocity();
-    //    sim_params.tolerance = sopparms.getInnerTolerance();
-    //    sim_params.max_iterations = sopparms.getMaxInnerIterations();
-    //    sim_params.outer_tolerance = sopparms.getOuterTolerance();
-    //    sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
-    //
-    //    sim_params.volume_constraint = sopparms.getVolumeConstraint();
-    //    sim_params.contact_kernel = static_cast<int>(sopparms.getKernel());
-    //    sim_params.contact_type = static_cast<int>(sopparms.getContactType());
-    //    sim_params.contact_radius_multiplier = sopparms.getContactRadiusMultiplier();
-    //    sim_params.smoothness_tolerance = sopparms.getSmoothTol();
-    //    sim_params.dynamic_friction = sopparms.getDynamicFriction();
-    //    sim_params.friction_iterations = sopparms.getFrictionIterations();
-    //    sim_params.friction_tolerance = sopparms.getFrictionTolerance();
-    //    sim_params.friction_inner_iterations = sopparms.getFrictionInnerIterations();
-    //
-    //    sim_params.print_level = sopparms.getPrintLevel();
-    //    sim_params.derivative_test = sopparms.getDerivativeTest();
-    //    sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());
-    //    sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
+    sim_params.clear_velocity = sopparms.getClearVelocity();
+    sim_params.tolerance = sopparms.getInnerTolerance();
+    sim_params.max_iterations = sopparms.getMaxInnerIterations();
+    sim_params.outer_tolerance = sopparms.getOuterTolerance();
+    sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
+
+    sim_params.volume_constraint = sopparms.getVolumeConstraint();
+    sim_params.friction_iterations = sopparms.getFrictionIterations();
+
+    // Get frictional contact params.
+    const auto &sop_frictional_contacts = sopparms.getFrictionalContacts();
+    std::vector<EL_SoftyFrictionalContactParams> frictional_contact_vec;
+    for (const auto & sop_fc: sop_frictional_contacts) {
+        EL_SoftyFrictionalContactParams fc_params;
+        switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel)) {
+            case SOP_SoftyEnums::Kernel::INTERPOLATING:
+                fc_params.kernel = EL_SoftyKernel::Interpolating;
+                break;
+            case SOP_SoftyEnums::Kernel::APPROXIMATE:
+                fc_params.kernel = EL_SoftyKernel::Approximate;
+                break;
+            case SOP_SoftyEnums::Kernel::CUBIC:
+                fc_params.kernel = EL_SoftyKernel::Cubic;
+                break;
+            case SOP_SoftyEnums::Kernel::GLOBAL:
+                fc_params.kernel = EL_SoftyKernel::Global;
+                break;
+        }
+
+        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype)) {
+            case SOP_SoftyEnums::ContactType::IMPLICIT:
+                fc_params.contact_type = EL_SoftyContactType::Implicit;
+                break;
+            case SOP_SoftyEnums::ContactType::POINT:
+                fc_params.contact_type = EL_SoftyContactType::Point;
+                break;
+        }
+        fc_params.radius_multiplier = sop_fc.radiusmult;
+        fc_params.smoothness_tolerance = sop_fc.smoothtol;
+        fc_params.dynamic_cof= sop_fc.dynamiccof;
+        fc_params.friction_tolerance = sop_fc.frictiontolerance;
+        fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
+        frictional_contact_vec.push_back(fc_params);
+    }
+
+    sim_params.frictional_contacts = EL_SoftyFrictionalContacts{
+        frictional_contact_vec.data(),
+        frictional_contact_vec.size()
+    };
+    
+    sim_params.print_level = sopparms.getPrintLevel();
+    sim_params.derivative_test = sopparms.getDerivativeTest();
+
+    switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy())) {
+        case SOP_SoftyEnums::MuStrategy::MONOTONE:
+            sim_params.mu_strategy = EL_SoftyMuStrategy::Monotone;
+            break;
+        case SOP_SoftyEnums::MuStrategy::ADAPTIVE:
+            sim_params.mu_strategy = EL_SoftyMuStrategy::Adaptive;
+            break;
+    }
+
+    sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

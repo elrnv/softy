@@ -599,13 +599,11 @@ impl ObjectData {
                 ShellProperties::Fixed => {
                     // This mesh is fixed and doesn't obey any physics. Simply
                     // copy the positions and velocities over.
-                    pos.iter_mut()
-                        .zip(new_pos_iter)
-                        .for_each(|(pos, new_pos)| {
-                            if let Some(&new_pos) = new_pos {
-                                *pos = new_pos;
-                            }
-                        });
+                    pos.iter_mut().zip(new_pos_iter).for_each(|(pos, new_pos)| {
+                        if let Some(&new_pos) = new_pos {
+                            *pos = new_pos;
+                        }
+                    });
                 }
             }
         }
@@ -2048,22 +2046,35 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut count = 0; // Constraint counter
 
         // Add energy indices
-        for solid in self.object_data.solids.iter() {
+        let mut offset = 0;
+        let prev_x = self.object_data.prev_x.view().at(0);
+        for (solid, num_variables) in self
+            .object_data
+            .solids
+            .iter()
+            .zip(prev_x.iter().map(|x| x.into_flat().len()))
+        {
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity
-                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            elasticity.energy_hessian_rows_cols_offset(
+                (offset, offset).into(),
+                &mut rows[count..count + n],
+                &mut cols[count..count + n],
+            );
+
             count += n;
 
             if !self.is_static() {
                 let inertia = solid.inertia();
                 let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_rows_cols(
+                inertia.energy_hessian_rows_cols_offset(
+                    (offset, offset).into(),
                     &mut rows[count..count + n],
                     &mut cols[count..count + n],
                 );
                 count += n;
             }
+            offset += num_variables;
         }
 
         //for shell in self.shells.iter() {

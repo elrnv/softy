@@ -170,22 +170,6 @@ impl SolverBuilder {
         };
         material_source.sort_unstable_by_key(to_mat_id);
 
-        // Assemble material source indices into a chunked array where each
-        // chunk represents a unique id. This means some chunks are empty.
-        let mut id = 0;
-        let mut off = 0;
-        let mut offsets = vec![0];
-        for cur_id in material_source.view().into_flat().iter().map(to_mat_id) {
-            while id < cur_id {
-                offsets.push(off);
-                id += 1;
-            }
-            off += 1;
-        }
-        offsets.push(off);
-
-        let material_source = Chunked::from_offsets(offsets, material_source);
-
         let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
             object_index: m0,
             collider_index: m1,
@@ -196,12 +180,18 @@ impl SolverBuilder {
         frictional_contacts
             .into_iter()
             .flat_map(|(params, (obj_id, coll_id))| {
-                let material_source_obj = &material_source[obj_id];
-                let material_source_coll = &material_source[coll_id];
-                material_source_obj.iter().flat_map(move |&m0| {
+                let material_source_obj: Option<SourceIndex> = material_source
+                    .binary_search_by_key(&obj_id, to_mat_id)
+                    .ok()
+                    .map(|i| material_source[i]);
+                let material_source_coll: Option<SourceIndex> = material_source
+                    .binary_search_by_key(&coll_id, to_mat_id)
+                    .ok()
+                    .map(|i| material_source[i]);
+                material_source_obj.into_iter().flat_map(move |m0| {
                     let (solid_iter, shell_iter) = match m0 {
                         SourceIndex::Solid(i) => (
-                            Some(material_source_coll.iter().flat_map(move |&m1| {
+                            Some(material_source_coll.into_iter().flat_map(move |m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         &solids[i].surface().trimesh,
@@ -222,7 +212,7 @@ impl SolverBuilder {
                         ),
                         SourceIndex::Shell(i) => (
                             None,
-                            Some(material_source_coll.iter().flat_map(move |&m1| {
+                            Some(material_source_coll.into_iter().flat_map(move |m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         &shells[i].trimesh,

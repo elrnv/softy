@@ -135,17 +135,16 @@ impl ShellMaterial {
                 deformable.elasticity = Some(elasticity);
                 self
             }
-            ShellProperties::Rigid { density } => {
-                Self::deformable(self.id,
-                                 DeformableProperties::default()
-                                 .with_elasticity(elasticity)
-                                 .with_density(*density))
-            }
-            ShellProperties::Fixed => {
-                Self::deformable(self.id,
-                                 DeformableProperties::default()
-                                 .with_elasticity(elasticity))
-            }
+            ShellProperties::Rigid { density } => Self::deformable(
+                self.id,
+                DeformableProperties::default()
+                    .with_elasticity(elasticity)
+                    .with_density(*density),
+            ),
+            ShellProperties::Fixed => Self::deformable(
+                self.id,
+                DeformableProperties::default().with_elasticity(elasticity),
+            ),
         }
     }
     pub fn with_damping(mut self, damping: f64, time_step: f64) -> ShellMaterial {
@@ -154,17 +153,16 @@ impl ShellMaterial {
                 *deformable = deformable.with_damping(damping, time_step);
                 self
             }
-            ShellProperties::Rigid { density } => {
-                Self::deformable(self.id,
-                                 DeformableProperties::default()
-                                 .with_damping(damping, time_step)
-                                 .with_density(*density))
-            }
-            ShellProperties::Fixed => {
-                Self::deformable(self.id,
-                                 DeformableProperties::default()
-                                 .with_damping(damping, time_step))
-            }
+            ShellProperties::Rigid { density } => Self::deformable(
+                self.id,
+                DeformableProperties::default()
+                    .with_damping(damping, time_step)
+                    .with_density(*density),
+            ),
+            ShellProperties::Fixed => Self::deformable(
+                self.id,
+                DeformableProperties::default().with_damping(damping, time_step),
+            ),
         }
     }
     pub fn with_density(mut self, density: f64) -> ShellMaterial {
@@ -173,13 +171,13 @@ impl ShellMaterial {
                 deformable.density = Some(density);
                 self
             }
-            ShellProperties::Rigid { density: self_density } => {
+            ShellProperties::Rigid {
+                density: self_density,
+            } => {
                 *self_density = density;
                 self
             }
-            ShellProperties::Fixed => {
-                Self::rigid(self.id, density)
-            }
+            ShellProperties::Fixed => Self::rigid(self.id, density),
         }
     }
 

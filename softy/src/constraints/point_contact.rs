@@ -775,7 +775,8 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
     fn constraint_size(&self) -> usize {
         self.implicit_surface
             .borrow()
-            .num_cached_neighbourhoods().unwrap_or(0)
+            .num_cached_neighbourhoods()
+            .unwrap_or(0)
     }
 
     #[inline]

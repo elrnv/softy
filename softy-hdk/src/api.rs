@@ -43,6 +43,12 @@ pub(crate) enum Error {
     SolverCreate(softy::Error),
 }
 
+impl From<softy::Error> for Error {
+    fn from(err: softy::Error) -> Error {
+        Error::SolverCreate(err)
+    }
+}
+
 pub(crate) fn get_solver(
     solver_id: Option<u32>,
     tetmesh: Option<Box<TetMesh<f64>>>,
@@ -124,7 +130,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
 /// Build a material from the given parameters and set it to the specified id.
 fn get_solid_material(
     params: EL_SoftySimParams,
-    material_id: u32,
+    material_id: i32,
 ) -> Result<softy::SolidMaterial, Error> {
     let EL_SoftySimParams {
         materials,
@@ -133,7 +139,12 @@ fn get_solid_material(
         ..
     } = params;
 
-    match materials.as_slice().get(material_id as usize) {
+    // Material 0 is reserved for default
+    if material_id <= 0 {
+        return softy::SolidMaterial::new(0);
+    }
+
+    match materials.as_slice().get(material_id - 1 as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,
@@ -143,7 +154,7 @@ fn get_solid_material(
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
                 return Err(Error::MaterialObjectMismatch {
-                    material_id,
+                    material_id: material_id as u32,
                     object_type,
                 });
             }
@@ -163,7 +174,7 @@ fn get_solid_material(
 /// Build a shell material from the given parameters and set it to the specified id.
 fn get_shell_material(
     params: EL_SoftySimParams,
-    material_id: u32,
+    material_id: i32,
 ) -> Result<softy::ShellMaterial, Error> {
     let EL_SoftySimParams {
         materials,
@@ -171,7 +182,12 @@ fn get_shell_material(
         ..
     } = params;
 
-    match materials.as_slice().get(material_id as usize) {
+    // Material 0 is reserved for default
+    if material_id <= 0 {
+        return softy::ShellMaterial::new(0);
+    }
+
+    match materials.as_slice().get(material_id - 1 as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,
@@ -181,7 +197,7 @@ fn get_shell_material(
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
                 return Err(Error::MaterialObjectMismatch {
-                    material_id,
+                    material_id: material_id as u32,
                     object_type,
                 });
             }
@@ -251,7 +267,7 @@ fn get_frictional_contacts(
 /// Given a slice of integers, compute the mode and return it along with its
 /// frequency.
 /// If the slice is empty just return 0.
-fn mode(data: &[u32]) -> (u32, usize) {
+fn mode(data: &[i32]) -> (i32, usize) {
     let max_int = data.iter().cloned().max().map(|x| x + 1).unwrap_or(0) as usize;
     let mut bins = vec![0; max_int];
     for &x in data.iter() {
@@ -261,17 +277,17 @@ fn mode(data: &[u32]) -> (u32, usize) {
         .cloned()
         .enumerate()
         .max_by_key(|&(_, f)| f)
-        .map(|(m, f)| (m as u32, f))
-        .unwrap_or((0u32, 0))
+        .map(|(m, f)| (m as i32, f))
+        .unwrap_or((0i32, 0))
 }
 
 #[test]
 fn mode_test() {
-    let v = vec![1u32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
+    let v = vec![1i32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
     assert_eq!(mode(&v), (1, 6));
     let v = vec![];
     assert_eq!(mode(&v), (0, 0));
-    let v = vec![0u32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+    let v = vec![0i32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
     assert_eq!(mode(&v), (1, 4));
 }
 
@@ -279,7 +295,7 @@ fn mode_test() {
 //#[allow(clippy::needless_pass_by_value)]
 #[inline]
 pub(crate) fn register_new_solver(
-    tetmesh: TetMesh<f64>,
+    mut tetmesh: TetMesh<f64>,
     shell: Option<Box<PolyMesh<f64>>>,
     params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
@@ -288,9 +304,11 @@ pub(crate) fn register_new_solver(
     // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
+    fem::SolverBuilder::initialize_source_index_attribute(&mut tetmesh)?;
+
     for mesh in tetmesh.split_into_connected_components() {
         let material_id = mesh
-            .attrib_as_slice::<u32, CellIndex>("mtl_id")
+            .attrib_as_slice::<i32, CellIndex>("mtl_id")
             .map(|slice| mode(slice).0)
             .unwrap_or(0);
         let solid_material = get_solid_material(params, material_id)?;
@@ -301,9 +319,9 @@ pub(crate) fn register_new_solver(
     if let Some(polymesh) = shell {
         for mesh in (*polymesh).reversed().split_into_connected_components() {
             let material_id = mesh
-                .attrib_as_slice::<u32, FaceIndex>("mtl_id")
+                .attrib_as_slice::<i32, FaceIndex>("mtl_id")
                 .map(|slice| mode(slice).0)
-                .unwrap_or(1);
+                .unwrap_or(0);
             let shell_material = get_shell_material(params, material_id)?;
             solver_builder.add_shell(mesh, shell_material);
         }
@@ -313,10 +331,7 @@ pub(crate) fn register_new_solver(
         solver_builder.add_frictional_contact(frictional_contact, indices);
     }
 
-    let solver = match solver_builder.build() {
-        Ok(solver) => solver,
-        Err(err) => return Err(Error::SolverCreate(err)),
-    };
+    let solver = solver_builder.build()?;
 
     // Get a mutable reference to the solver registry.
     let SolverRegistry {

@@ -87,7 +87,15 @@ static const char *theDsFile = R"THEDSFILE(
             name  "materials"
             label "Number of Materials"
             default 0
-            parmtag { "multistartoffset" "2" }
+            parmtag { "multistartoffset" "1" }
+
+            parm {
+                name "materialid#"
+                cppname "MaterialId"
+                label "Material Id"
+                type label
+                default { "#" }
+            }
 
             parm {
                 name "objtype#"
@@ -202,7 +210,7 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "ObjectMaterialId"
                 label "Object Material Id"
                 type integer
-                default { "0" }
+                default { "1" }
                 range { 0! 1 }
             }
 
@@ -211,7 +219,7 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "ColliderMaterialId"
                 label "Collider Material Id"
                 type integer
-                default { "1" }
+                default { "0" }
                 range { 0! 1 }
             }
 
@@ -484,13 +492,13 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
         auto sop_stiffnesstype = static_cast<SOP_SoftyEnums::StiffnessType>(sop_mtl.stiffnesstype);
         if (sop_stiffnesstype == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
-            mtl_props.bulk_modulus = sop_mtl.volumestiffness*1e3;
-            mtl_props.shear_modulus = sop_mtl.shapestiffness*1e3;
+            mtl_props.bulk_modulus = sop_mtl.volumestiffness*1.0e3;
+            mtl_props.shear_modulus = sop_mtl.shapestiffness*1.0e3;
         } else {
             // K = E / 3(1-2v)
             // G = E / 2(1+v)
             auto nu = sop_mtl.poissonratio;
-            auto E = sop_mtl.youngmodulus*1e3;
+            auto E = sop_mtl.youngmodulus*1.0e3;
             mtl_props.bulk_modulus = E / (3.0*(1.0 - 2.0*nu));
             mtl_props.shear_modulus = E / (2.0*(1.0 + nu));
         }

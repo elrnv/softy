@@ -141,10 +141,10 @@ fn get_solid_material(
 
     // Material 0 is reserved for default
     if material_id <= 0 {
-        return softy::SolidMaterial::new(0);
+        return Ok(softy::SolidMaterial::new(0));
     }
 
-    match materials.as_slice().get(material_id - 1 as usize) {
+    match materials.as_slice().get((material_id - 1) as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,
@@ -184,10 +184,10 @@ fn get_shell_material(
 
     // Material 0 is reserved for default
     if material_id <= 0 {
-        return softy::ShellMaterial::new(0);
+        return Ok(softy::ShellMaterial::new(0));
     }
 
-    match materials.as_slice().get(material_id - 1 as usize) {
+    match materials.as_slice().get((material_id - 1) as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
             bulk_modulus,

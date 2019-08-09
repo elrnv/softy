@@ -1,7 +1,7 @@
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::problem::FrictionalContactConstraint;
+use crate::fem::problem::{FrictionalContactConstraint, Var};
 use crate::objects::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{
@@ -194,13 +194,13 @@ impl SolverBuilder {
                             Some(material_source_coll.into_iter().flat_map(move |m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
-                                        &solids[i].surface().trimesh,
-                                        &solids[j].surface().trimesh,
+                                        Var::Variable(&solids[i].surface().trimesh),
+                                        Var::Variable(&solids[j].surface().trimesh),
                                         params,
                                     ),
                                     SourceIndex::Shell(j) => build_contact_constraint(
-                                        &solids[i].surface().trimesh,
-                                        &shells[j].trimesh,
+                                        Var::Variable(&solids[i].surface().trimesh),
+                                        shells[j].tagged_mesh(),
                                         params,
                                     ),
                                 }
@@ -215,13 +215,13 @@ impl SolverBuilder {
                             Some(material_source_coll.into_iter().flat_map(move |m1| {
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
-                                        &shells[i].trimesh,
-                                        &solids[j].surface().trimesh,
+                                        shells[i].tagged_mesh(),
+                                        Var::Variable(&solids[j].surface().trimesh),
                                         params,
                                     ),
                                     SourceIndex::Shell(j) => build_contact_constraint(
-                                        &shells[i].trimesh,
-                                        &shells[j].trimesh,
+                                        shells[i].tagged_mesh(),
+                                        shells[j].tagged_mesh(),
                                         params,
                                     ),
                                 }
@@ -777,6 +777,7 @@ impl SolverBuilder {
     /// mesh if it hasn't already been populated on the input.
     pub(crate) fn prepare_elasticity_attributes<Obj: Object>(obj: &mut Obj) -> Result<(), Error> {
         if let Some(elasticity) = obj.material().scaled_elasticity() {
+            dbg!(elasticity);
             let num_elements = obj.num_elements();
             match obj
                 .mesh_mut()
@@ -848,7 +849,14 @@ impl SolverBuilder {
         Ok(())
     }
 
-    pub(crate) fn prepare_source_index_attribute<M>(mesh: &mut M) -> Result<(), Error>
+    /// A utility for initializing the source index attribute to use for
+    /// updating mesh vertices. This can be used explicitly by the user on the
+    /// mesh before building the solver. For instance if the user splits the
+    /// mesh before adding it to the solver, it is necessary to initialize the
+    /// source index attribute so that the meshes can be updated via a global
+    /// vertex position array (point cloud).
+    /// The attribute is only set if it doesn't already exist.
+    pub fn initialize_source_index_attribute<M>(mesh: &mut M) -> Result<(), Error>
     where
         M: NumVertices + Attrib + VertexAttrib,
     {
@@ -868,6 +876,7 @@ impl SolverBuilder {
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
+        //
         let TetMeshSolid {
             tetmesh: ref mut mesh,
             ref mut material,
@@ -876,7 +885,7 @@ impl SolverBuilder {
 
         *material = material.normalized();
 
-        Self::prepare_source_index_attribute(mesh)?;
+        Self::initialize_source_index_attribute(mesh)?;
 
         Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
@@ -912,7 +921,7 @@ impl SolverBuilder {
 
         *material = material.normalized();
 
-        Self::prepare_source_index_attribute(mesh)?;
+        Self::initialize_source_index_attribute(mesh)?;
 
         match material.properties {
             ShellProperties::Fixed => {

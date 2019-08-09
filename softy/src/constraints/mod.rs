@@ -6,6 +6,7 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
+use crate::fem::problem::Var;
 use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TriMesh;
@@ -22,8 +23,8 @@ use utils::soap::*;
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
 pub fn build_contact_constraint(
-    object: &TriMesh,
-    collider: &TriMesh,
+    object: Var<&TriMesh>,
+    collider: Var<&TriMesh>,
     params: FrictionalContactParams,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
@@ -38,8 +39,8 @@ pub fn build_contact_constraint(
             unimplemented!()
         }
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
-            object,
-            collider,
+            object.untag(),
+            collider.untag(),
             params.kernel,
             params.friction_params,
         )?),

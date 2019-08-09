@@ -1,4 +1,5 @@
 use crate::energy_models::gravity::*;
+use crate::fem::problem::Var;
 use crate::objects::*;
 use crate::TriMesh;
 use geo::mesh::topology::*;
@@ -36,6 +37,13 @@ impl Object for TriMeshShell {
 impl TriMeshShell {
     pub fn new(trimesh: TriMesh, material: ShellMaterial) -> TriMeshShell {
         TriMeshShell { trimesh, material }
+    }
+
+    pub fn tagged_mesh(&self) -> Var<&TriMesh> {
+        match self.material.properties {
+            ShellProperties::Fixed => Var::Fixed(&self.trimesh),
+            _ => Var::Variable(&self.trimesh),
+        }
     }
 }
 

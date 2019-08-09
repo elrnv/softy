@@ -65,7 +65,7 @@ fn compute_contact_constraint(
 }
 
 #[test]
-fn tet_push_test() -> Result<(), Error> {
+fn tet_push() -> Result<(), Error> {
     // A triangle is being pushed on top of a tet.
     let height = 1.18032;
     let mut tri_verts = vec![
@@ -194,7 +194,7 @@ fn ball_tri_push_tester(
 }
 
 #[test]
-fn ball_tri_push_test() -> Result<(), Error> {
+fn ball_tri_push() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
     let fc_params = FrictionalContactParams {
@@ -210,7 +210,7 @@ fn ball_tri_push_test() -> Result<(), Error> {
 }
 
 #[test]
-fn ball_tri_push_volume_constraint_test() -> Result<(), Error> {
+fn ball_tri_push_volume_constraint() -> Result<(), Error> {
     let material = SOLID_MATERIAL
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
@@ -278,7 +278,7 @@ fn ball_bounce_tester(
 }
 
 #[test]
-fn ball_bounce_on_points_test() -> Result<(), Error> {
+fn ball_bounce_on_points() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
 
@@ -297,7 +297,7 @@ fn ball_bounce_on_points_test() -> Result<(), Error> {
 }
 
 #[test]
-fn ball_bounce_on_points_volume_constraint_test() -> Result<(), Error> {
+fn ball_bounce_on_points_volume_constraint() -> Result<(), Error> {
     let material = SOLID_MATERIAL
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
@@ -319,7 +319,7 @@ fn ball_bounce_on_points_volume_constraint_test() -> Result<(), Error> {
 /// Tet bouncing on an implicit surface. This is an easy test where the tet sees the entire
 /// local implicit surface.
 #[test]
-fn tet_bounce_on_implicit_test() -> Result<(), Error> {
+fn tet_bounce_on_implicit() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
@@ -339,7 +339,7 @@ fn tet_bounce_on_implicit_test() -> Result<(), Error> {
 
 /// Ball bouncing on an implicit surface.
 #[test]
-fn ball_bounce_on_implicit_test() -> Result<(), Error> {
+fn ball_bounce_on_implicit() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
@@ -359,7 +359,7 @@ fn ball_bounce_on_implicit_test() -> Result<(), Error> {
 
 /// Ball with constant volume bouncing on an implicit surface.
 #[test]
-fn ball_bounce_on_implicit_volume_constraint_test() -> Result<(), Error> {
+fn ball_bounce_on_implicit_volume_constraint() -> Result<(), Error> {
     let material = SOLID_MATERIAL
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
@@ -378,10 +378,62 @@ fn ball_bounce_on_implicit_volume_constraint_test() -> Result<(), Error> {
     ball_bounce_tester(material, sc_params, tetmesh)
 }
 
+/// Two tets in contact with each-other. This test verifies that the contact is resolved.
+#[test]
+fn two_tets_in_contact() -> Result<(), Error> {
+    let mut tet_bottom = make_regular_tet();
+    let mut tet_top = make_regular_tet();
+    utils::translate(&mut tet_top, [0.0, 0.9, 0.0]); // translate up by 0.3
+
+    // Fix bottom tet at the base.
+    tet_bottom.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
+
+    // Fix top tet at the peak vertex and one other vertex to simplify the problem.
+    tet_top.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])?;
+
+    // Set contact parameters
+    let kernel = KernelType::Approximate {
+        radius_multiplier: 2.0,
+        tolerance: 0.001,
+    };
+
+    let params = SimParams {
+        max_outer_iterations: 20,
+        gravity: [0.0f32, 0.0, 0.0],
+        print_level: 5,
+        derivative_test: 2,
+        ..STATIC_PARAMS
+    };
+
+    let mut solver = SolverBuilder::new(params.clone())
+        .add_solid(tet_top.clone(), medium_solid_material().with_id(0))
+        .add_solid(tet_bottom.clone(), medium_solid_material().with_id(1))
+        .add_frictional_contact(
+            FrictionalContactParams {
+                contact_type: ContactType::Point,
+                kernel,
+                friction_params: None,
+            },
+            (0, 1),
+        )
+        .build()?;
+
+    let solve_result = solver.step()?;
+
+    use std::path::PathBuf;
+
+    let resmesh1 = &solver.solid(0).tetmesh;
+    let resmesh2 = &solver.solid(1).tetmesh;
+    geo::io::save_tetmesh(resmesh1, &PathBuf::from("./out/mesh1.vtk"));
+    geo::io::save_tetmesh(resmesh2, &PathBuf::from("./out/mesh2.vtk"));
+    assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
+    Ok(())
+}
+
 /// Ball bouncing on an implicit surface with staggered projections friction.
 //#[test]
 #[allow(dead_code)]
-fn ball_bounce_on_sp_implicit_test() -> Result<(), Error> {
+fn ball_bounce_on_sp_implicit() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 

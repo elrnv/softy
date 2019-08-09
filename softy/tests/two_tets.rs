@@ -12,15 +12,11 @@ fn two_tet_solver() -> Solver {
 
     utils::translate(&mut tet2, [0.0, 0.5, 0.0]);
 
-    SolverBuilder::new(SimParams {
-        print_level: 0,
-        derivative_test: 0,
-        ..STATIC_PARAMS
-    })
-    .add_solid(tet1, SOLID_MATERIAL)
-    .add_solid(tet2, SOLID_MATERIAL)
-    .build()
-    .expect("Failed to build a solver for a two tet test.")
+    SolverBuilder::new(STATIC_PARAMS)
+        .add_solid(tet1, SOLID_MATERIAL)
+        .add_solid(tet2, SOLID_MATERIAL)
+        .build()
+        .expect("Failed to build a solver for a two tet test.")
 }
 
 /// Ball with constant volume bouncing on an implicit surface.
@@ -46,4 +42,21 @@ fn two_deformed_tets_test() {
 
     // Check that they are approximately at the same altitude.
     assert_relative_eq!(verts[2][1], verts[3][1], max_relative = 1e-3);
+}
+
+#[test]
+fn volume_constraint() -> Result<(), Error> {
+    let tet1 = make_one_deformed_tet_mesh();
+    let mut tet2 = make_one_deformed_tet_mesh();
+
+    utils::translate(&mut tet2, [0.0, 0.5, 0.0]);
+
+    let material = SOLID_MATERIAL.with_volume_preservation(true);
+
+    let mut solver = SolverBuilder::new(STATIC_PARAMS)
+        .add_solid(tet1, material)
+        .add_solid(tet2, material)
+        .build()?;
+    solver.step()?;
+    Ok(())
 }

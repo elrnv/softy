@@ -84,7 +84,7 @@ fn consistent_outer_iterations() -> Result<(), Error> {
 }
 
 #[test]
-fn one_tet_volume_constraint() -> Result<(), Error> {
+fn volume_constraint() -> Result<(), Error> {
     let mesh = make_one_deformed_tet_mesh();
 
     let material = SOLID_MATERIAL.with_volume_preservation(true);

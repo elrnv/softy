@@ -1,6 +1,7 @@
 use super::*;
 use crate::constraint::*;
 use crate::contact::*;
+use crate::fem::problem::Var;
 use crate::friction::*;
 use crate::matrix::*;
 use crate::Error;
@@ -29,10 +30,12 @@ pub struct PointContactConstraint {
     /// A mass for each vertex in the object mesh.
     pub vertex_masses: Vec<f64>,
 
-    /// Store the indices to the Hessian here. These will be served through the constraint
-    /// interface.
-    surface_hessian_rows: RefCell<Vec<usize>>,
-    surface_hessian_cols: RefCell<Vec<usize>>,
+    /// A flag indicating if the object is fixed. Otherwise it's considered
+    /// to be deforming, and thus appropriate derivatives are computed.
+    object_is_fixed: bool,
+    /// A flag indicating if the collider is fixed. Otherwise it's considered
+    /// to be deforming, and thus appropriate derivatives are computed.
+    collider_is_fixed: bool,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -41,13 +44,17 @@ pub struct PointContactConstraint {
 impl PointContactConstraint {
     pub fn new(
         // Main object experiencing contact against its implicit surface representation.
-        object: &TriMesh,
+        object: Var<&TriMesh>,
         // Collision object consisting of points pushing against the solid object.
-        collider: &TriMesh,
+        collider: Var<&TriMesh>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
+        let object_is_fixed = object.is_fixed();
+        let collider_is_fixed = collider.is_fixed();
+        let object = object.untag();
+        let collider = collider.untag();
         surface_builder
             .trimesh(object)
             .kernel(kernel)
@@ -81,8 +88,8 @@ impl PointContactConstraint {
                     }
                 }),
                 vertex_masses,
-                surface_hessian_rows: RefCell::new(Vec::new()),
-                surface_hessian_cols: RefCell::new(Vec::new()),
+                object_is_fixed,
+                collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
             };
 
@@ -838,17 +845,46 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
 impl ConstraintJacobian<'_, f64> for PointContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
-        self.implicit_surface
-            .borrow()
-            .num_surface_jacobian_entries()
-            .unwrap_or(0)
+        0 + if !self.object_is_fixed {
+            self.implicit_surface
+                .borrow()
+                .num_surface_jacobian_entries()
+                .unwrap_or(0)
+        } else {
+            0
+        } + if !self.collider_is_fixed {
+            self.implicit_surface
+                .borrow()
+                .num_query_jacobian_entries()
+                .unwrap_or(0)
+        } else {
+            0
+        }
     }
     fn constraint_jacobian_indices_iter(
         &self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
-            surf.surface_jacobian_indices_iter()?
+            let (obj_indices_iter, col_offset) = if !self.object_is_fixed {
+                (
+                    Some(surf.surface_jacobian_indices_iter()?),
+                    surf.surface_vertex_positions().len() * 3,
+                )
+            } else {
+                (None, 0)
+            };
+            let coll_indices_iter = if !self.object_is_fixed {
+                Some(surf.query_jacobian_indices_iter()?)
+            } else {
+                None
+            };
+            obj_indices_iter.into_iter().flatten().chain(
+                coll_indices_iter
+                    .into_iter()
+                    .flatten()
+                    .map(move |(row, col)| (row, col + col_offset)),
+            )
         };
 
         let cached_neighbourhood_indices = self.cached_neighbourhood_indices();
@@ -868,13 +904,36 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
         values: &mut [f64],
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+
         self.update_surface_with_mesh_pos(x1[0]);
         self.update_contact_points(x1[1]);
+
         let contact_points = self.contact_points.borrow_mut();
-        Ok(self
-            .implicit_surface
-            .borrow()
-            .surface_jacobian_values(contact_points.view().into(), values)?)
+
+        let num_obj_jac_nnz;
+
+        if !self.object_is_fixed {
+            num_obj_jac_nnz = self
+                .implicit_surface
+                .borrow()
+                .num_surface_jacobian_entries()
+                .unwrap_or(0);
+
+            self.implicit_surface.borrow().surface_jacobian_values(
+                contact_points.view().into(),
+                &mut values[..num_obj_jac_nnz],
+            )?;
+        } else {
+            num_obj_jac_nnz = 0;
+        }
+
+        if !self.collider_is_fixed {
+            self.implicit_surface.borrow().query_jacobian_values(
+                contact_points.view().into(),
+                &mut values[num_obj_jac_nnz..],
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -882,35 +941,50 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
     type InputDual = &'a [f64];
     #[inline]
     fn constraint_hessian_size(&self) -> usize {
-        let num = self
-            .implicit_surface
-            .borrow()
-            .num_surface_hessian_product_entries()
-            .unwrap_or(0);
-
-        // Allocate the space for the Hessian indices.
-        {
-            let mut hess_rows = self.surface_hessian_rows.borrow_mut();
-            hess_rows.clear();
-            hess_rows.resize(num, 0);
+        0 + if !self.object_is_fixed {
+            self.implicit_surface
+                .borrow()
+                .num_surface_hessian_product_entries()
+                .unwrap_or(0)
+        } else {
+            0
+        } + if !self.collider_is_fixed {
+            self.implicit_surface
+                .borrow()
+                .num_query_hessian_product_entries()
+                .unwrap_or(0)
+        } else {
+            0
         }
-
-        {
-            let mut hess_cols = self.surface_hessian_cols.borrow_mut();
-            hess_cols.clear();
-            hess_cols.resize(num, 0);
-        }
-
-        num
     }
 
     fn constraint_hessian_indices_iter(
         &self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
-        let surf = self.implicit_surface.borrow();
+        let idx_iter = {
+            let surf = self.implicit_surface.borrow();
+            let (obj_indices_iter, offset) = if !self.object_is_fixed {
+                (
+                    Some(surf.surface_hessian_product_indices_iter()?),
+                    surf.surface_vertex_positions().len() * 3,
+                )
+            } else {
+                (None, 0)
+            };
+            let coll_indices_iter = if !self.object_is_fixed {
+                Some(surf.query_hessian_product_indices_iter()?)
+            } else {
+                None
+            };
+            obj_indices_iter.into_iter().flatten().chain(
+                coll_indices_iter
+                    .into_iter()
+                    .flatten()
+                    .map(move |(row, col)| (row + offset, col + offset)),
+            )
+        };
         Ok(Box::new(
-            surf.surface_hessian_product_indices_iter()?
-                .map(move |(row, col)| MatrixElementIndex { row, col }),
+            idx_iter.map(move |(row, col)| MatrixElementIndex { row, col }),
         ))
     }
 
@@ -925,13 +999,33 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
         self.update_surface_with_mesh_pos(x1[0]);
         let surf = self.implicit_surface.borrow();
         self.update_contact_points(x1[1]);
-        let contact_points = self.contact_points.borrow_mut();
-        surf.surface_hessian_product_scaled_values(
-            contact_points.view().into(),
-            lambda,
-            scale,
-            values,
-        )?;
+        let contact_points = self.contact_points.borrow();
+
+        let mut obj_hess_nnz = 0;
+
+        if !self.object_is_fixed {
+            obj_hess_nnz = self
+                .implicit_surface
+                .borrow()
+                .num_surface_hessian_product_entries()
+                .unwrap_or(0);
+
+            surf.surface_hessian_product_scaled_values(
+                contact_points.view().into(),
+                lambda,
+                scale,
+                &mut values[..obj_hess_nnz],
+            )?;
+        }
+
+        if !self.collider_is_fixed {
+            surf.query_hessian_product_scaled_values(
+                contact_points.view().into(),
+                lambda,
+                scale,
+                &mut values[obj_hess_nnz..],
+            )?;
+        }
         Ok(())
     }
 }

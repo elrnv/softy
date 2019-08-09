@@ -131,6 +131,40 @@ pub struct Vertex {
     cur_vel: [f64; 3],
 }
 
+/// An enum that tags data as static (Fixed) or changing (Variable).
+/// `Var` is short for "variability".
+#[derive(Copy, Clone, Debug)]
+pub enum Var<T> {
+    Fixed(T),
+    Variable(T),
+}
+
+impl<T> Var<T> {
+    #[inline]
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Var<U> {
+        match self {
+            Var::Fixed(x) => Var::Fixed(f(x)),
+            Var::Variable(x) => Var::Variable(f(x)),
+        }
+    }
+
+    #[inline]
+    pub fn is_fixed(&self) -> bool {
+        match self {
+            Var::Fixed(_) => true,
+            Var::Variable(_) => false,
+        }
+    }
+
+    /// Effectively untag the underlying data by converting into the inner type.
+    #[inline]
+    pub fn untag(self) -> T {
+        match self {
+            Var::Fixed(t) | Var::Variable(t) => t,
+        }
+    }
+}
+
 pub type MeshVertexData<T> = Subset<Chunked3<T>>;
 pub type VertexData<D> = Chunked<Chunked<Chunked3<D>>>;
 pub type VertexView<'i, D> = ChunkedView<'i, ChunkedView<'i, Chunked3<D>>>;
@@ -287,7 +321,7 @@ impl ObjectData {
         Self::mesh_vertex_subset_mut_impl(cur_v, alt_v, src_idx, solids, shells)
     }
 
-    pub fn prev_vel_mut(&mut self, src_idx: SourceIndex) -> Subset<Chunked3<&mut [f64]>> {
+    pub fn prev_vel_mut(&mut self, src_idx: SourceIndex) -> MeshVertexData<&mut [f64]> {
         let ObjectData {
             prev_v,
             vel,
@@ -309,7 +343,7 @@ impl ObjectData {
         x: VertexView<'x, &'x [T]>,
         alt: VertexView<'x, &'x [T]>,
         source: SourceIndex,
-    ) -> Subset<Chunked3<&'x [T]>> {
+    ) -> MeshVertexData<&'x [T]> {
         Self::mesh_vertex_subset_impl(x, alt, source, &self.solids, &self.shells)
     }
 
@@ -318,7 +352,7 @@ impl ObjectData {
         x: VertexView<'x, &'x mut [T]>,
         alt: Alt,
         source: SourceIndex,
-    ) -> Subset<Chunked3<&'x mut [T]>>
+    ) -> MeshVertexData<&'x mut [T]>
     where
         Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
     {
@@ -331,17 +365,21 @@ impl ObjectData {
         source: SourceIndex,
         solids: &[TetMeshSolid],
         shells: &[TriMeshShell],
-    ) -> Subset<Chunked3<&'x [T]>> {
+    ) -> MeshVertexData<&'x [T]> {
         match source {
             SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
                 solids[i].surface().indices.to_vec(),
                 x.at(0).at(i),
             ),
             SourceIndex::Shell(i) => {
-                let x = match shells[i].material.properties {
+                let props = shells[i].material.properties;
+
+                // Determine source data.
+                let x = match props {
                     ShellProperties::Deformable { .. } => x,
                     _ => alt,
                 };
+
                 Subset::all(x.at(1).at(i))
             }
         }
@@ -354,7 +392,7 @@ impl ObjectData {
         source: SourceIndex,
         solids: &[TetMeshSolid],
         shells: &[TriMeshShell],
-    ) -> Subset<Chunked3<&'x mut [T]>>
+    ) -> MeshVertexData<&'x mut [T]>
     where
         Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
     {
@@ -364,10 +402,14 @@ impl ObjectData {
                 x.at_mut(0).at_mut(i),
             ),
             SourceIndex::Shell(i) => {
-                let mut x = match shells[i].material.properties {
+                let props = shells[i].material.properties;
+
+                // Determine source data.
+                let mut x = match props {
                     ShellProperties::Deformable { .. } => x,
                     _ => alt.into().unwrap_or(x),
                 };
+
                 Subset::all(x.at_mut(1).at_mut(i))
             }
         }
@@ -391,7 +433,7 @@ impl ObjectData {
         let surf_vtx_idx = coord / 3;
 
         // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
-        let tetmesh_coordinates = |mesh_index| {
+        let tetmesh_coordinates = |mesh_index, surf_vtx_idx| {
             let offset = self.prev_v.view().at(0).offset_value(mesh_index);
             3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
         };
@@ -409,7 +451,7 @@ impl ObjectData {
             SourceIndex::Solid(obj_i) => {
                 num_object_surface_indices = self.solids[obj_i].surface().indices.len();
                 if surf_vtx_idx < num_object_surface_indices {
-                    return tetmesh_coordinates(obj_i);
+                    return tetmesh_coordinates(obj_i, surf_vtx_idx);
                 }
             }
             SourceIndex::Shell(obj_i) => {
@@ -429,7 +471,7 @@ impl ObjectData {
         match collider_index {
             SourceIndex::Solid(coll_i) => {
                 assert!(surf_vtx_idx < self.solids[coll_i].surface().indices.len());
-                tetmesh_coordinates(coll_i)
+                tetmesh_coordinates(coll_i, surf_vtx_idx)
             }
             SourceIndex::Shell(coll_i) => {
                 assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
@@ -1874,9 +1916,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut count = 0; // Constraint counter
 
-        for (_, vc) in self.volume_constraints.iter() {
+        for (solid_idx, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_size();
-            vc.constraint(x0.into_flat(), x.into_flat(), &mut g[count..count + n]);
+            vc.constraint(
+                x0.at(0).at(*solid_idx).into_flat(),
+                x.at(0).at(*solid_idx).into_flat(),
+                &mut g[count..count + n],
+            );
             count += n;
         }
 
@@ -1923,24 +1969,28 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         rows: &mut [ipopt::Index],
         cols: &mut [ipopt::Index],
     ) -> bool {
+        // This is used for counting offsets.
+        let prev_v_solid = self.object_data.prev_v.view().at(0);
+
         let mut count = 0; // Constraint counter
 
         let mut row_offset = 0;
-        for (_, vc) in self.volume_constraints.iter() {
+        for (solid_idx, vc) in self.volume_constraints.iter() {
             let iter = vc.constraint_jacobian_indices_iter().unwrap();
+            let col_offset = prev_v_solid.offset_value(*solid_idx) * 3;
             for MatrixElementIndex { row, col } in iter {
                 rows[count] = (row + row_offset) as ipopt::Index;
-                cols[count] = col as ipopt::Index;
+                cols[count] = (col + col_offset) as ipopt::Index;
                 count += 1;
             }
             row_offset += 1;
         }
 
         for fc in self.frictional_contacts.iter() {
-            use ipopt::BasicProblem;
+            //use ipopt::BasicProblem;
             let nrows = fc.constraint.constraint_size();
-            let ncols = self.num_variables();
-            let mut jac = vec![vec![0; nrows]; ncols]; // col major
+            //let ncols = self.num_variables();
+            //let mut jac = vec![vec![0; nrows]; ncols]; // col major
 
             let iter = fc.constraint.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
@@ -1949,7 +1999,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                     self.object_data
                         .source_coordinates(fc.object_index, fc.collider_index, col)
                         as ipopt::Index;
-                jac[col][row] = 1;
+                //jac[col][row] = 1;
                 count += 1;
             }
             row_offset += nrows;
@@ -1979,11 +2029,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut count = 0; // Constraint counter
 
-        for (_, vc) in self.volume_constraints.iter() {
+        for (solid_idx, vc) in self.volume_constraints.iter() {
             let n = vc.constraint_jacobian_size();
             vc.constraint_jacobian_values(
-                x0.into_flat(),
-                x.into_flat(),
+                x0.at(0).at(*solid_idx).into_flat(),
+                x.at(0).at(*solid_idx).into_flat(),
                 &mut vals[count..count + n],
             )
             .ok();
@@ -2005,6 +2055,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 )
                 .ok();
             //println!("jac g vals = {:?}", &vals[count..count+n]);
+            count += n;
         }
         let dt = if self.time_step > 0.0 {
             self.time_step
@@ -2043,17 +2094,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     }
 
     fn hessian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
+        // This is used for counting offsets.
+        let prev_v_solid = self.object_data.prev_v.view().at(0);
+
         let mut count = 0; // Constraint counter
 
         // Add energy indices
-        let mut offset = 0;
-        let prev_x = self.object_data.prev_x.view().at(0);
-        for (solid, num_variables) in self
-            .object_data
-            .solids
-            .iter()
-            .zip(prev_x.iter().map(|x| x.into_flat().len()))
-        {
+        for (solid_idx, solid) in self.object_data.solids.iter().enumerate() {
+            let offset = prev_v_solid.offset_value(solid_idx) * 3;
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
             elasticity.energy_hessian_rows_cols_offset(
@@ -2074,7 +2122,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 );
                 count += n;
             }
-            offset += num_variables;
         }
 
         //for shell in self.shells.iter() {
@@ -2086,12 +2133,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let offset = self
-                .object_data
-                .prev_v
-                .view()
-                .at(0)
-                .offset_value(*solid_idx);
+            let offset = prev_v_solid.offset_value(*solid_idx) * 3;
             for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
                 rows[count] = (row + offset) as ipopt::Index;
                 cols[count] = (col + offset) as ipopt::Index;

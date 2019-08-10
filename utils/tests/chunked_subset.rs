@@ -187,21 +187,32 @@ fn subset_unichunked_index() {
     assert_eq!([13, 14, 15], subset[2]);
 }
 
-// TODO: Make this more ergonomic
 fn get<'a>(x: ChunkedView<'a, &'a [usize]>) -> &'a [usize] {
     x.at(1)
 }
 
-// Test that we can create a subset of a substructure of a nested chunked set
+#[test]
+fn chunked_return_get_result_from_fn() {
+    let v: Vec<_> = (1..=10).collect();
+    let s = Chunked::from_sizes(vec![1, 4, 5], v);
+    assert_eq!(get(s.view()), &[2, 3, 4, 5]);
+}
+
+// Test that we can create and return a subset of a substructure of a nested chunked set
 fn subset<'a, 'b>(
     indices: &'a [usize],
-    x: &'b ChunkedView<'b, ChunkedView<'b, Chunked3<&'b [usize]>>>,
+    x: ChunkedView<'b, ChunkedView<'b, Chunked3<&'b [usize]>>>,
 ) -> SubsetView<'a, Chunked3<&'b [usize]>> {
-    Subset::from_unique_ordered_indices(
-        indices,
-        Get::<'b, usize>::at(&Get::<'b, usize>::at(x, 1), 1),
-    )
+    Subset::from_unique_ordered_indices(indices, x.at(1).at(1))
 }
 
 #[test]
-fn subset_nested_chunked() {}
+fn subset_nested_chunked() {
+    let v: Vec<_> = (1..=45).collect();
+    let u = Chunked3::from_flat(v);
+    let c1 = Chunked::from_sizes(vec![1, 4, 5, 5], u);
+    let c2 = Chunked::from_sizes(vec![1, 2, 1], c1);
+    let subset = subset(&[0, 1], c2.view());
+    assert_eq!(subset[0], [16, 17, 18]);
+    assert_eq!(subset[1], [19, 20, 21]);
+}

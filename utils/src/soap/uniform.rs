@@ -357,12 +357,26 @@ where
     /// This method tells this type how it can be pushed to a set as a grouped
     /// type.
     fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S);
+
+    /// Construct a grouped type from a `RangeFrom<T>`.
+    fn from_range(rng: std::ops::RangeFrom<Self>) -> Self::Type
+    where
+        Self: Default + Copy,
+        std::ops::RangeFrom<Self>: Iterator<Item = Self>;
 }
 
 impl<T> Grouped<num::U1> for T {
     type Type = Self;
     fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S) {
         set.push(element);
+    }
+
+    fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Type
+    where
+        T: Default + Copy,
+        std::ops::RangeFrom<T>: Iterator<Item = T>,
+    {
+        rng.start
     }
 }
 
@@ -374,6 +388,17 @@ macro_rules! impl_grouped {
                 for i in &element {
                     set.push(i.clone());
                 }
+            }
+            fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Type
+            where
+                T: Default + Copy,
+                std::ops::RangeFrom<T>: Iterator<Item = T>,
+            {
+                let mut grp = [Default::default(); $n];
+                for (i, item) in rng.zip(grp.iter_mut()) {
+                    *item = i;
+                }
+                grp
             }
         }
     };

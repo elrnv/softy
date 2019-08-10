@@ -1,11 +1,19 @@
 mod chunked;
+mod range;
+mod select;
+mod slice;
 mod subset;
 mod uniform;
+mod vec;
 mod view;
 
 pub use chunked::*;
+pub use range::*;
+pub use select::*;
+pub use slice::*;
 pub use subset::*;
 pub use uniform::*;
+pub use vec::*;
 pub use view::*;
 
 // Helper module defines a few useful unsigned type level integers.
@@ -40,7 +48,6 @@ pub trait Owned {}
 impl<S, I> Owned for Subset<S, I> {}
 impl<S, I> Owned for Chunked<S, I> {}
 impl<S, N> Owned for UniChunked<S, N> {}
-impl<T> Owned for Vec<T> {}
 
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
 //pub trait Chunkable<'a>:
@@ -99,12 +106,6 @@ pub trait Clear {
     fn clear(&mut self);
 }
 
-impl<T> Clear for Vec<T> {
-    fn clear(&mut self) {
-        Vec::<T>::clear(self);
-    }
-}
-
 /// A type of range whose size is determined at compile time.
 /// This represents a range `[start..start + N::value()]`.
 /// This aids `UniChunked` types when indexing.
@@ -129,54 +130,6 @@ impl<N: num::Unsigned> StaticRange<N> {
     }
     fn end(&self) -> usize {
         self.start + N::value()
-    }
-}
-
-impl<'a, T, N> GetIndex<'a, &'a [T]> for StaticRange<N>
-where
-    N: num::Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a T::Type;
-    fn get(self, set: &&'a [T]) -> Option<Self::Output> {
-        if self.end() <= set.len() {
-            let slice = *set;
-            Some(unsafe { &*(slice.as_ptr().add(self.start()) as *const T::Type) })
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a, T, N> GetIndex<'a, &'a mut [T]> for StaticRange<N>
-where
-    N: num::Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a T::Type;
-    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-        if self.end() <= set.len() {
-            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Type) })
-        } else {
-            None
-        }
-    }
-}
-impl<'a, T, N> GetMutIndex<'a, &'a mut [T]> for StaticRange<N>
-where
-    N: num::Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a mut T::Type;
-    fn get_mut(self, set: &mut &'a mut [T]) -> Option<Self::Output> {
-        if self.end() <= set.len() {
-            Some(unsafe { &mut *((*set).as_mut_ptr().add(self.start()) as *mut T::Type) })
-        } else {
-            None
-        }
     }
 }
 
@@ -235,41 +188,6 @@ pub trait GetMut<'a, I> {
     /// This function will panic if `self.get(idx)` returns `None`.
     fn at_mut(&mut self, idx: I) -> Self::Output {
         self.get_mut(idx).expect("Index out of bounds")
-    }
-}
-
-impl<'a, T, I> GetIndex<'a, &'a [T]> for I
-where
-    I: std::slice::SliceIndex<[T]>,
-    <[T] as std::ops::Index<I>>::Output: 'a,
-{
-    type Output = &'a <[T] as std::ops::Index<I>>::Output;
-    fn get(self, set: &&'a [T]) -> Option<Self::Output> {
-        Some(std::ops::Index::<I>::index(*set, self))
-    }
-}
-
-impl<'a, T, I> GetIndex<'a, &'a mut [T]> for I
-where
-    I: std::slice::SliceIndex<[T]>,
-    <[T] as std::ops::Index<I>>::Output: 'a,
-{
-    type Output = &'a <[T] as std::ops::Index<I>>::Output;
-    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-        let slice = unsafe { std::slice::from_raw_parts(set.as_ptr(), set.len()) };
-        Some(std::ops::Index::<I>::index(slice, self))
-    }
-}
-
-impl<'a, T, I> GetMutIndex<'a, &'a mut [T]> for I
-where
-    I: std::slice::SliceIndex<[T]>,
-    <[T] as std::ops::Index<I>>::Output: 'a,
-{
-    type Output = &'a mut <[T] as std::ops::Index<I>>::Output;
-    fn get_mut(self, set: &mut &'a mut [T]) -> Option<Self::Output> {
-        let slice = unsafe { std::slice::from_raw_parts_mut(set.as_mut_ptr(), set.len()) };
-        Some(std::ops::IndexMut::<I>::index_mut(slice, self))
     }
 }
 
@@ -399,98 +317,6 @@ where
     }
 }
 
-impl<'a, T: 'a, I> Get<'a, I> for &'a [T]
-where
-    I: GetIndex<'a, &'a [T]>,
-{
-    type Output = I::Output;
-    /// Index into a standard slice `[T]` using the `Get` trait.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// assert_eq!(utils::soap::Get::get(&&[1,2,3,4,5][..], 2), Some(&3));
-    /// ```
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        GetIndex::get(idx, self)
-    }
-}
-
-impl<'a, T: 'a, I> Get<'a, I> for &'a mut [T]
-where
-    I: GetIndex<'a, &'a mut [T]>,
-{
-    type Output = I::Output;
-    /// Immutable index into a standard mutable slice `[T]` using the `Get` trait.
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        GetIndex::get(idx, self)
-    }
-}
-
-//impl<'a, T: 'a, I> Get<'a, I> for Vec<T>
-//where
-//    I: GetIndex<'a, &'a [T]>,
-//    T: Clone,
-//{
-//    type Output = I::Output;
-//    /// Index into a `Vec` using the `Get` trait.
-//    /// This function is not intended to be used directly, but it allows getters
-//    /// for chunked collections to work.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// let v = vec![1,2,3,4,5];
-//    /// assert_eq!(utils::soap::Get::get(&v, 2), Some(&3));
-//    /// ```
-//    fn get(&self, idx: I) -> Option<Self::Output> {
-//        GetIndex::get(idx, &self.as_slice())
-//    }
-//}
-
-impl<'a, T: 'a, I> GetMut<'a, I> for &'a mut [T]
-where
-    I: GetMutIndex<'a, &'a mut [T]>,
-{
-    type Output = I::Output;
-    /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
-    /// This function is not intended to be used directly, but it allows getters
-    /// for chunked collections to work.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut v = vec![1,2,3,4,5];
-    /// *utils::soap::GetMut::get_mut(&mut v.as_mut_slice(), 2).unwrap() = 100;
-    /// assert_eq!(v, vec![1,2,100,4,5]);
-    /// ```
-    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
-        GetMutIndex::get_mut(idx, self)
-    }
-}
-
-//impl<'a, T: 'a, I> GetMut<'a, I> for Vec<T>
-//where
-//    I: GetMutIndex<'a, &'a mut [T]>,
-//    T: Clone,
-//{
-//    type Output = I::Output;
-//    /// Index into a `Vec` using the `Get` trait.
-//    /// This function is not intended to be used directly, but it allows getters
-//    /// for chunked collections to work.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// let mut v = vec![1,2,3,4,5];
-//    /// *utils::soap::GetMut::get_mut(&mut v, 2).unwrap() = 100;
-//    /// assert_eq!(v, vec![1,2,100,4,5]);
-//    /// ```
-//    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
-//        GetMutIndex::get_mut(idx, self)
-//    }
-//}
-
 impl<'a, S, I> GetMut<'a, I> for &mut S
 where
     S: Owned + GetMut<'a, I>,
@@ -524,29 +350,23 @@ where
     }
 }
 
-//impl<'a, S, I> Get<'a, I> for &mut S
-//where
-//    S: Owned + Get<'a, I>,
-//{
-//    type Output = S::Output;
-//    /// Index into any borrowed collection `S`, which itself implements
-//    /// `Get<'a, I>`.
-//    fn get(&self, idx: I) -> Option<Self::Output> {
-//        Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
-//    }
-//}
-
-impl<T> Set for Vec<T> {
-    type Elem = T;
-    fn len(&self) -> usize {
-        Vec::len(self)
-    }
-}
-
-impl<T> Set for [T] {
-    type Elem = T;
-    fn len(&self) -> usize {
-        <[T]>::len(self)
+impl<'a, S, I> Get<'a, I> for &mut S
+where
+    S: Owned + Get<'a, I>,
+{
+    type Output = S::Output;
+    /// Index into any mutably borrowed collection `S`, which itself implements
+    /// `Get<'a, I>`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut s = v.as_mut_slice();
+    /// assert_eq!(utils::soap::Get::get(&mut s, 2).unwrap(), &3);
+    /// ```
+    fn get(&self, idx: I) -> Option<Self::Output> {
+        Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
     }
 }
 
@@ -580,12 +400,6 @@ impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
 /// Abstraction for pushing elements of type `T` onto a collection.
 pub trait Push<T> {
     fn push(&mut self, element: T);
-}
-
-impl<T> Push<T> for Vec<T> {
-    fn push(&mut self, element: T) {
-        Vec::push(self, element);
-    }
 }
 
 /// A helper trait to split a set into two sets at a given index.
@@ -636,127 +450,11 @@ where
     }
 }
 
-impl<T, N> SplitPrefix<N> for Vec<T>
-where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: Default,
-    N: num::Unsigned,
-{
-    type Prefix = T::Type;
-
-    fn split_prefix(mut self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
-            return None;
-        }
-        // Note: This is inefficient ( as is the implementation for `remove_prefix` ).
-        // As such it shouldn't be used when iterating over `Subset`s of
-        // `Vec<T>` or `Subset`s of any other chunked collection that uses
-        // `Vec<T>` for storage. We should be able to specialize the
-        // implementation of subsets of `Vec<T>` types for better performance.
-        self.rotate_left(N::value());
-        let at = self.len() - N::value();
-        let mut out: T::Type = Default::default();
-        unsafe {
-            self.set_len(at);
-            std::ptr::copy_nonoverlapping(
-                self.as_ptr().add(at),
-                &mut out as *mut T::Type as *mut T,
-                N::value(),
-            );
-        }
-        Some((out, self))
-    }
-}
-
-impl<'a, T, N> SplitPrefix<N> for &'a [T]
-where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-    N: num::Unsigned,
-{
-    type Prefix = &'a T::Type;
-
-    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
-            return None;
-        }
-
-        let (prefix, rest) = unsafe {
-            let prefix = self.as_ptr() as *const T::Type;
-            (&*prefix, &self[N::value()..])
-        };
-        Some((prefix, rest))
-    }
-}
-
-impl<'a, T, N> SplitPrefix<N> for &'a mut [T]
-where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-    N: num::Unsigned,
-{
-    type Prefix = &'a mut T::Type;
-
-    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
-            return None;
-        }
-
-        let (prefix, rest) = unsafe {
-            let prefix = self.as_mut_ptr() as *mut T::Type;
-            (&mut *prefix, &mut self[N::value()..])
-        };
-        Some((prefix, rest))
-    }
-}
-
 /// Convert a collection into its underlying representation, effectively
 /// stripping any organizational info.
 pub trait IntoFlat {
     type FlatType;
     fn into_flat(self) -> Self::FlatType;
-}
-
-impl<T> IntoFlat for Vec<T> {
-    type FlatType = Vec<T>;
-    /// Since a `Vec` has no information about the structure of its underlying
-    /// data, this is effectively a no-op.
-    fn into_flat(self) -> Self::FlatType {
-        self
-    }
-}
-
-impl<'a, T> IntoFlat for &'a [T] {
-    type FlatType = &'a [T];
-    fn into_flat(self) -> Self::FlatType {
-        self
-    }
-}
-
-impl<'a, T> IntoFlat for &'a mut [T] {
-    type FlatType = &'a mut [T];
-    fn into_flat(self) -> Self::FlatType {
-        self
-    }
-}
-
-impl<T> SplitAt for Vec<T> {
-    fn split_at(mut self, mid: usize) -> (Self, Self) {
-        let r = self.split_off(mid);
-        (self, r)
-    }
-}
-
-impl<'a, T> SplitAt for &mut [T] {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        self.split_at_mut(mid)
-    }
-}
-
-impl<'a, T> SplitAt for &[T] {
-    fn split_at(self, mid: usize) -> (Self, Self) {
-        self.split_at(mid)
-    }
 }
 
 /// A helper trait for constructing placeholder sets for use in `std::mem::replace`.
@@ -765,58 +463,12 @@ pub trait Dummy {
     fn dummy() -> Self;
 }
 
-impl<T> Dummy for &[T] {
-    fn dummy() -> Self {
-        &[]
-    }
-}
-
-impl<T> Dummy for &mut [T] {
-    fn dummy() -> Self {
-        &mut []
-    }
-}
-
 /// A helper trait used to help implement the Subset. This trait allows
 /// abstract collections to remove a number of elements from the
 /// beginning, which is what we need for subsets.
 pub trait RemovePrefix {
     /// Remove `n` elements from the beginning.
     fn remove_prefix(&mut self, n: usize);
-}
-
-impl<T> RemovePrefix for Vec<T> {
-    fn remove_prefix(&mut self, n: usize) {
-        self.rotate_left(n);
-        self.truncate(self.len() - n);
-    }
-}
-
-impl<T> RemovePrefix for &[T] {
-    fn remove_prefix(&mut self, n: usize) {
-        let (_, r) = self.split_at(n);
-        *self = r;
-    }
-}
-
-impl<T> RemovePrefix for &mut [T] {
-    /// Remove a prefix of size `n` from this mutable slice.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use::utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut s = v.as_mut_slice();
-    /// s.remove_prefix(2);
-    /// assert_eq!(&[3,4,5], s);
-    /// ```
-    fn remove_prefix(&mut self, n: usize) {
-        let data = std::mem::replace(self, &mut []);
-
-        let (_, r) = data.split_at_mut(n);
-        *self = r;
-    }
 }
 
 #[cfg(test)]

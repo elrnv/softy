@@ -106,6 +106,11 @@ pub trait Clear {
     fn clear(&mut self);
 }
 
+// A Note on indexing:
+// ===================
+// Following the standard library we support indexing by usize only.
+// However, Ranges as collections can be supported for other types as well.
+
 /// A type of range whose size is determined at compile time.
 /// This represents a range `[start..start + N::value()]`.
 /// This aids `UniChunked` types when indexing.
@@ -191,9 +196,9 @@ pub trait GetMut<'a, I> {
     }
 }
 
-impl<'a, S: Owned> GetIndex<'a, S> for std::ops::RangeFrom<usize>
+impl<'a, S> GetIndex<'a, S> for std::ops::RangeFrom<usize>
 where
-    S: Set,
+    S: Set + Owned,
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
     type Output = <std::ops::Range<usize> as GetIndex<'a, S>>::Output;
@@ -367,6 +372,13 @@ where
     /// ```
     fn get(&self, idx: I) -> Option<Self::Output> {
         Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
+    }
+}
+
+impl<N: num::Unsigned> Set for StaticRange<N> {
+    type Elem = usize;
+    fn len(&self) -> usize {
+        N::value()
     }
 }
 

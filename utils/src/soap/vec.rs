@@ -15,6 +15,22 @@ impl<T> Set for Vec<T> {
     }
 }
 
+impl<'a, T: 'a> View<'a> for Vec<T> {
+    type Type = &'a [T];
+
+    fn view(&'a self) -> Self::Type {
+        self.as_slice()
+    }
+}
+
+impl<'a, T: 'a> ViewMut<'a> for Vec<T> {
+    type Type = &'a mut [T];
+
+    fn view_mut(&'a mut self) -> Self::Type {
+        self.as_mut_slice()
+    }
+}
+
 impl<T> Push<T> for Vec<T> {
     fn push(&mut self, element: T) {
         Vec::push(self, element);

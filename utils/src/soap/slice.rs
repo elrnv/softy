@@ -139,6 +139,22 @@ impl<T> Set for [T] {
     }
 }
 
+impl<'a, T: 'a> View<'a> for [T] {
+    type Type = &'a [T];
+
+    fn view(&'a self) -> Self::Type {
+        self
+    }
+}
+
+impl<'a, T: 'a> ViewMut<'a> for [T] {
+    type Type = &'a mut [T];
+
+    fn view_mut(&'a mut self) -> Self::Type {
+        self
+    }
+}
+
 impl<'a, T, N> SplitPrefix<N> for &'a [T]
 where
     T: Grouped<N>,

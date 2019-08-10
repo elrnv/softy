@@ -64,13 +64,11 @@ impl<S: Set> Chunked<S> {
     /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_sizes<L>(sizes: L, data: S) -> Self
-    where L: std::borrow::Borrow<[usize]>
+    where
+        L: std::borrow::Borrow<[usize]>,
     {
         let sizes = sizes.borrow();
-        assert_eq!(
-            sizes.iter().sum::<usize>(),
-            data.len()
-        );
+        assert_eq!(sizes.iter().sum::<usize>(), data.len());
 
         let mut offsets = Vec::with_capacity(sizes.len() + 1);
         offsets.push(0);
@@ -1217,5 +1215,16 @@ mod tests {
         assert_eq!(vec![5, 6], iter.next().unwrap().to_vec());
         assert_eq!(empty.clone(), iter.next().unwrap().to_vec());
         assert_eq!(None, iter.next());
+    }
+
+    #[test]
+    fn chunked_range() {
+        let c = Chunked::from_sizes(vec![0, 4, 2, 0, 1], 0..7);
+        assert_eq!(c.at(0), 0..0);
+        assert_eq!(c.at(1), 0..4);
+        assert_eq!(c.at(2), 4..6);
+        assert_eq!(c.at(3), 6..6);
+        assert_eq!(c.at(4), 6..7);
+        assert_eq!(c.into_flat(), 0..7);
     }
 }

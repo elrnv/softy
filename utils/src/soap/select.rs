@@ -14,11 +14,11 @@ use super::*;
 /// use utils::soap::*;
 /// let selection = Select::new(vec![0,2,4,0,1], 5..10);
 /// let mut iter = selection.iter();
-/// assert_eq!(Some(&5), iter.next());
-/// assert_eq!(Some(&7), iter.next());
-/// assert_eq!(Some(&9), iter.next());
-/// assert_eq!(Some(&5), iter.next());
-/// assert_eq!(Some(&6), iter.next());
+/// assert_eq!(Some(5), iter.next());
+/// assert_eq!(Some(7), iter.next());
+/// assert_eq!(Some(9), iter.next());
+/// assert_eq!(Some(5), iter.next());
+/// assert_eq!(Some(6), iter.next());
 /// assert_eq!(None, iter.next());
 /// ```
 ///
@@ -357,11 +357,11 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let selection = Select::new(vec![0,2,0,4], Cunked2::from_flat(1..=12));
-    /// assert_eq!([1,2], selection[0]);
-    /// assert_eq!([5,6], selection[1]);
-    /// assert_eq!([1,2], selection[2]);
-    /// assert_eq!([9,10], selection[3]);
+    /// let selection = Select::new(vec![0,2,0,4], Chunked2::from_flat(1..=12));
+    /// assert_eq!(1..3, selection.at(0));
+    /// assert_eq!(5..7, selection.at(1));
+    /// assert_eq!(1..3, selection.at(2));
+    /// assert_eq!(9..11, selection.at(3));
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
         self.data.index(self.indices.borrow()[idx])

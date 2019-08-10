@@ -29,7 +29,8 @@ pub struct FrictionParams {
 pub struct FrictionalContact {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
-    pub impulse: Vec<[f64; 3]>,
+    pub object_impulse: Vec<[f64; 3]>,
+    pub collider_impulse: Vec<[f64; 3]>,
 }
 
 impl FrictionalContact {

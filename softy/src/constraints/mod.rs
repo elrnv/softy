@@ -165,6 +165,7 @@ pub trait ContactConstraint:
     for<'a> Constraint<'a, f64, Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
     + for<'a> ConstraintJacobian<'a, f64>
     + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
+    + std::fmt::Debug
 {
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;

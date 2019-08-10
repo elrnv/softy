@@ -845,21 +845,24 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
 impl ConstraintJacobian<'_, f64> for PointContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
-        0 + if !self.object_is_fixed {
+        let num_obj = if !self.object_is_fixed {
             self.implicit_surface
                 .borrow()
                 .num_surface_jacobian_entries()
                 .unwrap_or(0)
         } else {
             0
-        } + if !self.collider_is_fixed {
+        };
+
+        let num_coll = if !self.collider_is_fixed {
             self.implicit_surface
                 .borrow()
                 .num_query_jacobian_entries()
                 .unwrap_or(0)
         } else {
             0
-        }
+        };
+        num_obj + num_coll
     }
     fn constraint_jacobian_indices_iter(
         &self,
@@ -874,7 +877,8 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
             } else {
                 (None, 0)
             };
-            let coll_indices_iter = if !self.object_is_fixed {
+
+            let coll_indices_iter = if !self.collider_is_fixed {
                 Some(surf.query_jacobian_indices_iter()?)
             } else {
                 None
@@ -971,7 +975,7 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
             } else {
                 (None, 0)
             };
-            let coll_indices_iter = if !self.object_is_fixed {
+            let coll_indices_iter = if !self.collider_is_fixed {
                 Some(surf.query_hessian_product_indices_iter()?)
             } else {
                 None

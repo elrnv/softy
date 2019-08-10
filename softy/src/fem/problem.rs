@@ -100,7 +100,7 @@ impl Solution {
 /// The index of the object subject to the appropriate contact constraint.
 /// This enum helps us map from the particular contact constraint to the
 /// originating simulation object (shell or solid).
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SourceIndex {
     Solid(usize),
     Shell(usize),
@@ -116,6 +116,7 @@ impl SourceIndex {
 
 /// A struct that keeps track of which objects are being affected by the contact
 /// constraints.
+#[derive(Debug)]
 pub struct FrictionalContactConstraint {
     pub object_index: SourceIndex,
     pub collider_index: SourceIndex,
@@ -1889,7 +1890,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         for fc in self.frictional_contacts.iter() {
             num += fc.constraint.constraint_jacobian_size();
-            //println!("scc jac size = {:?}", num);
         }
         num
     }

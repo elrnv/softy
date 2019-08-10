@@ -152,12 +152,13 @@ impl SolverBuilder {
         self
     }
 
-    /// Helper function to compute a set of frictional contacts.
-    fn build_frictional_contacts(
+    /// Construct a chunked vector of source indices where each chunk represents a unique material
+    /// id. This means that the first chunk contains all objects whose material id is 0, second
+    /// chunk contains all objects with material id being 1 and so on.
+    pub(crate) fn build_material_sources(
         solids: &[TetMeshSolid],
         shells: &[TriMeshShell],
-        frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
-    ) -> Vec<FrictionalContactConstraint> {
+        ) -> Chunked<Vec<SourceIndex>> {
         // Build a mapping to mesh indices in their respective slices.
         let mut material_source = Vec::new();
         material_source.extend((0..solids.len()).map(|i| SourceIndex::Solid(i)));
@@ -168,7 +169,31 @@ impl SolverBuilder {
             SourceIndex::Solid(i) => solids[i].material.id,
             SourceIndex::Shell(i) => shells[i].material.id,
         };
-        material_source.sort_unstable_by_key(to_mat_id);
+        material_source.sort_by_key(to_mat_id);
+
+        // Assemble material source indices into a chunked array where each
+        // chunk represents a unique id. This means some chunks are empty.
+        let mut off = 0;
+        let mut offsets = vec![0];
+        for cur_id in material_source.iter().map(to_mat_id) {
+            while offsets.len() - 1 < cur_id {
+                offsets.push(off);
+            }
+            off += 1;
+        }
+        offsets.push(off);
+
+        Chunked::from_offsets(offsets, material_source)
+    }
+
+    /// Helper function to compute a set of frictional contacts.
+    fn build_frictional_contacts(
+        solids: &[TetMeshSolid],
+        shells: &[TriMeshShell],
+        frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+    ) -> Vec<FrictionalContactConstraint> {
+        let material_source = Self::build_material_sources(solids, shells);
+        dbg!(&material_source);
 
         let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
             object_index: m0,
@@ -177,21 +202,28 @@ impl SolverBuilder {
         };
 
         // Convert frictional contact parameters into frictional contact constraints.
+        // This function creates a frictional contact for every pair of matching material ids.
+        // In other words if two objects share the same material id for which a frictional contact
+        // is assigned, then at least two frictional contact constraints are created.
+
         frictional_contacts
             .into_iter()
             .flat_map(|(params, (obj_id, coll_id))| {
-                let material_source_obj: Option<SourceIndex> = material_source
-                    .binary_search_by_key(&obj_id, to_mat_id)
-                    .ok()
-                    .map(|i| material_source[i]);
-                let material_source_coll: Option<SourceIndex> = material_source
-                    .binary_search_by_key(&coll_id, to_mat_id)
-                    .ok()
-                    .map(|i| material_source[i]);
-                material_source_obj.into_iter().flat_map(move |m0| {
+                let material_source_obj = &material_source[obj_id];
+                let material_source_coll = &material_source[coll_id];
+                //let material_source_obj: Option<SourceIndex> = material_source
+                //    .binary_search_by_key(&obj_id, to_mat_id)
+                //    .ok()
+                //    .map(|i| material_source[i]);
+                //let material_source_coll: Option<SourceIndex> = material_source
+                //    .binary_search_by_key(&coll_id, to_mat_id)
+                //    .ok()
+                //    .map(|i| material_source[i]);
+                material_source_obj.into_iter().flat_map(move |&m0| {
                     let (solid_iter, shell_iter) = match m0 {
                         SourceIndex::Solid(i) => (
-                            Some(material_source_coll.into_iter().flat_map(move |m1| {
+                            Some(material_source_coll.into_iter().flat_map(move |&m1| {
+                                dbg!(m0, m1);
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         Var::Variable(&solids[i].surface().trimesh),
@@ -212,7 +244,8 @@ impl SolverBuilder {
                         ),
                         SourceIndex::Shell(i) => (
                             None,
-                            Some(material_source_coll.into_iter().flat_map(move |m1| {
+                            Some(material_source_coll.into_iter().flat_map(move |&m1| {
+                                dbg!(m0, m1);
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         shells[i].tagged_mesh(),
@@ -1735,4 +1768,39 @@ impl Solver {
     //
     //        Ok(result)
     //    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test the above function with moc data. This also serves as an example of usage.
+    #[test]
+    fn build_material_sources_test() {
+        // Convenience functions
+        let new_solid = |&id| TetMeshSolid::new(TetMesh::default(), SolidMaterial::new(id));
+        let new_shell = |&id| TriMeshShell::new(TriMesh::default(), ShellMaterial::new(id));
+        let solid = |id| SourceIndex::Solid(id);
+        let shell = |id| SourceIndex::Shell(id);
+
+        // No shells
+        let solids: Vec<_> = [1, 0, 0, 2].into_iter().map(new_solid).collect();
+        let srcs = SolverBuilder::build_material_sources(&solids, &[]);
+        assert_eq!(srcs, Chunked::from_offsets(vec![0,2,3,4],
+                                               vec![solid(1),solid(2),solid(0),solid(3)]));
+
+        // No solids
+        let shells: Vec<_> = [3, 4, 3, 1].into_iter().map(new_shell).collect();
+        let srcs = SolverBuilder::build_material_sources(&[], &shells);
+        assert_eq!(srcs, Chunked::from_offsets(vec![0,0,1,1,3,4],
+                                               vec![shell(3),shell(0),shell(2),shell(1)]));
+
+        // Complex test
+        let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1].into_iter().map(new_solid).collect();
+        let shells: Vec<_> = [3, 4, 0, 1, 0, 6, 10].into_iter().map(new_shell).collect();
+        let srcs = SolverBuilder::build_material_sources(&solids, &shells);
+        assert_eq!(srcs, Chunked::from_offsets(vec![0,6,10,11,12,13,13,14,14,14,14,15],
+                                               vec![solid(0),solid(1),solid(2),solid(6),shell(2),shell(4),solid(3),solid(5),solid(7),shell(3),solid(4),shell(0),shell(1),shell(5),shell(6)]));
+
+    }
 }

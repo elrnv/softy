@@ -14,11 +14,11 @@ use super::*;
 /// use utils::soap::*;
 /// let selection = Select::new(vec![0,2,4,0,1], 5..10);
 /// let mut iter = selection.iter();
-/// assert_eq!(Some(5), iter.next());
-/// assert_eq!(Some(7), iter.next());
-/// assert_eq!(Some(9), iter.next());
-/// assert_eq!(Some(5), iter.next());
-/// assert_eq!(Some(6), iter.next());
+/// assert_eq!(Some((0, 5)), iter.next());
+/// assert_eq!(Some((2, 7)), iter.next());
+/// assert_eq!(Some((4, 9)), iter.next());
+/// assert_eq!(Some((0, 5)), iter.next());
+/// assert_eq!(Some((1, 6)), iter.next());
 /// assert_eq!(None, iter.next());
 /// ```
 ///
@@ -28,14 +28,14 @@ use super::*;
 /// use utils::soap::*;
 /// let mut v = Chunked3::from_flat((1..=15).collect::<Vec<_>>());
 /// let mut selection = Select::new(vec![1,0,4,4,1], v.view_mut());
-/// *selection.at_mut(0) = [0; 3];
+/// *selection.at_mut(0).1 = [0; 3];
 /// {
 ///     let mut iter = selection.iter();
-///     assert_eq!(Some(&[0,0,0]), iter.next());
-///     assert_eq!(Some(&[1,2,3]), iter.next());
-///     assert_eq!(Some(&[13,14,15]), iter.next());
-///     assert_eq!(Some(&[13,14,15]), iter.next());
-///     assert_eq!(Some(&[0,0,0]), iter.next());
+///     assert_eq!(Some((1, &[0,0,0])), iter.next());
+///     assert_eq!(Some((0, &[1,2,3])), iter.next());
+///     assert_eq!(Some((4, &[13,14,15])), iter.next());
+///     assert_eq!(Some((4, &[13,14,15])), iter.next());
+///     assert_eq!(Some((1, &[0,0,0])), iter.next());
 ///     assert_eq!(None, iter.next());
 /// }
 /// ```
@@ -65,7 +65,7 @@ pub struct Select<S, I = Vec<usize>> {
 /// A borrowed selection.
 pub type SelectView<'a, S> = Select<S, &'a [usize]>;
 
-impl<S, I> Select<S, I> {
+impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
     /// Create a selection of elements from the original set from the given
     /// indices.
     ///
@@ -80,7 +80,16 @@ impl<S, I> Select<S, I> {
     /// assert_eq!(2, selection[2]);
     /// ```
     pub fn new(indices: I, data: S) -> Self {
-        Select { indices, data }
+        Self::validate(Select { indices, data })
+    }
+
+    /// Panics if this selection has out of bounds indices.
+    #[inline]
+    fn validate(self) -> Self {
+        if !self.indices.borrow().iter().all(|&i| i < self.data.len()) {
+            panic!("Subset index out of bounds.");
+        }
+        self
     }
 }
 
@@ -188,13 +197,13 @@ where
     /// let selection = Select::new(indices.as_slice(), v.as_slice());
     /// let (l, r) = selection.split_at(2);
     /// let mut iter_l = l.iter();
-    /// assert_eq!(Some(&4), iter_l.next());
-    /// assert_eq!(Some(&3), iter_l.next());
+    /// assert_eq!(Some((3, &4)), iter_l.next());
+    /// assert_eq!(Some((2, &3)), iter_l.next());
     /// assert_eq!(None, iter_l.next());
     /// let mut iter_r = r.iter();
-    /// assert_eq!(Some(&1), iter_r.next());
-    /// assert_eq!(Some(&5), iter_r.next());
-    /// assert_eq!(Some(&3), iter_r.next()); // Note that 3 is shared between l and r
+    /// assert_eq!(Some((0, &1)), iter_r.next());
+    /// assert_eq!(Some((4, &5)), iter_r.next());
+    /// assert_eq!(Some((2, &3)), iter_r.next()); // Note that 3 is shared between l and r
     /// assert_eq!(None, iter_r.next());
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
@@ -221,7 +230,8 @@ where
     <S as Set>::Elem: 'a,
 {
     /// The typical way to use this function is to clone from a `SelectView`
-    /// into an owned `S` type.
+    /// into a mutable `S` type. This function disregards indies, and simply
+    /// clones the underlying data.
     ///
     /// # Panics
     ///
@@ -235,27 +245,27 @@ where
     /// let indices = vec![3,3,4,0];
     /// let selection = Select::new(indices.as_slice(), v.as_slice());
     /// let mut owned = vec![0; 5];
-    /// selection.clone_into_other(&mut owned[..4]); // Need 4 elements to avoid panics.
+    /// selection.clone_values_into(&mut owned[..4]); // Need 4 elements to avoid panics.
     /// let mut iter_owned = owned.iter();
     /// assert_eq!(owned, vec![4,4,5,1,0]);
     /// ```
-    pub fn clone_into_other<V>(&'a self, other: &'a mut V)
+    pub fn clone_values_into<V>(&'a self, other: &'a mut V)
     where
         V: ViewMut<'a> + ?Sized,
-        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'a mut <S as Set>::Elem>,
+        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'a mut S::Elem>,
         <S as Set>::Elem: Clone,
     {
         let other_view = other.view_mut();
         assert_eq!(other_view.len(), self.len());
         for (theirs, mine) in other_view.into_iter().zip(self.iter()) {
-            theirs.clone_from(&mine);
+            theirs.clone_from(&mine.1);
         }
     }
 }
 
 /*
- * Indexing operators for convenience. Users familiar with indexing by `usize`
- * may find these implementations convenient.
+ * Get API provides a way to access the index and its associated value for each
+ * of the selected elements.
  */
 
 impl<'a, S, I> GetIndex<'a, Select<S, I>> for usize
@@ -263,14 +273,14 @@ where
     I: std::borrow::Borrow<[usize]>,
     S: Get<'a, usize>,
 {
-    type Output = <S as Get<'a, usize>>::Output;
+    type Output = (usize, <S as Get<'a, usize>>::Output);
 
     fn get(self, selection: &Select<S, I>) -> Option<Self::Output> {
         selection
             .indices
             .borrow()
             .get(self)
-            .and_then(|&cur| Get::get(&selection.data, cur))
+            .and_then(|&idx| selection.data.get(idx).map(|val| (idx, val)))
     }
 }
 
@@ -279,14 +289,14 @@ where
     I: std::borrow::Borrow<[usize]>,
     S: GetMut<'a, usize>,
 {
-    type Output = <S as GetMut<'a, usize>>::Output;
+    type Output = (usize, <S as GetMut<'a, usize>>::Output);
 
     fn get_mut(self, selection: &mut Select<S, I>) -> Option<Self::Output> {
         let Select { indices, data } = selection;
         indices
             .borrow()
             .get(self)
-            .and_then(move |&cur| GetMut::get_mut(data, cur))
+            .and_then(move |&idx| data.get_mut(idx).map(|val| (idx, val)))
     }
 }
 
@@ -308,7 +318,7 @@ where
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let selection = Select::new(vec![0,0,4], v.as_slice());
-    /// assert_eq!(&1, selection.get(1).unwrap());
+    /// assert_eq!((0, &1), selection.get(1).unwrap());
     /// ```
     fn get(&self, range: Idx) -> Option<Self::Output> {
         range.get(self)
@@ -333,12 +343,22 @@ where
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let selection = Select::new(vec![0,0,4], v.as_slice());
-    /// assert_eq!(&1, selection.get(1).unwrap());
+    /// assert_eq!((0, &1), selection.get(1).unwrap());
     /// ```
     fn get_mut(&mut self, range: Idx) -> Option<Self::Output> {
         range.get_mut(self)
     }
 }
+
+/*
+ * Indexing operators for convenience. Users familiar with indexing by `usize`
+ * may find these implementations convenient. However, these do not have the
+ * same function as `Get` provides, because they necessarily return a borrow of
+ * some inner value. Since `Select`ions store data and indices separately, only
+ * one of them can be returned as a reference. As such, the indexing operators
+ * only provide the select values without their respective indices. To get
+ * indices and values, the `Get` and `GetMut` traits should be used instead.
+ */
 
 impl<'a, S, I> std::ops::Index<usize> for Select<S, I>
 where
@@ -358,10 +378,10 @@ where
     /// ```rust
     /// use utils::soap::*;
     /// let selection = Select::new(vec![0,2,0,4], Chunked2::from_flat(1..=12));
-    /// assert_eq!(1..3, selection.at(0));
-    /// assert_eq!(5..7, selection.at(1));
-    /// assert_eq!(1..3, selection.at(2));
-    /// assert_eq!(9..11, selection.at(3));
+    /// assert_eq!((0, 1..3), selection.at(0));
+    /// assert_eq!((2, 5..7), selection.at(1));
+    /// assert_eq!((0, 1..3), selection.at(2));
+    /// assert_eq!((4, 9..11), selection.at(3));
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
         self.data.index(self.indices.borrow()[idx])
@@ -487,11 +507,12 @@ where
     I: std::borrow::Borrow<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
-    pub fn iter(&'a self) -> impl Iterator<Item = <S as Get<'a, usize>>::Output> {
+    pub fn iter(&'a self) -> impl Iterator<Item = (usize, <S as Get<'a, usize>>::Output)> {
         self.indices
             .borrow()
             .iter()
-            .filter_map(move |&i| self.data.get(i))
+            .cloned()
+            .filter_map(move |idx| self.data.get(idx).map(|val| (idx, val)))
     }
 }
 

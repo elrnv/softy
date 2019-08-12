@@ -825,8 +825,8 @@ where
     /// assert_eq!(Some(&[10,11][..]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter_mut(&'a mut self) -> VarIterMut<'a, <S as ViewMut<'a>>::Type> {
-        VarIterMut {
+    pub fn iter_mut(&'a mut self) -> VarIter<'a, <S as ViewMut<'a>>::Type> {
+        VarIter {
             offsets: self.chunks.borrow(),
             data: self.data.view_mut(),
         }
@@ -910,30 +910,6 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
-        pop_offset(&mut self.offsets).map(|n| {
-            let (l, r) = data_slice.split_at(n);
-            self.data = r;
-            l
-        })
-    }
-}
-
-/// Mutable variant of `VarIter`.
-pub struct VarIterMut<'a, S> {
-    offsets: &'a [usize],
-    data: S,
-}
-
-impl<'a, V: 'a> Iterator for VarIterMut<'a, V>
-where
-    V: SplitAt + Set + Dummy,
-{
-    type Item = V;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Get a unique mutable reference for the data.
-        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
-
         pop_offset(&mut self.offsets).map(move |n| {
             let (l, r) = data_slice.split_at(n);
             self.data = r;

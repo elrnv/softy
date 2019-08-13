@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use super::FrictionParams;
 use crate::contact::*;
-use geo::math::{Matrix3, Vector2};
+use geo::math::Vector2;
 use reinterpret::*;
 
 use utils::zip;
@@ -20,7 +20,7 @@ pub struct FrictionSolver<'a, CJI> {
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
-    contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+    contact_jacobian: Option<&'a ContactJacobian<CJI>>,
     /// Vertex masses.
     masses: &'a [f64],
 }
@@ -53,13 +53,13 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
     /// tangential velocities for each contact point in contact space. `contact_impulse` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
-    pub fn new(
+    pub(crate) fn new(
         velocity: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: (&'a [Matrix3<f64>], CJI),
+        contact_jacobian: &'a ContactJacobian<CJI>,
     ) -> FrictionSolver<'a, CJI> {
         Self::new_impl(
             velocity,
@@ -77,7 +77,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+        contact_jacobian: Option<&'a ContactJacobian<CJI>>,
     ) -> FrictionSolver<'a, CJI> {
         FrictionSolver {
             velocity: reinterpret_slice(velocity),

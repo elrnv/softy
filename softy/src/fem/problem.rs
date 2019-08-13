@@ -416,6 +416,155 @@ impl ObjectData {
         }
     }
 
+    /// Split a given array into a pair of mutable views.
+    /// This works when contacts happen on two different objects, however
+    /// if/when we implement self contact, this needs to be inspected carefully.
+    fn mesh_vertex_subset_split_mut<'x, T: Clone + 'x, Alt>(
+        &self,
+        x: VertexView<'x, &'x mut [T]>,
+        alt: Alt,
+        source: [SourceIndex; 2],
+    ) -> [MeshVertexData<&'x mut [T]>; 2]
+    where
+        Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
+    {
+        Self::mesh_vertex_subset_split_mut_impl(x, alt, source, &self.solids, &self.shells)
+    }
+
+    // TODO: Refactor this monstrosity
+    fn mesh_vertex_subset_split_mut_impl<'x, T: Clone + 'x, Alt>(
+        mut x: VertexView<'x, &'x mut [T]>,
+        alt: Alt,
+        source: [SourceIndex; 2],
+        solids: &[TetMeshSolid],
+        shells: &[TriMeshShell],
+    ) -> [MeshVertexData<&'x mut [T]>; 2]
+    where
+        Alt: Into<Option<VertexView<'x, &'x mut [T]>>>,
+    {
+        match source[0] {
+            SourceIndex::Solid(i) => match source[1] {
+                SourceIndex::Solid(j) => {
+                    if i < j {
+                        let (mut l, mut r) = x.at_mut(0).split_at(j);
+                        [
+                            Subset::from_unique_ordered_indices(
+                                solids[i].surface().indices.to_vec(),
+                                l.at_mut(i),
+                            ),
+                            Subset::from_unique_ordered_indices(
+                                solids[j].surface().indices.to_vec(),
+                                r.at_mut(0),
+                            ),
+                        ]
+                    } else {
+                        assert_ne!(i, j); // This needs special handling for self contact.
+                        let (mut l, mut r) = x.at_mut(0).split_at(i);
+                        [
+                            Subset::from_unique_ordered_indices(
+                                solids[i].surface().indices.to_vec(),
+                                r.at_mut(0),
+                            ),
+                            Subset::from_unique_ordered_indices(
+                                solids[j].surface().indices.to_vec(),
+                                l.at_mut(j),
+                            ),
+                        ]
+                    }
+                }
+                SourceIndex::Shell(j) => {
+                    let props = shells[i].material.properties;
+
+                    // Determine source data.
+                    let x = match props {
+                        ShellProperties::Deformable { .. } => x,
+                        _ => match alt.into() {
+                            Some(mut alt) => {
+                                return [
+                                    Subset::from_unique_ordered_indices(
+                                        solids[i].surface().indices.to_vec(),
+                                        x.at_mut(0).at_mut(i),
+                                    ),
+                                    Subset::all(alt.at_mut(1).at_mut(j)),
+                                ];
+                            }
+                            None => x,
+                        },
+                    };
+
+                    let (mut l, mut r) = x.split_at(1);
+                    [
+                        Subset::from_unique_ordered_indices(
+                            solids[i].surface().indices.to_vec(),
+                            l.at_mut(0).at_mut(i),
+                        ),
+                        Subset::all(r.at_mut(0).at_mut(j)),
+                    ]
+                }
+            },
+            SourceIndex::Shell(i) => {
+                let props = shells[i].material.properties;
+
+                // Determine source data.
+                let mut x = match props {
+                    ShellProperties::Deformable { .. } => x,
+                    _ => match alt.into() {
+                        Some(mut alt) => {
+                            return match source[1] {
+                                SourceIndex::Solid(j) => [
+                                    Subset::all(alt.at_mut(1).at_mut(i)),
+                                    Subset::from_unique_ordered_indices(
+                                        solids[j].surface().indices.to_vec(),
+                                        x.at_mut(0).at_mut(j),
+                                    ),
+                                ],
+                                SourceIndex::Shell(j) => {
+                                    let mut x = match props {
+                                        ShellProperties::Deformable { .. } => x,
+                                        _ => alt, // Both non-deformable shells.
+                                    };
+
+                                    if i < j {
+                                        let (mut l, mut r) = x.at_mut(1).split_at(j);
+                                        [Subset::all(l.at_mut(i)), Subset::all(r.at_mut(0))]
+                                    } else {
+                                        assert_ne!(i, j); // This needs special handling for self contact.
+                                        let (mut l, mut r) = x.at_mut(1).split_at(i);
+                                        [Subset::all(r.at_mut(0)), Subset::all(l.at_mut(j))]
+                                    }
+                                }
+                            };
+                        }
+                        None => x,
+                    },
+                };
+
+                match source[1] {
+                    SourceIndex::Solid(j) => {
+                        let (mut l, mut r) = x.split_at(1);
+                        [
+                            Subset::all(l.at_mut(0).at_mut(i)),
+                            Subset::from_unique_ordered_indices(
+                                solids[j].surface().indices.to_vec(),
+                                r.at_mut(0).at_mut(j),
+                            ),
+                        ]
+                    }
+                    SourceIndex::Shell(j) => {
+                        if i < j {
+                            let (mut l, mut r) = x.at_mut(1).split_at(j);
+                            [Subset::all(l.at_mut(i)), Subset::all(r.at_mut(0))]
+                        } else {
+                            assert_ne!(i, j); // This needs special handling for self contact.
+                            let (mut l, mut r) = x.at_mut(1).split_at(i);
+                            [Subset::all(r.at_mut(0)), Subset::all(l.at_mut(j))]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn mesh_surface_vertex_count(&self, source: SourceIndex) -> usize {
         match source {
             SourceIndex::Solid(i) => self.solids[i].surface().indices.len(),
@@ -1018,15 +1167,18 @@ impl NonLinearProblem {
             // TODO: It is unfortunate that we have to leak abstraction here.
             // Possibly we have to hide object_data behind a RefCell and use
             // borrow splitting.
-            let mut object_vel = ObjectData::mesh_vertex_subset_mut_impl(
+            let [mut obj_vel, mut coll_vel] = ObjectData::mesh_vertex_subset_split_mut_impl(
                 cur_v.view_mut(),
                 vel.view_mut(),
-                fc.object_index,
+                [fc.object_index, fc.collider_index],
                 solids,
                 shells,
             );
-            fc.constraint
-                .add_mass_weighted_frictional_contact_impulse(object_vel.view_mut());
+
+            fc.constraint.add_mass_weighted_frictional_contact_impulse([
+                obj_vel.view_mut(),
+                coll_vel.view_mut(),
+            ]);
         }
     }
 
@@ -1445,13 +1597,11 @@ impl NonLinearProblem {
                 [0.0; 3],
             );
 
-            let obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
-            let coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
+            let mut obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
+            let mut coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
 
-            // TODO: Finish this
-            //fc.constraint.add_friction_impulse(
-            //    [Chunked3::from_flat(obj_imp.as_mut_slice()),
-            //     Chunked3::from_flat(coll_imp.as_mut_slice())], 1.0);
+            fc.constraint
+                .add_friction_impulse([obj_imp.view_mut().into(), coll_imp.view_mut().into()], 1.0);
 
             let mut imp =
                 object_data.mesh_vertex_subset_mut(impulse.view_mut(), None, fc.object_index);
@@ -1856,10 +2006,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     },
                 });
 
-                let mut obj_g =
-                    self.object_data
-                        .mesh_vertex_subset_mut(grad.view_mut(), None, fc.object_index);
-                fc.constraint.add_friction_impulse(obj_g.view_mut(), -1.0);
+                let [mut obj_g, mut coll_g] = self.object_data.mesh_vertex_subset_split_mut(
+                    grad.view_mut(),
+                    None,
+                    [fc.object_index, fc.collider_index],
+                );
+                fc.constraint
+                    .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
             }
         }
 

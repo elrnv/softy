@@ -1,15 +1,13 @@
 #![allow(dead_code)]
 use super::FrictionParams;
 use super::FrictionSolveResult;
-use crate::contact::ContactBasis;
-use geo::math::Matrix3;
 use ipopt::{self, Index, Ipopt, Number};
 use reinterpret::*;
 
 use unroll::unroll_for_loops;
 use utils::zip;
 
-use crate::contact::Polar2;
+use crate::contact::{ContactBasis, ContactJacobian, Polar2};
 use crate::Error;
 
 /// Friction solver.
@@ -34,18 +32,18 @@ impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>> {
     }
 }
 
-impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionPolarSolver<'a, CJI> {
+impl<'a, CJI> FrictionPolarSolver<'a, CJI> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
-    pub fn new(
+    pub(crate) fn new(
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: (&'a [Matrix3<f64>], CJI),
+        contact_jacobian: &'a ContactJacobian<CJI>,
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
         Self::new_impl(
             velocity,
@@ -63,7 +61,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionPolarSolver<'a, CJI> {
         _contact_basis: &'a ContactBasis,
         _masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+        contact_jacobian: Option<&'a ContactJacobian<CJI>>,
     ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
         let problem = ExplicitFrictionPolarProblem(FrictionPolarProblem {
             velocity,
@@ -125,7 +123,7 @@ pub(crate) struct FrictionPolarProblem<'a, CJI> {
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
     #[allow(dead_code)]
-    contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
+    contact_jacobian: Option<&'a ContactJacobian<CJI>>,
     ///// Vertex masses.
     //masses: &'a [f64],
 }

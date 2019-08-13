@@ -206,7 +206,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         frictional_contact
             .contact_basis
             .update_from_normals(normals.into());
-        frictional_contact.impulse.clear();
+        frictional_contact.object_impulse.clear();
         assert_eq!(contact_impulse.len(), surf_indices.len());
 
         if false {
@@ -234,8 +234,8 @@ impl ContactConstraint for ImplicitContactConstraint {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                            frictional_contact.impulse.append(
-                                &mut frictional_contact
+                            frictional_contact.object_impulse.extend_from_slice(
+                                &frictional_contact
                                     .contact_basis
                                     .from_polar_tangent_space(reinterpret_vec(r_t)),
                             );
@@ -268,7 +268,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                     let r = frictional_contact
                         .contact_basis
                         .from_cylindrical_contact_coordinates(r_t.into(), contact_idx);
-                    frictional_contact.impulse.push(r.into());
+                    frictional_contact.object_impulse.push(r.into());
                 }
                 friction_steps -= 1;
             }
@@ -299,8 +299,8 @@ impl ContactConstraint for ImplicitContactConstraint {
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
 
-                frictional_contact.impulse.append(
-                    &mut frictional_contact
+                frictional_contact.object_impulse.extend_from_slice(
+                    &frictional_contact
                         .contact_basis
                         .from_tangent_space(reinterpret_vec(r_t)),
                 );
@@ -343,7 +343,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                     let r = frictional_contact
                         .contact_basis
                         .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx);
-                    frictional_contact.impulse.push(r.into());
+                    frictional_contact.object_impulse.push(r.into());
                 }
             }
 
@@ -355,10 +355,10 @@ impl ContactConstraint for ImplicitContactConstraint {
 
     fn add_mass_weighted_frictional_contact_impulse(
         &self,
-        mut vel: SubsetView<Chunked3<&mut [f64]>>,
+        mut vel: [SubsetView<Chunked3<&mut [f64]>>; 2],
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
-            if frictional_contact.impulse.is_empty() {
+            if frictional_contact.object_impulse.is_empty() {
                 return;
             }
 
@@ -366,12 +366,12 @@ impl ContactConstraint for ImplicitContactConstraint {
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
 
-            for (&i, &r) in indices.iter().zip(frictional_contact.impulse.iter()) {
+            for (&i, &r) in indices.iter().zip(frictional_contact.object_impulse.iter()) {
                 let m = self.vertex_masses[i];
-                let v = Vector3(vel[i]);
-                vel[i] = (v + Vector3(r) / m).into();
+                let v = Vector3(vel[0][i]);
+                vel[0][i] = (v + Vector3(r) / m).into();
             }
         }
     }
@@ -381,12 +381,16 @@ impl ContactConstraint for ImplicitContactConstraint {
         // solve.
         if let Some(ref mut frictional_contact) = self.frictional_contact {
             let new_friction_impulses = crate::constraints::remap_values(
-                frictional_contact.impulse.iter().cloned(),
+                frictional_contact.object_impulse.iter().cloned(),
                 [0.0; 3],
                 old_set.iter().cloned(),
                 new_set.iter().cloned(),
             );
-            std::mem::replace(&mut frictional_contact.impulse, new_friction_impulses);
+
+            std::mem::replace(
+                &mut frictional_contact.object_impulse,
+                Chunked3::from_grouped_vec(new_friction_impulses),
+            );
 
             frictional_contact.contact_basis.remap(old_set, new_set);
         }

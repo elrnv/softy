@@ -4,6 +4,7 @@ mod proj_solver;
 mod solver;
 
 use crate::contact::ContactBasis;
+use utils::soap::Chunked3;
 //pub use elastic_solver::*;
 pub use polar_solver::*;
 pub use proj_solver::*;
@@ -29,8 +30,8 @@ pub struct FrictionParams {
 pub struct FrictionalContact {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
-    pub object_impulse: Vec<[f64; 3]>,
-    pub collider_impulse: Vec<[f64; 3]>,
+    pub object_impulse: Chunked3<Vec<f64>>,
+    pub collider_impulse: Chunked3<Vec<f64>>,
 }
 
 impl FrictionalContact {
@@ -38,7 +39,8 @@ impl FrictionalContact {
         FrictionalContact {
             params,
             contact_basis: ContactBasis::new(),
-            impulse: Vec::new(),
+            object_impulse: Chunked3::new(),
+            collider_impulse: Chunked3::new(),
         }
     }
 }

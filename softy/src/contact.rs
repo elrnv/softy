@@ -1,9 +1,11 @@
 mod solver;
 
 use crate::friction::FrictionParams;
+use implicits::ImplicitSurface;
 use na::{Matrix3, Matrix3x2, RealField, Vector2, Vector3};
 use reinterpret::*;
 pub use solver::ContactSolver;
+use utils::soap::*;
 use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -293,6 +295,89 @@ impl ContactBasis {
             // Normalize in-place.
             t.normalize_mut();
         }
+    }
+}
+
+pub(crate) struct ContactJacobian<I> {
+    pub iter: I,
+    pub blocks: Vec<geo::math::Matrix3<f64>>,
+    pub num_rows: usize,
+    pub num_cols: usize,
+}
+
+pub(crate) fn build_chunked_contact_jacobian(
+    surf: &ImplicitSurface,
+    query_points: Chunked3<&[f64]>,
+) -> ContactJacobian<impl Iterator<Item = (usize, usize)> + Clone> {
+    let mut cj_matrices = vec![
+        geo::math::Matrix3::zeros();
+        surf.num_contact_jacobian_matrices()
+            .expect("Failed to get contact Jacobian size.")
+    ];
+    surf.contact_jacobian_matrices(
+        query_points.view().into(),
+        reinterpret_mut_slice(&mut cj_matrices),
+    )
+    .expect("Failed to compute contact Jacobian.");
+    let cj_indices_iter = surf
+        .contact_jacobian_indices_iter()
+        .expect("Failed to get contact Jacobian indices.");
+
+    ContactJacobian {
+        iter: cj_indices_iter,
+        blocks: cj_matrices,
+        num_rows: query_points.len(),
+        num_cols: surf.surface_vertex_positions().len(),
+    }
+}
+
+impl<'a, I, Rhs> std::ops::Mul<Rhs> for &ContactJacobian<I>
+where
+    I: Clone + Iterator<Item = (usize, usize)>,
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Chunked3<Vec<f64>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        let v = rhs.into();
+        assert_eq!(v.len(), self.num_cols);
+
+        let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.num_rows]);
+        for ((r, c), &block) in self.iter.clone().zip(self.blocks.iter()) {
+            let out = geo::math::Vector3(res[r]) + block * geo::math::Vector3(v[c]);
+            res[r] = out.into();
+        }
+
+        res
+    }
+}
+
+/// A transpose of a matrix like the contact jacobian.
+pub(crate) struct Transpose<M>(M);
+
+impl<I> ContactJacobian<I> {
+    pub(crate) fn transpose(&self) -> Transpose<&Self> {
+        Transpose(&self)
+    }
+}
+
+impl<'a, I, Rhs> std::ops::Mul<Rhs> for Transpose<&ContactJacobian<I>>
+where
+    I: Clone + Iterator<Item = (usize, usize)>,
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Chunked3<Vec<f64>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        let f = rhs.into();
+        assert_eq!(f.len(), self.0.num_rows);
+
+        let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.0.num_cols]);
+
+        for ((r, c), &block) in self.0.iter.clone().zip(self.0.blocks.iter()) {
+            let out = geo::math::Vector3(res[r]) + block.transpose() * geo::math::Vector3(f[c]);
+            res[r] = out.into();
+        }
+
+        res
     }
 }
 

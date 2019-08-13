@@ -400,8 +400,8 @@ fn two_tets_in_contact() -> Result<(), Error> {
     let params = SimParams {
         max_outer_iterations: 20,
         gravity: [0.0f32, 0.0, 0.0],
-        print_level: 5,
-        derivative_test: 2,
+        //print_level: 5,
+        //derivative_test: 2,
         ..STATIC_PARAMS
     };
 
@@ -420,12 +420,12 @@ fn two_tets_in_contact() -> Result<(), Error> {
 
     let solve_result = solver.step()?;
 
-    use std::path::PathBuf;
+    //use std::path::PathBuf;
 
-    let resmesh1 = &solver.solid(0).tetmesh;
-    let resmesh2 = &solver.solid(1).tetmesh;
-    geo::io::save_tetmesh(resmesh1, &PathBuf::from("./out/mesh1.vtk"));
-    geo::io::save_tetmesh(resmesh2, &PathBuf::from("./out/mesh2.vtk"));
+    //let resmesh1 = &solver.solid(0).tetmesh;
+    //let resmesh2 = &solver.solid(1).tetmesh;
+    //geo::io::save_tetmesh(resmesh1, &PathBuf::from("./out/mesh1.vtk"));
+    //geo::io::save_tetmesh(resmesh2, &PathBuf::from("./out/mesh2.vtk"));
     assert_eq!(solve_result.iterations, 1); // should be no more than one outer iteration
     Ok(())
 }

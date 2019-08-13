@@ -177,7 +177,8 @@ pub trait ContactConstraint:
     /// Clear the saved frictional contact impulse.
     fn clear_frictional_contact_impulse(&mut self) {
         if let Some(ref mut frictional_contact) = self.frictional_contact_mut() {
-            frictional_contact.impulse.clear();
+            frictional_contact.object_impulse.clear();
+            frictional_contact.collider_impulse.clear();
         }
     }
 
@@ -197,12 +198,19 @@ pub trait ContactConstraint:
         friction_steps: u32,
     ) -> u32;
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: SubsetView<Chunked3<&mut [f64]>>);
+    fn add_mass_weighted_frictional_contact_impulse(
+        &self,
+        x: [SubsetView<Chunked3<&mut [f64]>>; 2],
+    );
 
     /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(&self, mut grad: SubsetView<Chunked3<&mut [f64]>>, multiplier: f64) {
+    fn add_friction_impulse(
+        &self,
+        mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        multiplier: f64,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if frictional_contact.impulse.is_empty() {
+            if frictional_contact.object_impulse.is_empty() {
                 return;
             }
 
@@ -211,10 +219,10 @@ pub trait ContactConstraint:
                 return;
             }
 
-            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
             for (contact_idx, (&i, &r)) in indices
                 .iter()
-                .zip(frictional_contact.impulse.iter())
+                .zip(frictional_contact.object_impulse.iter())
                 .enumerate()
             {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {
@@ -231,7 +239,7 @@ pub trait ContactConstraint:
                     Vector3::zeros()
                 };
 
-                grad[i] = (Vector3(grad[i]) + r_t * multiplier).into();
+                grad[0][i] = (Vector3(grad[0][i]) + r_t * multiplier).into();
             }
         }
     }
@@ -240,7 +248,7 @@ pub trait ContactConstraint:
     fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if frictional_contact.impulse.is_empty() {
+            if frictional_contact.object_impulse.is_empty() {
                 return dissipation;
             }
 
@@ -249,11 +257,11 @@ pub trait ContactConstraint:
                 return dissipation;
             }
 
-            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
 
             for (contact_idx, (&i, &r)) in indices
                 .iter()
-                .zip(frictional_contact.impulse.iter())
+                .zip(frictional_contact.object_impulse.iter())
                 .enumerate()
             {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {

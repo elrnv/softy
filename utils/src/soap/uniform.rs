@@ -106,6 +106,29 @@ impl<S, N> UniChunked<S, N> {
     }
 }
 
+impl<S: Default, N: num::Unsigned> UniChunked<S, N> {
+    /// Create an empty `UniChunked` collection that groups elements into `N`
+    /// chunks.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked3::<Vec<usize>>::new();
+    /// assert_eq!(s, Chunked3::from_flat(Vec::new()));
+    /// s.push([1,2,3]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(Some(&[1,2,3]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    pub fn new() -> Self {
+        UniChunked {
+            chunks: N::new(), // Zero sized type.
+            data: S::default(),
+        }
+    }
+}
+
 impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     /// Create a `UniChunked` collection that groups the elements of the
     /// original set into uniformly sized groups at compile time.
@@ -134,6 +157,27 @@ impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     }
 }
 
+impl<S: Default> ChunkedN<S> {
+    /// Create an empty `UniChunked` collection that groups elements into `n`
+    /// chunks.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = ChunkedN::<Vec<_>>::with_stride(3);
+    /// s.push(&[1,2,3][..]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    pub fn with_stride(n: usize) -> Self {
+        UniChunked {
+            chunks: n,
+            data: S::default(),
+        }
+    }
+}
 impl<S: Set> UniChunked<S, usize> {
     /// Create a `UniChunked` collection that groups the elements of the
     /// original set into uniformly sized groups at compile time.
@@ -142,13 +186,13 @@ impl<S: Set> UniChunked<S, usize> {
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = ChunkedN::with_stride(vec![1,2,3,4,5,6], 3);
+    /// let s = ChunkedN::from_flat_with_stride(vec![1,2,3,4,5,6], 3);
     /// let mut iter = s.iter();
     /// assert_eq!(Some(&[1,2,3][..]), iter.next());
     /// assert_eq!(Some(&[4,5,6][..]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    pub fn with_stride(data: S, n: usize) -> Self {
+    pub fn from_flat_with_stride(data: S, n: usize) -> Self {
         assert_eq!(data.len() % n, 0);
         UniChunked { chunks: n, data }
     }
@@ -170,6 +214,84 @@ impl<T, N> UniChunked<Vec<T>, N> {
     {
         assert_eq!(src.len(), self.data.len());
         self.data.clone_from_slice(src);
+    }
+}
+
+impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
+    /// This function panics if `src` has doesn't have a length equal to `self.len()`.
+    pub fn copy_from_grouped(&mut self, src: &[T::Type])
+    where
+        T: Copy,
+    {
+        assert_eq!(src.len(), self.len());
+        self.data
+            .copy_from_slice(reinterpret::reinterpret_slice(src));
+    }
+    /// This function panics if `src` has doesn't have a length equal to `self.len()`.
+    pub fn clone_from_grouped(&mut self, src: &[T::Type])
+    where
+        T: Clone,
+    {
+        assert_eq!(src.len(), self.len());
+        self.data
+            .clone_from_slice(reinterpret::reinterpret_slice(src));
+    }
+}
+
+impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
+    pub fn reserve(&mut self, new_length: usize) {
+        self.data.reserve(new_length * N::value());
+    }
+}
+
+impl<T> ChunkedN<Vec<T>> {
+    pub fn reserve(&mut self, new_length: usize) {
+        self.data.reserve(new_length * self.chunks);
+    }
+}
+
+impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
+    /// This function panics if `src` has doesn't have a length equal to `self.len()`.
+    pub fn resize(&mut self, new_length: usize, default: T::Type)
+    where
+        <T as Grouped<N>>::Type: Clone,
+    {
+        self.reserve(new_length);
+        for _ in 0..new_length {
+            Grouped::<N>::push_to_vec(default.clone(), &mut self.data);
+        }
+    }
+}
+
+impl<T> ChunkedN<Vec<T>> {
+    pub fn resize(&mut self, new_length: usize, default: &[T])
+    where
+        T: Clone,
+    {
+        self.reserve(new_length);
+        for _ in 0..new_length {
+            self.data.extend_from_slice(default);
+        }
+    }
+}
+
+impl<T, N> UniChunked<Vec<T>, N>
+where
+    T: Grouped<N> + Clone,
+{
+    /// Extend this chunked `Vec` from a slice of arrays.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked2::from_flat(vec![0,1,2,3]);
+    /// s.extend_from_slice(&[[4,5], [6,7]]);
+    /// assert_eq!(s.data(), &vec![0,1,2,3,4,5,6,7]);
+    /// ```
+    pub fn extend_from_slice(&mut self, slice: &[T::Type]) {
+        self.data
+            .extend_from_slice(reinterpret::reinterpret_slice(slice));
     }
 }
 
@@ -210,9 +332,9 @@ impl<S: Set> Set for UniChunked<S, usize> {
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = ChunkedN::with_stride(vec![0,1,2,3,4,5], 2);
+    /// let s = ChunkedN::from_flat_with_stride(vec![0,1,2,3,4,5], 2);
     /// assert_eq!(s.len(), 3);
-    /// let s = ChunkedN::with_stride(vec![0,1,2,3,4,5], 3);
+    /// let s = ChunkedN::from_flat_with_stride(vec![0,1,2,3,4,5], 3);
     /// assert_eq!(s.len(), 2);
     /// ```
     fn len(&self) -> usize {
@@ -222,6 +344,7 @@ impl<S: Set> Set for UniChunked<S, usize> {
 
 impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Type> for UniChunked<S, N>
 where
+    N: num::Unsigned,
     S: Set + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Grouped<N>,
 {
@@ -241,6 +364,32 @@ where
     /// ```
     fn push(&mut self, element: <<S as Set>::Elem as Grouped<N>>::Type) {
         Grouped::<N>::push_to(element, &mut self.data);
+    }
+}
+
+impl<S> Push<&[<S as Set>::Elem]> for ChunkedN<S>
+where
+    S: Set + Push<<S as Set>::Elem>,
+    <S as Set>::Elem: Clone,
+{
+    /// Push a grouped element onto the `UniChunked` type. The pushed element must
+    /// have exactly `N` sub-elements.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = UniChunked::<_, num::U3>::from_flat(vec![1,2,3]);
+    /// s.push([4,5,6]);
+    /// let mut iter = s.iter();
+    /// assert_eq!(Some(&[1,2,3]), iter.next());
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn push(&mut self, element: &[<S as Set>::Elem]) {
+        for e in element {
+            self.data.push(e.clone());
+        }
     }
 }
 
@@ -402,6 +551,10 @@ where
     /// type.
     fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S);
 
+    fn push_to_vec(element: Self::Type, set: &mut Vec<Self>) {
+        Self::push_to(element, set);
+    }
+
     /// Construct a grouped type from a `RangeFrom<T>`.
     fn from_range(rng: std::ops::RangeFrom<Self>) -> Self::Type
     where
@@ -432,6 +585,9 @@ macro_rules! impl_grouped {
                 for i in &element {
                     set.push(i.clone());
                 }
+            }
+            fn push_to_vec(element: Self::Type, vec: &mut Vec<Self>) {
+                vec.extend_from_slice(&element);
             }
             fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Type
             where
@@ -1078,7 +1234,7 @@ where
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s = ChunkedN::with_stride(vec![1,2,3,4,5,6], 3);
+    /// let mut s = ChunkedN::from_flat_with_stride(vec![1,2,3,4,5,6], 3);
     /// s.view_mut().at_mut(1).copy_from_slice(&[0; 3]);
     /// let mut iter = s.iter();
     /// assert_eq!(Some(&[1,2,3][..]), iter.next());
@@ -1195,10 +1351,10 @@ impl<S: SplitAt + Set> SplitAt for ChunkedN<S> {
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let s = ChunkedN::with_stride(vec![0,1,2,3], 2);
+    /// let s = ChunkedN::from_flat_with_stride(vec![0,1,2,3], 2);
     /// let (l, r) = s.split_at(1);
-    /// assert_eq!(l, ChunkedN::with_stride(vec![0,1], 2));
-    /// assert_eq!(r, ChunkedN::with_stride(vec![2,3], 2));
+    /// assert_eq!(l, ChunkedN::from_flat_with_stride(vec![0,1], 2));
+    /// assert_eq!(r, ChunkedN::from_flat_with_stride(vec![2,3], 2));
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
         let UniChunked { data, chunks } = self;

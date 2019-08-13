@@ -129,7 +129,7 @@ impl<S: Set + RemovePrefix, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
     }
 }
 
-impl<S: Set + RemovePrefix, O> Subset<S, O> {
+impl<S, O> Subset<S, O> {
     /// Create a subset with all elements from the original set.
     ///
     /// # Example
@@ -735,5 +735,15 @@ impl<S: Dummy, I> Dummy for Subset<S, I> {
             data: Dummy::dummy(),
             indices: None,
         }
+    }
+}
+
+/*
+ * Conversions
+ */
+
+impl<S, I> From<S> for Subset<S, I> {
+    fn from(set: S) -> Subset<S, I> {
+        Subset::all(set)
     }
 }

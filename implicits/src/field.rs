@@ -1273,6 +1273,7 @@ pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::*;
     use geo::mesh::*;
 
@@ -1480,6 +1481,22 @@ mod tests {
         Ok(())
     }
 
+    /// This struct helps deserialize testing assets without having to store an rtree.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct ImplicitSurfaceNoTree
+    {
+        kernel: KernelType,
+        base_radius: f64,
+        bg_field_params: BackgroundFieldParams,
+        surface_topo: Vec<[usize; 3]>,
+        surface_vertex_positions: Vec<Vector3<f64>>,
+        samples: Samples<f64>,
+        max_step: f64,
+        query_neighbourhood: RefCell<Neighbourhood>,
+        dual_topo: Vec<Vec<usize>>,
+        sample_type: SampleType,
+    }
+
     /// Test a specific case where the projection direction can be zero, which could result in
     /// NaNs. This case must not crash.
     #[test]
@@ -1497,12 +1514,37 @@ mod tests {
         };
 
         let surface: ImplicitSurface<f64> = {
-            let mut file = std::fs::File::open("assets/torus_surf.json")
+            let mut file = std::fs::File::open("assets/torus_surf_no_tree.json")
                 .expect("Failed to open torus surface file");
             let mut contents = String::new();
             file.read_to_string(&mut contents)
                 .expect("Failed to read torus surface json.");
-            serde_json::from_str(&contents).expect("Failed to deserialize torus surface.")
+            let ImplicitSurfaceNoTree {
+                kernel,
+                base_radius,
+                bg_field_params,
+                surface_topo,
+                surface_vertex_positions,
+                samples,
+                max_step,
+                query_neighbourhood,
+                dual_topo,
+                sample_type
+            } = serde_json::from_str(&contents).expect("Failed to deserialize torus surface.");
+            ImplicitSurface {
+                kernel,
+                base_radius,
+                bg_field_params,
+                spatial_tree: build_rtree_from_samples(&samples),
+                surface_topo,
+                surface_vertex_positions,
+                samples,
+                max_step,
+                query_neighbourhood,
+                dual_topo,
+                sample_type,
+            }
+
         };
 
         let init_potential = {

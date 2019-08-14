@@ -129,6 +129,21 @@ where
         }
     }
 
+    /// A Helper function to compute the closest sample to the query point `q` in the given set of
+    /// samples. It is important to use this same function when determining closest points (as in
+    /// local and global field constructors below) because this ensures that in the precence of
+    /// discontinuities in the global field, the derivatives will be computed using the same
+    /// closest points as the potential field itself.
+    fn closest_sample(q: Vector3<T>, samples: SamplesView<'a, 'a, T>) -> Option<usize> {
+        samples
+            .iter()
+            .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
+            .min_by(|(_, d0), (_, d1)| {
+                d0.partial_cmp(d1)
+                    .unwrap_or_else(|| panic!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
+            }).map(|(index, _)| index)
+    }
+
     /// Build a local background field that is valid only when `local_samples_view` is non empty.
     /// This function returns the `InvalidBackgroundConstruction` error when `local_samples_view`
     /// is empty. This means that there is not enough information in the input to actually build
@@ -141,14 +156,7 @@ where
         bg_value: Option<V>,
     ) -> Result<Self, crate::Error> {
         let closest_sample_index = {
-            let min_sample = local_samples_view
-                .iter()
-                .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
-                .min_by(|(_, d0), (_, d1)| {
-                    d0.partial_cmp(d1)
-                        .unwrap_or_else(|| panic!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
-                });
-            if let Some((index, _)) = min_sample {
+            if let Some(index) = Self::closest_sample(q, local_samples_view) {
                 ClosestIndex::Local(index)
             } else {
                 return Err(crate::Error::InvalidBackgroundConstruction);
@@ -177,14 +185,20 @@ where
         bg_params: BackgroundFieldParams,
         bg_value: Option<V>,
     ) -> Self {
-        // Determine if the closest sample is in our neighbourhood of samples.
-        let closest_sample_index = if let Some(sample) = local_samples_view
-            .iter()
-            .find(|&sample| sample.index == global_closest)
-        {
-            ClosestIndex::Local(sample.index)
-        } else {
-            ClosestIndex::Global(global_closest)
+        // Check that the closest sample is in our neighbourhood of samples.
+        debug_assert!(
+            local_samples_view.is_empty()
+                || local_samples_view
+                    .iter()
+                    .find(|&sample| sample.index == global_closest)
+                    .is_some()
+        );
+        let closest_sample_index = {
+            if let Some(index) = Self::closest_sample(q, local_samples_view) {
+                ClosestIndex::Local(index)
+            } else {
+                ClosestIndex::Global(global_closest)
+            }
         };
 
         Self::new_impl(

@@ -394,7 +394,7 @@ mod tests {
 
     /// Test the query jacobian of the implicit surface.
     #[test]
-    fn query_jacobian_test() -> Result<(), Error> {
+    fn complex_query_jacobian_test() -> Result<(), Error> {
         use autodiff::F;
         use geo::math::Vector3;
 
@@ -493,7 +493,7 @@ mod tests {
 
     /// Test the query Hessian of the implicit surface.
     #[test]
-    fn query_hessian_test() -> Result<(), Error> {
+    fn complex_query_hessian_test() -> Result<(), Error> {
         use autodiff::F;
         use geo::math::Vector3;
 

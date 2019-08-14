@@ -192,7 +192,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// function will return `None`.
     pub fn build<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>>
     where
-        Sample<T>: spade::SpatialObject,
+        Sample<T>: rstar::RTreeObject,
     {
         let ImplicitSurfaceBuilder {
             kernel,

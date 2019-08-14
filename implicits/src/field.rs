@@ -11,7 +11,7 @@ use geo::Real;
 use num_traits::cast;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use spade::rtree::RTree;
+use rstar::RTree;
 use std::cell::{Ref, RefCell};
 use utils::zip;
 
@@ -232,7 +232,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 let neigh = |q| {
                     let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                     spatial_tree
-                        .lookup_in_circle(&q_pos, &radius2)
+                        .locate_within_distance(q_pos, radius2)
                         .into_iter()
                         .cloned()
                 };

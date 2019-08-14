@@ -9,7 +9,7 @@ rayon = "1.0"
 na = { package = "nalgebra", version = "0.18" }
 hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io", "serde_all"] }
-spade = { version = "1.5", features = ["serde_serialize"] }
+rstar = { version = "0.5", features = ["serde"] }
 autodiff = { git = "https://github.com/elrnv/autodiff.git" }
 reinterpret = "0.1"
 num-traits = "0.2"

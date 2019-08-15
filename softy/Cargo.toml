@@ -14,7 +14,7 @@ implicits = { path = "../implicits" }
 unroll = "0.1"
 approx = "0.3"
 num-traits = "0.2"
-jemallocator = "0.3"
+#jemallocator = "0.3"
 image = "0.21" # For visualizing large sparse matrices
 utils = { path = "../utils" }
 is_sorted = "0.1"

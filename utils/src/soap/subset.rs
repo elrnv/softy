@@ -25,14 +25,15 @@ use super::*;
 /// let mut v = Chunked3::from_flat(vec![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]);
 /// let mut subset = Subset::from_indices(vec![0,2,4], v.view_mut());
 /// {
-///     let mut subset_iter = subset.iter();
+///     let subset_view = subset.view();
+///     let mut subset_iter = subset_view.iter();
 ///     assert_eq!(Some(&[1,2,3]), subset_iter.next());
 ///     assert_eq!(Some(&[7,8,9]), subset_iter.next());
 ///     assert_eq!(Some(&[13,14,15]), subset_iter.next());
 ///     assert_eq!(None, subset_iter.next());
 /// }
-/// *subset.at_mut(1) = [0; 3];
-/// assert_eq!(&[0,0,0], subset.at(1));
+/// *subset.view_mut().isolate(1) = [0; 3];
+/// assert_eq!(&[0,0,0], subset.view().at(1));
 /// ```
 // A note about translation independence:
 // ======================================
@@ -432,14 +433,14 @@ where
     }
 }
 
-impl<'a, S, O> GetMutIndex<'a, Subset<S, O>> for usize
+impl<S, O> IsolateIndex<Subset<S, O>> for usize
 where
     O: std::borrow::Borrow<[usize]>,
-    S: GetMut<'a, usize>,
+    S: Isolate<usize>,
 {
-    type Output = <S as GetMut<'a, usize>>::Output;
+    type Output = <S as Isolate<usize>>::Output;
 
-    fn get_mut(self, subset: &mut Subset<S, O>) -> Option<Self::Output> {
+    fn try_isolate(self, subset: Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         let Subset { indices, data } = subset;
         if let Some(ref indices) = indices {
@@ -447,10 +448,10 @@ where
                 indices
                     .borrow()
                     .get(self)
-                    .and_then(move |&cur| GetMut::get_mut(data, cur - first))
+                    .and_then(move |&cur| Isolate::try_isolate(data, cur - first))
             })
         } else {
-            GetMut::get_mut(data, self)
+            Isolate::try_isolate(data, self)
         }
     }
 }
@@ -473,21 +474,21 @@ where
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5];
     /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
-    /// assert_eq!(&3, subset.get(1).unwrap());
+    /// assert_eq!(&3, subset.view().get(1).unwrap());
     /// ```
     fn get(&self, range: I) -> Option<Self::Output> {
         range.get(self)
     }
 }
 
-impl<'a, S, I, O> GetMut<'a, I> for Subset<S, O>
+impl<S, I, O> Isolate<I> for Subset<S, O>
 where
-    I: GetMutIndex<'a, Self>,
+    I: IsolateIndex<Self>,
 {
     type Output = I::Output;
 
-    fn get_mut(&mut self, range: I) -> Option<Self::Output> {
-        range.get_mut(self)
+    fn try_isolate(self, range: I) -> Option<Self::Output> {
+        range.try_isolate(self)
     }
 }
 

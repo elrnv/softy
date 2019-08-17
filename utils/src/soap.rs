@@ -183,13 +183,10 @@ where
     //unsafe fn get_unchecked(self, set: &'i S) -> Self::Output;
 }
 
-/// A helper trait like `GetIndex` but for mutable references.
-pub trait GetMutIndex<'a, S>
-where
-    S: ?Sized,
-{
+/// A helper trait like `GetIndex` but for `Isolate` types.
+pub trait IsolateIndex<S> {
     type Output;
-    fn get_mut(self, set: &mut S) -> Option<Self::Output>;
+    fn try_isolate(self, set: S) -> Option<Self::Output>;
     //unsafe fn get_unchecked_mut(self, set: &'i mut S) -> Self::Output;
 }
 
@@ -212,22 +209,32 @@ pub trait Get<'a, I> {
     }
 }
 
-/// An index trait for mutable collection types.
-/// Here `'i` indicates the lifetime of the input while `'o` indicates that of
-/// the output.
-pub trait GetMut<'a, I> {
+/// Since we cannot alias mutable references, in order to index a mutable view
+/// of elements, we must consume the original mutable reference. Since we can't
+/// use slices for general composable collections, its impossible to match
+/// against a `&mut self` in the getter function to be able to use it with owned
+/// collections, so we opt to have an interface that is designed specifically
+/// for mutably borrowed collections. For composable collections, this is better
+/// described by a subview operator, which is precisely what this trait
+/// represents. Incidentally this can also work for owned collections, which is
+/// why it's called `Isolate` instead of `SubView`.
+pub trait Isolate<I> {
     type Output;
-    //unsafe fn get_unchecked_mut(&'i self, idx: I) -> Self::Output;
-    fn get_mut(&mut self, idx: I) -> Option<Self::Output>;
+    //unsafe fn isolate_unchecked(&'i self, idx: I) -> Self::Output;
+    fn try_isolate(self, idx: I) -> Option<Self::Output>;
     /// Return a value at the given index. This is provided as the checked
-    /// version of `get` that will panic if the equivalent `get` call is `None`,
-    /// which typically means that the given index is out of bounds.
+    /// version of `try_isolate` that will panic if the equivalent `try_isolate`
+    /// call is `None`, which typically means that the given index is out of
+    /// bounds.
     ///
     /// # Panics
     ///
     /// This function will panic if `self.get(idx)` returns `None`.
-    fn at_mut(&mut self, idx: I) -> Self::Output {
-        self.get_mut(idx).expect("Index out of bounds")
+    fn isolate(self, idx: I) -> Self::Output
+    where
+        Self: Sized,
+    {
+        self.try_isolate(idx).expect("Index out of bounds")
     }
 }
 
@@ -293,122 +300,122 @@ where
     }
 }
 
-impl<'a, S: Owned> GetMutIndex<'a, S> for std::ops::RangeFrom<usize>
+impl<S: Owned> IsolateIndex<S> for std::ops::RangeFrom<usize>
 where
     S: Set,
-    std::ops::Range<usize>: GetMutIndex<'a, S>,
+    std::ops::Range<usize>: IsolateIndex<S>,
 {
-    type Output = <std::ops::Range<usize> as GetMutIndex<'a, S>>::Output;
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
-    fn get_mut(self, set: &mut S) -> Option<Self::Output> {
-        (self.start..set.len()).get_mut(set)
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
+        (self.start..set.len()).try_isolate(set)
     }
 }
 
-impl<'a, S: Owned> GetMutIndex<'a, S> for std::ops::RangeTo<usize>
+impl<S: Owned> IsolateIndex<S> for std::ops::RangeTo<usize>
 where
-    std::ops::Range<usize>: GetMutIndex<'a, S>,
+    std::ops::Range<usize>: IsolateIndex<S>,
 {
-    type Output = <std::ops::Range<usize> as GetMutIndex<'a, S>>::Output;
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
-    fn get_mut(self, set: &mut S) -> Option<Self::Output> {
-        (0..self.end).get_mut(set)
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
+        (0..self.end).try_isolate(set)
     }
 }
 
-impl<'a, S: Owned> GetMutIndex<'a, S> for std::ops::RangeFull
+impl<S: Owned> IsolateIndex<S> for std::ops::RangeFull
 where
     S: Set,
-    std::ops::Range<usize>: GetMutIndex<'a, S>,
+    std::ops::Range<usize>: IsolateIndex<S>,
 {
-    type Output = <std::ops::Range<usize> as GetMutIndex<'a, S>>::Output;
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
-    fn get_mut(self, set: &mut S) -> Option<Self::Output> {
-        (0..set.len()).get_mut(set)
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
+        (0..set.len()).try_isolate(set)
     }
 }
 
-impl<'a, S: Owned> GetMutIndex<'a, S> for std::ops::RangeInclusive<usize>
+impl<S: Owned> IsolateIndex<S> for std::ops::RangeInclusive<usize>
 where
     S: Set,
-    std::ops::Range<usize>: GetMutIndex<'a, S>,
+    std::ops::Range<usize>: IsolateIndex<S>,
 {
-    type Output = <std::ops::Range<usize> as GetMutIndex<'a, S>>::Output;
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
     #[allow(clippy::range_plus_one)]
-    fn get_mut(self, set: &mut S) -> Option<Self::Output> {
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
         if *self.end() == usize::max_value() {
             None
         } else {
-            (*self.start()..*self.end() + 1).get_mut(set)
+            (*self.start()..*self.end() + 1).try_isolate(set)
         }
     }
 }
 
-impl<'a, S: Owned> GetMutIndex<'a, S> for std::ops::RangeToInclusive<usize>
+impl<S: Owned> IsolateIndex<S> for std::ops::RangeToInclusive<usize>
 where
     S: Set,
-    std::ops::Range<usize>: GetMutIndex<'a, S>,
+    std::ops::Range<usize>: IsolateIndex<S>,
 {
-    type Output = <std::ops::Range<usize> as GetMutIndex<'a, S>>::Output;
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
-    fn get_mut(self, set: &mut S) -> Option<Self::Output> {
-        (0..=self.end).get_mut(set)
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
+        (0..=self.end).try_isolate(set)
     }
 }
 
-impl<'a, S, I> GetMut<'a, I> for &mut S
-where
-    S: Owned + GetMut<'a, I>,
-{
-    type Output = S::Output;
-    /// Index into any borrowed collection `S`, which itself implements
-    /// `Get<'a, I>`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut s = v.as_mut_slice();
-    /// *utils::soap::GetMut::get_mut(&mut s, 2).unwrap() = 100;
-    /// assert_eq!(v, vec![1,2,100,4,5]);
-    /// ```
-    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
-        (*self).get_mut(idx)
-    }
-}
-
-impl<'a, S, I> Get<'a, I> for &S
-where
-    S: Owned + Get<'a, I>,
-{
-    type Output = S::Output;
-    /// Index into any borrowed collection `S`, which itself implements
-    /// `Get<'a, I>`.
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        (**self).get(idx)
-    }
-}
-
-impl<'a, S, I> Get<'a, I> for &mut S
-where
-    S: Owned + Get<'a, I>,
-{
-    type Output = S::Output;
-    /// Index into any mutably borrowed collection `S`, which itself implements
-    /// `Get<'a, I>`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut s = v.as_mut_slice();
-    /// assert_eq!(utils::soap::Get::get(&mut s, 2).unwrap(), &3);
-    /// ```
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
-    }
-}
+//impl<'a, S, I> GetMut<'a, I> for &mut S
+//where
+//    S: Owned + GetMut<'a, I>,
+//{
+//    type Output = S::Output;
+//    /// Index into any borrowed collection `S`, which itself implements
+//    /// `Get<'a, I>`.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// let mut v = vec![1,2,3,4,5];
+//    /// let mut s = v.as_mut_slice();
+//    /// *utils::soap::GetMut::get_mut(&mut s, 2).unwrap() = 100;
+//    /// assert_eq!(v, vec![1,2,100,4,5]);
+//    /// ```
+//    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
+//        (*self).get_mut(idx)
+//    }
+//}
+//
+//impl<'a, S, I> Get<'a, I> for &S
+//where
+//    S: Owned + Get<'a, I>,
+//{
+//    type Output = S::Output;
+//    /// Index into any borrowed collection `S`, which itself implements
+//    /// `Get<'a, I>`.
+//    fn get(&self, idx: I) -> Option<Self::Output> {
+//        (**self).get(idx)
+//    }
+//}
+//
+//impl<'a, S, I> Get<'a, I> for &mut S
+//where
+//    S: Owned + Get<'a, I>,
+//{
+//    type Output = S::Output;
+//    /// Index into any mutably borrowed collection `S`, which itself implements
+//    /// `Get<'a, I>`.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// let mut v = vec![1,2,3,4,5];
+//    /// let mut s = v.as_mut_slice();
+//    /// assert_eq!(utils::soap::Get::get(&mut s, 2).unwrap(), &3);
+//    /// ```
+//    fn get(&self, idx: I) -> Option<Self::Output> {
+//        Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
+//    }
+//}
 
 impl<N: num::Unsigned> Set for StaticRange<N> {
     type Elem = usize;

@@ -44,11 +44,14 @@ fn chunked_index() {
 }
 
 #[test]
-fn chunked_index_mut() {
+fn chunked_isolate_mut() {
     let mut v = vec![1, 2, 3, 4, 0, 0, 7, 8, 9, 10, 11];
     let mut s = Chunked::from_offsets(vec![0, 3, 4, 6, 9, 11], v.view_mut());
 
-    s.get_mut(2).unwrap().copy_from_slice(&[5, 6]); // Single index
+    s.view_mut()
+        .try_isolate(2)
+        .unwrap()
+        .copy_from_slice(&[5, 6]); // Single index
     assert_eq!(
         *s.data(),
         vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].as_slice()
@@ -127,19 +130,21 @@ fn subset_unichunked_mut() {
     let mut uni = Chunked3::from_flat(v.clone());
     let mut subset = Subset::from_indices(vec![0, 2, 4], uni.view_mut());
     {
-        let mut subset_iter = subset.iter();
+        let subset_view = subset.view();
+        let mut subset_iter = subset_view.iter();
         assert_eq!(Some(&[1, 2, 3]), subset_iter.next());
         assert_eq!(Some(&[7, 8, 9]), subset_iter.next());
         assert_eq!(Some(&[13, 14, 15]), subset_iter.next());
         assert_eq!(None, subset_iter.next());
     }
-    *subset.at_mut(1) = [0; 3];
-    assert_eq!(&[0, 0, 0], subset.at(1));
+    *subset.view_mut().isolate(1) = [0; 3];
+    assert_eq!(&[0, 0, 0], subset.view().at(1));
 
     // Verify that this works for views as well.
     let mut subset = Subset::from_unique_ordered_indices(&[0, 2, 4][..], uni.view_mut());
     {
-        let mut subset_iter = subset.iter();
+        let subset_view = subset.view();
+        let mut subset_iter = subset_view.iter();
         assert_eq!(Some(&[1, 2, 3]), subset_iter.next());
         assert_eq!(Some(&[0; 3]), subset_iter.next());
         assert_eq!(Some(&[13, 14, 15]), subset_iter.next());
@@ -152,7 +157,7 @@ fn subset_unichunked_mut() {
     }
 
     for i in 0..3 {
-        assert_eq!(&[1, 1, 1], subset.at(i));
+        assert_eq!(&[1, 1, 1], subset.view().at(i));
     }
 }
 
@@ -176,12 +181,13 @@ fn subset_unichunked_index() {
     let indices = vec![1, 3, 4];
     let mut subset = Subset::from_unique_ordered_indices(indices.as_slice(), uni.view_mut());
     subset[1] = [0, 0, 0];
-    assert_eq!(Some(&[4, 5, 6]), subset.get(0));
-    assert_eq!(Some(&[0, 0, 0]), subset.get(1));
-    assert_eq!(Some(&[13, 14, 15]), subset.get(2));
-    assert_eq!(&[4, 5, 6], subset.at(0));
-    assert_eq!(&[0, 0, 0], subset.at(1));
-    assert_eq!(&[13, 14, 15], subset.at(2));
+    let subset_view = subset.view();
+    assert_eq!(Some(&[4, 5, 6]), subset_view.get(0));
+    assert_eq!(Some(&[0, 0, 0]), subset_view.get(1));
+    assert_eq!(Some(&[13, 14, 15]), subset_view.get(2));
+    assert_eq!(&[4, 5, 6], subset_view.at(0));
+    assert_eq!(&[0, 0, 0], subset_view.at(1));
+    assert_eq!(&[13, 14, 15], subset_view.at(2));
     assert_eq!([4, 5, 6], subset[0]);
     assert_eq!([0, 0, 0], subset[1]);
     assert_eq!([13, 14, 15], subset[2]);

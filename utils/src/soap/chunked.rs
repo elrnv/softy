@@ -493,24 +493,24 @@ where
     }
 }
 
-impl<'a, S, O> GetMutIndex<'a, Chunked<S, O>> for usize
+impl<S, O> IsolateIndex<Chunked<S, O>> for usize
 where
-    S: Set + GetMut<'a, std::ops::Range<usize>>,
+    S: Set + Isolate<std::ops::Range<usize>>,
     O: std::borrow::Borrow<[usize]>,
 {
     type Output = S::Output;
 
-    /// Get a mutable reference to a chunk of the given `Chunked` collection.
-    fn get_mut(self, chunked: &mut Chunked<S, O>) -> Option<Self::Output> {
+    /// Isolate a single chunk of the given `Chunked` collection.
+    fn try_isolate(self, chunked: Chunked<S, O>) -> Option<Self::Output> {
         if self <= chunked.len() {
-            let Chunked { ref chunks, data } = chunked;
+            let Chunked { chunks, data } = chunked;
             let chunks = chunks.borrow();
             chunks.get(0).and_then(|&first| {
                 chunks.get(self).and_then(move |&cur| {
                     chunks.get(self + 1).and_then(move |&next| {
                         let begin = cur - first;
                         let end = next - first;
-                        data.get_mut(begin..end)
+                        data.try_isolate(begin..end)
                     })
                 })
             })
@@ -520,14 +520,15 @@ where
     }
 }
 
-impl<'a, S> GetMutIndex<'a, Chunked<S, &'a [usize]>> for std::ops::Range<usize>
+impl<'a, S> IsolateIndex<Chunked<S, &'a [usize]>> for std::ops::Range<usize>
 where
-    S: Set + GetMut<'a, std::ops::Range<usize>>,
+    S: Set + Isolate<std::ops::Range<usize>>,
+    <S as Isolate<std::ops::Range<usize>>>::Output: Set,
 {
     type Output = Chunked<S::Output, &'a [usize]>;
 
-    /// Get a mutable `[begin..end)` subview of the given `Chunked` collection.
-    fn get_mut(mut self, chunked: &mut Chunked<S, &'a [usize]>) -> Option<Self::Output> {
+    /// Isolate a `[begin..end)` range of the given `Chunked` collection.
+    fn try_isolate(mut self, chunked: Chunked<S, &'a [usize]>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             let Chunked { chunks, data } = chunked;
             self.end += 1;
@@ -535,7 +536,7 @@ where
                 chunks.get(self).and_then(move |chunks| {
                     chunks.first().and_then(move |&cur| {
                         chunks.last().and_then(move |&next| {
-                            data.get_mut(cur - first..next - first)
+                            data.try_isolate(cur - first..next - first)
                                 .map(|data| Chunked { chunks, data })
                         })
                     })
@@ -547,14 +548,14 @@ where
     }
 }
 
-impl<'a, S, O, I> GetMut<'a, I> for Chunked<S, O>
+impl<S, O, I> Isolate<I> for Chunked<S, O>
 where
-    I: GetMutIndex<'a, Self>,
+    I: IsolateIndex<Self>,
 {
     type Output = I::Output;
-    /// Get a mutable subview from this `Chunked` collection according to the
-    /// given range. If the range is a single index, then a single mutable chunk
-    /// reference is returned instead.
+    /// Isolate a sub-collection from this `Chunked` collection according to the
+    /// given range. If the range is a single index, then a single chunk
+    /// is returned instead.
     ///
     /// # Examples
     ///
@@ -563,11 +564,11 @@ where
     /// let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
     /// let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.view_mut());
     ///
-    /// s.get_mut(2).unwrap().copy_from_slice(&[5,6]);        // Single index
+    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[5,6]);  // Single index
     /// assert_eq!(*s.data(), vec![1,2,3,4,5,6,7,8,9,10,11].as_slice());
     /// ```
-    fn get_mut(&mut self, range: I) -> Option<I::Output> {
-        range.get_mut(self)
+    fn try_isolate(self, range: I) -> Option<I::Output> {
+        range.try_isolate(self)
     }
 }
 

@@ -28,9 +28,10 @@ use super::*;
 /// use utils::soap::*;
 /// let mut v = Chunked3::from_flat((1..=15).collect::<Vec<_>>());
 /// let mut selection = Select::new(vec![1,0,4,4,1], v.view_mut());
-/// *selection.at_mut(0).1 = [0; 3];
+/// *selection.view_mut().isolate(0).1 = [0; 3];
 /// {
-///     let mut iter = selection.iter();
+///     let selection_view = selection.view();
+///     let mut iter = selection_view.iter();
 ///     assert_eq!(Some((1, &[0,0,0])), iter.next());
 ///     assert_eq!(Some((0, &[1,2,3])), iter.next());
 ///     assert_eq!(Some((4, &[13,14,15])), iter.next());
@@ -284,19 +285,19 @@ where
     }
 }
 
-impl<'a, S, I> GetMutIndex<'a, Select<S, I>> for usize
+impl<S, I> IsolateIndex<Select<S, I>> for usize
 where
     I: std::borrow::Borrow<[usize]>,
-    S: GetMut<'a, usize>,
+    S: Isolate<usize>,
 {
-    type Output = (usize, <S as GetMut<'a, usize>>::Output);
+    type Output = (usize, <S as Isolate<usize>>::Output);
 
-    fn get_mut(self, selection: &mut Select<S, I>) -> Option<Self::Output> {
+    fn try_isolate(self, selection: Select<S, I>) -> Option<Self::Output> {
         let Select { indices, data } = selection;
         indices
             .borrow()
             .get(self)
-            .and_then(move |&idx| data.get_mut(idx).map(|val| (idx, val)))
+            .and_then(move |&idx| data.try_isolate(idx).map(|val| (idx, val)))
     }
 }
 
@@ -325,28 +326,19 @@ where
     }
 }
 
-impl<'a, S, I, Idx> GetMut<'a, Idx> for Select<S, I>
+impl<S, I, Idx> Isolate<Idx> for Select<S, I>
 where
-    Idx: GetMutIndex<'a, Self>,
+    Idx: IsolateIndex<Self>,
 {
     type Output = Idx::Output;
 
-    /// Get a mutable reference to an element in this selection.
+    /// Isolate an element or a range in this selection.
     ///
     /// # Panics
     ///
     /// This function panics if the index is out of bounds.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let v = vec![1,2,3,4,5];
-    /// let selection = Select::new(vec![0,0,4], v.as_slice());
-    /// assert_eq!((0, &1), selection.get(1).unwrap());
-    /// ```
-    fn get_mut(&mut self, range: Idx) -> Option<Self::Output> {
-        range.get_mut(self)
+    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
+        range.try_isolate(self)
     }
 }
 

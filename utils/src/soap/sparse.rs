@@ -207,16 +207,16 @@ where
     }
 }
 
-impl<'a, S, T, I> GetMutIndex<'a, Sparse<S, T, I>> for usize
+impl<S, T, I> IsolateIndex<Sparse<S, T, I>> for usize
 where
     I: std::borrow::Borrow<[usize]>,
-    S: GetMut<'a, usize>,
+    S: Isolate<usize>,
 {
-    type Output = (usize, <S as GetMut<'a, usize>>::Output);
+    type Output = (usize, <S as Isolate<usize>>::Output);
 
-    fn get_mut(self, sparse: &mut Sparse<S, T, I>) -> Option<Self::Output> {
+    fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
         let Sparse { selection, data } = sparse;
-        data.get_mut(self)
+        data.try_isolate(self)
             .map(|item| (selection.indices().borrow()[self], item))
     }
 }
@@ -232,14 +232,14 @@ where
     }
 }
 
-impl<'a, S, T, I, Idx> GetMut<'a, Idx> for Sparse<S, T, I>
+impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
 where
-    Idx: GetMutIndex<'a, Self>,
+    Idx: IsolateIndex<Self>,
 {
     type Output = Idx::Output;
 
-    fn get_mut(&mut self, range: Idx) -> Option<Self::Output> {
-        range.get_mut(self)
+    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
+        range.try_isolate(self)
     }
 }
 

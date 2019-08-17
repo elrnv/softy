@@ -27,7 +27,7 @@ fn chunked_chunked_mut() {
     let chunked = Chunked::from_offsets(vec![0, 3, 5, 8, 10], v);
     let mut chunked = Chunked::from_offsets(vec![0, 1, 4], chunked);
 
-    chunked.view_mut().at_mut(1).at_mut(1)[1] = 100;
+    chunked.view_mut().isolate(1).isolate(1)[1] = 100;
     assert_eq!(chunked.view().at(1).at(1)[1], 100);
 
     // Simple iteration
@@ -51,7 +51,7 @@ fn chunked_chunked_chunked_mut() {
     let chunked = Chunked::from_offsets(vec![1, 3, 5, 6, 6, 8], chunked);
     let mut chunked = Chunked::from_offsets(vec![1, 3, 6], chunked);
 
-    chunked.view_mut().at_mut(0).at_mut(1).at_mut(1)[1] = 100;
+    chunked.view_mut().isolate(0).isolate(1).isolate(1)[1] = 100;
     assert_eq!(chunked.view().at(0).at(1).at(1)[1], 100);
 
     // Simple iteration

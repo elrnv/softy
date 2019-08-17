@@ -17,31 +17,33 @@ where
     }
 }
 
-impl<'a, T, N> GetIndex<'a, &'a mut [T]> for StaticRange<N>
-where
-    N: num::Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
-{
-    type Output = &'a T::Type;
-    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-        if self.end() <= set.len() {
-            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Type) })
-        } else {
-            None
-        }
-    }
-}
-impl<'a, T, N> GetMutIndex<'a, &'a mut [T]> for StaticRange<N>
+//impl<'a, T, N> GetIndex<'a, &'a mut [T]> for StaticRange<N>
+//where
+//    N: num::Unsigned,
+//    T: Grouped<N>,
+//    <T as Grouped<N>>::Type: 'a,
+//{
+//    type Output = &'a T::Type;
+//    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
+//        if self.end() <= set.len() {
+//            // TODO: This code causes mutable aliasing:
+//            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Type) })
+//        } else {
+//            None
+//        }
+//    }
+//}
+impl<'a, T, N> IsolateIndex<&'a mut [T]> for StaticRange<N>
 where
     N: num::Unsigned,
     T: Grouped<N>,
     <T as Grouped<N>>::Type: 'a,
 {
     type Output = &'a mut T::Type;
-    fn get_mut(self, set: &mut &'a mut [T]) -> Option<Self::Output> {
+    fn try_isolate(self, set: &'a mut [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
-            Some(unsafe { &mut *((*set).as_mut_ptr().add(self.start()) as *mut T::Type) })
+            //Some(unsafe { &mut *((*set).as_mut_ptr().add(self.start()) as *mut T::Type) })
+            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut T::Type) })
         } else {
             None
         }
@@ -59,25 +61,25 @@ where
     }
 }
 
-impl<'a, T, I> GetIndex<'a, &'a mut [T]> for I
-where
-    I: std::slice::SliceIndex<[T]>,
-    <[T] as std::ops::Index<I>>::Output: 'a,
-{
-    type Output = &'a <[T] as std::ops::Index<I>>::Output;
-    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-        let slice = unsafe { std::slice::from_raw_parts(set.as_ptr(), set.len()) };
-        Some(std::ops::Index::<I>::index(slice, self))
-    }
-}
+//impl<'a, T, I> GetIndex<'a, &'a mut [T]> for I
+//where
+//    I: std::slice::SliceIndex<[T]>,
+//    <[T] as std::ops::Index<I>>::Output: 'a,
+//{
+//    type Output = &'a <[T] as std::ops::Index<I>>::Output;
+//    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
+//        let slice = unsafe { std::slice::from_raw_parts(set.as_ptr(), set.len()) };
+//        Some(std::ops::Index::<I>::index(slice, self))
+//    }
+//}
 
-impl<'a, T, I> GetMutIndex<'a, &'a mut [T]> for I
+impl<'a, T, I> IsolateIndex<&'a mut [T]> for I
 where
     I: std::slice::SliceIndex<[T]>,
-    <[T] as std::ops::Index<I>>::Output: 'a,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'a,
 {
     type Output = &'a mut <[T] as std::ops::Index<I>>::Output;
-    fn get_mut(self, set: &mut &'a mut [T]) -> Option<Self::Output> {
+    fn try_isolate(self, set: &'a mut [T]) -> Option<&'a mut <[T] as std::ops::Index<I>>::Output> {
         let slice = unsafe { std::slice::from_raw_parts_mut(set.as_mut_ptr(), set.len()) };
         Some(std::ops::IndexMut::<I>::index_mut(slice, self))
     }
@@ -111,9 +113,9 @@ where
     }
 }
 
-impl<'a, T: 'a, I> GetMut<'a, I> for &'a mut [T]
+impl<'a, T, I> Isolate<I> for &'a mut [T]
 where
-    I: GetMutIndex<'a, &'a mut [T]>,
+    I: IsolateIndex<&'a mut [T]>,
 {
     type Output = I::Output;
     /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
@@ -124,11 +126,11 @@ where
     ///
     /// ```rust
     /// let mut v = vec![1,2,3,4,5];
-    /// *utils::soap::GetMut::get_mut(&mut v.as_mut_slice(), 2).unwrap() = 100;
+    /// *utils::soap::Isolate::try_isolate(v.as_mut_slice(), 2).unwrap() = 100;
     /// assert_eq!(v, vec![1,2,100,4,5]);
     /// ```
-    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
-        GetMutIndex::get_mut(idx, self)
+    fn try_isolate(self, idx: I) -> Option<Self::Output> {
+        IsolateIndex::try_isolate(idx, self)
     }
 }
 

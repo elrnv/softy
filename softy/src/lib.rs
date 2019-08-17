@@ -12,7 +12,6 @@ mod energy;
 mod energy_models;
 pub mod fem;
 mod friction;
-mod index;
 pub mod mask_iter;
 mod matrix;
 mod objects;
@@ -36,7 +35,7 @@ pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver
 pub use self::friction::*;
 pub use self::objects::material::*;
 use geo::mesh::attrib;
-pub use index::Index;
+pub use utils::index::Index;
 
 pub use attrib_defines::*;
 

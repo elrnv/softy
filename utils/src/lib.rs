@@ -1,4 +1,5 @@
 pub mod aref;
+pub mod index;
 pub mod soap;
 pub mod transform;
 pub mod zip;
@@ -84,7 +85,7 @@ pub fn make_box(res: [usize; 3]) -> TetMesh<f64> {
                 let x = -1.0 + 2.0 * (ix as f64) / nx as f64;
                 let y = -1.0 + 2.0 * (iy as f64) / ny as f64;
                 let z = -1.0 + 2.0 * (iz as f64) / nz as f64;
-                positions.push([x,y,z]);
+                positions.push([x, y, z]);
             }
         }
     }
@@ -95,40 +96,40 @@ pub fn make_box(res: [usize; 3]) -> TetMesh<f64> {
     for ix in 0..nx {
         for iy in 0..ny {
             for iz in 0..nz {
-                let index = |x,y,z| ((ix + x) * (ny+1) + (iy + y)) * (nz+1) + (iz + z);
+                let index = |x, y, z| ((ix + x) * (ny + 1) + (iy + y)) * (nz + 1) + (iz + z);
                 // Populate tets in a star pattern
-                let first = index(0,0,0);
-                let second = index(1,1,1);
+                let first = index(0, 0, 0);
+                let second = index(1, 1, 1);
                 // Tet 1
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(0,1,1));
-                indices.push(index(0,1,0));
+                indices.push(index(0, 1, 1));
+                indices.push(index(0, 1, 0));
                 // Tet 2
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(0,1,0));
-                indices.push(index(1,1,0));
+                indices.push(index(0, 1, 0));
+                indices.push(index(1, 1, 0));
                 // Tet 3
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(1,1,0));
-                indices.push(index(1,0,0));
+                indices.push(index(1, 1, 0));
+                indices.push(index(1, 0, 0));
                 // Tet 4
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(1,0,0));
-                indices.push(index(1,0,1));
+                indices.push(index(1, 0, 0));
+                indices.push(index(1, 0, 1));
                 // Tet 5
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(1,0,1));
-                indices.push(index(0,0,1));
+                indices.push(index(1, 0, 1));
+                indices.push(index(0, 0, 1));
                 // Tet 6
                 indices.push(first);
                 indices.push(second);
-                indices.push(index(0,0,1));
-                indices.push(index(0,1,1));
+                indices.push(index(0, 0, 1));
+                indices.push(index(0, 1, 1));
             }
         }
     }

@@ -284,6 +284,20 @@ where
     }
 }
 
+impl<S, O> ToOwnedData for Chunked<S, O>
+where
+    S: ToOwnedData,
+{
+    type OwnedData = Chunked<S::OwnedData, O>;
+    fn to_owned_data(self) -> Self::OwnedData {
+        let Chunked { chunks, data } = self;
+        Chunked {
+            chunks,
+            data: data.to_owned_data(),
+        }
+    }
+}
+
 // NOTE: There is currently no way to split ownership of a Vec without
 // allocating. For this reason we opt to use a slice and defer allocation to
 // a later step when the results may be collected into another Vec. This saves
@@ -1065,6 +1079,16 @@ impl<S: IntoFlat, O> IntoFlat for Chunked<S, O> {
     /// ```
     fn into_flat(self) -> Self::FlatType {
         self.data.into_flat()
+    }
+}
+
+impl<T, S: CloneWithFlat<T>, O: Clone> CloneWithFlat<T> for Chunked<S, O> {
+    type CloneType = Chunked<S::CloneType, O>;
+    fn clone_with_flat(&self, flat: T) -> Self::CloneType {
+        Chunked {
+            chunks: self.chunks.clone(),
+            data: self.data.clone_with_flat(flat),
+        }
     }
 }
 

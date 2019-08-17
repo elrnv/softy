@@ -674,6 +674,21 @@ where
     }
 }
 
+impl<S, N> ToOwnedData for UniChunked<S, N>
+where
+    S: ToOwnedData,
+    N: Copy,
+{
+    type OwnedData = UniChunked<S::OwnedData, N>;
+    fn to_owned_data(self) -> Self::OwnedData {
+        let UniChunked { chunks, data } = self;
+        UniChunked {
+            chunks,
+            data: data.to_owned_data(),
+        }
+    }
+}
+
 /*
  * Indexing
  */

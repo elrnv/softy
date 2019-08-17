@@ -78,6 +78,16 @@ impl<T> IntoFlat for Vec<T> {
     }
 }
 
+impl<T> CloneWithFlat<Vec<T>> for Vec<T> {
+    type CloneType = Vec<T>;
+    /// This function simply ignores self and returns flat since self is already
+    /// a flat type.
+    fn clone_with_flat(&self, flat: Vec<T>) -> Self::CloneType {
+        assert_eq!(self.len(), flat.len());
+        flat
+    }
+}
+
 impl<T> SplitAt for Vec<T> {
     fn split_at(mut self, mid: usize) -> (Self, Self) {
         let r = self.split_off(mid);

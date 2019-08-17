@@ -211,6 +211,36 @@ impl<'a, T> IntoFlat for &'a mut [T] {
     }
 }
 
+impl<'a, T: 'a> CloneWithFlat<Vec<T>> for &'a [T] {
+    type CloneType = Vec<T>;
+    /// This function simply ignores self and returns flat since self is already
+    /// a flat type.
+    fn clone_with_flat(&self, flat: Vec<T>) -> Self::CloneType {
+        assert_eq!(self.len(), flat.len());
+        flat
+    }
+}
+
+impl<'a, T: 'a> CloneWithFlat<&'a [T]> for &'a [T] {
+    type CloneType = &'a [T];
+    /// This function simply ignores self and returns flat since self is already
+    /// a flat type.
+    fn clone_with_flat(&self, flat: &'a [T]) -> Self::CloneType {
+        assert_eq!(self.len(), flat.len());
+        flat
+    }
+}
+
+impl<'a, T: 'a> CloneWithFlat<&'a mut [T]> for &'a mut [T] {
+    type CloneType = &'a mut [T];
+    /// This function simply ignores self and returns flat since self is already
+    /// a flat type.
+    fn clone_with_flat(&self, flat: &'a mut [T]) -> Self::CloneType {
+        assert_eq!(self.len(), flat.len());
+        flat
+    }
+}
+
 impl<'a, T> SplitAt for &mut [T] {
     fn split_at(self, mid: usize) -> (Self, Self) {
         self.split_at_mut(mid)

@@ -104,6 +104,37 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
     }
 }
 
+/// In contrast to `ToOwned`, this trait produces a clone with owned data, but
+/// potentially borrowed structure of the collection.
+pub trait ToOwnedData
+where
+    Self: Sized,
+{
+    type OwnedData;
+    fn to_owned_data(self) -> Self::OwnedData;
+    fn clone_into(self, target: &mut Self::OwnedData) {
+        *target = self.to_owned_data();
+    }
+}
+
+/// Blanked implementation of `ToOwnedData` for references of types that are
+/// already `std::borrow::ToOwned`.
+impl<S: std::borrow::ToOwned + ?Sized> ToOwnedData for &S {
+    type OwnedData = S::Owned;
+    fn to_owned_data(self) -> Self::OwnedData {
+        std::borrow::ToOwned::to_owned(self)
+    }
+}
+
+/// Blanked implementation of `ToOwnedData` for mutable references of types that are
+/// already `std::borrow::ToOwned`.
+impl<S: std::borrow::ToOwned + ?Sized> ToOwnedData for &mut S {
+    type OwnedData = S::Owned;
+    fn to_owned_data(self) -> Self::OwnedData {
+        std::borrow::ToOwned::to_owned(self)
+    }
+}
+
 pub trait Clear {
     /// Remove all elements from the current set without necessarily
     /// deallocating the space previously used.
@@ -471,6 +502,11 @@ where
 pub trait IntoFlat {
     type FlatType;
     fn into_flat(self) -> Self::FlatType;
+}
+
+pub trait CloneWithFlat<FlatType> {
+    type CloneType;
+    fn clone_with_flat(&self, flat: FlatType) -> Self::CloneType;
 }
 
 /// A helper trait for constructing placeholder sets for use in `std::mem::replace`.

@@ -487,6 +487,20 @@ pub trait RemovePrefix {
     fn remove_prefix(&mut self, n: usize);
 }
 
+///```compile_fail
+/// use utils::soap::*;
+/// // This shouldn't compile
+/// let v: Vec<usize> = (1..=10).collect();
+/// let chunked = Chunked::from_offsets(vec![0, 3, 5, 8, 10], v);
+/// let mut chunked = Chunked::from_offsets(vec![0, 1, 4], chunked);
+/// let mut mut_view = chunked.view_mut();
+///
+/// let mut1 = mut_view.at_mut(1).at_mut(1);
+/// // We should fail to compile when trying to get a second mut ref.
+/// let mut2 = mut_view.at_mut(1).at_mut(1);
+///```
+pub fn multiple_mut_refs_compile_test() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

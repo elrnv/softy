@@ -651,7 +651,7 @@ impl_borrow_chunked!(num::U3, 3);
 impl<S, N> ToOwned for UniChunked<S, N>
 where
     S: ToOwned,
-    N: num::Unsigned,
+    N: Copy,
 {
     type Owned = UniChunked<<S as ToOwned>::Owned, N>;
 
@@ -669,7 +669,7 @@ where
     fn to_owned(self) -> Self::Owned {
         UniChunked {
             data: self.data.to_owned(),
-            chunks: N::new(),
+            chunks: self.chunks,
         }
     }
 }

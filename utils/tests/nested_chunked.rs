@@ -315,3 +315,21 @@ fn sparse_chunked_sparse_unichunked_view() {
     assert_eq!(None, sparse0_iter.next());
     assert_eq!(None, sparse1_iter.next());
 }
+
+#[test]
+fn chunked_chars() {
+    let v = vec!["World", "Coffee", "Cat", " ", "Hello", "Refrigerator", "!"];
+    let bytes: Vec<Vec<u8>> = v
+        .into_iter()
+        .map(|word| word.to_string().into_bytes())
+        .collect();
+    let words = Chunked::<Vec<u8>>::from_nested_vec(bytes);
+    let selection = Select::new(vec![4, 3, 0, 6, 3, 4, 6], words);
+    let collapsed = selection.view().collapse();
+    assert_eq!(
+        "Hello World! Hello!",
+        String::from_utf8(collapsed.data().clone())
+            .unwrap()
+            .as_str()
+    );
+}

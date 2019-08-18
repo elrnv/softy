@@ -10,7 +10,7 @@ use super::*;
 ///
 /// The following example shows how to `Select` from a range.
 ///
-/// ```rust
+/// ```
 /// use utils::soap::*;
 /// let selection = Select::new(vec![0,2,4,0,1], 5..10);
 /// let mut iter = selection.iter();
@@ -24,7 +24,7 @@ use super::*;
 ///
 /// The next example shows how to `Select` from a [`UniChunked`] view.
 ///
-/// ```rust
+/// ```
 /// use utils::soap::*;
 /// let mut v = Chunked3::from_flat((1..=15).collect::<Vec<_>>());
 /// let mut selection = Select::new(vec![1,0,4,4,1], v.view_mut());
@@ -72,13 +72,13 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
-    /// let v = vec![1,2,3];
+    /// let v = vec!['a', 'b', 'c'];
     /// let selection = Select::new(vec![1,2,1], v.as_slice());
-    /// assert_eq!(2, selection[0]);
-    /// assert_eq!(3, selection[1]);
-    /// assert_eq!(2, selection[2]);
+    /// assert_eq!('b', selection[0]);
+    /// assert_eq!('c', selection[1]);
+    /// assert_eq!('b', selection[2]);
     /// ```
     pub fn new(indices: I, data: S) -> Self {
         Self::validate(Select { indices, data })
@@ -94,8 +94,68 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
     }
 }
 
+impl<'a, S, I> Select<S, I>
+where
+    S: Set + ToOwned + Get<'a, usize>,
+    <S as ToOwned>::Owned: std::iter::FromIterator<<S as Set>::Elem>,
+    <S as Get<'a, usize>>::Output: ToOwned<Owned = <S as Set>::Elem>,
+    I: std::borrow::Borrow<[usize]>,
+{
+    /// Collapse the data values pointed to by `indices` into the structure
+    /// given by the indices. In other words, replace `indices` with the data
+    /// they point to producing a new collection. This function allocates.
+    ///
+    /// # Examples
+    ///
+    /// In the following simple example, we convert a selection of characters
+    /// from a standard `Vec` into a standard owned `Vec` of characters.
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let v = vec!['a', 'b', 'c'];
+    /// let selection = Select::new(vec![1,2,1], v.as_slice());
+    /// assert_eq!(vec!['b', 'c', 'b'], selection.collapse());
+    /// ```
+    ///
+    /// A more complex example below shows how selections of chunked types can
+    /// be collapsed as well.
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// // Start with a vector of words stored as Strings.
+    /// let v = vec!["World", "Coffee", "Cat", " ", "Hello", "Refrigerator", "!"];
+    ///
+    /// // Convert the strings to bytes.
+    /// let bytes: Vec<Vec<u8>> = v
+    ///     .into_iter()
+    ///     .map(|word| word.to_string().into_bytes())
+    ///     .collect();
+    ///
+    /// // Chunk the nested vector at word boundaries.
+    /// let words = Chunked::<Vec<u8>>::from_nested_vec(bytes);
+    ///
+    /// // Select some of the words from the collection.
+    /// let selection = Select::new(vec![4, 3, 0, 6, 3, 4, 6], words);
+    ///
+    /// // Collapse the selected words into an owned collection.
+    /// let collapsed = selection.view().collapse();
+    ///
+    /// assert_eq!(
+    ///     "Hello World! Hello!",
+    ///     String::from_utf8(collapsed.data().clone()).unwrap().as_str()
+    /// );
+    /// ```
+    pub fn collapse(self) -> S::Owned {
+        self.indices
+            .borrow()
+            .iter()
+            .map(|&i| self.data.at(i).to_owned())
+            .collect()
+    }
+}
+
 impl<'a, S, I> Select<S, I> {
-    /// Get a references to the underlying indices.
+    /// Get a reference to the underlying indices.
     pub fn indices(&self) -> &I {
         &self.indices
     }
@@ -125,7 +185,7 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Select<S, I> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let selection = Select::new(vec![4,0,1,4], v.as_slice());
@@ -164,7 +224,7 @@ where
     // TODO: implement iter_mut
     ///// # Example
     /////
-    ///// ```rust
+    ///// ```
     ///// use utils::soap::*;
     ///// let mut v = vec![1,2,3,4,5];
     ///// let mut selection = Select::new(vec![1,2,4,1], v.as_mut_slice());
@@ -191,7 +251,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let indices = vec![3,2,0,4,2];
@@ -240,7 +300,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let indices = vec![3,3,4,0];
@@ -301,31 +361,6 @@ where
     }
 }
 
-impl<'a, S, I, Idx> Get<'a, Idx> for Select<S, I>
-where
-    Idx: GetIndex<'a, Self>,
-{
-    type Output = Idx::Output;
-
-    /// Get a reference to an element in this selection.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the index is out of bounds.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let v = vec![1,2,3,4,5];
-    /// let selection = Select::new(vec![0,0,4], v.as_slice());
-    /// assert_eq!((0, &1), selection.get(1).unwrap());
-    /// ```
-    fn get(&self, range: Idx) -> Option<Self::Output> {
-        range.get(self)
-    }
-}
-
 impl<S, I, Idx> Isolate<Idx> for Select<S, I>
 where
     Idx: IsolateIndex<Self>,
@@ -367,7 +402,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let selection = Select::new(vec![0,2,0,4], Chunked2::from_flat(1..=12));
     /// assert_eq!((0, 1..3), selection.at(0));
@@ -393,7 +428,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5];
     /// let mut selection = Select::new(vec![0,2,0,4], v.as_mut_slice());
@@ -425,7 +460,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5];
     /// let selection = Select::new(vec![0,2,0,4], v.as_slice());
@@ -450,7 +485,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5];
     /// let mut subset = Subset::from_indices(vec![3,2,0,4], v.as_mut_slice());
@@ -473,7 +508,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5];
     /// let mut selection = Select::new(vec![4,0,2,4], v.as_mut_slice());
@@ -556,7 +591,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let mut v = vec![1,2,3,4,5];
     /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());

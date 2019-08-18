@@ -81,16 +81,6 @@ macro_rules! impls_for_range {
                 self.clone()
             }
         }
-
-        impl<'a, T: 'a, I> Get<'a, I> for $range<T>
-        where
-            I: GetIndex<'a, $range<T>>,
-        {
-            type Output = I::Output;
-            fn get(&self, idx: I) -> Option<Self::Output> {
-                GetIndex::get(idx, self)
-            }
-        }
     };
 }
 

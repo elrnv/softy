@@ -456,31 +456,6 @@ where
     }
 }
 
-impl<'a, S, I, O> Get<'a, I> for Subset<S, O>
-where
-    I: GetIndex<'a, Self>,
-{
-    type Output = I::Output;
-
-    /// Get a reference to a range of elements of this subset.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the range is out of bounds or if the subset is empty.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
-    /// assert_eq!(&3, subset.view().get(1).unwrap());
-    /// ```
-    fn get(&self, range: I) -> Option<Self::Output> {
-        range.get(self)
-    }
-}
-
 impl<S, I, O> Isolate<I> for Subset<S, O>
 where
     I: IsolateIndex<Self>,

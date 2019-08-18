@@ -222,6 +222,22 @@ where
     pub fn from_nested_vec(nested_data: Vec<Vec<<S as Set>::Elem>>) -> Self {
         nested_data.into_iter().collect()
     }
+
+    ///// Construct a `Chunked` `Vec` of characters from a `Vec` of `String`s.
+    /////
+    ///// # Example
+    /////
+    ///// ```rust
+    ///// use utils::soap::*;
+    ///// let words = Chunked::<Vec<_>>::from_string_vec(vec!["Hello", "World"]);
+    ///// let mut iter = s.iter();
+    ///// assert_eq!("Hello", iter.next().unwrap().iter().cloned().collect::<String>());
+    ///// assert_eq!("World", iter.next().unwrap().iter().cloned().collect::<String>());
+    ///// assert_eq!(None, iter.next());
+    ///// ```
+    //pub fn from_string_vec(nested_data: Vec<Vec<<S as Set>::Elem>>) -> Self {
+    //    nested_data.into_iter().collect()
+    //}
 }
 
 impl<S, O> Set for Chunked<S, O>
@@ -401,9 +417,14 @@ where
     }
 }
 
-impl<'a, S> GetIndex<'a, Chunked<S, &'a [usize]>> for std::ops::Range<usize>
+impl<'a, S, O> GetIndex<'a, Chunked<S, O>> for std::ops::Range<usize>
 where
     S: Set + View<'a> + Get<'a, std::ops::Range<usize>, Output = <S as View<'a>>::Type>,
+    O: std::borrow::Borrow<[usize]>
+        + View<'a>
+        + Set
+        + Get<'a, usize, Output = &'a usize>
+        + Get<'a, Self, Output = &'a [usize]>,
 {
     type Output = Chunked<S::Output, &'a [usize]>;
 
@@ -420,9 +441,9 @@ where
     /// assert_eq!(Some(&[2,3,4][..]), v.get(0));
     /// assert_eq!(Some(&[5,6][..]), v.get(1));
     /// ```
-    fn get(mut self, chunked: &Chunked<S, &'a [usize]>) -> Option<Self::Output> {
+    fn get(mut self, chunked: &Chunked<S, O>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
-            let Chunked { chunks, data } = chunked;
+            let Chunked { data, chunks } = chunked;
             self.end += 1;
             chunks.get(0).and_then(move |&first| {
                 chunks.get(self).and_then(move |chunks| {
@@ -433,63 +454,6 @@ where
         } else {
             None
         }
-    }
-}
-
-impl<'a, S, O, I> Get<'a, I> for Chunked<S, O>
-where
-    I: GetIndex<'a, Self>,
-{
-    type Output = I::Output;
-    /// Get a subview from this `Chunked` collection according to the given
-    /// range. If the range is a single index, then a single chunk is returned
-    /// instead.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use utils::soap::*;
-    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
-    /// let s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
-    /// let s = s.view();
-    ///
-    /// assert_eq!(s.get(2), Some(&s[2])); // Single index
-    ///
-    /// let r = s.get(1..3).unwrap();         // Range
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[4][..]), iter.next());
-    /// assert_eq!(Some(&[5,6][..]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(3..).unwrap();         // RangeFrom
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[7,8,9][..]), iter.next());
-    /// assert_eq!(Some(&[10,11][..]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(..2).unwrap();         // RangeTo
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
-    /// assert_eq!(Some(&[4][..]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// assert_eq!(s.view(), s.get(..).unwrap()); // RangeFull
-    /// assert_eq!(s.view(), s.view().get(..).unwrap());
-    ///
-    /// let r = s.get(1..=2).unwrap();         // RangeInclusive
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[4][..]), iter.next());
-    /// assert_eq!(Some(&[5,6][..]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(..=1).unwrap();         // RangeToInclusive
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
-    /// assert_eq!(Some(&[4][..]), iter.next());
-    /// assert_eq!(None, iter.next());
-    /// ```
-    fn get(&self, range: I) -> Option<I::Output> {
-        range.get(self)
     }
 }
 

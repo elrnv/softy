@@ -793,63 +793,6 @@ where
     }
 }
 
-impl<'a, S, N, I> Get<'a, I> for UniChunked<S, N>
-where
-    I: GetIndex<'a, Self>,
-{
-    type Output = I::Output;
-    /// Get a subview from this `UniChunked` collection according to the given
-    /// range. If the range is a single index, then a single chunk is returned
-    /// instead.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let v = vec![1,2,3, 4,5,6, 7,8,9, 10,11,12];
-    /// let s = UniChunked::<_, num::U3>::from_flat(v.view());
-    ///
-    /// assert_eq!(s.get(2), Some(&[7,8,9])); // Single index
-    /// assert_eq!(s.get(2), Some(&s[2]));
-    ///
-    /// let r = s.get(1..3).unwrap();         // Range
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[4,5,6]), iter.next());
-    /// assert_eq!(Some(&[7,8,9]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(2..).unwrap();         // RangeFrom
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[7,8,9]), iter.next());
-    /// assert_eq!(Some(&[10,11,12]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(..2).unwrap();         // RangeTo
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[1,2,3]), iter.next());
-    /// assert_eq!(Some(&[4,5,6]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// assert_eq!(s.view(), s.get(..).unwrap()); // RangeFull
-    /// assert_eq!(s.view(), s.view().get(..).unwrap());
-    ///
-    /// let r = s.get(1..=2).unwrap();       // RangeInclusive
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[4,5,6]), iter.next());
-    /// assert_eq!(Some(&[7,8,9]), iter.next());
-    /// assert_eq!(None, iter.next());
-    ///
-    /// let r = s.get(..=1).unwrap();        // RangeToInclusive
-    /// let mut iter = r.iter();
-    /// assert_eq!(Some(&[1,2,3]), iter.next());
-    /// assert_eq!(Some(&[4,5,6]), iter.next());
-    /// assert_eq!(None, iter.next());
-    /// ```
-    fn get(&self, range: I) -> Option<I::Output> {
-        range.get(self)
-    }
-}
-
 impl<S, N> IsolateIndex<UniChunked<S, N>> for usize
 where
     S: Set + Isolate<StaticRange<N>>,

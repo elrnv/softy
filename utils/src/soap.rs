@@ -48,6 +48,8 @@ pub mod num {
 
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
+//TODO: Rename this, since Chunked Views are also considered "Owned", this is a misnomer.
+// Maybe "ValueType" makes sense
 pub trait Owned {}
 impl<S, I> Owned for Subset<S, I> {}
 impl<S, I> Owned for Chunked<S, I> {}
@@ -206,6 +208,17 @@ pub trait Get<'a, I> {
     /// This function will panic if `self.get(idx)` returns `None`.
     fn at(&self, idx: I) -> Self::Output {
         self.get(idx).expect("Index out of bounds")
+    }
+}
+
+/// A blanket implementation of `Get` for any collection which has an implementation for `GetIndex`.
+impl<'a, S, I> Get<'a, I> for S
+where
+    I: GetIndex<'a, Self>,
+{
+    type Output = I::Output;
+    fn get(&self, idx: I) -> Option<I::Output> {
+        idx.get(self)
     }
 }
 
@@ -529,6 +542,10 @@ pub trait RemovePrefix {
     /// Remove `n` elements from the beginning.
     fn remove_prefix(&mut self, n: usize);
 }
+
+/*
+ * Tests
+ */
 
 ///```compile_fail
 /// use utils::soap::*;

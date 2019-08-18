@@ -72,34 +72,6 @@ where
     }
 }
 
-impl<'a, T: 'a, I> Get<'a, I> for &'a [T]
-where
-    I: GetIndex<'a, &'a [T]>,
-{
-    type Output = I::Output;
-    /// Index into a standard slice `[T]` using the `Get` trait.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// assert_eq!(utils::soap::Get::get(&&[1,2,3,4,5][..], 2), Some(&3));
-    /// ```
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        GetIndex::get(idx, self)
-    }
-}
-
-impl<'a, T: 'a, I> Get<'a, I> for &'a mut [T]
-where
-    I: GetIndex<'a, &'a mut [T]>,
-{
-    type Output = I::Output;
-    /// Immutable index into a standard mutable slice `[T]` using the `Get` trait.
-    fn get(&self, idx: I) -> Option<Self::Output> {
-        GetIndex::get(idx, self)
-    }
-}
-
 impl<'a, T, I> Isolate<I> for &'a mut [T]
 where
     I: IsolateIndex<&'a mut [T]>,

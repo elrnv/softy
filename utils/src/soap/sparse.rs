@@ -225,17 +225,6 @@ where
     }
 }
 
-impl<'a, S, T, I, Idx> Get<'a, Idx> for Sparse<S, T, I>
-where
-    Idx: GetIndex<'a, Self>,
-{
-    type Output = Idx::Output;
-
-    fn get(&self, range: Idx) -> Option<Self::Output> {
-        range.get(self)
-    }
-}
-
 impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
 where
     Idx: IsolateIndex<Self>,

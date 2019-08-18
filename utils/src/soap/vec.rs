@@ -101,3 +101,11 @@ impl<T> RemovePrefix for Vec<T> {
         self.truncate(self.len() - n);
     }
 }
+
+/// Since `Vec` already owns its data, this is simply a noop.
+impl<T> ToOwned for Vec<T> {
+    type Owned = Self;
+    fn to_owned(self) -> Self::Owned {
+        self
+    }
+}

@@ -88,7 +88,7 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
     #[inline]
     fn validate(self) -> Self {
         if !self.indices.borrow().iter().all(|&i| i < self.data.len()) {
-            panic!("Subset index out of bounds.");
+            panic!("Select index out of bounds.");
         }
         self
     }
@@ -572,13 +572,13 @@ where
         }
     }
 }
+ */
 
-impl<S: Dummy, I> Dummy for Subset<S, I> {
+impl<S: Dummy, I: Dummy> Dummy for Select<S, I> {
     fn dummy() -> Self {
-        Subset {
+        Select {
+            indices: Dummy::dummy(),
             data: Dummy::dummy(),
-            indices: None,
         }
     }
 }
-*/

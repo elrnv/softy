@@ -40,10 +40,10 @@ impl<T> Push<T> for Vec<T> {
 impl<T, N> SplitPrefix<N> for Vec<T>
 where
     T: Grouped<N>,
-    <T as Grouped<N>>::Type: Default,
+    <T as Grouped<N>>::Array: Default,
     N: num::Unsigned,
 {
-    type Prefix = T::Type;
+    type Prefix = T::Array;
 
     fn split_prefix(mut self) -> Option<(Self::Prefix, Self)> {
         if self.len() < N::value() {
@@ -56,12 +56,12 @@ where
         // implementation of subsets of `Vec<T>` types for better performance.
         self.rotate_left(N::value());
         let at = self.len() - N::value();
-        let mut out: T::Type = Default::default();
+        let mut out: T::Array = Default::default();
         unsafe {
             self.set_len(at);
             std::ptr::copy_nonoverlapping(
                 self.as_ptr().add(at),
-                &mut out as *mut T::Type as *mut T,
+                &mut out as *mut T::Array as *mut T,
                 N::value(),
             );
         }

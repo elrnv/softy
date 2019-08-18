@@ -219,7 +219,7 @@ impl<T, N> UniChunked<Vec<T>, N> {
 
 impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn copy_from_grouped(&mut self, src: &[T::Type])
+    pub fn copy_from_grouped(&mut self, src: &[T::Array])
     where
         T: Copy,
     {
@@ -228,7 +228,7 @@ impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
             .copy_from_slice(reinterpret::reinterpret_slice(src));
     }
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn clone_from_grouped(&mut self, src: &[T::Type])
+    pub fn clone_from_grouped(&mut self, src: &[T::Array])
     where
         T: Clone,
     {
@@ -251,14 +251,13 @@ impl<T> ChunkedN<Vec<T>> {
 }
 
 impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
-    /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn resize(&mut self, new_length: usize, default: T::Type)
+    pub fn resize(&mut self, new_length: usize, default: T::Array)
     where
-        <T as Grouped<N>>::Type: Clone,
+        <T as Grouped<N>>::Array: PushToVec<T> + Clone,
     {
         self.reserve(new_length);
         for _ in 0..new_length {
-            Grouped::<N>::push_to_vec(default.clone(), &mut self.data);
+            PushToVec::push_to_vec(default.clone(), &mut self.data);
         }
     }
 }
@@ -289,7 +288,7 @@ where
     /// s.extend_from_slice(&[[4,5], [6,7]]);
     /// assert_eq!(s.data(), &vec![0,1,2,3,4,5,6,7]);
     /// ```
-    pub fn extend_from_slice(&mut self, slice: &[T::Type]) {
+    pub fn extend_from_slice(&mut self, slice: &[T::Array]) {
         self.data
             .extend_from_slice(reinterpret::reinterpret_slice(slice));
     }
@@ -299,9 +298,9 @@ where
 /// can be grouped as `N` sub-elements.
 impl<S: Set, N: num::Unsigned> Set for UniChunked<S, N>
 where
-    S::Elem: Grouped<N>,
+    <S as Set>::Elem: Grouped<N>,
 {
-    type Elem = <S::Elem as Grouped<N>>::Type;
+    type Elem = <S::Elem as Grouped<N>>::Array;
 
     /// Compute the length of this `UniChunked` collection as the number of
     /// grouped elements in the set.
@@ -342,11 +341,12 @@ impl<S: Set> Set for UniChunked<S, usize> {
     }
 }
 
-impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Type> for UniChunked<S, N>
+impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
 where
     N: num::Unsigned,
-    S: Set + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Grouped<N>,
+    <<S as Set>::Elem as Grouped<N>>::Array: PushTo<S>,
+    S: Set + Push<<S as Set>::Elem>,
 {
     /// Push a grouped element onto the `UniChunked` type. The pushed element must
     /// have exactly `N` sub-elements.
@@ -362,8 +362,8 @@ where
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    fn push(&mut self, element: <<S as Set>::Elem as Grouped<N>>::Type) {
-        Grouped::<N>::push_to(element, &mut self.data);
+    fn push(&mut self, element: <<S as Set>::Elem as Grouped<N>>::Array) {
+        PushTo::push_to(element, &mut self.data);
     }
 }
 
@@ -418,11 +418,12 @@ where
     }
 }
 
-impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Type> for UniChunked<S, N>
+impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
 where
     N: num::Unsigned,
-    S: Set + Default + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Grouped<N>,
+    <<S as Set>::Elem as Grouped<N>>::Array: PushTo<S>,
+    S: Set + Default + Push<<S as Set>::Elem>,
 {
     /// Construct a `UniChunked` collection from an iterator that produces
     /// chunked elements.
@@ -440,7 +441,7 @@ where
     /// ```
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = <<S as Set>::Elem as Grouped<N>>::Type>,
+        T: IntoIterator<Item = <<S as Set>::Elem as Grouped<N>>::Array>,
     {
         let mut s = UniChunked::default();
         for i in iter {
@@ -475,9 +476,9 @@ where
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for Vec<T>
 where
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = Vec<<T as Grouped<N>>::Type>;
+    type Output = Vec<<T as Grouped<N>>::Array>;
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_vec(self)
@@ -486,9 +487,9 @@ where
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a [T]
 where
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a [<T as Grouped<N>>::Type];
+    type Output = &'a [<T as Grouped<N>>::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_slice(self)
@@ -497,9 +498,9 @@ where
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut [T]
 where
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a mut [<T as Grouped<N>>::Type];
+    type Output = &'a mut [<T as Grouped<N>>::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self)
@@ -510,10 +511,10 @@ where
 //where
 //    S: Set,
 //    T: Grouped<N>,
-//    <T as Grouped<N>>::Type: 'a,
+//    <T as Grouped<N>>::Array: 'a,
 //    N: num::Unsigned
 //{
-//    type Output = &'a [<T as Grouped<N>>::Type];
+//    type Output = &'a [<T as Grouped<N>>::Array];
 //    #[inline]
 //    fn reinterpret_as_grouped(self) -> Self::Output {
 //        reinterpret::reinterpret_slice(self.as_slice())
@@ -522,9 +523,9 @@ where
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a Vec<T>
 where
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a [<T as Grouped<N>>::Type];
+    type Output = &'a [<T as Grouped<N>>::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_slice(self.as_slice())
@@ -533,42 +534,42 @@ where
 
 impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut Vec<T>
 where
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a mut [<T as Grouped<N>>::Type];
+    type Output = &'a mut [<T as Grouped<N>>::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self.as_mut_slice())
     }
 }
 
+pub trait PushTo<S> {
+    /// This method tells this type how it can be pushed to a set as a grouped
+    /// type.
+    fn push_to(element: Self, set: &mut S);
+}
+
+pub trait PushToVec<T> {
+    fn push_to_vec(element: Self, set: &mut Vec<T>);
+}
+
 pub trait Grouped<N>
 where
     Self: Sized,
 {
-    type Type;
-    /// This method tells this type how it can be pushed to a set as a grouped
-    /// type.
-    fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S);
-
-    fn push_to_vec(element: Self::Type, set: &mut Vec<Self>) {
-        Self::push_to(element, set);
-    }
+    type Array;
 
     /// Construct a grouped type from a `RangeFrom<T>`.
-    fn from_range(rng: std::ops::RangeFrom<Self>) -> Self::Type
+    fn from_range(rng: std::ops::RangeFrom<Self>) -> Self::Array
     where
         Self: Default + Copy,
         std::ops::RangeFrom<Self>: Iterator<Item = Self>;
 }
 
 impl<T> Grouped<num::U1> for T {
-    type Type = Self;
-    fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S) {
-        set.push(element);
-    }
+    type Array = Self;
 
-    fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Type
+    fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Array
     where
         T: Default + Copy,
         std::ops::RangeFrom<T>: Iterator<Item = T>,
@@ -577,19 +578,17 @@ impl<T> Grouped<num::U1> for T {
     }
 }
 
+//impl<T, S: Push<T>> PushTo<S> for T {
+//    fn push_to(element: T, set: &mut S) {
+//        set.push(element);
+//    }
+//}
+
 macro_rules! impl_grouped {
     ($nty:ty, $n:expr) => {
-        impl<T: Clone> Grouped<$nty> for T {
-            type Type = [Self; $n];
-            fn push_to<S: Push<Self>>(element: Self::Type, set: &mut S) {
-                for i in &element {
-                    set.push(i.clone());
-                }
-            }
-            fn push_to_vec(element: Self::Type, vec: &mut Vec<Self>) {
-                vec.extend_from_slice(&element);
-            }
-            fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Type
+        impl<T> Grouped<$nty> for T {
+            type Array = [Self; $n];
+            fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Array
             where
                 T: Default + Copy,
                 std::ops::RangeFrom<T>: Iterator<Item = T>,
@@ -601,11 +600,27 @@ macro_rules! impl_grouped {
                 grp
             }
         }
+
+        impl<T: Clone, S: Push<T>> PushTo<S> for [T; $n] {
+            fn push_to(element: Self, set: &mut S) {
+                for i in &element {
+                    set.push(i.clone());
+                }
+            }
+        }
+        impl<T: Clone> PushToVec<T> for [T; $n] {
+            fn push_to_vec(element: Self, set: &mut Vec<T>) {
+                set.extend_from_slice(&element);
+            }
+        }
     };
 }
 
 impl_grouped!(num::U2, 2);
 impl_grouped!(num::U3, 3);
+
+pub trait GroupedN: Grouped<num::U1> + Grouped<num::U2> + Grouped<num::U3> {}
+impl<T> GroupedN for T where T: Grouped<num::U1> + Grouped<num::U2> + Grouped<num::U3> {}
 
 impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&[T], N> {
     fn borrow(&self) -> &[T] {
@@ -952,7 +967,7 @@ where
     N: num::Unsigned,
     T: Grouped<N>,
 {
-    type Output = T::Type;
+    type Output = T::Array;
 
     /// Index the `UniChunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
@@ -977,7 +992,7 @@ where
     N: num::Unsigned,
     T: Grouped<N>,
 {
-    type Output = T::Type;
+    type Output = T::Array;
 
     /// Immutably index the `UniChunked` borrowed slice by `usize`. Note
     /// that this works for chunked collections that are themselves not chunked,
@@ -1002,7 +1017,7 @@ where
     N: num::Unsigned,
     T: Grouped<N>,
 {
-    type Output = T::Type;
+    type Output = T::Array;
 
     /// Immutably index the `UniChunked` mutably borrowed slice by `usize`. Note
     /// that this works for chunked collections that are themselves not chunked,

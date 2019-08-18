@@ -717,9 +717,12 @@ where
     }
 }
 
-impl<'a, T> IntoIterator for Chunked<&'a [T], &'a [usize]> {
-    type Item = &'a [T];
-    type IntoIter = VarIter<'a, &'a [T]>;
+impl<'a, S> IntoIterator for Chunked<S, &'a [usize]>
+where
+    S: SplitAt + Set + Dummy,
+{
+    type Item = S;
+    type IntoIter = VarIter<'a, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         VarIter {

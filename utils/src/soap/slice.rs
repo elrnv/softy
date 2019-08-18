@@ -4,13 +4,13 @@ impl<'a, T, N> GetIndex<'a, &'a [T]> for StaticRange<N>
 where
     N: num::Unsigned,
     T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a T::Type;
+    type Output = &'a T::Array;
     fn get(self, set: &&'a [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
             let slice = *set;
-            Some(unsafe { &*(slice.as_ptr().add(self.start()) as *const T::Type) })
+            Some(unsafe { &*(slice.as_ptr().add(self.start()) as *const T::Array) })
         } else {
             None
         }
@@ -21,13 +21,13 @@ where
 //where
 //    N: num::Unsigned,
 //    T: Grouped<N>,
-//    <T as Grouped<N>>::Type: 'a,
+//    <T as Grouped<N>>::Array: 'a,
 //{
-//    type Output = &'a T::Type;
+//    type Output = &'a T::Array;
 //    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
 //        if self.end() <= set.len() {
 //            // TODO: This code causes mutable aliasing:
-//            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Type) })
+//            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Array) })
 //        } else {
 //            None
 //        }
@@ -37,13 +37,12 @@ impl<'a, T, N> IsolateIndex<&'a mut [T]> for StaticRange<N>
 where
     N: num::Unsigned,
     T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
 {
-    type Output = &'a mut T::Type;
+    type Output = &'a mut T::Array;
     fn try_isolate(self, set: &'a mut [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
-            //Some(unsafe { &mut *((*set).as_mut_ptr().add(self.start()) as *mut T::Type) })
-            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut T::Type) })
+            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut T::Array) })
         } else {
             None
         }
@@ -60,18 +59,6 @@ where
         Some(std::ops::Index::<I>::index(*set, self))
     }
 }
-
-//impl<'a, T, I> GetIndex<'a, &'a mut [T]> for I
-//where
-//    I: std::slice::SliceIndex<[T]>,
-//    <[T] as std::ops::Index<I>>::Output: 'a,
-//{
-//    type Output = &'a <[T] as std::ops::Index<I>>::Output;
-//    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-//        let slice = unsafe { std::slice::from_raw_parts(set.as_ptr(), set.len()) };
-//        Some(std::ops::Index::<I>::index(slice, self))
-//    }
-//}
 
 impl<'a, T, I> IsolateIndex<&'a mut [T]> for I
 where
@@ -160,10 +147,10 @@ impl<'a, T: 'a> ViewMut<'a> for [T] {
 impl<'a, T, N> SplitPrefix<N> for &'a [T]
 where
     T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
     N: num::Unsigned,
 {
-    type Prefix = &'a T::Type;
+    type Prefix = &'a T::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
         if self.len() < N::value() {
@@ -171,7 +158,7 @@ where
         }
 
         let (prefix, rest) = unsafe {
-            let prefix = self.as_ptr() as *const T::Type;
+            let prefix = self.as_ptr() as *const T::Array;
             (&*prefix, &self[N::value()..])
         };
         Some((prefix, rest))
@@ -181,10 +168,10 @@ where
 impl<'a, T, N> SplitPrefix<N> for &'a mut [T]
 where
     T: Grouped<N>,
-    <T as Grouped<N>>::Type: 'a,
+    <T as Grouped<N>>::Array: 'a,
     N: num::Unsigned,
 {
-    type Prefix = &'a mut T::Type;
+    type Prefix = &'a mut T::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
         if self.len() < N::value() {
@@ -192,7 +179,7 @@ where
         }
 
         let (prefix, rest) = unsafe {
-            let prefix = self.as_mut_ptr() as *mut T::Type;
+            let prefix = self.as_mut_ptr() as *mut T::Array;
             (&mut *prefix, &mut self[N::value()..])
         };
         Some((prefix, rest))

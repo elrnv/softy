@@ -154,7 +154,7 @@ where
     std::ops::RangeFrom<I>: Iterator<Item = I>,
     N: num::Unsigned,
 {
-    type Prefix = I::Type;
+    type Prefix = I::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
         if self.len() < N::value() {

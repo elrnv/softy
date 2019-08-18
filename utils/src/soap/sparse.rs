@@ -93,6 +93,10 @@ where
 */
 
 impl<'a, S, T, I> Sparse<S, T, I> {
+    /// Get a reference to the underlying data.
+    pub fn data(&self) -> &S {
+        &self.data
+    }
     /// Get a reference to the underlying selection.
     pub fn selection(&self) -> &Select<T, I> {
         &self.selection
@@ -249,10 +253,11 @@ where
 
 impl<'a, S, T, I> Sparse<S, T, I>
 where
-    S: Set + Get<'a, usize> + View<'a>,
+    S: View<'a>,
+    <S as View<'a>>::Type: Set,
     T: Set + Get<'a, usize> + View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
+    <S as View<'a>>::Type: IntoIterator,
     <T as View<'a>>::Type: IntoIterator<Item = T::Output>,
 {
     pub fn iter(
@@ -260,7 +265,7 @@ where
     ) -> impl Iterator<
         Item = (
             usize,
-            <S as Get<'a, usize>>::Output,
+            <<S as View<'a>>::Type as IntoIterator>::Item,
             <T as Get<'a, usize>>::Output,
         ),
     > {
@@ -333,14 +338,13 @@ where
         }
     }
 }
+ */
 
-impl<S: Dummy, I> Dummy for Subset<S, I> {
+impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
     fn dummy() -> Self {
-        Subset {
+        Sparse {
+            selection: Dummy::dummy(),
             data: Dummy::dummy(),
-            indices: None,
         }
     }
 }
-
-*/

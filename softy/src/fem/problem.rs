@@ -388,7 +388,7 @@ impl ObjectData {
 
     // TODO: refactor this function together with the function above.
     fn mesh_vertex_subset_mut_impl<'x, T: Clone + 'x, Alt>(
-        mut x: VertexView<'x, &'x mut [T]>,
+        x: VertexView<'x, &'x mut [T]>,
         alt: Alt,
         source: SourceIndex,
         solids: &[TetMeshSolid],
@@ -400,18 +400,18 @@ impl ObjectData {
         match source {
             SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
                 solids[i].surface().indices.to_vec(),
-                x.at_mut(0).at_mut(i),
+                x.isolate(0).isolate(i),
             ),
             SourceIndex::Shell(i) => {
                 let props = shells[i].material.properties;
 
                 // Determine source data.
-                let mut x = match props {
+                let x = match props {
                     ShellProperties::Deformable { .. } => x,
                     _ => alt.into().unwrap_or(x),
                 };
 
-                Subset::all(x.at_mut(1).at_mut(i))
+                Subset::all(x.isolate(1).isolate(i))
             }
         }
     }
@@ -433,7 +433,7 @@ impl ObjectData {
 
     // TODO: Refactor this monstrosity
     fn mesh_vertex_subset_split_mut_impl<'x, T: Clone + 'x, Alt>(
-        mut x: VertexView<'x, &'x mut [T]>,
+        x: VertexView<'x, &'x mut [T]>,
         alt: Alt,
         source: [SourceIndex; 2],
         solids: &[TetMeshSolid],
@@ -446,59 +446,59 @@ impl ObjectData {
             SourceIndex::Solid(i) => match source[1] {
                 SourceIndex::Solid(j) => {
                     if i < j {
-                        let (mut l, mut r) = x.at_mut(0).split_at(j);
+                        let (l, r) = x.isolate(0).split_at(j);
                         [
                             Subset::from_unique_ordered_indices(
                                 solids[i].surface().indices.to_vec(),
-                                l.at_mut(i),
+                                l.isolate(i),
                             ),
                             Subset::from_unique_ordered_indices(
                                 solids[j].surface().indices.to_vec(),
-                                r.at_mut(0),
+                                r.isolate(0),
                             ),
                         ]
                     } else {
                         assert_ne!(i, j); // This needs special handling for self contact.
-                        let (mut l, mut r) = x.at_mut(0).split_at(i);
+                        let (l, r) = x.isolate(0).split_at(i);
                         [
                             Subset::from_unique_ordered_indices(
                                 solids[i].surface().indices.to_vec(),
-                                r.at_mut(0),
+                                r.isolate(0),
                             ),
                             Subset::from_unique_ordered_indices(
                                 solids[j].surface().indices.to_vec(),
-                                l.at_mut(j),
+                                l.isolate(j),
                             ),
                         ]
                     }
                 }
                 SourceIndex::Shell(j) => {
-                    let props = shells[i].material.properties;
+                    let props = shells[j].material.properties;
 
                     // Determine source data.
                     let x = match props {
                         ShellProperties::Deformable { .. } => x,
                         _ => match alt.into() {
-                            Some(mut alt) => {
+                            Some(alt) => {
                                 return [
                                     Subset::from_unique_ordered_indices(
                                         solids[i].surface().indices.to_vec(),
-                                        x.at_mut(0).at_mut(i),
+                                        x.isolate(0).isolate(i),
                                     ),
-                                    Subset::all(alt.at_mut(1).at_mut(j)),
+                                    Subset::all(alt.isolate(1).isolate(j)),
                                 ];
                             }
                             None => x,
                         },
                     };
 
-                    let (mut l, mut r) = x.split_at(1);
+                    let (l, r) = x.split_at(1);
                     [
                         Subset::from_unique_ordered_indices(
                             solids[i].surface().indices.to_vec(),
-                            l.at_mut(0).at_mut(i),
+                            l.isolate(0).isolate(i),
                         ),
-                        Subset::all(r.at_mut(0).at_mut(j)),
+                        Subset::all(r.isolate(0).isolate(j)),
                     ]
                 }
             },
@@ -506,31 +506,31 @@ impl ObjectData {
                 let props = shells[i].material.properties;
 
                 // Determine source data.
-                let mut x = match props {
+                let x = match props {
                     ShellProperties::Deformable { .. } => x,
                     _ => match alt.into() {
-                        Some(mut alt) => {
+                        Some(alt) => {
                             return match source[1] {
                                 SourceIndex::Solid(j) => [
-                                    Subset::all(alt.at_mut(1).at_mut(i)),
+                                    Subset::all(alt.isolate(1).isolate(i)),
                                     Subset::from_unique_ordered_indices(
                                         solids[j].surface().indices.to_vec(),
-                                        x.at_mut(0).at_mut(j),
+                                        x.isolate(0).isolate(j),
                                     ),
                                 ],
                                 SourceIndex::Shell(j) => {
-                                    let mut x = match props {
+                                    let x = match props {
                                         ShellProperties::Deformable { .. } => x,
                                         _ => alt, // Both non-deformable shells.
                                     };
 
                                     if i < j {
-                                        let (mut l, mut r) = x.at_mut(1).split_at(j);
-                                        [Subset::all(l.at_mut(i)), Subset::all(r.at_mut(0))]
+                                        let (l, r) = x.isolate(1).split_at(j);
+                                        [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
                                     } else {
                                         assert_ne!(i, j); // This needs special handling for self contact.
-                                        let (mut l, mut r) = x.at_mut(1).split_at(i);
-                                        [Subset::all(r.at_mut(0)), Subset::all(l.at_mut(j))]
+                                        let (l, r) = x.isolate(1).split_at(i);
+                                        [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
                                     }
                                 }
                             };
@@ -541,23 +541,23 @@ impl ObjectData {
 
                 match source[1] {
                     SourceIndex::Solid(j) => {
-                        let (mut l, mut r) = x.split_at(1);
+                        let (l, r) = x.split_at(1);
                         [
-                            Subset::all(l.at_mut(0).at_mut(i)),
+                            Subset::all(l.isolate(0).isolate(i)),
                             Subset::from_unique_ordered_indices(
                                 solids[j].surface().indices.to_vec(),
-                                r.at_mut(0).at_mut(j),
+                                r.isolate(0).isolate(j),
                             ),
                         ]
                     }
                     SourceIndex::Shell(j) => {
                         if i < j {
-                            let (mut l, mut r) = x.at_mut(1).split_at(j);
-                            [Subset::all(l.at_mut(i)), Subset::all(r.at_mut(0))]
+                            let (l, r) = x.isolate(1).split_at(j);
+                            [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
                         } else {
                             assert_ne!(i, j); // This needs special handling for self contact.
-                            let (mut l, mut r) = x.at_mut(1).split_at(i);
-                            [Subset::all(r.at_mut(0)), Subset::all(l.at_mut(j))]
+                            let (l, r) = x.isolate(1).split_at(i);
+                            [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
                         }
                     }
                 }
@@ -674,7 +674,7 @@ impl ObjectData {
     /// and velocities for all solids.
     pub fn update_solid_vertices(&mut self, new_pos: Chunked3<&[f64]>) -> Result<(), crate::Error> {
         // All solids have prev_x coincident with pos so we use prev_x directly here.
-        let mut prev_x = self.prev_x.view_mut().at_mut(0);
+        let mut prev_x = self.prev_x.view_mut().isolate(0);
 
         // All solids are simulated, so the input point set must have the same
         // size as our internal vertex set. If these are mismatched, then there
@@ -729,8 +729,8 @@ impl ObjectData {
         // latter.
         let ObjectData { prev_x, pos, .. } = self;
 
-        let mut prev_x = prev_x.view_mut().at_mut(1);
-        let mut pos = pos.view_mut().at_mut(1);
+        let mut prev_x = prev_x.view_mut().isolate(1);
+        let mut pos = pos.view_mut().isolate(1);
 
         // Get the trimesh and prev_x/pos so we can update the fixed vertices.
         for (shell, (mut prev_x, mut pos)) in self
@@ -1448,6 +1448,8 @@ impl NonLinearProblem {
 
         let mut is_finished = true;
 
+        let mut constraint_offset = volume_constraints.len();
+
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let v = cur_v.view();
             let obj_prev_pos = self.object_data.prev_pos(fc.object_index);
@@ -1455,15 +1457,14 @@ impl NonLinearProblem {
             let obj_vel = self.object_data.cur_vel(v, fc.object_index);
             let col_vel = self.object_data.cur_vel(v, fc.collider_index);
 
-            let offset = volume_constraints.len();
-
+            let n = fc.constraint.constraint_size();
             let contact_impulse = Self::contact_impulse_magnitudes(
-                &solution.constraint_multipliers[offset..],
+                &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
                 time_step,
             );
 
             dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
-            let potential_values = &constraint_values[offset..];
+            let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
             let remaining_steps = fc.constraint.update_frictional_contact_impulse(
                 &contact_impulse,
                 [obj_prev_pos.view(), col_prev_pos.view()],
@@ -1473,6 +1474,7 @@ impl NonLinearProblem {
             );
 
             is_finished &= remaining_steps == 0;
+            constraint_offset += n;
         }
 
         is_finished
@@ -1891,8 +1893,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 .tetmesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
-                let mut x_l = x_l.at_mut(0).at_mut(i);
-                let mut x_u = x_u.at_mut(0).at_mut(i);
+                let mut x_l = x_l.view_mut().isolate(0).isolate(i);
+                let mut x_u = x_u.view_mut().isolate(0).isolate(i);
                 // Find and set fixed vertices.
                 x_l.iter_mut()
                     .zip(x_u.iter_mut())
@@ -1910,8 +1912,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 .trimesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
-                let mut x_l = x_l.at_mut(1).at_mut(i);
-                let mut x_u = x_u.at_mut(1).at_mut(i);
+                let mut x_l = x_l.view_mut().isolate(1).isolate(i);
+                let mut x_u = x_u.view_mut().isolate(1).isolate(i);
                 // Find and set fixed vertices.
                 x_l.iter_mut()
                     .zip(x_u.iter_mut())
@@ -1964,7 +1966,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         for (i, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(i).into_flat();
             let x1 = x1.at(0).at(i).into_flat();
-            let g = grad.at_mut(0).at_mut(i).into_flat();
+            let g = grad.view_mut().isolate(0).isolate(i).into_flat();
             solid.elasticity().add_energy_gradient(x0, x1, g);
             solid.gravity(self.gravity).add_energy_gradient(x0, x1, g);
         }
@@ -1973,7 +1975,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             let x0 = x0.at(1).at(i).into_flat();
             let x1 = x1.at(1).at(i).into_flat();
             //let v0 = v0.at(1).at(i).into_flat();
-            let g = grad.at_mut(1).at_mut(i).into_flat();
+            let g = grad.view_mut().isolate(1).isolate(i).into_flat();
             //shell.elasticity().energy(x0, x1, g);
             shell.gravity(self.gravity).add_energy_gradient(x0, x1, g);
         }
@@ -1990,7 +1992,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             for (i, solid) in self.object_data.solids.iter().enumerate() {
                 let v0 = v0.at(0).at(i).into_flat();
                 let v = v.at(0).at(i).into_flat();
-                let g = grad.at_mut(0).at_mut(i).into_flat();
+                let g = grad.view_mut().isolate(0).isolate(i).into_flat();
                 solid.inertia().add_energy_gradient(v0, v, g);
             }
 

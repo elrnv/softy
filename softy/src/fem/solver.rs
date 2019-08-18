@@ -158,7 +158,7 @@ impl SolverBuilder {
     pub(crate) fn build_material_sources(
         solids: &[TetMeshSolid],
         shells: &[TriMeshShell],
-        ) -> Chunked<Vec<SourceIndex>> {
+    ) -> Chunked<Vec<SourceIndex>> {
         // Build a mapping to mesh indices in their respective slices.
         let mut material_source = Vec::new();
         material_source.extend((0..solids.len()).map(|i| SourceIndex::Solid(i)));
@@ -193,7 +193,6 @@ impl SolverBuilder {
         frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
     ) -> Vec<FrictionalContactConstraint> {
         let material_source = Self::build_material_sources(solids, shells);
-        dbg!(&material_source);
 
         let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
             object_index: m0,
@@ -223,7 +222,6 @@ impl SolverBuilder {
                     let (solid_iter, shell_iter) = match m0 {
                         SourceIndex::Solid(i) => (
                             Some(material_source_coll.into_iter().flat_map(move |&m1| {
-                                dbg!(m0, m1);
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         Var::Variable(&solids[i].surface().trimesh),
@@ -245,7 +243,6 @@ impl SolverBuilder {
                         SourceIndex::Shell(i) => (
                             None,
                             Some(material_source_coll.into_iter().flat_map(move |&m1| {
-                                dbg!(m0, m1);
                                 match m1 {
                                     SourceIndex::Solid(j) => build_contact_constraint(
                                         shells[i].tagged_mesh(),
@@ -810,7 +807,6 @@ impl SolverBuilder {
     /// mesh if it hasn't already been populated on the input.
     pub(crate) fn prepare_elasticity_attributes<Obj: Object>(obj: &mut Obj) -> Result<(), Error> {
         if let Some(elasticity) = obj.material().scaled_elasticity() {
-            dbg!(elasticity);
             let num_elements = obj.num_elements();
             match obj
                 .mesh_mut()
@@ -1786,21 +1782,54 @@ mod tests {
         // No shells
         let solids: Vec<_> = [1, 0, 0, 2].into_iter().map(new_solid).collect();
         let srcs = SolverBuilder::build_material_sources(&solids, &[]);
-        assert_eq!(srcs, Chunked::from_offsets(vec![0,2,3,4],
-                                               vec![solid(1),solid(2),solid(0),solid(3)]));
+        assert_eq!(
+            srcs,
+            Chunked::from_offsets(
+                vec![0, 2, 3, 4],
+                vec![solid(1), solid(2), solid(0), solid(3)]
+            )
+        );
 
         // No solids
         let shells: Vec<_> = [3, 4, 3, 1].into_iter().map(new_shell).collect();
         let srcs = SolverBuilder::build_material_sources(&[], &shells);
-        assert_eq!(srcs, Chunked::from_offsets(vec![0,0,1,1,3,4],
-                                               vec![shell(3),shell(0),shell(2),shell(1)]));
+        assert_eq!(
+            srcs,
+            Chunked::from_offsets(
+                vec![0, 0, 1, 1, 3, 4],
+                vec![shell(3), shell(0), shell(2), shell(1)]
+            )
+        );
 
         // Complex test
-        let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1].into_iter().map(new_solid).collect();
+        let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1]
+            .into_iter()
+            .map(new_solid)
+            .collect();
         let shells: Vec<_> = [3, 4, 0, 1, 0, 6, 10].into_iter().map(new_shell).collect();
         let srcs = SolverBuilder::build_material_sources(&solids, &shells);
-        assert_eq!(srcs, Chunked::from_offsets(vec![0,6,10,11,12,13,13,14,14,14,14,15],
-                                               vec![solid(0),solid(1),solid(2),solid(6),shell(2),shell(4),solid(3),solid(5),solid(7),shell(3),solid(4),shell(0),shell(1),shell(5),shell(6)]));
-
+        assert_eq!(
+            srcs,
+            Chunked::from_offsets(
+                vec![0, 6, 10, 11, 12, 13, 13, 14, 14, 14, 14, 15],
+                vec![
+                    solid(0),
+                    solid(1),
+                    solid(2),
+                    solid(6),
+                    shell(2),
+                    shell(4),
+                    solid(3),
+                    solid(5),
+                    solid(7),
+                    shell(3),
+                    solid(4),
+                    shell(0),
+                    shell(1),
+                    shell(5),
+                    shell(6)
+                ]
+            )
+        );
     }
 }

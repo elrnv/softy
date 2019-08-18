@@ -150,24 +150,24 @@ impl ContactConstraint for ImplicitContactConstraint {
         )
     }
 
-    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
-        // The contact jacobian for implicit collisions is just a selection matrix of vertices that
-        // are in contact, since contacts are colocated with vertex positions.
+    //fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
+    //    // The contact jacobian for implicit collisions is just a selection matrix of vertices that
+    //    // are in contact, since contacts are colocated with vertex positions.
 
-        let surf_indices = self
-            .active_constraint_indices()
-            .expect("Failed to retrieve constraint indices.");
+    //    let surf_indices = self
+    //        .active_constraint_indices()
+    //        .expect("Failed to retrieve constraint indices.");
 
-        let nnz = surf_indices.len();
-        let values = vec![1.0; nnz];
-        let rows: Vec<_> = (0..nnz).collect();
-        let cols: Vec<_> = surf_indices;
+    //    let nnz = surf_indices.len();
+    //    let values = vec![1.0; nnz];
+    //    let rows: Vec<_> = (0..nnz).collect();
+    //    let cols: Vec<_> = surf_indices;
 
-        let num_rows = nnz;
-        let num_cols = self.contact_points.borrow().len();
+    //    let num_rows = nnz;
+    //    let num_cols = self.contact_points.borrow().len();
 
-        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
-    }
+    //    sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
+    //}
 
     fn update_frictional_contact_impulse(
         &mut self,

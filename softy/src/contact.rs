@@ -298,17 +298,19 @@ impl ContactBasis {
     }
 }
 
-pub(crate) struct ContactJacobian<I> {
+/// An intermediate representation of a contact jacobian that makes it easy to
+/// convert to other sparse representations.
+pub(crate) struct TripletContactJacobian<I> {
     pub iter: I,
     pub blocks: Vec<geo::math::Matrix3<f64>>,
     pub num_rows: usize,
     pub num_cols: usize,
 }
 
-pub(crate) fn build_chunked_contact_jacobian(
+pub(crate) fn build_triplet_contact_jacobian(
     surf: &ImplicitSurface,
     query_points: Chunked3<&[f64]>,
-) -> ContactJacobian<impl Iterator<Item = (usize, usize)> + Clone> {
+) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone> {
     let mut cj_matrices = vec![
         geo::math::Matrix3::zeros();
         surf.num_contact_jacobian_matrices()
@@ -320,10 +322,10 @@ pub(crate) fn build_chunked_contact_jacobian(
     )
     .expect("Failed to compute contact Jacobian.");
     let cj_indices_iter = surf
-        .contact_jacobian_indices_iter()
+        .contact_jacobian_matrix_indices_iter()
         .expect("Failed to get contact Jacobian indices.");
 
-    ContactJacobian {
+    TripletContactJacobian {
         iter: cj_indices_iter,
         blocks: cj_matrices,
         num_rows: query_points.len(),
@@ -331,7 +333,127 @@ pub(crate) fn build_chunked_contact_jacobian(
     }
 }
 
-impl<'a, I, Rhs> std::ops::Mul<Rhs> for &ContactJacobian<I>
+/// Contact jacobian maps values at the surface vertex positions (of the object)
+/// to query points (contact points). Not all contact points are active, so rows
+/// are sparse, and not all surface vertex positions are affected by each query
+/// point, so columns are also sparse.
+pub struct ContactJacobian(
+    pub  Tensor<
+        Sparse<
+            Chunked<Sparse<Chunked3<Chunked3<Vec<f64>>>, std::ops::Range<usize>>>,
+            std::ops::Range<usize>,
+        >,
+    >,
+);
+pub struct ContactJacobianView<'a>(
+    Tensor<
+        SparseView<
+            'a,
+            ChunkedView<'a, SparseView<'a, Chunked3<Chunked3<&'a [f64]>>, std::ops::Range<usize>>>,
+            std::ops::Range<usize>,
+        >,
+    >,
+);
+
+impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
+    fn into(self) -> ContactJacobian {
+        let num_blocks = self.blocks.len();
+        let blocks = Chunked3::from_flat(Chunked3::from_flat(reinterpret_vec(self.blocks)));
+        let mut rows = Vec::with_capacity(num_blocks);
+        let mut cols = Vec::with_capacity(num_blocks);
+        let mut offsets = Vec::with_capacity(self.num_rows);
+
+        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
+        for (row, col) in self.iter {
+            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
+
+            if row + 1 != prev_row {
+                rows.push(row);
+                prev_row = row + 1;
+                // Check that this is indeed a new row
+                offsets.push(cols.len());
+            }
+
+            cols.push(col);
+        }
+        offsets.push(cols.len());
+        offsets.shrink_to_fit();
+        rows.shrink_to_fit();
+
+        ContactJacobian(Tensor::new(Sparse::from_dim(
+            rows,
+            self.num_rows,
+            Chunked::from_offsets(offsets, Sparse::from_dim(cols, self.num_cols, blocks)),
+        )))
+    }
+}
+
+impl ContactJacobian {
+    pub(crate) fn view(&self) -> ContactJacobianView {
+        ContactJacobianView(Tensor::new(self.0.data.view()))
+    }
+    pub(crate) fn transpose(&self) -> Transpose<ContactJacobianView> {
+        Transpose(self.view())
+    }
+}
+
+impl ContactJacobianView<'_> {
+    pub(crate) fn num_cols(&self) -> usize {
+        self.0.data.data().data().selection().data().end()
+    }
+    pub(crate) fn num_rows(&self) -> usize {
+        self.0.data.selection().data().end()
+    }
+    //pub(crate) fn transpose(self) -> Transpose<Self> {
+    //    Transpose(self)
+    //}
+}
+
+impl<'a, Rhs> std::ops::Mul<Rhs> for ContactJacobianView<'_>
+where
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        use geo::math::{Matrix3, Vector3};
+        let v = rhs.into();
+        assert_eq!(v.len(), self.num_cols());
+
+        let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.num_rows()]);
+        for (row_idx, row, _) in self.0.data.iter() {
+            for (col_idx, block, _) in row.iter() {
+                let out = Vector3(res[row_idx]) + Matrix3(*block) * Vector3(v[col_idx]);
+                res[row_idx] = out.into();
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
+impl<'a, Rhs> std::ops::Mul<Rhs> for Transpose<ContactJacobianView<'_>>
+where
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        use geo::math::{Matrix3, Vector3};
+        let f = rhs.into();
+        assert_eq!(f.len(), self.0.num_rows());
+
+        let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.0.num_cols()]);
+        for (row_idx, row, _) in (self.0).0.data.iter() {
+            for (col_idx, block, _) in row.iter() {
+                let out = Vector3(res[col_idx]) + Matrix3(*block) * Vector3(f[row_idx]);
+                res[col_idx] = out.into();
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
+impl<'a, I, Rhs> std::ops::Mul<Rhs> for &TripletContactJacobian<I>
 where
     I: Clone + Iterator<Item = (usize, usize)>,
     Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
@@ -351,16 +473,36 @@ where
     }
 }
 
-/// A transpose of a matrix like the contact jacobian.
-pub(crate) struct Transpose<M>(M);
+impl<I> Into<sprs::CsMat<f64>> for TripletContactJacobian<I>
+where
+    I: Iterator<Item = (usize, usize)>,
+{
+    // Compute contact jacobian
+    fn into(self) -> sprs::CsMat<f64> {
+        let (rows, cols) = self
+            .iter
+            .flat_map(move |(row_mtx, col_mtx)| {
+                (0..3).flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
+            })
+            .unzip();
 
-impl<I> ContactJacobian<I> {
-    pub(crate) fn transpose(&self) -> Transpose<&Self> {
-        Transpose(&self)
+        let values = reinterpret::reinterpret_vec(self.blocks);
+
+        sprs::TriMat::from_triplets((3 * self.num_rows, 3 * self.num_cols), rows, cols, values)
+            .to_csr()
     }
 }
 
-impl<'a, I, Rhs> std::ops::Mul<Rhs> for Transpose<&ContactJacobian<I>>
+/// A transpose of a matrix like the contact jacobian.
+pub(crate) struct Transpose<M>(M);
+
+//impl<I> TripletContactJacobian<I> {
+//pub(crate) fn transpose(&self) -> Transpose<&Self> {
+//    Transpose(&self)
+//}
+//}
+
+impl<'a, I, Rhs> std::ops::Mul<Rhs> for Transpose<&TripletContactJacobian<I>>
 where
     I: Clone + Iterator<Item = (usize, usize)>,
     Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
@@ -373,8 +515,8 @@ where
         let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.0.num_cols]);
 
         for ((r, c), &block) in self.0.iter.clone().zip(self.0.blocks.iter()) {
-            let out = geo::math::Vector3(res[r]) + block.transpose() * geo::math::Vector3(f[c]);
-            res[r] = out.into();
+            let out = geo::math::Vector3(res[c]) + block.transpose() * geo::math::Vector3(f[r]);
+            res[c] = out.into();
         }
 
         res

@@ -7,16 +7,16 @@ use reinterpret::*;
 use unroll::unroll_for_loops;
 use utils::zip;
 
-use crate::contact::{ContactBasis, ContactJacobian, Polar2};
+use crate::contact::{ContactBasis, ContactJacobianView, Polar2};
 use crate::Error;
 
 /// Friction solver.
-pub struct FrictionPolarSolver<'a, CJI> {
+pub struct FrictionPolarSolver<'a> {
     /// Non-linear solver.
-    solver: Ipopt<ExplicitFrictionPolarProblem<'a, CJI>>,
+    solver: Ipopt<ExplicitFrictionPolarProblem<'a>>,
 }
 
-impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>> {
+impl<'a> FrictionPolarSolver<'a> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -27,12 +27,12 @@ impl<'a> FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-    ) -> Result<FrictionPolarSolver<'a, std::iter::Empty<(usize, usize)>>, Error> {
+    ) -> Result<FrictionPolarSolver<'a>, Error> {
         Self::new_impl(velocity, contact_force, contact_basis, masses, params, None)
     }
 }
 
-impl<'a, CJI> FrictionPolarSolver<'a, CJI> {
+impl<'a> FrictionPolarSolver<'a> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_force` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -43,8 +43,8 @@ impl<'a, CJI> FrictionPolarSolver<'a, CJI> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: &'a ContactJacobian<CJI>,
-    ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
+        contact_jacobian: ContactJacobianView<'a>,
+    ) -> Result<FrictionPolarSolver<'a>, Error> {
         Self::new_impl(
             velocity,
             contact_force,
@@ -61,8 +61,8 @@ impl<'a, CJI> FrictionPolarSolver<'a, CJI> {
         _contact_basis: &'a ContactBasis,
         _masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: Option<&'a ContactJacobian<CJI>>,
-    ) -> Result<FrictionPolarSolver<'a, CJI>, Error> {
+        contact_jacobian: Option<ContactJacobianView<'a>>,
+    ) -> Result<FrictionPolarSolver<'a>, Error> {
         let problem = ExplicitFrictionPolarProblem(FrictionPolarProblem {
             velocity,
             contact_force,
@@ -109,7 +109,7 @@ impl<'a, CJI> FrictionPolarSolver<'a, CJI> {
     }
 }
 
-pub(crate) struct FrictionPolarProblem<'a, CJI> {
+pub(crate) struct FrictionPolarProblem<'a> {
     /// A set of tangential velocities in contact space for active contacts. These are used to
     /// determine the applied frictional force.
     velocity: &'a [Polar2<f64>],
@@ -123,12 +123,12 @@ pub(crate) struct FrictionPolarProblem<'a, CJI> {
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
     #[allow(dead_code)]
-    contact_jacobian: Option<&'a ContactJacobian<CJI>>,
+    contact_jacobian: Option<ContactJacobianView<'a>>,
     ///// Vertex masses.
     //masses: &'a [f64],
 }
 
-impl<CJI> FrictionPolarProblem<'_, CJI> {
+impl FrictionPolarProblem<'_> {
     pub fn num_contacts(&self) -> usize {
         self.velocity.len()
     }
@@ -187,10 +187,10 @@ fn normalize_angle(angle: f64) -> f64 {
 
 /// Specialization of the friction problem. This is the simplest and least accurate implementation
 /// of the friction problem.
-pub(crate) struct ExplicitFrictionPolarProblem<'a, CJI>(FrictionPolarProblem<'a, CJI>);
+pub(crate) struct ExplicitFrictionPolarProblem<'a>(FrictionPolarProblem<'a>);
 
 /// Prepare the problem for Newton iterations.
-impl<CJI> ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_, CJI> {
+impl ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_> {
     fn num_variables(&self) -> usize {
         self.0.num_variables()
     }
@@ -239,7 +239,7 @@ impl<CJI> ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_, CJI> {
     }
 }
 
-impl<CJI> ipopt::NewtonProblem for ExplicitFrictionPolarProblem<'_, CJI> {
+impl ipopt::NewtonProblem for ExplicitFrictionPolarProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
         // Objective hessian is block diagonal. (lower triangular part only)
         3 * self.0.num_contacts()
@@ -282,10 +282,10 @@ impl<CJI> ipopt::NewtonProblem for ExplicitFrictionPolarProblem<'_, CJI> {
 }
 
 /// Semi-implicit Friction problem is one step more accurate than the explicit one.
-pub(crate) struct SemiImplicitFrictionPolarProblem<'a, CJI>(FrictionPolarProblem<'a, CJI>);
+pub(crate) struct SemiImplicitFrictionPolarProblem<'a>(FrictionPolarProblem<'a>);
 
 /// Prepare the problem for Newton iterations.
-impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_, CJI> {
+impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
     fn num_variables(&self) -> usize {
         self.0.num_variables()
     }
@@ -334,7 +334,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_, CJI> {
     }
 }
 
-impl<CJI> ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_, CJI> {
+impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
         // Objective hessian is block diagonal. (lower triangular part only)
         3 * self.0.num_contacts()

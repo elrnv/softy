@@ -7,7 +7,7 @@ use reinterpret::*;
 use utils::zip;
 
 /// Friction solver.
-pub struct FrictionSolver<'a, CJI> {
+pub struct FrictionSolver<'a> {
     /// A set of tangential velocities in contact space for active contacts. These are used to
     /// determine the applied frictional force.
     velocity: &'a [Vector2<f64>],
@@ -20,12 +20,12 @@ pub struct FrictionSolver<'a, CJI> {
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
-    contact_jacobian: Option<&'a ContactJacobian<CJI>>,
+    contact_jacobian: Option<ContactJacobianView<'a>>,
     /// Vertex masses.
     masses: &'a [f64],
 }
 
-impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
+impl<'a> FrictionSolver<'a> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_impulse` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -36,7 +36,7 @@ impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-    ) -> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
+    ) -> FrictionSolver<'a> {
         Self::new_impl(
             velocity,
             contact_impulse,
@@ -48,7 +48,7 @@ impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
     }
 }
 
-impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
+impl<'a> FrictionSolver<'a> {
     /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
     /// tangential velocities for each contact point in contact space. `contact_impulse` is the
     /// normal component of the predictor frictional contact impulse at each contact point.
@@ -59,8 +59,8 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: &'a ContactJacobian<CJI>,
-    ) -> FrictionSolver<'a, CJI> {
+        contact_jacobian: ContactJacobianView<'a>,
+    ) -> FrictionSolver<'a> {
         Self::new_impl(
             velocity,
             contact_impulse,
@@ -77,8 +77,8 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
         contact_basis: &'a ContactBasis,
         masses: &'a [f64],
         params: FrictionParams,
-        contact_jacobian: Option<&'a ContactJacobian<CJI>>,
-    ) -> FrictionSolver<'a, CJI> {
+        contact_jacobian: Option<ContactJacobianView<'a>>,
+    ) -> FrictionSolver<'a> {
         FrictionSolver {
             velocity: reinterpret_slice(velocity),
             contact_impulse,

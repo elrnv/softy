@@ -28,7 +28,13 @@ pub struct PointContactConstraint {
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
     /// A mass for each vertex in the object mesh.
-    pub vertex_masses: Vec<f64>,
+    /// If the object is fixed, masses are effectively infinite and this field
+    /// will be `None`.
+    pub object_vertex_masses: Option<Vec<f64>>,
+    /// A mass for each vertex in the collider mesh.
+    /// If the collider is fixed, masses are effectively infinite and this field
+    /// will be `None`.
+    pub collider_vertex_masses: Option<Vec<f64>>,
 
     /// A flag indicating if the object is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
@@ -73,9 +79,15 @@ impl PointContactConstraint {
 
             let query_points = collider.vertex_positions();
 
-            let vertex_masses = object
-                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)?
-                .to_vec();
+            let object_vertex_masses = object
+                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
+                .ok()
+                .map(|attrib| attrib.to_vec());
+
+            let collider_vertex_masses = collider
+                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
+                .ok()
+                .map(|attrib| attrib.to_vec());
 
             let constraint = PointContactConstraint {
                 implicit_surface: RefCell::new(surface),
@@ -87,7 +99,8 @@ impl PointContactConstraint {
                         None
                     }
                 }),
-                vertex_masses,
+                object_vertex_masses,
+                collider_vertex_masses,
                 object_is_fixed,
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -330,33 +343,6 @@ impl ContactConstraint for PointContactConstraint {
         )
     }
 
-    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64> {
-        // Compute contact jacobian
-        let surf = self.implicit_surface.borrow();
-        let query_points = self.contact_points.borrow();
-
-        let mut cj_values = vec![
-            0.0;
-            surf.num_contact_jacobian_entries()
-                .expect("Failed to get contact Jacobian size.")
-        ];
-        surf.contact_jacobian_values(
-            query_points.view().into(),
-            reinterpret_mut_slice(&mut cj_values),
-        )
-        .expect("Failed to compute contact Jacobian.");
-        let cj_indices_iter = surf
-            .contact_jacobian_indices_iter()
-            .expect("Failed to get contact Jacobian indices.");
-
-        let (rows, cols) = cj_indices_iter.unzip();
-
-        let num_cols = 3 * surf.surface_vertex_positions().len();
-        let num_rows = 3 * query_points.len();
-
-        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, cj_values).to_csr()
-    }
-
     fn update_frictional_contact_impulse(
         &mut self,
         contact_impulse: &[f64],
@@ -392,12 +378,13 @@ impl ContactConstraint for PointContactConstraint {
         // Compute contact jacobian
         let surf = self.implicit_surface.borrow();
 
-        let jac = build_chunked_contact_jacobian(&surf, query_points.view());
+        let jac_triplets = build_triplet_contact_jacobian(&surf, query_points.view());
+        let jac: ContactJacobian = jac_triplets.into();
 
         // Friction impulse in physical space at all query points (contact positions).
         *collider_friction_impulse = Chunked3::from_grouped_vec(vec![[0.0; 3]; query_points.len()]);
 
-        let velocity = &jac * v[0];
+        let velocity = jac.view() * v[0];
 
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());
@@ -408,14 +395,15 @@ impl ContactConstraint for PointContactConstraint {
             .map(|&aqi| contact_impulse[aqi])
             .collect();
 
-        let vertex_masses = &self.vertex_masses;
+        let object_vertex_masses = self.object_vertex_masses.as_ref().unwrap();
+        let collider_vertex_masses = self.collider_vertex_masses.as_ref().unwrap();
 
         let success = if false {
             // Polar coords
             let velocity_t: Vec<_> = active_query_indices
                 .iter()
                 .map(|&aqi| {
-                    let vel: [f64; 3] = velocity[query_indices[aqi]].into();
+                    let vel: [f64; 3] = velocity.data[query_indices[aqi]].into();
                     let v = contact_basis.to_cylindrical_contact_coordinates(vel, aqi);
                     v.tangent
                 })
@@ -426,9 +414,10 @@ impl ContactConstraint for PointContactConstraint {
                     &velocity_t,
                     &contact_impulse,
                     &contact_basis,
-                    vertex_masses,
+                    //TODO:: ADD proper MASS HERE
+                    &object_vertex_masses,
                     *params,
-                    &jac,
+                    jac.view(),
                 ) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
@@ -483,7 +472,7 @@ impl ContactConstraint for PointContactConstraint {
             let velocity_t: Vec<_> = active_query_indices
                 .iter()
                 .map(|&aqi| {
-                    let vel: [f64; 3] = velocity[query_indices[aqi]].into();
+                    let vel: [f64; 3] = velocity.data[query_indices[aqi]].into();
                     let v = contact_basis.to_contact_coordinates(vel, aqi);
                     [v[1], v[2]]
                 })
@@ -494,9 +483,9 @@ impl ContactConstraint for PointContactConstraint {
                     &velocity_t,
                     &contact_impulse,
                     &contact_basis,
-                    vertex_masses,
+                    collider_vertex_masses,
                     *params,
-                    &jac,
+                    jac.view(),
                 );
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
@@ -539,7 +528,7 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
-        *object_friction_impulse = jac.transpose() * collider_friction_impulse.view();
+        *object_friction_impulse = (jac.transpose() * collider_friction_impulse.view()).data;
 
         // The last thing to do is to ensure that collider friction impulses are
         // the impulses ON the collider and not BY the collider.
@@ -562,7 +551,7 @@ impl ContactConstraint for PointContactConstraint {
                     frictional_contact
                         .object_impulse
                         .iter()
-                        .zip(self.vertex_masses.iter()),
+                        .zip(self.object_vertex_masses.as_ref().unwrap().iter()),
                 ) {
                     for j in 0..3 {
                         v[0][j] += f[j] / m;
@@ -581,7 +570,7 @@ impl ContactConstraint for PointContactConstraint {
                 .iter()
                 .zip(frictional_contact.collider_impulse.iter())
             {
-                let m = self.vertex_masses[i];
+                let m = self.collider_vertex_masses.as_ref().unwrap()[i];
                 let v = Vector3(vel[1][i]);
                 vel[1][i] = (v + Vector3(r) / m).into();
             }

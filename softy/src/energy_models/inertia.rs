@@ -7,7 +7,7 @@ use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
 use geo::Real;
 use num_traits::FromPrimitive;
-use rayon::prelude::*;
+//use rayon::prelude::*;
 use reinterpret::*;
 use utils::zip;
 
@@ -110,9 +110,9 @@ impl EnergyHessian for TetMeshInertia<'_> {
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
-            .par_iter_mut()
-            .zip(hess_col_chunks.par_iter_mut())
-            .zip(tetmesh.cells().par_iter())
+            .iter_mut()
+            .zip(hess_col_chunks.iter_mut())
+            .zip(tetmesh.cells().iter())
             .for_each(|((tet_hess_rows, tet_hess_cols), cell)| {
                 for vi in 0..4 {
                     // vertex index
@@ -142,8 +142,8 @@ impl EnergyHessian for TetMeshInertia<'_> {
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
-            .par_iter_mut()
-            .zip(tetmesh.cells().par_iter())
+            .iter_mut()
+            .zip(tetmesh.cells().iter())
             .for_each(|(tet_hess, cell)| {
                 for vi in 0..4 {
                     // vertex index
@@ -178,17 +178,17 @@ impl EnergyHessian for TetMeshInertia<'_> {
             .tetmesh
             .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
-            .par_iter();
+            .iter();
 
         let density_iter = solid
             .tetmesh
             .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
             .unwrap()
-            .par_iter();
+            .iter();
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
-            .par_iter_mut()
+            .iter_mut()
             .zip(vol_iter.zip(density_iter))
             .for_each(|(tet_hess, (&vol, &density))| {
                 for vi in 0..4 {

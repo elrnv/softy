@@ -17,22 +17,22 @@ where
     }
 }
 
-//impl<'a, T, N> GetIndex<'a, &'a mut [T]> for StaticRange<N>
-//where
-//    N: num::Unsigned,
-//    T: Grouped<N>,
-//    <T as Grouped<N>>::Array: 'a,
-//{
-//    type Output = &'a T::Array;
-//    fn get(self, set: &&'a mut [T]) -> Option<Self::Output> {
-//        if self.end() <= set.len() {
-//            // TODO: This code causes mutable aliasing:
-//            Some(unsafe { &*((*set).as_ptr().add(self.start()) as *const T::Array) })
-//        } else {
-//            None
-//        }
-//    }
-//}
+impl<'a, T, N> IsolateIndex<&'a [T]> for StaticRange<N>
+where
+    N: num::Unsigned,
+    T: Grouped<N>,
+    <T as Grouped<N>>::Array: 'a,
+{
+    type Output = &'a T::Array;
+    fn try_isolate(self, set: &'a [T]) -> Option<Self::Output> {
+        if self.end() <= set.len() {
+            Some(unsafe { &*(set.as_ptr().add(self.start()) as *const T::Array) })
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a, T, N> IsolateIndex<&'a mut [T]> for StaticRange<N>
 where
     N: num::Unsigned,
@@ -60,6 +60,17 @@ where
     }
 }
 
+impl<'a, T, I> IsolateIndex<&'a [T]> for I
+where
+    I: std::slice::SliceIndex<[T]>,
+    <I as std::slice::SliceIndex<[T]>>::Output: 'a,
+{
+    type Output = &'a <[T] as std::ops::Index<I>>::Output;
+    fn try_isolate(self, set: &'a [T]) -> Option<&'a <[T] as std::ops::Index<I>>::Output> {
+        Some(std::ops::Index::<I>::index(set, self))
+    }
+}
+
 impl<'a, T, I> IsolateIndex<&'a mut [T]> for I
 where
     I: std::slice::SliceIndex<[T]>,
@@ -69,6 +80,16 @@ where
     fn try_isolate(self, set: &'a mut [T]) -> Option<&'a mut <[T] as std::ops::Index<I>>::Output> {
         let slice = unsafe { std::slice::from_raw_parts_mut(set.as_mut_ptr(), set.len()) };
         Some(std::ops::IndexMut::<I>::index_mut(slice, self))
+    }
+}
+
+impl<'a, T, I> Isolate<I> for &'a [T]
+where
+    I: IsolateIndex<&'a [T]>,
+{
+    type Output = I::Output;
+    fn try_isolate(self, idx: I) -> Option<Self::Output> {
+        IsolateIndex::try_isolate(idx, self)
     }
 }
 

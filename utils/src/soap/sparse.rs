@@ -104,7 +104,7 @@ impl<'a, S, T, I> Sparse<S, T, I> {
 
     /// Get a reference to the underlying indices.
     pub fn indices(&self) -> &I {
-        self.selection.indices()
+        &self.selection.indices
     }
 }
 
@@ -154,26 +154,37 @@ where
 impl<'a, S, T, I> ViewMut<'a> for Sparse<S, T, I>
 where
     S: Set + ViewMut<'a>,
-    T: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    T: Set + View<'a>,
+    I: std::borrow::BorrowMut<[usize]>,
     <S as ViewMut<'a>>::Type: Set,
-    <T as ViewMut<'a>>::Type: Set,
+    <T as View<'a>>::Type: Set,
 {
-    type Type = Sparse<S::Type, T::Type, &'a [usize]>;
+    type Type = Sparse<S::Type, T::Type, &'a mut [usize]>;
     fn view_mut(&'a mut self) -> Self::Type {
-        let Sparse { selection, data } = self;
+        let Sparse {
+            selection:
+                Select {
+                    indices,
+                    data: ref target,
+                },
+            data: source,
+        } = self;
         Sparse {
-            selection: selection.view_mut(),
-            data: data.view_mut(),
+            selection: Select {
+                indices: indices.borrow_mut(),
+                data: target.view(),
+            },
+            data: source.view_mut(),
         }
     }
 }
 
 // This impl enables `Chunked` `Subset`s
-impl<S, T> SplitAt for Sparse<S, T, &[usize]>
+impl<S, T, I> SplitAt for Sparse<S, T, I>
 where
     S: Set + SplitAt,
     T: Set + Clone,
+    I: SplitAt,
 {
     fn split_at(self, mid: usize) -> (Self, Self) {
         let Sparse { selection, data } = self;
@@ -221,7 +232,7 @@ where
     fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
         let Sparse { selection, data } = sparse;
         data.try_isolate(self)
-            .map(|item| (selection.indices().borrow()[self], item))
+            .map(|item| (selection.indices.borrow()[self], item))
     }
 }
 
@@ -264,70 +275,31 @@ where
             .map(|((i, t), s)| (i, s, t))
     }
 }
-/*
 
-pub struct SubsetIterMut<'a, V> {
-    indices: Option<&'a [usize]>,
-    data: V,
-}
-
-impl<'a, V: 'a> Iterator for SubsetIterMut<'a, V>
+/// A mutable iterator can only iterate over the source elements in `S` and not
+/// the target elements in `T` since we would need scheduling to modify
+/// potentially overlapping mutable references.
+impl<'a, S, T, I> Sparse<S, T, I>
 where
-    V: SplitAt + SplitFirst + Set + Dummy,
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set + IntoIterator,
+    T: View<'a>,
+    <T as View<'a>>::Type: Set,
+    I: std::borrow::BorrowMut<[usize]>,
 {
-    type Item = V::First;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIterMut { indices, data } = self;
-        let data_slice = std::mem::replace(data, Dummy::dummy());
-        match indices {
-            Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
-                let (item, right) = data_slice.split_first().expect("Corrupt subset");
-                if let Some((second, _)) = rest.split_first() {
-                    let (_, r) = right.split_at(*second - *first - 1);
-                    *data = r;
-                } else {
-                    let n = data.len();
-                    let (_, r) = right.split_at(n);
-                    *data = r;
-                }
-                *indices = rest;
-                item
-            }),
-            None => data_slice.split_first().map(|(item, rest)| {
-                *data = rest;
-                item
-            }),
-        }
+    pub fn iter_mut(
+        &'a mut self,
+    ) -> impl Iterator<
+        Item = (
+            &'a mut usize,
+            <<S as ViewMut<'a>>::Type as IntoIterator>::Item,
+        ),
+    > {
+        self.selection
+            .index_iter_mut()
+            .zip(self.data.view_mut().into_iter())
     }
 }
-
-impl<'a, S, I> Subset<S, I>
-where
-    S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
-{
-    /// Mutably iterate over a borrowed subset.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
-    /// for i in subset.iter_mut() {
-    ///     *i += 1;
-    /// }
-    /// assert_eq!(v, vec![2,2,4,4,6]);
-    /// ```
-    pub fn iter_mut(&'a mut self) -> SubsetIterMut<'a, <S as ViewMut<'a>>::Type> {
-        SubsetIterMut {
-            indices: self.indices.as_ref().map(|indices| indices.borrow()),
-            data: self.data.view_mut(),
-        }
-    }
-}
- */
 
 impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
     fn dummy() -> Self {

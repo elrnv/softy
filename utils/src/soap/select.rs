@@ -59,8 +59,8 @@ use super::*;
 /// the indices themselves.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Select<S, I = Vec<usize>> {
-    pub(crate) indices: I,
-    pub(crate) data: S,
+    pub indices: I,
+    pub data: S,
 }
 
 /// A borrowed selection.
@@ -154,23 +154,6 @@ where
     }
 }
 
-impl<'a, S, I> Select<S, I> {
-    /// Get a reference to the underlying indices.
-    pub fn indices(&self) -> &I {
-        &self.indices
-    }
-
-    /// Get a reference to the underlying data.
-    pub fn data(&self) -> &S {
-        &self.data
-    }
-
-    /// Get a mutable reference to the underlying data.
-    pub fn data_mut(&mut self) -> &mut S {
-        &mut self.data
-    }
-}
-
 // Note to self:
 // To enable a collection to be chunked, we need to implement:
 // Set, View, SplitAt
@@ -215,25 +198,47 @@ where
 impl<'a, S, I> ViewMut<'a> for Select<S, I>
 where
     S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
     <S as ViewMut<'a>>::Type: Set,
+    I: std::borrow::Borrow<[usize]>,
 {
     type Type = Select<S::Type, &'a [usize]>;
-    /// Create a mutable view into this selection.
+    /// Create a mutable view of the indices of this selection.
+    //    /// Although it may be useful to have a mutable reference into the
+    //    /// referenced data, it is not generally useful to modify the data through a
+    //    /// potentially overlapping selection. For modifying the pointed data, use
+    //    /// the `Subset` collection, which ensures that the selection is non-overlapping.
     ///
-    // TODO: implement iter_mut
-    ///// # Example
-    /////
-    ///// ```
-    ///// use utils::soap::*;
-    ///// let mut v = vec![1,2,3,4,5];
-    ///// let mut selection = Select::new(vec![1,2,4,1], v.as_mut_slice());
-    ///// let mut view = selection.view_mut();
-    ///// for i in view.iter_mut() {
-    /////     *i += 1;
-    ///// }
-    ///// assert_eq!(v, vec![1,4,4,4,6]);
-    ///// ```
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut v = vec!['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    /// let mut selection = Select::new(vec![1,2,4,1], v.as_mut_slice());
+    ///
+    /// {
+    ///     let view = selection.view();
+    ///     let mut iter = view.iter();
+    ///     assert_eq!(Some((1, &'b')), iter.next());
+    ///     assert_eq!(Some((2, &'c')), iter.next());
+    ///     assert_eq!(Some((4, &'e')), iter.next());
+    ///     assert_eq!(Some((1, &'b')), iter.next());
+    ///     assert_eq!(None, iter.next());
+    /// }
+    ///
+    /// // Change all referenced elements to 'a'.
+    /// let mut view = selection.view_mut();
+    /// for &i in view.indices.iter() {
+    ///     view.data[i] = 'a';
+    /// }
+    ///
+    /// let view = selection.view();
+    /// let mut iter = view.iter();
+    /// assert_eq!(Some((1, &'a')), iter.next());
+    /// assert_eq!(Some((2, &'a')), iter.next());
+    /// assert_eq!(Some((4, &'a')), iter.next());
+    /// assert_eq!(Some((1, &'a')), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
     fn view_mut(&'a mut self) -> Self::Type {
         Select {
             indices: self.indices.borrow(),
@@ -243,9 +248,10 @@ where
 }
 
 // This impl enables `Chunked` `Select`ions
-impl<V> SplitAt for Select<V, &[usize]>
+impl<V, I> SplitAt for Select<V, I>
 where
     V: Set + Clone,
+    I: SplitAt,
 {
     /// Split this selection into two at the given index `mid`.
     ///
@@ -347,17 +353,18 @@ where
 
 impl<S, I> IsolateIndex<Select<S, I>> for usize
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: Isolate<usize>,
+    <I as Isolate<usize>>::Output: std::borrow::Borrow<usize>,
     S: Isolate<usize>,
 {
-    type Output = (usize, <S as Isolate<usize>>::Output);
+    type Output = (I::Output, S::Output);
 
     fn try_isolate(self, selection: Select<S, I>) -> Option<Self::Output> {
+        use std::borrow::Borrow;
         let Select { indices, data } = selection;
         indices
-            .borrow()
-            .get(self)
-            .and_then(move |&idx| data.try_isolate(idx).map(|val| (idx, val)))
+            .try_isolate(self)
+            .and_then(move |idx| data.try_isolate(*idx.borrow()).map(|val| (idx, val)))
     }
 }
 
@@ -543,71 +550,14 @@ where
     }
 }
 
-// TODO: need a GetMut::get_mut_ptr implementation to get a raw pointer here.
-/*
-pub struct SelectIterMut<'a, V> {
-    indices: &'a [usize],
-    data: V,
-}
-
-impl<'a, V: 'a> Iterator for SelectIterMut<'a, V>
+impl<'a, S, I> Select<S, I>
 where
-    V: Set + GetMut<'a, usize>,
+    I: std::borrow::BorrowMut<[usize]>,
 {
-    type Item = V::Output;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let SelectIterMut { indices, data } = self;
-        let data_slice = std::mem::replace(data, Dummy::dummy());
-        let data[
-        match indices {
-            Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
-                let (item, right) = data_slice.split_first().expect("Corrupt subset");
-                if let Some((second, _)) = rest.split_first() {
-                    let (_, r) = right.split_at(*second - *first - 1);
-                    *data = r;
-                } else {
-                    let n = data.len();
-                    let (_, r) = right.split_at(n);
-                    *data = r;
-                }
-                *indices = rest;
-                item
-            }),
-            None => data_slice.split_first().map(|(item, rest)| {
-                *data = rest;
-                item
-            }),
-        }
+    pub fn index_iter_mut(&'a mut self) -> impl Iterator<Item = &'a mut usize> {
+        self.indices.borrow_mut().iter_mut()
     }
 }
-
-impl<'a, S, I> Subset<S, I>
-where
-    S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
-{
-    /// Mutably iterate over a borrowed subset.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,5];
-    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
-    /// for i in subset.iter_mut() {
-    ///     *i += 1;
-    /// }
-    /// assert_eq!(v, vec![2,2,4,4,6]);
-    /// ```
-    pub fn iter_mut(&'a mut self) -> SubsetIterMut<'a, <S as ViewMut<'a>>::Type> {
-        SubsetIterMut {
-            indices: self.indices.as_ref().map(|indices| indices.borrow()),
-            data: self.data.view_mut(),
-        }
-    }
-}
- */
 
 impl<S: Dummy, I: Dummy> Dummy for Select<S, I> {
     fn dummy() -> Self {

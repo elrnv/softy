@@ -550,11 +550,20 @@ where
     }
 }
 
-impl<'a, S, I> Select<S, I>
+impl<S, I> Select<S, I>
+where
+    I: std::borrow::Borrow<[usize]>,
+{
+    pub fn index_iter(&self) -> impl Iterator<Item = &usize> {
+        self.indices.borrow().iter()
+    }
+}
+
+impl<S, I> Select<S, I>
 where
     I: std::borrow::BorrowMut<[usize]>,
 {
-    pub fn index_iter_mut(&'a mut self) -> impl Iterator<Item = &'a mut usize> {
+    pub fn index_iter_mut(&mut self) -> impl Iterator<Item = &mut usize> {
         self.indices.borrow_mut().iter_mut()
     }
 }

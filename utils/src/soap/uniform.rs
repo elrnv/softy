@@ -418,6 +418,30 @@ where
     }
 }
 
+//impl<S> IntoIterator for ChunkedN<S>
+//where
+//    S: Set
+//{
+//    type Item = ::Item;
+//    type IntoIter = std::iter::Chunks<<<S as IntoIterator>::IntoIter>;
+//
+//    /// Convert a `UniChunked` collection into an iterator over grouped elements.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// use utils::soap::*;
+//    /// let mut s = UniChunked::<_, num::U3>::from_flat(vec![1,2,3,4,5,6]);
+//    /// let mut iter = s.into_iter();
+//    /// assert_eq!(Some([1,2,3]), iter.next());
+//    /// assert_eq!(Some([4,5,6]), iter.next());
+//    /// assert_eq!(None, iter.next());
+//    /// ```
+//    fn into_iter(self) -> Self::IntoIter {
+//        self.data.into_iter().chunks(self.chunks)
+//    }
+//}
+
 impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
 where
     N: num::Unsigned,

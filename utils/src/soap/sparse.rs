@@ -283,8 +283,6 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
-    T: View<'a>,
-    <T as View<'a>>::Type: Set,
     I: std::borrow::BorrowMut<[usize]>,
 {
     pub fn iter_mut(
@@ -298,6 +296,39 @@ where
         self.selection
             .index_iter_mut()
             .zip(self.data.view_mut().into_iter())
+    }
+}
+
+/// Mutably iterate over the source values.
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set + IntoIterator,
+    I: std::borrow::Borrow<[usize]>,
+{
+    pub fn source_iter_mut(
+        &'a mut self,
+    ) -> impl Iterator<Item = (usize, <<S as ViewMut<'a>>::Type as IntoIterator>::Item)> {
+        self.selection
+            .index_iter()
+            .cloned()
+            .zip(self.data.view_mut().into_iter())
+    }
+}
+
+/// Mutably iterate over the selected indices.
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: Set + IntoIterator,
+    I: std::borrow::BorrowMut<[usize]>,
+{
+    pub fn index_iter_mut(
+        &'a mut self,
+    ) -> impl Iterator<Item = (&'a mut usize, <<S as View<'a>>::Type as IntoIterator>::Item)> {
+        self.selection
+            .index_iter_mut()
+            .zip(self.data.view().into_iter())
     }
 }
 

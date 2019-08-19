@@ -337,23 +337,14 @@ pub(crate) fn build_triplet_contact_jacobian(
 /// to query points (contact points). Not all contact points are active, so rows
 /// are sparse, and not all surface vertex positions are affected by each query
 /// point, so columns are also sparse.
-pub struct ContactJacobian(
-    pub  Tensor<
-        Sparse<
-            Chunked<Sparse<Chunked3<Chunked3<Vec<f64>>>, std::ops::Range<usize>>>,
-            std::ops::Range<usize>,
-        >,
+pub struct ContactJacobian<S = Vec<f64>, I = Vec<usize>>(
+    pub  Sparse<
+        Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, I>,
+        std::ops::Range<usize>,
+        I,
     >,
 );
-pub struct ContactJacobianView<'a>(
-    Tensor<
-        SparseView<
-            'a,
-            ChunkedView<'a, SparseView<'a, Chunked3<Chunked3<&'a [f64]>>, std::ops::Range<usize>>>,
-            std::ops::Range<usize>,
-        >,
-    >,
-);
+pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
 
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
     fn into(self) -> ContactJacobian {
@@ -380,17 +371,17 @@ impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContac
         offsets.shrink_to_fit();
         rows.shrink_to_fit();
 
-        ContactJacobian(Tensor::new(Sparse::from_dim(
+        ContactJacobian(Sparse::from_dim(
             rows,
             self.num_rows,
             Chunked::from_offsets(offsets, Sparse::from_dim(cols, self.num_cols, blocks)),
-        )))
+        ))
     }
 }
 
 impl ContactJacobian {
     pub(crate) fn view(&self) -> ContactJacobianView {
-        ContactJacobianView(Tensor::new(self.0.data.view()))
+        ContactJacobian(self.0.view())
     }
     pub(crate) fn transpose(&self) -> Transpose<ContactJacobianView> {
         Transpose(self.view())
@@ -399,10 +390,10 @@ impl ContactJacobian {
 
 impl ContactJacobianView<'_> {
     pub(crate) fn num_cols(&self) -> usize {
-        self.0.data.data().data().selection().data().end()
+        self.0.data().data().selection().data.end()
     }
     pub(crate) fn num_rows(&self) -> usize {
-        self.0.data.selection().data().end()
+        self.0.selection().data.end()
     }
     //pub(crate) fn transpose(self) -> Transpose<Self> {
     //    Transpose(self)
@@ -420,7 +411,7 @@ where
         assert_eq!(v.len(), self.num_cols());
 
         let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.num_rows()]);
-        for (row_idx, row, _) in self.0.data.iter() {
+        for (row_idx, row, _) in self.0.iter() {
             for (col_idx, block, _) in row.iter() {
                 let out = Vector3(res[row_idx]) + Matrix3(*block) * Vector3(v[col_idx]);
                 res[row_idx] = out.into();
@@ -442,7 +433,7 @@ where
         assert_eq!(f.len(), self.0.num_rows());
 
         let mut res = Chunked3::from_grouped_vec(vec![[0.0; 3]; self.0.num_cols()]);
-        for (row_idx, row, _) in (self.0).0.data.iter() {
+        for (row_idx, row, _) in (self.0).0.iter() {
             for (col_idx, block, _) in row.iter() {
                 let out = Vector3(res[col_idx]) + Matrix3(*block) * Vector3(f[row_idx]);
                 res[col_idx] = out.into();
@@ -494,7 +485,7 @@ where
 }
 
 /// A transpose of a matrix like the contact jacobian.
-pub(crate) struct Transpose<M>(M);
+pub(crate) struct Transpose<M>(pub M);
 
 //impl<I> TripletContactJacobian<I> {
 //pub(crate) fn transpose(&self) -> Transpose<&Self> {

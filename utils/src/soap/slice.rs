@@ -273,3 +273,25 @@ impl<T> RemovePrefix for &mut [T] {
         *self = r;
     }
 }
+
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a [T]
+where
+    <T as Grouped<N>>::Array: 'a,
+{
+    type Output = &'a [<T as Grouped<N>>::Array];
+    #[inline]
+    fn reinterpret_as_grouped(self) -> Self::Output {
+        reinterpret::reinterpret_slice(self)
+    }
+}
+
+impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut [T]
+where
+    <T as Grouped<N>>::Array: 'a,
+{
+    type Output = &'a mut [<T as Grouped<N>>::Array];
+    #[inline]
+    fn reinterpret_as_grouped(self) -> Self::Output {
+        reinterpret::reinterpret_mut_slice(self)
+    }
+}

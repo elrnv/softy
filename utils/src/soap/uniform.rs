@@ -418,29 +418,29 @@ where
     }
 }
 
-//impl<S> IntoIterator for ChunkedN<S>
-//where
-//    S: Set
-//{
-//    type Item = ::Item;
-//    type IntoIter = std::iter::Chunks<<<S as IntoIterator>::IntoIter>;
-//
-//    /// Convert a `UniChunked` collection into an iterator over grouped elements.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// use utils::soap::*;
-//    /// let mut s = UniChunked::<_, num::U3>::from_flat(vec![1,2,3,4,5,6]);
-//    /// let mut iter = s.into_iter();
-//    /// assert_eq!(Some([1,2,3]), iter.next());
-//    /// assert_eq!(Some([4,5,6]), iter.next());
-//    /// assert_eq!(None, iter.next());
-//    /// ```
-//    fn into_iter(self) -> Self::IntoIter {
-//        self.data.into_iter().chunks(self.chunks)
-//    }
-//}
+impl<S> IntoIterator for ChunkedN<S>
+where
+    S: Set + IntoChunkIterator,
+{
+    type Item = <S as IntoChunkIterator>::Item;
+    type IntoIter = <S as IntoChunkIterator>::IterType;
+
+    /// Convert a `ChunkedN` collection into an iterator over grouped elements.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = ChunkedN::from_flat_with_stride(vec![1,2,3,4,5,6], 3);
+    /// let mut iter = s.into_iter();
+    /// assert_eq!(Some([1,2,3]), iter.next());
+    /// assert_eq!(Some([4,5,6]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.into_chunk_iter()
+    }
+}
 
 impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
 where
@@ -486,7 +486,7 @@ pub trait ReinterpretAsGrouped<N> {
     fn reinterpret_as_grouped(self) -> Self::Output;
 }
 
-impl<'a, S, N: num::Unsigned, M: num::Unsigned> ReinterpretAsGrouped<N> for UniChunked<S, M>
+impl<'a, S, N, M> ReinterpretAsGrouped<N> for UniChunked<S, M>
 where
     S: ReinterpretAsGrouped<M>,
     <S as ReinterpretAsGrouped<M>>::Output: ReinterpretAsGrouped<N>,
@@ -495,75 +495,6 @@ where
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         self.data.reinterpret_as_grouped().reinterpret_as_grouped()
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for Vec<T>
-where
-    <T as Grouped<N>>::Array: 'a,
-{
-    type Output = Vec<<T as Grouped<N>>::Array>;
-    #[inline]
-    fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_vec(self)
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a [T]
-where
-    <T as Grouped<N>>::Array: 'a,
-{
-    type Output = &'a [<T as Grouped<N>>::Array];
-    #[inline]
-    fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_slice(self)
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut [T]
-where
-    <T as Grouped<N>>::Array: 'a,
-{
-    type Output = &'a mut [<T as Grouped<N>>::Array];
-    #[inline]
-    fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_mut_slice(self)
-    }
-}
-
-//impl<'a, S, N> ReinterpretAsGrouped<N> for &'a S
-//where
-//    S: Set,
-//    T: Grouped<N>,
-//    <T as Grouped<N>>::Array: 'a,
-//    N: num::Unsigned
-//{
-//    type Output = &'a [<T as Grouped<N>>::Array];
-//    #[inline]
-//    fn reinterpret_as_grouped(self) -> Self::Output {
-//        reinterpret::reinterpret_slice(self.as_slice())
-//    }
-//}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a Vec<T>
-where
-    <T as Grouped<N>>::Array: 'a,
-{
-    type Output = &'a [<T as Grouped<N>>::Array];
-    #[inline]
-    fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_slice(self.as_slice())
-    }
-}
-
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut Vec<T>
-where
-    <T as Grouped<N>>::Array: 'a,
-{
-    type Output = &'a mut [<T as Grouped<N>>::Array];
-    #[inline]
-    fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_mut_slice(self.as_mut_slice())
     }
 }
 
@@ -642,9 +573,6 @@ macro_rules! impl_grouped {
 
 impl_grouped!(num::U2, 2);
 impl_grouped!(num::U3, 3);
-
-pub trait GroupedN: Grouped<num::U1> + Grouped<num::U2> + Grouped<num::U3> {}
-impl<T> GroupedN for T where T: Grouped<num::U1> + Grouped<num::U2> + Grouped<num::U3> {}
 
 impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&[T], N> {
     fn borrow(&self) -> &[T] {

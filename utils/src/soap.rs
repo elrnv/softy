@@ -543,6 +543,16 @@ pub trait RemovePrefix {
     fn remove_prefix(&mut self, n: usize);
 }
 
+/// This trait generalizes the method `chunks` available on slices in the
+/// standard library. Collections that can be chunked by a runtime stride should
+/// implement this behaviour such that they can be composed with `ChunkedN`
+/// types.
+pub trait IntoChunkIterator {
+    type Item;
+    type IterType: Iterator<Item = Self::Item>;
+    fn into_chunk_iter(&self) -> Self::IterType;
+}
+
 /*
  * Tests
  */

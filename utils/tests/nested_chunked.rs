@@ -128,6 +128,26 @@ fn unichunked_unichunked() {
 }
 
 #[test]
+fn unichunked_chunked() {
+    let v: Vec<usize> = (1..=12).collect();
+    let chunked = Chunked::from_sizes(vec![2, 1, 2, 3, 3, 1], v);
+    let uni = Chunked3::from_flat(chunked);
+    let mut uni_iter = uni.iter();
+    let chunked = uni_iter.next().unwrap();
+    let mut chunked_iter = chunked.iter();
+    assert_eq!(Some(&[1, 2][..]), chunked_iter.next());
+    assert_eq!(Some(&[3][..]), chunked_iter.next());
+    assert_eq!(Some(&[4, 5][..]), chunked_iter.next());
+    assert_eq!(None, chunked_iter.next());
+    let chunked = uni_iter.next().unwrap();
+    let mut chunked_iter = chunked.iter();
+    assert_eq!(Some(&[6, 7, 8][..]), chunked_iter.next());
+    assert_eq!(Some(&[9, 10, 11][..]), chunked_iter.next());
+    assert_eq!(Some(&[12][..]), chunked_iter.next());
+    assert_eq!(None, chunked_iter.next());
+}
+
+#[test]
 fn sparse_unichunked() {
     let v: Vec<usize> = (1..=6).collect();
     let uni = Chunked2::from_flat(v);
@@ -188,7 +208,7 @@ fn sparse_unichunked_unichunked_mut() {
     let uni0 = Chunked2::from_flat(v);
     let uni1 = Chunked3::from_flat(uni0);
     let mut sparse = Sparse::from_dim(vec![0, 2], 3, uni1);
-    for (_, v3) in sparse.iter_mut() {
+    for (_, mut v3) in sparse.iter_mut() {
         for v2 in v3.iter_mut() {
             for elem in v2.iter_mut() {
                 *elem *= 10;

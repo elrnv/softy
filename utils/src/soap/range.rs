@@ -91,9 +91,8 @@ impls_for_range!(RangeToInclusive);
 
 impl<'a, R, N> GetIndex<'a, R> for StaticRange<N>
 where
-    N: Unsigned,
+    N: Unsigned + Array<<R as BoundedRange>::Index>,
     R: BoundedRange + Set,
-    <R as BoundedRange>::Index: Grouped<N>,
 {
     type Output = Range<R::Index>;
     fn get(self, rng: &R) -> Option<Self::Output> {
@@ -104,7 +103,7 @@ where
         let start = rng.start() + self.start;
         Some(Range {
             start: start.clone(),
-            end: start + N::value(),
+            end: start + N::to_usize(),
         })
     }
 }
@@ -140,30 +139,45 @@ where
 
 impl<I, N> SplitPrefix<N> for Range<I>
 where
-    I: IntBound + Default + Copy + From<usize> + Grouped<N>,
+    I: IntBound + Default + Copy + From<usize>,
     std::ops::RangeFrom<I>: Iterator<Item = I>,
-    N: Unsigned,
+    N: Unsigned + Array<I>,
+    <N as Array<I>>::Array: Default,
 {
-    type Prefix = I::Array;
+    type Prefix = N::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
+        if self.len() < N::to_usize() {
             return None;
         }
 
         let std::ops::Range { start, end } = self;
 
-        let prefix = I::from_range(std::ops::RangeFrom {
-            start: start.clone(),
-        });
+        let mut prefix: N::Array = Default::default();
+        for (i, item) in (start.clone()..).zip(N::iter_mut(&mut prefix)) {
+            *item = i;
+        }
+
         let start = start.clone().into();
 
         let rest = Range {
-            start: (start + N::value()).into(),
+            start: (start + N::to_usize()).into(),
             end,
         };
 
         Some((prefix, rest))
+    }
+}
+
+impl<I, N> IntoStaticChunkIterator<N> for Range<I>
+where
+    Self: Set + SplitPrefix<N> + Dummy,
+    N: Unsigned,
+{
+    type Item = <Self as SplitPrefix<N>>::Prefix;
+    type IterType = UniChunkedIter<Self, N>;
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        self.into_generic_static_chunk_iter()
     }
 }
 
@@ -213,6 +227,13 @@ where
         self.start = n.into();
     }
 }
+
+// Ranges are lightweight and are considered to be viewed types since they are
+// cheap to operate on.
+impl<T> Viewed for Range<T> {}
+impl<T> Viewed for RangeInclusive<T> {}
+impl<T> Viewed for RangeTo<T> {}
+impl<T> Viewed for RangeToInclusive<T> {}
 
 #[cfg(test)]
 mod tests {

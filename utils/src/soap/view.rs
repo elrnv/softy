@@ -1,7 +1,12 @@
+/// A marker trait to indicate a viewed collection type. Note that collections
+/// can be partially viewed, but only completely viewed collections are marked
+/// by `Viewed`.
+pub trait Viewed {}
+
 /// A trait defining a collection that can be accessed via an
 /// immutable (shared) view. This type of view can be cloned and copied.
 pub trait View<'a> {
-    type Type;
+    type Type: Viewed;
 
     fn view(&'a self) -> Self::Type;
 }
@@ -9,7 +14,7 @@ pub trait View<'a> {
 /// A trait defining a collection that can be accessed via a mutable (unique)
 /// view.
 pub trait ViewMut<'a> {
-    type Type;
+    type Type: Viewed;
 
     fn view_mut(&'a mut self) -> Self::Type;
 }

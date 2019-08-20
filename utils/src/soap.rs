@@ -20,10 +20,12 @@ pub use uniform::*;
 pub use vec::*;
 pub use view::*;
 
-use typenum::{consts::*, Unsigned};
+pub use typenum::consts;
+use typenum::type_operators::PartialDiv;
+use typenum::Unsigned;
 
 /// Wrapper around `typenum` types to prevent downstream trait implementations.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct U<N>(N);
 
 impl<N: Default> Default for U<N> {
@@ -34,16 +36,119 @@ impl<N: Default> Default for U<N> {
 
 pub trait Array<T> {
     type Array;
+    fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T>;
+    fn iter(array: &Self::Array) -> std::slice::Iter<T>;
+    fn as_slice(array: &Self::Array) -> &[T];
 }
 
 macro_rules! impl_array_for_typenum {
-    ($nty:ty, $n:expr) => {
-        impl<T> Array<T> for $nty {
-            type Array = [T; $n];
+    ($nty:ident, $n:expr) => {
+        pub type $nty = U<consts::$nty>;
+        impl<T> Set for [T; $n] {
+            type Elem = T;
+            fn len(&self) -> usize {
+                $n
+            }
         }
+        impl<'a, T: 'a> View<'a> for [T; $n] {
+            type Type = &'a [T];
+            fn view(&'a self) -> Self::Type {
+                self
+            }
+        }
+        impl<'a, T: 'a> ViewMut<'a> for [T; $n] {
+            type Type = &'a mut [T];
+            fn view_mut(&'a mut self) -> Self::Type {
+                self
+            }
+        }
+        impl<T: Dummy + Copy> Dummy for [T; $n] {
+            fn dummy() -> Self {
+                [Dummy::dummy(); $n]
+            }
+        }
+        impl<T> Array<T> for consts::$nty {
+            type Array = [T; $n];
+
+            fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T> {
+                array.iter_mut()
+            }
+            fn iter(array: &Self::Array) -> std::slice::Iter<T> {
+                array.iter()
+            }
+            fn as_slice(array: &Self::Array) -> &[T] {
+                array
+            }
+        }
+
+        impl<'a, T, N> ReinterpretAsGrouped<N> for &'a [T; $n]
+        where
+            N: Unsigned + Array<T>,
+            consts::$nty: PartialDiv<N>,
+            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
+            <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array: 'a,
+        {
+            type Output = &'a <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
+            #[inline]
+            fn reinterpret_as_grouped(self) -> Self::Output {
+                assert_eq!(
+                    $n / N::to_usize(),
+                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
+                );
+                unsafe {
+                    &*(self as *const [T; $n]
+                        as *const <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array)
+                }
+            }
+        }
+
+        impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut [T; $n]
+        where
+            N: Unsigned + Array<T>,
+            consts::$nty: PartialDiv<N>,
+            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
+            <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array: 'a,
+        {
+            type Output = &'a mut <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
+            #[inline]
+            fn reinterpret_as_grouped(self) -> Self::Output {
+                assert_eq!(
+                    $n / N::to_usize(),
+                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
+                );
+                unsafe {
+                    &mut *(self as *mut [T; $n]
+                        as *mut <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array)
+                }
+            }
+        }
+
+        // TODO: Figure out how to compile the below code.
+        //        impl<T, N> ReinterpretAsGrouped<N> for [T; $n]
+        //        where
+        //            N: Unsigned + Array<T>,
+        //            consts::$nty: PartialDiv<N>,
+        //            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
+        //        {
+        //            type Output = <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
+        //            #[inline]
+        //            fn reinterpret_as_grouped(self) -> Self::Output {
+        //                assert_eq!(
+        //                    $n / N::to_usize(),
+        //                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
+        //                );
+        //                unsafe {
+        //                    std::mem::transmute::<
+        //                        Self,
+        //                        <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array,
+        //                    >(self)
+        //                }
+        //            }
+        //        }
     };
 }
 
+impl_array_for_typenum!(U1, 1);
 impl_array_for_typenum!(U2, 2);
 impl_array_for_typenum!(U3, 3);
 impl_array_for_typenum!(U4, 4);
@@ -59,14 +164,46 @@ impl_array_for_typenum!(U14, 14);
 impl_array_for_typenum!(U15, 15);
 impl_array_for_typenum!(U16, 16);
 
+impl<S: Set> Set for Box<S> {
+    type Elem = S::Elem;
+    fn len(&self) -> usize {
+        S::len(self)
+    }
+}
+impl<'a, S: View<'a>> View<'a> for Box<S> {
+    type Type = <S as View<'a>>::Type;
+    fn view(&'a self) -> Self::Type {
+        S::view(self)
+    }
+}
+impl<'a, S: ViewMut<'a>> ViewMut<'a> for Box<S> {
+    type Type = <S as ViewMut<'a>>::Type;
+    fn view_mut(&'a mut self) -> Self::Type {
+        S::view_mut(self)
+    }
+}
+impl<S: Dummy> Dummy for Box<S> {
+    fn dummy() -> Self {
+        Box::new(Dummy::dummy())
+    }
+}
+
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
 //TODO: Rename this, since Chunked Views are also considered "Owned", this is a misnomer.
 // Maybe "ValueType" makes sense
 pub trait Owned {}
+impl<S, T, I> Owned for Sparse<S, T, I> {}
+impl<S, I> Owned for Select<S, I> {}
 impl<S, I> Owned for Subset<S, I> {}
 impl<S, I> Owned for Chunked<S, I> {}
 impl<S, N> Owned for UniChunked<S, N> {}
+
+impl<S: Viewed, T: Viewed, I: Viewed> Viewed for Sparse<S, T, I> {}
+impl<S: Viewed, I: Viewed> Viewed for Select<S, I> {}
+impl<S: Viewed, I: Viewed> Viewed for Subset<S, I> {}
+impl<S: Viewed, I: Viewed> Viewed for Chunked<S, I> {}
+impl<S: Viewed, N> Viewed for UniChunked<S, N> {}
 
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
 //pub trait Chunkable<'a>:
@@ -184,7 +321,7 @@ impl<N: Unsigned> StaticRange<N> {
         self.start
     }
     fn end(&self) -> usize {
-        self.start + N::value()
+        self.start + N::to_usize()
     }
 }
 
@@ -446,7 +583,7 @@ where
 impl<N: Unsigned> Set for StaticRange<N> {
     type Elem = usize;
     fn len(&self) -> usize {
-        N::value()
+        N::to_usize()
     }
 }
 
@@ -503,6 +640,7 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
+/// Split off a number of elements from the beginning of the collection where the number is determined at compile time.
 pub trait SplitPrefix<N>
 where
     Self: Sized,
@@ -511,23 +649,13 @@ where
     fn split_prefix(self) -> Option<(Self::Prefix, Self)>;
 }
 
-/// `SplitFirst` is an alias for `SplitPrefix<num::U1>`.
+/// Split out the first element of a collection.
 pub trait SplitFirst
 where
     Self: Sized,
 {
     type First;
     fn split_first(self) -> Option<(Self::First, Self)>;
-}
-
-impl<T> SplitFirst for T
-where
-    T: SplitPrefix<U1>,
-{
-    type First = T::Prefix;
-    fn split_first(self) -> Option<(Self::First, Self)> {
-        self.split_prefix()
-    }
 }
 
 /// Convert a collection into its underlying representation, effectively
@@ -572,6 +700,7 @@ pub trait IntoChunkIterator {
 }
 
 // Implement IntoChunkIterator for all types that implement Set, SplitAt and Dummy.
+// This should be reimplemented like IntoStaticChunkIterator to avoid expensive iteration of allocating types.
 impl<S> IntoChunkIterator for S
 where
     S: Set + SplitAt + Dummy,
@@ -614,25 +743,21 @@ where
 /// Iterate over chunks whose size is determined at compile time.
 /// Note that each chunk may not be a simple array, although a statically sized
 /// chunk of a slice is an array.
-pub trait IntoStaticChunkIterator<N> {
+pub trait IntoStaticChunkIterator<N>
+where
+    Self: Sized + Set + Dummy,
+    N: Unsigned,
+{
     type Item;
     type IterType: Iterator<Item = Self::Item>;
 
+    /// This function panics if this collection length is not a multiple of `N`.
     fn into_static_chunk_iter(self) -> Self::IterType;
-}
 
-// Implement IntoStaticChunkIterator for all types that implement Set, SplitPrefix and Dummy.
-impl<S, N> IntoStaticChunkIterator<N> for S
-where
-    S: Set + SplitPrefix<N> + Dummy,
-    N: Unsigned,
-{
-    type Item = S::Prefix;
-    type IterType = UniChunkedIter<S, N>;
-
-    /// This function panics if this collection length is not a multipler of `N`.
-    fn into_static_chunk_iter(self) -> Self::IterType {
-        assert_eq!(self.len() % N::value(), 0);
+    /// Simply call this method for all types that implement `SplitPrefix<N>`.
+    #[inline]
+    fn into_generic_static_chunk_iter(self) -> UniChunkedIter<Self, N> {
+        assert_eq!(self.len() % N::to_usize(), 0);
         UniChunkedIter {
             chunk_size: std::marker::PhantomData,
             data: self,
@@ -640,6 +765,7 @@ where
     }
 }
 
+/// Generic static sized chunk iterater appropriate for any lightweight view type collection.
 pub struct UniChunkedIter<S, N> {
     chunk_size: std::marker::PhantomData<N>,
     data: S,
@@ -686,7 +812,7 @@ mod tests {
     /// Test iteration of a `Chunked` inside a `Chunked`.
     #[test]
     fn var_of_uni_iter_test() {
-        let u0 = UniChunked::<_, U2>::from_flat((1..=12).collect::<Vec<_>>());
+        let u0 = Chunked2::from_flat((1..=12).collect::<Vec<_>>());
         let v1 = Chunked::from_offsets(vec![0, 2, 3, 6], u0);
 
         let mut iter1 = v1.iter();

@@ -1138,6 +1138,32 @@ impl<S: Clear> Clear for Chunked<S> {
     }
 }
 
+impl<'a, S, N> SplitPrefix<N> for ChunkedView<'a, S>
+where
+    S: Viewed + Set + SplitAt,
+    N: Unsigned,
+{
+    type Prefix = ChunkedView<'a, S>;
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        if N::to_usize() > self.len() {
+            return None;
+        }
+        Some(self.split_at(N::to_usize()))
+    }
+}
+
+impl<S, N> IntoStaticChunkIterator<N> for ChunkedView<'_, S>
+where
+    Self: Set + SplitPrefix<N> + Dummy,
+    N: Unsigned,
+{
+    type Item = <Self as SplitPrefix<N>>::Prefix;
+    type IterType = UniChunkedIter<Self, N>;
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        self.into_generic_static_chunk_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

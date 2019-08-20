@@ -7,7 +7,7 @@ use utils::soap::*;
 #[test]
 fn get_unichunked() {
     let v = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let s = UniChunked::<_, num::U3>::from_flat(v.view());
+    let s = Chunked3::from_flat(v.view());
 
     assert_eq!(s.get(2), Some(&[7, 8, 9])); // Single index
     assert_eq!(s.get(2), Some(&s[2]));

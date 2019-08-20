@@ -2,15 +2,14 @@ use super::*;
 
 impl<'a, T, N> GetIndex<'a, &'a [T]> for StaticRange<N>
 where
-    N: Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a T::Array;
+    type Output = &'a N::Array;
     fn get(self, set: &&'a [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
             let slice = *set;
-            Some(unsafe { &*(slice.as_ptr().add(self.start()) as *const T::Array) })
+            Some(unsafe { &*(slice.as_ptr().add(self.start()) as *const N::Array) })
         } else {
             None
         }
@@ -19,14 +18,13 @@ where
 
 impl<'a, T, N> IsolateIndex<&'a [T]> for StaticRange<N>
 where
-    N: Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a T::Array;
+    type Output = &'a N::Array;
     fn try_isolate(self, set: &'a [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
-            Some(unsafe { &*(set.as_ptr().add(self.start()) as *const T::Array) })
+            Some(unsafe { &*(set.as_ptr().add(self.start()) as *const N::Array) })
         } else {
             None
         }
@@ -35,14 +33,13 @@ where
 
 impl<'a, T, N> IsolateIndex<&'a mut [T]> for StaticRange<N>
 where
-    N: Unsigned,
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a mut T::Array;
+    type Output = &'a mut N::Array;
     fn try_isolate(self, set: &'a mut [T]) -> Option<Self::Output> {
         if self.end() <= set.len() {
-            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut T::Array) })
+            Some(unsafe { &mut *(set.as_mut_ptr().add(self.start()) as *mut N::Array) })
         } else {
             None
         }
@@ -139,20 +136,19 @@ impl<'a, T: 'a> ViewMut<'a> for [T] {
 
 impl<'a, T, N> SplitPrefix<N> for &'a [T]
 where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: 'a,
-    N: Unsigned,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Prefix = &'a T::Array;
+    type Prefix = &'a N::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
+        if self.len() < N::to_usize() {
             return None;
         }
 
         let (prefix, rest) = unsafe {
-            let prefix = self.as_ptr() as *const T::Array;
-            (&*prefix, &self[N::value()..])
+            let prefix = self.as_ptr() as *const N::Array;
+            (&*prefix, self.get_unchecked(N::to_usize()..))
         };
         Some((prefix, rest))
     }
@@ -160,22 +156,61 @@ where
 
 impl<'a, T, N> SplitPrefix<N> for &'a mut [T]
 where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: 'a,
-    N: Unsigned,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Prefix = &'a mut T::Array;
+    type Prefix = &'a mut N::Array;
 
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
+        if self.len() < N::to_usize() {
             return None;
         }
 
         let (prefix, rest) = unsafe {
-            let prefix = self.as_mut_ptr() as *mut T::Array;
-            (&mut *prefix, &mut self[N::value()..])
+            let prefix = self.as_mut_ptr() as *mut N::Array;
+            (&mut *prefix, self.get_unchecked_mut(N::to_usize()..))
         };
         Some((prefix, rest))
+    }
+}
+
+impl<'a, T, N> IntoStaticChunkIterator<N> for &'a [T]
+where
+    Self: SplitPrefix<N>,
+    N: Unsigned,
+{
+    type Item = <Self as SplitPrefix<N>>::Prefix;
+    type IterType = UniChunkedIter<Self, N>;
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        self.into_generic_static_chunk_iter()
+    }
+}
+
+impl<'a, T, N> IntoStaticChunkIterator<N> for &'a mut [T]
+where
+    Self: SplitPrefix<N>,
+    N: Unsigned,
+{
+    type Item = <Self as SplitPrefix<N>>::Prefix;
+    type IterType = UniChunkedIter<Self, N>;
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        self.into_generic_static_chunk_iter()
+    }
+}
+
+impl<'a, T> SplitFirst for &'a [T] {
+    type First = &'a T;
+
+    fn split_first(self) -> Option<(Self::First, Self)> {
+        self.split_first()
+    }
+}
+
+impl<'a, T> SplitFirst for &'a mut [T] {
+    type First = &'a mut T;
+
+    fn split_first(self) -> Option<(Self::First, Self)> {
+        self.split_first_mut()
     }
 }
 
@@ -276,7 +311,7 @@ impl<T> RemovePrefix for &mut [T] {
 
 impl<'a, T, N> ReinterpretAsGrouped<N> for &'a [T]
 where
-    N: Unsigned + Array<T>,
+    N: Array<T>,
     <N as Array<T>>::Array: 'a,
 {
     type Output = &'a [N::Array];
@@ -288,7 +323,7 @@ where
 
 impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut [T]
 where
-    N: Unsigned + Array<T>,
+    N: Array<T>,
     <N as Array<T>>::Array: 'a,
 {
     type Output = &'a mut [N::Array];
@@ -297,3 +332,6 @@ where
         reinterpret::reinterpret_mut_slice(self)
     }
 }
+
+impl<T> Viewed for &[T] {}
+impl<T> Viewed for &mut [T] {}

@@ -39,14 +39,13 @@ impl<T> Push<T> for Vec<T> {
 
 impl<T, N> SplitPrefix<N> for Vec<T>
 where
-    T: Grouped<N>,
-    <T as Grouped<N>>::Array: Default,
-    N: Unsigned,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: Default,
 {
-    type Prefix = T::Array;
+    type Prefix = N::Array;
 
     fn split_prefix(mut self) -> Option<(Self::Prefix, Self)> {
-        if self.len() < N::value() {
+        if self.len() < N::to_usize() {
             return None;
         }
         // Note: This is inefficient ( as is the implementation for `remove_prefix` ).
@@ -54,18 +53,31 @@ where
         // `Vec<T>` or `Subset`s of any other chunked collection that uses
         // `Vec<T>` for storage. We should be able to specialize the
         // implementation of subsets of `Vec<T>` types for better performance.
-        self.rotate_left(N::value());
-        let at = self.len() - N::value();
-        let mut out: T::Array = Default::default();
+        self.rotate_left(N::to_usize());
+        let at = self.len() - N::to_usize();
+        let mut out: N::Array = Default::default();
         unsafe {
             self.set_len(at);
             std::ptr::copy_nonoverlapping(
                 self.as_ptr().add(at),
-                &mut out as *mut T::Array as *mut T,
-                N::value(),
+                &mut out as *mut N::Array as *mut T,
+                N::to_usize(),
             );
         }
         Some((out, self))
+    }
+}
+
+impl<T, N> IntoStaticChunkIterator<N> for Vec<T>
+where
+    N: Unsigned + Array<T>,
+{
+    type Item = N::Array;
+    type IterType = std::vec::IntoIter<N::Array>;
+
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        assert_eq!(self.len() % N::to_usize(), 0);
+        reinterpret::reinterpret_vec(self).into_iter()
     }
 }
 
@@ -112,7 +124,7 @@ impl<T> ToOwned for Vec<T> {
 
 impl<'a, T, N> ReinterpretAsGrouped<N> for Vec<T>
 where
-    N: Unsigned + Array<T>,
+    N: Array<T>,
     <N as Array<T>>::Array: 'a,
 {
     type Output = Vec<N::Array>;
@@ -124,7 +136,7 @@ where
 
 impl<'a, T, N> ReinterpretAsGrouped<N> for &'a Vec<T>
 where
-    N: Unsigned + Array<T>,
+    N: Array<T>,
     <N as Array<T>>::Array: 'a,
 {
     type Output = &'a [N::Array];
@@ -136,12 +148,18 @@ where
 
 impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut Vec<T>
 where
-    N: Unsigned + Array<T>,
+    N: Array<T>,
     <N as Array<T>>::Array: 'a,
 {
     type Output = &'a mut [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self.as_mut_slice())
+    }
+}
+
+impl<T> Dummy for Vec<T> {
+    fn dummy() -> Self {
+        Vec::new()
     }
 }

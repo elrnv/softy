@@ -19,60 +19,50 @@ pub struct UniChunked<S, N> {
     pub(crate) chunks: N,
 }
 
-macro_rules! impl_from_grouped {
-    ($nty:ty, $n:expr) => {
-        impl<T> UniChunked<Vec<T>, $nty> {
-            /// Create a `UniChunked` collection from a `Vec` of arrays.
-            pub fn from_grouped_vec(data: Vec<[T; $n]>) -> UniChunked<Vec<T>, $nty> {
-                use num::Unsigned;
-                UniChunked {
-                    chunks: <$nty>::new(),
-                    data: reinterpret::reinterpret_vec(data),
-                }
-            }
-            /// Create a `UniChunked` collection from a slice of arrays.
-            pub fn from_grouped_slice(data: &[[T; $n]]) -> UniChunked<&[T], $nty> {
-                use num::Unsigned;
-                UniChunked {
-                    chunks: <$nty>::new(),
-                    data: reinterpret::reinterpret_slice(data),
-                }
-            }
-            /// Create a `UniChunked` collection from a mutable slice of arrays.
-            pub fn from_grouped_mut_slice(data: &mut [[T; $n]]) -> UniChunked<&mut [T], $nty> {
-                use num::Unsigned;
-                UniChunked {
-                    chunks: <$nty>::new(),
-                    data: reinterpret::reinterpret_mut_slice(data),
-                }
-            }
+impl<T, N: Default + Array<T>> UniChunked<Vec<T>, N> {
+    /// Create a `UniChunked` collection from a `Vec` of arrays.
+    pub fn from_grouped_vec(data: Vec<N::Array>) -> UniChunked<Vec<T>, N> {
+        UniChunked {
+            chunks: N::default(),
+            data: reinterpret::reinterpret_vec(data),
         }
-
-        impl<T: Clone> Into<Vec<[T; $n]>> for UniChunked<Vec<T>, $nty> {
-            fn into(self) -> Vec<[T; $n]> {
-                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
-            }
+    }
+    /// Create a `UniChunked` collection from a slice of arrays.
+    pub fn from_grouped_slice(data: &[N::Array]) -> UniChunked<&[T], N> {
+        UniChunked {
+            chunks: N::default(),
+            data: reinterpret::reinterpret_slice(data),
         }
-        impl<'a, T: Clone> Into<&'a [[T; $n]]> for UniChunked<&'a [T], $nty> {
-            fn into(self) -> &'a [[T; $n]] {
-                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
-            }
+    }
+    /// Create a `UniChunked` collection from a mutable slice of arrays.
+    pub fn from_grouped_mut_slice(data: &mut [N::Array]) -> UniChunked<&mut [T], N> {
+        UniChunked {
+            chunks: N::default(),
+            data: reinterpret::reinterpret_mut_slice(data),
         }
-        impl<'a, T: Clone> Into<&'a mut [[T; $n]]> for UniChunked<&'a mut [T], $nty> {
-            fn into(self) -> &'a mut [[T; $n]] {
-                ReinterpretAsGrouped::<$nty>::reinterpret_as_grouped(self.into_inner())
-            }
-        }
-    };
+    }
 }
 
-impl_from_grouped!(num::U2, 2);
-impl_from_grouped!(num::U3, 3);
+impl<T: Clone, N: Array<T>> Into<Vec<N::Array>> for UniChunked<Vec<T>, N> {
+    fn into(self) -> Vec<N::Array> {
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
+    }
+}
+impl<'a, T: Clone, N: Array<T>> Into<&'a [N::Array]> for UniChunked<&'a [T], N> {
+    fn into(self) -> &'a [N::Array] {
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
+    }
+}
+impl<'a, T: Clone, N: Array<T>> Into<&'a mut [N::Array]> for UniChunked<&'a mut [T], N> {
+    fn into(self) -> &'a mut [N::Array] {
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
+    }
+}
 
 /// Define aliases for common uniform chunked types.
-pub type Chunked3<S> = UniChunked<S, num::U3>;
-pub type Chunked2<S> = UniChunked<S, num::U2>;
-pub type Chunked1<S> = UniChunked<S, num::U1>;
+pub type Chunked3<S> = UniChunked<S, U<U3>>;
+pub type Chunked2<S> = UniChunked<S, U<U2>>;
+pub type Chunked1<S> = UniChunked<S, U<U1>>;
 pub type ChunkedN<S> = UniChunked<S, usize>;
 
 impl<S, N> UniChunked<S, N> {
@@ -106,7 +96,7 @@ impl<S, N> UniChunked<S, N> {
     }
 }
 
-impl<S: Default, N: num::Unsigned> UniChunked<S, N> {
+impl<S: Default, N: Default> UniChunked<S, U<N>> {
     /// Create an empty `UniChunked` collection that groups elements into `N`
     /// chunks.
     ///
@@ -123,13 +113,13 @@ impl<S: Default, N: num::Unsigned> UniChunked<S, N> {
     /// ```
     pub fn new() -> Self {
         UniChunked {
-            chunks: N::new(), // Zero sized type.
+            chunks: Default::default(), // Zero sized type.
             data: S::default(),
         }
     }
 }
 
-impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
+impl<S: Set, N: Unsigned + Default> UniChunked<S, U<N>> {
     /// Create a `UniChunked` collection that groups the elements of the
     /// original set into uniformly sized groups at compile time.
     ///
@@ -144,9 +134,9 @@ impl<S: Set, N: num::Unsigned> UniChunked<S, N> {
     /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_flat(data: S) -> Self {
-        assert_eq!(data.len() % N::value(), 0);
+        assert_eq!(data.len() % N::to_usize(), 0);
         UniChunked {
-            chunks: N::new(), // Zero sized type.
+            chunks: Default::default(), // Zero sized type.
             data,
         }
     }
@@ -178,7 +168,8 @@ impl<S: Default> ChunkedN<S> {
         }
     }
 }
-impl<S: Set> UniChunked<S, usize> {
+
+impl<S: Set> ChunkedN<S> {
     /// Create a `UniChunked` collection that groups the elements of the
     /// original set into uniformly sized groups at compile time.
     ///
@@ -217,9 +208,9 @@ impl<T, N> UniChunked<Vec<T>, N> {
     }
 }
 
-impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
+impl<T, N: Unsigned + Array<T>> UniChunked<Vec<T>, U<N>> {
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn copy_from_grouped(&mut self, src: &[T::Array])
+    pub fn copy_from_grouped(&mut self, src: &[N::Array])
     where
         T: Copy,
     {
@@ -228,7 +219,7 @@ impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
             .copy_from_slice(reinterpret::reinterpret_slice(src));
     }
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn clone_from_grouped(&mut self, src: &[T::Array])
+    pub fn clone_from_grouped(&mut self, src: &[N::Array])
     where
         T: Clone,
     {
@@ -238,9 +229,9 @@ impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
     }
 }
 
-impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
+impl<T, N: Unsigned + Array<T>> UniChunked<Vec<T>, U<N>> {
     pub fn reserve(&mut self, new_length: usize) {
-        self.data.reserve(new_length * N::value());
+        self.data.reserve(new_length * N::to_usize());
     }
 }
 
@@ -250,14 +241,14 @@ impl<T> ChunkedN<Vec<T>> {
     }
 }
 
-impl<T: Grouped<N>, N: num::Unsigned> UniChunked<Vec<T>, N> {
-    pub fn resize(&mut self, new_length: usize, default: T::Array)
+impl<T, N: Unsigned + Array<T>> UniChunked<Vec<T>, U<N>> {
+    pub fn resize(&mut self, new_length: usize, default: N::Array)
     where
-        <T as Grouped<N>>::Array: PushToVec<T> + Clone,
+        T: PushArrayToVec<T, N> + Clone,
     {
         self.reserve(new_length);
         for _ in 0..new_length {
-            PushToVec::push_to_vec(default.clone(), &mut self.data);
+            PushArrayToVec::push_to_vec(default.clone(), &mut self.data);
         }
     }
 }
@@ -274,9 +265,10 @@ impl<T> ChunkedN<Vec<T>> {
     }
 }
 
-impl<T, N> UniChunked<Vec<T>, N>
+impl<T, N> UniChunked<Vec<T>, U<N>>
 where
-    T: Grouped<N> + Clone,
+    N: Array<T>,
+    T: Clone,
 {
     /// Extend this chunked `Vec` from a slice of arrays.
     ///
@@ -288,7 +280,7 @@ where
     /// s.extend_from_slice(&[[4,5], [6,7]]);
     /// assert_eq!(s.data(), &vec![0,1,2,3,4,5,6,7]);
     /// ```
-    pub fn extend_from_slice(&mut self, slice: &[T::Array]) {
+    pub fn extend_from_slice(&mut self, slice: &[N::Array]) {
         self.data
             .extend_from_slice(reinterpret::reinterpret_slice(slice));
     }
@@ -296,11 +288,8 @@ where
 
 /// An implementation of `Set` for a `UniChunked` collection of any type that
 /// can be grouped as `N` sub-elements.
-impl<S: Set, N: num::Unsigned> Set for UniChunked<S, N>
-where
-    <S as Set>::Elem: Grouped<N>,
-{
-    type Elem = <S::Elem as Grouped<N>>::Array;
+impl<S: Set, N: Unsigned + Array<<S as Set>::Elem>> Set for UniChunked<S, U<N>> {
+    type Elem = N::Array;
 
     /// Compute the length of this `UniChunked` collection as the number of
     /// grouped elements in the set.
@@ -315,13 +304,13 @@ where
     /// assert_eq!(s.len(), 2);
     /// ```
     fn len(&self) -> usize {
-        self.data.len() / N::value()
+        self.data.len() / N::to_usize()
     }
 }
 
 /// An implementation of `Set` for a `UniChunked` collection of any type that
 /// can be grouped as `N` sub-elements.
-impl<S: Set> Set for UniChunked<S, usize> {
+impl<S: Set> Set for ChunkedN<S> {
     type Elem = Vec<S::Elem>;
 
     /// Compute the length of this `UniChunked` collection as the number of
@@ -341,11 +330,10 @@ impl<S: Set> Set for UniChunked<S, usize> {
     }
 }
 
-impl<S, N> Push<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
+impl<S, N> Push<N::Array> for UniChunked<S, U<N>>
 where
-    N: num::Unsigned,
-    <S as Set>::Elem: Grouped<N>,
-    <<S as Set>::Elem as Grouped<N>>::Array: PushTo<S>,
+    N: Unsigned + Array<<S as Set>::Elem>,
+    <S as Set>::Elem: PushArrayTo<S, N>,
     S: Set + Push<<S as Set>::Elem>,
 {
     /// Push a grouped element onto the `UniChunked` type. The pushed element must
@@ -362,8 +350,8 @@ where
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    fn push(&mut self, element: <<S as Set>::Elem as Grouped<N>>::Array) {
-        PushTo::push_to(element, &mut self.data);
+    fn push(&mut self, element: N::Array) {
+        PushArrayTo::push_to(element, &mut self.data);
     }
 }
 
@@ -393,13 +381,13 @@ where
     }
 }
 
-impl<S, N> IntoIterator for UniChunked<S, N>
+impl<S, N> IntoIterator for UniChunked<S, U<N>>
 where
-    S: Set + ReinterpretAsGrouped<N>,
-    N: num::Unsigned,
+    S: Set + IntoStaticChunkIterator<N>,
+    N: Unsigned,
 {
-    type Item = <<S as ReinterpretAsGrouped<N>>::Output as IntoIterator>::Item;
-    type IntoIter = <<S as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter;
+    type Item = <S as IntoStaticChunkIterator<N>>::Item;
+    type IntoIter = <S as IntoStaticChunkIterator<N>>::IterType;
 
     /// Convert a `UniChunked` collection into an iterator over grouped elements.
     ///
@@ -414,7 +402,7 @@ where
     /// assert_eq!(None, iter.next());
     /// ```
     fn into_iter(self) -> Self::IntoIter {
-        self.data.reinterpret_as_grouped().into_iter()
+        self.data.into_static_chunk_iter()
     }
 }
 
@@ -432,21 +420,20 @@ where
     /// ```rust
     /// use utils::soap::*;
     /// let mut s = ChunkedN::from_flat_with_stride(vec![1,2,3,4,5,6], 3);
-    /// let mut iter = s.into_iter();
-    /// assert_eq!(Some([1,2,3]), iter.next());
-    /// assert_eq!(Some([4,5,6]), iter.next());
+    /// let mut iter = s.view().into_iter();
+    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
+    /// assert_eq!(Some(&[4,5,6][..]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
     fn into_iter(self) -> Self::IntoIter {
-        self.data.into_chunk_iter()
+        self.data.into_chunk_iter(self.chunks)
     }
 }
 
-impl<S, N> std::iter::FromIterator<<<S as Set>::Elem as Grouped<N>>::Array> for UniChunked<S, N>
+impl<S, N> std::iter::FromIterator<N::Array> for UniChunked<S, U<N>>
 where
-    N: num::Unsigned,
-    <S as Set>::Elem: Grouped<N>,
-    <<S as Set>::Elem as Grouped<N>>::Array: PushTo<S>,
+    N: Unsigned + Array<<S as Set>::Elem>,
+    <S as Set>::Elem: PushArrayTo<S, N>,
     S: Set + Default + Push<<S as Set>::Elem>,
 {
     /// Construct a `UniChunked` collection from an iterator that produces
@@ -465,7 +452,7 @@ where
     /// ```
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = <<S as Set>::Elem as Grouped<N>>::Array>,
+        T: IntoIterator<Item = N::Array>,
     {
         let mut s = UniChunked::default();
         for i in iter {
@@ -475,7 +462,7 @@ where
     }
 }
 
-impl<S: Set + Default, N: num::Unsigned> Default for UniChunked<S, N> {
+impl<S: Set + Default, N: Unsigned> Default for UniChunked<S, U<N>> {
     fn default() -> Self {
         Self::from_flat(S::default())
     }
@@ -486,7 +473,7 @@ pub trait ReinterpretAsGrouped<N> {
     fn reinterpret_as_grouped(self) -> Self::Output;
 }
 
-impl<'a, S, N, M> ReinterpretAsGrouped<N> for UniChunked<S, M>
+impl<'a, S, N, M> ReinterpretAsGrouped<N> for UniChunked<S, U<M>>
 where
     S: ReinterpretAsGrouped<M>,
     <S as ReinterpretAsGrouped<M>>::Output: ReinterpretAsGrouped<N>,
@@ -498,14 +485,18 @@ where
     }
 }
 
-pub trait PushTo<S> {
-    /// This method tells this type how it can be pushed to a set as a grouped
-    /// type.
-    fn push_to(element: Self, set: &mut S);
+pub trait PushArrayTo<S, N> {
+    type Array;
+    /// This method tells this type how it can be pushed to a set as an array.
+    fn push_to(element: Self::Array, set: &mut S);
 }
 
-pub trait PushToVec<T> {
-    fn push_to_vec(element: Self, set: &mut Vec<T>);
+pub trait PushArrayToVec<T, N>
+where
+    N: Array<T>,
+{
+    /// This method tells this type how it can be pushed to a `Vec` as an array.
+    fn push_to_vec(element: N::Array, set: &mut Vec<T>);
 }
 
 pub trait Grouped<N>
@@ -521,17 +512,15 @@ where
         std::ops::RangeFrom<Self>: Iterator<Item = Self>;
 }
 
-impl<T> Grouped<num::U1> for T {
-    type Array = Self;
-
-    fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Array
-    where
-        T: Default + Copy,
-        std::ops::RangeFrom<T>: Iterator<Item = T>,
-    {
-        rng.start
-    }
-}
+//impl<T> Grouped<U1> for T {
+//    fn from_range(rng: std::ops::RangeFrom<T>) -> N::Array
+//    where
+//        T: Default + Copy,
+//        std::ops::RangeFrom<T>: Iterator<Item = T>,
+//    {
+//        rng.start
+//    }
+//}
 
 //impl<T, S: Push<T>> PushTo<S> for T {
 //    fn push_to(element: T, set: &mut S) {
@@ -539,40 +528,33 @@ impl<T> Grouped<num::U1> for T {
 //    }
 //}
 
-macro_rules! impl_grouped {
-    ($nty:ty, $n:expr) => {
-        impl<T> Grouped<$nty> for T {
-            type Array = [Self; $n];
-            fn from_range(rng: std::ops::RangeFrom<T>) -> Self::Array
-            where
-                T: Default + Copy,
-                std::ops::RangeFrom<T>: Iterator<Item = T>,
-            {
-                let mut grp = [Default::default(); $n];
-                for (i, item) in rng.zip(grp.iter_mut()) {
-                    *item = i;
-                }
-                grp
-            }
+impl<T, N: Array<T>> Grouped<N> for T {
+    fn from_range(rng: std::ops::RangeFrom<T>) -> N::Array
+    where
+        T: Default + Copy,
+        std::ops::RangeFrom<T>: Iterator<Item = T>,
+    {
+        let mut grp: N::Array = Default::default();
+        for (i, item) in rng.zip(grp.iter_mut()) {
+            *item = i;
         }
-
-        impl<T: Clone, S: Push<T>> PushTo<S> for [T; $n] {
-            fn push_to(element: Self, set: &mut S) {
-                for i in &element {
-                    set.push(i.clone());
-                }
-            }
-        }
-        impl<T: Clone> PushToVec<T> for [T; $n] {
-            fn push_to_vec(element: Self, set: &mut Vec<T>) {
-                set.extend_from_slice(&element);
-            }
-        }
-    };
+        grp
+    }
 }
 
-impl_grouped!(num::U2, 2);
-impl_grouped!(num::U3, 3);
+impl<T: Clone, S: Push<T>, N: Array<T>> PushArrayTo<S, N> for T {
+    type Array = N::Array;
+    fn push_to(element: Self::Array, set: &mut S) {
+        for i in &element {
+            set.push(i.clone());
+        }
+    }
+}
+impl<T: Clone, N: Array<T>> PushArrayToVec<T, N> for T {
+    fn push_to_vec(element: N::Array, set: &mut Vec<T>) {
+        set.extend_from_slice(&element);
+    }
+}
 
 impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&[T], N> {
     fn borrow(&self) -> &[T] {
@@ -592,28 +574,21 @@ impl<T, N> std::borrow::BorrowMut<[T]> for UniChunked<&mut [T], N> {
     }
 }
 
-macro_rules! impl_borrow_chunked {
-    ($nty:ty, $n:expr) => {
-        impl<T> std::borrow::Borrow<[[T; $n]]> for UniChunked<&[T], $nty> {
-            fn borrow(&self) -> &[[T; $n]] {
-                reinterpret::reinterpret_slice(self.data)
-            }
-        }
-        impl<T> std::borrow::Borrow<[[T; $n]]> for UniChunked<&mut [T], $nty> {
-            fn borrow(&self) -> &[[T; $n]] {
-                reinterpret::reinterpret_slice(self.data)
-            }
-        }
-        impl<T> std::borrow::BorrowMut<[[T; $n]]> for UniChunked<&mut [T], $nty> {
-            fn borrow_mut(&mut self) -> &mut [[T; $n]] {
-                reinterpret::reinterpret_mut_slice(self.data)
-            }
-        }
-    };
+impl<T, N: Array<T>> std::borrow::Borrow<[N::Array]> for UniChunked<&[T], N> {
+    fn borrow(&self) -> &[N::Array] {
+        reinterpret::reinterpret_slice(self.data)
+    }
 }
-
-impl_borrow_chunked!(num::U2, 2);
-impl_borrow_chunked!(num::U3, 3);
+impl<T, N: Array<T>> std::borrow::Borrow<[N::Array]> for UniChunked<&mut [T], N> {
+    fn borrow(&self) -> &[N::Array] {
+        reinterpret::reinterpret_slice(self.data)
+    }
+}
+impl<T, N: Array<T>> std::borrow::BorrowMut<[N::Array]> for UniChunked<&mut [T], N> {
+    fn borrow_mut(&mut self) -> &mut [N::Array] {
+        reinterpret::reinterpret_mut_slice(self.data)
+    }
+}
 
 impl<S, N> ToOwned for UniChunked<S, N>
 where
@@ -660,41 +635,39 @@ where
  * Indexing
  */
 
-impl<'a, S, N> GetIndex<'a, UniChunked<S, N>> for usize
+impl<'a, S, N> GetIndex<'a, UniChunked<S, U<N>>> for usize
 where
     S: Set + Get<'a, StaticRange<N>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Output = S::Output;
 
     /// Get an element of the given `UniChunked` collection.
-    fn get(self, chunked: &UniChunked<S, N>) -> Option<Self::Output> {
+    fn get(self, chunked: &UniChunked<S, U<N>>) -> Option<Self::Output> {
         if self < chunked.len() {
-            chunked.data.get(StaticRange::new(self * N::value()))
+            chunked.data.get(StaticRange::new(self * N::to_usize()))
         } else {
             None
         }
     }
 }
 
-impl<'a, S, N> GetIndex<'a, UniChunked<S, N>> for std::ops::Range<usize>
+impl<'a, S, N> GetIndex<'a, UniChunked<S, U<N>>> for std::ops::Range<usize>
 where
     S: Set + Get<'a, std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
+    N: Unsigned + Default,
 {
-    type Output = UniChunked<S::Output, N>;
+    type Output = UniChunked<S::Output, U<N>>;
 
     /// Get a `[begin..end)` subview of the given `UniChunked` collection.
-    fn get(self, chunked: &UniChunked<S, N>) -> Option<Self::Output> {
+    fn get(self, chunked: &UniChunked<S, U<N>>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             chunked
                 .data
-                .get(N::value() * self.start..N::value() * self.end)
+                .get(N::value() * self.start..N::to_usize() * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: N::new(),
+                    chunks: N::default(),
                 })
         } else {
             None
@@ -745,43 +718,41 @@ where
     }
 }
 
-impl<S, N> IsolateIndex<UniChunked<S, N>> for usize
+impl<S, N> IsolateIndex<UniChunked<S, U<N>>> for usize
 where
     S: Set + Isolate<StaticRange<N>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Output = S::Output;
 
     /// Isolate a chunk of the given `UniChunked` collection.
-    fn try_isolate(self, chunked: UniChunked<S, N>) -> Option<Self::Output> {
+    fn try_isolate(self, chunked: UniChunked<S, U<N>>) -> Option<Self::Output> {
         if self < chunked.len() {
             chunked
                 .data
-                .try_isolate(StaticRange::new(self * N::value()))
+                .try_isolate(StaticRange::new(self * N::to_usize()))
         } else {
             None
         }
     }
 }
 
-impl<S, N> IsolateIndex<UniChunked<S, N>> for std::ops::Range<usize>
+impl<S, N> IsolateIndex<UniChunked<S, U<N>>> for std::ops::Range<usize>
 where
     S: Set + Isolate<std::ops::Range<usize>>,
-    <S as Set>::Elem: Grouped<N>,
-    N: num::Unsigned,
+    N: Unsigned + Default,
 {
-    type Output = UniChunked<S::Output, N>;
+    type Output = UniChunked<S::Output, U<N>>;
 
     /// Isolate a `[begin..end)` range of the given `UniChunked` collection.
-    fn try_isolate(self, chunked: UniChunked<S, N>) -> Option<Self::Output> {
+    fn try_isolate(self, chunked: UniChunked<S, U<N>>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
             chunked
                 .data
-                .try_isolate(N::value() * self.start..N::value() * self.end)
+                .try_isolate(N::to_usize() * self.start..N::to_usize() * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: N::new(),
+                    chunks: N::default(),
                 })
         } else {
             None
@@ -857,12 +828,11 @@ where
     }
 }
 
-impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, N>
+impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, U<N>>
 where
-    N: num::Unsigned,
-    T: Grouped<N>,
+    N: Unsigned + Array<T>,
 {
-    type Output = T::Array;
+    type Output = N::Array;
 
     /// Index the `UniChunked` `Vec` by `usize`. Note that this
     /// works for chunked collections that are themselves not chunked, since the
@@ -884,7 +854,7 @@ where
 
 impl<T, N> std::ops::Index<usize> for UniChunked<&[T], N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
 {
     type Output = T::Array;
@@ -909,7 +879,7 @@ where
 
 impl<T, N> std::ops::Index<usize> for UniChunked<&mut [T], N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
 {
     type Output = T::Array;
@@ -934,7 +904,7 @@ where
 
 impl<T, N> std::ops::IndexMut<usize> for UniChunked<Vec<T>, N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
 {
     /// Mutably index the `UniChunked` `Vec` by `usize`. Note that this
@@ -959,7 +929,7 @@ where
 
 impl<T, N> std::ops::IndexMut<usize> for UniChunked<&mut [T], N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
 {
     /// Mutably index the `UniChunked` mutably borrowed slice by `usize`.
@@ -989,8 +959,8 @@ where
 impl<'a, S, N> UniChunked<S, N>
 where
     S: View<'a>,
-    <S as View<'a>>::Type: ReinterpretAsGrouped<N>,
-    N: num::Unsigned,
+    <S as View<'a>>::Type: IntoStaticChunkIterator<N>,
+    N: Unsigned,
 {
     /// Produce an iterator over borrowed grouped elements of the `UniChunked`.
     ///
@@ -1025,19 +995,16 @@ where
     /// assert_eq!(Some(&[11,12]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter(
-        &'a self,
-    ) -> <<<S as View<'a>>::Type as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter
-    {
-        self.data.view().reinterpret_as_grouped().into_iter()
+    pub fn iter(&'a self) -> <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::IterType {
+        self.data.view().into_static_chunk_iter()
     }
 }
 
 impl<'a, S, N> UniChunked<S, N>
 where
     S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: ReinterpretAsGrouped<N>,
-    N: num::Unsigned,
+    <S as ViewMut<'a>>::Type: IntoStaticChunkIterator<N>,
+    N: Unsigned,
 {
     /// Produce an iterator over mutably borrowed grouped elements of `UniChunked`.
     ///
@@ -1084,9 +1051,8 @@ where
     /// ```
     pub fn iter_mut(
         &'a mut self,
-    ) -> <<<S as ViewMut<'a>>::Type as ReinterpretAsGrouped<N>>::Output as IntoIterator>::IntoIter
-    {
-        self.data.view_mut().reinterpret_as_grouped().into_iter()
+    ) -> <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::IterType {
+        self.data.view_mut().into_static_chunk_iter()
     }
 }
 
@@ -1227,7 +1193,7 @@ where
     }
 }
 
-impl<S: SplitAt + Set, N: Copy + num::Unsigned> SplitAt for UniChunked<S, N> {
+impl<S: SplitAt + Set, N: Copy + Unsigned> SplitAt for UniChunked<S, U<N>> {
     /// Split the current set into two distinct sets at the given index `mid`.
     ///
     /// # Example
@@ -1241,7 +1207,7 @@ impl<S: SplitAt + Set, N: Copy + num::Unsigned> SplitAt for UniChunked<S, N> {
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
         let UniChunked { data, chunks } = self;
-        let (l, r) = data.split_at(mid * N::value());
+        let (l, r) = data.split_at(mid * N::to_usize());
         (
             UniChunked { data: l, chunks },
             UniChunked { data: r, chunks },
@@ -1271,7 +1237,7 @@ impl<S: SplitAt + Set> SplitAt for ChunkedN<S> {
     }
 }
 
-impl<S: SplitPrefix<N> + Set, N: Copy> SplitPrefix<num::U1> for UniChunked<S, N> {
+impl<S: SplitPrefix<N> + Set, N: Copy> SplitPrefix<U1> for UniChunked<S, U<N>> {
     type Prefix = S::Prefix;
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
         let UniChunked { data, chunks } = self;
@@ -1280,7 +1246,28 @@ impl<S: SplitPrefix<N> + Set, N: Copy> SplitPrefix<num::U1> for UniChunked<S, N>
     }
 }
 
-impl<S: Dummy, N: num::Unsigned> Dummy for UniChunked<S, N> {
+impl<
+        S: SplitPrefix<<N as std::ops::Mul<M>>::Output> + Set,
+        N: Unsigned + std::ops::Mul<M>,
+        M: Unsigned,
+    > SplitPrefix<M> for UniChunked<S, U<N>>
+{
+    type Prefix = UniChunked<S, N>;
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        let UniChunked { data, chunks } = self;
+        data.split_prefix().map(|(prefix, rest)| {
+            (
+                UniChunked {
+                    data: prefix,
+                    chunks,
+                },
+                UniChunked { data: rest, chunks },
+            )
+        })
+    }
+}
+
+impl<S: Dummy, N: Unsigned> Dummy for UniChunked<S, N> {
     fn dummy() -> Self {
         UniChunked {
             data: Dummy::dummy(),
@@ -1307,7 +1294,7 @@ impl<S: IntoFlat, N> IntoFlat for UniChunked<S, N> {
 }
 
 /// Required for building `Subset`s of `UniChunked` types.
-impl<S: RemovePrefix, N: num::Unsigned> RemovePrefix for UniChunked<S, N> {
+impl<S: RemovePrefix, N: Unsigned> RemovePrefix for UniChunked<S, N> {
     fn remove_prefix(&mut self, n: usize) {
         self.data.remove_prefix(n * N::value());
     }

@@ -2,7 +2,7 @@ use super::*;
 
 impl<'a, T, N> GetIndex<'a, &'a [T]> for StaticRange<N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
     <T as Grouped<N>>::Array: 'a,
 {
@@ -19,7 +19,7 @@ where
 
 impl<'a, T, N> IsolateIndex<&'a [T]> for StaticRange<N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
     <T as Grouped<N>>::Array: 'a,
 {
@@ -35,7 +35,7 @@ where
 
 impl<'a, T, N> IsolateIndex<&'a mut [T]> for StaticRange<N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     T: Grouped<N>,
     <T as Grouped<N>>::Array: 'a,
 {
@@ -141,7 +141,7 @@ impl<'a, T, N> SplitPrefix<N> for &'a [T]
 where
     T: Grouped<N>,
     <T as Grouped<N>>::Array: 'a,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Prefix = &'a T::Array;
 
@@ -162,7 +162,7 @@ impl<'a, T, N> SplitPrefix<N> for &'a mut [T]
 where
     T: Grouped<N>,
     <T as Grouped<N>>::Array: 'a,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Prefix = &'a mut T::Array;
 
@@ -274,22 +274,24 @@ impl<T> RemovePrefix for &mut [T] {
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a [T]
+impl<'a, T, N> ReinterpretAsGrouped<N> for &'a [T]
 where
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a [<T as Grouped<N>>::Array];
+    type Output = &'a [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_slice(self)
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut [T]
+impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut [T]
 where
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a mut [<T as Grouped<N>>::Array];
+    type Output = &'a mut [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self)

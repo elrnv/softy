@@ -91,7 +91,7 @@ impls_for_range!(RangeToInclusive);
 
 impl<'a, R, N> GetIndex<'a, R> for StaticRange<N>
 where
-    N: num::Unsigned,
+    N: Unsigned,
     R: BoundedRange + Set,
     <R as BoundedRange>::Index: Grouped<N>,
 {
@@ -142,7 +142,7 @@ impl<I, N> SplitPrefix<N> for Range<I>
 where
     I: IntBound + Default + Copy + From<usize> + Grouped<N>,
     std::ops::RangeFrom<I>: Iterator<Item = I>,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Prefix = I::Array;
 

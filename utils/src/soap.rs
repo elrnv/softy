@@ -20,31 +20,44 @@ pub use uniform::*;
 pub use vec::*;
 pub use view::*;
 
-// Helper module defines a few useful unsigned type level integers.
-// This is to avoid having to depend on yet another crate.
-pub mod num {
-    pub trait Unsigned {
-        fn new() -> Self;
-        fn value() -> usize;
-    }
+use typenum::{consts::*, Unsigned};
 
-    macro_rules! def_num {
-        ($(($nty:ident, $n:expr)),*) => {
-            $(
-                #[derive(Debug, Copy, Clone, PartialEq)]
-                pub struct $nty;
-                impl Unsigned for $nty {
-                    fn new() -> Self { $nty }
-                    fn value() -> usize {
-                        $n
-                    }
-                }
-             )*
-        }
-    }
+/// Wrapper around `typenum` types to prevent downstream trait implementations.
+#[derive(Copy, Clone)]
+pub struct U<N>(N);
 
-    def_num!((U1, 1), (U2, 2), (U3, 3));
+impl<N: Default> Default for U<N> {
+    fn default() -> Self {
+        U(N::default())
+    }
 }
+
+pub trait Array<T> {
+    type Array;
+}
+
+macro_rules! impl_array_for_typenum {
+    ($nty:ty, $n:expr) => {
+        impl<T> Array<T> for $nty {
+            type Array = [T; $n];
+        }
+    };
+}
+
+impl_array_for_typenum!(U2, 2);
+impl_array_for_typenum!(U3, 3);
+impl_array_for_typenum!(U4, 4);
+impl_array_for_typenum!(U5, 5);
+impl_array_for_typenum!(U6, 6);
+impl_array_for_typenum!(U7, 7);
+impl_array_for_typenum!(U9, 9);
+impl_array_for_typenum!(U10, 10);
+impl_array_for_typenum!(U11, 11);
+impl_array_for_typenum!(U12, 12);
+impl_array_for_typenum!(U13, 13);
+impl_array_for_typenum!(U14, 14);
+impl_array_for_typenum!(U15, 15);
+impl_array_for_typenum!(U16, 16);
 
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
@@ -166,7 +179,7 @@ impl<N> StaticRange<N> {
     }
 }
 
-impl<N: num::Unsigned> StaticRange<N> {
+impl<N: Unsigned> StaticRange<N> {
     fn start(&self) -> usize {
         self.start
     }
@@ -430,7 +443,7 @@ where
 //    }
 //}
 
-impl<N: num::Unsigned> Set for StaticRange<N> {
+impl<N: Unsigned> Set for StaticRange<N> {
     type Elem = usize;
     fn len(&self) -> usize {
         N::value()
@@ -509,7 +522,7 @@ where
 
 impl<T> SplitFirst for T
 where
-    T: SplitPrefix<num::U1>,
+    T: SplitPrefix<U1>,
 {
     type First = T::Prefix;
     fn split_first(self) -> Option<(Self::First, Self)> {
@@ -550,7 +563,102 @@ pub trait RemovePrefix {
 pub trait IntoChunkIterator {
     type Item;
     type IterType: Iterator<Item = Self::Item>;
-    fn into_chunk_iter(&self) -> Self::IterType;
+
+    /// Produce a chunk iterator with the given stride `chunk_size`.
+    /// One notable difference between this trait and `chunks*` methods on slices is that
+    /// `chunks_iter` should panic when the underlying data cannot split into `chunk_size` sized
+    /// chunks exactly.
+    fn into_chunk_iter(self, chunk_size: usize) -> Self::IterType;
+}
+
+// Implement IntoChunkIterator for all types that implement Set, SplitAt and Dummy.
+impl<S> IntoChunkIterator for S
+where
+    S: Set + SplitAt + Dummy,
+{
+    type Item = S;
+    type IterType = ChunkedNIter<S>;
+
+    fn into_chunk_iter(self, chunk_size: usize) -> Self::IterType {
+        assert_eq!(self.len() % chunk_size, 0);
+        ChunkedNIter {
+            chunk_size,
+            data: self,
+        }
+    }
+}
+
+pub struct ChunkedNIter<S> {
+    chunk_size: usize,
+    data: S,
+}
+
+impl<S> Iterator for ChunkedNIter<S>
+where
+    S: Set + SplitAt + Dummy,
+{
+    type Item = S;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.data.is_empty() {
+            return None;
+        }
+
+        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        let (l, r) = data_slice.split_at(self.chunk_size);
+        self.data = r;
+        Some(l)
+    }
+}
+
+/// Iterate over chunks whose size is determined at compile time.
+/// Note that each chunk may not be a simple array, although a statically sized
+/// chunk of a slice is an array.
+pub trait IntoStaticChunkIterator<N> {
+    type Item;
+    type IterType: Iterator<Item = Self::Item>;
+
+    fn into_static_chunk_iter(self) -> Self::IterType;
+}
+
+// Implement IntoStaticChunkIterator for all types that implement Set, SplitPrefix and Dummy.
+impl<S, N> IntoStaticChunkIterator<N> for S
+where
+    S: Set + SplitPrefix<N> + Dummy,
+    N: Unsigned,
+{
+    type Item = S::Prefix;
+    type IterType = UniChunkedIter<S, N>;
+
+    /// This function panics if this collection length is not a multipler of `N`.
+    fn into_static_chunk_iter(self) -> Self::IterType {
+        assert_eq!(self.len() % N::value(), 0);
+        UniChunkedIter {
+            chunk_size: std::marker::PhantomData,
+            data: self,
+        }
+    }
+}
+
+pub struct UniChunkedIter<S, N> {
+    chunk_size: std::marker::PhantomData<N>,
+    data: S,
+}
+
+impl<S, N> Iterator for UniChunkedIter<S, N>
+where
+    S: Set + SplitPrefix<N> + Dummy,
+    N: Unsigned,
+{
+    type Item = S::Prefix;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        data_slice.split_prefix().map(|(prefix, rest)| {
+            self.data = rest;
+            prefix
+        })
+    }
 }
 
 /*
@@ -578,7 +686,7 @@ mod tests {
     /// Test iteration of a `Chunked` inside a `Chunked`.
     #[test]
     fn var_of_uni_iter_test() {
-        let u0 = UniChunked::<_, num::U2>::from_flat((1..=12).collect::<Vec<_>>());
+        let u0 = UniChunked::<_, U2>::from_flat((1..=12).collect::<Vec<_>>());
         let v1 = Chunked::from_offsets(vec![0, 2, 3, 6], u0);
 
         let mut iter1 = v1.iter();

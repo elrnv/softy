@@ -905,6 +905,10 @@ where
  * iterator allocates a new `Vec` at each iteration. This is an expensive
  * operation and is here for compatibility with the rest of Rust's ecosystem.
  * However, this iterator should be used sparingly.
+ *
+ * TODO: It should be possible to rewrite this implementation with unsafe to split off Box<[T]>
+ * chunks, however this is not a priority at the moment since efficient iteration can always be
+ * done on slices.
  */
 
 /// IntoIter for `Chunked`.

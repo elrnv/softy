@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rand = "0.5"
+typenum = "1.10"
 reinterpret = "0.1"
 
 [dev-dependencies]

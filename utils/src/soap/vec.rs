@@ -41,7 +41,7 @@ impl<T, N> SplitPrefix<N> for Vec<T>
 where
     T: Grouped<N>,
     <T as Grouped<N>>::Array: Default,
-    N: num::Unsigned,
+    N: Unsigned,
 {
     type Prefix = T::Array;
 
@@ -110,33 +110,36 @@ impl<T> ToOwned for Vec<T> {
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for Vec<T>
+impl<'a, T, N> ReinterpretAsGrouped<N> for Vec<T>
 where
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = Vec<<T as Grouped<N>>::Array>;
+    type Output = Vec<N::Array>;
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_vec(self)
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a Vec<T>
+impl<'a, T, N> ReinterpretAsGrouped<N> for &'a Vec<T>
 where
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a [<T as Grouped<N>>::Array];
+    type Output = &'a [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_slice(self.as_slice())
     }
 }
 
-impl<'a, T: Grouped<N>, N: num::Unsigned> ReinterpretAsGrouped<N> for &'a mut Vec<T>
+impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut Vec<T>
 where
-    <T as Grouped<N>>::Array: 'a,
+    N: Unsigned + Array<T>,
+    <N as Array<T>>::Array: 'a,
 {
-    type Output = &'a mut [<T as Grouped<N>>::Array];
+    type Output = &'a mut [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
         reinterpret::reinterpret_mut_slice(self.as_mut_slice())

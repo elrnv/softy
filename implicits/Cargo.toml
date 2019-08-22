@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 rayon = "1.0"
 na = { package = "nalgebra", version = "0.18" }
-hrbf = { git = "ssh://git@gitlab.com/elrnv/dyn-hrbf.git" }
+hrbf = "0.2"
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io", "serde_all"] }
 rstar = { version = "0.5", features = ["serde"] }
 autodiff = { git = "https://github.com/elrnv/autodiff.git" }

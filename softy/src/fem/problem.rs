@@ -217,7 +217,7 @@ impl ObjectData {
         let mut mesh_sizes = Vec::new();
         mesh_sizes.extend(self.solids.iter().map(|solid| solid.tetmesh.num_vertices()));
         mesh_sizes.extend(self.shells.iter().map(|shell| shell.trimesh.num_vertices()));
-        let out = Chunked3::from_grouped_vec(vec![[0.0; 3]; mesh_sizes.iter().sum::<usize>()]);
+        let out = Chunked3::from_array_vec(vec![[0.0; 3]; mesh_sizes.iter().sum::<usize>()]);
 
         let out = Chunked::from_sizes(mesh_sizes, out);
         let num_solids = self.solids.len();
@@ -970,13 +970,13 @@ impl NonLinearProblem {
 
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
-        let new_pos = Chunked3::from_grouped_slice(pts.vertex_positions());
+        let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
         self.object_data.update_solid_vertices(new_pos.view())
     }
 
     /// Update the shell meshes with the given points.
     pub fn update_shell_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
-        let new_pos = Chunked3::from_grouped_slice(pts.vertex_positions());
+        let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
         self.object_data.update_shell_vertices(new_pos.view())
     }
 
@@ -1524,7 +1524,7 @@ impl NonLinearProblem {
             .unwrap();
 
         let mut forces =
-            Chunked3::from_grouped_mut_slice(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+            Chunked3::from_array_slice_mut(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
 
         // Reset forces
         for f in forces.iter_mut() {
@@ -1599,8 +1599,8 @@ impl NonLinearProblem {
                 [0.0; 3],
             );
 
-            let mut obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
-            let mut coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
+            let mut obj_imp = Chunked3::from_array_slice_mut(obj_imp.as_mut_slice());
+            let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
             fc.constraint
                 .add_friction_impulse([obj_imp.view_mut().into(), coll_imp.view_mut().into()], 1.0);
@@ -1660,8 +1660,8 @@ impl NonLinearProblem {
                 [0.0; 3],
             );
 
-            let mut obj_imp = Chunked3::from_grouped_mut_slice(obj_imp.as_mut_slice());
-            let mut coll_imp = Chunked3::from_grouped_mut_slice(coll_imp.as_mut_slice());
+            let mut obj_imp = Chunked3::from_array_slice_mut(obj_imp.as_mut_slice());
+            let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
             let obj_x0 = object_data.prev_pos(fc.object_index);
             let coll_x0 = object_data.prev_pos(fc.collider_index);

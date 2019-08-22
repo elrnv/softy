@@ -16,104 +16,6 @@ use std::cell::RefCell;
 use utils::soap::*;
 use utils::zip;
 
-/// A diagonal mass matrix chunked by triplet blocks (one triplet for each vertex).
-#[derive(Clone, Debug)]
-pub struct MassMatrix(Chunked3<Vec<f64>>);
-
-impl MassMatrix {
-    pub(crate) fn num_cols(&self) -> usize {
-        self.0.len()
-    }
-    pub(crate) fn num_rows(&self) -> usize {
-        self.0.len()
-    }
-}
-
-impl std::ops::MulAssign<MassMatrix> for ContactJacobian {
-    fn mul_assign(&mut self, rhs: MassMatrix) {
-        for (_, mut row) in self.0.view_mut().iter_mut() {
-            for ((_, block), mass) in row.iter_mut().zip(rhs.0.iter()) {
-                for (col, m) in block.iter_mut().zip(mass.iter()) {
-                    *col = (Vector3(*col) * *m).into();
-                }
-            }
-        }
-    }
-}
-
-impl std::ops::Mul<Transpose<ContactJacobianView<'_>>> for ContactJacobianView<'_> {
-    type Output = Tensor<
-        Sparse<
-            ChunkedN<Sparse<Chunked3<Chunked3<Vec<f64>>>, std::ops::Range<usize>, Vec<usize>>>,
-            std::ops::Range<usize>,
-            Vec<usize>,
-        >,
-    >;
-    fn mul(self, rhs: Transpose<ContactJacobianView>) -> Self::Output {
-        let rhs_t = rhs.0;
-        let num_non_zero_blocks = rhs_t.0.len() * rhs_t.0.len();
-        let out = Sparse::from_dim(
-            self.0.indices().clone(),
-            self.num_rows(),
-            ChunkedN::from_flat_with_stride(
-                Sparse::from_dim(
-                    rhs_t
-                        .0
-                        .indices()
-                        .iter()
-                        .cycle()
-                        .cloned()
-                        .take(num_non_zero_blocks)
-                        .collect(),
-                    rhs_t.num_rows(),
-                    Chunked3::from_flat(Chunked3::from_flat(vec![0.0; num_non_zero_blocks * 9])),
-                ),
-                rhs_t.0.len(),
-            ),
-        );
-        for ((_, mut row_l), (_, out)) in self.0.iter().zip(out.source_iter_mut()) {
-            rhs_t.mul_vector(row_l, out);
-        }
-
-        Tensor::new(out)
-    }
-}
-
-impl ContactJacobianView<'_> {
-    /// Multiply `self` by the given `rhs` vector into the given `out` view.
-    /// Note that the output vector `out` may be more sparse than the number of
-    /// rows in `self`, however it is assumed that exactly `num_rows` elements
-    /// is allocated in `out`.
-    fn mul_vector(
-        self,
-        rhs: SparseView<Chunked3<Chunked3<&[f64]>>, std::ops::Range<usize>>,
-        mut out: SparseView<Chunked3<Chunked3<&mut [f64]>>, std::ops::Range<usize>>,
-    ) {
-        for ((row_idx, row, _), (out_idx, out)) in self.0.iter().zip(out.source_iter_mut()) {
-            debug_assert_eq!(row_idx, out_idx);
-            // Initialize output
-            let mut out_mtx = Matrix3::zeros();
-
-            // Compute the dot product of the two sparse vectors.
-            let mut row_iter = row.iter();
-            let mut rhs_iter = rhs.iter();
-            while let Some((col_idx, col, _)) = row_iter.next() {
-                while let Some((rhs_idx, rhs, _)) = rhs_iter.next() {
-                    if rhs_idx < col_idx {
-                        continue;
-                    } else if rhs_idx > col_idx {
-                        break;
-                    } else {
-                        // rhs_idx == row_idx
-                        out_mtx = (Matrix3(*col) * Matrix3(*rhs)).into();
-                    }
-                }
-            }
-            *out = out_mtx.into();
-        }
-    }
-}
-
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
 #[derive(Clone, Debug)]
@@ -125,14 +27,14 @@ pub struct PointContactConstraint {
 
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
-    /// A mass for each vertex in the object mesh.
-    /// If the object is fixed, masses are effectively infinite and this field
+    /// A mass inverse for each vertex in the object mesh.
+    /// If the object is fixed, masses are effectively zero and this field
     /// will be `None`.
-    pub object_mass: Option<MassMatrix>,
-    /// A mass for each vertex in the collider mesh.
-    /// If the collider is fixed, masses are effectively infinite and this field
+    pub object_mass_inv: Option<MassMatrix>,
+    /// A mass inverse for each vertex in the collider mesh.
+    /// If the collider is fixed, masses are effectively zero and this field
     /// will be `None`.
-    pub collider_mass: Option<MassMatrix>,
+    pub collider_mass_inv: Option<MassMatrix>,
 
     /// A flag indicating if the object is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
@@ -177,19 +79,39 @@ impl PointContactConstraint {
 
             let query_points = collider.vertex_positions();
 
-            let object_mass = object
+            let object_mass_inv = object
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
-                .ok()
-                .map(|attrib| MassMatrix(attrib.iter().map(|&x| [x; 3]).collect()));
+                .map(|attrib| {
+                    Tensor::new(
+                        attrib
+                            .iter()
+                            .map(|&x| {
+                                assert!(x > 0.0);
+                                [1.0 / x; 3]
+                            })
+                            .collect(),
+                    )
+                })
+                .ok();
 
-            let collider_mass = collider
+            let collider_mass_inv = collider
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
-                .ok()
-                .map(|attrib| MassMatrix(attrib.iter().map(|&x| [x; 3]).collect()));
+                .map(|attrib| {
+                    Tensor::new(
+                        attrib
+                            .iter()
+                            .map(|&x| {
+                                assert!(x > 0.0);
+                                [1.0 / x; 3]
+                            })
+                            .collect(),
+                    )
+                })
+                .ok();
 
             let constraint = PointContactConstraint {
                 implicit_surface: RefCell::new(surface),
-                contact_points: RefCell::new(Chunked3::from_grouped_vec(query_points.to_vec())),
+                contact_points: RefCell::new(Chunked3::from_array_vec(query_points.to_vec())),
                 frictional_contact: friction_params.and_then(|fparams| {
                     if fparams.dynamic_friction > 0.0 {
                         Some(FrictionalContact::new(fparams))
@@ -197,8 +119,8 @@ impl PointContactConstraint {
                         None
                     }
                 }),
-                object_mass,
-                collider_mass,
+                object_mass_inv,
+                collider_mass_inv,
                 object_is_fixed,
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -472,17 +394,36 @@ impl ContactConstraint for PointContactConstraint {
         contact_basis.update_from_normals(normals.into());
 
         let query_points = self.contact_points.borrow();
-
-        // Compute contact jacobian
         let surf = self.implicit_surface.borrow();
 
+        // TODO: Deal with infinite masses (i.e. None case).
+        let object_zero_mass = Tensor::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[0].len()]));
+        let collider_zero_mass = Tensor::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]));
+        let object_mass_inv = self.object_mass_inv.as_ref().unwrap_or(&object_zero_mass);
+        let collider_mass_inv = self
+            .collider_mass_inv
+            .as_ref()
+            .unwrap_or(&collider_zero_mass);
+
+        // Compute contact jacobian
         let jac_triplets = build_triplet_contact_jacobian(&surf, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
 
         // Friction impulse in physical space at all query points (contact positions).
-        *collider_friction_impulse = Chunked3::from_grouped_vec(vec![[0.0; 3]; query_points.len()]);
+        *collider_friction_impulse = Chunked3::from_array_vec(vec![[0.0; 3]; query_points.len()]);
 
-        let velocity = jac.view() * v[0];
+        let mut collider_velocity = Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]);
+        v[1].clone_into_other(&mut collider_velocity);
+
+        let mut velocity = jac.view() * v[0];
+        let mut rhs = velocity.view_mut();
+        rhs -= Tensor::new(collider_velocity.view());
+
+        let mut jac_mass = jac.clone();
+        jac_mass *= object_mass_inv.view();
+
+        let effective_mass_inv = jac_mass.view() * jac.transpose();
+        let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
 
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());
@@ -492,10 +433,6 @@ impl ContactConstraint for PointContactConstraint {
             .iter()
             .map(|&aqi| contact_impulse[aqi])
             .collect();
-
-        // TODO: Deal with infinite masses (i.e. None case).
-        let object_mass = self.object_mass.as_ref().unwrap();
-        let collider_mass = self.collider_mass.as_ref().unwrap();
 
         let success = if false {
             // Polar coords
@@ -514,7 +451,7 @@ impl ContactConstraint for PointContactConstraint {
                     &contact_impulse,
                     &contact_basis,
                     //TODO:: ADD proper MASS HERE
-                    object_mass.0.view().into_inner(),
+                    effective_mass_inv.view(),
                     *params,
                     jac.view(),
                 ) {
@@ -582,7 +519,7 @@ impl ContactConstraint for PointContactConstraint {
                     &velocity_t,
                     &contact_impulse,
                     &contact_basis,
-                    collider_mass.0.view().into_inner(),
+                    effective_mass_inv.view(),
                     *params,
                     jac.view(),
                 );
@@ -646,15 +583,11 @@ impl ContactConstraint for PointContactConstraint {
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if !frictional_contact.object_impulse.is_empty() {
-                for (v, (f, m)) in vel.iter_mut().zip(
-                    frictional_contact
-                        .object_impulse
-                        .iter()
-                        .zip(self.object_mass.as_ref().unwrap().0.iter()),
-                ) {
-                    for j in 0..3 {
-                        v[0][j] += f[j] / m[j];
-                    }
+                if let Some(mass_mtx) = self.object_mass_inv.as_ref() {
+                    let add_vel =
+                        mass_mtx.view() * Tensor::new(frictional_contact.object_impulse.view());
+                    let mut out_vel = Tensor::new(vel[0]);
+                    out_vel += add_vel.view();
                 }
             }
 
@@ -665,14 +598,10 @@ impl ContactConstraint for PointContactConstraint {
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            for (&i, &r) in indices
-                .iter()
-                .zip(frictional_contact.collider_impulse.iter())
-            {
-                let m = self.collider_mass.as_ref().unwrap().0[i];
-                let v = Vector3(vel[1][i]);
-                vel[1][i] = (v + Vector3(r) / m[0]).into();
-            }
+            let add_vel = self.collider_mass_inv.as_ref().unwrap().view()
+                * Tensor::new(frictional_contact.collider_impulse.view());
+            let mut out_vel = Tensor::new(Subset::from_indices(indices, vel[1]));
+            out_vel += add_vel.view();
         }
     }
 
@@ -785,7 +714,7 @@ impl ContactConstraint for PointContactConstraint {
 
             std::mem::replace(
                 &mut frictional_contact.collider_impulse,
-                Chunked3::from_grouped_vec(new_friction_impulses),
+                Chunked3::from_array_vec(new_friction_impulses),
             );
 
             // Object impulses don't need to be remapped because we store them

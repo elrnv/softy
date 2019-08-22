@@ -21,8 +21,7 @@ pub struct FrictionSolver<'a> {
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
     contact_jacobian: Option<ContactJacobianView<'a>>,
-    /// Vertex masses.
-    masses: &'a [f64],
+    mass_inv_mtx: EffectiveMassInvView<'a>,
 }
 
 impl<'a> FrictionSolver<'a> {
@@ -34,14 +33,14 @@ impl<'a> FrictionSolver<'a> {
         velocity: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> FrictionSolver<'a> {
         Self::new_impl(
             velocity,
             contact_impulse,
             contact_basis,
-            masses,
+            mass_inv_mtx,
             params,
             None,
         )
@@ -57,7 +56,7 @@ impl<'a> FrictionSolver<'a> {
         velocity: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
         contact_jacobian: ContactJacobianView<'a>,
     ) -> FrictionSolver<'a> {
@@ -65,7 +64,7 @@ impl<'a> FrictionSolver<'a> {
             velocity,
             contact_impulse,
             contact_basis,
-            masses,
+            mass_inv_mtx,
             params,
             Some(contact_jacobian),
         )
@@ -75,7 +74,7 @@ impl<'a> FrictionSolver<'a> {
         velocity: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
         contact_jacobian: Option<ContactJacobianView<'a>>,
     ) -> FrictionSolver<'a> {
@@ -85,7 +84,7 @@ impl<'a> FrictionSolver<'a> {
             contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
-            masses,
+            mass_inv_mtx,
         }
     }
 
@@ -93,13 +92,14 @@ impl<'a> FrictionSolver<'a> {
     pub fn step(&mut self) -> Vec<[f64; 2]> {
         // Solve quadratic optimization problem
         let mut friction_impulse = vec![Vector2::zeros(); self.velocity.len()];
-        for (r, &v, &m, &cr) in zip!(
+        for (r, &v, &cr) in zip!(
             friction_impulse.iter_mut(),
             self.velocity.iter(),
-            self.masses.iter(),
+            //self.mass_inv_mtx.iter(),
             self.contact_impulse.iter()
         ) {
-            let rc = -v * m; // Impulse candidate
+            assert!(false); // This needs to incorporate effective mass.
+            let rc = -v; // Impulse candidate
 
             // Project onto the unit circle.
             let radius = self.mu * cr.abs();
@@ -161,7 +161,10 @@ mod tests {
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
-        let masses = vec![mass; 1];
+        let mass_inv_mtx = Tensor::new(Chunked::from_sizes(
+            vec![1],
+            Sparse::from_dim(vec![0], 1, Chunked3::from_flat(vec![1.0 / mass; 3])),
+        ));
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
@@ -170,7 +173,7 @@ mod tests {
             &velocity,
             &contact_impulse,
             &contact_basis,
-            &masses,
+            mass_inv_mtx.view(),
             params,
         );
         let solution = solver.step();

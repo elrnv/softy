@@ -5,9 +5,10 @@ use ipopt::{self, Index, Ipopt, Number};
 use reinterpret::*;
 
 use unroll::unroll_for_loops;
+use utils::soap::*;
 use utils::zip;
 
-use crate::contact::{ContactBasis, ContactJacobianView, Polar2};
+use crate::contact::*;
 use crate::Error;
 
 /// Friction solver.
@@ -25,10 +26,17 @@ impl<'a> FrictionPolarSolver<'a> {
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
-        Self::new_impl(velocity, contact_force, contact_basis, masses, params, None)
+        Self::new_impl(
+            velocity,
+            contact_force,
+            contact_basis,
+            mass_inv_mtx,
+            params,
+            None,
+        )
     }
 }
 
@@ -41,7 +49,7 @@ impl<'a> FrictionPolarSolver<'a> {
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
         contact_jacobian: ContactJacobianView<'a>,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
@@ -49,7 +57,7 @@ impl<'a> FrictionPolarSolver<'a> {
             velocity,
             contact_force,
             contact_basis,
-            masses,
+            mass_inv_mtx,
             params,
             Some(contact_jacobian),
         )
@@ -59,7 +67,7 @@ impl<'a> FrictionPolarSolver<'a> {
         velocity: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         _contact_basis: &'a ContactBasis,
-        _masses: &'a [f64],
+        _mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
         contact_jacobian: Option<ContactJacobianView<'a>>,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
@@ -69,7 +77,7 @@ impl<'a> FrictionPolarSolver<'a> {
             //contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
-            //masses,
+            //mass_inv_mtx,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -124,8 +132,7 @@ pub(crate) struct FrictionPolarProblem<'a> {
     /// meaning that contacts occur at vertex positions.
     #[allow(dead_code)]
     contact_jacobian: Option<ContactJacobianView<'a>>,
-    ///// Vertex masses.
-    //masses: &'a [f64],
+    //mass_inv_mtx: EffectiveMassInvView<'a>,
 }
 
 impl FrictionPolarProblem<'_> {
@@ -401,7 +408,10 @@ mod tests {
             angle: PI,
         }]; // one point sliding up.
         let contact_force = vec![10.0 * mass];
-        let masses = vec![mass; 3];
+        let mass_inv_mtx = Tensor::new(Chunked::from_sizes(
+            vec![1],
+            Sparse::from_dim(vec![0], 1, Chunked3::from_flat(vec![1.0 / mass; 3])),
+        ));
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
@@ -410,7 +420,7 @@ mod tests {
             &velocity,
             &contact_force,
             &contact_basis,
-            &masses,
+            mass_inv_mtx.view(),
             params,
         )?;
         let result = solver.step()?;

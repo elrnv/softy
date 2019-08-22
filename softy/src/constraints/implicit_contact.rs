@@ -65,7 +65,7 @@ impl ImplicitContactConstraint {
 
             let constraint = ImplicitContactConstraint {
                 implicit_surface: RefCell::new(surface),
-                contact_points: RefCell::new(Chunked3::from_grouped_vec(contact_points.to_vec())),
+                contact_points: RefCell::new(Chunked3::from_array_vec(contact_points.to_vec())),
                 frictional_contact: friction_params.and_then(|friction_params| {
                     if friction_params.dynamic_friction > 0.0 {
                         Some(FrictionalContact::new(friction_params))
@@ -189,10 +189,17 @@ impl ContactConstraint for ImplicitContactConstraint {
             .expect("Failed to retrieve constraint indices.");
 
         // A set of masses on active contact vertices.
-        let contact_masses: Vec<_> = surf_indices
-            .iter()
-            .map(|&surf_idx| self.vertex_masses[surf_idx])
-            .collect();
+        let object_mass_inv: EffectiveMassInv = Tensor::new(
+            surf_indices
+                .iter()
+                .map(|&surf_idx| {
+                    let m = self.vertex_masses[surf_idx];
+                    assert!(m > 0.0);
+                    [1.0 / m; 3]
+                })
+                .collect::<Chunked3<Vec<f64>>>(),
+        )
+        .into();
 
         let ImplicitContactConstraint {
             ref mut frictional_contact,
@@ -228,7 +235,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                     &velocity_t,
                     &contact_impulse,
                     &frictional_contact.contact_basis,
-                    &contact_masses,
+                    object_mass_inv.view(),
                     frictional_contact.params,
                 ) {
                     Ok(mut solver) => {
@@ -292,7 +299,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                     &velocity_t,
                     &contact_impulse,
                     &frictional_contact.contact_basis,
-                    &contact_masses,
+                    object_mass_inv.view(),
                     frictional_contact.params,
                 );
 
@@ -389,7 +396,7 @@ impl ContactConstraint for ImplicitContactConstraint {
 
             std::mem::replace(
                 &mut frictional_contact.object_impulse,
-                Chunked3::from_grouped_vec(new_friction_impulses),
+                Chunked3::from_array_vec(new_friction_impulses),
             );
 
             frictional_contact.contact_basis.remap(old_set, new_set);

@@ -182,9 +182,10 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Select<S, I> {
 // Required for `Chunked` and `UniChunked` selections.
 impl<'a, S, I> View<'a> for Select<S, I>
 where
-    S: Set + View<'a>,
+    S: View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'a>>::Type: Set,
+    //<S as View<'a>>::Type: Set,
+    //Select<<S as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -198,15 +199,11 @@ where
 impl<'a, S, I> ViewMut<'a> for Select<S, I>
 where
     S: Set + ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: Set,
     I: std::borrow::Borrow<[usize]>,
+    //Select<<S as ViewMut<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
-    /// Create a mutable view of the indices of this selection.
-    //    /// Although it may be useful to have a mutable reference into the
-    //    /// referenced data, it is not generally useful to modify the data through a
-    //    /// potentially overlapping selection. For modifying the pointed data, use
-    //    /// the `Subset` collection, which ensures that the selection is non-overlapping.
+    /// Create a mutable view of this selection.
     ///
     /// # Example
     ///
@@ -368,21 +365,36 @@ where
     }
 }
 
-impl<S, I, Idx> Isolate<Idx> for Select<S, I>
+/// Isolating a range from a selection will preserve the original data set.
+impl<S, I> IsolateIndex<Select<S, I>> for std::ops::Range<usize>
 where
-    Idx: IsolateIndex<Self>,
+    I: Isolate<std::ops::Range<usize>>,
 {
-    type Output = Idx::Output;
+    type Output = Select<S, I::Output>;
 
-    /// Isolate an element or a range in this selection.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the index is out of bounds.
-    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
-        range.try_isolate(self)
+    fn try_isolate(self, selection: Select<S, I>) -> Option<Self::Output> {
+        let Select { indices, data } = selection;
+        indices
+            .try_isolate(self)
+            .map(move |indices| Select { indices, data })
     }
 }
+
+//impl<S, I, Idx> Isolate<Idx> for Select<S, I>
+//where
+//    Idx: IsolateIndex<Self>,
+//{
+//    type Output = Idx::Output;
+//
+//    /// Isolate an element or a range in this selection.
+//    ///
+//    /// # Panics
+//    ///
+//    /// This function panics if the index is out of bounds.
+//    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
+//        range.try_isolate(self)
+//    }
+//}
 
 /*
  * Indexing operators for convenience. Users familiar with indexing by `usize`
@@ -569,10 +581,56 @@ where
 }
 
 impl<S: Dummy, I: Dummy> Dummy for Select<S, I> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Select {
             indices: Dummy::dummy(),
             data: Dummy::dummy(),
         }
+    }
+}
+
+impl<S, I: Truncate> Truncate for Select<S, I> {
+    fn truncate(&mut self, new_len: usize) {
+        // The target data remains untouched.
+        self.indices.truncate(new_len);
+    }
+}
+
+/*
+ * Data Access
+ */
+
+impl<S: Storage, I> Storage for Select<S, I> {
+    type Storage = S::Storage;
+    /// Return an immutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked3::from_flat(v.clone());
+    /// let s1 = Select::new(vec![1, 1, 0, 2], s0.clone());
+    /// assert_eq!(s1.storage(), &v);
+    /// ```
+    fn storage(&self) -> &Self::Storage {
+        self.data.storage()
+    }
+}
+
+impl<S: StorageMut, I> StorageMut for Select<S, I> {
+    /// Return a mutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let mut s0 = Chunked3::from_flat(v.clone());
+    /// let mut s1 = Select::new(vec![1, 1, 0, 2], s0.clone());
+    /// assert_eq!(s1.storage_mut(), &mut v);
+    /// ```
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self.data.storage_mut()
     }
 }

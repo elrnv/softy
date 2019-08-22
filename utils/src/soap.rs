@@ -1,4 +1,5 @@
 mod chunked;
+mod matrix;
 mod range;
 mod select;
 mod slice;
@@ -10,6 +11,7 @@ mod vec;
 mod view;
 
 pub use chunked::*;
+pub use matrix::*;
 pub use range::*;
 pub use select::*;
 pub use slice::*;
@@ -63,7 +65,7 @@ macro_rules! impl_array_for_typenum {
             }
         }
         impl<T: Dummy + Copy> Dummy for [T; $n] {
-            fn dummy() -> Self {
+            unsafe fn dummy() -> Self {
                 [Dummy::dummy(); $n]
             }
         }
@@ -183,7 +185,7 @@ impl<'a, S: ViewMut<'a>> ViewMut<'a> for Box<S> {
     }
 }
 impl<S: Dummy> Dummy for Box<S> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Box::new(Dummy::dummy())
     }
 }
@@ -224,6 +226,130 @@ pub trait Set {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+pub trait StaticallySplittable:
+    IntoStaticChunkIterator<consts::U2>
+    + IntoStaticChunkIterator<consts::U3>
+    + IntoStaticChunkIterator<consts::U4>
+    + IntoStaticChunkIterator<consts::U5>
+    + IntoStaticChunkIterator<consts::U6>
+    + IntoStaticChunkIterator<consts::U7>
+    + IntoStaticChunkIterator<consts::U8>
+    + IntoStaticChunkIterator<consts::U9>
+    + IntoStaticChunkIterator<consts::U10>
+    + IntoStaticChunkIterator<consts::U11>
+    + IntoStaticChunkIterator<consts::U12>
+    + IntoStaticChunkIterator<consts::U13>
+    + IntoStaticChunkIterator<consts::U14>
+    + IntoStaticChunkIterator<consts::U15>
+    + IntoStaticChunkIterator<consts::U16>
+{
+}
+
+impl<T> StaticallySplittable for T where
+    T: IntoStaticChunkIterator<consts::U2>
+        + IntoStaticChunkIterator<consts::U3>
+        + IntoStaticChunkIterator<consts::U4>
+        + IntoStaticChunkIterator<consts::U5>
+        + IntoStaticChunkIterator<consts::U6>
+        + IntoStaticChunkIterator<consts::U7>
+        + IntoStaticChunkIterator<consts::U8>
+        + IntoStaticChunkIterator<consts::U9>
+        + IntoStaticChunkIterator<consts::U10>
+        + IntoStaticChunkIterator<consts::U11>
+        + IntoStaticChunkIterator<consts::U12>
+        + IntoStaticChunkIterator<consts::U13>
+        + IntoStaticChunkIterator<consts::U14>
+        + IntoStaticChunkIterator<consts::U15>
+        + IntoStaticChunkIterator<consts::U16>
+{
+}
+
+pub trait ReadSet<'a>:
+    Set
+    + View<'a>
+    + Get<'a, usize>
+    + Get<'a, std::ops::Range<usize>>
+    + Isolate<usize>
+    + Isolate<std::ops::Range<usize>>
+    + ToOwned
+    + ToOwnedData
+    + SplitAt
+    + SplitOff
+    + SplitFirst
+    + IntoFlat
+    + Dummy
+    + RemovePrefix
+    + IntoChunkIterator
+    + StaticallySplittable
+    + Viewed
+    + IntoIterator
+{
+}
+
+impl<'a, T> ReadSet<'a> for T where
+    T: Set
+        + View<'a>
+        + Get<'a, usize>
+        + Get<'a, std::ops::Range<usize>>
+        + Isolate<usize>
+        + Isolate<std::ops::Range<usize>>
+        + ToOwned
+        + ToOwnedData
+        + SplitAt
+        + SplitOff
+        + SplitFirst
+        + IntoFlat
+        + Dummy
+        + RemovePrefix
+        + IntoChunkIterator
+        + StaticallySplittable
+        + Viewed
+        + IntoIterator
+{
+}
+
+pub trait WriteSet<'a>: ReadSet<'a> + ViewMut<'a> {}
+impl<'a, T> WriteSet<'a> for T where T: ReadSet<'a> + ViewMut<'a> {}
+
+pub trait OwnedSet<'a>:
+    Set
+    + View<'a>
+    + ViewMut<'a>
+    + Get<'a, usize>
+    + Get<'a, std::ops::Range<usize>>
+    + Isolate<usize>
+    + Isolate<std::ops::Range<usize>>
+    + ToOwned
+    + ToOwnedData
+    + SplitOff
+    + IntoFlat
+    + Dummy
+    + RemovePrefix
+    + IntoChunkIterator
+    + StaticallySplittable
+    + Owned
+{
+}
+impl<'a, T> OwnedSet<'a> for T where
+    T: Set
+        + View<'a>
+        + ViewMut<'a>
+        + Get<'a, usize>
+        + Get<'a, std::ops::Range<usize>>
+        + Isolate<usize>
+        + Isolate<std::ops::Range<usize>>
+        + ToOwned
+        + ToOwnedData
+        + SplitOff
+        + IntoFlat
+        + Dummy
+        + RemovePrefix
+        + IntoChunkIterator
+        + StaticallySplittable
+        + Owned
+{
 }
 
 /// An analog to the `ToOwned` trait from `std` that works for chunked views.
@@ -298,6 +424,35 @@ pub trait Clear {
 // Following the standard library we support indexing by usize only.
 // However, Ranges as collections can be supported for other types as well.
 
+/// A helper trait to identify valid types for Range bounds for use as Sets.
+pub trait IntBound:
+    std::ops::Sub<Self, Output = Self>
+    + std::ops::Add<usize, Output = Self>
+    + Into<usize>
+    + From<usize>
+    + Clone
+{
+}
+
+impl<T> IntBound for T where
+    T: std::ops::Sub<Self, Output = Self>
+        + std::ops::Add<usize, Output = Self>
+        + Into<usize>
+        + From<usize>
+        + Clone
+{
+}
+
+/// A definition of a bounded range.
+pub trait BoundedRange {
+    type Index: IntBound;
+    fn start(&self) -> Self::Index;
+    fn end(&self) -> Self::Index;
+    fn distance(&self) -> Self::Index {
+        self.end() - self.start()
+    }
+}
+
 /// A type of range whose size is determined at compile time.
 /// This represents a range `[start..start + N::value()]`.
 /// This aids `UniChunked` types when indexing.
@@ -316,7 +471,8 @@ impl<N> StaticRange<N> {
     }
 }
 
-impl<N: Unsigned> StaticRange<N> {
+impl<N: Unsigned> BoundedRange for StaticRange<N> {
+    type Index = usize;
     fn start(&self) -> usize {
         self.start
     }
@@ -401,6 +557,30 @@ pub trait Isolate<I> {
     }
 }
 
+/// A blanket implementation of `Isolate` for any collection which has an implementation for `IsolateIndex`.
+impl<S, I> Isolate<I> for S
+where
+    I: IsolateIndex<Self>,
+{
+    type Output = I::Output;
+    fn try_isolate(self, idx: I) -> Option<Self::Output> {
+        idx.try_isolate(self)
+    }
+}
+
+impl<'a, S, N> GetIndex<'a, S> for StaticRange<N>
+where
+    S: Set + Owned,
+    N: Unsigned,
+    std::ops::Range<usize>: GetIndex<'a, S>,
+{
+    type Output = <std::ops::Range<usize> as GetIndex<'a, S>>::Output;
+
+    fn get(self, set: &S) -> Option<Self::Output> {
+        (self.start..self.start + N::to_usize()).get(set)
+    }
+}
+
 impl<'a, S> GetIndex<'a, S> for std::ops::RangeFrom<usize>
 where
     S: Set + Owned,
@@ -463,15 +643,27 @@ where
     }
 }
 
-impl<S: Owned> IsolateIndex<S> for std::ops::RangeFrom<usize>
+impl<S, N: Unsigned> IsolateIndex<S> for StaticRange<N>
 where
-    S: Set,
+    S: Set + Owned,
     std::ops::Range<usize>: IsolateIndex<S>,
 {
     type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
     fn try_isolate(self, set: S) -> Option<Self::Output> {
-        (self.start..set.len()).try_isolate(set)
+        IsolateIndex::try_isolate(self.start..self.start + N::to_usize(), set)
+    }
+}
+
+impl<S> IsolateIndex<S> for std::ops::RangeFrom<usize>
+where
+    S: Set + Owned,
+    std::ops::Range<usize>: IsolateIndex<S>,
+{
+    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
+
+    fn try_isolate(self, set: S) -> Option<Self::Output> {
+        IsolateIndex::try_isolate(self.start..set.len(), set)
     }
 }
 
@@ -482,7 +674,7 @@ where
     type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
     fn try_isolate(self, set: S) -> Option<Self::Output> {
-        (0..self.end).try_isolate(set)
+        IsolateIndex::try_isolate(0..self.end, set)
     }
 }
 
@@ -494,7 +686,7 @@ where
     type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
     fn try_isolate(self, set: S) -> Option<Self::Output> {
-        (0..set.len()).try_isolate(set)
+        IsolateIndex::try_isolate(0..set.len(), set)
     }
 }
 
@@ -510,7 +702,7 @@ where
         if *self.end() == usize::max_value() {
             None
         } else {
-            (*self.start()..*self.end() + 1).try_isolate(set)
+            IsolateIndex::try_isolate(*self.start()..*self.end() + 1, set)
         }
     }
 }
@@ -523,62 +715,9 @@ where
     type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
 
     fn try_isolate(self, set: S) -> Option<Self::Output> {
-        (0..=self.end).try_isolate(set)
+        IsolateIndex::try_isolate(0..=self.end, set)
     }
 }
-
-//impl<'a, S, I> GetMut<'a, I> for &mut S
-//where
-//    S: Owned + GetMut<'a, I>,
-//{
-//    type Output = S::Output;
-//    /// Index into any borrowed collection `S`, which itself implements
-//    /// `Get<'a, I>`.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// let mut v = vec![1,2,3,4,5];
-//    /// let mut s = v.as_mut_slice();
-//    /// *utils::soap::GetMut::get_mut(&mut s, 2).unwrap() = 100;
-//    /// assert_eq!(v, vec![1,2,100,4,5]);
-//    /// ```
-//    fn get_mut(&mut self, idx: I) -> Option<Self::Output> {
-//        (*self).get_mut(idx)
-//    }
-//}
-//
-//impl<'a, S, I> Get<'a, I> for &S
-//where
-//    S: Owned + Get<'a, I>,
-//{
-//    type Output = S::Output;
-//    /// Index into any borrowed collection `S`, which itself implements
-//    /// `Get<'a, I>`.
-//    fn get(&self, idx: I) -> Option<Self::Output> {
-//        (**self).get(idx)
-//    }
-//}
-//
-//impl<'a, S, I> Get<'a, I> for &mut S
-//where
-//    S: Owned + Get<'a, I>,
-//{
-//    type Output = S::Output;
-//    /// Index into any mutably borrowed collection `S`, which itself implements
-//    /// `Get<'a, I>`.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// let mut v = vec![1,2,3,4,5];
-//    /// let mut s = v.as_mut_slice();
-//    /// assert_eq!(utils::soap::Get::get(&mut s, 2).unwrap(), &3);
-//    /// ```
-//    fn get(&self, idx: I) -> Option<Self::Output> {
-//        Get::<'a, I>::get(&**self, idx) // Borrows S by &'i reference.
-//    }
-//}
 
 impl<N: Unsigned> Set for StaticRange<N> {
     type Elem = usize;
@@ -640,6 +779,11 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
+/// Truncate the collection to be a specified length.
+pub trait Truncate {
+    fn truncate(&mut self, len: usize);
+}
+
 /// Split off a number of elements from the beginning of the collection where the number is determined at compile time.
 pub trait SplitPrefix<N>
 where
@@ -665,15 +809,28 @@ pub trait IntoFlat {
     fn into_flat(self) -> Self::FlatType;
 }
 
+/// Get an immutable reference to the underlying storage type.
+pub trait Storage {
+    type Storage;
+    fn storage(&self) -> &Self::Storage;
+}
+/// Get a mutable reference to the underlying storage type.
+pub trait StorageMut: Storage {
+    fn storage_mut(&mut self) -> &mut Self::Storage;
+}
+
 pub trait CloneWithFlat<FlatType> {
     type CloneType;
     fn clone_with_flat(&self, flat: FlatType) -> Self::CloneType;
 }
 
 /// A helper trait for constructing placeholder sets for use in `std::mem::replace`.
-/// These don't necessarily have to correspond to bona-fide sets.
+/// These don't necessarily have to correspond to bona-fide sets and can
+/// potentially produce invalid sets. For this reason this function can be
+/// unsafe since it can generate collections that don't uphold their invariants
+/// for the sake of avoiding allocations.
 pub trait Dummy {
-    fn dummy() -> Self;
+    unsafe fn dummy() -> Self;
 }
 
 /// A helper trait used to help implement the Subset. This trait allows
@@ -733,7 +890,7 @@ where
             return None;
         }
 
-        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         let (l, r) = data_slice.split_at(self.chunk_size);
         self.data = r;
         Some(l)
@@ -779,7 +936,7 @@ where
     type Item = S::Prefix;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         data_slice.split_prefix().map(|(prefix, rest)| {
             self.data = rest;
             prefix

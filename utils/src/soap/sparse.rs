@@ -97,14 +97,26 @@ impl<'a, S, T, I> Sparse<S, T, I> {
     pub fn data(&self) -> &S {
         &self.data
     }
+    /// Get a mutable reference to the underlying data.
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
     /// Get a reference to the underlying selection.
     pub fn selection(&self) -> &Select<T, I> {
         &self.selection
     }
 
+    pub fn selection_mut(&mut self) -> &mut Select<T, I> {
+        &mut self.selection
+    }
+
     /// Get a reference to the underlying indices.
     pub fn indices(&self) -> &I {
         &self.selection.indices
+    }
+
+    pub fn indices_mut(&mut self) -> &mut I {
+        &mut self.selection.indices
     }
 }
 
@@ -136,11 +148,11 @@ impl<S: Set, T, I> Set for Sparse<S, T, I> {
 // Required for `Chunked` and `UniChunked` subsets.
 impl<'a, S, T, I> View<'a> for Sparse<S, T, I>
 where
-    S: Set + View<'a>,
-    T: Set + View<'a>,
+    S: View<'a>,
+    T: View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'a>>::Type: Set,
-    <T as View<'a>>::Type: Set,
+    //Select<<T as View<'a>>::Type, &'a [usize]>: IntoIterator,
+    //Sparse<<S as View<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Sparse<S::Type, T::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -156,8 +168,7 @@ where
     S: Set + ViewMut<'a>,
     T: Set + View<'a>,
     I: std::borrow::BorrowMut<[usize]>,
-    <S as ViewMut<'a>>::Type: Set,
-    <T as View<'a>>::Type: Set,
+    //Sparse<<S as ViewMut<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Sparse<S::Type, T::Type, &'a mut [usize]>;
     fn view_mut(&'a mut self) -> Self::Type {
@@ -224,28 +235,56 @@ where
 
 impl<S, T, I> IsolateIndex<Sparse<S, T, I>> for usize
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: Isolate<usize>,
+    <I as Isolate<usize>>::Output: std::borrow::Borrow<usize>,
     S: Isolate<usize>,
+    T: Isolate<usize>,
 {
-    type Output = (usize, <S as Isolate<usize>>::Output);
+    type Output = (
+        <I as Isolate<usize>>::Output,
+        <S as Isolate<usize>>::Output,
+        <T as Isolate<usize>>::Output,
+    );
 
     fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
         let Sparse { selection, data } = sparse;
         data.try_isolate(self)
-            .map(|item| (selection.indices.borrow()[self], item))
+            // TODO: selection.isolate can be unchecked.
+            .map(|item| {
+                let (idx, target) = selection.isolate(self);
+                (idx, item, target)
+            })
     }
 }
 
-impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
+impl<S, T, I> IsolateIndex<Sparse<S, T, I>> for std::ops::Range<usize>
 where
-    Idx: IsolateIndex<Self>,
+    S: Isolate<std::ops::Range<usize>>,
+    I: Isolate<std::ops::Range<usize>>,
 {
-    type Output = Idx::Output;
+    type Output = Sparse<S::Output, T, I::Output>;
 
-    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
-        range.try_isolate(self)
+    fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
+        let Sparse { selection, data } = sparse;
+        data.try_isolate(self.clone()).and_then(|data| {
+            // TODO: selection.try_isolate can be unchecked.
+            selection
+                .try_isolate(self)
+                .map(|selection| Sparse { selection, data })
+        })
     }
 }
+//
+//impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
+//where
+//    Idx: IsolateIndex<Self>,
+//{
+//    type Output = Idx::Output;
+//
+//    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
+//        range.try_isolate(self)
+//    }
+//}
 
 /*
  * Iteration
@@ -283,6 +322,25 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
+    I: std::borrow::Borrow<[usize]>,
+{
+    pub fn source_iter_mut(
+        &'a mut self,
+    ) -> impl Iterator<Item = (usize, <<S as ViewMut<'a>>::Type as IntoIterator>::Item)> {
+        self.selection
+            .index_iter()
+            .cloned()
+            .zip(self.data.view_mut().into_iter())
+    }
+}
+
+/// A mutable iterator can only iterate over the source elements in `S` and not
+/// the target elements in `T` since we would need scheduling to modify
+/// potentially overlapping mutable references.
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set + IntoIterator,
     I: std::borrow::BorrowMut<[usize]>,
 {
     pub fn iter_mut(
@@ -295,23 +353,6 @@ where
     > {
         self.selection
             .index_iter_mut()
-            .zip(self.data.view_mut().into_iter())
-    }
-}
-
-/// Mutably iterate over the source values.
-impl<'a, S, T, I> Sparse<S, T, I>
-where
-    S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: Set + IntoIterator,
-    I: std::borrow::Borrow<[usize]>,
-{
-    pub fn source_iter_mut(
-        &'a mut self,
-    ) -> impl Iterator<Item = (usize, <<S as ViewMut<'a>>::Type as IntoIterator>::Item)> {
-        self.selection
-            .index_iter()
-            .cloned()
             .zip(self.data.view_mut().into_iter())
     }
 }
@@ -333,10 +374,56 @@ where
 }
 
 impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Sparse {
             selection: Dummy::dummy(),
             data: Dummy::dummy(),
         }
+    }
+}
+
+impl<S: Truncate, T, I: Truncate> Truncate for Sparse<S, T, I> {
+    fn truncate(&mut self, new_len: usize) {
+        self.selection.truncate(new_len);
+        self.data.truncate(new_len);
+    }
+}
+
+/*
+ * Storage Access
+ */
+
+impl<S: Storage, T, I> Storage for Sparse<S, T, I> {
+    type Storage = S::Storage;
+    /// Return an immutable reference to the underlying storage type of source data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked3::from_flat(v.clone());
+    /// let s1 = Sparse::from_dim(vec![0, 2, 2, 0], 4, s0.clone());
+    /// assert_eq!(s1.storage(), &v);
+    /// ```
+    fn storage(&self) -> &Self::Storage {
+        self.data.storage()
+    }
+}
+
+impl<S: StorageMut, T, I> StorageMut for Sparse<S, T, I> {
+    /// Return a mutable reference to the underlying storage type of source data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let mut s0 = Chunked3::from_flat(v.clone());
+    /// let mut s1 = Sparse::from_dim(vec![0, 2, 2, 0], 4, s0.clone());
+    /// assert_eq!(s1.storage_mut(), &mut v);
+    /// ```
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self.data.storage_mut()
     }
 }

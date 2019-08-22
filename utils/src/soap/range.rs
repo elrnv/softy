@@ -4,27 +4,7 @@
  * Since our collections must know about the length, only finite ranges are supported.
  */
 use super::*;
-use std::ops::{Add, Sub};
 use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive};
-
-impl<T> Owned for Range<T> {}
-
-/// A helper trait to identify valid types for Range bounds in the following implementations.
-pub trait IntBound:
-    Sub<Self, Output = Self> + Add<usize, Output = Self> + Into<usize> + From<usize> + Clone
-{
-}
-
-impl<T> IntBound for T where
-    T: Sub<Self, Output = Self> + Add<usize, Output = Self> + Into<usize> + From<usize> + Clone
-{
-}
-
-pub trait BoundedRange {
-    type Index: IntBound;
-    fn start(&self) -> Self::Index;
-    fn end(&self) -> Self::Index;
-}
 
 impl<T: IntBound> BoundedRange for Range<T> {
     type Index = T;
@@ -68,13 +48,17 @@ impl<T: IntBound> BoundedRange for RangeToInclusive<T> {
 
 macro_rules! impls_for_range {
     ($range:ident) => {
+        impl<T> Owned for $range<T> {}
         impl<I: IntBound> Set for $range<I> {
             type Elem = <Self as BoundedRange>::Index;
             fn len(&self) -> usize {
                 (BoundedRange::end(self) - BoundedRange::start(self)).into()
             }
         }
-        impl<'a, I: IntBound> View<'a> for $range<I> {
+        impl<'a, I: IntBound> View<'a> for $range<I>
+        where
+            Self: IntoIterator,
+        {
             type Type = Self;
 
             fn view(&'a self) -> Self::Type {
@@ -88,25 +72,6 @@ impls_for_range!(Range);
 impls_for_range!(RangeInclusive);
 impls_for_range!(RangeTo);
 impls_for_range!(RangeToInclusive);
-
-impl<'a, R, N> GetIndex<'a, R> for StaticRange<N>
-where
-    N: Unsigned + Array<<R as BoundedRange>::Index>,
-    R: BoundedRange + Set,
-{
-    type Output = Range<R::Index>;
-    fn get(self, rng: &R) -> Option<Self::Output> {
-        if self.end() > rng.len() {
-            return None;
-        }
-
-        let start = rng.start() + self.start;
-        Some(Range {
-            start: start.clone(),
-            end: start + N::to_usize(),
-        })
-    }
-}
 
 impl<'a, R> GetIndex<'a, R> for usize
 where
@@ -211,7 +176,7 @@ impl<T> Dummy for Range<T>
 where
     T: Default,
 {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Range {
             start: T::default(),
             end: T::default(),
@@ -225,6 +190,54 @@ where
 {
     fn remove_prefix(&mut self, n: usize) {
         self.start = n.into();
+    }
+}
+
+impl<T> Storage for Range<T> {
+    type Storage = Range<T>;
+    /// A range is a type of storage, simply return an immutable reference to self.
+    fn storage(&self) -> &Self::Storage {
+        self
+    }
+}
+
+impl<T> StorageMut for Range<T> {
+    /// A range is a type of storage, simply return a mutable reference to self.
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self
+    }
+}
+
+impl<T: IntBound> Truncate for Range<T> {
+    /// Truncate the range to a specified length.
+    fn truncate(&mut self, new_len: usize) {
+        self.end = self.start.clone() + new_len;
+    }
+}
+
+impl<T: IntBound> IsolateIndex<Range<T>> for usize {
+    type Output = T;
+    fn try_isolate(self, rng: Range<T>) -> Option<Self::Output> {
+        if self < rng.distance().into() {
+            Some(rng.start + self)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: IntBound> IsolateIndex<Range<T>> for std::ops::Range<usize> {
+    type Output = Range<T>;
+
+    fn try_isolate(self, rng: Range<T>) -> Option<Self::Output> {
+        if self.start >= rng.distance().into() || self.end > rng.distance().into() {
+            return None;
+        }
+
+        Some(Range {
+            start: rng.start.clone() + self.start,
+            end: rng.start + self.end,
+        })
     }
 }
 

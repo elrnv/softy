@@ -10,6 +10,13 @@ pub struct Tensor<T: ?Sized, I = ()> {
     pub data: T,
 }
 
+/// This helper function interprets a data type `T` as a tensor. Perhaps at a
+/// later point this can be replaced by aptly designed traits for composable
+/// collection types.
+pub(crate) fn as_tensor<T>(c: &mut T) -> &mut Tensor<T> {
+    unsafe { &mut *(c as *mut T as *mut Tensor<T>) }
+}
+
 impl<T, I> Tensor<T, I> {
     pub fn new(data: T) -> Tensor<T, I> {
         Tensor {
@@ -19,11 +26,9 @@ impl<T, I> Tensor<T, I> {
     }
 }
 
-impl<T, I, J> Tensor<T, (I, J)> {
-    pub fn transpose(self) -> Tensor<T, (J, I)> {
-        Tensor::<_, (J, I)>::new(self.data)
-    }
-}
+/*
+ * Tensor as a Set
+ */
 
 impl<T: Set> Set for Tensor<T> {
     type Elem = T::Elem;
@@ -32,11 +37,30 @@ impl<T: Set> Set for Tensor<T> {
     }
 }
 
-/// This helper function interprets a data type `T` as a tensor. Perhaps at a
-/// later point this can be replaced by aptly designed traits for composable
-/// collection types.
-pub(crate) fn as_tensor<T>(c: &mut T) -> &mut Tensor<T> {
-    unsafe { &mut *(c as *mut T as *mut Tensor<T>) }
+/*
+ * View Impls
+ */
+
+impl<T: Viewed> Viewed for Tensor<T> {}
+
+impl<'a, T: View<'a>> View<'a> for Tensor<T> {
+    type Type = Tensor<T::Type>;
+    fn view(&'a self) -> Self::Type {
+        Tensor::new(self.data.view())
+    }
+}
+
+impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
+    type Type = Tensor<T::Type>;
+    fn view_mut(&'a mut self) -> Self::Type {
+        Tensor::new(self.data.view_mut())
+    }
+}
+
+impl<T, I, J> Tensor<T, (I, J)> {
+    pub fn transpose(self) -> Tensor<T, (J, I)> {
+        Tensor::<_, (J, I)>::new(self.data)
+    }
 }
 
 /*
@@ -179,6 +203,23 @@ impl<T: MulAssign + Copy> MulAssign<T> for Tensor<&mut [T]> {
     }
 }
 
+//struct AddOp<L, R> {
+//    lhs: L,
+//    rhs: R,
+//}
+//
+//impl AddOp<L, R>
+//    where L: Add<R>
+//{
+//    fn eval() ->
+//}
+//
+//struct BinaryOp<Op, Lhs, Rhs> {
+//    lhs: Lhs,
+//    rhs: Rhs,
+//    op: Op,
+//}
+
 /*
  * All additions and subtractions on 1-tensors represented by chunked vectors can be performed at the lowest level (flat)
  */
@@ -195,6 +236,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
             fn add(self, other: Self) -> Self::Output {
                 assert_eq!(self.data.len(), other.data.len());
                 let $chunked { chunks, data } = self.data;
+
                 Tensor::new($chunked {
                     chunks,
                     data: (Tensor::new(data) + Tensor::new(other.data.data)).data,
@@ -287,6 +329,26 @@ macro_rules! impl_chunked_tensor_arithmetic {
 
 impl_chunked_tensor_arithmetic!(Chunked);
 impl_chunked_tensor_arithmetic!(UniChunked);
+
+//impl<'a, S, O, I> Add<Tensor<Subset<Chunked<S, O>, I>>> for Tensor<Chunked<S, O>>
+//where
+//    Subset<Chunked<S, O>, I>: ReadSet<'a>,
+//    Chunked<S, O>: ReadSet<'a>,
+//    <Chunked<S, O> as ToOwnedData>::OwnedData: OwnedSet<'a>,
+//    Tensor<<<Chunked<S, O> as ToOwnedData>::OwnedData as Set>::Elem>: AddAssign,
+//{
+//    type Output = Tensor<<Chunked<S, O> as ToOwnedData>::OwnedData>;
+//
+//    fn add(self, other: Tensor<Subset<Chunked<S, O>, I>>) -> Self::Output {
+//        assert_eq!(self.data.len(), other.data.len());
+//        let mut out = self.data.to_owned_data();
+//        let out_iter_mut = out.view_mut().into_iter();
+//        for (lhs, rhs) in out_iter_mut.zip(other.data.iter()) {
+//            *lhs += *rhs;
+//        }
+//        Tensor::new(out)
+//    }
+//}
 
 #[cfg(test)]
 mod tests {

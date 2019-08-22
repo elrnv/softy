@@ -80,36 +80,36 @@ where
     }
 }
 
-impl<'a, T, I> Isolate<I> for &'a [T]
-where
-    I: IsolateIndex<&'a [T]>,
-{
-    type Output = I::Output;
-    fn try_isolate(self, idx: I) -> Option<Self::Output> {
-        IsolateIndex::try_isolate(idx, self)
-    }
-}
-
-impl<'a, T, I> Isolate<I> for &'a mut [T]
-where
-    I: IsolateIndex<&'a mut [T]>,
-{
-    type Output = I::Output;
-    /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
-    /// This function is not intended to be used directly, but it allows getters
-    /// for chunked collections to work.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut v = vec![1,2,3,4,5];
-    /// *utils::soap::Isolate::try_isolate(v.as_mut_slice(), 2).unwrap() = 100;
-    /// assert_eq!(v, vec![1,2,100,4,5]);
-    /// ```
-    fn try_isolate(self, idx: I) -> Option<Self::Output> {
-        IsolateIndex::try_isolate(idx, self)
-    }
-}
+//impl<'a, T, I> Isolate<I> for &'a [T]
+//where
+//    I: IsolateIndex<&'a [T]>,
+//{
+//    type Output = I::Output;
+//    fn try_isolate(self, idx: I) -> Option<Self::Output> {
+//        IsolateIndex::try_isolate(idx, self)
+//    }
+//}
+//
+//impl<'a, T, I> Isolate<I> for &'a mut [T]
+//where
+//    I: IsolateIndex<&'a mut [T]>,
+//{
+//    type Output = I::Output;
+//    /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
+//    /// This function is not intended to be used directly, but it allows getters
+//    /// for chunked collections to work.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// let mut v = vec![1,2,3,4,5];
+//    /// *utils::soap::Isolate::try_isolate(v.as_mut_slice(), 2).unwrap() = 100;
+//    /// assert_eq!(v, vec![1,2,100,4,5]);
+//    /// ```
+//    fn try_isolate(self, idx: I) -> Option<Self::Output> {
+//        IsolateIndex::try_isolate(idx, self)
+//    }
+//}
 
 impl<T> Set for [T] {
     type Elem = T;
@@ -228,6 +228,36 @@ impl<'a, T> IntoFlat for &'a mut [T] {
     }
 }
 
+impl<'a, T> Storage for &'a [T] {
+    type Storage = &'a [T];
+    /// A slice is a type of storage, simply return an immutable reference to self.
+    fn storage(&self) -> &Self::Storage {
+        self
+    }
+}
+
+impl<'a, T> StorageMut for &'a [T] {
+    /// A slice is a type of storage, simply return a mutable reference to self.
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self
+    }
+}
+
+impl<'a, T> Storage for &'a mut [T] {
+    type Storage = &'a mut [T];
+    /// A slice is a type of storage, simply return an immutable reference to self.
+    fn storage(&self) -> &Self::Storage {
+        self
+    }
+}
+
+impl<'a, T> StorageMut for &'a mut [T] {
+    /// A slice is a type of storage, simply return a mutable reference to self.
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self
+    }
+}
+
 impl<'a, T: 'a> CloneWithFlat<Vec<T>> for &'a [T] {
     type CloneType = Vec<T>;
     /// This function simply ignores self and returns flat since self is already
@@ -271,13 +301,13 @@ impl<'a, T> SplitAt for &[T] {
 }
 
 impl<T> Dummy for &[T] {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         &[]
     }
 }
 
 impl<T> Dummy for &mut [T] {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         &mut []
     }
 }
@@ -317,7 +347,7 @@ where
     type Output = &'a [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_slice(self)
+        unsafe { reinterpret::reinterpret_slice(self) }
     }
 }
 
@@ -329,9 +359,24 @@ where
     type Output = &'a mut [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_mut_slice(self)
+        unsafe { reinterpret::reinterpret_mut_slice(self) }
     }
 }
 
 impl<T> Viewed for &[T] {}
 impl<T> Viewed for &mut [T] {}
+
+impl<T> Truncate for &[T] {
+    fn truncate(&mut self, new_len: usize) {
+        // Simply forget about the elements past new_len.
+        *self = self.split_at(new_len).0;
+    }
+}
+
+impl<T> Truncate for &mut [T] {
+    fn truncate(&mut self, new_len: usize) {
+        let data = std::mem::replace(self, &mut []);
+        // Simply forget about the elements past new_len.
+        *self = data.split_at_mut(new_len).0;
+    }
+}

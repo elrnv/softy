@@ -120,7 +120,38 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
             data,
         }
     }
+}
 
+impl<S: Set, O> Chunked<S, O> {
+    /// Convert this `Chunked` into its inner representation, which consists of a
+    /// collection of offsets (first output) along with the underlying data
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let data = vec![1,2,3,4,5,6];
+    /// let offsets = vec![0,3,4,6];
+    /// let s = Chunked::from_offsets(offsets.clone(), data.clone());
+    /// assert_eq!(s.into_inner(), (offsets, data));
+    /// ```
+    /// storage type (second output).
+    pub fn into_inner(self) -> (O, S) {
+        let Chunked { chunks, data } = self;
+        (chunks, data)
+    }
+
+    /// This function mutably borrows the inner structure of the chunked collection.
+    pub fn as_inner_mut(&mut self) -> (&mut O, &mut S) {
+        let Chunked { chunks, data } = self;
+        (chunks, data)
+    }
+}
+
+impl<S, O> Chunked<S, O>
+where
+    O: std::borrow::Borrow<[usize]>,
+{
     /// Return the offset into `data` of the element at the given index.
     /// This function returns the total length of `data` if `index` is equal to
     /// `self.len()`.
@@ -163,34 +194,59 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     pub fn offsets(&self) -> &O {
         &self.chunks
     }
-    pub fn offsets_mut(&mut self) -> &mut O {
-        &mut self.chunks
+    //pub fn offsets_mut(&mut self) -> &mut O {
+    //    &mut self.chunks
+    //}
+
+    /// Get the length of the chunk at the given index.
+    /// This is equivalent to `self.get(chunk_index).len()`.
+    pub fn chunk_len(&self, chunk_index: usize) -> usize {
+        let offsets = self.chunks.borrow();
+        assert!(chunk_index + 1 < offsets.len());
+
+        unsafe { offsets.get_unchecked(chunk_index + 1) - offsets.get_unchecked(chunk_index) }
     }
 }
 
-impl<S: Set, O> Chunked<S, O> {
-    /// Convert this `Chunked` into its inner representation, which consists of a
-    /// collection of offsets (first output) along with the underlying data
+impl<S, O> Chunked<S, O>
+where
+    O: std::borrow::BorrowMut<[usize]>,
+{
+    /// Move a number of elements from a chunk at the given index to the
+    /// following chunk. If the last chunk is selected, then the transferred
+    /// elements are effectively removed.
+    ///
+    /// This operation is efficient and only performs one write on a single
+    /// element in an array of `usize`.
     ///
     /// # Example
     ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let data = vec![1,2,3,4,5,6];
-    /// let offsets = vec![0,3,4,6];
-    /// let s = Chunked::from_offsets(offsets.clone(), data.clone());
-    /// assert_eq!(s.into_inner(), (offsets, data));
     /// ```
-    /// storage type (second output).
-    pub fn into_inner(self) -> (O, S) {
-        let Chunked { chunks, data } = self;
-        (chunks, data)
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5];
+    /// let mut c = Chunked::from_sizes(vec![3,2], v);
+    /// let mut c_iter = c.iter();
+    /// assert_eq!(Some(&[1,2,3][..]), c_iter.next());
+    /// assert_eq!(Some(&[4,5][..]), c_iter.next());
+    /// assert_eq!(None, c_iter.next());
+    ///
+    /// // Transfer 2 elements from the first chunk to the next.
+    /// c.transfer_forward(0, 2);
+    /// let mut c_iter = c.iter();
+    /// assert_eq!(Some(&[1][..]), c_iter.next());
+    /// assert_eq!(Some(&[2,3,4,5][..]), c_iter.next());
+    /// assert_eq!(None, c_iter.next());
+    /// ```
+    pub fn transfer_forward(&mut self, chunk_index: usize, num_elements: usize) {
+        self.chunks.borrow_mut()[chunk_index + 1] -= num_elements;
     }
 
-    /// This function mutably borrows the inner structure of the chunked collection.
-    pub fn as_inner_mut(&mut self) -> (&mut O, &mut S) {
-        let Chunked { chunks, data } = self;
-        (chunks, data)
+    /// Like `transfer_forward` but specify the number of elements to keep
+    /// instead of the number of elements to transfer in the chunk at
+    /// `chunk_index`.
+    pub fn transfer_forward_all_but(&mut self, chunk_index: usize, num_elements_to_keep: usize) {
+        let num_elements_to_transfer = self.chunk_len(chunk_index) - num_elements_to_keep;
+        self.transfer_forward(chunk_index, num_elements_to_transfer);
     }
 }
 
@@ -261,7 +317,99 @@ where
     }
 }
 
-impl<'a, S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for Chunked<S> {
+impl<S, O> Chunked<S, O>
+where
+    S: Truncate + Set,
+    O: std::borrow::Borrow<[usize]>,
+{
+    /// Remove any unused data past the last offset.
+    /// Return the number of elements removed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_sizes(vec![1,3,2], vec![1,2,3,4,5,6]);
+    /// assert_eq!(3, s.len());
+    ///
+    /// // Transferring the last two elements past the indexed stack.
+    /// // This creates a zero sized chunk at the end.
+    /// s.transfer_forward(2, 2);
+    /// assert_eq!(6, s.data().len());
+    /// assert_eq!(3, s.len());
+    ///
+    /// s.trim_data(); // Remove unindexed elements.
+    /// assert_eq!(4, s.data().len());
+    /// ```
+    pub fn trim_data(&mut self) -> usize {
+        let offsets = self.chunks.borrow();
+        debug_assert!(offsets.len() > 0);
+        let last_offset = unsafe { *offsets.get_unchecked(offsets.len() - 1) };
+        let num_removed = self.data.len() - last_offset;
+        self.data.truncate(last_offset);
+        debug_assert_eq!(self.data.len(), last_offset);
+        num_removed
+    }
+}
+
+impl<S, O> Chunked<S, O>
+where
+    S: Truncate + Set,
+    O: std::borrow::Borrow<[usize]> + Truncate,
+{
+    /// Remove any empty chunks at the end of the collection and any unindexed
+    /// data past the last offset.
+    /// Return the number of chunks removed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_sizes(vec![1,3,2], vec![1,2,3,4,5,6]);
+    /// assert_eq!(3, s.len());
+    ///
+    /// // Transferring the last two elements past the indexed stack.
+    /// // This creates an empty chunk at the end.
+    /// s.transfer_forward(2, 2);
+    /// assert_eq!(6, s.data().len());
+    /// assert_eq!(3, s.len());
+    ///
+    /// s.trim(); // Remove unindexed elements.
+    /// assert_eq!(4, s.data().len());
+    /// ```
+    pub fn trim(&mut self) -> usize {
+        let offsets = self.chunks.borrow();
+        let num_offsets = offsets.len();
+        debug_assert!(num_offsets > 0);
+        let last_offset = unsafe { *offsets.get_unchecked(num_offsets - 1) };
+        // Count the number of identical offsets from the end.
+        let num_empty = offsets
+            .iter()
+            .rev()
+            .skip(1) // skip the acutal last offset
+            .take_while(|&&offset| offset == last_offset)
+            .count();
+
+        self.chunks.truncate(num_offsets - num_empty);
+        self.trim_data();
+        num_empty
+    }
+}
+
+impl<S: Truncate, O> Truncate for Chunked<S, O>
+where
+    O: std::borrow::Borrow<[usize]>,
+{
+    fn truncate(&mut self, new_len: usize) {
+        let offsets = self.chunks.borrow();
+        debug_assert!(offsets.len() > 0);
+        let end = unsafe { offsets.get_unchecked(offsets.len() - 1) };
+        let first = offsets[new_len];
+        self.data.truncate(end - first);
+    }
+}
+
+impl<S: Set + Push<<S as Set>::Elem>> Push<<Self as Set>::Elem> for Chunked<S> {
     /// Push an element onto this `Chunked`.
     ///
     /// # Example
@@ -512,29 +660,29 @@ where
     }
 }
 
-impl<S, O, I> Isolate<I> for Chunked<S, O>
-where
-    I: IsolateIndex<Self>,
-{
-    type Output = I::Output;
-    /// Isolate a sub-collection from this `Chunked` collection according to the
-    /// given range. If the range is a single index, then a single chunk
-    /// is returned instead.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
-    /// let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.view_mut());
-    ///
-    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[5,6]);  // Single index
-    /// assert_eq!(*s.data(), vec![1,2,3,4,5,6,7,8,9,10,11].as_slice());
-    /// ```
-    fn try_isolate(self, range: I) -> Option<I::Output> {
-        range.try_isolate(self)
-    }
-}
+//impl<S, O, I> Isolate<I> for Chunked<S, O>
+//where
+//    I: IsolateIndex<Self>,
+//{
+//    type Output = I::Output;
+//    /// Isolate a sub-collection from this `Chunked` collection according to the
+//    /// given range. If the range is a single index, then a single chunk
+//    /// is returned instead.
+//    ///
+//    /// # Examples
+//    ///
+//    /// ```rust
+//    /// use utils::soap::*;
+//    /// let mut v = vec![1,2,3,4,0,0,7,8,9,10,11];
+//    /// let mut s = Chunked::from_offsets(vec![0,3,4,6,9,11], v.view_mut());
+//    ///
+//    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[5,6]);  // Single index
+//    /// assert_eq!(*s.data(), vec![1,2,3,4,5,6,7,8,9,10,11].as_slice());
+//    /// ```
+//    fn try_isolate(self, range: I) -> Option<I::Output> {
+//        range.try_isolate(self)
+//    }
+//}
 
 impl<T, O> std::ops::Index<usize> for Chunked<Vec<T>, O>
 where
@@ -891,7 +1039,9 @@ where
     type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        // WARNING: After calling std::mem::replace with dummy, self.data is a
+        // transient invalid Chunked collection.
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         pop_offset(&mut self.offsets).map(move |n| {
             let (l, r) = data_slice.split_at(n);
             self.data = r;
@@ -978,8 +1128,8 @@ where
 impl<'a, S, O> View<'a> for Chunked<S, O>
 where
     S: Set + View<'a>,
+    //Chunked<<S as View<'a>>::Type, &'a [usize]>: IntoIterator,
     O: std::borrow::Borrow<[usize]>,
-    <S as View<'a>>::Type: Set,
 {
     type Type = Chunked<S::Type, &'a [usize]>;
 
@@ -1002,14 +1152,17 @@ where
     /// }
     /// ```
     fn view(&'a self) -> Self::Type {
-        Chunked::from_offsets(self.chunks.borrow(), self.data.view())
+        Chunked {
+            chunks: self.chunks.borrow(),
+            data: self.data.view(),
+        }
     }
 }
 
 impl<'a, S, O> ViewMut<'a> for Chunked<S, O>
 where
     S: Set + ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: Set,
+    //Chunked<<S as ViewMut<'a>>::Type, &'a [usize]>: IntoIterator,
     O: std::borrow::Borrow<[usize]>,
 {
     type Type = Chunked<S::Type, &'a [usize]>;
@@ -1030,7 +1183,10 @@ where
     /// assert_eq!(None, view1_iter.next());
     /// ```
     fn view_mut(&'a mut self) -> Self::Type {
-        Chunked::from_offsets(self.chunks.borrow(), self.data.view_mut())
+        Chunked {
+            chunks: self.chunks.borrow(),
+            data: self.data.view_mut(),
+        }
     }
 }
 
@@ -1051,6 +1207,43 @@ impl<S: IntoFlat, O> IntoFlat for Chunked<S, O> {
     /// ```
     fn into_flat(self) -> Self::FlatType {
         self.data.into_flat()
+    }
+}
+
+impl<S: Storage, O> Storage for Chunked<S, O> {
+    type Storage = S::Storage;
+    /// Return an immutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    /// let s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// let s1 = Chunked::from_offsets(vec![0,1,4,5], s0.clone());
+    /// assert_eq!(s1.storage(), &v);
+    /// assert_eq!(s0.storage(), &v);
+    /// ```
+    fn storage(&self) -> &Self::Storage {
+        self.data.storage()
+    }
+}
+
+impl<S: StorageMut, O> StorageMut for Chunked<S, O> {
+    /// Return a mutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    /// let mut s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// let mut s1 = Chunked::from_offsets(vec![0,1,4,5], s0.clone());
+    /// assert_eq!(s1.storage_mut(), &mut v);
+    /// assert_eq!(s0.storage_mut(), &mut v);
+    /// ```
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self.data.storage_mut()
     }
 }
 
@@ -1095,7 +1288,7 @@ impl<S: Default> Default for Chunked<S> {
 }
 
 impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Chunked {
             data: Dummy::dummy(),
             chunks: Dummy::dummy(),

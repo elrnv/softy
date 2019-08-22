@@ -237,7 +237,7 @@ impl<'a, S: Set, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
 // Set, View, SplitAt
 // For mutability we also need ViewMut,
 // For UniChunked we need:
-// Set, Vew, ReinterpretSet (this needs to be refined)
+// Set, Vew, IntoStaticChunkIterator
 
 /// Required for `Chunked` and `UniChunked` subsets.
 impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
@@ -262,9 +262,8 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
 /// Required for `Chunked` and `UniChunked` subsets.
 impl<'a, S, I> View<'a> for Subset<S, I>
 where
-    S: Set + View<'a>,
+    S: View<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as View<'a>>::Type: Set,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -281,7 +280,6 @@ impl<'a, S, I> ViewMut<'a> for Subset<S, I>
 where
     S: Set + ViewMut<'a>,
     I: std::borrow::Borrow<[usize]>,
-    <S as ViewMut<'a>>::Type: Set,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     /// Create a mutable view into this subset.
@@ -366,12 +364,57 @@ where
     }
 }
 
+/*
+/// This impl enables `Subset`s of `Subset`s
+impl<S> SplitFirst for SubsetView<S>
+where
+    S: Set + SplitFirst,
+{
+    type First = S::First;
+
+    /// Split this subset into two at the given index `mid`.
+    fn split_first(self) -> Option<(Self::First, Self)> {
+        if let Some(ref indices) = self.indices {
+            let (indices_l, indices_r) = indices.split_at(mid);
+            let n = self.data.len();
+            let offset = indices_r
+                .first()
+                .map(|first| *first - *indices_l.first().unwrap_or(first))
+                .unwrap_or(n);
+            let (data_l, data_r) = self.data.split_at(offset);
+            (
+                Subset {
+                    indices: Some(indices_l),
+                    data: data_l,
+                },
+                Subset {
+                    indices: Some(indices_r),
+                    data: data_r,
+                },
+            )
+        } else {
+            let (data_l, data_r) = self.data.split_at(mid);
+            (
+                Subset {
+                    indices: None,
+                    data: data_l,
+                },
+                Subset {
+                    indices: None,
+                    data: data_r,
+                },
+            )
+        }
+    }
+}
+*/
+
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,
     I: std::borrow::Borrow<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
-    <S as Set>::Elem: 'a,
+    <S as Set>::Elem: 'a + Clone,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
     /// into an owned `S` type.
@@ -396,7 +439,6 @@ where
     where
         V: ViewMut<'a> + ?Sized,
         <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'a mut <S as Set>::Elem>,
-        <S as Set>::Elem: Clone,
     {
         let other_view = other.view_mut();
         assert_eq!(other_view.len(), self.len());
@@ -456,16 +498,16 @@ where
     }
 }
 
-impl<S, I, O> Isolate<I> for Subset<S, O>
-where
-    I: IsolateIndex<Self>,
-{
-    type Output = I::Output;
-
-    fn try_isolate(self, range: I) -> Option<Self::Output> {
-        range.try_isolate(self)
-    }
-}
+//impl<S, I, O> Isolate<I> for Subset<S, O>
+//where
+//    I: IsolateIndex<Self>,
+//{
+//    type Output = I::Output;
+//
+//    fn try_isolate(self, range: I) -> Option<Self::Output> {
+//        range.try_isolate(self)
+//    }
+//}
 
 macro_rules! impl_index_fn {
     ($self:ident, $idx:ident, $index_fn:ident) => {
@@ -656,7 +698,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let SubsetIterMut { indices, data } = self;
-        let data_slice = std::mem::replace(data, Dummy::dummy());
+        let data_slice = std::mem::replace(data, unsafe { Dummy::dummy() });
         match indices {
             Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
                 let (item, right) = data_slice.split_first().expect("Corrupt subset");
@@ -706,10 +748,21 @@ where
 }
 
 impl<S: Dummy, I> Dummy for Subset<S, I> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Subset {
             data: Dummy::dummy(),
             indices: None,
+        }
+    }
+}
+
+impl<S: Truncate, I: Truncate> Truncate for Subset<S, I> {
+    fn truncate(&mut self, new_len: usize) {
+        match &mut self.indices {
+            // The target data remains untouched.
+            Some(indices) => indices.truncate(new_len),
+            // Since the subset is entire it's ok to truncate the underlying data.
+            None => self.data.truncate(new_len),
         }
     }
 }
@@ -721,5 +774,44 @@ impl<S: Dummy, I> Dummy for Subset<S, I> {
 impl<S, I> From<S> for Subset<S, I> {
     fn from(set: S) -> Subset<S, I> {
         Subset::all(set)
+    }
+}
+
+/*
+ * Data access
+ */
+
+impl<S: Storage, I> Storage for Subset<S, I> {
+    type Storage = S::Storage;
+    /// Return an immutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked3::from_flat(v.clone());
+    /// let s1 = Subset::from_indices(vec![0, 2, 3], s0.clone());
+    /// assert_eq!(s1.storage(), &v);
+    /// ```
+    fn storage(&self) -> &Self::Storage {
+        self.data.storage()
+    }
+}
+
+impl<S: StorageMut, I> StorageMut for Subset<S, I> {
+    /// Return a mutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let mut s0 = Chunked3::from_flat(v.clone());
+    /// let mut s1 = Subset::from_indices(vec![0, 2, 3], s0.clone());
+    /// assert_eq!(s1.storage_mut(), &mut v);
+    /// ```
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self.data.storage_mut()
     }
 }

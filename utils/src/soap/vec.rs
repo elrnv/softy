@@ -77,7 +77,7 @@ where
 
     fn into_static_chunk_iter(self) -> Self::IterType {
         assert_eq!(self.len() % N::to_usize(), 0);
-        reinterpret::reinterpret_vec(self).into_iter()
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self).into_iter()
     }
 }
 
@@ -86,6 +86,21 @@ impl<T> IntoFlat for Vec<T> {
     /// Since a `Vec` has no information about the structure of its underlying
     /// data, this is effectively a no-op.
     fn into_flat(self) -> Self::FlatType {
+        self
+    }
+}
+
+impl<T> Storage for Vec<T> {
+    type Storage = Vec<T>;
+    /// `Vec` is a type of storage, simply return an immutable reference to self.
+    fn storage(&self) -> &Self::Storage {
+        self
+    }
+}
+
+impl<T> StorageMut for Vec<T> {
+    /// `Vec` is a type of storage, simply return a mutable reference to self.
+    fn storage_mut(&mut self) -> &mut Self::Storage {
         self
     }
 }
@@ -122,15 +137,22 @@ impl<T> ToOwned for Vec<T> {
     }
 }
 
+/// Since `Vec` already owns its data, this is simply a noop.
+impl<T> ToOwnedData for Vec<T> {
+    type OwnedData = Self;
+    fn to_owned_data(self) -> Self::OwnedData {
+        self
+    }
+}
+
 impl<'a, T, N> ReinterpretAsGrouped<N> for Vec<T>
 where
     N: Array<T>,
-    <N as Array<T>>::Array: 'a,
 {
     type Output = Vec<N::Array>;
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_vec(self)
+        unsafe { reinterpret::reinterpret_vec(self) }
     }
 }
 
@@ -142,7 +164,7 @@ where
     type Output = &'a [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_slice(self.as_slice())
+        unsafe { reinterpret::reinterpret_slice(self.as_slice()) }
     }
 }
 
@@ -154,12 +176,18 @@ where
     type Output = &'a mut [N::Array];
     #[inline]
     fn reinterpret_as_grouped(self) -> Self::Output {
-        reinterpret::reinterpret_mut_slice(self.as_mut_slice())
+        unsafe { reinterpret::reinterpret_mut_slice(self.as_mut_slice()) }
     }
 }
 
 impl<T> Dummy for Vec<T> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         Vec::new()
+    }
+}
+
+impl<T> Truncate for Vec<T> {
+    fn truncate(&mut self, new_len: usize) {
+        Vec::truncate(self, new_len);
     }
 }

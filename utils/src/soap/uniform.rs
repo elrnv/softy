@@ -33,7 +33,7 @@ impl<T, N: Default + Array<T>> UniChunked<Vec<T>, U<N>> {
     pub fn from_array_vec(data: Vec<N::Array>) -> UniChunked<Vec<T>, U<N>> {
         UniChunked {
             chunks: Default::default(),
-            data: reinterpret::reinterpret_vec(data),
+            data: unsafe { reinterpret::reinterpret_vec(data) },
         }
     }
 }
@@ -52,7 +52,7 @@ impl<'a, T, N: Default + Array<T>> UniChunked<&'a [T], U<N>> {
     pub fn from_array_slice(data: &[N::Array]) -> UniChunked<&[T], U<N>> {
         UniChunked {
             chunks: Default::default(),
-            data: reinterpret::reinterpret_slice(data),
+            data: unsafe { reinterpret::reinterpret_slice(data) },
         }
     }
 }
@@ -71,7 +71,7 @@ impl<'a, T, N: Default + Array<T>> UniChunked<&'a mut [T], U<N>> {
     pub fn from_array_slice_mut(data: &'a mut [N::Array]) -> UniChunked<&'a mut [T], U<N>> {
         UniChunked {
             chunks: Default::default(),
-            data: reinterpret::reinterpret_mut_slice(data),
+            data: unsafe { reinterpret::reinterpret_mut_slice(data) },
         }
     }
 }
@@ -275,43 +275,53 @@ impl<S: Set> ChunkedN<S> {
     }
 }
 
-impl<T, N> UniChunked<Vec<T>, N> {
+impl<S, N> UniChunked<S, N> {
     /// This function panics if `src` has doesn't have a length equal to `self.len()*N::value()`.
-    pub fn copy_from_flat(&mut self, src: &[T])
+    pub fn copy_from_flat<T>(&mut self, src: &[T])
     where
         T: Copy,
+        S: std::borrow::BorrowMut<[T]>,
     {
-        assert_eq!(src.len(), self.data.len());
-        self.data.copy_from_slice(src);
+        let data = self.data.borrow_mut();
+        assert_eq!(src.len(), data.len());
+        data.copy_from_slice(src);
     }
     /// This function panics if `src` has doesn't have a length equal to `self.len()*N::value()`.
-    pub fn clone_from_flat(&mut self, src: &[T])
+    pub fn clone_from_flat<T>(&mut self, src: &[T])
     where
         T: Clone,
+        S: std::borrow::BorrowMut<[T]>,
     {
-        assert_eq!(src.len(), self.data.len());
-        self.data.clone_from_slice(src);
+        let data = self.data.borrow_mut();
+        assert_eq!(src.len(), data.len());
+        data.clone_from_slice(src);
     }
 }
 
-impl<T, N: Unsigned + Array<T>> UniChunked<Vec<T>, U<N>> {
+impl<S: Set, N: Unsigned> UniChunked<S, U<N>> {
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn copy_from_grouped(&mut self, src: &[N::Array])
+    pub fn copy_from_arrays(&mut self, src: &[N::Array])
     where
-        T: Copy,
+        N: Array<<S as Set>::Elem>,
+        <S as Set>::Elem: Copy,
+        S: std::borrow::BorrowMut<[<S as Set>::Elem]>,
     {
         assert_eq!(src.len(), self.len());
         self.data
-            .copy_from_slice(reinterpret::reinterpret_slice(src));
+            .borrow_mut()
+            .copy_from_slice(unsafe { reinterpret::reinterpret_slice(src) });
     }
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
-    pub fn clone_from_grouped(&mut self, src: &[N::Array])
+    pub fn clone_from_arrays(&mut self, src: &[N::Array])
     where
-        T: Clone,
+        N: Array<<S as Set>::Elem>,
+        <S as Set>::Elem: Clone,
+        S: std::borrow::BorrowMut<[<S as Set>::Elem]>,
     {
         assert_eq!(src.len(), self.len());
         self.data
-            .clone_from_slice(reinterpret::reinterpret_slice(src));
+            .borrow_mut()
+            .clone_from_slice(unsafe { reinterpret::reinterpret_slice(src) });
     }
 }
 
@@ -371,7 +381,7 @@ where
     /// ```
     pub fn extend_from_slice(&mut self, slice: &[N::Array]) {
         self.data
-            .extend_from_slice(reinterpret::reinterpret_slice(slice));
+            .extend_from_slice(unsafe { reinterpret::reinterpret_slice(slice) });
     }
 }
 
@@ -628,17 +638,17 @@ impl<T: Clone, N: Array<T>> PushArrayToVec<N> for T {
 
 impl<T, N: Array<T> + Unsigned> std::borrow::Borrow<[N::Array]> for UniChunked<&[T], U<N>> {
     fn borrow(&self) -> &[N::Array] {
-        reinterpret::reinterpret_slice(self.data)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data)
     }
 }
 impl<T, N: Array<T> + Unsigned> std::borrow::Borrow<[N::Array]> for UniChunked<&mut [T], U<N>> {
     fn borrow(&self) -> &[N::Array] {
-        reinterpret::reinterpret_slice(self.data)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&*self.data)
     }
 }
 impl<T, N: Array<T> + Unsigned> std::borrow::BorrowMut<[N::Array]> for UniChunked<&mut [T], U<N>> {
     fn borrow_mut(&mut self) -> &mut [N::Array] {
-        reinterpret::reinterpret_mut_slice(self.data)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut *self.data)
     }
 }
 
@@ -855,30 +865,30 @@ where
     }
 }
 
-impl<S, N, I> Isolate<I> for UniChunked<S, N>
-where
-    I: IsolateIndex<Self>,
-{
-    type Output = I::Output;
-    /// Get a mutable subview from this `UniChunked` collection according to the
-    /// given range. If the range is a single index, then a single chunk is
-    /// returned instead.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use utils::soap::*;
-    /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
-    /// let mut s = Chunked3::from_flat(v.as_mut_slice());
-    ///
-    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[7,8,9]);
-    /// assert_eq!(s.view().get(2), Some(&[7,8,9])); // Single index
-    /// assert_eq!(v, vec![1,2,3, 4,5,6, 7,8,9, 10,11,12]);
-    /// ```
-    fn try_isolate(self, range: I) -> Option<I::Output> {
-        range.try_isolate(self)
-    }
-}
+//impl<S, N, I> Isolate<I> for UniChunked<S, N>
+//where
+//    I: IsolateIndex<Self>,
+//{
+//    type Output = I::Output;
+//    /// Get a mutable subview from this `UniChunked` collection according to the
+//    /// given range. If the range is a single index, then a single chunk is
+//    /// returned instead.
+//    ///
+//    /// # Examples
+//    ///
+//    /// ```rust
+//    /// use utils::soap::*;
+//    /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
+//    /// let mut s = Chunked3::from_flat(v.as_mut_slice());
+//    ///
+//    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[7,8,9]);
+//    /// assert_eq!(s.view().get(2), Some(&[7,8,9])); // Single index
+//    /// assert_eq!(v, vec![1,2,3, 4,5,6, 7,8,9, 10,11,12]);
+//    /// ```
+//    fn try_isolate(self, range: I) -> Option<I::Output> {
+//        range.try_isolate(self)
+//    }
+//}
 
 impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, U<N>>
 where
@@ -1122,7 +1132,7 @@ where
     type Item = S;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let data_slice = std::mem::replace(&mut self.data, Dummy::dummy());
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         if data_slice.is_empty() {
             None
         } else {
@@ -1181,7 +1191,7 @@ impl<'a, S, N> View<'a> for UniChunked<S, N>
 where
     S: Set + View<'a>,
     N: Copy,
-    <S as View<'a>>::Type: Set,
+    UniChunked<<S as View<'a>>::Type, N>: IntoIterator,
 {
     type Type = UniChunked<<S as View<'a>>::Type, N>;
 
@@ -1216,7 +1226,7 @@ impl<'a, S, N> ViewMut<'a> for UniChunked<S, N>
 where
     S: Set + ViewMut<'a>,
     N: Copy,
-    <S as ViewMut<'a>>::Type: Set,
+    UniChunked<<S as ViewMut<'a>>::Type, N>: IntoIterator,
 {
     type Type = UniChunked<<S as ViewMut<'a>>::Type, N>;
 
@@ -1332,11 +1342,23 @@ where
 }
 
 impl<S: Dummy, N: Default> Dummy for UniChunked<S, N> {
-    fn dummy() -> Self {
+    unsafe fn dummy() -> Self {
         UniChunked {
             data: Dummy::dummy(),
             chunks: N::default(),
         }
+    }
+}
+
+impl<S: Truncate, N: Unsigned> Truncate for UniChunked<S, U<N>> {
+    fn truncate(&mut self, new_len: usize) {
+        self.data.truncate(new_len * N::to_usize());
+    }
+}
+
+impl<S: Truncate> Truncate for ChunkedN<S> {
+    fn truncate(&mut self, new_len: usize) {
+        self.data.truncate(new_len * self.chunks);
     }
 }
 
@@ -1345,6 +1367,43 @@ impl<S: IntoFlat, N> IntoFlat for UniChunked<S, N> {
     /// Strip away the uniform organization of the underlying data, and return the underlying data.
     fn into_flat(self) -> Self::FlatType {
         self.data.into_flat()
+    }
+}
+
+impl<S: Storage, N> Storage for UniChunked<S, N> {
+    type Storage = S::Storage;
+    /// Return an immutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked2::from_flat(v.clone());
+    /// let s1 = ChunkedN::from_flat_with_stride(s0.clone(), 3);
+    /// assert_eq!(s1.storage(), &v);
+    /// assert_eq!(s0.storage(), &v);
+    /// ```
+    fn storage(&self) -> &Self::Storage {
+        self.data.storage()
+    }
+}
+
+impl<S: StorageMut, N> StorageMut for UniChunked<S, N> {
+    /// Return a mutable reference to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let mut s0 = Chunked2::from_flat(v.clone());
+    /// let mut s1 = ChunkedN::from_flat_with_stride(s0.clone(), 3);
+    /// assert_eq!(s1.storage_mut(), &mut v);
+    /// assert_eq!(s0.storage_mut(), &mut v);
+    /// ```
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self.data.storage_mut()
     }
 }
 

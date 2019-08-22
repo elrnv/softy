@@ -364,34 +364,34 @@ where
     }
 }
 
-/*
 /// This impl enables `Subset`s of `Subset`s
 impl<S> SplitFirst for SubsetView<S>
 where
-    S: Set + SplitFirst,
+    S: Set + SplitAt,
 {
     type First = S::First;
 
-    /// Split this subset into two at the given index `mid`.
+    /// Split the first element of this subset.
     fn split_first(self) -> Option<(Self::First, Self)> {
         if let Some(ref indices) = self.indices {
-            let (indices_l, indices_r) = indices.split_at(mid);
-            let n = self.data.len();
-            let offset = indices_r
-                .first()
-                .map(|first| *first - *indices_l.first().unwrap_or(first))
-                .unwrap_or(n);
-            let (data_l, data_r) = self.data.split_at(offset);
-            (
-                Subset {
-                    indices: Some(indices_l),
-                    data: data_l,
-                },
-                Subset {
-                    indices: Some(indices_r),
-                    data: data_r,
-                },
-            )
+            indices.split_first().map(|(first_index, rest_indices)| {
+                let n = self.data.len();
+                let offset = indices_r
+                    .first()
+                    .map(|first| *first - *indices_l.first().unwrap_or(first))
+                    .unwrap_or(n);
+                let (data_l, data_r) = self.data.split_at(offset);
+                (
+                    Subset {
+                        indices: Some(indices_l),
+                        data: data_l,
+                    },
+                    Subset {
+                        indices: Some(indices_r),
+                        data: data_r,
+                    },
+                )
+            })
         } else {
             let (data_l, data_r) = self.data.split_at(mid);
             (
@@ -407,7 +407,6 @@ where
         }
     }
 }
-*/
 
 impl<'a, S, I> Subset<S, I>
 where

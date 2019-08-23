@@ -183,6 +183,7 @@ pub trait ContactConstraint:
     }
 
     /// Compute the contact Jacobian as an ArrayFire matrix.
+    #[cfg(feature = "af")]
     fn contact_jacobian_af(&self) -> af::Array<f64>;
 
     /// Update the underlying friction impulse based on the given predictive step.

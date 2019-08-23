@@ -173,6 +173,7 @@ pub trait EnergyHessian {
     }
 
     /// Construct an ArrayFire matrix.
+    #[cfg(feature = "af")]
     fn energy_hessian_af(&self, x: &[f64], dx: &[f64], scale: f64) -> af::Array<f64> {
         let nnz = self.energy_hessian_size();
         let mut rows = vec![0i32; nnz];

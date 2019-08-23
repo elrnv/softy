@@ -116,6 +116,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         ))
     }
 
+    #[cfg(feature = "af")]
     fn contact_jacobian_af(&self) -> af::Array<f64> {
         // The contact jacobian for implicit collisions is just a selection matrix of vertices that
         // are in contact, since contacts are colocated with vertex positions.

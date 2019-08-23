@@ -20,7 +20,7 @@ utils = { path = "../utils" }
 is_sorted = "0.1"
 sprs = "0.6.4"
 ndarray = "0.12.1"
-af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git" }
+af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.2" }

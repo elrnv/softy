@@ -11,6 +11,7 @@ use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
+#[cfg(feature = "af")]
 use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
@@ -316,6 +317,7 @@ impl ContactConstraint for PointContactConstraint {
         ARef::Plain(&[])
     }
 
+    #[cfg(feature = "af")]
     fn contact_jacobian_af(&self) -> af::Array<f64> {
         // Compute contact jacobian
         let surf = self.implicit_surface.borrow();

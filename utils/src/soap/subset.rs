@@ -1,7 +1,12 @@
 use super::*;
+use std::convert::AsRef;
+use std::borrow::Borrow;
 
 /// A Set that is a non-contiguous subset of some larger collection.
-/// `B` can be any borrowed collection type that implements the [`Set`] and [`RemovePrefix`] traits.
+/// `B` can be any borrowed collection type that implements the [`Set`], and [`RemovePrefix`]
+/// traits.
+/// For iteration of subsets, the underlying type must also implement [`SplitFirst`] and
+/// [`SplitAt`] traits.
 ///
 /// # Example
 ///
@@ -88,7 +93,7 @@ impl<S: Set + RemovePrefix> Subset<S> {
     }
 }
 
-impl<S: Set + RemovePrefix, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
+impl<S: Set + RemovePrefix, I: AsRef<[usize]>> Subset<S, I> {
     /// Create a subset of elements from the original scollection corresponding to the given indices.
     /// In contrast to `Subset::from_indices`, this function expects the indices
     /// to be unique and in sorted order, instead of manully making it so.
@@ -119,7 +124,7 @@ impl<S: Set + RemovePrefix, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
         assert!(Self::is_sorted(&indices));
         assert!(!Self::has_duplicates(&indices));
 
-        if let Some(first) = indices.borrow().first() {
+        if let Some(first) = indices.as_ref().first() {
             data.remove_prefix(*first);
         }
 
@@ -153,11 +158,11 @@ impl<S, O> Subset<S, O> {
     }
 }
 
-impl<'a, S, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
+impl<'a, S, I: AsRef<[usize]>> Subset<S, I> {
     /// A helper function that checks if a given collection of indices has duplicates.
     /// It is assumed that the given indices are already in sorted order.
     fn has_duplicates(indices: &I) -> bool {
-        let mut index_iter = indices.borrow().iter().cloned();
+        let mut index_iter = indices.as_ref().iter().cloned();
         if let Some(mut prev) = index_iter.next() {
             for cur in index_iter {
                 if cur == prev {
@@ -183,7 +188,7 @@ impl<'a, S, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
     where
         F: FnMut(&usize, &usize) -> Option<std::cmp::Ordering>,
     {
-        let mut iter = indices.borrow().iter();
+        let mut iter = indices.as_ref().iter();
         let mut last = match iter.next() {
             Some(e) => e,
             None => return true,
@@ -216,12 +221,12 @@ impl<'a, S: Set, I> Subset<S, I> {
     }
 }
 
-impl<'a, S: Set, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
+impl<'a, S: Set, I: AsRef<[usize]>> Subset<S, I> {
     /// Panics if this subset is invald.
     #[inline]
     fn validate(self) -> Self {
         if let Some(ref indices) = self.indices {
-            let indices = indices.borrow();
+            let indices = indices.as_ref();
             if let Some(first) = indices.first() {
                 for &i in indices.iter() {
                     assert!(i - *first < self.data.len(), "Subset index out of bounds.");
@@ -240,7 +245,7 @@ impl<'a, S: Set, I: std::borrow::Borrow<[usize]>> Subset<S, I> {
 // Set, Vew, IntoStaticChunkIterator
 
 /// Required for `Chunked` and `UniChunked` subsets.
-impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
+impl<S: Set, I: AsRef<[usize]>> Set for Subset<S, I> {
     type Elem = S::Elem;
     /// Get the length of this subset.
     ///
@@ -255,7 +260,7 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
     fn len(&self) -> usize {
         self.indices
             .as_ref()
-            .map_or(self.data.len(), |indices| indices.borrow().len())
+            .map_or(self.data.len(), |indices| indices.as_ref().len())
     }
 }
 
@@ -263,14 +268,14 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Subset<S, I> {
 impl<'a, S, I> View<'a> for Subset<S, I>
 where
     S: View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
         // Note: it is assumed that the first index corresponds to the first
         // element in data, regardless of what the value of the index is.
         Subset {
-            indices: self.indices.as_ref().map(|indices| indices.borrow()),
+            indices: self.indices.as_ref().map(|indices| indices.as_ref()),
             data: self.data.view(),
         }
     }
@@ -279,7 +284,7 @@ where
 impl<'a, S, I> ViewMut<'a> for Subset<S, I>
 where
     S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Type = Subset<S::Type, &'a [usize]>;
     /// Create a mutable view into this subset.
@@ -300,7 +305,7 @@ where
         // Note: it is assumed that the first index corresponds to the first
         // element in data, regardless of what the value of the index is.
         Subset {
-            indices: self.indices.as_ref().map(|indices| indices.borrow()),
+            indices: self.indices.as_ref().map(|indices| indices.as_ref()),
             data: self.data.view_mut(),
         }
     }
@@ -365,22 +370,28 @@ where
 }
 
 /// This impl enables `Subset`s of `Subset`s
-impl<S> SplitFirst for SubsetView<'_, S>
+impl<S, I> SplitFirst for Subset<S, I>
 where
+    I: SplitFirst + AsRef<[usize]>,
+    <I as SplitFirst>::First: Borrow<usize>,
     S: Set + SplitAt + SplitFirst,
 {
     type First = S::First;
 
     /// Split the first element of this subset.
     fn split_first(self) -> Option<(Self::First, Self)> {
-        if let Some(ref indices) = self.indices {
+        let Subset {
+            data,
+            indices,
+        } = self;
+        if let Some(indices) = indices {
             indices.split_first().map(|(first_index, rest_indices)| {
-                let n = self.data.len();
-                let offset = rest_indices
+                let n = data.len();
+                let offset = rest_indices.as_ref()
                     .first()
-                    .map(|next| *next - *first_index)
+                    .map(|next| *next - *first_index.borrow())
                     .unwrap_or(n);
-                let (data_l, data_r) = self.data.split_at(offset);
+                let (data_l, data_r) = data.split_at(offset);
                 (
                     data_l.split_first().unwrap().0,
                     Subset {
@@ -390,7 +401,7 @@ where
                 )
             })
         } else {
-            self.data.split_first().map(|(first, rest)| {
+            data.split_first().map(|(first, rest)| {
                 (
                     first,
                     Subset {
@@ -403,10 +414,31 @@ where
     }
 }
 
+impl<S: Set + RemovePrefix, I: RemovePrefix + AsRef<[usize]>> RemovePrefix for Subset<S, I> {
+    /// This function will panic if `n` is larger than `self.len()`.
+    fn remove_prefix(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        match self.indices {
+            Some(ref mut indices) => {
+                let first = indices.as_ref()[0]; // Will panic if out of bounds.
+                indices.remove_prefix(n);
+                let data_len = self.data.len();
+                let next = indices.as_ref().get(0).unwrap_or(&data_len);
+                self.data.remove_prefix(*next - first);
+            }
+            None => {
+                self.data.remove_prefix(n);
+            }
+        }
+    }
+}
+
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
     <S as Set>::Elem: 'a + Clone,
 {
@@ -449,7 +481,7 @@ where
 
 impl<'a, S, O> GetIndex<'a, Subset<S, O>> for usize
 where
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
     S: Get<'a, usize>,
 {
     type Output = <S as Get<'a, usize>>::Output;
@@ -457,9 +489,9 @@ where
     fn get(self, subset: &Subset<S, O>) -> Option<Self::Output> {
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         if let Some(ref indices) = subset.indices {
-            indices.borrow().get(0).and_then(|&first| {
+            indices.as_ref().get(0).and_then(|&first| {
                 indices
-                    .borrow()
+                    .as_ref()
                     .get(self)
                     .and_then(|&cur| Get::get(&subset.data, cur - first))
             })
@@ -471,7 +503,7 @@ where
 
 impl<S, O> IsolateIndex<Subset<S, O>> for usize
 where
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
     S: Isolate<usize>,
 {
     type Output = <S as Isolate<usize>>::Output;
@@ -480,9 +512,9 @@ where
         // TODO: too much bounds checking here, add a get_unchecked call to GetIndex.
         let Subset { indices, data } = subset;
         if let Some(ref indices) = indices {
-            indices.borrow().get(0).and_then(move |&first| {
+            indices.as_ref().get(0).and_then(move |&first| {
                 indices
-                    .borrow()
+                    .as_ref()
                     .get(self)
                     .and_then(move |&cur| Isolate::try_isolate(data, cur - first))
             })
@@ -508,7 +540,7 @@ macro_rules! impl_index_fn {
         $self
             .data
             .$index_fn($self.indices.as_ref().map_or($idx, |indices| {
-                let indices = indices.borrow();
+                let indices = indices.as_ref();
                 indices[$idx] - *indices.first().unwrap()
             }))
     };
@@ -517,7 +549,7 @@ macro_rules! impl_index_fn {
 impl<'a, S, I> std::ops::Index<usize> for Subset<S, I>
 where
     S: std::ops::Index<usize> + Set + Owned,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = S::Output;
 
@@ -545,7 +577,7 @@ where
 impl<'a, S, I> std::ops::IndexMut<usize> for Subset<S, I>
 where
     S: std::ops::IndexMut<usize> + Set + Owned,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Mutably index the subset.
     ///
@@ -572,7 +604,7 @@ where
 
 impl<'a, T, I> std::ops::Index<usize> for Subset<&'a [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = T;
     /// Immutably index the subset.
@@ -596,7 +628,7 @@ where
 
 impl<'a, T, I> std::ops::Index<usize> for Subset<&'a mut [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = T;
     /// Immutably index the subset.
@@ -620,7 +652,7 @@ where
 
 impl<'a, T, I> std::ops::IndexMut<usize> for Subset<&'a mut [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Mutably index the subset.
     ///
@@ -652,13 +684,13 @@ where
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + Get<'a, usize> + View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
     pub fn iter(&'a self) -> impl Iterator<Item = <S as Get<'a, usize>>::Output> {
         let iters = match self.indices.as_ref() {
             Some(indices) => {
-                let indices = indices.borrow();
+                let indices = indices.as_ref();
                 let first = *indices.first().unwrap_or(&0);
                 (
                     None,
@@ -718,7 +750,7 @@ where
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Mutably iterate over a borrowed subset.
     ///
@@ -735,7 +767,7 @@ where
     /// ```
     pub fn iter_mut(&'a mut self) -> SubsetIterMut<'a, <S as ViewMut<'a>>::Type> {
         SubsetIterMut {
-            indices: self.indices.as_ref().map(|indices| indices.borrow()),
+            indices: self.indices.as_ref().map(|indices| indices.as_ref()),
             data: self.data.view_mut(),
         }
     }

@@ -169,7 +169,6 @@ impl AddAssign<Tensor<Chunked3<&[f64]>>> for Tensor<SubsetView<'_, Chunked3<&mut
     }
 }
 
-/*
 impl AddAssign<Tensor<SubsetView<'_, Chunked3<&[f64]>>>>
     for Tensor<SubsetView<'_, SubsetView<'_, Chunked3<&mut [f64]>>>>
 {
@@ -179,7 +178,16 @@ impl AddAssign<Tensor<SubsetView<'_, Chunked3<&[f64]>>>>
         }
     }
 }
-*/
+
+impl AddAssign<Tensor<Chunked3<&[f64]>>>
+    for Tensor<SubsetView<'_, SubsetView<'_, Chunked3<&mut [f64]>>>>
+{
+    fn add_assign(&mut self, other: Tensor<Chunked3<&[f64]>>) {
+        for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
+            *out = (geo::math::Vector3(*out) + geo::math::Vector3(b)).into();
+        }
+    }
+}
 
 impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalMatrix3View<'_> {
     type Output = Tensor<Chunked3<Vec<f64>>>;

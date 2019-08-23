@@ -4,18 +4,12 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 /// A generic type that accepts algebraic expressions.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct Tensor<T: ?Sized, I = ()> {
     index: PhantomData<I>,
     pub data: T,
 }
 
-/// This helper function interprets a data type `T` as a tensor. Perhaps at a
-/// later point this can be replaced by aptly designed traits for composable
-/// collection types.
-pub(crate) fn as_tensor<T>(c: &mut T) -> &mut Tensor<T> {
-    unsafe { &mut *(c as *mut T as *mut Tensor<T>) }
-}
 
 impl<T, I> Tensor<T, I> {
     pub fn new(data: T) -> Tensor<T, I> {
@@ -23,6 +17,15 @@ impl<T, I> Tensor<T, I> {
             data,
             index: PhantomData,
         }
+    }
+
+    /// Create a reference to the given type as a `Tensor`.
+    pub fn as_ref(c: &T) -> &Tensor<T, I> {
+        unsafe { &*(c as *const T as *const Tensor<T, I>) }
+    }
+    /// Same as `as_ref` but creates a mutable reference to the given type as a `Tensor`.
+    pub fn as_mut(c: &mut T) -> &mut Tensor<T, I> {
+        unsafe { &mut *(c as *mut T as *mut Tensor<T, I>) }
     }
 }
 
@@ -296,7 +299,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
         {
             fn add_assign(&mut self, other: Tensor<$chunked<T, I>>) {
                 assert_eq!(self.data.len(), other.data.len());
-                let tensor = as_tensor(&mut self.data.data);
+                let tensor = Tensor::as_mut(&mut self.data.data);
                 *tensor += Tensor::new(other.data.data);
             }
         }
@@ -309,7 +312,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
         {
             fn sub_assign(&mut self, other: Tensor<$chunked<T, I>>) {
                 assert_eq!(self.data.len(), other.data.len());
-                let tensor = as_tensor(&mut self.data.data);
+                let tensor = Tensor::as_mut(&mut self.data.data);
                 *tensor -= Tensor::new(other.data.data);
             }
         }
@@ -320,7 +323,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
             Tensor<S>: MulAssign<T>,
         {
             fn mul_assign(&mut self, other: T) {
-                let tensor = as_tensor(&mut self.data.data);
+                let tensor = Tensor::as_mut(&mut self.data.data);
                 *tensor *= other;
             }
         }

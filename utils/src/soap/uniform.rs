@@ -1,4 +1,5 @@
 use super::*;
+use std::convert::{AsMut, AsRef};
 
 /// `UniChunked` Assigns a stride `N` to the specified collection.
 ///
@@ -280,9 +281,9 @@ impl<S, N> UniChunked<S, N> {
     pub fn copy_from_flat<T>(&mut self, src: &[T])
     where
         T: Copy,
-        S: std::borrow::BorrowMut<[T]>,
+        S: AsMut<[T]>,
     {
-        let data = self.data.borrow_mut();
+        let data = self.data.as_mut();
         assert_eq!(src.len(), data.len());
         data.copy_from_slice(src);
     }
@@ -290,9 +291,9 @@ impl<S, N> UniChunked<S, N> {
     pub fn clone_from_flat<T>(&mut self, src: &[T])
     where
         T: Clone,
-        S: std::borrow::BorrowMut<[T]>,
+        S: AsMut<[T]>,
     {
-        let data = self.data.borrow_mut();
+        let data = self.data.as_mut();
         assert_eq!(src.len(), data.len());
         data.clone_from_slice(src);
     }
@@ -304,11 +305,11 @@ impl<S: Set, N: Unsigned> UniChunked<S, U<N>> {
     where
         N: Array<<S as Set>::Elem>,
         <S as Set>::Elem: Copy,
-        S: std::borrow::BorrowMut<[<S as Set>::Elem]>,
+        S: AsMut<[<S as Set>::Elem]>,
     {
         assert_eq!(src.len(), self.len());
         self.data
-            .borrow_mut()
+            .as_mut()
             .copy_from_slice(unsafe { reinterpret::reinterpret_slice(src) });
     }
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
@@ -316,11 +317,11 @@ impl<S: Set, N: Unsigned> UniChunked<S, U<N>> {
     where
         N: Array<<S as Set>::Elem>,
         <S as Set>::Elem: Clone,
-        S: std::borrow::BorrowMut<[<S as Set>::Elem]>,
+        S: AsMut<[<S as Set>::Elem]>,
     {
         assert_eq!(src.len(), self.len());
         self.data
-            .borrow_mut()
+            .as_mut()
             .clone_from_slice(unsafe { reinterpret::reinterpret_slice(src) });
     }
 }
@@ -618,36 +619,36 @@ impl<T: Clone, N: Array<T>> PushArrayToVec<N> for T {
     }
 }
 
-//impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&[T], N> {
+//impl<T, N> AsRef<[T]> for UniChunked<&[T], N> {
 //    fn borrow(&self) -> &[T] {
 //        self.data
 //    }
 //}
 //
-//impl<T, N> std::borrow::Borrow<[T]> for UniChunked<&mut [T], N> {
+//impl<T, N> AsRef<[T]> for UniChunked<&mut [T], N> {
 //    fn borrow(&self) -> &[T] {
 //        self.data
 //    }
 //}
 //
-//impl<T, N> std::borrow::BorrowMut<[T]> for UniChunked<&mut [T], N> {
+//impl<T, N> AsMut<[T]> for UniChunked<&mut [T], N> {
 //    fn borrow_mut(&mut self) -> &mut [T] {
 //        self.data
 //    }
 //}
 
-impl<T, N: Array<T> + Unsigned> std::borrow::Borrow<[N::Array]> for UniChunked<&[T], U<N>> {
-    fn borrow(&self) -> &[N::Array] {
+impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&[T], U<N>> {
+    fn as_ref(&self) -> &[N::Array] {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data)
     }
 }
-impl<T, N: Array<T> + Unsigned> std::borrow::Borrow<[N::Array]> for UniChunked<&mut [T], U<N>> {
-    fn borrow(&self) -> &[N::Array] {
+impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&mut [T], U<N>> {
+    fn as_ref(&self) -> &[N::Array] {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&*self.data)
     }
 }
-impl<T, N: Array<T> + Unsigned> std::borrow::BorrowMut<[N::Array]> for UniChunked<&mut [T], U<N>> {
-    fn borrow_mut(&mut self) -> &mut [N::Array] {
+impl<T, N: Array<T> + Unsigned> AsMut<[N::Array]> for UniChunked<&mut [T], U<N>> {
+    fn as_mut(&mut self) -> &mut [N::Array] {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut *self.data)
     }
 }
@@ -1191,7 +1192,6 @@ impl<'a, S, N> View<'a> for UniChunked<S, N>
 where
     S: Set + View<'a>,
     N: Copy,
-    UniChunked<<S as View<'a>>::Type, N>: IntoIterator,
 {
     type Type = UniChunked<<S as View<'a>>::Type, N>;
 
@@ -1226,7 +1226,6 @@ impl<'a, S, N> ViewMut<'a> for UniChunked<S, N>
 where
     S: Set + ViewMut<'a>,
     N: Copy,
-    UniChunked<<S as ViewMut<'a>>::Type, N>: IntoIterator,
 {
     type Type = UniChunked<<S as ViewMut<'a>>::Type, N>;
 

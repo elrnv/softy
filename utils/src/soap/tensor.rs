@@ -10,7 +10,6 @@ pub struct Tensor<T: ?Sized, I = ()> {
     pub data: T,
 }
 
-
 impl<T, I> Tensor<T, I> {
     pub fn new(data: T) -> Tensor<T, I> {
         Tensor {
@@ -26,6 +25,19 @@ impl<T, I> Tensor<T, I> {
     /// Same as `as_ref` but creates a mutable reference to the given type as a `Tensor`.
     pub fn as_mut(c: &mut T) -> &mut Tensor<T, I> {
         unsafe { &mut *(c as *mut T as *mut Tensor<T, I>) }
+    }
+}
+
+impl<T, I> std::ops::Deref for Tensor<T, I> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T, I> std::ops::DerefMut for Tensor<T, I> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
     }
 }
 

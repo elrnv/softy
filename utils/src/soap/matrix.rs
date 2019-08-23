@@ -1,7 +1,13 @@
 //!
 //! Common matrix types and operations.
 //!
+
+mod sprs_compat;
+pub use sprs_compat::*;
+
 use super::*;
+use geo::math::{Matrix3, Vector3};
+use std::convert::AsRef;
 use std::ops::{Add, AddAssign, Mul};
 
 pub type DiagonalMatrix3<S = Vec<f64>> = Tensor<Chunked3<S>>;
@@ -27,27 +33,39 @@ pub type SSMatrix3<S = Vec<f64>, I = Vec<usize>> = Tensor<
 
 pub type SSMatrix3View<'a> = SSMatrix3<&'a [f64], &'a [usize]>;
 
-impl<S, I> SSMatrix3<S, I> {
+impl<S: Set, I: AsRef<[usize]>> SSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
         self.data.data().data().selection().data.distance()
     }
     pub fn num_rows(&self) -> usize {
         self.data.selection().data.distance()
     }
+    pub fn transpose<'a>(&'a self) -> Transpose<SSMatrix3<S::Type, &'a [usize]>>
+    where
+        S: View<'a>,
+    {
+        Transpose(View::view(self))
+    }
 }
 
-/// Dense-row sparse-column row-major 3x3 block matrix.
+/// Dense-row sparse-column row-major 3x3 block matrix. Block version of CSR.
 pub type DSMatrix3<S = Vec<f64>, I = Vec<usize>> =
     Tensor<Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, I>>;
 
 pub type DSMatrix3View<'a> = DSMatrix3<&'a [f64], &'a [usize]>;
 
-impl<S: Set, I: std::borrow::Borrow<[usize]>> DSMatrix3<S, I> {
+impl<S: Set, I: AsRef<[usize]>> DSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
         self.data.data().selection().data.distance()
     }
     pub fn num_rows(&self) -> usize {
         self.data.len()
+    }
+    pub fn transpose<'a>(&'a self) -> Transpose<DSMatrix3<S::Type, &'a [usize]>>
+    where
+        S: View<'a>,
+    {
+        Transpose(View::view(self))
     }
 }
 
@@ -164,7 +182,7 @@ impl Add<DiagonalMatrix3View<'_>> for SSMatrix3View<'_> {
 impl AddAssign<Tensor<Chunked3<&[f64]>>> for Tensor<SubsetView<'_, Chunked3<&mut [f64]>>> {
     fn add_assign(&mut self, other: Tensor<Chunked3<&[f64]>>) {
         for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (geo::math::Vector3(*out) + geo::math::Vector3(b)).into();
+            *out = (Vector3(*out) + Vector3(b)).into();
         }
     }
 }
@@ -174,7 +192,7 @@ impl AddAssign<Tensor<SubsetView<'_, Chunked3<&[f64]>>>>
 {
     fn add_assign(&mut self, other: Tensor<SubsetView<'_, Chunked3<&[f64]>>>) {
         for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (geo::math::Vector3(*out) + geo::math::Vector3(b)).into();
+            *out = (Vector3(*out) + Vector3(b)).into();
         }
     }
 }
@@ -184,7 +202,7 @@ impl AddAssign<Tensor<Chunked3<&[f64]>>>
 {
     fn add_assign(&mut self, other: Tensor<Chunked3<&[f64]>>) {
         for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (geo::math::Vector3(*out) + geo::math::Vector3(b)).into();
+            *out = (Vector3(*out) + Vector3(b)).into();
         }
     }
 }
@@ -201,3 +219,182 @@ impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalMatrix3View<'_> {
         Tensor::new(out)
     }
 }
+
+impl<'a, Rhs> std::ops::Mul<Rhs> for SSMatrix3View<'_>
+where
+    Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
+{
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        let rhs = rhs.into();
+        assert_eq!(rhs.len(), self.num_cols());
+
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
+        for (row_idx, row, _) in self.iter() {
+            for (col_idx, block, _) in row.iter() {
+                let out =
+                    Vector3(res[row_idx]) + Matrix3(*block.into_arrays()) * Vector3(rhs[col_idx]);
+                res[row_idx] = out.into();
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
+impl<'a, Rhs> std::ops::Mul<Rhs> for Transpose<SSMatrix3View<'_>>
+where
+    Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
+{
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        let rhs = rhs.into();
+        assert_eq!(rhs.len(), self.0.num_rows());
+
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols()]);
+        for (row_idx, row, _) in self.0.iter() {
+            for (col_idx, block, _) in row.iter() {
+                let out =
+                    Vector3(res[col_idx]) + Matrix3(*block.into_arrays()) * Vector3(rhs[row_idx]);
+                res[col_idx] = out.into();
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
+impl<S> std::ops::MulAssign<DiagonalMatrix3<S>> for SSMatrix3
+where
+    DiagonalMatrix3<S>: for<'a> View<'a, Type = DiagonalMatrix3View<'a>>,
+{
+    fn mul_assign(&mut self, rhs: DiagonalMatrix3<S>) {
+        let rhs = rhs.view();
+        for (_, mut row) in self.view_mut().iter_mut() {
+            for ((_, mut block), mass) in row.iter_mut().zip(rhs.data.iter()) {
+                for (col, m) in block.iter_mut().zip(mass.iter()) {
+                    *col = (geo::math::Vector3(*col) * *m).into();
+                }
+            }
+        }
+    }
+}
+
+impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
+    type Output = SSMatrix3;
+    fn mul(self, rhs: Transpose<SSMatrix3View>) -> Self::Output {
+        let rhs_t = rhs.0;
+        let num_rows = self.num_rows();
+        let num_cols = rhs_t.num_rows();
+
+        let lhs_nnz = self.storage().len();
+        let rhs_nnz = rhs_t.storage().len();
+        let num_non_zero_blocks = lhs_nnz + rhs_nnz;
+
+        // Allocate enough offsets for all non-zero rows in self. and assign the
+        // first row to contain all elements by setting all offsets to
+        // num_non_zero_blocks except the first.
+        let mut non_zero_row_offsets = vec![num_non_zero_blocks; self.len() + 1];
+        non_zero_row_offsets[0] = 0;
+
+        let mut out = Sparse::from_dim(
+            self.indices().to_vec(),
+            num_rows,
+            Chunked::from_offsets(
+                non_zero_row_offsets,
+                Sparse::from_dim(
+                    vec![0; num_non_zero_blocks], // Pre-allocate column index vec.
+                    num_cols,
+                    Chunked3::from_flat(Chunked3::from_flat(vec![0.0; num_non_zero_blocks * 9])),
+                ),
+            ),
+        );
+
+        let mut nz_row_idx = 0;
+        for (row_idx, row_l, _) in self.iter() {
+            let (_, out_row, _) = out.view_mut().isolate(nz_row_idx);
+            let num_non_zero_blocks_in_row = rhs_t
+                .view()
+                .mul_sparse_matrix3_vector(Tensor::new(row_l), Tensor::new(out_row));
+
+            // Truncate resulting row. This makes space for the next row in the output.
+            if num_non_zero_blocks_in_row > 0 {
+                // This row is non-zero, set the row index in the output.
+                out.indices_mut()[nz_row_idx] = row_idx;
+                // Truncate the current row to fit.
+                out.data_mut()
+                    .transfer_forward_all_but(nz_row_idx, num_non_zero_blocks_in_row);
+                nz_row_idx += 1;
+            }
+        }
+
+        // There may be fewer non-zero rows than in self. Truncate those.
+        out.indices_mut().truncate(nz_row_idx);
+        // Also truncate the entries in storage we didn't use.
+        out.data_mut().trim();
+
+        Tensor::new(out)
+    }
+}
+
+pub type SparseVectorMatrix3<S = Vec<f64>, I = Vec<usize>> =
+    Tensor<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>>;
+pub type SparseVectorMatrix3View<'a> = SparseVectorMatrix3<&'a [f64], &'a [usize]>;
+
+impl SSMatrix3View<'_> {
+    /// Multiply `self` by the given `rhs` vector into the given `out` view.
+    /// Note that the output vector `out` may be more sparse than the number of
+    /// rows in `self`, however it is assumed that enough elements is allocated
+    /// in `out` to ensure that the result fits. Entries are packed towards the
+    /// beginning of out, and the number of non-zeros produced is returned so it
+    /// can be simply truncated to fit at the end of this function.
+    fn mul_sparse_matrix3_vector<S, I>(
+        self,
+        rhs: SparseVectorMatrix3<S, I>,
+        mut out: SparseVectorMatrix3<&mut [f64], &mut [usize]>,
+    ) -> usize
+    where
+        SparseVectorMatrix3<S, I>: for<'a> View<'a, Type = SparseVectorMatrix3View<'a>>,
+    {
+        let rhs = rhs.view();
+        // The output iterator will advance when we see a non-zero result.
+        let mut out_iter_mut = out.iter_mut();
+        let mut num_non_zeros = 0;
+
+        for (row_idx, row, _) in self.iter() {
+            // Initialize output
+            let mut sum_mtx = geo::math::Matrix3::zeros();
+            let mut row_nnz = 0;
+
+            // Compute the dot product of the two sparse vectors.
+            let mut row_iter = row.iter();
+            let mut rhs_iter = rhs.iter();
+            while let Some((col_idx, col, _)) = row_iter.next() {
+                while let Some((rhs_idx, rhs, _)) = rhs_iter.next() {
+                    if rhs_idx < col_idx {
+                        continue;
+                    } else if rhs_idx > col_idx {
+                        break;
+                    } else {
+                        // rhs_idx == row_idx
+                        sum_mtx += geo::math::Matrix3(*col.into_arrays())
+                            * geo::math::Matrix3(*rhs.into_arrays());
+                        row_nnz += 1;
+                    }
+                }
+            }
+
+            if row_nnz > 0 {
+                let (index, out_block) = out_iter_mut.next().unwrap();
+                *index = row_idx;
+                *(out_block.into_arrays()) = sum_mtx.into();
+                num_non_zeros += 1;
+            }
+        }
+
+        num_non_zeros
+    }
+}
+
+/// A transpose of a matrix.
+pub struct Transpose<M>(pub M);

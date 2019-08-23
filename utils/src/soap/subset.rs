@@ -1,6 +1,5 @@
 use super::*;
 use std::convert::AsRef;
-use std::borrow::Borrow;
 
 /// A Set that is a non-contiguous subset of some larger collection.
 /// `B` can be any borrowed collection type that implements the [`Set`], and [`RemovePrefix`]
@@ -373,21 +372,20 @@ where
 impl<S, I> SplitFirst for Subset<S, I>
 where
     I: SplitFirst + AsRef<[usize]>,
-    <I as SplitFirst>::First: Borrow<usize>,
+    <I as SplitFirst>::First: std::borrow::Borrow<usize>,
     S: Set + SplitAt + SplitFirst,
 {
     type First = S::First;
 
     /// Split the first element of this subset.
     fn split_first(self) -> Option<(Self::First, Self)> {
-        let Subset {
-            data,
-            indices,
-        } = self;
+        use std::borrow::Borrow;
+        let Subset { data, indices } = self;
         if let Some(indices) = indices {
             indices.split_first().map(|(first_index, rest_indices)| {
                 let n = data.len();
-                let offset = rest_indices.as_ref()
+                let offset = rest_indices
+                    .as_ref()
                     .first()
                     .map(|next| *next - *first_index.borrow())
                     .unwrap_or(n);

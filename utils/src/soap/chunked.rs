@@ -1,4 +1,5 @@
 use super::*;
+use std::convert::AsRef;
 
 /// A partitioning of the collection `S` into distinct chunks.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -65,9 +66,9 @@ impl<S: Set> Chunked<S> {
     /// ```
     pub fn from_sizes<L>(sizes: L, data: S) -> Self
     where
-        L: std::borrow::Borrow<[usize]>,
+        L: AsRef<[usize]>,
     {
-        let sizes = sizes.borrow();
+        let sizes = sizes.as_ref();
         assert_eq!(sizes.iter().sum::<usize>(), data.len());
 
         let mut offsets = Vec::with_capacity(sizes.len() + 1);
@@ -84,7 +85,7 @@ impl<S: Set> Chunked<S> {
     }
 }
 
-impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
+impl<S: Set, O: AsRef<[usize]>> Chunked<S, O> {
     /// Construct a `Chunked` collection of elements given a collection of
     /// offsets into `S`. This is the most efficient constructor for creating
     /// variable sized chunks, however it is also the most error prone.
@@ -109,7 +110,7 @@ impl<S: Set, O: std::borrow::Borrow<[usize]>> Chunked<S, O> {
     /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_offsets(offsets: O, data: S) -> Self {
-        let offsets_borrow = offsets.borrow();
+        let offsets_borrow = offsets.as_ref();
         assert!(!offsets_borrow.is_empty());
         assert_eq!(
             *offsets_borrow.last().unwrap(),
@@ -150,7 +151,7 @@ impl<S: Set, O> Chunked<S, O> {
 
 impl<S, O> Chunked<S, O>
 where
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     /// Return the offset into `data` of the element at the given index.
     /// This function returns the total length of `data` if `index` is equal to
@@ -170,7 +171,7 @@ where
     /// assert_eq!(4, s.offset(2));
     /// ```
     pub fn offset(&self, index: usize) -> usize {
-        self.chunks.borrow()[index] - self.chunks.borrow()[0]
+        self.chunks.as_ref()[index] - self.chunks.as_ref()[0]
     }
 
     /// Return the raw offset value of the element at the given index.
@@ -189,7 +190,7 @@ where
     /// assert_eq!(6, s.offset_value(2));
     /// ```
     pub fn offset_value(&self, index: usize) -> usize {
-        self.chunks.borrow()[index]
+        self.chunks.as_ref()[index]
     }
     pub fn offsets(&self) -> &O {
         &self.chunks
@@ -201,7 +202,7 @@ where
     /// Get the length of the chunk at the given index.
     /// This is equivalent to `self.get(chunk_index).len()`.
     pub fn chunk_len(&self, chunk_index: usize) -> usize {
-        let offsets = self.chunks.borrow();
+        let offsets = self.chunks.as_ref();
         assert!(chunk_index + 1 < offsets.len());
 
         unsafe { offsets.get_unchecked(chunk_index + 1) - offsets.get_unchecked(chunk_index) }
@@ -210,7 +211,7 @@ where
 
 impl<S, O> Chunked<S, O>
 where
-    O: std::borrow::BorrowMut<[usize]>,
+    O: AsRef<[usize]> + AsMut<[usize]>,
 {
     /// Move a number of elements from a chunk at the given index to the
     /// following chunk. If the last chunk is selected, then the transferred
@@ -238,7 +239,7 @@ where
     /// assert_eq!(None, c_iter.next());
     /// ```
     pub fn transfer_forward(&mut self, chunk_index: usize, num_elements: usize) {
-        self.chunks.borrow_mut()[chunk_index + 1] -= num_elements;
+        self.chunks.as_mut()[chunk_index + 1] -= num_elements;
     }
 
     /// Like `transfer_forward` but specify the number of elements to keep
@@ -299,7 +300,7 @@ where
 impl<S, O> Set for Chunked<S, O>
 where
     S: Set,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Elem = Vec<S::Elem>;
 
@@ -313,14 +314,14 @@ where
     /// assert_eq!(3, s.len());
     /// ```
     fn len(&self) -> usize {
-        self.chunks.borrow().len() - 1
+        self.chunks.as_ref().len() - 1
     }
 }
 
 impl<S, O> Chunked<S, O>
 where
     S: Truncate + Set,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     /// Remove any unused data past the last offset.
     /// Return the number of elements removed.
@@ -342,7 +343,7 @@ where
     /// assert_eq!(4, s.data().len());
     /// ```
     pub fn trim_data(&mut self) -> usize {
-        let offsets = self.chunks.borrow();
+        let offsets = self.chunks.as_ref();
         debug_assert!(offsets.len() > 0);
         let last_offset = unsafe { *offsets.get_unchecked(offsets.len() - 1) };
         let num_removed = self.data.len() - last_offset;
@@ -355,7 +356,7 @@ where
 impl<S, O> Chunked<S, O>
 where
     S: Truncate + Set,
-    O: std::borrow::Borrow<[usize]> + Truncate,
+    O: AsRef<[usize]> + Truncate,
 {
     /// Remove any empty chunks at the end of the collection and any unindexed
     /// data past the last offset.
@@ -378,7 +379,7 @@ where
     /// assert_eq!(4, s.data().len());
     /// ```
     pub fn trim(&mut self) -> usize {
-        let offsets = self.chunks.borrow();
+        let offsets = self.chunks.as_ref();
         let num_offsets = offsets.len();
         debug_assert!(num_offsets > 0);
         let last_offset = unsafe { *offsets.get_unchecked(num_offsets - 1) };
@@ -398,10 +399,10 @@ where
 
 impl<S: Truncate, O> Truncate for Chunked<S, O>
 where
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     fn truncate(&mut self, new_len: usize) {
-        let offsets = self.chunks.borrow();
+        let offsets = self.chunks.as_ref();
         debug_assert!(offsets.len() > 0);
         let end = unsafe { offsets.get_unchecked(offsets.len() - 1) };
         let first = offsets[new_len];
@@ -529,7 +530,7 @@ where
 impl<'a, S, O> GetIndex<'a, Chunked<S, O>> for usize
 where
     S: Set + View<'a> + Get<'a, std::ops::Range<usize>, Output = <S as View<'a>>::Type>,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Output = S::Output;
 
@@ -549,7 +550,7 @@ where
     fn get(self, chunked: &Chunked<S, O>) -> Option<Self::Output> {
         if self <= chunked.len() {
             let Chunked { ref chunks, data } = chunked;
-            let chunks = chunks.borrow();
+            let chunks = chunks.as_ref();
             chunks.get(0).and_then(|&first| {
                 chunks.get(self).and_then(|&cur| {
                     chunks.get(self + 1).and_then(|&next| {
@@ -568,7 +569,7 @@ where
 impl<'a, S, O> GetIndex<'a, Chunked<S, O>> for std::ops::Range<usize>
 where
     S: Set + View<'a> + Get<'a, std::ops::Range<usize>, Output = <S as View<'a>>::Type>,
-    O: std::borrow::Borrow<[usize]>
+    O: AsRef<[usize]>
         + View<'a>
         + Set
         + Get<'a, usize, Output = &'a usize>
@@ -608,7 +609,7 @@ where
 impl<S, O> IsolateIndex<Chunked<S, O>> for usize
 where
     S: Set + Isolate<std::ops::Range<usize>>,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Output = S::Output;
 
@@ -616,7 +617,7 @@ where
     fn try_isolate(self, chunked: Chunked<S, O>) -> Option<Self::Output> {
         if self <= chunked.len() {
             let Chunked { chunks, data } = chunked;
-            let chunks = chunks.borrow();
+            let chunks = chunks.as_ref();
             chunks.get(0).and_then(|&first| {
                 chunks.get(self).and_then(move |&cur| {
                     chunks.get(self + 1).and_then(move |&next| {
@@ -711,7 +712,7 @@ where
 
 impl<T, O> std::ops::Index<usize> for Chunked<&[T], O>
 where
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Output = [T];
 
@@ -730,7 +731,7 @@ where
     /// assert_eq!(&[5,6], &s[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        &self.data[self.chunks.borrow()[idx]..self.chunks.borrow()[idx + 1]]
+        &self.data[self.chunks.as_ref()[idx]..self.chunks.as_ref()[idx + 1]]
     }
 }
 
@@ -847,7 +848,7 @@ where
 impl<'a, S, O> Chunked<S, O>
 where
     S: View<'a>,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     /// Produce an iterator over elements (borrowed slices) of a `Chunked`.
     ///
@@ -894,7 +895,7 @@ where
     /// ```
     pub fn iter(&'a self) -> VarIter<'a, <S as View<'a>>::Type> {
         VarIter {
-            offsets: self.chunks.borrow(),
+            offsets: self.chunks.as_ref(),
             data: self.data.view(),
         }
     }
@@ -903,7 +904,7 @@ where
 impl<'a, S, O> Chunked<S, O>
 where
     S: ViewMut<'a>,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     /// Produce a mutable iterator over elements (borrowed slices) of a
     /// `Chunked`.
@@ -957,7 +958,7 @@ where
     /// ```
     pub fn iter_mut(&'a mut self) -> VarIter<'a, <S as ViewMut<'a>>::Type> {
         VarIter {
-            offsets: self.chunks.borrow(),
+            offsets: self.chunks.as_ref(),
             data: self.data.view_mut(),
         }
     }
@@ -1129,7 +1130,7 @@ impl<'a, S, O> View<'a> for Chunked<S, O>
 where
     S: Set + View<'a>,
     //Chunked<<S as View<'a>>::Type, &'a [usize]>: IntoIterator,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Type = Chunked<S::Type, &'a [usize]>;
 
@@ -1153,7 +1154,7 @@ where
     /// ```
     fn view(&'a self) -> Self::Type {
         Chunked {
-            chunks: self.chunks.borrow(),
+            chunks: self.chunks.as_ref(),
             data: self.data.view(),
         }
     }
@@ -1163,7 +1164,7 @@ impl<'a, S, O> ViewMut<'a> for Chunked<S, O>
 where
     S: Set + ViewMut<'a>,
     //Chunked<<S as ViewMut<'a>>::Type, &'a [usize]>: IntoIterator,
-    O: std::borrow::Borrow<[usize]>,
+    O: AsRef<[usize]>,
 {
     type Type = Chunked<S::Type, &'a [usize]>;
 
@@ -1184,7 +1185,7 @@ where
     /// ```
     fn view_mut(&'a mut self) -> Self::Type {
         Chunked {
-            chunks: self.chunks.borrow(),
+            chunks: self.chunks.as_ref(),
             data: self.data.view_mut(),
         }
     }
@@ -1297,9 +1298,7 @@ impl<S: Dummy, O: Dummy> Dummy for Chunked<S, O> {
 }
 
 /// Required for subsets of chunked collections.
-impl<S: RemovePrefix, O: RemovePrefix + std::borrow::Borrow<[usize]>> RemovePrefix
-    for Chunked<S, O>
-{
+impl<S: RemovePrefix, O: RemovePrefix + AsRef<[usize]>> RemovePrefix for Chunked<S, O> {
     /// Remove a prefix of size `n` from a chunked collection.
     ///
     /// # Example
@@ -1313,12 +1312,12 @@ impl<S: RemovePrefix, O: RemovePrefix + std::borrow::Borrow<[usize]>> RemovePref
     /// assert_eq!(None, iter.next());
     /// ```
     fn remove_prefix(&mut self, n: usize) {
-        let chunks = self.chunks.borrow();
+        let chunks = self.chunks.as_ref();
         assert!(n < chunks.len());
         let offset = *chunks.first().unwrap();
 
         self.chunks.remove_prefix(n);
-        let data_offset = *self.chunks.borrow().first().unwrap() - offset;
+        let data_offset = *self.chunks.as_ref().first().unwrap() - offset;
         self.data.remove_prefix(data_offset);
     }
 }

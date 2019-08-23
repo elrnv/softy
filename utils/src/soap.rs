@@ -802,6 +802,7 @@ where
     fn split_first(self) -> Option<(Self::First, Self)>;
 }
 
+//TODO: Rename to IntoStorage
 /// Convert a collection into its underlying representation, effectively
 /// stripping any organizational info.
 pub trait IntoFlat {
@@ -814,6 +815,7 @@ pub trait Storage {
     type Storage;
     fn storage(&self) -> &Self::Storage;
 }
+
 /// Get a mutable reference to the underlying storage type.
 pub trait StorageMut: Storage {
     fn storage_mut(&mut self) -> &mut Self::Storage;

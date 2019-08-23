@@ -1,4 +1,5 @@
 use super::*;
+use std::convert::{AsMut, AsRef};
 
 /// A Set that is a non-contiguous, unordered and possibly duplicated selection
 /// of some larger collection. `S` can be any borrowed collection type that
@@ -66,7 +67,7 @@ pub struct Select<S, I = Vec<usize>> {
 /// A borrowed selection.
 pub type SelectView<'a, S> = Select<S, &'a [usize]>;
 
-impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
+impl<S: Set, I: AsRef<[usize]>> Select<S, I> {
     /// Create a selection of elements from the original set from the given
     /// indices.
     ///
@@ -87,7 +88,7 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Select<S, I> {
     /// Panics if this selection has out of bounds indices.
     #[inline]
     fn validate(self) -> Self {
-        if !self.indices.borrow().iter().all(|&i| i < self.data.len()) {
+        if !self.indices.as_ref().iter().all(|&i| i < self.data.len()) {
             panic!("Select index out of bounds.");
         }
         self
@@ -99,7 +100,7 @@ where
     S: Set + ToOwned + Get<'a, usize>,
     <S as ToOwned>::Owned: std::iter::FromIterator<<S as Set>::Elem>,
     <S as Get<'a, usize>>::Output: ToOwned<Owned = <S as Set>::Elem>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Collapse the data values pointed to by `indices` into the structure
     /// given by the indices. In other words, replace `indices` with the data
@@ -147,7 +148,7 @@ where
     /// ```
     pub fn collapse(self) -> S::Owned {
         self.indices
-            .borrow()
+            .as_ref()
             .iter()
             .map(|&i| self.data.at(i).to_owned())
             .collect()
@@ -162,7 +163,7 @@ where
 // Set, Vew, ReinterpretSet (this needs to be refined)
 
 // Required for `Chunked` and `UniChunked` selections.
-impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Select<S, I> {
+impl<S: Set, I: AsRef<[usize]>> Set for Select<S, I> {
     type Elem = S::Elem;
     /// Get the number of selected elements.
     ///
@@ -175,7 +176,7 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Select<S, I> {
     /// assert_eq!(4, selection.len());
     /// ```
     fn len(&self) -> usize {
-        self.indices.borrow().len()
+        self.indices.as_ref().len()
     }
 }
 
@@ -183,14 +184,14 @@ impl<S: Set, I: std::borrow::Borrow<[usize]>> Set for Select<S, I> {
 impl<'a, S, I> View<'a> for Select<S, I>
 where
     S: View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     //<S as View<'a>>::Type: Set,
     //Select<<S as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
         Select {
-            indices: self.indices.borrow(),
+            indices: self.indices.as_ref(),
             data: self.data.view(),
         }
     }
@@ -199,7 +200,7 @@ where
 impl<'a, S, I> ViewMut<'a> for Select<S, I>
 where
     S: Set + ViewMut<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     //Select<<S as ViewMut<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
@@ -238,7 +239,7 @@ where
     /// ```
     fn view_mut(&'a mut self) -> Self::Type {
         Select {
-            indices: self.indices.borrow(),
+            indices: self.indices.as_ref(),
             data: self.data.view_mut(),
         }
     }
@@ -289,7 +290,7 @@ where
 impl<'a, S, I> Select<S, I>
 where
     S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
     <S as Set>::Elem: 'a,
 {
@@ -334,7 +335,7 @@ where
 
 impl<'a, S, I> GetIndex<'a, Select<S, I>> for usize
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     S: Get<'a, usize>,
 {
     type Output = (usize, <S as Get<'a, usize>>::Output);
@@ -342,7 +343,7 @@ where
     fn get(self, selection: &Select<S, I>) -> Option<Self::Output> {
         selection
             .indices
-            .borrow()
+            .as_ref()
             .get(self)
             .and_then(|&idx| selection.data.get(idx).map(|val| (idx, val)))
     }
@@ -409,7 +410,7 @@ where
 impl<'a, S, I> std::ops::Index<usize> for Select<S, I>
 where
     S: std::ops::Index<usize> + Set + Owned,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = S::Output;
 
@@ -430,14 +431,14 @@ where
     /// assert_eq!((4, 9..11), selection.at(3));
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.borrow()[idx])
+        self.data.index(self.indices.as_ref()[idx])
     }
 }
 
 impl<'a, S, I> std::ops::IndexMut<usize> for Select<S, I>
 where
     S: std::ops::IndexMut<usize> + Set + Owned,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Mutably index the selection.
     ///
@@ -462,13 +463,13 @@ where
     /// assert_eq!(selection[3], 5);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data.index_mut(self.indices.borrow()[idx])
+        self.data.index_mut(self.indices.as_ref()[idx])
     }
 }
 
 impl<'a, T, I> std::ops::Index<usize> for Select<&'a [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = T;
     /// Immutably index the selection of elements from a borrowed slice.
@@ -487,13 +488,13 @@ where
     /// assert_eq!(1, selection[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.borrow()[idx])
+        self.data.index(self.indices.as_ref()[idx])
     }
 }
 
 impl<'a, T, I> std::ops::Index<usize> for Select<&'a mut [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     type Output = T;
     /// Immutably index a selection of elements from a mutably borrowed slice.
@@ -511,13 +512,13 @@ where
     /// assert_eq!(3, subset[1]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.borrow()[idx])
+        self.data.index(self.indices.as_ref()[idx])
     }
 }
 
 impl<'a, T, I> std::ops::IndexMut<usize> for Select<&'a mut [T], I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Mutably index a selection of elements from a mutably borrowed slice.
     ///
@@ -539,7 +540,7 @@ where
     /// assert_eq!(selection[3], 100);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data.index_mut(self.indices.borrow()[idx])
+        self.data.index_mut(self.indices.as_ref()[idx])
     }
 }
 
@@ -550,12 +551,12 @@ where
 impl<'a, S, I> Select<S, I>
 where
     S: Set + Get<'a, usize> + View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
     pub fn iter(&'a self) -> impl Iterator<Item = (usize, <S as Get<'a, usize>>::Output)> {
         self.indices
-            .borrow()
+            .as_ref()
             .iter()
             .cloned()
             .filter_map(move |idx| self.data.get(idx).map(|val| (idx, val)))
@@ -564,19 +565,19 @@ where
 
 impl<S, I> Select<S, I>
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     pub fn index_iter(&self) -> impl Iterator<Item = &usize> {
-        self.indices.borrow().iter()
+        self.indices.as_ref().iter()
     }
 }
 
 impl<S, I> Select<S, I>
 where
-    I: std::borrow::BorrowMut<[usize]>,
+    I: AsMut<[usize]>,
 {
     pub fn index_iter_mut(&mut self) -> impl Iterator<Item = &mut usize> {
-        self.indices.borrow_mut().iter_mut()
+        self.indices.as_mut().iter_mut()
     }
 }
 

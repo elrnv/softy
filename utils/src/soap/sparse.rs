@@ -1,4 +1,5 @@
 use super::*;
+use std::convert::{AsMut, AsRef};
 use std::ops::Range;
 
 /// A `Sparse` data set `S` where the sparsity pattern is given by `I` as select
@@ -15,7 +16,7 @@ pub type SparseView<'a, S, T> = Sparse<S, T, &'a [usize]>;
 impl<S, I> Sparse<S, Range<usize>, I>
 where
     S: Set,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// Create a sparse collection from the given set of `indices`, a
     /// `dim`ension and a set of `values`.
@@ -51,7 +52,7 @@ impl<S, T, I> Sparse<S, T, I>
 where
     S: Set,
     T: Set,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     /// The most general constructor for a sparse collection taking a selection
     /// of values and their corresponding data.
@@ -150,7 +151,7 @@ impl<'a, S, T, I> View<'a> for Sparse<S, T, I>
 where
     S: View<'a>,
     T: View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     //Select<<T as View<'a>>::Type, &'a [usize]>: IntoIterator,
     //Sparse<<S as View<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
@@ -167,7 +168,7 @@ impl<'a, S, T, I> ViewMut<'a> for Sparse<S, T, I>
 where
     S: Set + ViewMut<'a>,
     T: Set + View<'a>,
-    I: std::borrow::BorrowMut<[usize]>,
+    I: AsMut<[usize]>,
     //Sparse<<S as ViewMut<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Sparse<S::Type, T::Type, &'a mut [usize]>;
@@ -182,7 +183,7 @@ where
         } = self;
         Sparse {
             selection: Select {
-                indices: indices.borrow_mut(),
+                indices: indices.as_mut(),
                 data: target.view(),
             },
             data: source.view_mut(),
@@ -221,14 +222,14 @@ where
 
 impl<'a, S, T, I> GetIndex<'a, Sparse<S, T, I>> for usize
 where
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     S: Get<'a, usize>,
 {
     type Output = (usize, <S as Get<'a, usize>>::Output);
 
     fn get(self, sparse: &Sparse<S, T, I>) -> Option<Self::Output> {
         let Sparse { selection, data } = sparse;
-        let selected = selection.indices.borrow();
+        let selected = selection.indices.as_ref();
         data.get(self).map(|item| (selected[self], item))
     }
 }
@@ -290,12 +291,50 @@ where
  * Iteration
  */
 
+impl<'a, S, T> IntoIterator for SparseView<'a, S, T>
+where
+    S: SplitFirst + Dummy,
+{
+    type Item = (usize, S::First);
+    type IntoIter = SparseIter<'a, S>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        SparseIter {
+            indices: self.selection.indices,
+            data: self.data,
+        }
+    }
+}
+
+pub struct SparseIter<'a, S> {
+    indices: &'a [usize],
+    data: S,
+}
+
+impl<'a, S> Iterator for SparseIter<'a, S>
+where
+    S: SplitFirst + Dummy,
+{
+    type Item = (usize, S::First);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
+        data_slice.split_first().and_then(|(first, rest)| {
+            self.data = rest;
+            self.indices.split_first().map(|(first_idx, rest_indices)| {
+                self.indices = rest_indices;
+                (*first_idx, first)
+            })
+        })
+    }
+}
+
 impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: View<'a>,
     <S as View<'a>>::Type: Set,
     T: Set + Get<'a, usize> + View<'a>,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator,
     <T as View<'a>>::Type: IntoIterator<Item = T::Output>,
 {
@@ -322,7 +361,7 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
-    I: std::borrow::Borrow<[usize]>,
+    I: AsRef<[usize]>,
 {
     pub fn source_iter_mut(
         &'a mut self,
@@ -341,7 +380,7 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
-    I: std::borrow::BorrowMut<[usize]>,
+    I: AsMut<[usize]>,
 {
     pub fn iter_mut(
         &'a mut self,
@@ -362,7 +401,7 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: View<'a>,
     <S as View<'a>>::Type: Set + IntoIterator,
-    I: std::borrow::BorrowMut<[usize]>,
+    I: AsMut<[usize]>,
 {
     pub fn index_iter_mut(
         &'a mut self,
@@ -401,6 +440,14 @@ impl<S: StorageInto<U>, T, I, U> StorageInto<U> for Sparse<S, T, I> {
             data: self.data.storage_into(),
             selection: self.selection,
         }
+    }
+}
+
+impl<S: IntoFlat, T, I> IntoFlat for Sparse<S, T, I> {
+    type FlatType = S::FlatType;
+    /// Convert the sparse set into its raw storage representation.
+    fn into_flat(self) -> Self::FlatType {
+        self.data.into_flat()
     }
 }
 

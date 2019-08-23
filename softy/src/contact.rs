@@ -337,14 +337,7 @@ pub(crate) fn build_triplet_contact_jacobian(
 /// to query points (contact points). Not all contact points are active, so rows
 /// are sparse, and not all surface vertex positions are affected by each query
 /// point, so columns are also sparse.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ContactJacobian<S = Vec<f64>, I = Vec<usize>>(
-    pub  Sparse<
-        Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, I>,
-        std::ops::Range<usize>,
-        I,
-    >,
-);
+pub type ContactJacobian<S = Vec<f64>, I = Vec<usize>> = SSMatrix3<S, I>;
 pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
 
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
@@ -372,103 +365,32 @@ impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContac
         offsets.shrink_to_fit();
         rows.shrink_to_fit();
 
-        ContactJacobian(Sparse::from_dim(
+        Tensor::new(Sparse::from_dim(
             rows,
             self.num_rows,
             Chunked::from_offsets(offsets, Sparse::from_dim(cols, self.num_cols, blocks)),
         ))
     }
 }
-
-impl ContactJacobian {
-    pub(crate) fn view(&self) -> ContactJacobianView {
-        ContactJacobian(self.0.view())
-    }
-    pub(crate) fn transpose(&self) -> Transpose<ContactJacobianView> {
-        Transpose(self.view())
-    }
-}
-
-impl ContactJacobianView<'_> {
-    pub(crate) fn num_cols(&self) -> usize {
-        self.0.data().data().selection().data.end()
-    }
-    pub(crate) fn num_rows(&self) -> usize {
-        self.0.selection().data.end()
-    }
-    pub(crate) fn view(&self) -> ContactJacobianView {
-        ContactJacobian(self.0.view())
-    }
-    //pub(crate) fn transpose(self) -> Transpose<Self> {
-    //    Transpose(self)
-    //}
-}
-
-impl<'a, Rhs> std::ops::Mul<Rhs> for ContactJacobianView<'_>
-where
-    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
-{
-    type Output = Tensor<Chunked3<Vec<f64>>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        use geo::math::{Matrix3, Vector3};
-        let v = rhs.into();
-        assert_eq!(v.len(), self.num_cols());
-
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
-        for (row_idx, row, _) in self.0.iter() {
-            for (col_idx, block, _) in row.iter() {
-                let out =
-                    Vector3(res[row_idx]) + Matrix3(*block.into_arrays()) * Vector3(v[col_idx]);
-                res[row_idx] = out.into();
-            }
-        }
-
-        Tensor::new(res)
-    }
-}
-
-impl<'a, Rhs> std::ops::Mul<Rhs> for Transpose<ContactJacobianView<'_>>
-where
-    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
-{
-    type Output = Tensor<Chunked3<Vec<f64>>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        use geo::math::{Matrix3, Vector3};
-        let f = rhs.into();
-        assert_eq!(f.len(), self.0.num_rows());
-
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols()]);
-        for (row_idx, row, _) in (self.0).0.iter() {
-            for (col_idx, block, _) in row.iter() {
-                let out =
-                    Vector3(res[col_idx]) + Matrix3(*block.into_arrays()) * Vector3(f[row_idx]);
-                res[col_idx] = out.into();
-            }
-        }
-
-        Tensor::new(res)
-    }
-}
-
-impl<'a, I, Rhs> std::ops::Mul<Rhs> for &TripletContactJacobian<I>
-where
-    I: Clone + Iterator<Item = (usize, usize)>,
-    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
-{
-    type Output = Chunked3<Vec<f64>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        let v = rhs.into();
-        assert_eq!(v.len(), self.num_cols);
-
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows]);
-        for ((r, c), &block) in self.iter.clone().zip(self.blocks.iter()) {
-            let out = geo::math::Vector3(res[r]) + block * geo::math::Vector3(v[c]);
-            res[r] = out.into();
-        }
-
-        res
-    }
-}
+//
+//impl<'a, I> std::ops::Mul<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>
+//    for &TripletContactJacobian<I>
+//where
+//    I: Clone + Iterator<Item = (usize, usize)>,
+//{
+//    type Output = Chunked3<Vec<f64>>;
+//    fn mul(self, rhs: Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>) -> Self::Output {
+//        assert_eq!(rhs.data.len(), self.num_cols);
+//
+//        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows]);
+//        for ((r, c), &block) in self.iter.clone().zip(self.blocks.iter()) {
+//            let out = geo::math::Vector3(res[r]) + block * geo::math::Vector3(rhs[c]);
+//            res[r] = out.into();
+//        }
+//
+//        res
+//    }
+//}
 
 impl<I> Into<sprs::CsMat<f64>> for TripletContactJacobian<I>
 where
@@ -490,35 +412,29 @@ where
     }
 }
 
-/// A transpose of a matrix like the contact jacobian.
-pub(crate) struct Transpose<M>(pub M);
-
 //impl<I> TripletContactJacobian<I> {
 //pub(crate) fn transpose(&self) -> Transpose<&Self> {
 //    Transpose(&self)
 //}
 //}
 
-impl<'a, I, Rhs> std::ops::Mul<Rhs> for Transpose<&TripletContactJacobian<I>>
-where
-    I: Clone + Iterator<Item = (usize, usize)>,
-    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
-{
-    type Output = Chunked3<Vec<f64>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        let f = rhs.into();
-        assert_eq!(f.len(), self.0.num_rows);
-
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols]);
-
-        for ((r, c), &block) in self.0.iter.clone().zip(self.0.blocks.iter()) {
-            let out = geo::math::Vector3(res[c]) + block.transpose() * geo::math::Vector3(f[r]);
-            res[c] = out.into();
-        }
-
-        res
-    }
-}
+//impl<'a, I> Transpose<&TripletContactJacobian<I>>
+//where
+//    I: Clone + Iterator<Item = (usize, usize)>,
+//{
+//    fn mul_vector(self, rhs: Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>) -> Chunked3<Vec<f64>> {
+//        assert_eq!(rhs.data.len(), self.0.num_rows);
+//
+//        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols]);
+//
+//        for ((r, c), &block) in self.0.iter.clone().zip(self.0.blocks.iter()) {
+//            let out = geo::math::Vector3(res[c]) + block.transpose() * geo::math::Vector3(rhs[r]);
+//            res[c] = out.into();
+//        }
+//
+//        res
+//    }
+//}
 
 /// A diagonal mass matrix chunked by triplet blocks (one triplet for each vertex).
 pub type MassMatrix<S = Vec<f64>> = DiagonalMatrix3<S>;
@@ -527,132 +443,8 @@ pub type MassMatrixView<'a> = MassMatrix<&'a [f64]>;
 pub type Delassus<S = Vec<f64>, I = Vec<usize>> = DSMatrix3<S, I>;
 pub type DelassusView<'a> = Delassus<&'a [f64], &'a [usize]>;
 
-impl std::ops::MulAssign<MassMatrixView<'_>> for ContactJacobian {
-    fn mul_assign(&mut self, rhs: MassMatrixView<'_>) {
-        for (_, mut row) in self.0.view_mut().iter_mut() {
-            for ((_, mut block), mass) in row.iter_mut().zip(rhs.data.iter()) {
-                for (col, m) in block.iter_mut().zip(mass.iter()) {
-                    *col = (geo::math::Vector3(*col) * *m).into();
-                }
-            }
-        }
-    }
-}
-
 pub(crate) type EffectiveMassInv<S = Vec<f64>, I = Vec<usize>> = DSMatrix3<S, I>;
 pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usize]>;
-
-impl std::ops::Mul<Transpose<ContactJacobianView<'_>>> for ContactJacobianView<'_> {
-    type Output = Tensor<
-        Sparse<
-            Chunked<Sparse<Chunked3<Chunked3<Vec<f64>>>, std::ops::Range<usize>, Vec<usize>>>,
-            std::ops::Range<usize>,
-            Vec<usize>,
-        >,
-    >;
-    fn mul(self, rhs: Transpose<ContactJacobianView>) -> Self::Output {
-        let rhs_t = rhs.0;
-        let num_rows = self.num_rows();
-        let num_cols = rhs_t.num_rows();
-
-        let lhs_nnz = self.0.storage().len();
-        let rhs_nnz = rhs_t.0.storage().len();
-        let num_non_zero_blocks = lhs_nnz + rhs_nnz;
-
-        // Allocate enough offsets for all non-zero rows in self. and assign the
-        // first row to contain all elements by setting all offsets to
-        // num_non_zero_blocks except the first.
-        let mut non_zero_row_offsets = vec![num_non_zero_blocks; self.0.len() + 1];
-        non_zero_row_offsets[0] = 0;
-
-        let mut out = Sparse::from_dim(
-            self.0.indices().to_vec(),
-            num_rows,
-            Chunked::from_offsets(
-                non_zero_row_offsets,
-                Sparse::from_dim(
-                    vec![0; num_non_zero_blocks], // Pre-allocate column index vec.
-                    num_cols,
-                    Chunked3::from_flat(Chunked3::from_flat(vec![0.0; num_non_zero_blocks * 9])),
-                ),
-            ),
-        );
-
-        let mut nz_row_idx = 0;
-        for (row_idx, row_l, _) in self.0.iter() {
-            let (_, out_row, _) = out.view_mut().isolate(nz_row_idx);
-            let num_non_zero_blocks_in_row = rhs_t.view().mul_vector(row_l, out_row);
-
-            // Truncate resulting row. This makes space for the next row in the output.
-            if num_non_zero_blocks_in_row > 0 {
-                // This row is non-zero, set the row index in the output.
-                out.indices_mut()[nz_row_idx] = row_idx;
-                // Truncate the current row to fit.
-                out.data_mut()
-                    .transfer_forward_all_but(nz_row_idx, num_non_zero_blocks_in_row);
-                nz_row_idx += 1;
-            }
-        }
-
-        // There may be fewer non-zero rows than in self. Truncate those.
-        out.indices_mut().truncate(nz_row_idx);
-        // Also truncate the entries in storage we didn't use.
-        out.data_mut().trim();
-
-        Tensor::new(out)
-    }
-}
-
-impl ContactJacobianView<'_> {
-    /// Multiply `self` by the given `rhs` vector into the given `out` view.
-    /// Note that the output vector `out` may be more sparse than the number of
-    /// rows in `self`, however it is assumed that enough elements is allocated
-    /// in `out` to ensure that the result fits. Entries are packed towards the
-    /// beginning of out, and the number of non-zeros produced is returned so it
-    /// can be simply truncated to fit at the end of this function.
-    fn mul_vector(
-        self,
-        rhs: SparseView<Chunked3<Chunked3<&[f64]>>, std::ops::Range<usize>>,
-        mut out: Sparse<Chunked3<Chunked3<&mut [f64]>>, std::ops::Range<usize>, &mut [usize]>,
-    ) -> usize {
-        // The output iterator will advance when we see a non-zero result.
-        let mut out_iter_mut = out.iter_mut();
-        let mut num_non_zeros = 0;
-
-        for (row_idx, row, _) in self.0.iter() {
-            // Initialize output
-            let mut sum_mtx = geo::math::Matrix3::zeros();
-            let mut row_nnz = 0;
-
-            // Compute the dot product of the two sparse vectors.
-            let mut row_iter = row.iter();
-            let mut rhs_iter = rhs.iter();
-            while let Some((col_idx, col, _)) = row_iter.next() {
-                while let Some((rhs_idx, rhs, _)) = rhs_iter.next() {
-                    if rhs_idx < col_idx {
-                        continue;
-                    } else if rhs_idx > col_idx {
-                        break;
-                    } else {
-                        // rhs_idx == row_idx
-                        sum_mtx += geo::math::Matrix3(*col.into_arrays())
-                            * geo::math::Matrix3(*rhs.into_arrays());
-                        row_nnz += 1;
-                    }
-                }
-            }
-
-            if row_nnz > 0 {
-                let (index, out_block) = out_iter_mut.next().unwrap();
-                *index = row_idx;
-                *(out_block.into_arrays()) = sum_mtx.into();
-                num_non_zeros += 1;
-            }
-        }
-
-        num_non_zeros
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -427,6 +427,11 @@ impl ContactConstraint for PointContactConstraint {
         let effective_mass_inv = jac_mass.view() * jac.transpose();
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
 
+        let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
+        let ldlt_solver =
+            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
+        let impulse = ldlt_solver.solve(rhs.storage());
+
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());
 
@@ -602,7 +607,10 @@ impl ContactConstraint for PointContactConstraint {
 
             let add_vel = self.collider_mass_inv.as_ref().unwrap().view()
                 * Tensor::new(frictional_contact.collider_impulse.view());
-            let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(indices.as_slice(), collider_vel));
+            let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(
+                indices.as_slice(),
+                collider_vel,
+            ));
             out_vel += add_vel.view();
         }
     }

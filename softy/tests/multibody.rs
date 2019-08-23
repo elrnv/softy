@@ -9,6 +9,7 @@ pub fn medium_solid_material() -> SolidMaterial {
     SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
 }
 
+#[test]
 fn stacking_boxes() -> Result<(), Error> {
     let material = medium_solid_material();
     let params = SimParams {

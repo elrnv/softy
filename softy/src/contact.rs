@@ -616,7 +616,7 @@ impl ContactJacobianView<'_> {
         mut out: Sparse<Chunked3<Chunked3<&mut [f64]>>, std::ops::Range<usize>, &mut [usize]>,
     ) -> usize {
         // The output iterator will advance when we see a non-zero result.
-        let out_iter_mut = out.iter_mut();
+        let mut out_iter_mut = out.iter_mut();
         let mut num_non_zeros = 0;
 
         for (row_idx, row, _) in self.0.iter() {

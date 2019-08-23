@@ -117,6 +117,7 @@ impl<'a> FrictionSolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use utils::soap::*;
     use crate::Error;
     use approx::*;
 
@@ -161,10 +162,7 @@ mod tests {
 
         let velocity = vec![[1.0, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
-        let mass_inv_mtx = Tensor::new(Chunked::from_sizes(
-            vec![1],
-            Sparse::from_dim(vec![0], 1, Chunked3::from_flat(vec![1.0 / mass; 3])),
-        ));
+        let mass_inv_mtx: DSMatrix3 = Tensor::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
@@ -201,6 +199,9 @@ mod tests {
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];
         let masses = vec![0.0003720701030949866, 0.0003720701030949866];
 
+        let mass_inv_mtx: DSMatrix3 =
+            Tensor::new(Chunked3::from_array_vec(vec![[1.0 / masses[0]; 3], [1.0 / masses[1]; 3]])).into();
+
         let mut contact_basis = ContactBasis::new();
         let normals = vec![
             [-0.0, -0.7071067811865476, -0.7071067811865476],
@@ -212,7 +213,7 @@ mod tests {
             &velocity,
             &contact_impulse,
             &contact_basis,
-            &masses,
+            mass_inv_mtx.view(),
             params,
         );
         let solution = solver.step();

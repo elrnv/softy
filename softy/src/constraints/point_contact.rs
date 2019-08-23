@@ -581,14 +581,14 @@ impl ContactConstraint for PointContactConstraint {
 
     fn add_mass_weighted_frictional_contact_impulse(
         &self,
-        mut vel: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        [object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if !frictional_contact.object_impulse.is_empty() {
                 if let Some(mass_mtx) = self.object_mass_inv.as_ref() {
                     let add_vel =
                         mass_mtx.view() * Tensor::new(frictional_contact.object_impulse.view());
-                    let mut out_vel = Tensor::new(vel[0]);
+                    let mut out_vel = Tensor::new(object_vel);
                     out_vel += add_vel.view();
                 }
             }
@@ -602,7 +602,7 @@ impl ContactConstraint for PointContactConstraint {
 
             let add_vel = self.collider_mass_inv.as_ref().unwrap().view()
                 * Tensor::new(frictional_contact.collider_impulse.view());
-            let mut out_vel = Tensor::new(Subset::from_indices(indices, vel[1]));
+            let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(indices.as_slice(), collider_vel));
             out_vel += add_vel.view();
         }
     }

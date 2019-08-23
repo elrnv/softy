@@ -307,7 +307,7 @@ where
 }
 
 /// This impl enables `Chunked` `Subset`s
-impl<V> SplitAt for Subset<V, &[usize]>
+impl<V> SplitAt for SubsetView<'_, V>
 where
     V: Set + SplitAt,
 {
@@ -365,9 +365,9 @@ where
 }
 
 /// This impl enables `Subset`s of `Subset`s
-impl<S> SplitFirst for SubsetView<S>
+impl<S> SplitFirst for SubsetView<'_, S>
 where
-    S: Set + SplitAt,
+    S: Set + SplitAt + SplitFirst,
 {
     type First = S::First;
 
@@ -376,34 +376,29 @@ where
         if let Some(ref indices) = self.indices {
             indices.split_first().map(|(first_index, rest_indices)| {
                 let n = self.data.len();
-                let offset = indices_r
+                let offset = rest_indices
                     .first()
-                    .map(|first| *first - *indices_l.first().unwrap_or(first))
+                    .map(|next| *next - *first_index)
                     .unwrap_or(n);
                 let (data_l, data_r) = self.data.split_at(offset);
                 (
+                    data_l.split_first().unwrap().0,
                     Subset {
-                        indices: Some(indices_l),
-                        data: data_l,
-                    },
-                    Subset {
-                        indices: Some(indices_r),
+                        indices: Some(rest_indices),
                         data: data_r,
                     },
                 )
             })
         } else {
-            let (data_l, data_r) = self.data.split_at(mid);
-            (
-                Subset {
-                    indices: None,
-                    data: data_l,
-                },
-                Subset {
-                    indices: None,
-                    data: data_r,
-                },
-            )
+            self.data.split_first().map(|(first, rest)| {
+                (
+                    first,
+                    Subset {
+                        indices: None,
+                        data: rest,
+                    },
+                )
+            })
         }
     }
 }
@@ -773,6 +768,17 @@ impl<S: Truncate, I: Truncate> Truncate for Subset<S, I> {
 impl<S, I> From<S> for Subset<S, I> {
     fn from(set: S) -> Subset<S, I> {
         Subset::all(set)
+    }
+}
+
+/// Pass through the conversion for structure type `Subset`.
+impl<S: StorageInto<T>, I, T> StorageInto<T> for Subset<S, I> {
+    type Output = Subset<S::Output, I>;
+    fn storage_into(self) -> Self::Output {
+        Subset {
+            data: self.data.storage_into(),
+            indices: self.indices,
+        }
     }
 }
 

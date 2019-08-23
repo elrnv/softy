@@ -819,11 +819,12 @@ pub trait StorageMut: Storage {
     fn storage_mut(&mut self) -> &mut Self::Storage;
 }
 
-/// Transform the borrow pattern of the underlying storage type. This is useful
-/// when the storage is not just a simple vec but a combination of independent
+/// Transform the access pattern of the underlying storage type. This is useful
+/// when the storage is not just a simple `Vec` or slice but a combination of independent
 /// collections.
-pub trait StorageInto: storage {
-    fn storage_into(self, f: F) -> &mut Self::Storage;
+pub trait StorageInto<Target> {
+    type Output;
+    fn storage_into(self) -> Self::Output;
 }
 
 pub trait CloneWithFlat<FlatType> {

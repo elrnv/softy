@@ -390,6 +390,21 @@ impl<S: Truncate, T, I: Truncate> Truncate for Sparse<S, T, I> {
 }
 
 /*
+ * Conversions
+ */
+
+/// Pass through the conversion for structure type `Subset`.
+impl<S: StorageInto<U>, T, I, U> StorageInto<U> for Sparse<S, T, I> {
+    type Output = Sparse<S::Output, T, I>;
+    fn storage_into(self) -> Self::Output {
+        Sparse {
+            data: self.data.storage_into(),
+            selection: self.selection,
+        }
+    }
+}
+
+/*
  * Storage Access
  */
 

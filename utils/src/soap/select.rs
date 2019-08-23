@@ -597,6 +597,21 @@ impl<S, I: Truncate> Truncate for Select<S, I> {
 }
 
 /*
+ * Conversions
+ */
+
+/// Pass through the conversion for structure type `Select`.
+impl<S: StorageInto<T>, I, T> StorageInto<T> for Select<S, I> {
+    type Output = Select<S::Output, I>;
+    fn storage_into(self) -> Self::Output {
+        Select {
+            data: self.data.storage_into(),
+            indices: self.indices,
+        }
+    }
+}
+
+/*
  * Data Access
  */
 

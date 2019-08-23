@@ -191,3 +191,31 @@ impl<T> Truncate for Vec<T> {
         Vec::truncate(self, new_len);
     }
 }
+
+/*
+ * These are base cases for `ConvertStorage`. We apply the conversion at this point since `Vec` is
+ * a storage type. The following are some common conversion behaviours.
+ */
+
+/// Convert a `Vec` of one type into a `Vec` of another type given that the element types can be
+/// converted.
+///
+/// # Example
+///
+/// ```
+/// use utils::soap::*;
+/// let sentences = vec!["First", "sentence", "about", "nothing", ".", "Second", "sentence", "."];
+/// let chunked = Chunked::from_sizes(vec![5,3], sentences);
+/// let owned_sentences: Chunked<Vec<String>> = chunked.storage_into();
+/// assert_eq!(Some(&["Second".to_string(), "sentence".to_string(), ".".to_string()][..]), owned_sentences.view().get(1));
+/// ```
+impl<T, S: Into<T>> StorageInto<Vec<T>> for Vec<S> {
+    type Output = Vec<T>;
+    fn storage_into(self) -> Self::Output {
+        self.into_iter().map(|x| x.into()).collect()
+    }
+}
+
+/*
+ * End of ConvertStorage impls
+ */

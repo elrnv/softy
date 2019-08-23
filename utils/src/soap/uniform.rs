@@ -1425,3 +1425,14 @@ impl<S: Clear, N> Clear for UniChunked<S, N> {
         self.data.clear();
     }
 }
+
+/// Pass through the conversion for structure type `UniChunked`.
+impl<S: StorageInto<T>, N, T> StorageInto<T> for UniChunked<S, N> {
+    type Output = UniChunked<S::Output, N>;
+    fn storage_into(self) -> Self::Output {
+        UniChunked {
+            data: self.data.storage_into(),
+            chunks: self.chunks,
+        }
+    }
+}

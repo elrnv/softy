@@ -1357,6 +1357,17 @@ where
     }
 }
 
+/// Pass through the conversion for structure type `Chunked`.
+impl<S: StorageInto<T>, O, T> StorageInto<T> for Chunked<S, O> {
+    type Output = Chunked<S::Output, O>;
+    fn storage_into(self) -> Self::Output {
+        Chunked {
+            data: self.data.storage_into(),
+            chunks: self.chunks,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

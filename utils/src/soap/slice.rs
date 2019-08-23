@@ -380,3 +380,36 @@ impl<T> Truncate for &mut [T] {
         *self = data.split_at_mut(new_len).0;
     }
 }
+
+/*
+ * These are base cases for `ConvertStorage`. We apply the conversion at this point since slices
+ * are storage types. The following are some common conversion behaviours.
+ */
+
+/// Convert a slice into an owned `Vec` type.
+impl<'a, T: Clone> StorageInto<Vec<T>> for &'a [T] {
+    type Output = Vec<T>;
+    fn storage_into(self) -> Self::Output {
+        self.to_vec()
+    }
+}
+
+/// Convert a mutable slice into an owned `Vec` type.
+impl<'a, T: Clone> StorageInto<Vec<T>> for &'a mut [T] {
+    type Output = Vec<T>;
+    fn storage_into(self) -> Self::Output {
+        self.to_vec()
+    }
+}
+
+/// Convert a mutable slice into an immutable borrow.
+impl<'a, T: 'a> StorageInto<&'a [T]> for &'a mut [T] {
+    type Output = &'a [T];
+    fn storage_into(self) -> Self::Output {
+        &*self
+    }
+}
+
+/*
+ * End of ConvertStorage impls
+ */

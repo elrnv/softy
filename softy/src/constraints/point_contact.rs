@@ -417,7 +417,7 @@ impl ContactConstraint for PointContactConstraint {
         let mut collider_velocity = Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]);
         v[1].clone_into_other(&mut collider_velocity);
 
-        let mut velocity = jac.view() * v[0];
+        let mut velocity = jac.view() * Tensor::new(v[0]);
         let mut rhs = velocity.view_mut();
         rhs -= Tensor::new(collider_velocity.view());
 
@@ -430,7 +430,7 @@ impl ContactConstraint for PointContactConstraint {
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         let ldlt_solver =
             sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
-        let impulse = ldlt_solver.solve(rhs.storage());
+        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());
@@ -443,18 +443,18 @@ impl ContactConstraint for PointContactConstraint {
 
         let success = if false {
             // Polar coords
-            let velocity_t: Vec<_> = active_query_indices
+            let predictor_impulse_t: Vec<_> = active_query_indices
                 .iter()
                 .map(|&aqi| {
-                    let vel: [f64; 3] = velocity.data[query_indices[aqi]].into();
-                    let v = contact_basis.to_cylindrical_contact_coordinates(vel, aqi);
-                    v.tangent
+                    let predictor_imp: [f64; 3] = predictor_impulse[query_indices[aqi]].into();
+                    let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
+                    r.tangent
                 })
                 .collect();
             if true {
                 // switch between implicit solver and explicit solver here.
                 match FrictionPolarSolver::new(
-                    &velocity_t,
+                    &predictor_impulse_t,
                     &contact_impulse,
                     &contact_basis,
                     //TODO:: ADD proper MASS HERE
@@ -486,17 +486,17 @@ impl ContactConstraint for PointContactConstraint {
                     }
                 }
             } else {
-                for (contact_idx, (&aqi, &v_t, &cr)) in zip!(
+                for (contact_idx, (&aqi, &pred_r_t, &cr)) in zip!(
                     active_query_indices.iter(),
-                    velocity_t.iter(),
+                    predictor_impulse_t.iter(),
                     contact_impulse.iter()
                 )
                 .enumerate()
                 {
-                    let r_t = if v_t.radius > 0.0 {
+                    let r_t = if pred_r_t.radius > 0.0 {
                         Polar2 {
                             radius: params.dynamic_friction * cr.abs(),
-                            angle: negate_angle(v_t.angle),
+                            angle: negate_angle(pred_r_t.angle),
                         }
                     } else {
                         Polar2 {
@@ -512,18 +512,18 @@ impl ContactConstraint for PointContactConstraint {
             }
         } else {
             // Euclidean coords
-            let velocity_t: Vec<_> = active_query_indices
+            let predictor_impulse_t: Vec<_> = active_query_indices
                 .iter()
                 .map(|&aqi| {
-                    let vel: [f64; 3] = velocity.data[query_indices[aqi]].into();
-                    let v = contact_basis.to_contact_coordinates(vel, aqi);
-                    [v[1], v[2]]
+                    let pred_r: [f64; 3] = predictor_impulse[query_indices[aqi]].into();
+                    let r = contact_basis.to_contact_coordinates(pred_r, aqi);
+                    [r[1], r[2]]
                 })
                 .collect();
             if false {
                 // switch between implicit solver and explicit solver here.
                 let mut solver = FrictionSolver::new(
-                    &velocity_t,
+                    &predictor_impulse_t,
                     &contact_impulse,
                     &contact_basis,
                     effective_mass_inv.view(),
@@ -539,17 +539,17 @@ impl ContactConstraint for PointContactConstraint {
                 }
                 true
             } else {
-                for (contact_idx, (&aqi, &v_t, &cr)) in zip!(
+                for (contact_idx, (&aqi, &pred_r_t, &cr)) in zip!(
                     active_query_indices.iter(),
-                    velocity_t.iter(),
+                    predictor_impulse_t.iter(),
                     contact_impulse.iter()
                 )
                 .enumerate()
                 {
-                    let v_t = Vector2(v_t);
-                    let v_norm = v_t.norm();
-                    let r_t = if v_norm > 0.0 {
-                        v_t * (-params.dynamic_friction * cr.abs() / v_norm)
+                    let pred_r_t = Vector2(pred_r_t);
+                    let pred_r_norm = pred_r_t.norm();
+                    let r_t = if pred_r_norm > 0.0 {
+                        pred_r_t * (-params.dynamic_friction * cr.abs() / pred_r_norm)
                     } else {
                         Vector2::zeros()
                     };
@@ -571,7 +571,7 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
-        *object_friction_impulse = (jac.transpose() * collider_friction_impulse.view()).data;
+        *object_friction_impulse = (jac.transpose() * Tensor::new(collider_friction_impulse.view().into())).data;
 
         // The last thing to do is to ensure that collider friction impulses are
         // the impulses ON the collider and not BY the collider.

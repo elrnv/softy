@@ -18,19 +18,19 @@ pub struct FrictionPolarSolver<'a> {
 }
 
 impl<'a> FrictionPolarSolver<'a> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_force` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+    /// Build a new solver for the friction problem. The given a `predictor_impulse` as a stacked
+    /// vector of tangential impulses for each contact point in contact space. `contact_force` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub fn without_contact_jacobian(
-        velocity: &'a [Polar2<f64>],
+        predictor_impulse: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         Self::new_impl(
-            velocity,
+            predictor_impulse,
             contact_force,
             contact_basis,
             mass_inv_mtx,
@@ -41,12 +41,12 @@ impl<'a> FrictionPolarSolver<'a> {
 }
 
 impl<'a> FrictionPolarSolver<'a> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_force` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+    /// Build a new solver for the friction problem. The given `predictor_impulse` is a stacked
+    /// vector of tangential velocities for each contact point in contact space. `contact_force` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub(crate) fn new(
-        velocity: &'a [Polar2<f64>],
+        predictor_impulse: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
@@ -54,7 +54,7 @@ impl<'a> FrictionPolarSolver<'a> {
         contact_jacobian: ContactJacobianView<'a>,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         Self::new_impl(
-            velocity,
+            predictor_impulse,
             contact_force,
             contact_basis,
             mass_inv_mtx,
@@ -64,7 +64,7 @@ impl<'a> FrictionPolarSolver<'a> {
     }
 
     fn new_impl(
-        velocity: &'a [Polar2<f64>],
+        predictor_impulse: &'a [Polar2<f64>],
         contact_force: &'a [f64],
         _contact_basis: &'a ContactBasis,
         _mass_inv_mtx: EffectiveMassInvView<'a>,
@@ -72,7 +72,7 @@ impl<'a> FrictionPolarSolver<'a> {
         contact_jacobian: Option<ContactJacobianView<'a>>,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         let problem = ExplicitFrictionPolarProblem(FrictionPolarProblem {
-            velocity,
+            predictor_impulse,
             contact_force,
             //contact_basis,
             mu: params.dynamic_friction,
@@ -118,9 +118,9 @@ impl<'a> FrictionPolarSolver<'a> {
 }
 
 pub(crate) struct FrictionPolarProblem<'a> {
-    /// A set of tangential velocities in contact space for active contacts. These are used to
-    /// determine the applied frictional force.
-    velocity: &'a [Polar2<f64>],
+    /// A set of tangential predictor impulses in contact space for active contacts. These are used
+    /// to determine the applied frictional force.
+    predictor_impulse: &'a [Polar2<f64>],
     /// A set of contact forces for each contact point.
     contact_force: &'a [f64],
     ///// Basis defining the normal and tangent space at each point of contact.
@@ -137,7 +137,7 @@ pub(crate) struct FrictionPolarProblem<'a> {
 
 impl FrictionPolarProblem<'_> {
     pub fn num_contacts(&self) -> usize {
-        self.velocity.len()
+        self.predictor_impulse.len()
     }
     pub fn num_variables(&self) -> usize {
         2 * self.num_contacts()
@@ -159,14 +159,14 @@ impl FrictionPolarProblem<'_> {
 
     pub fn initial_point(&self, f: &mut [Number]) -> bool {
         let forces: &mut [Polar2<f64>] = reinterpret_mut_slice(f);
-        for (f, &cf, &v) in zip!(
+        for (f, &cf, &r) in zip!(
             forces.iter_mut(),
             self.contact_force.iter(),
-            self.velocity.iter()
+            self.predictor_impulse.iter()
         ) {
-            if v.radius > 0.0 {
+            if r.radius > 0.0 {
                 f.radius = self.mu * cf.abs();
-                f.angle = negate_angle(v.angle);
+                f.angle = negate_angle(r.angle);
             } else {
                 *f = Polar2 {
                     radius: 0.0,
@@ -212,14 +212,14 @@ impl ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_> {
 
     fn objective(&self, f: &[Number], obj: &mut Number) -> bool {
         let forces: &[Polar2<f64>] = reinterpret_slice(f);
-        assert_eq!(self.0.velocity.len(), forces.len());
+        assert_eq!(self.0.predictor_impulse.len(), forces.len());
 
         // Clear objective value.
         *obj = 0.0;
 
         // Compute (negative of) frictional dissipation.
-        for (&v, &f) in self.0.velocity.iter().zip(forces.iter()) {
-            *obj += f.radius * f64::cos(f.angle - v.angle);
+        for (&r, &f) in self.0.predictor_impulse.iter().zip(forces.iter()) {
+            *obj += f.radius * f64::cos(f.angle - r.angle);
         }
 
         true
@@ -228,7 +228,7 @@ impl ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_> {
     fn objective_grad(&self, f: &[Number], grad_f: &mut [Number]) -> bool {
         let forces: &[Polar2<Number>] = reinterpret_slice(f);
         let grad_f: &mut [Polar2<Number>] = reinterpret_mut_slice(grad_f);
-        assert_eq!(self.0.velocity.len(), grad_f.len());
+        assert_eq!(self.0.predictor_impulse.len(), grad_f.len());
 
         for g in grad_f.iter_mut() {
             *g = Polar2 {
@@ -237,9 +237,9 @@ impl ipopt::BasicProblem for ExplicitFrictionPolarProblem<'_> {
             };
         }
 
-        for (g, &v, &f) in zip!(grad_f.iter_mut(), self.0.velocity.iter(), forces.iter()) {
-            g.radius += f64::cos(f.angle - v.angle);
-            g.angle -= f.radius * f64::sin(f.angle - v.angle);
+        for (g, &r, &f) in zip!(grad_f.iter_mut(), self.0.predictor_impulse.iter(), forces.iter()) {
+            g.radius += f64::cos(f.angle - r.angle);
+            g.angle -= f.radius * f64::sin(f.angle - r.angle);
         }
 
         true
@@ -270,17 +270,17 @@ impl ipopt::NewtonProblem for ExplicitFrictionPolarProblem<'_> {
     fn hessian_values(&self, f: &[Number], vals: &mut [Number]) -> bool {
         let hess_vals: &mut [[Number; 3]] = reinterpret_mut_slice(vals);
         let forces: &[Polar2<Number>] = reinterpret_slice(f);
-        for ((h, &f), &v) in hess_vals
+        for ((h, &f), &r) in hess_vals
             .iter_mut()
             .zip(forces.iter())
-            .zip(self.0.velocity.iter())
+            .zip(self.0.predictor_impulse.iter())
         {
             *h = [0.0; 3];
             if f.radius.abs() > 0.0 {
                 *h = [
                     0.0,
-                    -f64::sin(f.angle - v.angle),
-                    -f.radius * f64::cos(f.angle - v.angle),
+                    -f64::sin(f.angle - r.angle),
+                    -f.radius * f64::cos(f.angle - r.angle),
                 ];
             }
         }
@@ -307,14 +307,14 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
 
     fn objective(&self, f: &[Number], obj: &mut Number) -> bool {
         let forces: &[Polar2<f64>] = reinterpret_slice(f);
-        assert_eq!(self.0.velocity.len(), forces.len());
+        assert_eq!(self.0.predictor_impulse.len(), forces.len());
 
         // Clear objective value.
         *obj = 0.0;
 
         // Compute (negative of) frictional dissipation.
-        for (&v, &f) in self.0.velocity.iter().zip(forces.iter()) {
-            *obj += f.radius * f64::cos(f.angle - v.angle);
+        for (&r, &f) in self.0.predictor_impulse.iter().zip(forces.iter()) {
+            *obj += f.radius * f64::cos(f.angle - r.angle);
         }
 
         true
@@ -323,7 +323,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
     fn objective_grad(&self, f: &[Number], grad_f: &mut [Number]) -> bool {
         let forces: &[Polar2<Number>] = reinterpret_slice(f);
         let grad_f: &mut [Polar2<Number>] = reinterpret_mut_slice(grad_f);
-        assert_eq!(self.0.velocity.len(), grad_f.len());
+        assert_eq!(self.0.predictor_impulse.len(), grad_f.len());
 
         for g in grad_f.iter_mut() {
             *g = Polar2 {
@@ -332,9 +332,9 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
             };
         }
 
-        for (g, &v, &f) in zip!(grad_f.iter_mut(), self.0.velocity.iter(), forces.iter()) {
-            g.radius += f64::cos(f.angle - v.angle);
-            g.angle -= f.radius * f64::sin(f.angle - v.angle);
+        for (g, &r, &f) in zip!(grad_f.iter_mut(), self.0.predictor_impulse.iter(), forces.iter()) {
+            g.radius += f64::cos(f.angle - r.angle);
+            g.angle -= f.radius * f64::sin(f.angle - r.angle);
         }
 
         true
@@ -365,17 +365,17 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
     fn hessian_values(&self, f: &[Number], vals: &mut [Number]) -> bool {
         let hess_vals: &mut [[Number; 3]] = reinterpret_mut_slice(vals);
         let forces: &[Polar2<Number>] = reinterpret_slice(f);
-        for ((h, &f), &v) in hess_vals
+        for ((h, &f), &r) in hess_vals
             .iter_mut()
             .zip(forces.iter())
-            .zip(self.0.velocity.iter())
+            .zip(self.0.predictor_impulse.iter())
         {
             *h = [0.0; 3];
             if f.radius.abs() > 0.0 {
                 *h = [
                     0.0,
-                    -f64::sin(f.angle - v.angle),
-                    -f.radius * f64::cos(f.angle - v.angle),
+                    -f64::sin(f.angle - r.angle),
+                    -f.radius * f64::cos(f.angle - r.angle),
                 ];
             }
         }
@@ -403,8 +403,8 @@ mod tests {
         };
         let mass = 1.0;
 
-        let velocity = vec![Polar2 {
-            radius: 1.0,
+        let predictor_impulse = vec![Polar2 {
+            radius: 1.0 * mass,
             angle: PI,
         }]; // one point sliding up.
         let contact_force = vec![10.0 * mass];
@@ -414,7 +414,7 @@ mod tests {
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
 
         let mut solver = FrictionPolarSolver::without_contact_jacobian(
-            &velocity,
+            &predictor_impulse,
             &contact_force,
             &contact_basis,
             mass_inv_mtx.view(),

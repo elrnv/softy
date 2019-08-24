@@ -8,9 +8,9 @@ use utils::zip;
 
 /// Friction solver.
 pub struct FrictionSolver<'a> {
-    /// A set of tangential velocities in contact space for active contacts. These are used to
+    /// A set of tangential impulses in contact space for active contacts. These are used to
     /// determine the applied frictional force.
-    velocity: &'a [Vector2<f64>],
+    predictor_impulse: &'a [Vector2<f64>],
     /// A set of contact forces for each contact point.
     contact_impulse: &'a [f64],
     /// Basis defining the normal and tangent space at each point of contact.
@@ -25,19 +25,19 @@ pub struct FrictionSolver<'a> {
 }
 
 impl<'a> FrictionSolver<'a> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_impulse` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+    /// Build a new solver for the friction problem. The given `predictor_impulse` is a stacked
+    /// vector of tangential impulses for each contact point in contact space. `contact_impulse` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub fn without_contact_jacobian(
-        velocity: &'a [[f64; 2]],
+        predictor_impulse: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> FrictionSolver<'a> {
         Self::new_impl(
-            velocity,
+            predictor_impulse,
             contact_impulse,
             contact_basis,
             mass_inv_mtx,
@@ -48,12 +48,12 @@ impl<'a> FrictionSolver<'a> {
 }
 
 impl<'a> FrictionSolver<'a> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_impulse` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+    /// Build a new solver for the friction problem. The given `predictor_impulse` is a stacked
+    /// vector of tangential impulses for each contact point in contact space. `contact_impulse` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub(crate) fn new(
-        velocity: &'a [[f64; 2]],
+        predictor_impulse: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
@@ -61,7 +61,7 @@ impl<'a> FrictionSolver<'a> {
         contact_jacobian: ContactJacobianView<'a>,
     ) -> FrictionSolver<'a> {
         Self::new_impl(
-            velocity,
+            predictor_impulse,
             contact_impulse,
             contact_basis,
             mass_inv_mtx,
@@ -71,7 +71,7 @@ impl<'a> FrictionSolver<'a> {
     }
 
     fn new_impl(
-        velocity: &'a [[f64; 2]],
+        predictor_impulse: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
@@ -79,7 +79,7 @@ impl<'a> FrictionSolver<'a> {
         contact_jacobian: Option<ContactJacobianView<'a>>,
     ) -> FrictionSolver<'a> {
         FrictionSolver {
-            velocity: reinterpret_slice(velocity),
+            predictor_impulse: reinterpret_slice(predictor_impulse),
             contact_impulse,
             contact_basis,
             mu: params.dynamic_friction,
@@ -91,10 +91,10 @@ impl<'a> FrictionSolver<'a> {
     /// Solve one step.
     pub fn step(&mut self) -> Vec<[f64; 2]> {
         // Solve quadratic optimization problem
-        let mut friction_impulse = vec![Vector2::zeros(); self.velocity.len()];
+        let mut friction_impulse = vec![Vector2::zeros(); self.predictor_impulse.len()];
         for (r, &v, &cr) in zip!(
             friction_impulse.iter_mut(),
-            self.velocity.iter(),
+            self.predictor_impulse.iter(),
             //self.mass_inv_mtx.iter(),
             self.contact_impulse.iter()
         ) {
@@ -126,15 +126,15 @@ mod tests {
     #[test]
     fn sliding_point() -> Result<(), Error> {
         let mass = 10.0;
-        let (velocity, impulse) = sliding_point_tester(0.000001, mass)?;
+        let (predictor_impulse, impulse) = sliding_point_tester(0.000001, mass)?;
 
-        // Check that the point still has velocity in the positive x direction
-        dbg!(&velocity);
+        // Check that the point still has predictor_impulse in the positive x direction
+        dbg!(&predictor_impulse);
         dbg!(&impulse);
-        assert!(velocity[0] > 0.8);
+        assert!(predictor_impulse[0] > 0.8);
 
-        // Sanity check that no perpendicular velocities or impulses were produced in the process
-        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
+        // Sanity check that no impulses were produced in the process
+        assert_relative_eq!(predictor_impulse[1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
         Ok(())
     }
@@ -142,13 +142,13 @@ mod tests {
     //#[test]
     fn sticking_point() -> Result<(), Error> {
         let mass = 10.0;
-        let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
+        let (predictor_impulse, impulse) = sliding_point_tester(1.5, mass)?;
         // Check that the point gets stuck
         dbg!(&impulse);
-        assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
+        assert_relative_eq!(predictor_impulse[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
 
-        // Sanity check that no perpendicular velocities or impulses were produced in the process
-        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
+        // Sanity check that no perpendicular impulses were produced in the process
+        assert_relative_eq!(predictor_impulse[1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
         Ok(())
     }
@@ -161,7 +161,7 @@ mod tests {
             print_level: 5,
         };
 
-        let velocity = vec![[1.0, 0.0]]; // one point sliding right.
+        let predictor_impulse  = vec![[1.0 * mass, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
         let mass_inv_mtx: DSMatrix3 = Tensor::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
 
@@ -169,7 +169,7 @@ mod tests {
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
 
         let mut solver = FrictionSolver::without_contact_jacobian(
-            &velocity,
+            &predictor_impulse,
             &contact_impulse,
             &contact_basis,
             mass_inv_mtx.view(),
@@ -178,9 +178,9 @@ mod tests {
         let solution = solver.step();
 
         let impulse = Vector2(solution[0]);
-        let final_velocity = Vector2(velocity[0]) + impulse / mass;
+        let final_predictor = Vector2(predictor_impulse[0]) + impulse / mass;
 
-        Ok((final_velocity, impulse))
+        Ok((final_predictor, impulse))
     }
 
     /// A tetrahedron sliding on a slanted surface.
@@ -193,12 +193,12 @@ mod tests {
             print_level: 5,
         };
 
-        let velocity = vec![
-            [0.07225747944670913, 0.0000001280108566301736],
-            [0.06185827187696774, -0.0060040275393186595],
-        ]; // tet vertex velocities
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];
         let masses = vec![0.0003720701030949866, 0.0003720701030949866];
+        let predictor_impulse = vec![
+            [0.07225747944670913 * masses[0], 0.0000001280108566301736 * masses[0]],
+            [0.06185827187696774 * masses[1], -0.0060040275393186595 * masses[1]],
+        ]; // tet vertex impulses
 
         let mass_inv_mtx: DSMatrix3 =
             Tensor::new(Chunked3::from_array_vec(vec![[1.0 / masses[0]; 3], [1.0 / masses[1]; 3]])).into();
@@ -211,7 +211,7 @@ mod tests {
         contact_basis.update_from_normals(normals);
 
         let mut solver = FrictionSolver::without_contact_jacobian(
-            &velocity,
+            &predictor_impulse,
             &contact_impulse,
             &contact_basis,
             mass_inv_mtx.view(),

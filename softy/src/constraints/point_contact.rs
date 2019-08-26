@@ -571,7 +571,8 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
-        *object_friction_impulse = (jac.transpose() * Tensor::new(collider_friction_impulse.view().into())).data;
+        *object_friction_impulse =
+            (jac.transpose() * Tensor::new(collider_friction_impulse.view().into())).data;
 
         // The last thing to do is to ensure that collider friction impulses are
         // the impulses ON the collider and not BY the collider.

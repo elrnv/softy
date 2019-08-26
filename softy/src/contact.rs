@@ -342,34 +342,8 @@ pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
 
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
     fn into(self) -> ContactJacobian {
-        let num_blocks = self.blocks.len();
         let blocks = Chunked3::from_flat(Chunked3::from_flat(reinterpret_vec(self.blocks)));
-        let mut rows = Vec::with_capacity(num_blocks);
-        let mut cols = Vec::with_capacity(num_blocks);
-        let mut offsets = Vec::with_capacity(self.num_rows);
-
-        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
-        for (row, col) in self.iter {
-            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
-
-            if row + 1 != prev_row {
-                rows.push(row);
-                prev_row = row + 1;
-                // Check that this is indeed a new row
-                offsets.push(cols.len());
-            }
-
-            cols.push(col);
-        }
-        offsets.push(cols.len());
-        offsets.shrink_to_fit();
-        rows.shrink_to_fit();
-
-        Tensor::new(Sparse::from_dim(
-            rows,
-            self.num_rows,
-            Chunked::from_offsets(offsets, Sparse::from_dim(cols, self.num_cols, blocks)),
-        ))
+        ContactJacobian::from_triplets(self.iter, self.num_rows, self.num_cols, blocks)
     }
 }
 //

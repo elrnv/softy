@@ -50,6 +50,54 @@ impl<S: Set, I> SSMatrix3<S, I> {
     }
 }
 
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> SSMatrix3<S, I> {
+    #[cfg(debug_assertions)]
+    pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
+        use image::ImageBuffer;
+
+        let nrows = self.num_rows() * 3;
+        let ncols = self.num_cols() * 3;
+
+        let ciel = 10.0; //jac.max();
+        let floor = -10.0; //jac.min();
+
+        let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
+            let val = self.coeff(r as usize, c as usize);
+            let color = if val > 0.0 {
+                [255, (255.0 * val / ciel) as u8, 0]
+            } else if val < 0.0 {
+                [0, (255.0 * (1.0 + val / floor)) as u8, 255]
+            } else {
+                [255, 0, 255]
+            };
+            image::Rgb(color)
+        });
+
+        img.save(path.as_ref())
+            .expect("Failed to save matrix image.");
+    }
+
+    /// Get the value in the matrix at the given coordinates.
+    pub fn coeff(&'a self, r: usize, c: usize) -> f64 {
+        let view = self.view();
+        if let Ok(row) = view
+            .data
+            .selection
+            .indices
+            .binary_search(&(r / 3))
+            .map(|idx| view.data.source.isolate(idx))
+        {
+            row.selection
+                .indices
+                .binary_search(&(c / 3))
+                .map(|idx| row.source.isolate(idx).at(r % 3)[c % 3])
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        }
+    }
+}
+
 impl SSMatrix3 {
     pub fn from_triplets<It: Iterator<Item = (usize, usize)>>(
         index_iter: It,
@@ -99,12 +147,46 @@ impl<S: Set, I: Set> DSMatrix3<S, I> {
     pub fn num_rows(&self) -> usize {
         self.data.len()
     }
-    pub fn transpose<'a>(&'a self) -> Transpose<DSMatrix3<S::Type, &'a [usize]>>
-    where
-        S: View<'a>,
-        I: AsRef<[usize]>,
-    {
+}
+
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> DSMatrix3<S, I> {
+    pub fn transpose(&'a self) -> Transpose<DSMatrix3<S::Type, &'a [usize]>> {
         Transpose(View::view(self))
+    }
+    #[cfg(debug_assertions)]
+    pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
+        use image::ImageBuffer;
+
+        let nrows = self.num_rows() * 3;
+        let ncols = self.num_cols() * 3;
+
+        let ciel = 10000.0; //jac.max();
+        let floor = -10000.0; //jac.min();
+
+        let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
+            let val = self.coeff(r as usize, c as usize);
+            let color = if val > 0.0 {
+                [255, (255.0 * val / ciel) as u8, 0]
+            } else if val < 0.0 {
+                [0, (255.0 * (1.0 + val / floor)) as u8, 255]
+            } else {
+                [255, 0, 255]
+            };
+            image::Rgb(color)
+        });
+
+        img.save(path.as_ref())
+            .expect("Failed to save matrix image.");
+    }
+
+    /// Get the value in the matrix at the given coordinates.
+    pub fn coeff(&'a self, r: usize, c: usize) -> f64 {
+        let row = self.data.view().isolate(r / 3);
+        row.selection
+            .indices
+            .binary_search(&(c / 3))
+            .map(|idx| row.source.isolate(idx).at(r % 3)[c % 3])
+            .unwrap_or(0.0)
     }
 }
 
@@ -169,7 +251,7 @@ impl Add<DiagonalMatrix3View<'_>> for SSMatrix3View<'_> {
                     if row_idx < sparse_row_idx {
                         let out_row = out.view_mut().isolate(row_idx);
                         let (idx, out_col, _) = out_row.isolate(0);
-                        *idx = count;
+                        *idx = row_idx; // Diagonal entry col_idx == row_idx
                         add_diagonal_entry(out_col, entry);
                         out.transfer_forward_all_but(row_idx, 1);
                         count += 1;
@@ -416,8 +498,9 @@ impl SSMatrix3View<'_> {
                         break;
                     } else {
                         // rhs_idx == row_idx
-                        sum_mtx += geo::math::Matrix3(*col.into_arrays())
-                            * geo::math::Matrix3(*rhs.into_arrays());
+                        // The following product is reversed because geo::math::Matrix3 are col-major.
+                        sum_mtx += geo::math::Matrix3(*rhs.into_arrays())
+                            * geo::math::Matrix3(*col.into_arrays()).transpose();
                         row_nnz += 1;
                     }
                 }
@@ -437,3 +520,38 @@ impl SSMatrix3View<'_> {
 
 /// A transpose of a matrix.
 pub struct Transpose<M>(pub M);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::*;
+
+    #[test]
+    fn sparse_sparse_mul() {
+        let blocks = vec![
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            [1.1, 2.2, 3.3],
+            [4.4, 5.5, 6.6],
+            [7.7, 8.8, 9.9],
+        ];
+        let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+        let indices = vec![(1, 1), (3, 2)];
+        let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+
+        let sym = mtx.view() * mtx.transpose();
+        sym.write_img("out/sym.png");
+
+        let exp_vec = vec![
+            14.0, 32.0, 50.0, 15.4, 35.2, 55.0, 32.0, 77.0, 122.0, 35.2, 84.7, 134.2, 50.0, 122.0,
+            194.0, 55.0, 134.2, 213.4, 15.4, 35.2, 55.0, 16.94, 38.72, 60.5, 35.2, 84.7, 134.2,
+            38.72, 93.17, 147.62, 55.0, 134.2, 213.4, 60.5, 147.62, 234.74,
+        ];
+
+        let val_vec = sym.storage();
+        for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
+            assert_eq!(val, exp);
+        }
+    }
+}

@@ -10,6 +10,7 @@ rand = "0.5"
 typenum = "1.10"
 reinterpret = "0.2"
 sprs = { version = "0.6.4", optional = true }
+image = "0.22"
 
 [dev-dependencies]
 approx = "0.3"

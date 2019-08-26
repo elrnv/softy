@@ -1,4 +1,6 @@
-mod chunked;
+mod array;
+mod boxed;
+pub mod chunked;
 mod matrix;
 mod range;
 mod select;
@@ -6,10 +8,13 @@ mod slice;
 mod sparse;
 mod subset;
 mod tensor;
+mod tuple;
 mod uniform;
 mod vec;
 mod view;
 
+pub use array::*;
+pub use boxed::*;
 pub use chunked::*;
 pub use matrix::*;
 pub use range::*;
@@ -18,6 +23,7 @@ pub use slice::*;
 pub use sparse::*;
 pub use subset::*;
 pub use tensor::*;
+pub use tuple::*;
 pub use uniform::*;
 pub use vec::*;
 pub use view::*;
@@ -26,15 +32,58 @@ pub use typenum::consts;
 use typenum::type_operators::PartialDiv;
 use typenum::Unsigned;
 
-/// Wrapper around `typenum` types to prevent downstream trait implementations.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct U<N>(N);
-
-impl<N: Default> Default for U<N> {
-    fn default() -> Self {
-        U(N::default())
+/*
+ * Set is the most basic trait that annotates finite collections that contain data.
+ */
+/// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
+/// anything. For example a buffer of floats can represent a set of vertex colours or vertex
+/// positions.
+pub trait Set {
+    /// Owned element of the set.
+    type Elem;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
+
+impl<N: Unsigned> Set for StaticRange<N> {
+    type Elem = usize;
+    fn len(&self) -> usize {
+        N::to_usize()
+    }
+}
+
+impl<S: Set + ?Sized> Set for &S {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+impl<S: Set + ?Sized> Set for &mut S {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+
+impl<S: Set + ?Sized> Set for std::cell::Ref<'_, S> {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+
+impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
+    type Elem = <S as Set>::Elem;
+    fn len(&self) -> usize {
+        <S as Set>::len(self)
+    }
+}
+
+/*
+ * Array manipulation
+ */
 
 pub trait Array<T> {
     type Array;
@@ -43,152 +92,9 @@ pub trait Array<T> {
     fn as_slice(array: &Self::Array) -> &[T];
 }
 
-macro_rules! impl_array_for_typenum {
-    ($nty:ident, $n:expr) => {
-        pub type $nty = U<consts::$nty>;
-        impl<T> Set for [T; $n] {
-            type Elem = T;
-            fn len(&self) -> usize {
-                $n
-            }
-        }
-        impl<'a, T: 'a> View<'a> for [T; $n] {
-            type Type = &'a [T];
-            fn view(&'a self) -> Self::Type {
-                self
-            }
-        }
-        impl<'a, T: 'a> ViewMut<'a> for [T; $n] {
-            type Type = &'a mut [T];
-            fn view_mut(&'a mut self) -> Self::Type {
-                self
-            }
-        }
-        impl<T: Dummy + Copy> Dummy for [T; $n] {
-            unsafe fn dummy() -> Self {
-                [Dummy::dummy(); $n]
-            }
-        }
-        impl<T> Array<T> for consts::$nty {
-            type Array = [T; $n];
-
-            fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T> {
-                array.iter_mut()
-            }
-            fn iter(array: &Self::Array) -> std::slice::Iter<T> {
-                array.iter()
-            }
-            fn as_slice(array: &Self::Array) -> &[T] {
-                array
-            }
-        }
-
-        impl<'a, T, N> ReinterpretAsGrouped<N> for &'a [T; $n]
-        where
-            N: Unsigned + Array<T>,
-            consts::$nty: PartialDiv<N>,
-            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
-            <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array: 'a,
-        {
-            type Output = &'a <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
-            #[inline]
-            fn reinterpret_as_grouped(self) -> Self::Output {
-                assert_eq!(
-                    $n / N::to_usize(),
-                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
-                );
-                unsafe {
-                    &*(self as *const [T; $n]
-                        as *const <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array)
-                }
-            }
-        }
-
-        impl<'a, T, N> ReinterpretAsGrouped<N> for &'a mut [T; $n]
-        where
-            N: Unsigned + Array<T>,
-            consts::$nty: PartialDiv<N>,
-            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
-            <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array: 'a,
-        {
-            type Output = &'a mut <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
-            #[inline]
-            fn reinterpret_as_grouped(self) -> Self::Output {
-                assert_eq!(
-                    $n / N::to_usize(),
-                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
-                );
-                unsafe {
-                    &mut *(self as *mut [T; $n]
-                        as *mut <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array)
-                }
-            }
-        }
-
-        // TODO: Figure out how to compile the below code.
-        //        impl<T, N> ReinterpretAsGrouped<N> for [T; $n]
-        //        where
-        //            N: Unsigned + Array<T>,
-        //            consts::$nty: PartialDiv<N>,
-        //            <consts::$nty as PartialDiv<N>>::Output: Array<N::Array> + Unsigned,
-        //        {
-        //            type Output = <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array;
-        //            #[inline]
-        //            fn reinterpret_as_grouped(self) -> Self::Output {
-        //                assert_eq!(
-        //                    $n / N::to_usize(),
-        //                    <<consts::$nty as PartialDiv<N>>::Output as Unsigned>::to_usize()
-        //                );
-        //                unsafe {
-        //                    std::mem::transmute::<
-        //                        Self,
-        //                        <<consts::$nty as PartialDiv<N>>::Output as Array<N::Array>>::Array,
-        //                    >(self)
-        //                }
-        //            }
-        //        }
-    };
-}
-
-impl_array_for_typenum!(U1, 1);
-impl_array_for_typenum!(U2, 2);
-impl_array_for_typenum!(U3, 3);
-impl_array_for_typenum!(U4, 4);
-impl_array_for_typenum!(U5, 5);
-impl_array_for_typenum!(U6, 6);
-impl_array_for_typenum!(U7, 7);
-impl_array_for_typenum!(U9, 9);
-impl_array_for_typenum!(U10, 10);
-impl_array_for_typenum!(U11, 11);
-impl_array_for_typenum!(U12, 12);
-impl_array_for_typenum!(U13, 13);
-impl_array_for_typenum!(U14, 14);
-impl_array_for_typenum!(U15, 15);
-impl_array_for_typenum!(U16, 16);
-
-impl<S: Set> Set for Box<S> {
-    type Elem = S::Elem;
-    fn len(&self) -> usize {
-        S::len(self)
-    }
-}
-impl<'a, S: View<'a>> View<'a> for Box<S> {
-    type Type = <S as View<'a>>::Type;
-    fn view(&'a self) -> Self::Type {
-        S::view(self)
-    }
-}
-impl<'a, S: ViewMut<'a>> ViewMut<'a> for Box<S> {
-    type Type = <S as ViewMut<'a>>::Type;
-    fn view_mut(&'a mut self) -> Self::Type {
-        S::view_mut(self)
-    }
-}
-impl<S: Dummy> Dummy for Box<S> {
-    unsafe fn dummy() -> Self {
-        Box::new(Dummy::dummy())
-    }
-}
+/*
+ * Marker and utility traits to help with Coherence rules of Rust.
+ */
 
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
@@ -216,17 +122,9 @@ impl<S: Viewed, N> Viewed for UniChunked<S, N> {}
 //impl<'a, T: Clone + PartialEq> Chunkable<'a> for &'a mut [T] {}
 //impl<'a, T: Clone + PartialEq + 'a> Chunkable<'a> for Vec<T> {}
 
-/// A trait defining a raw buffer of data. This data is typed but not annotated so it can represent
-/// anything. For example a buffer of floats can represent a set of vertex colours or vertex
-/// positions.
-pub trait Set {
-    /// Owned element of the set.
-    type Elem;
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
+/*
+ * Aggregate traits
+ */
 
 pub trait StaticallySplittable:
     IntoStaticChunkIterator<consts::U2>
@@ -352,6 +250,60 @@ impl<'a, T> OwnedSet<'a> for T where
 {
 }
 
+/*
+ * Allocation
+ */
+
+/// Abstraction for pushing elements of type `T` onto a collection.
+pub trait Push<T> {
+    fn push(&mut self, element: T);
+}
+
+pub trait ExtendFromSlice {
+    type Item;
+    fn extend_from_slice(&mut self, other: &[Self::Item]);
+}
+
+/*
+ * Deallocation
+ */
+
+/// Truncate the collection to be a specified length.
+pub trait Truncate {
+    fn truncate(&mut self, len: usize);
+}
+
+pub trait Clear {
+    /// Remove all elements from the current set without necessarily
+    /// deallocating the space previously used.
+    fn clear(&mut self);
+}
+
+/*
+ * Conversion
+ */
+
+//TODO: Rename to IntoStorage
+/// Convert a collection into its underlying representation, effectively
+/// stripping any organizational info.
+pub trait IntoFlat {
+    type FlatType;
+    fn into_flat(self) -> Self::FlatType;
+}
+
+/// Transform the access pattern of the underlying storage type. This is useful
+/// when the storage is not just a simple `Vec` or slice but a combination of independent
+/// collections.
+pub trait StorageInto<Target> {
+    type Output;
+    fn storage_into(self) -> Self::Output;
+}
+
+pub trait CloneWithStorage<S> {
+    type CloneType;
+    fn clone_with_storage(&self, storage: S) -> Self::CloneType;
+}
+
 /// An analog to the `ToOwned` trait from `std` that works for chunked views.
 pub trait ToOwned
 where
@@ -413,11 +365,9 @@ impl<S: std::borrow::ToOwned + ?Sized> ToOwnedData for &mut S {
     }
 }
 
-pub trait Clear {
-    /// Remove all elements from the current set without necessarily
-    /// deallocating the space previously used.
-    fn clear(&mut self);
-}
+/*
+ * Indexing
+ */
 
 // A Note on indexing:
 // ===================
@@ -719,45 +669,6 @@ where
     }
 }
 
-impl<N: Unsigned> Set for StaticRange<N> {
-    type Elem = usize;
-    fn len(&self) -> usize {
-        N::to_usize()
-    }
-}
-
-impl<S: Set + ?Sized> Set for &S {
-    type Elem = <S as Set>::Elem;
-    fn len(&self) -> usize {
-        <S as Set>::len(self)
-    }
-}
-impl<S: Set + ?Sized> Set for &mut S {
-    type Elem = <S as Set>::Elem;
-    fn len(&self) -> usize {
-        <S as Set>::len(self)
-    }
-}
-
-impl<S: Set + ?Sized> Set for std::cell::Ref<'_, S> {
-    type Elem = <S as Set>::Elem;
-    fn len(&self) -> usize {
-        <S as Set>::len(self)
-    }
-}
-
-impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
-    type Elem = <S as Set>::Elem;
-    fn len(&self) -> usize {
-        <S as Set>::len(self)
-    }
-}
-
-/// Abstraction for pushing elements of type `T` onto a collection.
-pub trait Push<T> {
-    fn push(&mut self, element: T);
-}
-
 /// A helper trait to split a set into two sets at a given index.
 /// This trait is used to implement iteration over `ChunkedView`s.
 pub trait SplitAt
@@ -779,11 +690,6 @@ pub trait SplitOff {
     fn split_off(&mut self, mid: usize) -> Self;
 }
 
-/// Truncate the collection to be a specified length.
-pub trait Truncate {
-    fn truncate(&mut self, len: usize);
-}
-
 /// Split off a number of elements from the beginning of the collection where the number is determined at compile time.
 pub trait SplitPrefix<N>
 where
@@ -802,14 +708,6 @@ where
     fn split_first(self) -> Option<(Self::First, Self)>;
 }
 
-//TODO: Rename to IntoStorage
-/// Convert a collection into its underlying representation, effectively
-/// stripping any organizational info.
-pub trait IntoFlat {
-    type FlatType;
-    fn into_flat(self) -> Self::FlatType;
-}
-
 /// Get an immutable reference to the underlying storage type.
 pub trait Storage {
     type Storage;
@@ -819,19 +717,6 @@ pub trait Storage {
 /// Get a mutable reference to the underlying storage type.
 pub trait StorageMut: Storage {
     fn storage_mut(&mut self) -> &mut Self::Storage;
-}
-
-/// Transform the access pattern of the underlying storage type. This is useful
-/// when the storage is not just a simple `Vec` or slice but a combination of independent
-/// collections.
-pub trait StorageInto<Target> {
-    type Output;
-    fn storage_into(self) -> Self::Output;
-}
-
-pub trait CloneWithFlat<FlatType> {
-    type CloneType;
-    fn clone_with_flat(&self, flat: FlatType) -> Self::CloneType;
 }
 
 /// A helper trait for constructing placeholder sets for use in `std::mem::replace`.
@@ -846,6 +731,8 @@ pub trait Dummy {
 /// A helper trait used to help implement the Subset. This trait allows
 /// abstract collections to remove a number of elements from the
 /// beginning, which is what we need for subsets.
+// Technically this is a deallocation trait, but it's only used to enable
+// iteration on subsets so it's here.
 pub trait RemovePrefix {
     /// Remove `n` elements from the beginning.
     fn remove_prefix(&mut self, n: usize);
@@ -952,6 +839,24 @@ where
             prefix
         })
     }
+}
+
+/*
+ * New experimental traits below
+ */
+
+pub trait SwapChunks {
+    /// Swap equal sized contiguous chunks in this collection.
+    fn swap_chunks(&mut self, begin_a: usize, begin_b: usize, chunk_size: usize);
+}
+
+pub trait Sort {
+    /// Sort the given indices into this collection with respect to values provided by this collection.
+    fn sort_indices(&self, indices: &mut [usize]);
+}
+
+pub trait PermuteInPlace {
+    fn permute_in_place(&mut self, indices: &[usize], seen: &mut [bool]);
 }
 
 /*

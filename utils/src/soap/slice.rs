@@ -258,33 +258,33 @@ impl<'a, T> StorageMut for &'a mut [T] {
     }
 }
 
-impl<'a, T: 'a> CloneWithFlat<Vec<T>> for &'a [T] {
+impl<'a, T: 'a> CloneWithStorage<Vec<T>> for &'a [T] {
     type CloneType = Vec<T>;
-    /// This function simply ignores self and returns flat since self is already
-    /// a flat type.
-    fn clone_with_flat(&self, flat: Vec<T>) -> Self::CloneType {
-        assert_eq!(self.len(), flat.len());
-        flat
+    /// This function simply ignores self and returns storage since self is already
+    /// a storage type.
+    fn clone_with_storage(&self, storage: Vec<T>) -> Self::CloneType {
+        assert_eq!(self.len(), storage.len());
+        storage
     }
 }
 
-impl<'a, T: 'a> CloneWithFlat<&'a [T]> for &'a [T] {
+impl<'a, T: 'a> CloneWithStorage<&'a [T]> for &'a [T] {
     type CloneType = &'a [T];
-    /// This function simply ignores self and returns flat since self is already
-    /// a flat type.
-    fn clone_with_flat(&self, flat: &'a [T]) -> Self::CloneType {
-        assert_eq!(self.len(), flat.len());
-        flat
+    /// This function simply ignores self and returns storage since self is already
+    /// a storage type.
+    fn clone_with_storage(&self, storage: &'a [T]) -> Self::CloneType {
+        assert_eq!(self.len(), storage.len());
+        storage
     }
 }
 
-impl<'a, T: 'a> CloneWithFlat<&'a mut [T]> for &'a mut [T] {
+impl<'a, T: 'a> CloneWithStorage<&'a mut [T]> for &'a mut [T] {
     type CloneType = &'a mut [T];
-    /// This function simply ignores self and returns flat since self is already
-    /// a flat type.
-    fn clone_with_flat(&self, flat: &'a mut [T]) -> Self::CloneType {
-        assert_eq!(self.len(), flat.len());
-        flat
+    /// This function simply ignores self and returns storage since self is already
+    /// a storage type.
+    fn clone_with_storage(&self, storage: &'a mut [T]) -> Self::CloneType {
+        assert_eq!(self.len(), storage.len());
+        storage
     }
 }
 
@@ -413,3 +413,38 @@ impl<'a, T: 'a> StorageInto<&'a [T]> for &'a mut [T] {
 /*
  * End of ConvertStorage impls
  */
+
+impl<T> SwapChunks for &mut [T] {
+    /// Swap non-overlapping chunks beginning at the given indices.
+    fn swap_chunks(&mut self, i: usize, j: usize, chunk_size: usize) {
+        assert!(i + chunk_size <= j || j + chunk_size <= i);
+
+        let (lower, upper) = if i < j { (i, j) } else { (j, i) };
+        let (l, r) = self.split_at_mut(upper);
+        l[lower..lower + chunk_size].swap_with_slice(&mut r[..chunk_size]);
+    }
+}
+
+impl<T: PartialOrd + Clone> Sort for [T] {
+    /// Sort the given indices into this collection with respect to values provided by this collection.
+    /// Invalid values like `NaN` in floats will be pushed to the end.
+    fn sort_indices(&self, indices: &mut [usize]) {
+        indices.sort_by(|&a, &b| {
+            self[a]
+                .partial_cmp(&self[b])
+                .unwrap_or(std::cmp::Ordering::Less)
+        });
+    }
+}
+
+impl<T> PermuteInPlace for &mut [T] {
+    /// Permute this slice according to the given permutation.
+    /// The given permutation must have length equal to this slice.
+    /// The slice `seen` is provided to keep track of which elements have already been seen.
+    /// `seen` is assumed to be initialized to `false` and have length equal or
+    /// larger than this slice.
+    fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
+        let data = std::mem::replace(self, &mut []);
+        UniChunked { chunks: 1, data }.permute_in_place(permutation, seen);
+    }
+}

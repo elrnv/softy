@@ -9,7 +9,7 @@ impl<S, I> Into<sprs::CsMat<f64>> for DSMatrix3<S, I>
 where
     // Needed for num_cols/num_rows
     S: Set,
-    I: AsRef<[usize]>,
+    I: Set + AsRef<[usize]>,
     // Needed for view
     DSMatrix3<S, I>: for<'a> View<'a, Type = DSMatrix3View<'a>>,
 {

@@ -275,7 +275,7 @@ where
         })
     }
 }
-//
+
 //impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
 //where
 //    Idx: IsolateIndex<Self>,
@@ -451,6 +451,16 @@ impl<S: IntoFlat, T, I> IntoFlat for Sparse<S, T, I> {
     }
 }
 
+impl<T: Clone, S: CloneWithStorage<U>, I: Clone, U> CloneWithStorage<U> for Sparse<S, T, I> {
+    type CloneType = Sparse<S::CloneType, T, I>;
+    fn clone_with_storage(&self, storage: U) -> Self::CloneType {
+        Sparse {
+            selection: self.selection.clone(),
+            data: self.data.clone_with_storage(storage),
+        }
+    }
+}
+
 /*
  * Storage Access
  */
@@ -487,5 +497,18 @@ impl<S: StorageMut, T, I> StorageMut for Sparse<S, T, I> {
     /// ```
     fn storage_mut(&mut self) -> &mut Self::Storage {
         self.data.storage_mut()
+    }
+}
+
+impl<S: PermuteInPlace, T, I: PermuteInPlace> PermuteInPlace for Sparse<S, T, I> {
+    fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
+        let Sparse {
+            selection: Select { indices, .. },
+            data,
+        } = self;
+
+        indices.permute_in_place(permutation, seen);
+        seen.iter_mut().for_each(|x| *x = false);
+        data.permute_in_place(permutation, seen);
     }
 }

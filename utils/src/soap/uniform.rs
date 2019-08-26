@@ -562,6 +562,41 @@ where
     }
 }
 
+impl<S, N> std::iter::Extend<N::Array> for UniChunked<S, U<N>>
+where
+    N: Unsigned + Array<<S as Set>::Elem> + Default,
+    <S as Set>::Elem: PushArrayTo<S, N>,
+    S: Set + Default + Push<<S as Set>::Elem>,
+{
+    /// Extend a `UniChunked` collection from an iterator over arrays.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    ///
+    /// let v = vec![[1,2,3],[4,5,6]];
+    /// let mut s = Chunked3::from_array_vec(v);
+    ///
+    /// let more = vec![[7,8,9],[10,11,12]];
+    /// s.extend(more.iter().cloned());
+    /// let mut iter = s.iter();
+    /// assert_eq!(Some(&[1,2,3]), iter.next());
+    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(Some(&[7,8,9]), iter.next());
+    /// assert_eq!(Some(&[10,11,12]), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn extend<T>(&mut self, iter: T)
+    where
+        T: IntoIterator<Item = N::Array>,
+    {
+        for i in iter {
+            self.push(i);
+        }
+    }
+}
+
 impl<S: Set + Default, N: Unsigned + Default> Default for UniChunked<S, U<N>> {
     fn default() -> Self {
         Self::from_flat(S::default())
@@ -1368,6 +1403,15 @@ impl<S: IntoFlat, N> IntoFlat for UniChunked<S, N> {
         self.data.into_flat()
     }
 }
+impl<T, S: CloneWithStorage<T>, N: Clone> CloneWithStorage<T> for UniChunked<S, N> {
+    type CloneType = UniChunked<S::CloneType, N>;
+    fn clone_with_storage(&self, storage: T) -> Self::CloneType {
+        UniChunked {
+            chunks: self.chunks.clone(),
+            data: self.data.clone_with_storage(storage),
+        }
+    }
+}
 
 impl<S: Storage, N> Storage for UniChunked<S, N> {
     type Storage = S::Storage;
@@ -1433,5 +1477,89 @@ impl<S: StorageInto<T>, N, T> StorageInto<T> for UniChunked<S, N> {
             data: self.data.storage_into(),
             chunks: self.chunks,
         }
+    }
+}
+
+impl<S: SwapChunks> SwapChunks for ChunkedN<S> {
+    fn swap_chunks(&mut self, begin_a: usize, begin_b: usize, chunk_size: usize) {
+        assert!(begin_a + chunk_size <= begin_b || begin_b + chunk_size <= begin_a);
+        self.data.swap_chunks(
+            self.chunks * begin_a,
+            self.chunks * begin_b,
+            self.chunks * chunk_size,
+        );
+    }
+}
+
+impl<S: SwapChunks, N: Unsigned> SwapChunks for UniChunked<S, U<N>> {
+    fn swap_chunks(&mut self, begin_a: usize, begin_b: usize, chunk_size: usize) {
+        assert!(begin_a + chunk_size <= begin_b || begin_b + chunk_size <= begin_a);
+        self.data.swap_chunks(
+            N::to_usize() * begin_a,
+            N::to_usize() * begin_b,
+            N::to_usize() * chunk_size,
+        );
+    }
+}
+
+/// This is a more general implementation of permute in place that is also used for slices.
+impl<S: Set + SwapChunks> PermuteInPlace for ChunkedN<S> {
+    /// Permute this collection according to the given permutation.
+    /// The given permutation must have length equal to this collection.
+    /// The slice `seen` is provided to keep track of which elements have already been seen.
+    /// `seen` is assumed to be initialized to `false` and have length equal or
+    /// larger than this collection.
+    fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
+        debug_assert_eq!(permutation.len(), self.len());
+        debug_assert!(seen.len() >= self.len());
+        debug_assert!(seen.iter().all(|&s| !s));
+
+        // Mark all items that are already in their correct position as seen.
+        seen.iter_mut()
+            .enumerate()
+            .zip(permutation.iter())
+            .filter_map(|((i, s), &p)| if p == i { Some(s) } else { None })
+            .for_each(|s| *s = true);
+
+        for unseen_i in 0..seen.len() {
+            if seen[unseen_i] {
+                continue;
+            }
+
+            let mut i = unseen_i;
+            loop {
+                let idx = permutation[i];
+                if seen[idx] {
+                    break;
+                }
+
+                self.data
+                    .swap_chunks(self.chunks * i, self.chunks * idx, self.chunks);
+
+                seen[i] = true;
+                i = idx;
+            }
+        }
+    }
+}
+
+impl<S: Dummy, N: Unsigned + Default> PermuteInPlace for UniChunked<S, U<N>>
+where
+    ChunkedN<S>: PermuteInPlace,
+{
+    /// Permute this collection according to the given permutation.
+    /// The given permutation must have length equal to this collection.
+    /// The slice `seen` is provided to keep track of which elements have already been seen.
+    /// `seen` is assumed to be initialized to `false` and have length equal or
+    /// larger than this collection.
+    fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
+        let data = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
+        let mut chunked = UniChunked {
+            chunks: N::to_usize(),
+            data,
+        };
+        chunked.permute_in_place(permutation, seen);
+
+        self.data = chunked.data;
     }
 }

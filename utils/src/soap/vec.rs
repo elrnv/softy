@@ -105,13 +105,13 @@ impl<T> StorageMut for Vec<T> {
     }
 }
 
-impl<T> CloneWithFlat<Vec<T>> for Vec<T> {
+impl<T> CloneWithStorage<Vec<T>> for Vec<T> {
     type CloneType = Vec<T>;
-    /// This function simply ignores self and returns flat since self is already
-    /// a flat type.
-    fn clone_with_flat(&self, flat: Vec<T>) -> Self::CloneType {
-        assert_eq!(self.len(), flat.len());
-        flat
+    /// This function simply ignores self and returns storage since self is already
+    /// a storage type.
+    fn clone_with_storage(&self, storage: Vec<T>) -> Self::CloneType {
+        assert_eq!(self.len(), storage.len());
+        storage
     }
 }
 
@@ -192,6 +192,13 @@ impl<T> Truncate for Vec<T> {
     }
 }
 
+impl<T: Clone> ExtendFromSlice for Vec<T> {
+    type Item = T;
+    fn extend_from_slice(&mut self, other: &[Self::Item]) {
+        Vec::extend_from_slice(self, other);
+    }
+}
+
 /*
  * These are base cases for `ConvertStorage`. We apply the conversion at this point since `Vec` is
  * a storage type. The following are some common conversion behaviours.
@@ -219,3 +226,14 @@ impl<T, S: Into<T>> StorageInto<Vec<T>> for Vec<S> {
 /*
  * End of ConvertStorage impls
  */
+
+impl<T> PermuteInPlace for Vec<T> {
+    /// Permute this collection according to the given permutation.
+    /// The given permutation must have length equal to this collection.
+    /// The slice `seen` is provided to keep track of which elements have already been seen.
+    /// `seen` is assumed to be initialized to `false` and have length equal or
+    /// larger than this collection.
+    fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
+        self.as_mut_slice().permute_in_place(permutation, seen);
+    }
+}

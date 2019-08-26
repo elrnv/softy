@@ -6,6 +6,7 @@ mod sprs_compat;
 pub use sprs_compat::*;
 
 use super::*;
+use chunked::Offsets;
 use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
 use std::ops::{Add, AddAssign, Mul};
@@ -25,7 +26,7 @@ impl<S: Set> DiagonalMatrix3<S> {
 /// Sparse-row sparse-column 3x3 block matrix.
 pub type SSMatrix3<S = Vec<f64>, I = Vec<usize>> = Tensor<
     Sparse<
-        Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, I>,
+        Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, Offsets<I>>,
         std::ops::Range<usize>,
         I,
     >,
@@ -33,7 +34,7 @@ pub type SSMatrix3<S = Vec<f64>, I = Vec<usize>> = Tensor<
 
 pub type SSMatrix3View<'a> = SSMatrix3<&'a [f64], &'a [usize]>;
 
-impl<S: Set, I: AsRef<[usize]>> SSMatrix3<S, I> {
+impl<S: Set, I> SSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
         self.data.data().data().selection().data.distance()
     }
@@ -43,18 +44,56 @@ impl<S: Set, I: AsRef<[usize]>> SSMatrix3<S, I> {
     pub fn transpose<'a>(&'a self) -> Transpose<SSMatrix3<S::Type, &'a [usize]>>
     where
         S: View<'a>,
+        I: AsRef<[usize]>,
     {
         Transpose(View::view(self))
     }
 }
 
+impl SSMatrix3 {
+    pub fn from_triplets<It: Iterator<Item = (usize, usize)>>(
+        index_iter: It,
+        num_rows: usize,
+        num_cols: usize,
+        blocks: Chunked3<Chunked3<Vec<f64>>>,
+    ) -> Self {
+        let num_blocks = blocks.len();
+        let mut rows = Vec::with_capacity(num_blocks);
+        let mut cols = Vec::with_capacity(num_blocks);
+        let mut offsets = Vec::with_capacity(num_rows);
+
+        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
+        for (row, col) in index_iter {
+            dbg!(row, col);
+            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
+
+            if row + 1 != prev_row {
+                rows.push(row);
+                prev_row = row + 1;
+                offsets.push(cols.len());
+            }
+
+            cols.push(col);
+        }
+        offsets.push(cols.len());
+        offsets.shrink_to_fit();
+        rows.shrink_to_fit();
+
+        let mut col_data = Chunked::from_offsets(offsets, Sparse::from_dim(cols, num_cols, blocks));
+
+        col_data.sort_chunks_by_index();
+
+        Tensor::new(Sparse::from_dim(rows, num_rows, col_data))
+    }
+}
+
 /// Dense-row sparse-column row-major 3x3 block matrix. Block version of CSR.
 pub type DSMatrix3<S = Vec<f64>, I = Vec<usize>> =
-    Tensor<Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, I>>;
+    Tensor<Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, Offsets<I>>>;
 
 pub type DSMatrix3View<'a> = DSMatrix3<&'a [f64], &'a [usize]>;
 
-impl<S: Set, I: AsRef<[usize]>> DSMatrix3<S, I> {
+impl<S: Set, I: Set> DSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
         self.data.data().selection().data.distance()
     }
@@ -64,6 +103,7 @@ impl<S: Set, I: AsRef<[usize]>> DSMatrix3<S, I> {
     pub fn transpose<'a>(&'a self) -> Transpose<DSMatrix3<S::Type, &'a [usize]>>
     where
         S: View<'a>,
+        I: AsRef<[usize]>,
     {
         Transpose(View::view(self))
     }
@@ -337,7 +377,7 @@ impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
     }
 }
 
-pub type SparseVectorMatrix3<S = Vec<f64>, I = Vec<usize>> =
+pub type SparseVectorMatrix3<S = Vec<f64>, I = Offsets> =
     Tensor<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>>;
 pub type SparseVectorMatrix3View<'a> = SparseVectorMatrix3<&'a [f64], &'a [usize]>;
 

@@ -61,7 +61,7 @@ use std::convert::{AsMut, AsRef};
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Select<S, I = Vec<usize>> {
     pub indices: I,
-    pub data: S,
+    pub target: S,
 }
 
 /// A borrowed selection.
@@ -81,14 +81,14 @@ impl<S: Set, I: AsRef<[usize]>> Select<S, I> {
     /// assert_eq!('c', selection[1]);
     /// assert_eq!('b', selection[2]);
     /// ```
-    pub fn new(indices: I, data: S) -> Self {
-        Self::validate(Select { indices, data })
+    pub fn new(indices: I, target: S) -> Self {
+        Self::validate(Select { indices, target })
     }
 
     /// Panics if this selection has out of bounds indices.
     #[inline]
     fn validate(self) -> Self {
-        if !self.indices.as_ref().iter().all(|&i| i < self.data.len()) {
+        if !self.indices.as_ref().iter().all(|&i| i < self.target.len()) {
             panic!("Select index out of bounds.");
         }
         self
@@ -102,9 +102,9 @@ where
     <S as Get<'a, usize>>::Output: ToOwned<Owned = <S as Set>::Elem>,
     I: AsRef<[usize]>,
 {
-    /// Collapse the data values pointed to by `indices` into the structure
-    /// given by the indices. In other words, replace `indices` with the data
-    /// they point to producing a new collection. This function allocates.
+    /// Collapse the target values pointed to by `indices` into the structure
+    /// given by the indices. In other words, replace `indices` with the target
+    /// data they point to producing a new collection. This function allocates.
     ///
     /// # Examples
     ///
@@ -150,7 +150,7 @@ where
         self.indices
             .as_ref()
             .iter()
-            .map(|&i| self.data.at(i).to_owned())
+            .map(|&i| self.target.at(i).to_owned())
             .collect()
     }
 }
@@ -192,7 +192,7 @@ where
     fn view(&'a self) -> Self::Type {
         Select {
             indices: self.indices.as_ref(),
-            data: self.data.view(),
+            target: self.target.view(),
         }
     }
 }
@@ -226,7 +226,7 @@ where
     /// // Change all referenced elements to 'a'.
     /// let mut view = selection.view_mut();
     /// for &i in view.indices.iter() {
-    ///     view.data[i] = 'a';
+    ///     view.target[i] = 'a';
     /// }
     ///
     /// let view = selection.view();
@@ -240,7 +240,7 @@ where
     fn view_mut(&'a mut self) -> Self::Type {
         Select {
             indices: self.indices.as_ref(),
-            data: self.data.view_mut(),
+            target: self.target.view_mut(),
         }
     }
 }
@@ -272,16 +272,16 @@ where
     /// assert_eq!(None, iter_r.next());
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
-        let Select { data, indices } = self;
+        let Select { target, indices } = self;
         let (indices_l, indices_r) = indices.split_at(mid);
         (
             Select {
                 indices: indices_l,
-                data: data.clone(),
+                target: target.clone(),
             },
             Select {
                 indices: indices_r,
-                data: data,
+                target: target,
             },
         )
     }
@@ -296,7 +296,7 @@ where
 {
     /// The typical way to use this function is to clone from a `SelectView`
     /// into a mutable `S` type. This function disregards indies, and simply
-    /// clones the underlying data.
+    /// clones the underlying target data.
     ///
     /// # Panics
     ///
@@ -345,7 +345,7 @@ where
             .indices
             .as_ref()
             .get(self)
-            .and_then(|&idx| selection.data.get(idx).map(|val| (idx, val)))
+            .and_then(|&idx| selection.target.get(idx).map(|val| (idx, val)))
     }
 }
 
@@ -359,14 +359,14 @@ where
 
     fn try_isolate(self, selection: Select<S, I>) -> Option<Self::Output> {
         use std::borrow::Borrow;
-        let Select { indices, data } = selection;
+        let Select { indices, target } = selection;
         indices
             .try_isolate(self)
-            .and_then(move |idx| data.try_isolate(*idx.borrow()).map(|val| (idx, val)))
+            .and_then(move |idx| target.try_isolate(*idx.borrow()).map(|val| (idx, val)))
     }
 }
 
-/// Isolating a range from a selection will preserve the original data set.
+/// Isolating a range from a selection will preserve the original target data set.
 impl<S, I> IsolateIndex<Select<S, I>> for std::ops::Range<usize>
 where
     I: Isolate<std::ops::Range<usize>>,
@@ -374,10 +374,10 @@ where
     type Output = Select<S, I::Output>;
 
     fn try_isolate(self, selection: Select<S, I>) -> Option<Self::Output> {
-        let Select { indices, data } = selection;
+        let Select { indices, target } = selection;
         indices
             .try_isolate(self)
-            .map(move |indices| Select { indices, data })
+            .map(move |indices| Select { indices, target })
     }
 }
 
@@ -401,10 +401,11 @@ where
  * Indexing operators for convenience. Users familiar with indexing by `usize`
  * may find these implementations convenient. However, these do not have the
  * same function as `Get` provides, because they necessarily return a borrow of
- * some inner value. Since `Select`ions store data and indices separately, only
- * one of them can be returned as a reference. As such, the indexing operators
- * only provide the select values without their respective indices. To get
- * indices and values, the `Get` and `GetMut` traits should be used instead.
+ * some inner value. Since `Select`ions store target data and indices
+ * separately, only one of them can be returned as a reference. As such, the
+ * indexing operators only provide the select values without their respective
+ * indices. To get indices and values, the `Get` and `GetMut` traits should be
+ * used instead.
  */
 
 impl<'a, S, I> std::ops::Index<usize> for Select<S, I>
@@ -431,7 +432,7 @@ where
     /// assert_eq!((4, 9..11), selection.at(3));
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.as_ref()[idx])
+        self.target.index(self.indices.as_ref()[idx])
     }
 }
 
@@ -463,7 +464,7 @@ where
     /// assert_eq!(selection[3], 5);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data.index_mut(self.indices.as_ref()[idx])
+        self.target.index_mut(self.indices.as_ref()[idx])
     }
 }
 
@@ -488,7 +489,7 @@ where
     /// assert_eq!(1, selection[2]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.as_ref()[idx])
+        self.target.index(self.indices.as_ref()[idx])
     }
 }
 
@@ -512,7 +513,7 @@ where
     /// assert_eq!(3, subset[1]);
     /// ```
     fn index(&self, idx: usize) -> &Self::Output {
-        self.data.index(self.indices.as_ref()[idx])
+        self.target.index(self.indices.as_ref()[idx])
     }
 }
 
@@ -540,7 +541,7 @@ where
     /// assert_eq!(selection[3], 100);
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        self.data.index_mut(self.indices.as_ref()[idx])
+        self.target.index_mut(self.indices.as_ref()[idx])
     }
 }
 
@@ -559,7 +560,7 @@ where
             .as_ref()
             .iter()
             .cloned()
-            .filter_map(move |idx| self.data.get(idx).map(|val| (idx, val)))
+            .filter_map(move |idx| self.target.get(idx).map(|val| (idx, val)))
     }
 }
 
@@ -585,7 +586,7 @@ impl<S: Dummy, I: Dummy> Dummy for Select<S, I> {
     unsafe fn dummy() -> Self {
         Select {
             indices: Dummy::dummy(),
-            data: Dummy::dummy(),
+            target: Dummy::dummy(),
         }
     }
 }
@@ -606,14 +607,14 @@ impl<S: StorageInto<T>, I, T> StorageInto<T> for Select<S, I> {
     type Output = Select<S::Output, I>;
     fn storage_into(self) -> Self::Output {
         Select {
-            data: self.data.storage_into(),
+            target: self.target.storage_into(),
             indices: self.indices,
         }
     }
 }
 
 /*
- * Data Access
+ * Target data Access
  */
 
 impl<S: Storage, I> Storage for Select<S, I> {
@@ -630,7 +631,7 @@ impl<S: Storage, I> Storage for Select<S, I> {
     /// assert_eq!(s1.storage(), &v);
     /// ```
     fn storage(&self) -> &Self::Storage {
-        self.data.storage()
+        self.target.storage()
     }
 }
 
@@ -647,6 +648,6 @@ impl<S: StorageMut, I> StorageMut for Select<S, I> {
     /// assert_eq!(s1.storage_mut(), &mut v);
     /// ```
     fn storage_mut(&mut self) -> &mut Self::Storage {
-        self.data.storage_mut()
+        self.target.storage_mut()
     }
 }

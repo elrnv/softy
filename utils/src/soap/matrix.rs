@@ -36,10 +36,10 @@ pub type SSMatrix3View<'a> = SSMatrix3<&'a [f64], &'a [usize]>;
 
 impl<S: Set, I> SSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
-        self.data.data().data().selection().data.distance()
+        self.data.source().data().selection().target.distance()
     }
     pub fn num_rows(&self) -> usize {
-        self.data.selection().data.distance()
+        self.data.selection().target.distance()
     }
     pub fn transpose<'a>(&'a self) -> Transpose<SSMatrix3<S::Type, &'a [usize]>>
     where
@@ -64,7 +64,6 @@ impl SSMatrix3 {
 
         let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
         for (row, col) in index_iter {
-            dbg!(row, col);
             assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
 
             if row + 1 != prev_row {
@@ -95,7 +94,7 @@ pub type DSMatrix3View<'a> = DSMatrix3<&'a [f64], &'a [usize]>;
 
 impl<S: Set, I: Set> DSMatrix3<S, I> {
     pub fn num_cols(&self) -> usize {
-        self.data.data().selection().data.distance()
+        self.data.data().selection().target.distance()
     }
     pub fn num_rows(&self) -> usize {
         self.data.len()
@@ -138,8 +137,8 @@ impl Add<DiagonalMatrix3View<'_>> for SSMatrix3View<'_> {
         let num_rows = self.num_rows();
         let num_cols = self.num_cols();
 
-        let lhs_nnz = self.data.storage().len();
-        let rhs_nnz = rhs.storage().len();
+        let lhs_nnz = self.data.source.data.source.len();
+        let rhs_nnz = rhs.data().len();
         let num_non_zero_blocks = lhs_nnz + rhs_nnz;
 
         let mut non_zero_row_offsets = vec![num_non_zero_blocks; num_rows + 1];
@@ -327,8 +326,8 @@ impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
         let num_rows = self.num_rows();
         let num_cols = rhs_t.num_rows();
 
-        let lhs_nnz = self.storage().len();
-        let rhs_nnz = rhs_t.storage().len();
+        let lhs_nnz = self.data.source.data.source.len();
+        let rhs_nnz = rhs_t.data.source.data.source.len();
         let num_non_zero_blocks = lhs_nnz + rhs_nnz;
 
         // Allocate enough offsets for all non-zero rows in self. and assign the
@@ -362,7 +361,7 @@ impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
                 // This row is non-zero, set the row index in the output.
                 out.indices_mut()[nz_row_idx] = row_idx;
                 // Truncate the current row to fit.
-                out.data_mut()
+                out.source_mut()
                     .transfer_forward_all_but(nz_row_idx, num_non_zero_blocks_in_row);
                 nz_row_idx += 1;
             }
@@ -371,7 +370,7 @@ impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
         // There may be fewer non-zero rows than in self. Truncate those.
         out.indices_mut().truncate(nz_row_idx);
         // Also truncate the entries in storage we didn't use.
-        out.data_mut().trim();
+        out.source_mut().trim();
 
         Tensor::new(out)
     }

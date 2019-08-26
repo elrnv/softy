@@ -7,7 +7,7 @@ use std::ops::Range;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Sparse<S, T, I = Vec<usize>> {
     pub(crate) selection: Select<T, I>,
-    pub(crate) data: S,
+    pub(crate) source: S,
 }
 
 /// A borrowed view of a sparse collection.
@@ -58,15 +58,15 @@ where
     /// of values and their corresponding data.
     ///
     /// # Panics
-    /// This function will panic if `selection` and `data` have different sizes.
-    pub fn new(selection: Select<T, I>, data: S) -> Self {
-        Self::validate(Sparse { selection, data })
+    /// This function will panic if `selection` and `source` have different sizes.
+    pub fn new(selection: Select<T, I>, source: S) -> Self {
+        Self::validate(Sparse { selection, source })
     }
 
-    /// Panics if the number of indices doesn't equal to the number of elements in the data set.
+    /// Panics if the number of indices doesn't equal to the number of elements in the source data set.
     #[inline]
     fn validate(self) -> Self {
-        assert_eq!(self.data.len(), self.selection.len());
+        assert_eq!(self.source.len(), self.selection.len());
         self
     }
 }
@@ -94,13 +94,13 @@ where
 */
 
 impl<'a, S, T, I> Sparse<S, T, I> {
-    /// Get a reference to the underlying data.
-    pub fn data(&self) -> &S {
-        &self.data
+    /// Get a reference to the underlying source data.
+    pub fn source(&self) -> &S {
+        &self.source
     }
-    /// Get a mutable reference to the underlying data.
-    pub fn data_mut(&mut self) -> &mut S {
-        &mut self.data
+    /// Get a mutable reference to the underlying source data.
+    pub fn source_mut(&mut self) -> &mut S {
+        &mut self.source
     }
     /// Get a reference to the underlying selection.
     pub fn selection(&self) -> &Select<T, I> {
@@ -142,7 +142,7 @@ impl<S: Set, T, I> Set for Sparse<S, T, I> {
     /// assert_eq!(5, sparse.len());
     /// ```
     fn len(&self) -> usize {
-        self.data.len()
+        self.source.len()
     }
 }
 
@@ -159,7 +159,7 @@ where
     fn view(&'a self) -> Self::Type {
         Sparse {
             selection: self.selection.view(),
-            data: self.data.view(),
+            source: self.source.view(),
         }
     }
 }
@@ -174,19 +174,18 @@ where
     type Type = Sparse<S::Type, T::Type, &'a mut [usize]>;
     fn view_mut(&'a mut self) -> Self::Type {
         let Sparse {
-            selection:
-                Select {
-                    indices,
-                    data: ref target,
-                },
-            data: source,
+            selection: Select {
+                indices,
+                ref target,
+            },
+            source,
         } = self;
         Sparse {
             selection: Select {
                 indices: indices.as_mut(),
-                data: target.view(),
+                target: target.view(),
             },
-            data: source.view_mut(),
+            source: source.view_mut(),
         }
     }
 }
@@ -199,17 +198,17 @@ where
     I: SplitAt,
 {
     fn split_at(self, mid: usize) -> (Self, Self) {
-        let Sparse { selection, data } = self;
+        let Sparse { selection, source } = self;
         let (selection_l, selection_r) = selection.split_at(mid);
-        let (data_l, data_r) = data.split_at(mid);
+        let (source_l, source_r) = source.split_at(mid);
         (
             Sparse {
                 selection: selection_l,
-                data: data_l,
+                source: source_l,
             },
             Sparse {
                 selection: selection_r,
-                data: data_r,
+                source: source_r,
             },
         )
     }
@@ -228,9 +227,9 @@ where
     type Output = (usize, <S as Get<'a, usize>>::Output);
 
     fn get(self, sparse: &Sparse<S, T, I>) -> Option<Self::Output> {
-        let Sparse { selection, data } = sparse;
+        let Sparse { selection, source } = sparse;
         let selected = selection.indices.as_ref();
-        data.get(self).map(|item| (selected[self], item))
+        source.get(self).map(|item| (selected[self], item))
     }
 }
 
@@ -248,8 +247,9 @@ where
     );
 
     fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
-        let Sparse { selection, data } = sparse;
-        data.try_isolate(self)
+        let Sparse { selection, source } = sparse;
+        source
+            .try_isolate(self)
             // TODO: selection.isolate can be unchecked.
             .map(|item| {
                 let (idx, target) = selection.isolate(self);
@@ -266,12 +266,12 @@ where
     type Output = Sparse<S::Output, T, I::Output>;
 
     fn try_isolate(self, sparse: Sparse<S, T, I>) -> Option<Self::Output> {
-        let Sparse { selection, data } = sparse;
-        data.try_isolate(self.clone()).and_then(|data| {
+        let Sparse { selection, source } = sparse;
+        source.try_isolate(self.clone()).and_then(|source| {
             // TODO: selection.try_isolate can be unchecked.
             selection
                 .try_isolate(self)
-                .map(|selection| Sparse { selection, data })
+                .map(|selection| Sparse { selection, source })
         })
     }
 }
@@ -301,14 +301,14 @@ where
     fn into_iter(self) -> Self::IntoIter {
         SparseIter {
             indices: self.selection.indices,
-            data: self.data,
+            source: self.source,
         }
     }
 }
 
 pub struct SparseIter<'a, S> {
     indices: &'a [usize],
-    data: S,
+    source: S,
 }
 
 impl<'a, S> Iterator for SparseIter<'a, S>
@@ -318,9 +318,9 @@ where
     type Item = (usize, S::First);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
-        data_slice.split_first().and_then(|(first, rest)| {
-            self.data = rest;
+        let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
+        source_slice.split_first().and_then(|(first, rest)| {
+            self.source = rest;
             self.indices.split_first().map(|(first_idx, rest_indices)| {
                 self.indices = rest_indices;
                 (*first_idx, first)
@@ -349,7 +349,7 @@ where
     > {
         self.selection
             .iter()
-            .zip(self.data.view().into_iter())
+            .zip(self.source.view().into_iter())
             .map(|((i, t), s)| (i, s, t))
     }
 }
@@ -369,7 +369,7 @@ where
         self.selection
             .index_iter()
             .cloned()
-            .zip(self.data.view_mut().into_iter())
+            .zip(self.source.view_mut().into_iter())
     }
 }
 
@@ -392,7 +392,7 @@ where
     > {
         self.selection
             .index_iter_mut()
-            .zip(self.data.view_mut().into_iter())
+            .zip(self.source.view_mut().into_iter())
     }
 }
 
@@ -408,7 +408,7 @@ where
     ) -> impl Iterator<Item = (&'a mut usize, <<S as View<'a>>::Type as IntoIterator>::Item)> {
         self.selection
             .index_iter_mut()
-            .zip(self.data.view().into_iter())
+            .zip(self.source.view().into_iter())
     }
 }
 
@@ -416,7 +416,7 @@ impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
     unsafe fn dummy() -> Self {
         Sparse {
             selection: Dummy::dummy(),
-            data: Dummy::dummy(),
+            source: Dummy::dummy(),
         }
     }
 }
@@ -424,7 +424,7 @@ impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
 impl<S: Truncate, T, I: Truncate> Truncate for Sparse<S, T, I> {
     fn truncate(&mut self, new_len: usize) {
         self.selection.truncate(new_len);
-        self.data.truncate(new_len);
+        self.source.truncate(new_len);
     }
 }
 
@@ -437,7 +437,7 @@ impl<S: StorageInto<U>, T, I, U> StorageInto<U> for Sparse<S, T, I> {
     type Output = Sparse<S::Output, T, I>;
     fn storage_into(self) -> Self::Output {
         Sparse {
-            data: self.data.storage_into(),
+            source: self.source.storage_into(),
             selection: self.selection,
         }
     }
@@ -447,7 +447,7 @@ impl<S: IntoFlat, T, I> IntoFlat for Sparse<S, T, I> {
     type FlatType = S::FlatType;
     /// Convert the sparse set into its raw storage representation.
     fn into_flat(self) -> Self::FlatType {
-        self.data.into_flat()
+        self.source.into_flat()
     }
 }
 
@@ -456,7 +456,7 @@ impl<T: Clone, S: CloneWithStorage<U>, I: Clone, U> CloneWithStorage<U> for Spar
     fn clone_with_storage(&self, storage: U) -> Self::CloneType {
         Sparse {
             selection: self.selection.clone(),
-            data: self.data.clone_with_storage(storage),
+            source: self.source.clone_with_storage(storage),
         }
     }
 }
@@ -479,7 +479,7 @@ impl<S: Storage, T, I> Storage for Sparse<S, T, I> {
     /// assert_eq!(s1.storage(), &v);
     /// ```
     fn storage(&self) -> &Self::Storage {
-        self.data.storage()
+        self.source.storage()
     }
 }
 
@@ -496,7 +496,7 @@ impl<S: StorageMut, T, I> StorageMut for Sparse<S, T, I> {
     /// assert_eq!(s1.storage_mut(), &mut v);
     /// ```
     fn storage_mut(&mut self) -> &mut Self::Storage {
-        self.data.storage_mut()
+        self.source.storage_mut()
     }
 }
 
@@ -504,11 +504,11 @@ impl<S: PermuteInPlace, T, I: PermuteInPlace> PermuteInPlace for Sparse<S, T, I>
     fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
         let Sparse {
             selection: Select { indices, .. },
-            data,
+            source,
         } = self;
 
         indices.permute_in_place(permutation, seen);
         seen.iter_mut().for_each(|x| *x = false);
-        data.permute_in_place(permutation, seen);
+        source.permute_in_place(permutation, seen);
     }
 }

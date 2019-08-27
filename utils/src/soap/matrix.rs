@@ -524,7 +524,6 @@ pub struct Transpose<M>(pub M);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::*;
 
     #[test]
     fn sparse_sparse_mul() {

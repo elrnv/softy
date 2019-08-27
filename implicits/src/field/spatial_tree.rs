@@ -35,9 +35,5 @@ pub fn build_rtree_from_samples<T: Real + Send + Sync>(samples: &Samples<T>) -> 
 where
     Sample<T>: RTreeObject,
 {
-    let mut rtree = RTree::new();
-    for pt in samples.iter() {
-        rtree.insert(pt);
-    }
-    rtree
+    RTree::bulk_load(samples.iter().collect::<Vec<_>>())
 }

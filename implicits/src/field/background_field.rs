@@ -186,6 +186,10 @@ where
         bg_value: Option<V>,
     ) -> Self {
         // Check that the closest sample is in our neighbourhood of samples.
+
+        // Note that the following assertion may sometimes fail. An issue has been filed with the
+        // author of rstar: https://github.com/Stoeoef/rstar/issues/13
+        // As such it shall remain a debug_assert.
         debug_assert!(
             local_samples_view.is_empty()
                 || local_samples_view

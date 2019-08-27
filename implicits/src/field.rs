@@ -10,8 +10,8 @@ use geo::prim::Triangle;
 use geo::Real;
 use num_traits::cast;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use rstar::RTree;
+use serde::{Deserialize, Serialize};
 use std::cell::{Ref, RefCell};
 use utils::zip;
 
@@ -1456,8 +1456,7 @@ mod tests {
 
         utils::translate(&mut grid, [0.0, 0.12639757990837097, 0.0]);
 
-        let torus =
-            geo::io::load_polymesh(&std::path::PathBuf::from("assets/projection_torus.vtk"))?;
+        let torus = geo::io::load_polymesh("assets/projection_torus.vtk")?;
 
         // Construct the implicit surface.
         let surface = surface_from_polymesh(
@@ -1483,8 +1482,7 @@ mod tests {
 
     /// This struct helps deserialize testing assets without having to store an rtree.
     #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct ImplicitSurfaceNoTree
-    {
+    pub struct ImplicitSurfaceNoTree {
         kernel: KernelType,
         base_radius: f64,
         bg_field_params: BackgroundFieldParams,
@@ -1529,7 +1527,7 @@ mod tests {
                 max_step,
                 query_neighbourhood,
                 dual_topo,
-                sample_type
+                sample_type,
             } = serde_json::from_str(&contents).expect("Failed to deserialize torus surface.");
             ImplicitSurface {
                 kernel,
@@ -1544,7 +1542,6 @@ mod tests {
                 dual_topo,
                 sample_type,
             }
-
         };
 
         let init_potential = {

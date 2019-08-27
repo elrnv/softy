@@ -1,7 +1,7 @@
 use super::samples::*;
 use geo::math::Vector3;
 use geo::Real;
-use rstar::{RTree, AABB, RTreeObject, PointDistance};
+use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
 /// Implement the trait required for `Sample` to live inside an `RTree`.
 impl<T: Real> RTreeObject for Sample<T> {

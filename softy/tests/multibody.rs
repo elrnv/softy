@@ -61,7 +61,7 @@ fn stacking_boxes() -> Result<(), Error> {
 
     geo::io::save_polymesh(
         &PolyMesh::from(solver.shell(0).trimesh.clone()),
-        &PathBuf::from("./out/grid.vtk"),
+        "./out/grid.vtk",
     )
     .unwrap();
 

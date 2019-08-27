@@ -128,9 +128,7 @@ mod tests {
         let (velocity, impulse) = sliding_point_tester(0.000001, mass)?;
 
         // Check that the point still has velocity in the positive x direction
-        dbg!(&velocity);
-        dbg!(&impulse);
-     .into()   assert!(velocity[0] > 0.8);
+        assert!(velocity[0] > 0.8);
 
         // Sanity check that no impulses were produced in the process
         assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
@@ -143,8 +141,6 @@ mod tests {
         let mass = 10.0;
         let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
         // Check that the point gets stuck
-        dbg!(&velocity);
-        dbg!(&impulse);
         assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
 
         // Sanity check that no perpendicular impulses were produced in the process

@@ -610,7 +610,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// Compute the potential at a given query point. If the potential is invalid or nieghbourhood
     /// is empty, `potential` is not modified, otherwise it's updated.
     /// Note: passing the output parameter potential as a mut reference allows us to optionally mix
-    /// a preinitialized custom global potential field with the local potential.
+    /// a pre-initialized custom global potential field with the local potential.
     pub(crate) fn compute_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
@@ -644,8 +644,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         *potential += local_field;
     }
 
-    /// Compiute the potential field (excluding background field) at a given query point. If the
-    #[inline]
+    /// Compute the potential field (excluding background field) at a given query point.
     pub(crate) fn compute_local_potential_at<K>(
         q: Vector3<T>,
         samples: SamplesView<T>,
@@ -669,6 +668,50 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             )
             .sum::<T>()
             * weight_sum_inv
+    }
+
+    /// Compute the potential field (excluding background field) at a given query point.
+    pub(crate) fn alt_compute_local_potential_at<K>(
+        q: Vector3<T>,
+        samples: SamplesView<T>,
+        kernel: K,
+        weight_sum_inv: T,
+        closest_d: T,
+    ) -> T
+    where
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+        T: na::RealField,
+    {
+        use na::{DMatrix, DVector};
+        let basis = DMatrix::from_iterator(
+            4,
+            samples.len(),
+            samples
+                .iter()
+                .flat_map(|s| vec![T::one(), s.pos[0], s.pos[1], s.pos[2]].into_iter()),
+        );
+
+        let diag_weights: Vec<T> = samples
+            .iter()
+            .map(|s| kernel.with_closest_dist(closest_d).eval(q, s.pos) * weight_sum_inv)
+            .collect();
+
+        let weights = DMatrix::from_diagonal(&DVector::from_vec(diag_weights));
+
+        let basis_view = &basis;
+        let h = basis_view * &weights * basis_view.transpose();
+
+        let sample_data: Vec<T> = samples
+            .iter()
+            .map(|s| s.value + s.nml.dot(q - s.pos) / s.nml.norm())
+            .collect();
+
+        let rhs = basis * weights * DVector::from_vec(sample_data);
+
+        h.svd(false, false)
+            .solve(&rhs, T::from(1e-9).unwrap())
+            .map(|c| c[0] + q[0] * c[1] + q[1] * c[2] + q[2] * c[3])
+            .unwrap_or(T::from(std::f64::NAN).unwrap())
     }
 
     /*
@@ -784,6 +827,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     where
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
+        T: na::RealField,
     {
         let ImplicitSurface {
             kernel,
@@ -810,6 +854,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
+        T: na::RealField,
     {
         let ImplicitSurface {
             ref samples,
@@ -828,6 +873,19 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             // Couldn't cast, which means potential is of some non-numeric type.
             // We overwrite it because we need that attribute spot.
             potential = vec![0.0f32; mesh.num_vertices()];
+        }
+
+        // Alternative potential for prototyping
+        let alt_potential_attrib = mesh
+            .remove_attrib::<VertexIndex>("alt_potential")
+            .ok() // convert to option (None when it doesn't exist)
+            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+
+        let mut alt_potential = alt_potential_attrib.into_buffer().cast_into_vec::<f32>();
+        if alt_potential.is_empty() {
+            // Couldn't cast, which means potential is of some non-numeric type.
+            // We overwrite it because we need that attribute spot.
+            alt_potential = vec![0.0f32; mesh.num_vertices()];
         }
 
         // Overwrite these attributes.
@@ -856,6 +914,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             bg_weight_chunk,
             weight_sum_chunk,
             potential_chunk,
+            alt_potential_chunk,
             normals_chunk,
             tangents_chunk,
         ) in zip!(
@@ -867,6 +926,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
+            alt_potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             normals.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
             tangents.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
         ) {
@@ -883,6 +943,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                 bg_weight_chunk.par_iter_mut(),
                 weight_sum_chunk.par_iter_mut(),
                 potential_chunk.par_iter_mut(),
+                alt_potential_chunk.par_iter_mut(),
                 normals_chunk.par_iter_mut(),
                 tangents_chunk.par_iter_mut()
             )
@@ -896,6 +957,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     bg_weight,
                     weight_sum,
                     potential,
+                    alt_potential,
                     normal,
                     tangent,
                 )| {
@@ -923,10 +985,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     *weight_sum = bg.weight_sum.to_f32().unwrap();
                     let weight_sum_inv = bg.weight_sum_inv();
 
-                    *potential = bg
-                        .compute_unnormalized_weighted_scalar_field()
+                    *potential = (weight_sum_inv * bg.compute_unnormalized_weighted_scalar_field())
                         .to_f32()
                         .unwrap();
+
+                    *alt_potential = (weight_sum_inv
+                        * bg.compute_unnormalized_weighted_scalar_field())
+                    .to_f32()
+                    .unwrap();
 
                     if !view.is_empty() {
                         let mut grad_w_sum_normalized = Vector3::zeros();
@@ -940,24 +1006,29 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         let mut out_normal = Vector3::zeros();
                         let mut out_tangent = Vector3::zeros();
 
-                        let mut numerator = T::zero();
-                        for Sample {
-                            pos,
-                            nml,
-                            vel,
-                            value,
-                            ..
-                        } in view.iter()
-                        {
+                        let p = Self::compute_local_potential_at(
+                            q,
+                            view,
+                            kernel,
+                            weight_sum_inv,
+                            closest_d,
+                        );
+
+                        let alt_p = Self::alt_compute_local_potential_at(
+                            q,
+                            view,
+                            kernel,
+                            weight_sum_inv,
+                            closest_d,
+                        );
+
+                        for Sample { pos, nml, vel, .. } in view.iter() {
                             let w = kernel.with_closest_dist(closest_d).eval(q, pos);
                             let grad_w = kernel.with_closest_dist(closest_d).grad(q, pos);
                             let w_normalized = w * weight_sum_inv;
                             let grad_w_normalized =
                                 grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
 
-                            let p = value + nml.dot(q - pos) / nml.norm();
-
-                            numerator += w * p;
                             out_normal +=
                                 grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
 
@@ -988,8 +1059,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                             out_tangent += (rot * vel) * w_normalized;
                         }
 
-                        *potential = (*potential + numerator.to_f32().unwrap())
-                            * bg.weight_sum_inv().to_f32().unwrap();
+                        *potential += p.to_f32().unwrap();
+                        *alt_potential += alt_p.to_f32().unwrap();
                         *normal = out_normal.map(|x| x.to_f32().unwrap()).into();
                         *tangent = out_tangent.map(|x| x.to_f32().unwrap()).into();
                     }
@@ -1003,6 +1074,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
+            mesh.set_attrib_data::<_, VertexIndex>("alt_potential", &alt_potential)?;
             mesh.set_attrib_data::<_, VertexIndex>("normals", &normals)?;
             mesh.set_attrib_data::<_, VertexIndex>("tangents", &tangents)?;
         }

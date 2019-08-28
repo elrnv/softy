@@ -227,6 +227,48 @@ mod tests {
         Ok(())
     }
 
+//    #[test]
+//    fn ephemeral_test() -> Result<(), Error> {
+//        let mut grid = make_grid(22, 22);
+//
+//        let trimesh = utils::make_sample_octahedron();
+//
+//        let mut sphere = PolyMesh::from(trimesh);
+//
+//        compute_potential_debug(
+//            &mut grid,
+//            &mut sphere,
+//            Params {
+//                kernel: KernelType::Approximate {
+//                    tolerance: 0.00001,
+//                    radius_multiplier: 3.6742346141747673,
+//                },
+//                background_field: BackgroundFieldParams {
+//                    field_type: BackgroundFieldType::DistanceBased,
+//                    weighted: false,
+//                },
+//                sample_type: SampleType::Face,
+//                ..Default::default()
+//            },
+//            || false,
+//        )?;
+//
+//        //geo::io::save_polymesh(
+//        //    &grid,
+//        //    &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
+//        //)
+//        //.unwrap();
+//
+//        let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
+//        let alt_potential_iter = grid.attrib_iter::<f32, VertexIndex>("alt_potential")?;
+//
+//        for (sol_pot, alt_pot) in solution_potential_iter.zip(alt_potential_iter) {
+//            assert_relative_eq!(sol_pot, alt_pot, max_relative = 1e-6);
+//        }
+//
+//        Ok(())
+//    }
+
     /// Vertex centered HRBF surface test.
     #[test]
     fn hrbf_vertex_test() -> Result<(), Error> {

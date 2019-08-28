@@ -424,13 +424,22 @@ impl ContactConstraint for PointContactConstraint {
         let mut jac_mass = jac.clone();
         jac_mass *= object_mass_inv.view();
 
+        //jac_mass.write_img("./out/jac_mass.png");
+
         let effective_mass_inv = jac_mass.view() * jac.transpose();
+        //effective_mass_inv.write_img("./out/jjt.png");
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
+        //effective_mass_inv.write_img("./out/effective_mass_inv.png");
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
-        let ldlt_solver =
-            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
-        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
+        //        let ldlt_solver =
+        //            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
+        //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
+
+        let mut rhs = rhs.storage().to_vec();
+        sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
+            .unwrap();
+        let predictor_impulse = Chunked3::from_flat(rhs);
 
         assert_eq!(query_indices.len(), contact_impulse.len());
         assert_eq!(potential_values.len(), contact_impulse.len());

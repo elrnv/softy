@@ -3,6 +3,7 @@ name = "implicits"
 version = "0.1.1"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
+license = "MPL-2.0"
 
 [dependencies]
 rayon = "1.0"

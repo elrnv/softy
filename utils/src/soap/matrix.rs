@@ -160,8 +160,8 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> DSMatrix3
         let nrows = self.num_rows() * 3;
         let ncols = self.num_cols() * 3;
 
-        let ciel = 10000.0; //jac.max();
-        let floor = -10000.0; //jac.min();
+        let ciel = 10.0; //jac.max();
+        let floor = -10.0; //jac.min();
 
         let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
             let val = self.coeff(r as usize, c as usize);
@@ -387,14 +387,16 @@ where
 
 impl<S> std::ops::MulAssign<DiagonalMatrix3<S>> for SSMatrix3
 where
-    DiagonalMatrix3<S>: for<'a> View<'a, Type = DiagonalMatrix3View<'a>>,
+    S: Set + for<'a> View<'a, Type = &'a [f64]>,
 {
     fn mul_assign(&mut self, rhs: DiagonalMatrix3<S>) {
-        let rhs = rhs.view();
+        let rhs = View::view(&rhs);
+        assert_eq!(rhs.data.len(), self.num_cols());
         for (_, mut row) in self.view_mut().iter_mut() {
-            for ((_, mut block), mass) in row.iter_mut().zip(rhs.data.iter()) {
-                for (col, m) in block.iter_mut().zip(mass.iter()) {
-                    *col = (geo::math::Vector3(*col) * *m).into();
+            for (col_idx, mut block) in row.iter_mut() {
+                let mass_vec = *rhs.data.at(*col_idx);
+                for (block_row, &mass) in block.iter_mut().zip(mass_vec.iter()) {
+                    *block_row = (geo::math::Vector3(*block_row) * mass).into();
                 }
             }
         }
@@ -458,6 +460,8 @@ impl std::ops::Mul<Transpose<SSMatrix3View<'_>>> for SSMatrix3View<'_> {
     }
 }
 
+// A row vector of row-major 3x3 matrix blocks.
+// This can also be interpreted as a column vector of column-major 3x3 matrix blocks.
 pub type SparseVectorMatrix3<S = Vec<f64>, I = Offsets> =
     Tensor<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>>;
 pub type SparseVectorMatrix3View<'a> = SparseVectorMatrix3<&'a [f64], &'a [usize]>;
@@ -490,18 +494,31 @@ impl SSMatrix3View<'_> {
             // Compute the dot product of the two sparse vectors.
             let mut row_iter = row.iter();
             let mut rhs_iter = rhs.iter();
-            while let Some((col_idx, col, _)) = row_iter.next() {
-                while let Some((rhs_idx, rhs, _)) = rhs_iter.next() {
+
+            let mut col_mb = row_iter.next();
+            let mut rhs_mb = rhs_iter.next();
+            if col_mb.is_some() && rhs_mb.is_some() {
+                loop {
+                    if col_mb.is_none() || rhs_mb.is_none() {
+                        break;
+                    }
+                    let (col_idx, col_block, _) = col_mb.unwrap();
+                    let (rhs_idx, rhs_block, _) = rhs_mb.unwrap();
+
                     if rhs_idx < col_idx {
+                        rhs_mb = rhs_iter.next();
                         continue;
                     } else if rhs_idx > col_idx {
-                        break;
+                        col_mb = row_iter.next();
+                        continue;
                     } else {
                         // rhs_idx == row_idx
-                        // The following product is reversed because geo::math::Matrix3 are col-major.
-                        sum_mtx += geo::math::Matrix3(*rhs.into_arrays())
-                            * geo::math::Matrix3(*col.into_arrays()).transpose();
+                        // col here is transposed because geo::matrix::Matrix3 is interpreted as col major.
+                        sum_mtx += geo::math::Matrix3(*col_block.into_arrays()).transpose()
+                            * geo::math::Matrix3(*rhs_block.into_arrays());
                         row_nnz += 1;
+                        rhs_mb = rhs_iter.next();
+                        col_mb = row_iter.next();
                     }
                 }
             }
@@ -524,13 +541,16 @@ pub struct Transpose<M>(pub M);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::*;
 
     #[test]
-    fn sparse_sparse_mul() {
+    fn sparse_sparse_mul_diag() {
         let blocks = vec![
+            // Block 1
             [1.0, 2.0, 3.0],
             [4.0, 5.0, 6.0],
             [7.0, 8.0, 9.0],
+            // Block 2
             [1.1, 2.2, 3.3],
             [4.4, 5.5, 6.6],
             [7.7, 8.8, 9.9],
@@ -540,17 +560,81 @@ mod tests {
         let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
 
         let sym = mtx.view() * mtx.transpose();
-        sym.write_img("out/sym.png");
 
         let exp_vec = vec![
-            14.0, 32.0, 50.0, 15.4, 35.2, 55.0, 32.0, 77.0, 122.0, 35.2, 84.7, 134.2, 50.0, 122.0,
-            194.0, 55.0, 134.2, 213.4, 15.4, 35.2, 55.0, 16.94, 38.72, 60.5, 35.2, 84.7, 134.2,
-            38.72, 93.17, 147.62, 55.0, 134.2, 213.4, 60.5, 147.62, 234.74,
+            14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 16.94, 38.72, 60.5, 38.72,
+            93.17, 147.62, 60.5, 147.62, 234.74,
         ];
 
         let val_vec = sym.storage();
         for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
-            assert_eq!(val, exp);
+            assert_relative_eq!(val, exp);
         }
     }
+
+    //#[test]
+    //fn sparse_diag_add() {
+    //    let blocks = vec![
+    //        // Block 1
+    //        [1.0, 2.0, 3.0],
+    //        [4.0, 5.0, 6.0],
+    //        [7.0, 8.0, 9.0],
+    //        // Block 2
+    //        [1.1, 2.2, 3.3],
+    //        [4.4, 5.5, 6.6],
+    //        [7.7, 8.8, 9.9],
+    //    ];
+    //    let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+    //    let indices = vec![(1, 1), (3, 2)];
+    //    let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+    //    let diag = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+
+    //    let sym = mtx.view() * mtx.transpose();
+    //    sym.write_img("out/sym.png");
+
+    //    let exp_vec = vec![
+    //        14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 16.94, 38.72, 60.5, 38.72,
+    //        93.17, 147.62, 60.5, 147.62, 234.74,
+    //    ];
+
+    //    let val_vec = sym.storage();
+    //    for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
+    //        assert_relative_eq!(val, exp);
+    //    }
+    //}
+
+    #[test]
+    fn sparse_sparse_mul_non_diag() {
+        let blocks = vec![
+            // Block 1
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            // Block 2
+            [10.0, 11.0, 12.0],
+            [16.0, 17.0, 18.0],
+            [22.0, 23.0, 24.0],
+            // Block 3
+            [13.0, 14.0, 15.0],
+            [19.0, 20.0, 21.0],
+            [25.0, 26.0, 27.0],
+        ];
+        let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+        let indices = vec![(1, 0), (2, 0), (2, 1)];
+        let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 3, 2, chunked_blocks);
+
+        let sym = mtx.view() * mtx.transpose();
+
+        let exp_vec = vec![
+            14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 68.0, 104.0, 140.0, 167.0,
+            257.0, 347.0, 266.0, 410.0, 554.0, 68.0, 167.0, 266.0, 104.0, 257.0, 410.0, 140.0,
+            347.0, 554.0, 955.0, 1405.0, 1855.0, 1405.0, 2071.0, 2737.0, 1855.0, 2737.0, 3619.0,
+        ];
+
+        let val_vec = sym.storage();
+        for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
+            assert_relative_eq!(val, exp);
+        }
+    }
+
 }

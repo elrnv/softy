@@ -155,17 +155,26 @@ pub type ChunkedN<S> = UniChunked<S, usize>;
  * determined chunk size.
  */
 
-impl<S, N: Unsigned> UniChunked<S, U<N>> {
-    /// Get the size of each chunk in this collection.
-    pub fn chunk_size(&self) -> usize {
+pub trait Dimension: Copy {
+    fn value(self) -> usize;
+}
+
+impl<N: Unsigned + Copy> Dimension for U<N> {
+    fn value(self) -> usize {
         N::to_usize()
     }
 }
 
-impl<S> ChunkedN<S> {
+impl Dimension for usize {
+    fn value(self) -> usize {
+        self
+    }
+}
+
+impl<S, N: Dimension> UniChunked<S, N> {
     /// Get the size of each chunk in this collection.
     pub fn chunk_size(&self) -> usize {
-        self.chunks
+        self.chunks.value()
     }
 }
 
@@ -428,7 +437,7 @@ impl<S: Set, N: Unsigned + Array<<S as Set>::Elem>> Set for UniChunked<S, U<N>> 
 }
 
 /// An implementation of `Set` for a `UniChunked` collection of any type that
-/// can be grouped as `N` sub-elements.
+/// can be grouped into sub-elements whose size is determined at run-time.
 impl<S: Set> Set for ChunkedN<S> {
     type Elem = Vec<S::Elem>;
 

@@ -150,6 +150,25 @@ pub type Chunked2<S> = UniChunked<S, U2>;
 pub type Chunked1<S> = UniChunked<S, U1>;
 pub type ChunkedN<S> = UniChunked<S, usize>;
 
+/*
+ * A uniform way to get the chunk size from a unichunked collection with dynamically or statically
+ * determined chunk size.
+ */
+
+impl<S, N: Unsigned> UniChunked<S, U<N>> {
+    /// Get the size of each chunk in this collection.
+    pub fn chunk_size(&self) -> usize {
+        N::to_usize()
+    }
+}
+
+impl<S> ChunkedN<S> {
+    /// Get the size of each chunk in this collection.
+    pub fn chunk_size(&self) -> usize {
+        self.chunks
+    }
+}
+
 impl<S, N> UniChunked<S, N> {
     /// Get a immutable reference to the underlying data.
     ///

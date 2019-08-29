@@ -14,67 +14,86 @@ use std::ops::{Add, AddAssign, Mul};
 /// Row-major dense matrix with dynamic number of rows and N columns, where N can be `usize` or a
 /// constant.
 pub type DMatrix<S = Vec<f64>, N = usize> = Tensor<UniChunked<S, N>>;
-pub type DMatrixView<'a, N = usize> = DMatrixN<&'a [f64], N>;
+pub type DMatrixView<'a, N = usize> = DMatrix<&'a [f64], N>;
 
 /// Row-major dense matrix of row-major NxM blocks where N is the number of rows an M number of
 /// columns.
-pub type DBlockMatrixNM<S = Vec<f64>, N, M> = DMatrix<UniChunked<UniChunked<S, M>, N>>;
-pub type DBlockMatrixNMView<'a, N, M> = DMatrix<&'a [f64], N, M>;
+pub type DBlockMatrix<S = Vec<f64>, N = usize, M = usize> = DMatrix<UniChunked<UniChunked<S, M>, N>>;
+pub type DBlockMatrixView<'a, N = usize, M = usize> = DBlockMatrix<&'a [f64], N, M>;
 
 /// Row-major dense matrix of row-major 3x3 blocks.
 pub type DBlockMatrix3<S = Vec<f64>> = DBlockMatrix<Chunked3<Chunked3<S>>>;
 pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
 
-pub struct DiagonalMatrix3<S = Vec<f64>>(Tensor<Chunked3<S>>);
-pub type DiagonalMatrix3View<'a> = DiagonalMatrix3<&'a [f64]>;
+/*
+ * A diagonal matrix has the same structure as a vector, so it needs a newtype to distinguish it
+ * from such.
+ */
 
-impl<S: Set> Set for DiagonalMatrix3<S> {
+pub struct DiagonalBlockMatrix<S = Vec<f64>, N = usize>(Tensor<UniChunked<S, N>>);
+pub type DiagonalBlockMatrixView<'a, N = usize> = DiagonalMatrix<&'a [f64], N>;
+
+pub type DiagonalBlockMatrix3<S = Vec<f64>> = DiagonalMatrix<S, U3>;
+pub type DiagonalBlockMatrix3View<'a> = DiagonalMatrix3<&'a [f64]>;
+
+impl<S: Set, N> Set for DiagonalBlockMatrix<S, N> {
     type Elem = S::Elem;
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<S: Set> DiagonalMatrix3<S> {
+impl<S: Set, N> DiagonalBlockMatrix<S, N> {
+    pub fn num_block_cols(&self) -> usize {
+        self.len()
+    }
+    pub fn num_block_rows(&self) -> usize {
+        self.len()
+    }
     pub fn num_cols(&self) -> usize {
-        self.data.len()
+        self.num_block_cols() * self.0.chunk_size()
     }
     pub fn num_rows(&self) -> usize {
-        self.data.len()
+        self.num_block_rows() * self.0.chunk_size()
     }
 }
 
-impl<S: Viewed> Viewed for DiagonalMatrix3<S> {}
-impl<'a, S: View<'a>> View<'a> for DiagonalMatrix3<S> {
-    type Type = DiagonalMatrix3View<'a>;
+impl<S: Viewed, N> Viewed for DiagonalBlockMatrix<S, N> {}
+impl<'a, S: View<'a>, N> View<'a> for DiagonalBlockMatrix<S, N> {
+    type Type = DiagonalBlockMatrixView<'a, N>;
     fn view(&'a self) -> Self::Type {
-        DiagonalMatrix3(self.0.view())
+        DiagonalMatrix(self.0.view())
     }
 }
 
-impl<'a, S: ViewMut<'a>> ViewMut<'a> for DiagonalMatrix3<S> {
-    type Type = DiagonalMatrix3View<'a>;
+impl<'a, S: ViewMut<'a>, N> ViewMut<'a> for DiagonalBlockMatrix<S, N> {
+    type Type = DiagonalBlockMatrixView<'a, N>;
     fn view_mut(&'a mut self) -> Self::Type {
-        DiagonalMatrix3(self.0.view_mut())
+        DiagonalMatrix(self.0.view_mut())
     }
 }
 
 /// Sparse-row sparse-column 3x3 block matrix.
-pub type SSMatrix3<S = Vec<f64>, I = Vec<usize>> = Tensor<
+pub type SSBlockMatrix<S = Vec<f64>, I = Vec<usize>, N = usize, M = usize> = Tensor<
     Sparse<
-        Chunked<Sparse<Chunked3<Chunked3<S>>, std::ops::Range<usize>, I>, Offsets<I>>,
+        Chunked<Sparse<Chunked<Chunked<S, M>, N>, std::ops::Range<usize>, I>, Offsets<I>>,
         std::ops::Range<usize>,
         I,
     >,
 >;
 
-pub type SSMatrix3View<'a> = SSMatrix3<&'a [f64], &'a [usize]>;
+pub type SSBlockMatrixView<'a, N, M> = SSBlockMatrix<&'a [f64], &'a [usize], N, M>;
 
-impl<S: Set, I> SSMatrix3<S, I> {
-    pub fn num_cols(&self) -> usize {
+impl<S: Set, I, N, M> SSBlockMatrix<S, I, N, M> {
+    pub fn num_block_cols(&self) -> usize {
         self.data.source().data().selection().target.distance()
     }
-    pub fn num_rows(&self) -> usize {
+    pub fn num_block_rows(&self) -> usize {
         self.data.selection().target.distance()
+    }
+    pub fn num_cols(&self) -> usize {
+        self.num_block_cols() * self.chunks_size();
+    }
+    pub fn num_rows(&self) -> usize {
     }
     pub fn transpose<'a>(&'a self) -> Transpose<SSMatrix3<S::Type, &'a [usize]>>
     where
@@ -235,9 +254,9 @@ impl From<DiagonalMatrix3> for DSMatrix3 {
             .map(|&[x, y, z]| [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, z]])
             .collect();
 
-        let num_cols = diag.num_cols();
+        let num_cols = diag.num_block_cols();
         Tensor::new(Chunked::from_sizes(
-            vec![1; diag.num_rows()], // One element in every row.
+            vec![1; diag.num_block_rows()], // One block in every row.
             Sparse::from_dim(
                 (0..num_cols).collect(), // Diagonal sparsity pattern
                 num_cols,

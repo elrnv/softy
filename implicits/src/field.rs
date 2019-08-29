@@ -708,7 +708,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let rhs = basis * weights * DVector::from_vec(sample_data);
 
-        h.svd(false, false)
+        h.svd(true, true)
             .solve(&rhs, T::from(1e-9).unwrap())
             .map(|c| c[0] + q[0] * c[1] + q[1] * c[2] + q[2] * c[3])
             .unwrap_or(T::from(std::f64::NAN).unwrap())

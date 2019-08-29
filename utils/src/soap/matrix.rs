@@ -11,15 +11,50 @@ use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
 use std::ops::{Add, AddAssign, Mul};
 
-pub type DiagonalMatrix3<S = Vec<f64>> = Tensor<Chunked3<S>>;
+/// Row-major dense matrix with dynamic number of rows and N columns, where N can be `usize` or a
+/// constant.
+pub type DMatrix<S = Vec<f64>, N = usize> = Tensor<UniChunked<S, N>>;
+pub type DMatrixView<'a, N = usize> = DMatrixN<&'a [f64], N>;
+
+/// Row-major dense matrix of row-major NxM blocks where N is the number of rows an M number of
+/// columns.
+pub type DBlockMatrixNM<S = Vec<f64>, N, M> = DMatrix<UniChunked<UniChunked<S, M>, N>>;
+pub type DBlockMatrixNMView<'a, N, M> = DMatrix<&'a [f64], N, M>;
+
+/// Row-major dense matrix of row-major 3x3 blocks.
+pub type DBlockMatrix3<S = Vec<f64>> = DBlockMatrix<Chunked3<Chunked3<S>>>;
+pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
+
+pub struct DiagonalMatrix3<S = Vec<f64>>(Tensor<Chunked3<S>>);
 pub type DiagonalMatrix3View<'a> = DiagonalMatrix3<&'a [f64]>;
 
+impl<S: Set> Set for DiagonalMatrix3<S> {
+    type Elem = S::Elem;
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 impl<S: Set> DiagonalMatrix3<S> {
     pub fn num_cols(&self) -> usize {
         self.data.len()
     }
     pub fn num_rows(&self) -> usize {
         self.data.len()
+    }
+}
+
+impl<S: Viewed> Viewed for DiagonalMatrix3<S> {}
+impl<'a, S: View<'a>> View<'a> for DiagonalMatrix3<S> {
+    type Type = DiagonalMatrix3View<'a>;
+    fn view(&'a self) -> Self::Type {
+        DiagonalMatrix3(self.0.view())
+    }
+}
+
+impl<'a, S: ViewMut<'a>> ViewMut<'a> for DiagonalMatrix3<S> {
+    type Type = DiagonalMatrix3View<'a>;
+    fn view_mut(&'a mut self) -> Self::Type {
+        DiagonalMatrix3(self.0.view_mut())
     }
 }
 
@@ -572,36 +607,49 @@ mod tests {
         }
     }
 
-    //#[test]
-    //fn sparse_diag_add() {
-    //    let blocks = vec![
-    //        // Block 1
-    //        [1.0, 2.0, 3.0],
-    //        [4.0, 5.0, 6.0],
-    //        [7.0, 8.0, 9.0],
-    //        // Block 2
-    //        [1.1, 2.2, 3.3],
-    //        [4.4, 5.5, 6.6],
-    //        [7.7, 8.8, 9.9],
-    //    ];
-    //    let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
-    //    let indices = vec![(1, 1), (3, 2)];
-    //    let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
-    //    let diag = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+    #[test]
+    fn sparse_diag_add() {
+        let blocks = vec![
+            // Block 1
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            // Block 2
+            [1.1, 2.2, 3.3],
+            [4.4, 5.5, 6.6],
+            [7.7, 8.8, 9.9],
+        ];
+        let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+        let indices = vec![(1, 1), (3, 2)];
+        let mtx = SSMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
 
-    //    let sym = mtx.view() * mtx.transpose();
-    //    sym.write_img("out/sym.png");
+        let sym = mtx.view() * mtx.transpose();
 
-    //    let exp_vec = vec![
-    //        14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 16.94, 38.72, 60.5, 38.72,
-    //        93.17, 147.62, 60.5, 147.62, 234.74,
-    //    ];
+        let diagonal: Vec<_> = (1..=12).map(|i| i as f64).collect();
+        let diag = DiagonalMatrix3::new(Chunked3::from_flat(diagonal));
 
-    //    let val_vec = sym.storage();
-    //    for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
-    //        assert_relative_eq!(val, exp);
-    //    }
-    //}
+        let non_singular_sym = sym.view() + diag.view();
+
+        let exp_vec = vec![
+            1.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 3.0,
+            18.0, 32.0, 50.0,
+            32.0, 82.0, 122.0,
+            50.0, 122.0, 200.0,
+            7.0, 0.0, 0.0,
+            0.0, 8.0, 0.0,
+            0.0, 0.0, 9.0,
+            26.94, 38.72, 60.5,
+            38.72, 104.17, 147.62,
+            60.5, 147.62, 246.74,
+        ];
+
+        let val_vec = non_singular_sym.storage();
+        for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
+            assert_relative_eq!(val, exp);
+        }
+    }
 
     #[test]
     fn sparse_sparse_mul_non_diag() {

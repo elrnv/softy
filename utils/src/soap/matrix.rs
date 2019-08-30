@@ -47,12 +47,38 @@ pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
  * from such.
  */
 
+/// A diagonal matrix of `N` sized chunks. this is not to be confused with block diagonal matrix,
+/// which may contain off-diagonal elements in each block. This is a purely diagonal matrix, whose
+/// diagonal elements are grouped into `N` sized chunks.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DiagonalBlockMatrix<N = usize, S = Vec<f64>>(UniChunked<S, N>);
 pub type DiagonalBlockMatrixView<'a, N = usize> = DiagonalBlockMatrix<N, &'a [f64]>;
 pub type DiagonalBlockMatrixViewMut<'a, N = usize> = DiagonalBlockMatrix<N, &'a mut [f64]>;
 
 pub type DiagonalBlockMatrix3<S = Vec<f64>> = DiagonalBlockMatrix<U3, S>;
 pub type DiagonalBlockMatrix3View<'a> = DiagonalBlockMatrix3<&'a [f64]>;
+
+impl<S, N: Dimension> DiagonalBlockMatrix<N, S> {
+    pub fn new(chunks: UniChunked<S, N>) -> Self {
+        DiagonalBlockMatrix(chunks)
+    }
+
+    /// Produce a mutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
+    /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
+    pub fn tensor_view_mut<'a>(&'a mut self) -> Tensor<UniChunked<S::Type, N>>
+        where S: Set + ViewMut<'a>,
+    {
+        Tensor::new(self.0.view_mut())
+    }
+
+    /// Produce an immutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
+    /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
+    pub fn tensor_view<'a>(&'a self) -> Tensor<UniChunked<S::Type, N>>
+        where S: Set + View<'a>,
+    {
+        Tensor::new(self.0.view())
+    }
+}
 
 impl<S, N: Dimension> BlockMatrix for DiagonalBlockMatrix<N, S>
 where UniChunked<S, N>: Set

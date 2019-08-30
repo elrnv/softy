@@ -190,7 +190,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             .expect("Failed to retrieve constraint indices.");
 
         // A set of masses on active contact vertices.
-        let object_mass_inv: EffectiveMassInv = Tensor::new(
+        let object_mass_inv: EffectiveMassInv = DiagonalBlockMatrix::new(
             surf_indices
                 .iter()
                 .map(|&surf_idx| {

@@ -83,7 +83,7 @@ impl PointContactConstraint {
             let object_mass_inv = object
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
                 .map(|attrib| {
-                    Tensor::new(
+                    DiagonalBlockMatrix::new(
                         attrib
                             .iter()
                             .map(|&x| {
@@ -98,7 +98,7 @@ impl PointContactConstraint {
             let collider_mass_inv = collider
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
                 .map(|attrib| {
-                    Tensor::new(
+                    DiagonalBlockMatrix::new(
                         attrib
                             .iter()
                             .map(|&x| {
@@ -399,8 +399,8 @@ impl ContactConstraint for PointContactConstraint {
         let surf = self.implicit_surface.borrow();
 
         // TODO: Deal with infinite masses (i.e. None case).
-        let object_zero_mass = Tensor::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[0].len()]));
-        let collider_zero_mass = Tensor::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]));
+        let object_zero_mass = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[0].len()]));
+        let collider_zero_mass = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]));
         let object_mass_inv = self.object_mass_inv.as_ref().unwrap_or(&object_zero_mass);
         let collider_mass_inv = self
             .collider_mass_inv
@@ -426,7 +426,7 @@ impl ContactConstraint for PointContactConstraint {
 
         //jac_mass.write_img("./out/jac_mass.png");
 
-        let effective_mass_inv = jac_mass.view() * jac.transpose();
+        let effective_mass_inv = jac_mass.view() * jac.view().transpose();
         //effective_mass_inv.write_img("./out/jjt.png");
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
         //effective_mass_inv.write_img("./out/effective_mass_inv.png");
@@ -581,7 +581,7 @@ impl ContactConstraint for PointContactConstraint {
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
         *object_friction_impulse =
-            (jac.transpose() * Tensor::new(collider_friction_impulse.view().into())).data;
+            (jac.view().transpose() * Tensor::new(collider_friction_impulse.view().into())).data;
 
         // The last thing to do is to ensure that collider friction impulses are
         // the impulses ON the collider and not BY the collider.

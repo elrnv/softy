@@ -337,7 +337,7 @@ pub(crate) fn build_triplet_contact_jacobian(
 /// to query points (contact points). Not all contact points are active, so rows
 /// are sparse, and not all surface vertex positions are affected by each query
 /// point, so columns are also sparse.
-pub type ContactJacobian<S = Vec<f64>, I = Vec<usize>> = SSMatrix3<S, I>;
+pub type ContactJacobian<S = Vec<f64>, I = Vec<usize>> = SSBlockMatrix3<S, I>;
 pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
 
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
@@ -411,13 +411,13 @@ where
 //}
 
 /// A diagonal mass matrix chunked by triplet blocks (one triplet for each vertex).
-pub type MassMatrix<S = Vec<f64>> = DiagonalMatrix3<S>;
+pub type MassMatrix<S = Vec<f64>> = DiagonalBlockMatrix3<S>;
 pub type MassMatrixView<'a> = MassMatrix<&'a [f64]>;
 
-pub type Delassus<S = Vec<f64>, I = Vec<usize>> = DSMatrix3<S, I>;
+pub type Delassus<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
 pub type DelassusView<'a> = Delassus<&'a [f64], &'a [usize]>;
 
-pub(crate) type EffectiveMassInv<S = Vec<f64>, I = Vec<usize>> = DSMatrix3<S, I>;
+pub(crate) type EffectiveMassInv<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
 pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usize]>;
 
 #[cfg(test)]

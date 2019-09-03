@@ -55,12 +55,21 @@ pub struct Subset<S, I = Vec<usize>> {
     /// An optional set of indices. When this is `None`, the subset is
     /// considered to be entire. Empty subsets are represented by a zero length
     /// array of indices: either `Some(&[])` or `Some(Vec::new())`.
-    pub(crate) indices: Option<I>,
-    pub(crate) data: S,
+    pub indices: Option<I>,
+    pub data: S,
 }
 
 /// A borrowed subset.
 pub type SubsetView<'a, S> = Subset<S, &'a [usize]>;
+
+impl<S, I> Subset<S, I> {
+    pub fn data(&self) -> &S {
+        &self.data
+    }
+    pub fn data_mut(&mut self) -> &mut S {
+        &mut self.data
+    }
+}
 
 impl<S: Set + RemovePrefix> Subset<S> {
     /// Create a subset of elements from the original set given at the specified indices.
@@ -153,6 +162,50 @@ impl<S, O> Subset<S, O> {
         Subset {
             indices: None,
             data,
+        }
+    }
+}
+
+impl<S: Set, I: AsRef<[usize]>> Subset<S, I> {
+    /// Find an element in the subset by its index in the superset. Return the index of the element
+    /// in the subset if found.
+    /// Since subset indices are always in sorted order, this function performs a binary search.
+    ///
+    /// # Examples
+    ///
+    /// In the following simple example the element `3` is found at superset index `2` which is
+    /// located at index `1` in the subset.
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let superset =  vec![1,2,3,4,5,6];
+    /// let subset = Subset::from_unique_ordered_indices(vec![1,2,5], superset);
+    /// assert_eq!(Some(1), subset.find_by_index(2));
+    /// assert_eq!(None, subset.find_by_index(3));
+    /// ```
+    /// 
+    /// Note that the superset index refers to the indices with which the subset was created. This
+    /// means that even after we have split the subset, the input indices are expected to refer to
+    /// the original subset. The following example demonstrates this by splitting the original
+    /// subset in the pervious example.
+    /// 
+    /// ```
+    /// use utils::soap::*;
+    /// let superset =  vec![1,2,3,4,5,6];
+    /// let subset = Subset::from_unique_ordered_indices(vec![1,2,5], superset);
+    /// let (_, r) = subset.view().split_at(1);
+    /// assert_eq!(Some(0), r.find_by_index(2));
+    /// assert_eq!(None, r.find_by_index(3));
+    /// ```
+    pub fn find_by_index(&self, index: usize) -> Option<usize> {
+        match &self.indices {
+            Some(indices) => {
+                indices.as_ref().binary_search(&index).ok()
+            }
+            None => {
+                // If the subset is entire, then we know the element is contained.
+                Some(index)
+            }
         }
     }
 }

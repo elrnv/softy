@@ -183,12 +183,12 @@ impl<S: Set, I: AsRef<[usize]>> Subset<S, I> {
     /// assert_eq!(Some(1), subset.find_by_index(2));
     /// assert_eq!(None, subset.find_by_index(3));
     /// ```
-    /// 
+    ///
     /// Note that the superset index refers to the indices with which the subset was created. This
     /// means that even after we have split the subset, the input indices are expected to refer to
     /// the original subset. The following example demonstrates this by splitting the original
     /// subset in the pervious example.
-    /// 
+    ///
     /// ```
     /// use utils::soap::*;
     /// let superset =  vec![1,2,3,4,5,6];
@@ -199,9 +199,7 @@ impl<S: Set, I: AsRef<[usize]>> Subset<S, I> {
     /// ```
     pub fn find_by_index(&self, index: usize) -> Option<usize> {
         match &self.indices {
-            Some(indices) => {
-                indices.as_ref().binary_search(&index).ok()
-            }
+            Some(indices) => indices.as_ref().binary_search(&index).ok(),
             None => {
                 // If the subset is entire, then we know the element is contained.
                 Some(index)

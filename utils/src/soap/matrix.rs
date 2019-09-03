@@ -35,7 +35,8 @@ pub type DMatrixView<'a, N = usize> = DMatrix<&'a [f64], N>;
 
 /// Row-major dense matrix of row-major NxM blocks where N is the number of rows an M number of
 /// columns.
-pub type DBlockMatrix<N = usize, M = usize, S = Vec<f64>> = DMatrix<UniChunked<UniChunked<S, M>, N>>;
+pub type DBlockMatrix<N = usize, M = usize, S = Vec<f64>> =
+    DMatrix<UniChunked<UniChunked<S, M>, N>>;
 pub type DBlockMatrixView<'a, N = usize, M = usize> = DBlockMatrix<N, M, &'a [f64]>;
 
 /// Row-major dense matrix of row-major 3x3 blocks.
@@ -51,15 +52,19 @@ pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
 /// which may contain off-diagonal elements in each block. This is a purely diagonal matrix, whose
 /// diagonal elements are grouped into `N` sized chunks.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DiagonalBlockMatrix<N = usize, S = Vec<f64>, I = Vec<usize>>(Subset<UniChunked<S, N>, I>);
+pub struct DiagonalBlockMatrix<N = usize, S = Vec<f64>, I = Vec<usize>>(
+    Subset<UniChunked<S, N>, I>,
+);
 pub type DiagonalBlockMatrixView<'a, N = usize> = DiagonalBlockMatrix<N, &'a [f64], &'a [usize]>;
-pub type DiagonalBlockMatrixViewMut<'a, N = usize> = DiagonalBlockMatrix<N, &'a mut [f64], &'a [usize]>;
+pub type DiagonalBlockMatrixViewMut<'a, N = usize> =
+    DiagonalBlockMatrix<N, &'a mut [f64], &'a [usize]>;
 
 pub type DiagonalBlockMatrix3<S = Vec<f64>, I = Vec<usize>> = DiagonalBlockMatrix<U3, S, I>;
 pub type DiagonalBlockMatrix3View<'a> = DiagonalBlockMatrix3<&'a [f64], &'a [usize]>;
 
 impl<S, I: AsRef<[usize]>, N: Dimension> DiagonalBlockMatrix<N, S, I>
-where UniChunked<S, N>: Set,
+where
+    UniChunked<S, N>: Set,
 {
     /// A generic constructor that transforms the input into the underlying storage type. This
     /// sometimes requires additional generic parameters to be explicitly specified.
@@ -73,7 +78,8 @@ where UniChunked<S, N>: Set,
     /// Produce a mutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
     /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
     pub fn tensor_view_mut<'a>(&'a mut self) -> Tensor<SubsetView<'a, UniChunked<S::Type, N>>>
-        where S: Set + ViewMut<'a>,
+    where
+        S: Set + ViewMut<'a>,
     {
         Tensor::new(ViewMut::view_mut(&mut self.0))
     }
@@ -81,14 +87,16 @@ where UniChunked<S, N>: Set,
     /// Produce an immutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
     /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
     pub fn tensor_view<'a>(&'a self) -> Tensor<SubsetView<'a, UniChunked<S::Type, N>>>
-        where S: Set + View<'a>,
+    where
+        S: Set + View<'a>,
     {
         Tensor::new(self.0.view())
     }
 }
 
 impl<S, N: Dimension> DiagonalBlockMatrix<N, S, Box<[usize]>>
-    where UniChunked<S, N>: Set,
+where
+    UniChunked<S, N>: Set,
 {
     /// Explicit constructor from uniformly chunked collections.
     pub fn from_uniform(chunks: UniChunked<S, N>) -> Self {
@@ -96,9 +104,10 @@ impl<S, N: Dimension> DiagonalBlockMatrix<N, S, Box<[usize]>>
     }
 }
 impl<S, N> DiagonalBlockMatrix<U<N>, S, Box<[usize]>>
-    where UniChunked<S, U<N>>: Set,
-          N: Unsigned + Default,
-          S: Set,
+where
+    UniChunked<S, U<N>>: Set,
+    N: Unsigned + Default,
+    S: Set,
 {
     pub fn from_flat(chunks: S) -> Self {
         DiagonalBlockMatrix(Subset::all(UniChunked::from_flat(chunks)))
@@ -106,7 +115,8 @@ impl<S, N> DiagonalBlockMatrix<U<N>, S, Box<[usize]>>
 }
 
 impl<S, N: Dimension> BlockMatrix for DiagonalBlockMatrix<N, S>
-where UniChunked<S, N>: Set
+where
+    UniChunked<S, N>: Set,
 {
     fn num_cols_per_block(&self) -> usize {
         self.0.data.chunk_size()
@@ -123,7 +133,8 @@ where UniChunked<S, N>: Set
 }
 
 impl<S, N: Dimension> Matrix for DiagonalBlockMatrix<N, S>
-where UniChunked<S, N>: Set
+where
+    UniChunked<S, N>: Set,
 {
     type Transpose = Self;
     fn transpose(self) -> Self {
@@ -139,8 +150,10 @@ where UniChunked<S, N>: Set
 
 impl<S: Viewed, I, N> Viewed for DiagonalBlockMatrix<N, S, I> {}
 
-impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>, N: Copy> View<'a> for DiagonalBlockMatrix<N, S, I>
-where UniChunked<S, N>: Set
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>, N: Copy> View<'a>
+    for DiagonalBlockMatrix<N, S, I>
+where
+    UniChunked<S, N>: Set,
 {
     type Type = DiagonalBlockMatrixView<'a, N>;
     fn view(&'a self) -> Self::Type {
@@ -148,8 +161,10 @@ where UniChunked<S, N>: Set
     }
 }
 
-impl<'a, S: Set + ViewMut<'a, Type = &'a mut [f64]>, I: AsRef<[usize]>, N: Copy> ViewMut<'a> for DiagonalBlockMatrix<N, S, I>
-where UniChunked<S, N>: Set
+impl<'a, S: Set + ViewMut<'a, Type = &'a mut [f64]>, I: AsRef<[usize]>, N: Copy> ViewMut<'a>
+    for DiagonalBlockMatrix<N, S, I>
+where
+    UniChunked<S, N>: Set,
 {
     type Type = DiagonalBlockMatrixViewMut<'a, N>;
     fn view_mut(&'a mut self) -> Self::Type {
@@ -285,15 +300,16 @@ impl SSBlockMatrix3 {
 
 /// Dense-row sparse-column row-major 3x3 block matrix. Block version of CSR.
 pub type DSBlockMatrix<N = usize, M = usize, S = Vec<f64>, I = Vec<usize>> =
-    Tensor<Chunked<Sparse<UniChunked<UniChunked<S,M>, N>, std::ops::Range<usize>, I>, Offsets<I>>>;
+    Tensor<Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>, Offsets<I>>>;
 pub type DSBlockMatrixView<'a, N = usize, M = usize> = DSBlockMatrix<N, M, &'a [f64], &'a [usize]>;
 
 pub type DSBlockMatrix3<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U3, U3, S, I>;
 pub type DSBlockMatrix3View<'a> = DSBlockMatrix3<&'a [f64], &'a [usize]>;
 
 impl<S: Set, I: Set, N: Dimension, M: Dimension> BlockMatrix for DSBlockMatrix<N, M, S, I>
-where UniChunked<UniChunked<S, M>, N>: Set,
-      UniChunked<S, M>: Set,
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
 {
     fn num_cols_per_block(&self) -> usize {
         self.data.data().source().data().chunk_size()
@@ -310,8 +326,9 @@ where UniChunked<UniChunked<S, M>, N>: Set,
 }
 
 impl<S: Set, I: Set, N: Dimension, M: Dimension> Matrix for DSBlockMatrix<N, M, S, I>
-where UniChunked<UniChunked<S, M>, N>: Set,
-      UniChunked<S, M>: Set,
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
 {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
@@ -366,8 +383,10 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
     fn from(diag: DiagonalBlockMatrix3) -> DSBlockMatrix3 {
         // Need to convert each triplet in diag into a diagonal 3x3 matrix.
         // Each block is essentially [x, 0, 0, 0, y, 0, 0, 0, z].
-        let data: Chunked3<Vec<_>> = diag.view()
-            .0.iter()
+        let data: Chunked3<Vec<_>> = diag
+            .view()
+            .0
+            .iter()
             .map(|&[x, y, z]| [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, z]])
             .collect();
 
@@ -636,7 +655,8 @@ impl std::ops::Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_>
 // This can also be interpreted as a column vector of column-major 3x3 matrix blocks.
 pub type SparseBlockVector<N = usize, M = usize, S = Vec<f64>, I = Offsets> =
     Tensor<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>>;
-pub type SparseBlockVectorView<'a, N = usize, M = usize> = SparseBlockVector<N, M, &'a [f64], &'a [usize]>;
+pub type SparseBlockVectorView<'a, N = usize, M = usize> =
+    SparseBlockVector<N, M, &'a [f64], &'a [usize]>;
 pub type SparseBlockVector3<S = Vec<f64>, I = Offsets> = SparseBlockVector<U3, U3, S, I>;
 pub type SparseBlockVector3View<'a> = SparseBlockVector3<&'a [f64], &'a [usize]>;
 
@@ -798,18 +818,9 @@ mod tests {
         let non_singular_sym = sym.view() + diag.view();
 
         let exp_vec = vec![
-            1.0, 0.0, 0.0,
-            0.0, 2.0, 0.0,
-            0.0, 0.0, 3.0,
-            18.0, 32.0, 50.0,
-            32.0, 82.0, 122.0,
-            50.0, 122.0, 200.0,
-            7.0, 0.0, 0.0,
-            0.0, 8.0, 0.0,
-            0.0, 0.0, 9.0,
-            26.94, 38.72, 60.5,
-            38.72, 104.17, 147.62,
-            60.5, 147.62, 246.74,
+            1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 18.0, 32.0, 50.0, 32.0, 82.0, 122.0, 50.0,
+            122.0, 200.0, 7.0, 0.0, 0.0, 0.0, 8.0, 0.0, 0.0, 0.0, 9.0, 26.94, 38.72, 60.5, 38.72,
+            104.17, 147.62, 60.5, 147.62, 246.74,
         ];
 
         let val_vec = non_singular_sym.storage();

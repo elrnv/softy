@@ -730,6 +730,76 @@ where
  * Iteration
  */
 
+impl<S, I> IntoIterator for Subset<S, I>
+where
+    S: SplitAt + SplitFirst + Set + Dummy,
+    I: SplitFirst + Clone,
+    <I as SplitFirst>::First: std::borrow::Borrow<usize>,
+{
+    type Item = S::First;
+    type IntoIter = SubsetIter<S, I>;
+
+    /// Convert a `Subset` into an iterator.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut s = Subset::from_unique_ordered_indices(vec![1,3,5], vec![1,2,3,4,5,6]);
+    /// let mut iter = s.view().into_iter();
+    /// assert_eq!(Some(&2), iter.next());
+    /// assert_eq!(Some(&4), iter.next());
+    /// assert_eq!(Some(&6), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    fn into_iter(self) -> Self::IntoIter {
+        SubsetIter {
+            indices: self.indices,
+            data: self.data,
+        }
+    }
+}
+
+// Iterator for `Subset`s
+pub struct SubsetIter<S, I> {
+    indices: Option<I>,
+    data: S,
+}
+
+impl<S, I> Iterator for SubsetIter<S, I>
+where
+    S: SplitAt + SplitFirst + Set + Dummy,
+    I: SplitFirst + Clone,
+    <I as SplitFirst>::First: std::borrow::Borrow<usize>,
+{
+    type Item = S::First;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::borrow::Borrow;
+        let SubsetIter { indices, data } = self;
+        let data_slice = std::mem::replace(data, unsafe { Dummy::dummy() });
+        match indices {
+            Some(ref mut indices) => indices.clone().split_first().map(|(first, rest)| {
+                let (item, right) = data_slice.split_first().expect("Corrupt subset");
+                if let Some((second, _)) = rest.clone().split_first() {
+                    let (_, r) = right.split_at(*second.borrow() - *first.borrow() - 1);
+                    *data = r;
+                } else {
+                    let n = data.len();
+                    let (_, r) = right.split_at(n);
+                    *data = r;
+                }
+                *indices = rest;
+                item
+            }),
+            None => data_slice.split_first().map(|(item, rest)| {
+                *data = rest;
+                item
+            }),
+        }
+    }
+}
+
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + Get<'a, usize> + View<'a>,
@@ -760,42 +830,6 @@ where
     }
 }
 
-pub struct SubsetIterMut<'a, V> {
-    indices: Option<&'a [usize]>,
-    data: V,
-}
-
-impl<'a, V: 'a> Iterator for SubsetIterMut<'a, V>
-where
-    V: SplitAt + SplitFirst + Set + Dummy,
-{
-    type Item = V::First;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let SubsetIterMut { indices, data } = self;
-        let data_slice = std::mem::replace(data, unsafe { Dummy::dummy() });
-        match indices {
-            Some(ref mut indices) => indices.split_first().map(|(first, rest)| {
-                let (item, right) = data_slice.split_first().expect("Corrupt subset");
-                if let Some((second, _)) = rest.split_first() {
-                    let (_, r) = right.split_at(*second - *first - 1);
-                    *data = r;
-                } else {
-                    let n = data.len();
-                    let (_, r) = right.split_at(n);
-                    *data = r;
-                }
-                *indices = rest;
-                item
-            }),
-            None => data_slice.split_first().map(|(item, rest)| {
-                *data = rest;
-                item
-            }),
-        }
-    }
-}
-
 impl<'a, S, I> Subset<S, I>
 where
     S: Set + ViewMut<'a>,
@@ -814,8 +848,8 @@ where
     /// }
     /// assert_eq!(v, vec![2,2,4,4,6]);
     /// ```
-    pub fn iter_mut(&'a mut self) -> SubsetIterMut<'a, <S as ViewMut<'a>>::Type> {
-        SubsetIterMut {
+    pub fn iter_mut(&'a mut self) -> SubsetIter<<S as ViewMut<'a>>::Type, &'a [usize]> {
+        SubsetIter {
             indices: self.indices.as_ref().map(|indices| indices.as_ref()),
             data: self.data.view_mut(),
         }

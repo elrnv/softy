@@ -434,7 +434,6 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
             out_mtx[2][2] += entry[2];
         };
 
-        let mut count = 0;
         for (sparse_row_idx, row_l, _) in self.data.iter() {
             let (row_idx, rhs_entry) = loop {
                 if let Some((row_idx, entry)) = rhs_iter.next() {
@@ -444,7 +443,6 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
                         *idx = row_idx; // Diagonal entry col_idx == row_idx
                         add_diagonal_entry(out_col, entry);
                         out.transfer_forward_all_but(row_idx, 1);
-                        count += 1;
                     } else {
                         break (row_idx, entry);
                     }
@@ -483,7 +481,6 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
 
             // Truncate the current row to fit.
             out.transfer_forward_all_but(row_idx, count_out_cols);
-            count += count_out_cols;
         }
 
         Tensor::new(out)

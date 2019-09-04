@@ -1,14 +1,33 @@
 use super::*;
 use std::marker::PhantomData;
-use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Neg, Add, AddAssign, Mul, MulAssign, Div, DivAssign, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
 /// A generic type that accepts algebraic expressions.
+///
+/// The type parameter `I` determines the indexing structure of the tensor.
+/// For instance for unique types `I0` and `I1`, the type `I == (I0, I1)` represents a matrix with
+/// outer index `I0` and inner index `I1`. This means that a transpose can be implemented simply by
+/// swapping positions of `I0` and `I1`, which means a matrix with `I == (I1, I0)` has structure
+/// that is transpose of the matix with `I = (I0, I1)`.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Tensor<T: ?Sized, I = ()> {
     index: PhantomData<I>,
     pub data: T,
+}
+
+impl<T> Tensor<T> {
+    /// Construct a tensor without any indexing information.
+    /// This is convenient for one-off computations where the indexing structure is not important.
+    /// In other words, this creates a shallow or `flat` tensor without information about the
+    /// deeper structures.
+    pub fn flat(data: T) -> Tensor<T> {
+        Tensor {
+            data,
+            index: PhantomData,
+        }
+    }
 }
 
 impl<T, I> Tensor<T, I> {
@@ -18,7 +37,6 @@ impl<T, I> Tensor<T, I> {
             index: PhantomData,
         }
     }
-
     /// Create a reference to the given type as a `Tensor`.
     pub fn as_ref(c: &T) -> &Tensor<T, I> {
         unsafe { &*(c as *const T as *const Tensor<T, I>) }
@@ -46,7 +64,7 @@ impl<T, I> std::ops::DerefMut for Tensor<T, I> {
  * Tensor as a Set
  */
 
-impl<T: Set> Set for Tensor<T> {
+impl<T: Set, I> Set for Tensor<T, I> {
     type Elem = T::Elem;
     fn len(&self) -> usize {
         self.data.len()
@@ -57,16 +75,16 @@ impl<T: Set> Set for Tensor<T> {
  * View Impls
  */
 
-impl<T: Viewed> Viewed for Tensor<T> {}
+impl<T: Viewed, I> Viewed for Tensor<T, I> {}
 
-impl<'a, T: View<'a>> View<'a> for Tensor<T> {
+impl<'a, T: View<'a>, I> View<'a> for Tensor<T, I> {
     type Type = Tensor<T::Type>;
     fn view(&'a self) -> Self::Type {
         Tensor::new(self.data.view())
     }
 }
 
-impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
+impl<'a, T: ViewMut<'a>, I> ViewMut<'a> for Tensor<T, I> {
     type Type = Tensor<T::Type>;
     fn view_mut(&'a mut self) -> Self::Type {
         Tensor::new(self.data.view_mut())
@@ -75,7 +93,7 @@ impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
 
 impl<T, I, J> Tensor<T, (I, J)> {
     pub fn transpose(self) -> Tensor<T, (J, I)> {
-        Tensor::<_, (J, I)>::new(self.data)
+        Tensor::new(self.data)
     }
 }
 
@@ -97,6 +115,20 @@ impl<T: MulAssign> MulAssign for Tensor<T> {
     }
 }
 
+impl<T: DivAssign> Div for Tensor<T> {
+    type Output = Self;
+    fn div(mut self, rhs: Self) -> Self {
+        self /= rhs;
+        self
+    }
+}
+
+impl<T: DivAssign> DivAssign for Tensor<T> {
+    fn div_assign(&mut self, rhs: Self) {
+        self.data /= rhs.data;
+    }
+}
+
 /*
  * Implement 1-tensor algebra.
  */
@@ -106,8 +138,8 @@ impl<T: MulAssign> MulAssign for Tensor<T> {
  */
 
 macro_rules! impl_array_tensors {
-    ($nty:ident; $n:expr) => {
-        impl<T: AddAssign + Copy> Add for Tensor<[T; $n]> {
+    ($n:expr) => {
+        impl<T: AddAssign + Copy, I> Add for Tensor<[T; $n], I> {
             type Output = Self;
 
             /// Add two tensor arrays together.
@@ -117,7 +149,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: AddAssign + Copy> AddAssign for Tensor<[T; $n]> {
+        impl<T: AddAssign + Copy, I> AddAssign for Tensor<[T; $n], I> {
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Self) {
                 for i in 0..$n {
@@ -125,7 +157,7 @@ macro_rules! impl_array_tensors {
                 }
             }
         }
-        impl<T: SubAssign + Copy> Sub for Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy, I> Sub for Tensor<[T; $n], I> {
             type Output = Self;
 
             fn sub(mut self, rhs: Self) -> Self::Output {
@@ -134,7 +166,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: SubAssign + Copy> SubAssign for Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy, I> SubAssign for Tensor<[T; $n], I> {
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Self) {
                 for i in 0..$n {
@@ -145,7 +177,7 @@ macro_rules! impl_array_tensors {
 
         // Right multiply by a tensor with one less degree than Self.
         // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T> Mul<Tensor<T>> for Tensor<[T; $n]>
+        impl<T, I> Mul<Tensor<T>> for Tensor<[T; $n], I>
         where
             Tensor<T>: MulAssign + Clone,
         {
@@ -156,11 +188,11 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T> MulAssign<Tensor<T>> for Tensor<[T; $n]>
+        impl<T, I> MulAssign<Tensor<T>> for Tensor<[T; $n], I>
         where
             Tensor<T>: MulAssign + Clone,
         {
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             fn mul_assign(&mut self, rhs: Tensor<T>) {
                 use std::ops::IndexMut;
                 for i in 0..$n {
@@ -169,13 +201,49 @@ macro_rules! impl_array_tensors {
                 }
             }
         }
+
+        impl<T, I> Div<Tensor<T>> for Tensor<[T; $n], I>
+        where
+            Tensor<T>: DivAssign + Clone,
+        {
+            type Output = Self;
+            fn div(mut self, rhs: Tensor<T>) -> Self::Output {
+                self /= rhs;
+                self
+            }
+        }
+
+        impl<T, I> DivAssign<Tensor<T>> for Tensor<[T; $n], I>
+        where
+            Tensor<T>: DivAssign + Clone,
+        {
+            #[unroll_for_loops]
+            fn div_assign(&mut self, rhs: Tensor<T>) {
+                use std::ops::IndexMut;
+                for i in 0..$n {
+                    let lhs = Tensor::as_mut(self.data.index_mut(i));
+                    *lhs /= rhs.clone();
+                }
+            }
+        }
+
+        impl<T: Neg<Output = T> + Copy, I> Neg for Tensor<[T; $n], I> {
+            type Output = Self;
+            #[unroll_for_loops]
+            fn neg(mut self) -> Self::Output {
+                for i in 0..$n {
+                    self.data[i] = -self.data[i];
+                }
+                self
+            }
+        }
     };
 }
 
-impl_array_tensors!(U1; 1);
-impl_array_tensors!(U2; 2);
-impl_array_tensors!(U3; 3);
-impl_array_tensors!(U4; 4);
+impl_array_tensors!(1);
+impl_array_tensors!(2);
+impl_array_tensors!(3);
+impl_array_tensors!(4);
 
 impl<T: Add<Output = T> + Copy> Add for Tensor<&[T]> {
     type Output = Tensor<Vec<T>>;
@@ -454,6 +522,23 @@ where
     }
 }
 
+impl<'a, T> SubAssign<Tensor<SubsetView<'a, SubsetView<'a, UniChunked<&'a [T], U3>>>>>
+    for Tensor<UniChunked<&mut [T], U3>>
+where
+    //N: Unsigned + Copy + Array<T>,
+    //<N as Array<T>>::Array: Copy + 'a,
+    T: Copy,
+    Tensor<[T; 3]>: SubAssign,
+{
+    fn sub_assign(&mut self, other: Tensor<SubsetView<'a, SubsetView<'a, UniChunked<&'a [T], U3>>>>) {
+        assert_eq!(self.len(), other.len());
+        for (lhs, rhs) in self.data.iter_mut().zip(Subset::iter(&other.data)) {
+            let lhs_tensor = Tensor::as_mut(lhs);
+            *lhs_tensor -= Tensor::new(*rhs);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,35 +599,35 @@ mod tests {
 
     #[test]
     fn small_tensor_add() {
-        let a = Tensor::new([1, 2, 3, 4]);
-        let b = Tensor::new([5, 6, 7, 8]);
-        assert_eq!(Tensor::new([6, 8, 10, 12]), a + b);
+        let a = Tensor::flat([1, 2, 3, 4]);
+        let b = Tensor::flat([5, 6, 7, 8]);
+        assert_eq!(Tensor::flat([6, 8, 10, 12]), a + b);
 
-        let mut c = Tensor::new([0, 1, 2, 3]);
+        let mut c = Tensor::flat([0, 1, 2, 3]);
         c += a;
-        assert_eq!(Tensor::new([1, 3, 5, 7]), c);
+        assert_eq!(Tensor::flat([1, 3, 5, 7]), c);
     }
 
     #[test]
     fn small_tensor_sub() {
-        let a = Tensor::new([1, 2, 3, 4]);
-        let b = Tensor::new([5, 6, 7, 8]);
-        assert_eq!(Tensor::new([4, 4, 4, 4]), b - a);
+        let a = Tensor::flat([1, 2, 3, 4]);
+        let b = Tensor::flat([5, 6, 7, 8]);
+        assert_eq!(Tensor::flat([4, 4, 4, 4]), b - a);
 
-        let mut c = Tensor::new([1, 3, 5, 7]);
+        let mut c = Tensor::flat([1, 3, 5, 7]);
         c -= a;
-        assert_eq!(Tensor::new([0, 1, 2, 3]), c);
+        assert_eq!(Tensor::flat([0, 1, 2, 3]), c);
     }
 
     #[test]
     fn small_tensor_scalar_mul() {
-        let mut a = Tensor::new([1, 2, 3, 4]);
+        let mut a = Tensor::flat([1, 2, 3, 4]);
 
         // Right multiply by wrapped scalar.
-        assert_eq!(Tensor::new([3, 6, 9, 12]), a * Tensor::new(3));
+        assert_eq!(Tensor::flat([3, 6, 9, 12]), a * Tensor::flat(3));
 
         // Right assign multiply by wrapped scalar.
-        a *= Tensor::new(2);
-        assert_eq!(Tensor::new([2, 4, 6, 8]), a);
+        a *= Tensor::flat(2);
+        assert_eq!(Tensor::flat([2, 4, 6, 8]), a);
     }
 }

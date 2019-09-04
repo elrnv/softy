@@ -229,23 +229,14 @@ impl<'a, T> IntoFlat for &'a mut [T] {
 }
 
 impl<'a, T> Storage for &'a [T] {
-    type Storage = &'a [T];
-    /// A slice is a type of storage, simply return an immutable reference to self.
+    type Storage = [T];
     fn storage(&self) -> &Self::Storage {
         self
     }
 }
 
-impl<'a, T> StorageMut for &'a [T] {
-    /// A slice is a type of storage, simply return a mutable reference to self.
-    fn storage_mut(&mut self) -> &mut Self::Storage {
-        self
-    }
-}
-
 impl<'a, T> Storage for &'a mut [T] {
-    type Storage = &'a mut [T];
-    /// A slice is a type of storage, simply return an immutable reference to self.
+    type Storage = [T];
     fn storage(&self) -> &Self::Storage {
         self
     }

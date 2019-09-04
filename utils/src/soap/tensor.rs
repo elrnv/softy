@@ -1,6 +1,7 @@
 use super::*;
 use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use unroll::unroll_for_loops;
 
 /// A generic type that accepts algebraic expressions.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -79,12 +80,102 @@ impl<T, I, J> Tensor<T, (I, J)> {
 }
 
 /*
+ * Implement 0-tensor algebra.
+ */
+
+impl<T: MulAssign> Mul for Tensor<T> {
+    type Output = Self;
+    fn mul(mut self, rhs: Self) -> Self {
+        self *= rhs;
+        self
+    }
+}
+
+impl<T: MulAssign> MulAssign for Tensor<T> {
+    fn mul_assign(&mut self, rhs: Self) {
+        self.data *= rhs.data;
+    }
+}
+
+/*
  * Implement 1-tensor algebra.
  */
 
 /*
  * Tensor addition and subtraction.
  */
+
+macro_rules! impl_array_tensors {
+    ($nty:ident; $n:expr) => {
+        impl<T: AddAssign + Copy> Add for Tensor<[T; $n]> {
+            type Output = Self;
+
+            /// Add two tensor arrays together.
+            fn add(mut self, rhs: Self) -> Self::Output {
+                self += rhs;
+                self
+            }
+        }
+
+        impl<T: AddAssign + Copy> AddAssign for Tensor<[T; $n]> {
+            #[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Self) {
+                for i in 0..$n {
+                    self.data[i] += rhs.data[i];
+                }
+            }
+        }
+        impl<T: SubAssign + Copy> Sub for Tensor<[T; $n]> {
+            type Output = Self;
+
+            fn sub(mut self, rhs: Self) -> Self::Output {
+                self -= rhs;
+                self
+            }
+        }
+
+        impl<T: SubAssign + Copy> SubAssign for Tensor<[T; $n]> {
+            #[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Self) {
+                for i in 0..$n {
+                    self.data[i] -= rhs.data[i];
+                }
+            }
+        }
+
+        // Right multiply by a tensor with one less degree than Self.
+        // Note the clone trait is required for cloning the RHS for every row in Self.
+        impl<T> Mul<Tensor<T>> for Tensor<[T; $n]>
+        where
+            Tensor<T>: MulAssign + Clone,
+        {
+            type Output = Self;
+            fn mul(mut self, rhs: Tensor<T>) -> Self::Output {
+                self *= rhs;
+                self
+            }
+        }
+
+        impl<T> MulAssign<Tensor<T>> for Tensor<[T; $n]>
+        where
+            Tensor<T>: MulAssign + Clone,
+        {
+            //#[unroll_for_loops]
+            fn mul_assign(&mut self, rhs: Tensor<T>) {
+                use std::ops::IndexMut;
+                for i in 0..$n {
+                    let lhs = Tensor::as_mut(self.data.index_mut(i));
+                    *lhs *= rhs.clone();
+                }
+            }
+        }
+    };
+}
+
+impl_array_tensors!(U1; 1);
+impl_array_tensors!(U2; 2);
+impl_array_tensors!(U3; 3);
+impl_array_tensors!(U4; 4);
 
 impl<T: Add<Output = T> + Copy> Add for Tensor<&[T]> {
     type Output = Tensor<Vec<T>>;
@@ -345,25 +436,23 @@ macro_rules! impl_chunked_tensor_arithmetic {
 impl_chunked_tensor_arithmetic!(Chunked);
 impl_chunked_tensor_arithmetic!(UniChunked);
 
-//impl<'a, S, O, I> Add<Tensor<Subset<Chunked<S, O>, I>>> for Tensor<Chunked<S, O>>
-//where
-//    Subset<Chunked<S, O>, I>: ReadSet<'a>,
-//    Chunked<S, O>: ReadSet<'a>,
-//    <Chunked<S, O> as ToOwnedData>::OwnedData: OwnedSet<'a>,
-//    Tensor<<<Chunked<S, O> as ToOwnedData>::OwnedData as Set>::Elem>: AddAssign,
-//{
-//    type Output = Tensor<<Chunked<S, O> as ToOwnedData>::OwnedData>;
-//
-//    fn add(self, other: Tensor<Subset<Chunked<S, O>, I>>) -> Self::Output {
-//        assert_eq!(self.data.len(), other.data.len());
-//        let mut out = self.data.to_owned_data();
-//        let out_iter_mut = out.view_mut().into_iter();
-//        for (lhs, rhs) in out_iter_mut.zip(other.data.iter()) {
-//            *lhs += *rhs;
-//        }
-//        Tensor::new(out)
-//    }
-//}
+// TODO: Generalize this operation
+impl<T, N, I> SubAssign<Tensor<Subset<UniChunked<&[T], U<N>>, I>>>
+    for Tensor<UniChunked<&mut [T], U<N>>>
+where
+    I: AsRef<[usize]>,
+    N: Unsigned + Copy + Array<T>,
+    <N as Array<T>>::Array: Copy,
+    Tensor<<N as Array<T>>::Array>: SubAssign,
+{
+    fn sub_assign(&mut self, other: Tensor<Subset<UniChunked<&[T], U<N>>, I>>) {
+        assert_eq!(self.len(), other.len());
+        for (lhs, rhs) in self.data.iter_mut().zip(other.data.iter()) {
+            let lhs_tensor = Tensor::as_mut(lhs);
+            *lhs_tensor -= Tensor::new(*rhs);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -407,5 +496,53 @@ mod tests {
             Tensor::new(Chunked2::from_flat(vec![6, 8, 10, 12])),
             Tensor::new(a.view()) + Tensor::new(b.view())
         );
+    }
+
+    #[test]
+    fn tensor_subset_sub_assign() {
+        let a = Subset::from_unique_ordered_indices(
+            vec![1, 3],
+            Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+        );
+        let mut b = Chunked2::from_flat(vec![9, 10, 13, 14]);
+        let mut b_tensor = Tensor::new(b.view_mut());
+        let a_tensor = Tensor::new(a.view());
+        SubAssign::sub_assign(&mut b_tensor, a_tensor);
+        assert_eq!(b.view().at(0), &[6, 6]);
+        assert_eq!(b.view().at(1), &[6, 6]);
+    }
+
+    #[test]
+    fn small_tensor_add() {
+        let a = Tensor::new([1, 2, 3, 4]);
+        let b = Tensor::new([5, 6, 7, 8]);
+        assert_eq!(Tensor::new([6, 8, 10, 12]), a + b);
+
+        let mut c = Tensor::new([0, 1, 2, 3]);
+        c += a;
+        assert_eq!(Tensor::new([1, 3, 5, 7]), c);
+    }
+
+    #[test]
+    fn small_tensor_sub() {
+        let a = Tensor::new([1, 2, 3, 4]);
+        let b = Tensor::new([5, 6, 7, 8]);
+        assert_eq!(Tensor::new([4, 4, 4, 4]), b - a);
+
+        let mut c = Tensor::new([1, 3, 5, 7]);
+        c -= a;
+        assert_eq!(Tensor::new([0, 1, 2, 3]), c);
+    }
+
+    #[test]
+    fn small_tensor_scalar_mul() {
+        let mut a = Tensor::new([1, 2, 3, 4]);
+
+        // Right multiply by wrapped scalar.
+        assert_eq!(Tensor::new([3, 6, 9, 12]), a * Tensor::new(3));
+
+        // Right assign multiply by wrapped scalar.
+        a *= Tensor::new(2);
+        assert_eq!(Tensor::new([2, 4, 6, 8]), a);
     }
 }

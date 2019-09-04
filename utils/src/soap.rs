@@ -1,4 +1,5 @@
 mod array;
+mod array_math;
 mod boxed;
 pub mod chunked;
 mod matrix;
@@ -14,6 +15,7 @@ mod vec;
 mod view;
 
 pub use array::*;
+pub use array_math::*;
 pub use boxed::*;
 pub use chunked::*;
 pub use matrix::*;
@@ -710,7 +712,7 @@ where
 
 /// Get an immutable reference to the underlying storage type.
 pub trait Storage {
-    type Storage;
+    type Storage: ?Sized;
     fn storage(&self) -> &Self::Storage;
 }
 

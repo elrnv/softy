@@ -509,6 +509,16 @@ where
     }
 }
 
+impl<S, N> ExtendFromSlice for UniChunked<S, U<N>>
+where S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
+      N: Unsigned + Array<<S as Set>::Elem>,
+{
+    type Item = N::Array;
+    fn extend_from_slice(&mut self, other: &[Self::Item]) {
+        self.data.extend_from_slice(unsafe { reinterpret::reinterpret_slice(other) });
+    }
+}
+
 impl<S, N> IntoIterator for UniChunked<S, U<N>>
 where
     S: Set + IntoStaticChunkIterator<N>,
@@ -1591,3 +1601,4 @@ where
         self.data = chunked.data;
     }
 }
+

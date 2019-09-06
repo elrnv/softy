@@ -98,7 +98,7 @@ fn chunked_unichunked_push() {
     for i in 0..4 {
         let data: Vec<usize> = (i..i + 4).collect();
         let uni = Chunked2::from_flat(data);
-        chunked.push(uni.into());
+        chunked.push(uni);
     }
 
     assert_eq!(
@@ -125,6 +125,14 @@ fn unichunked_unichunked() {
     assert_eq!(Some(&[9, 10]), uni0_iter.next());
     assert_eq!(Some(&[11, 12]), uni0_iter.next());
     assert_eq!(None, uni0_iter.next());
+}
+
+#[test]
+fn unichunked_unichunked_as_ref() {
+    let v: Vec<usize> = (1..=12).collect();
+    let uni0 = Chunked2::from_flat(v);
+    let uni1 = Chunked3::from_flat(uni0);
+    assert_eq!(&[[[1,2],[3,4],[5,6]],[[7,8],[9,10],[11,12]]], uni1.as_ref());
 }
 
 #[test]

@@ -326,7 +326,7 @@ impl<S: Default, O: Default> Chunked<S, O> {
 
 impl<S> Chunked<S>
 where
-    S: Set + Push<<S as Set>::Elem> + Default,
+    S: Set + Default + ExtendFromSlice<Item = <S as Set>::Elem>, //Push<<S as Set>::Elem>,
 {
     /// Construct a `Chunked` `Vec` from a nested `Vec`.
     ///
@@ -475,13 +475,15 @@ where
     }
 }
 
-impl<S> Push<<Self as Set>::Elem> for Chunked<S>
+impl<S, O, L> Push<L> for Chunked<S, O>
 where
-    S: Set + Push<<S as Set>::Elem>,
+    S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
+    L: AsRef<[<S as Set>::Elem]>,
+    O: Push<usize>,
 {
-    /// Push an element onto this `Chunked`.
+    /// Push a slice of elements onto this `Chunked`.
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
     /// use utils::soap::*;
@@ -494,10 +496,39 @@ where
     /// assert_eq!(Some(&[4,5][..]), view1_iter.next());
     /// assert_eq!(None, view1_iter.next());
     /// ```
-    fn push(&mut self, element: <Self as Set>::Elem) {
-        for elem in element.into_iter() {
-            self.data.push(elem);
-        }
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.push(&[1,2]);
+    /// assert_eq!(3, s.len());
+    /// ```
+    fn push(&mut self, element: L) {
+        self.data.extend_from_slice(element.as_ref());
+        self.chunks.push(self.data.len());
+    }
+}
+
+impl<S, O> Chunked<S, O>
+where
+    S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
+    O: Push<usize>,
+{
+    /// Push a slice of elements onto this `Chunked`.
+    /// This can be more efficient than pushing from an iterator.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.push_slice(&[1,2]);
+    /// assert_eq!(3, s.len());
+    /// ```
+    pub fn push_slice(&mut self, element: &[<S as Set>::Elem]) {
+        self.data.extend_from_slice(element);
         self.chunks.push(self.data.len());
     }
 }
@@ -574,7 +605,7 @@ where
 // during initialization, for instance.
 impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for Chunked<S>
 where
-    S: Set + Default + Push<<S as Set>::Elem>,
+    S: Set + Default + ExtendFromSlice<Item = <S as Set>::Elem>,// + Push<<S as Set>::Elem>,
 {
     /// Construct a `Chunked` from an iterator over `Vec` types.
     ///
@@ -849,28 +880,6 @@ where
     /// ```
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         &mut self.data[self.chunks[idx]..self.chunks[idx + 1]]
-    }
-}
-
-impl<S, O> Chunked<S, O>
-where
-    S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
-    O: Push<usize>,
-{
-    /// Push a slice of elements onto this `Chunked`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use utils::soap::*;
-    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
-    /// assert_eq!(2, s.len());
-    /// s.push_slice(&[1,2]);
-    /// assert_eq!(3, s.len());
-    /// ```
-    pub fn push_slice(&mut self, element: &[<S as Set>::Elem]) {
-        self.data.extend_from_slice(element);
-        self.chunks.push(self.data.len());
     }
 }
 

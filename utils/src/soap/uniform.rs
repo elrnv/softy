@@ -171,9 +171,9 @@ impl Dimension for usize {
     }
 }
 
-impl<S, N: Dimension> UniChunked<S, N> {
+impl<S, N: Dimension> ChunkSize for UniChunked<S, N> {
     /// Get the size of each chunk in this collection.
-    pub fn chunk_size(&self) -> usize {
+    fn chunk_size(&self) -> usize {
         self.chunks.value()
     }
 }

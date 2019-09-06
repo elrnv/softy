@@ -651,3 +651,13 @@ impl<S: StorageMut, I> StorageMut for Select<S, I> {
         self.target.storage_mut()
     }
 }
+
+/*
+ * Selections of Unichunked types
+ */
+
+impl<S: ChunkSize, I> ChunkSize for Select<S, I> {
+    fn chunk_size(&self) -> usize {
+        self.target.chunk_size()
+    }
+}

@@ -55,21 +55,16 @@ pub struct Subset<S, I = Vec<usize>> {
     /// An optional set of indices. When this is `None`, the subset is
     /// considered to be entire. Empty subsets are represented by a zero length
     /// array of indices: either `Some(&[])` or `Some(Vec::new())`.
-    pub indices: Option<I>,
-    pub data: S,
+    indices: Option<I>,
+    /// Because `Subset`s modify the underlying data, it is not useful to query what the data is at
+    /// any given time. For a more transparent data structure that preserves the original data set,
+    /// use `Select`. To expose any characteristics of the contained `data` type, use a trait. See
+    /// `ChunkSize` for an example.
+    data: S,
 }
 
 /// A borrowed subset.
 pub type SubsetView<'a, S> = Subset<S, &'a [usize]>;
-
-impl<S, I> Subset<S, I> {
-    pub fn data(&self) -> &S {
-        &self.data
-    }
-    pub fn data_mut(&mut self) -> &mut S {
-        &mut self.data
-    }
-}
 
 impl<S: Set + RemovePrefix> Subset<S> {
     /// Create a subset of elements from the original set given at the specified indices.
@@ -933,5 +928,15 @@ impl<S: StorageMut, I> StorageMut for Subset<S, I> {
     /// ```
     fn storage_mut(&mut self) -> &mut Self::Storage {
         self.data.storage_mut()
+    }
+}
+
+/*
+ * Subsets of uniformly chunked collections
+ */
+
+impl<S: ChunkSize, I> ChunkSize for Subset<S, I> {
+    fn chunk_size(&self) -> usize {
+        self.data.chunk_size()
     }
 }

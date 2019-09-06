@@ -512,3 +512,13 @@ impl<S: PermuteInPlace, T, I: PermuteInPlace> PermuteInPlace for Sparse<S, T, I>
         source.permute_in_place(permutation, seen);
     }
 }
+
+/*
+ * Sparse uniformly chunked types
+ */
+
+impl<S: ChunkSize, T, I> ChunkSize for Sparse<S, T, I> {
+    fn chunk_size(&self) -> usize {
+        self.source.chunk_size()
+    }
+}

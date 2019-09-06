@@ -861,6 +861,12 @@ pub trait PermuteInPlace {
     fn permute_in_place(&mut self, indices: &[usize], seen: &mut [bool]);
 }
 
+/// This trait is used to produce the chunk size of a collection if it contains uniformly chunked
+/// elements.
+pub trait ChunkSize {
+    fn chunk_size(&self) -> usize;
+}
+
 /*
  * Tests
  */

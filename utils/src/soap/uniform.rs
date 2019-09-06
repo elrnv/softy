@@ -709,22 +709,32 @@ impl<T: Clone, N: Array<T>> PushArrayToVec<N> for T {
 //        self.data
 //    }
 //}
+//
 
-impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&[T], U<N>> {
+impl<S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem> + Unsigned> AsRef<[N::Array]> for UniChunked<S, U<N>>
+where <S as ReinterpretAsGrouped<N>>::Output: AsRef<[N::Array]>,
+      S: AsRef<[<S as Set>::Elem]>,
+{
     fn as_ref(&self) -> &[N::Array] {
-        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data)
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data.as_ref()).as_ref()
     }
 }
-impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&mut [T], U<N>> {
-    fn as_ref(&self) -> &[N::Array] {
-        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&*self.data)
-    }
-}
-impl<T, N: Array<T> + Unsigned> AsMut<[N::Array]> for UniChunked<&mut [T], U<N>> {
-    fn as_mut(&mut self) -> &mut [N::Array] {
-        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut *self.data)
-    }
-}
+
+//impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&[T], U<N>> {
+//    fn as_ref(&self) -> &[N::Array] {
+//        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data)
+//    }
+//}
+//impl<T, N: Array<T> + Unsigned> AsRef<[N::Array]> for UniChunked<&mut [T], U<N>> {
+//    fn as_ref(&self) -> &[N::Array] {
+//        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&*self.data)
+//    }
+//}
+//impl<T, N: Array<T> + Unsigned> AsMut<[N::Array]> for UniChunked<&mut [T], U<N>> {
+//    fn as_mut(&mut self) -> &mut [N::Array] {
+//        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(&mut *self.data)
+//    }
+//}
 
 impl<S, N> ToOwned for UniChunked<S, N>
 where

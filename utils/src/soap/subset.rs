@@ -940,3 +940,19 @@ impl<S: ChunkSize, I> ChunkSize for Subset<S, I> {
         self.data.chunk_size()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subset_of_subsets_iter() {
+        let set = vec![1,2,3,4,5,6];
+        let subset = Subset::from_unique_ordered_indices(vec![1,3,5], set);
+        let subsubset = Subset::from_unique_ordered_indices(vec![0,2], subset);
+        let mut iter = subsubset.iter();
+        assert_eq!(Some(&2), iter.next());
+        assert_eq!(Some(&6), iter.next());
+        assert_eq!(None, iter.next());
+    }
+}

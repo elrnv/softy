@@ -13,6 +13,7 @@ reinterpret = "0.2"
 sprs = { version = "0.6.4", optional = true }
 image = "0.22"
 unroll = "0.1"
+num-traits = "0.2"
 
 [dev-dependencies]
 approx = "0.3"

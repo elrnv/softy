@@ -481,9 +481,9 @@ impl<S: Set + RemovePrefix, I: RemovePrefix + AsRef<[usize]>> RemovePrefix for S
 
 impl<'a, S, I> Subset<S, I>
 where
-    S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,
+    S: Set + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
+    <S as View<'a>>::Type: Get<'a, usize, Output = &'a <S as Set>::Elem> + IntoIterator<Item = &'a <S as Set>::Elem>,
     <S as Set>::Elem: 'a + Clone,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
@@ -797,25 +797,25 @@ where
 
 impl<'a, S, I> Subset<S, I>
 where
-    S: Set + Get<'a, usize> + View<'a>,
+    S: Set + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
+    <S as View<'a>>::Type: Get<'a, usize> + IntoIterator<Item = <<S as View<'a>>::Type as Get<'a, usize>>::Output>,
 {
-    pub fn iter(&'a self) -> impl Iterator<Item = <S as Get<'a, usize>>::Output> {
-        let iters = match self.indices.as_ref() {
+    pub fn iter(&'a self) -> impl Iterator<Item = <<S as View<'a>>::Type as Get<'a, usize>>::Output> {
+        let view = self.view();
+        let iters = match view.indices {
             Some(indices) => {
-                let indices = indices.as_ref();
                 let first = *indices.first().unwrap_or(&0);
                 (
                     None,
                     Some(
                         indices
                             .iter()
-                            .filter_map(move |&i| self.data.get(i - first)),
+                            .filter_map(move |&i| view.data.get(i - first)),
                     ),
                 )
             }
-            None => (Some(self.data.view().into_iter()), None),
+            None => (Some(view.data.into_iter()), None),
         };
         iters
             .0

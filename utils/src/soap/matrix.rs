@@ -9,7 +9,7 @@ use super::*;
 use chunked::Offsets;
 use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
-use std::ops::{Add, AddAssign, Mul};
+use std::ops::{Add, AddAssign, Mul, MulAssign};
 
 /// This trait defines information provided by any matrx type.
 pub trait Matrix {
@@ -52,25 +52,33 @@ pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
 /// which may contain off-diagonal elements in each block. This is a purely diagonal matrix, whose
 /// diagonal elements are grouped into `N` sized chunks.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DiagonalBlockMatrix<N = usize, S = Vec<f64>, I = Vec<usize>>(
+pub struct DiagonalBlockMatrix<N = usize, S = Vec<f64>, I = Box<[usize]>>(
     Subset<UniChunked<S, N>, I>,
 );
 pub type DiagonalBlockMatrixView<'a, N = usize> = DiagonalBlockMatrix<N, &'a [f64], &'a [usize]>;
 pub type DiagonalBlockMatrixViewMut<'a, N = usize> =
     DiagonalBlockMatrix<N, &'a mut [f64], &'a [usize]>;
 
-pub type DiagonalBlockMatrix3<S = Vec<f64>, I = Vec<usize>> = DiagonalBlockMatrix<U3, S, I>;
+pub type DiagonalBlockMatrix3<S = Vec<f64>, I = Box<[usize]>> = DiagonalBlockMatrix<U3, S, I>;
 pub type DiagonalBlockMatrix3View<'a> = DiagonalBlockMatrix3<&'a [f64], &'a [usize]>;
 
-impl<S, I: AsRef<[usize]>, N: Dimension> DiagonalBlockMatrix<N, S, I>
+impl<S, N: Dimension> DiagonalBlockMatrix<N, S, Box<[usize]>>
 where
     UniChunked<S, N>: Set,
 {
     /// A generic constructor that transforms the input into the underlying storage type. This
     /// sometimes requires additional generic parameters to be explicitly specified.
-    pub fn new<T: Into<Subset<UniChunked<S, N>, I>>>(chunks: T) -> Self {
+    /// This function assumes `Box<[usize]>` as a placeholder for indices sinces the subset is
+    /// entire.
+    pub fn new<T: Into<Subset<UniChunked<S, N>, Box<[usize]>>>>(chunks: T) -> Self {
         DiagonalBlockMatrix(chunks.into())
     }
+}
+
+impl<S, I: AsRef<[usize]>, N: Dimension> DiagonalBlockMatrix<N, S, I>
+where
+    UniChunked<S, N>: Set,
+{
     /// Explicit constructor from subsets.
     pub fn from_subset(chunks: Subset<UniChunked<S, N>, I>) -> Self {
         DiagonalBlockMatrix(chunks.into())
@@ -119,10 +127,10 @@ where
     UniChunked<S, N>: Set,
 {
     fn num_cols_per_block(&self) -> usize {
-        self.0.data.chunk_size()
+        self.0.chunk_size()
     }
     fn num_rows_per_block(&self) -> usize {
-        self.0.data.chunk_size()
+        self.0.chunk_size()
     }
     fn num_chunked_cols(&self) -> usize {
         self.0.len()
@@ -219,8 +227,11 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> SSBlockMa
     pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
         use image::ImageBuffer;
 
-        let nrows = self.num_rows() * 3;
-        let ncols = self.num_cols() * 3;
+        let nrows = self.num_rows();
+        let ncols = self.num_cols();
+        if nrows == 0 || ncols == 0 {
+            return;
+        }
 
         let ciel = 10.0; //jac.max();
         let floor = -10.0; //jac.min();
@@ -349,6 +360,10 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> DSBlockMa
         let nrows = self.num_rows();
         let ncols = self.num_cols();
 
+        if nrows == 0 || ncols == 0 {
+            return;
+        }
+
         let ciel = 10.0; //jac.max();
         let floor = -10.0; //jac.min();
 
@@ -410,7 +425,7 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
         let num_cols = self.num_chunked_cols();
 
         let lhs_nnz = self.data.source.data.source.len();
-        let rhs_nnz = rhs.data().len();
+        let rhs_nnz = rhs.len();
         let num_non_zero_blocks = lhs_nnz + rhs_nnz;
 
         let mut non_zero_row_offsets = vec![num_non_zero_blocks; num_rows + 1];
@@ -482,6 +497,7 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
             // Truncate the current row to fit.
             out.transfer_forward_all_but(row_idx, count_out_cols);
         }
+        out.trim();
 
         Tensor::new(out)
     }
@@ -528,7 +544,20 @@ impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3View<'_> {
     }
 }
 
-impl<'a, Rhs> std::ops::Mul<Rhs> for SSBlockMatrix3View<'_>
+impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3<&[f64]> {
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, other: Tensor<Chunked3<&[f64]>>) -> Self::Output {
+        let mut out = crate::soap::ToOwned::to_owned(other.data);
+        for (&b, out) in self.0.iter().zip(out.iter_mut()) {
+            for j in 0..3 {
+                out[j] *= b[j];
+            }
+        }
+        Tensor::new(out)
+    }
+}
+
+impl<'a, Rhs> Mul<Rhs> for SSBlockMatrix3View<'_>
 where
     Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
 {
@@ -550,7 +579,7 @@ where
     }
 }
 
-impl<'a, Rhs> std::ops::Mul<Rhs> for Transpose<SSBlockMatrix3View<'_>>
+impl<'a, Rhs> Mul<Rhs> for Transpose<SSBlockMatrix3View<'_>>
 where
     Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
 {
@@ -572,7 +601,7 @@ where
     }
 }
 
-impl<S, I> std::ops::MulAssign<DiagonalBlockMatrix3<S, I>> for SSBlockMatrix3
+impl<S, I> MulAssign<DiagonalBlockMatrix3<S, I>> for SSBlockMatrix3
 where
     S: Set + for<'a> View<'a, Type = &'a [f64]>,
     I: AsRef<[usize]>,
@@ -591,7 +620,7 @@ where
     }
 }
 
-impl std::ops::Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
+impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
     type Output = SSBlockMatrix3;
     fn mul(self, rhs: Transpose<SSBlockMatrix3View>) -> Self::Output {
         let rhs_t = rhs.0;

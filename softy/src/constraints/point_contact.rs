@@ -1022,13 +1022,11 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
-            let (obj_indices_iter, col_offset) = if !self.object_is_fixed {
-                (
-                    Some(surf.surface_jacobian_indices_iter()?),
-                    surf.surface_vertex_positions().len() * 3,
-                )
+            let col_offset = surf.surface_vertex_positions().len() * 3;
+            let obj_indices_iter = if !self.object_is_fixed {
+                Some(surf.surface_jacobian_indices_iter()?)
             } else {
-                (None, 0)
+                None
             };
 
             let coll_indices_iter = if !self.collider_is_fixed {
@@ -1120,13 +1118,11 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex>>, Error> {
         let idx_iter = {
             let surf = self.implicit_surface.borrow();
-            let (obj_indices_iter, offset) = if !self.object_is_fixed {
-                (
-                    Some(surf.surface_hessian_product_indices_iter()?),
-                    surf.surface_vertex_positions().len() * 3,
-                )
+            let offset = surf.surface_vertex_positions().len() * 3;
+            let obj_indices_iter = if !self.object_is_fixed {
+                Some(surf.surface_hessian_product_indices_iter()?)
             } else {
-                (None, 0)
+                None
             };
             let coll_indices_iter = if !self.collider_is_fixed {
                 Some(surf.query_hessian_product_indices_iter()?)

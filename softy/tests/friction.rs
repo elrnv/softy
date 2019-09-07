@@ -79,8 +79,6 @@ fn sliding_tet_on_points() -> Result<(), Error> {
     rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     translate(&mut surface, [0.0, -0.7, 0.0].into());
 
-    geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
-
     friction_tester(material, fc_params, tetmesh, surface, true)
 }
 
@@ -106,14 +104,14 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
 
     let tetmesh = make_regular_tet();
     let mut surface = make_grid(Grid {
-        rows: 4,
-        cols: 4,
+        rows: 1,
+        cols: 1,
         orientation: AxisPlaneOrientation::ZX,
     });
     rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     translate(&mut surface, [0.0, -0.7, 0.0].into());
 
-    geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+    //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
 
     friction_tester(material, fc_params, tetmesh, surface, false)
 }

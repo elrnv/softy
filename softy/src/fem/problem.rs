@@ -1724,38 +1724,6 @@ impl NonLinearProblem {
     /*
      * The following functions are there for debugging jacobians and hessians
      */
-    /*
-
-    #[allow(dead_code)]
-    fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) -> Result<(), crate::Error> {
-        let mut iter_counter = self.iter_counter.borrow_mut();
-        let mut mesh = self.tetmesh.borrow().clone();
-        let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
-        let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
-        mesh.vertex_positions_mut()
-            .iter_mut()
-            .zip(all_displacements.iter())
-            .zip(all_positions.iter())
-            .for_each(|((mp, d), p)| *mp = (*p + *d).into());
-        *iter_counter += 1;
-        geo::io::save_tetmesh(
-            &mesh,
-            &std::path::PathBuf::from(format!("out/{}_{}.vtk", name, *iter_counter)),
-        )?;
-
-        if let Some(tri_mesh_ref) = self.kinematic_object.as_ref() {
-            let obj = geo::mesh::PolyMesh::from(tri_mesh_ref.borrow().clone());
-            geo::io::save_polymesh(
-                &obj,
-                &std::path::PathBuf::from(format!("out/tri_{}_{}.vtk", name, *iter_counter)),
-            )?;
-        } else {
-            return Err(crate::Error::NoKinematicMesh);
-        }
-
-        dbg!(*iter_counter);
-        Ok(())
-    }
 
     #[allow(dead_code)]
     pub fn write_jacobian_img(&self, jac: &na::DMatrix<f64>) {
@@ -1779,7 +1747,7 @@ impl NonLinearProblem {
             image::Rgb(color)
         });
 
-        img.save(format!("out/jac_{}.png", self.iter_counter.borrow()))
+        img.save(format!("./out/jac_{}.png", self.iter_counter.borrow()))
             .expect("Failed to save Jacobian Image");
     }
 
@@ -1808,7 +1776,7 @@ impl NonLinearProblem {
         use std::io::Write;
 
         let mut f =
-            std::fs::File::create(format!("out/jac_{}.txt", self.iter_counter.borrow())).unwrap();
+            std::fs::File::create(format!("./out/jac_{}.txt", self.iter_counter.borrow())).unwrap();
         writeln!(&mut f, "jac = ").ok();
         for r in 0..nrows {
             for c in 0..ncols {
@@ -1829,6 +1797,39 @@ impl NonLinearProblem {
         dbg!(cond);
     }
 
+    /*
+    #[allow(dead_code)]
+    fn output_mesh(&self, x: &[Number], dx: &[Number], name: &str) -> Result<(), crate::Error> {
+        let mut iter_counter = self.iter_counter.borrow_mut();
+        let mut mesh = self.tetmesh.borrow().clone();
+        let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
+        let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
+        mesh.vertex_positions_mut()
+            .iter_mut()
+            .zip(all_displacements.iter())
+            .zip(all_positions.iter())
+            .for_each(|((mp, d), p)| *mp = (*p + *d).into());
+        *iter_counter += 1;
+        geo::io::save_tetmesh(
+            &mesh,
+            &std::path::PathBuf::from(format!("./out/{}_{}.vtk", name, *iter_counter)),
+        )?;
+
+        if let Some(tri_mesh_ref) = self.kinematic_object.as_ref() {
+            let obj = geo::mesh::PolyMesh::from(tri_mesh_ref.borrow().clone());
+            geo::io::save_polymesh(
+                &obj,
+                &std::path::PathBuf::from(format!("./out/tri_{}_{}.vtk", name, *iter_counter)),
+            )?;
+        } else {
+            return Err(crate::Error::NoKinematicMesh);
+        }
+
+        dbg!(*iter_counter);
+        Ok(())
+    }
+    */
+
     #[allow(dead_code)]
     pub fn print_hessian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
@@ -1842,7 +1843,7 @@ impl NonLinearProblem {
         let mut cols = vec![0; values.len()];
         assert!(self.hessian_indices(&mut rows, &mut cols));
 
-        let mut hess = DMatrix::zeros(self.num_variables(), self.num_variables());
+        let mut hess = DMatrix::<f64>::zeros(self.num_variables(), self.num_variables());
         for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
             hess[(row as usize, col as usize)] += v;
         }
@@ -1853,7 +1854,6 @@ impl NonLinearProblem {
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         dbg!(cond_hess);
     }
-    */
 
     /*
      * End of debugging functions
@@ -2003,8 +2003,17 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 assert!(match fc.object_index {
                     SourceIndex::Solid(_) => true,
                     SourceIndex::Shell(i) => match self.object_data.shells[i].material.properties {
-                        ShellProperties::Fixed => false,
-                        ShellProperties::Rigid { .. } => false,
+                        ShellProperties::Fixed => match fc.collider_index {
+                            SourceIndex::Solid(_) => true,
+                            SourceIndex::Shell(i) => {
+                                match self.object_data.shells[i].material.properties {
+                                    ShellProperties::Fixed => false,
+                                    ShellProperties::Rigid { .. } => false, //unimplemented,
+                                    _ => true,
+                                }
+                            }
+                        },
+                        ShellProperties::Rigid { .. } => false, // unimplemented
                         _ => true,
                     },
                 });
@@ -2097,6 +2106,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             count += n;
         }
 
+        assert_eq!(count, g.len());
+
         true
     }
 
@@ -2117,6 +2128,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             g_u[count..count + n].swap_with_slice(&mut bounds.1);
             count += n;
         }
+
+        assert_eq!(count, g_l.len());
+        assert_eq!(count, g_u.len());
         true
     }
 
@@ -2174,6 +2188,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("");
         }
 
+        assert_eq!(count, rows.len());
+        assert_eq!(count, cols.len());
+
         true
     }
 
@@ -2213,6 +2230,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("jac g vals = {:?}", &vals[count..count+n]);
             count += n;
         }
+        assert_eq!(count, vals.len());
         let dt = if self.time_step > 0.0 {
             self.time_step
         } else {
@@ -2311,6 +2329,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 count += 1;
             }
         }
+        assert_eq!(count, rows.len());
+        assert_eq!(count, cols.len());
 
         true
     }

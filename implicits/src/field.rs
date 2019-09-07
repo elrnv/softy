@@ -200,6 +200,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         num_updated
     }
 
+    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
+        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
+        self.spatial_tree
+            .locate_within_distance(q_pos, radius * radius)
+            .count()
+    }
+
     pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
         let q_pos = Vector3(q).cast::<f64>().unwrap().into();
         self.spatial_tree.nearest_neighbor_iter(&q_pos).next()

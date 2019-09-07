@@ -845,6 +845,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         let third = T::one() / T::from(3.0).unwrap();
 
+        assert_eq!(query_points.len(), neigh_points.len());
+
         // For each row (query point),
         let jac = zip!(query_points.iter(), neigh_points.iter())
             .filter(|(_, nbrs)| !nbrs.is_empty())

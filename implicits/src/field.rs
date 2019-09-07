@@ -202,7 +202,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
         let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-        self.spatial_tree.nearest_neighbor(&q_pos)
+        self.spatial_tree.nearest_neighbor_iter(&q_pos).next()
     }
 
     /// Compute neighbour cache if it has been invalidated. Return true if neighbour cache has
@@ -242,7 +242,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     neigh,
                     |q| {
                         spatial_tree
-                            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                            .nearest_neighbor_iter(&Vector3(q).cast::<f64>().unwrap().into())
+                            .next()
                             .expect("Empty spatial tree")
                     },
                     surface_topo,

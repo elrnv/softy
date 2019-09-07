@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use super::FrictionParams;
 use crate::contact::*;
-use geo::math::Vector2;
 use reinterpret::*;
+use utils::soap::Vector2;
 
 use utils::zip;
 
@@ -173,8 +173,8 @@ mod tests {
         );
         let solution = solver.step();
 
-        let impulse = Vector2(solution[0]);
-        let final_velocity = (Vector2(predictor_momentum[0]) + impulse) / mass;
+        let impulse = Vector2::new(solution[0]);
+        let final_velocity = (Vector2::new(predictor_momentum[0]) + impulse) / mass;
 
         Ok((final_velocity, impulse))
     }
@@ -225,7 +225,7 @@ mod tests {
         let solution = solver.step();
 
         let final_momentum: Vec<_> = zip!(predictor_momentum.iter(), solution.iter())
-            .map(|(&pred_p, &r)| (Vector2(pred_p) + Vector2(r)))
+            .map(|(&pred_p, &r)| (Vector2::flat(pred_p) + Vector2::flat(r)))
             .collect();
 
         for i in 0..2 {

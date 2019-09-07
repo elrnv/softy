@@ -629,7 +629,8 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
 
         let lhs_nnz = self.data.source.data.source.len();
         let rhs_nnz = rhs_t.data.source.data.source.len();
-        let num_non_zero_blocks = lhs_nnz + rhs_nnz;
+        let num_non_zero_cols = rhs_t.indices().len();
+        let num_non_zero_blocks = (lhs_nnz + rhs_nnz).max(num_non_zero_cols);
 
         // Allocate enough offsets for all non-zero rows in self. and assign the
         // first row to contain all elements by setting all offsets to
@@ -666,8 +667,27 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
                     .transfer_forward_all_but(nz_row_idx, num_non_zero_blocks_in_row);
                 nz_row_idx += 1;
             }
+
+            // We may run out of memory in out. Check this and allocate space for each additional
+            // row as needed.
+            if nz_row_idx < out.len() {
+                let num_available = out.view().isolate(nz_row_idx).1.len();
+                if num_available < num_non_zero_cols {
+                    // The next row has less than num_non_zero_cols available space. We should allocate
+                    // additional entries.
+                    // First append entries to the last chunk.
+                    let num_new_elements = num_non_zero_cols - num_available;
+                    Chunked::extend_last(&mut out.source_mut(), std::iter::repeat((0, [[0.0; 3]; 3])).take(num_new_elements));
+                    // Next we transfer all elements of the last chunk into the current row.
+                    for idx in (nz_row_idx+1..out.len()).rev() {
+                        out.source_mut().transfer_backward(idx, num_new_elements);
+                    }
+                }
+             }
         }
 
+        // TODO: The following two functions should be consolidated, and nz_row_idx should be
+        // inferred.
         // There may be fewer non-zero rows than in self. Truncate those.
         out.indices_mut().truncate(nz_row_idx);
         // Also truncate the entries in storage we didn't use.

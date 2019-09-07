@@ -167,6 +167,8 @@ pub trait ContactConstraint:
     + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
     + std::fmt::Debug
 {
+    /// Total number of contacts that could occur.
+    fn num_potential_contacts(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
     /// Provide the frictional contact mutable data.

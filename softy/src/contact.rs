@@ -307,28 +307,41 @@ pub(crate) struct TripletContactJacobian<I> {
     pub num_cols: usize,
 }
 
-pub(crate) fn build_triplet_contact_jacobian(
+pub(crate) fn build_triplet_contact_jacobian<'a>(
     surf: &ImplicitSurface,
-    query_points: Chunked3<&[f64]>,
-) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone> {
-    let mut cj_matrices = vec![
+    active_contact_points: SubsetView<'a, Chunked3<&'a [f64]>>,
+    query_points: Chunked3<&'a [f64]>,
+) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
+    let mut orig_cj_matrices = vec![
         geo::math::Matrix3::zeros();
         surf.num_contact_jacobian_matrices()
             .expect("Failed to get contact Jacobian size.")
     ];
     surf.contact_jacobian_matrices(
-        query_points.view().into(),
-        reinterpret_mut_slice(&mut cj_matrices),
+        query_points.into(),
+        reinterpret_mut_slice(&mut orig_cj_matrices),
     )
     .expect("Failed to compute contact Jacobian.");
-    let cj_indices_iter = surf
+
+    let orig_cj_indices_iter = surf
         .contact_jacobian_matrix_indices_iter()
         .expect("Failed to get contact Jacobian indices.");
+
+    let cj_matrices: Vec<_> =
+        orig_cj_indices_iter.clone().zip(orig_cj_matrices.into_iter()).filter_map(
+            |((row, _), matrix)| active_contact_points.find_by_index(row).map(|_| matrix)
+        ).collect();
+
+
+    // Remap rows to match active constraints. This means that some entries of the raw jacobian
+    // will not have a valid entry in the pruned jacobian.
+    let cj_indices_iter = orig_cj_indices_iter
+        .filter_map(move |(row, col)| active_contact_points.find_by_index(row).map(|at| (at, col)));
 
     TripletContactJacobian {
         iter: cj_indices_iter,
         blocks: cj_matrices,
-        num_rows: query_points.len(),
+        num_rows: active_contact_points.len(),
         num_cols: surf.surface_vertex_positions().len(),
     }
 }

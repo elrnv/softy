@@ -23,7 +23,8 @@ use utils::zip;
 pub struct PointContactConstraint {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
-    /// Points where collision and contact occurs.
+    /// Points where collision and contact occurs. I.e. all surface vertex positions on the
+    /// collider mesh.
     pub contact_points: RefCell<Chunked3<Vec<f64>>>,
 
     /// Friction impulses applied during contact.
@@ -31,11 +32,11 @@ pub struct PointContactConstraint {
     /// A mass inverse for each vertex in the object mesh.
     /// If the object is fixed, masses are effectively zero and this field
     /// will be `None`.
-    pub object_mass_inv: Option<MassMatrix>,
+    pub object_mass_inv: Option<Chunked3<Vec<f64>>>,
     /// A mass inverse for each vertex in the collider mesh.
     /// If the collider is fixed, masses are effectively zero and this field
     /// will be `None`.
-    pub collider_mass_inv: Option<MassMatrix>,
+    pub collider_mass_inv: Option<Chunked3<Vec<f64>>>,
 
     /// A flag indicating if the object is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
@@ -83,30 +84,26 @@ impl PointContactConstraint {
             let object_mass_inv = object
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
                 .map(|attrib| {
-                    DiagonalBlockMatrix::new(
-                        attrib
-                            .iter()
-                            .map(|&x| {
-                                assert!(x > 0.0);
-                                [1.0 / x; 3]
-                            })
-                            .collect(),
-                    )
+                    attrib
+                        .iter()
+                        .map(|&x| {
+                            assert!(x > 0.0);
+                            [1.0 / x; 3]
+                        })
+                        .collect()
                 })
                 .ok();
 
             let collider_mass_inv = collider
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
                 .map(|attrib| {
-                    DiagonalBlockMatrix::new(
-                        attrib
-                            .iter()
-                            .map(|&x| {
-                                assert!(x > 0.0);
-                                [1.0 / x; 3]
-                            })
-                            .collect(),
-                    )
+                    attrib
+                        .iter()
+                        .map(|&x| {
+                            assert!(x > 0.0);
+                            [1.0 / x; 3]
+                        })
+                        .collect()
                 })
                 .ok();
 
@@ -290,23 +287,47 @@ impl PointContactConstraint {
             }
         }
     }
-    fn in_contact_indices(&self, contact_impulse: &[f64]) -> Vec<usize> {
-        contact_impulse
+
+    /// Prune contacts with zero contact_impulse and contacts without neighbouring samples.
+    /// This function outputs the indices of contacts as well as a pruned vector of impulses.
+    fn in_contact_indices(&self, contact_impulse: &[f64]) -> (Vec<usize>, Vec<usize>, Vec<f64>) {
+        let surf = self.implicit_surface.borrow();
+        let query_points = self.contact_points.borrow();
+        let radius = surf.radius() * 0.9;
+        let query_indices = self
+            .active_constraint_indices()
+            .expect("Failed to retrieve constraint indices.");
+        assert_eq!(query_indices.len(), contact_impulse.len());
+        let (active_constraint_subset, contact_impulse): (Vec<_>, Vec<_>) = contact_impulse
             .iter()
             .enumerate()
-            .map(|(i, _)| i)
-            //.filter_map(|(i, &cf)| {
-            //    if cf.abs() > tolerance {
-            //        Some(i)
-            //    } else {
-            //        None
-            //    }
-            //})
-            .collect()
+            .filter_map(|(i, &cf)| {
+                if cf != 0.0
+                    && surf.num_neighbours_within_distance(
+                        query_points[query_indices[i]],
+                        radius * radius,
+                    ) > 0
+                {
+                    Some((i, cf))
+                } else {
+                    None
+                }
+            })
+            .unzip();
+        let active_contacts: Vec<usize> = active_constraint_subset
+            .iter()
+            .map(|&i| query_indices[i])
+            .collect();
+
+        (active_constraint_subset, active_contacts, contact_impulse)
     }
 }
 
 impl ContactConstraint for PointContactConstraint {
+    // Get the total number of contacts that could potentially occur.
+    fn num_potential_contacts(&self) -> usize {
+        self.contact_points.borrow().len()
+    }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
     }
@@ -370,7 +391,7 @@ impl ContactConstraint for PointContactConstraint {
         contact_impulse: &[f64],
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         v: [SubsetView<Chunked3<&[f64]>>; 2],
-        potential_values: &[f64],
+        _potential_values: &[f64],
         friction_steps: u32,
     ) -> u32 {
         if self.frictional_contact.is_none() || friction_steps == 0 {
@@ -380,11 +401,13 @@ impl ContactConstraint for PointContactConstraint {
         let normals = self
             .contact_normals(x)
             .expect("Failed to compute contact normals.");
-        let query_indices = self
-            .active_constraint_indices()
-            .expect("Failed to retrieve constraint indices.");
 
-        let active_query_indices = self.in_contact_indices(contact_impulse);
+        // Note that there is a distinction between active *contacts* and active *constraints*.
+        // Active *constraints* correspond to to those points that are in the MLS neighbourhood of
+        // influence to be part of the optimization. Active *contacts* are a subset of those that
+        // are considered in contact.
+        let (active_constraint_subset, active_contact_indices, contact_impulse) =
+            self.in_contact_indices(contact_impulse);
 
         let FrictionalContact {
             contact_basis,
@@ -393,29 +416,56 @@ impl ContactConstraint for PointContactConstraint {
             collider_impulse: collider_friction_impulse, // for active point contacts
         } = self.frictional_contact.as_mut().unwrap();
 
+        // Friction impulse in physical space at active contacts.
+        *collider_friction_impulse =
+            Chunked3::from_array_vec(vec![[0.0; 3]; active_contact_indices.len()]);
+
+        if active_contact_indices.is_empty() {
+            // If there are no active contacts, there is nothing to update.
+            // Clear object_friction_impulse before returning.
+            object_friction_impulse
+                .iter_mut()
+                .for_each(|x| *x = [0.0; 3]);
+            return 0;
+        }
+
         contact_basis.update_from_normals(normals.into());
 
         let query_points = self.contact_points.borrow();
         let surf = self.implicit_surface.borrow();
 
-        // TODO: Deal with infinite masses (i.e. None case).
-        let object_zero_mass = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[0].len()]));
-        let collider_zero_mass = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]));
-        let object_mass_inv = self.object_mass_inv.as_ref().unwrap_or(&object_zero_mass);
-        let collider_mass_inv = self
-            .collider_mass_inv
-            .as_ref()
-            .unwrap_or(&collider_zero_mass);
+        // Construct diagonal mass matrices for object and collider.
+        let object_zero_mass_inv = Chunked3::from_array_vec(vec![[0.0; 3]; v[0].len()]);
+        let collider_zero_mass_inv = Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]);
+        let object_mass_inv = DiagonalBlockMatrix::from_uniform(
+            self.object_mass_inv
+                .as_ref()
+                .map(|mass_inv| mass_inv.view())
+                .unwrap_or_else(|| object_zero_mass_inv.view()),
+        );
+
+        // Collider mass matrix is constructed at active contacts only.
+        let collider_mass_inv =
+            DiagonalBlockMatrix::from_subset(Subset::from_unique_ordered_indices(
+                active_contact_indices.as_slice(),
+                self.collider_mass_inv
+                    .as_ref()
+                    .map(|mass_inv| mass_inv.view())
+                    .unwrap_or_else(|| collider_zero_mass_inv.view()),
+            ));
+
+        let active_contact_points = Subset::from_unique_ordered_indices(
+            active_contact_indices.as_slice(),
+            query_points.view(),
+        );
 
         // Compute contact jacobian
-        let jac_triplets = build_triplet_contact_jacobian(&surf, query_points.view());
+        let jac_triplets =
+            build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
 
-        // Friction impulse in physical space at all query points (contact positions).
-        *collider_friction_impulse = Chunked3::from_array_vec(vec![[0.0; 3]; query_points.len()]);
-
-        let mut collider_velocity = Chunked3::from_array_vec(vec![[0.0; 3]; v[1].len()]);
-        v[1].clone_into_other(&mut collider_velocity);
+        let collider_velocity =
+            Subset::from_unique_ordered_indices(active_contact_indices.as_slice(), v[1]);
 
         let mut velocity = jac.view() * Tensor::new(v[0]);
         let mut rhs = velocity.view_mut();
@@ -441,21 +491,12 @@ impl ContactConstraint for PointContactConstraint {
             .unwrap();
         let predictor_impulse = Chunked3::from_flat(rhs);
 
-        assert_eq!(query_indices.len(), contact_impulse.len());
-        assert_eq!(potential_values.len(), contact_impulse.len());
-
-        // Compute contact impulse on active query indices.
-        let contact_impulse: Vec<_> = active_query_indices
-            .iter()
-            .map(|&aqi| contact_impulse[aqi])
-            .collect();
-
         let success = if false {
             // Polar coords
-            let predictor_impulse_t: Vec<_> = active_query_indices
+            let predictor_impulse_t: Vec<_> = active_constraint_subset
                 .iter()
-                .map(|&aqi| {
-                    let predictor_imp: [f64; 3] = predictor_impulse[query_indices[aqi]].into();
+                .zip(predictor_impulse.iter())
+                .map(|(&aqi, &predictor_imp)| {
                     let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
                     r.tangent
                 })
@@ -466,7 +507,6 @@ impl ContactConstraint for PointContactConstraint {
                     &predictor_impulse_t,
                     &contact_impulse,
                     &contact_basis,
-                    //TODO:: ADD proper MASS HERE
                     effective_mass_inv.view(),
                     *params,
                     jac.view(),
@@ -474,12 +514,16 @@ impl ContactConstraint for PointContactConstraint {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                            for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
+                            for ((&aqi, &r), r_out) in active_constraint_subset
+                                .iter()
+                                .zip(r_t.iter())
+                                .zip(collider_friction_impulse.iter_mut())
+                            {
                                 let r_polar = Polar2 {
                                     radius: r[0],
                                     angle: r[1],
                                 };
-                                collider_friction_impulse[query_indices[aqi]] = contact_basis
+                                *r_out = contact_basis
                                     .from_cylindrical_contact_coordinates(r_polar.into(), aqi)
                                     .into();
                             }
@@ -495,13 +539,12 @@ impl ContactConstraint for PointContactConstraint {
                     }
                 }
             } else {
-                for (contact_idx, (&aqi, &pred_r_t, &cr)) in zip!(
-                    active_query_indices.iter(),
+                for (&aqi, &pred_r_t, &cr, r_out) in zip!(
+                    active_constraint_subset.iter(),
                     predictor_impulse_t.iter(),
-                    contact_impulse.iter()
-                )
-                .enumerate()
-                {
+                    contact_impulse.iter(),
+                    collider_friction_impulse.iter_mut()
+                ) {
                     let r_t = if pred_r_t.radius > 0.0 {
                         Polar2 {
                             radius: params.dynamic_friction * cr.abs(),
@@ -513,18 +556,18 @@ impl ContactConstraint for PointContactConstraint {
                             angle: 0.0,
                         }
                     };
-                    collider_friction_impulse[query_indices[aqi]] = contact_basis
-                        .from_cylindrical_contact_coordinates(r_t.into(), contact_idx)
+                    *r_out = contact_basis
+                        .from_cylindrical_contact_coordinates(r_t.into(), aqi)
                         .into();
                 }
                 true
             }
         } else {
             // Euclidean coords
-            let predictor_impulse_t: Vec<_> = active_query_indices
+            let predictor_impulse_t: Vec<_> = active_constraint_subset
                 .iter()
-                .map(|&aqi| {
-                    let pred_r: [f64; 3] = predictor_impulse[query_indices[aqi]].into();
+                .zip(predictor_impulse.iter())
+                .map(|(&aqi, &pred_r)| {
                     let r = contact_basis.to_contact_coordinates(pred_r, aqi);
                     [r[1], r[2]]
                 })
@@ -541,20 +584,19 @@ impl ContactConstraint for PointContactConstraint {
                 );
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
-                for (&aqi, &r) in active_query_indices.iter().zip(r_t.iter()) {
-                    collider_friction_impulse[query_indices[aqi]] = contact_basis
+                for (&aqi, &r) in active_constraint_subset.iter().zip(r_t.iter()) {
+                    collider_friction_impulse[aqi] = contact_basis
                         .from_contact_coordinates([0.0, r[0], r[1]], aqi)
                         .into();
                 }
                 true
             } else {
-                for (contact_idx, (&aqi, &pred_r_t, &cr)) in zip!(
-                    active_query_indices.iter(),
+                for (&aqi, &pred_r_t, &cr, r_out) in zip!(
+                    active_constraint_subset.iter(),
                     predictor_impulse_t.iter(),
-                    contact_impulse.iter()
-                )
-                .enumerate()
-                {
+                    contact_impulse.iter(),
+                    collider_friction_impulse.iter_mut(),
+                ) {
                     let pred_r_t = Vector2(pred_r_t);
                     let pred_r_norm = pred_r_t.norm();
                     let r_t = if pred_r_norm > 0.0 {
@@ -562,8 +604,8 @@ impl ContactConstraint for PointContactConstraint {
                     } else {
                         Vector2::zeros()
                     };
-                    collider_friction_impulse[query_indices[aqi]] = contact_basis
-                        .from_contact_coordinates([0.0, r_t[0], r_t[1]], contact_idx)
+                    *r_out = contact_basis
+                        .from_contact_coordinates([0.0, r_t[0], r_t[1]], aqi)
                         .into();
                 }
                 true
@@ -600,7 +642,8 @@ impl ContactConstraint for PointContactConstraint {
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if !frictional_contact.object_impulse.is_empty() {
-                if let Some(mass_mtx) = self.object_mass_inv.as_ref() {
+                if let Some(masses) = self.object_mass_inv.as_ref() {
+                    let mass_mtx = DiagonalBlockMatrix::new(masses.view());
                     let add_vel =
                         mass_mtx.view() * Tensor::new(frictional_contact.object_impulse.view());
                     let mut out_vel = Tensor::new(object_vel);
@@ -608,14 +651,14 @@ impl ContactConstraint for PointContactConstraint {
                 }
             }
 
-            if frictional_contact.collider_impulse.is_empty() {
+            if frictional_contact.collider_impulse.is_empty() || self.collider_mass_inv.is_none() {
                 return;
             }
             let indices = self
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            let add_vel = self.collider_mass_inv.as_ref().unwrap().view()
+            let add_vel = DiagonalBlockMatrix::new(self.collider_mass_inv.as_ref().unwrap().view())
                 * Tensor::new(frictional_contact.collider_impulse.view());
             let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(
                 indices.as_slice(),

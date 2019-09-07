@@ -96,6 +96,9 @@ impl ImplicitContactConstraint {
 }
 
 impl ContactConstraint for ImplicitContactConstraint {
+    fn num_potential_contacts(&self) -> usize {
+        self.contact_points.borrow().len()
+    }
     fn frictional_contact(&self) -> Option<&FrictionalContact> {
         self.frictional_contact.as_ref()
     }
@@ -190,7 +193,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             .expect("Failed to retrieve constraint indices.");
 
         // A set of masses on active contact vertices.
-        let object_mass_inv: EffectiveMassInv = DiagonalBlockMatrix::new(
+        let object_mass_inv: EffectiveMassInv = From::from(DiagonalBlockMatrix::new(
             surf_indices
                 .iter()
                 .map(|&surf_idx| {
@@ -199,8 +202,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                     [1.0 / m; 3]
                 })
                 .collect::<Chunked3<Vec<f64>>>(),
-        )
-        .into();
+        ));
 
         let ImplicitContactConstraint {
             ref mut frictional_contact,

@@ -543,10 +543,10 @@ impl ObjectData {
                     SourceIndex::Solid(j) => {
                         let (l, r) = x.split_at(1);
                         [
-                            Subset::all(l.isolate(0).isolate(i)),
+                            Subset::all(r.isolate(0).isolate(i)),
                             Subset::from_unique_ordered_indices(
                                 solids[j].surface().indices.to_vec(),
-                                r.isolate(0).isolate(j),
+                                l.isolate(0).isolate(j),
                             ),
                         ]
                     }
@@ -997,12 +997,13 @@ impl NonLinearProblem {
             offsets.push(active_set.len());
         }
 
+        let mut offset = active_set.len();
         for FrictionalContactConstraint { ref constraint, .. } in self.frictional_contacts.iter() {
             let fc_active_constraints = constraint.active_constraint_indices().unwrap_or_default();
-            let offset = active_set.len();
             for c in fc_active_constraints.into_iter() {
                 active_set.push(c + offset);
             }
+            offset += constraint.num_potential_contacts();
             offsets.push(active_set.len());
         }
     }

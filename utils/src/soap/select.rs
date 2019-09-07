@@ -287,6 +287,12 @@ where
     }
 }
 
+impl<S, I: RemovePrefix> RemovePrefix for Select<S, I> {
+    fn remove_prefix(&mut self, n: usize) {
+        self.indices.remove_prefix(n);
+    }
+}
+
 impl<'a, S, I> Select<S, I>
 where
     S: Set + Get<'a, usize, Output = &'a <S as Set>::Elem> + View<'a>,

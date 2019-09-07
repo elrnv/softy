@@ -93,6 +93,21 @@ where
 }
 */
 
+impl<'a, S, T> Extend<(usize, <S as Set>::Elem)> for Sparse<S, T>
+where S: Set + Extend<<S as Set>::Elem>,
+{
+    fn extend<It: IntoIterator<Item=(usize, <S as Set>::Elem)>>(&mut self, iter: It) {
+        let Sparse {
+            source,
+            selection: Select {
+                indices,
+                ..
+            }
+        } = self;
+        source.extend(iter.into_iter().map(|(idx, elem)| { indices.push(idx); elem }));
+    }
+}
+
 impl<'a, S, T, I> Sparse<S, T, I> {
     /// Get a reference to the underlying source data.
     pub fn source(&self) -> &S {
@@ -130,7 +145,7 @@ impl<'a, S, T, I> Sparse<S, T, I> {
 
 // Required for `Chunked` and `UniChunked` subsets.
 impl<S: Set, T, I> Set for Sparse<S, T, I> {
-    type Elem = S::Elem;
+    type Elem = (usize, S::Elem);
     /// Get the length of this sparse collection.
     ///
     /// # Example
@@ -211,6 +226,13 @@ where
                 source: source_r,
             },
         )
+    }
+}
+
+impl<S: RemovePrefix, T, I: RemovePrefix> RemovePrefix for Sparse<S, T, I> {
+    fn remove_prefix(&mut self, n: usize) {
+        self.selection.remove_prefix(n);
+        self.source.remove_prefix(n);
     }
 }
 

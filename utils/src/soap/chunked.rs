@@ -317,6 +317,46 @@ where
     }
 }
 
+impl<S, O> Chunked<S, Offsets<O>>
+where
+    O: AsRef<[usize]> + AsMut<[usize]>,
+    S: RemovePrefix,
+{
+    /// Move a number of elements from a chunk at the given index to the
+    /// previous chunk. If the first chunk is selected, then the transferred
+    /// elements are explicitly removed, which may cause reallocation if the underlying storage
+    /// type manages memory.
+    ///
+    /// This operation is efficient and only performs one write on a single
+    /// element in an array of `usize`, unless a reallocation is triggered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5];
+    /// let mut c = Chunked::from_sizes(vec![3,2], v);
+    /// let mut c_iter = c.iter();
+    /// assert_eq!(Some(&[1,2,3][..]), c_iter.next());
+    /// assert_eq!(Some(&[4,5][..]), c_iter.next());
+    /// assert_eq!(None, c_iter.next());
+    ///
+    /// // Transfer 2 elements from the first chunk to the next.
+    /// c.transfer_backward(1, 1);
+    /// let mut c_iter = c.iter();
+    /// assert_eq!(Some(&[1,2,3,4][..]), c_iter.next());
+    /// assert_eq!(Some(&[5][..]), c_iter.next());
+    /// assert_eq!(None, c_iter.next());
+    /// ```
+    pub fn transfer_backward(&mut self, chunk_index: usize, num_elements: usize) {
+        self.chunks.move_forward(chunk_index, num_elements);
+        if chunk_index == 0 {
+            // Truncate data from the front to re-establish a valid chunked set.
+            self.data.remove_prefix(num_elements);
+        }
+    }
+}
+
 impl<S: Default, O: Default> Chunked<S, O> {
     /// Construct an empty `Chunked` type.
     pub fn new() -> Self {
@@ -530,6 +570,53 @@ where
     pub fn push_slice(&mut self, element: &[<S as Set>::Elem]) {
         self.data.extend_from_slice(element);
         self.chunks.push(self.data.len());
+    }
+}
+
+impl<S, O> Chunked<S, O>
+where
+    S: Set + Extend<<S as Set>::Elem>,
+    O: Push<usize>,
+{
+    /// Push a chunk using an iterator over chunk elements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.push_iter(std::iter::repeat(100).take(4));
+    /// assert_eq!(3, s.len());
+    /// assert_eq!(&[100; 4][..], s.view().at(2));
+    /// ```
+    pub fn push_iter<I: IntoIterator<Item=<S as Set>::Elem>>(&mut self, iter: I) {
+        self.data.extend(iter);
+        self.chunks.push(self.data.len());
+    }
+}
+
+impl<S, O> Chunked<S, Offsets<O>>
+where
+    S: Set + Extend<<S as Set>::Elem>,
+    O: AsMut<[usize]>,
+{
+    /// Extend the last chunk with the given iterator.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut s = Chunked::from_offsets(vec![0,3,5], vec![1,2,3,4,5]);
+    /// assert_eq!(2, s.len());
+    /// s.extend_last(std::iter::repeat(100).take(2));
+    /// assert_eq!(2, s.len());
+    /// assert_eq!(&[4, 5, 100, 100][..], s.view().at(1));
+    /// ```
+    pub fn extend_last<I: IntoIterator<Item=<S as Set>::Elem>>(&mut self, iter: I) {
+        let init_len = self.data.len();
+        self.data.extend(iter);
+        self.chunks.extend_last(self.data.len() - init_len);
     }
 }
 
@@ -1112,12 +1199,6 @@ impl<S: SplitOff + Set> SplitOff for Chunked<S> {
         self.chunks = Offsets(offsets_l);
         let data_r = self.data.split_off(off);
         Chunked::from_offsets(offsets_r, data_r)
-    }
-}
-
-impl<T> SplitOff for Vec<T> {
-    fn split_off(&mut self, mid: usize) -> Self {
-        Vec::split_off(self, mid)
     }
 }
 

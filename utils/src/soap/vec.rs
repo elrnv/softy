@@ -37,6 +37,12 @@ impl<T> Push<T> for Vec<T> {
     }
 }
 
+impl<T> SplitOff for Vec<T> {
+    fn split_off(&mut self, mid: usize) -> Self {
+        Vec::split_off(self, mid)
+    }
+}
+
 impl<T, N> SplitPrefix<N> for Vec<T>
 where
     N: Unsigned + Array<T>,

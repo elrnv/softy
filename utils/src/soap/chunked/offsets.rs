@@ -96,10 +96,31 @@ impl<O: AsMut<[usize]>> Offsets<O> {
     /// elements from the previous chunk to the specified chunk.
     ///
     /// # Panics
-    /// This function panics if `at` is out of bounds and may cause Undefined Behavior if zero.
+    /// This function panics if `at` is out of bounds and may cause Undefined Behavior in
+    /// `Chunked` collections if zero.
     pub(crate) fn move_back(&mut self, at: usize, by: usize) {
-        debug_assert!(at > 0 && at < self.as_mut().len());
-        self.as_mut()[at] -= by;
+        let offsets = self.as_mut();
+        debug_assert!(at > 0 && at < offsets.len());
+        offsets[at] -= by;
+    }
+    /// Moves an offset forward by a specified amount, effectively transferring
+    /// elements from the previous chunk to the specified chunk.
+    ///
+    /// # Panics
+    /// This function panics if `at` is out of bounds.
+    pub(crate) fn move_forward(&mut self, at: usize, by: usize) {
+        let offsets = self.as_mut();
+        debug_assert!(at < offsets.len());
+        offsets[at] += by;
+    }
+
+    /// Extend the last offset, which effectively increases the last chunk size.
+    /// This function is similar to `self.move_forward(self.len() - 1)` but it does not perform
+    /// bounds checking.
+    pub(crate) fn extend_last(&mut self, by: usize) {
+        let offsets = self.as_mut();
+        let last = offsets.len() - 1;
+        unsafe { *offsets.get_unchecked_mut(last) += by };
     }
 }
 

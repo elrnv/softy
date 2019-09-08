@@ -23,6 +23,7 @@ fn friction_tester(
         gravity: [0.0f32, -9.81, 0.0],
         time_step: Some(0.01),
         print_level: 5,
+        max_gradient_scaling: 1e-7,
         friction_iterations,
         ..DYNAMIC_PARAMS
     };
@@ -35,7 +36,7 @@ fn friction_tester(
         .add_frictional_contact(fc_params, coupling)
         .build()?;
 
-    for i in 0..50 {
+    for i in 0..100 {
         let res = solver.step()?;
         println!("res = {:?}", res);
         geo::io::save_tetmesh(
@@ -72,12 +73,15 @@ fn sliding_tet_on_points() -> Result<(), Error> {
 
     let tetmesh = make_regular_tet();
     let mut surface = make_grid(Grid {
-        rows: 4,
-        cols: 4,
+        rows: 16,
+        cols: 16,
         orientation: AxisPlaneOrientation::ZX,
     });
+    scale(&mut surface, [2.0, 1.0, 2.0]);
     rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     translate(&mut surface, [0.0, -0.7, 0.0].into());
+
+    geo::io::save_polymesh(&surface, "./out/ramp.vtk");
 
     friction_tester(material, fc_params, tetmesh, surface, true)
 }

@@ -24,17 +24,17 @@ fn stacking_boxes() -> Result<(), Error> {
     };
 
     let mut grid = make_grid(Grid {
-        rows: 4,
-        cols: 4,
+        rows: 8,
+        cols: 8,
         orientation: AxisPlaneOrientation::ZX,
     });
 
     scale(&mut grid, [3.0, 1.0, 3.0].into());
-    translate(&mut grid, [0.0, -3.0, 0.0].into());
+    translate(&mut grid, [0.0, -1.1, 0.0].into());
 
-    let box_bottom = make_box([1, 1, 1]);
-    let mut box_top = make_box([1, 1, 1]);
-    translate(&mut box_top, [0.0, 3.0, 0.0].into());
+    let box_bottom = make_box([2, 2, 2]);
+    let mut box_top = make_box([2, 2, 2]);
+    translate(&mut box_top, [0.0, 1.1, 0.0].into());
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -54,8 +54,8 @@ fn stacking_boxes() -> Result<(), Error> {
         .add_solid(box_bottom, material.with_id(1))
         .add_solid(box_top, material.with_id(2))
         .add_fixed(grid, 0)
-        .add_frictional_contact(fc_params, (1, 0))
-        .add_frictional_contact(fc_params, (2, 0))
+        .add_frictional_contact(fc_params, (0, 1))
+        .add_frictional_contact(fc_params, (0, 2))
         //.add_frictional_contact(fc_params, (1, 2))
         .build()?;
 

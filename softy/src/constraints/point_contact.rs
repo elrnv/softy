@@ -471,15 +471,15 @@ impl ContactConstraint for PointContactConstraint {
         let mut rhs = velocity.view_mut();
         rhs -= Tensor::new(collider_velocity.view());
 
+        jac.write_img("./out/jac.png");
         let mut jac_mass = jac.clone();
         jac_mass *= object_mass_inv.view();
 
         //jac_mass.write_img("./out/jac_mass.png");
 
         let effective_mass_inv = jac_mass.view() * jac.view().transpose();
-        //effective_mass_inv.write_img("./out/jjt.png");
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
-        //effective_mass_inv.write_img("./out/effective_mass_inv.png");
+        effective_mass_inv.write_img("./out/effective_mass_inv.png");
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         //        let ldlt_solver =
@@ -572,8 +572,8 @@ impl ContactConstraint for PointContactConstraint {
                     [r[1], r[2]]
                 })
                 .collect();
-            if false {
-                // switch between implicit solver and explicit solver here.
+            if true {
+                // Switch between implicit solver and explicit solver here.
                 let mut solver = FrictionSolver::new(
                     &predictor_impulse_t,
                     &contact_impulse,
@@ -584,8 +584,10 @@ impl ContactConstraint for PointContactConstraint {
                 );
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
-                for (&aqi, &r) in active_constraint_subset.iter().zip(r_t.iter()) {
-                    collider_friction_impulse[aqi] = contact_basis
+                for ((&aqi, &r), r_out) in active_constraint_subset.iter()
+                    .zip(r_t.iter())
+                    .zip(collider_friction_impulse.iter_mut()) {
+                    *r_out = contact_basis
                         .from_contact_coordinates([0.0, r[0], r[1]], aqi)
                         .into();
                 }

@@ -41,23 +41,27 @@ pub use attrib_defines::*;
 
 pub use implicits::KernelType;
 
-#[derive(Debug)]
+use snafu::Snafu;
+
+#[derive(Debug, Snafu)]
 pub enum Error {
+    /// Size mismatch error
     SizeMismatch,
-    AttribError(attrib::Error),
+    #[snafu(display("Attribute error"))] //: {:?}", 0))]
+    AttribError { source: attrib::Error },
     InvertedReferenceElement,
     /// Error during main solve step. This reports iterations, objective value and max inner
     /// iterations.
-    SolveError(ipopt::SolveStatus, SolveResult),
+    SolveError { status: ipopt::SolveStatus, result: SolveResult },
     /// Error during an inner solve step. This reports iterations and objective value.
     InnerSolveError {
         status: ipopt::SolveStatus,
         objective_value: f64,
         iterations: u32,
     },
-    FrictionSolveError(ipopt::SolveStatus),
-    SolverCreateError(ipopt::CreateError),
-    InvalidParameter(String),
+    FrictionSolveError { status: ipopt::SolveStatus },
+    SolverCreateError { source: ipopt::CreateError },
+    InvalidParameter { name: String },
     MissingSourceIndex,
     MissingDensityParam,
     MissingElasticityParams,
@@ -66,40 +70,40 @@ pub enum Error {
     NoSimulationMesh,
     NoKinematicMesh,
     /// Error during mesh IO. Typically during debugging.
-    MeshIOError(geo::io::Error),
-    FileIOError(std::io::ErrorKind),
+    MeshIOError { source: geo::io::Error },
+    FileIOError { source: std::io::Error },
     InvalidImplicitSurface,
-    ImplicitsError(implicits::Error),
-    UnimplementedFeature(String),
+    ImplicitsError { source: implicits::Error },
+    UnimplementedFeature { description: String },
 }
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {
-        Error::FileIOError(err.kind())
+        Error::FileIOError { source: err }
     }
 }
 
 impl From<geo::io::Error> for Error {
     fn from(err: geo::io::Error) -> Error {
-        Error::MeshIOError(err)
+        Error::MeshIOError { source: err }
     }
 }
 
 impl From<ipopt::CreateError> for Error {
     fn from(err: ipopt::CreateError) -> Error {
-        Error::SolverCreateError(err)
+        Error::SolverCreateError { source: err }
     }
 }
 
 impl From<attrib::Error> for Error {
     fn from(err: attrib::Error) -> Error {
-        Error::AttribError(err)
+        Error::AttribError { source: err }
     }
 }
 
 impl From<implicits::Error> for Error {
     fn from(err: implicits::Error) -> Error {
-        Error::ImplicitsError(err)
+        Error::ImplicitsError { source: err }
     }
 }
 
@@ -112,16 +116,16 @@ pub enum SimResult {
 impl From<Error> for SimResult {
     fn from(err: Error) -> SimResult {
         match err {
-            Error::SizeMismatch => SimResult::Error("Size mismatch error".to_string()),
-            Error::AttribError(e) => SimResult::Error(format!("Attribute error: {:?}", e)),
+            Error::SizeMismatch => SimResult::Error(format!("{}", err)),
+            Error::AttribError { source } => SimResult::Error(format!("{}", source)),
             Error::InvertedReferenceElement => {
                 SimResult::Error("Inverted reference element detected".to_string())
             }
-            Error::SolveError(e, solve_result) => match e {
+            Error::SolveError { status, result } => match status {
                 ipopt::SolveStatus::MaximumIterationsExceeded => {
-                    SimResult::Warning(format!("Maximum iterations exceeded \n{}", solve_result))
+                    SimResult::Warning(format!("Maximum iterations exceeded \n{}", result))
                 }
-                e => SimResult::Error(format!("Solve failed: {:?}\n{}", e, solve_result)),
+                status => SimResult::Error(format!("Solve failed: {:?}\n{}", status, result)),
             },
             Error::InnerSolveError {
                 status,
@@ -131,8 +135,8 @@ impl From<Error> for SimResult {
                 "Inner Solve failed: {:?}\nobjective value: {:?}\niterations: {:?}",
                 status, objective_value, iterations
             )),
-            Error::FrictionSolveError(e) => {
-                SimResult::Error(format!("Friction Solve failed: {:?}", e))
+            Error::FrictionSolveError { status } => {
+                SimResult::Error(format!("Friction Solve failed: {:?}", status))
             }
             Error::MissingSourceIndex => {
                 SimResult::Error("Missing source index vertex attribute".to_string())
@@ -151,24 +155,24 @@ impl From<Error> for SimResult {
             }
             Error::NoSimulationMesh => SimResult::Error("Missing simulation mesh".to_string()),
             Error::NoKinematicMesh => SimResult::Error("Missing kinematic mesh".to_string()),
-            Error::SolverCreateError(err) => {
-                SimResult::Error(format!("Failed to create a solver: {:?}", err))
+            Error::SolverCreateError { source } => {
+                SimResult::Error(format!("Failed to create a solver: {:?}", source))
             }
-            Error::InvalidParameter(err) => {
-                SimResult::Error(format!("Invalid parameter: {:?}", err))
+            Error::InvalidParameter { name } => {
+                SimResult::Error(format!("Invalid parameter: {:?}", name))
             }
-            Error::MeshIOError(err) => {
-                SimResult::Error(format!("Error during mesh I/O: {:?}", err))
+            Error::MeshIOError { source } => {
+                SimResult::Error(format!("Error during mesh I/O: {:?}", source))
             }
-            Error::FileIOError(err) => SimResult::Error(format!("File I/O error: {:?}", err)),
+            Error::FileIOError { source } => SimResult::Error(format!("File I/O error: {:?}", source.kind())),
             Error::InvalidImplicitSurface => {
                 SimResult::Error("Error creating an implicit surface".to_string())
             }
-            Error::ImplicitsError(err) => {
-                SimResult::Error(format!("Error computing implicit surface: {:?}", err))
+            Error::ImplicitsError { source } => {
+                SimResult::Error(format!("Error computing implicit surface: {:?}", source))
             }
-            Error::UnimplementedFeature(err) => {
-                SimResult::Error(format!("Unimplemented feature: {:?}", err))
+            Error::UnimplementedFeature { description } => {
+                SimResult::Error(format!("Unimplemented feature: {:?}", description))
             }
         }
     }

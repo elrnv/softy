@@ -112,7 +112,7 @@ impl<'a> FrictionPolarSolver<'a> {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::FrictionSolveError(e)),
+            e => Err(Error::FrictionSolveError { status: e }),
         }
     }
 }

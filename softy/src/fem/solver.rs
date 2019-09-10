@@ -596,7 +596,7 @@ impl SolverBuilder {
             } else if params.derivative_test == 2 {
                 ipopt.set_option("derivative_test", "second-order");
             } else {
-                return Err(Error::InvalidParameter("derivative_test".to_string()));
+                return Err(Error::InvalidParameter { name: "derivative_test".to_string() });
             }
         }
         if let Some(ref log_file) = params.log_file {
@@ -1556,7 +1556,7 @@ impl Solver {
                 }) => {
                     result = result.combine_inner_step_data(iterations, objective_value);
                     self.commit_solution(true);
-                    return Err(Error::SolveError(status, result));
+                    return Err(Error::SolveError { status, result });
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.

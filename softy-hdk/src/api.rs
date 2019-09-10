@@ -382,9 +382,9 @@ where
                 return (None, None, CookResult::Error(
                         format!("Input points ({}) don't coincide with solver TetMesh ({}).",
                         (*pts).num_vertices(), solver.num_solid_vertices()))),
-            Err(softy::Error::AttribError(err)) =>
+            Err(softy::Error::AttribError { source }) =>
                 return (None, None, CookResult::Warning(
-                        format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", err))),
+                        format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", source))),
             Err(err) =>
                 return (None, None, CookResult::Error(
                         format!("Error updating tetmesh vertices. ({:?})", err))),

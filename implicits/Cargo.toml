@@ -16,6 +16,7 @@ reinterpret = "0.1"
 num-traits = "0.2"
 utils = { path = "../utils" }
 serde = { version = "1.0", features = ["derive"] }
+snafu = "0.5"
 
 [dev-dependencies]
 approx = "0.3"

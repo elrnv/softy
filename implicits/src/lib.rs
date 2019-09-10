@@ -15,6 +15,7 @@ pub mod field;
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
 use geo::Real;
+use snafu::Snafu;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -88,16 +89,23 @@ pub fn surface_from_polymesh<T: Real + Send + Sync>(
     surface_from_trimesh::<T>(&surf_trimesh, params)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum Error {
+    /// Computation was interruped.
     Interrupted,
+    /// Normals are either missing or have the wrong type.
     MissingNormals,
+    /// Unsupported kernel is specified.
     UnsupportedKernel,
+    /// Unsupported sample type is specified.
     UnsupportedSampleType,
+    /// Missing neighbour data.
     MissingNeighbourData,
+    /// Invalid background field construction.
     InvalidBackgroundConstruction,
+    /// Failed to compute implicit surface.
     Failure,
-    IO(geo::io::Error),
+    IO { source: geo::io::Error },
 }
 
 impl From<attrib::Error> for Error {
@@ -111,7 +119,7 @@ impl From<attrib::Error> for Error {
 
 impl From<geo::io::Error> for Error {
     fn from(err: geo::io::Error) -> Self {
-        Error::IO(err)
+        Error::IO { source: err }
     }
 }
 

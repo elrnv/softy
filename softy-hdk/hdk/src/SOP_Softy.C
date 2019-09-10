@@ -454,10 +454,10 @@ write_solver_data(GU_Detail *detail, EL_SoftyStepResult res, int64 solver_id) {
 
     // Add the simulation meshes into the current detail
     OwnedPtr<HR_TetMesh> tetmesh = res.tetmesh;
-    //OwnedPtr<PolyMesh> polymesh = res.polymesh;
+    OwnedPtr<HR_PolyMesh> polymesh = res.polymesh;
 
     add_tetmesh(detail, std::move(tetmesh));
-    //add_polymesh(detail, std::move(polymesh));
+    add_polymesh(detail, std::move(polymesh));
 }
 
 // Entry point to the SOP

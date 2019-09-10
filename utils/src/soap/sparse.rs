@@ -354,11 +354,10 @@ where
 impl<'a, S, T, I> Sparse<S, T, I>
 where
     S: View<'a>,
-    <S as View<'a>>::Type: Set,
+    <S as View<'a>>::Type: Set + IntoIterator,
     T: Set + Get<'a, usize> + View<'a>,
-    I: AsRef<[usize]>,
-    <S as View<'a>>::Type: IntoIterator,
     <T as View<'a>>::Type: IntoIterator<Item = T::Output>,
+    I: AsRef<[usize]>,
 {
     pub fn iter(
         &'a self,
@@ -376,6 +375,53 @@ where
     }
 }
 
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: Set + IntoIterator,
+{
+    pub fn source_iter(
+        &'a self,
+    ) -> impl Iterator<
+        Item = <<S as View<'a>>::Type as IntoIterator>::Item,
+    > {
+        self.source.view().into_iter()
+    }
+}
+
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: Set + IntoIterator,
+    I: AsRef<[usize]>,
+{
+    pub fn indexed_source_iter(
+        &'a self,
+    ) -> impl Iterator<
+        Item = (
+            usize,
+            <<S as View<'a>>::Type as IntoIterator>::Item,
+        ),
+    > {
+        self.selection
+            .index_iter().cloned()
+            .zip(self.source.view().into_iter())
+    }
+}
+
+/// A mutable iterator over the source elements in `S`
+impl<'a, S, T, I> Sparse<S, T, I>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: Set + IntoIterator,
+{
+    pub fn source_iter_mut(
+        &'a mut self,
+    ) -> impl Iterator<Item = <<S as ViewMut<'a>>::Type as IntoIterator>::Item> {
+        self.source.view_mut().into_iter()
+    }
+}
+
 /// A mutable iterator can only iterate over the source elements in `S` and not
 /// the target elements in `T` since we would need scheduling to modify
 /// potentially overlapping mutable references.
@@ -385,7 +431,7 @@ where
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
     I: AsRef<[usize]>,
 {
-    pub fn source_iter_mut(
+    pub fn indexed_source_iter_mut(
         &'a mut self,
     ) -> impl Iterator<Item = (usize, <<S as ViewMut<'a>>::Type as IntoIterator>::Item)> {
         self.selection

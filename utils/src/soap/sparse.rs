@@ -450,6 +450,13 @@ impl<S: Truncate, T, I: Truncate> Truncate for Sparse<S, T, I> {
     }
 }
 
+impl<S: Clear, T, I: Clear> Clear for Sparse<S, T, I> {
+    fn clear(&mut self) {
+        self.source.clear();
+        self.selection.clear();
+    }
+}
+
 /*
  * Conversions
  */

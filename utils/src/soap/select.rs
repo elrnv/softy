@@ -604,6 +604,13 @@ impl<S, I: Truncate> Truncate for Select<S, I> {
     }
 }
 
+// Clear selection
+impl<S, I: Clear> Clear for Select<S, I> {
+    fn clear(&mut self) {
+        self.indices.clear();
+    }
+}
+
 /*
  * Conversions
  */

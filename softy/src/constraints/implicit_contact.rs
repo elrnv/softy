@@ -109,8 +109,8 @@ impl ContactConstraint for ImplicitContactConstraint {
         {
             let mut active_constraint_indices = self.active_constraint_indices.borrow_mut();
             active_constraint_indices.clear();
-            if let Ok(mut indices) = self.active_constraint_indices() {
-                active_constraint_indices.append(&mut indices);
+            if let Ok(indices) = self.active_constraint_indices() {
+                active_constraint_indices.extend(indices.into_iter());
             }
         }
         ARef::Cell(std::cell::Ref::map(
@@ -185,8 +185,9 @@ impl ContactConstraint for ImplicitContactConstraint {
             return 0;
         }
 
+        self.update_contact_points(x[0]);
         let normals = self
-            .contact_normals(x)
+            .contact_normals()
             .expect("Failed to compute contact normals.");
         let surf_indices = self
             .active_constraint_indices()
@@ -413,8 +414,9 @@ impl ContactConstraint for ImplicitContactConstraint {
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
+        self.update_contact_points(x[0]);
         let normals = self
-            .contact_normals(x)
+            .contact_normals()
             .expect("Failed to retrieve contact normals.");
         let surf_indices = self
             .active_constraint_indices()
@@ -456,11 +458,9 @@ impl ContactConstraint for ImplicitContactConstraint {
 
     fn contact_normals(
         &self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();
-        self.update_contact_points(x[0]);
         let contact_points = self.contact_points.borrow_mut();
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];

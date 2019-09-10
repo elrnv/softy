@@ -301,7 +301,6 @@ pub trait ContactConstraint:
     /// there are no cached query points.
     fn contact_normals(
         &self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;

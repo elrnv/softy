@@ -620,7 +620,7 @@ impl SolverBuilder {
             inner_iterations: 0,
             sim_params: params,
             max_step: 0.0,
-            old_active_set: Chunked::<Vec<usize>>::new(),
+            old_active_constraint_set: Chunked::<Vec<usize>>::new(),
         })
     }
 
@@ -1017,7 +1017,7 @@ pub struct Solver {
     /// of constraints for the new time steps after vertex positions have changed.
     /// The set is chunked by constraints. Each constraint chunk represents the
     /// active set for that constraint.
-    old_active_set: Chunked<Vec<usize>>,
+    old_active_constraint_set: Chunked<Vec<usize>>,
 }
 
 impl Solver {
@@ -1378,14 +1378,14 @@ impl Solver {
     fn save_current_active_constraint_set(&mut self) {
         let Solver {
             ref solver,
-            ref mut old_active_set,
+            ref mut old_active_constraint_set,
             ..
         } = self;
-        old_active_set.clear();
+        old_active_constraint_set.clear();
         solver
             .solver_data()
             .problem
-            .compute_active_constraint_set(old_active_set);
+            .compute_active_constraint_set(old_active_constraint_set);
     }
 
     /// Determine if the inner step is acceptable. If unacceptable, adjust solver paramters and
@@ -1472,14 +1472,14 @@ impl Solver {
     fn remap_contacts(&mut self) {
         let Solver {
             solver,
-            old_active_set,
+            old_active_constraint_set,
             ..
         } = self;
 
         solver
             .solver_data_mut()
             .problem
-            .remap_contacts(old_active_set.view());
+            .remap_constraints(old_active_constraint_set.view());
     }
 
     /// Run the optimization solver on one time step.
@@ -1540,7 +1540,7 @@ impl Solver {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
                             debug_assert!(self
                                 .problem()
-                                .is_same_as_constraint_set(self.old_active_set.view()));
+                                .is_same_as_constraint_set(self.old_active_constraint_set.view()));
                             let is_finished = self.compute_friction_impulse(
                                 &step_result.constraint_values,
                                 &mut friction_steps,

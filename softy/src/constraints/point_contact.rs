@@ -38,6 +38,9 @@ pub struct PointContactConstraint {
     /// will be `None`.
     pub collider_mass_inv: Option<Chunked3<Vec<f64>>>,
 
+    /// A memoized set of contact indices used to map collider impulses to their source mesh.
+    pub active_contact_indices: Vec<usize>,
+
     /// A flag indicating if the object is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
     object_is_fixed: bool,
@@ -119,6 +122,7 @@ impl PointContactConstraint {
                 }),
                 object_mass_inv,
                 collider_mass_inv,
+                active_contact_indices: Vec::new(),
                 object_is_fixed,
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
@@ -293,7 +297,7 @@ impl PointContactConstraint {
     fn in_contact_indices(&self, contact_impulse: &[f64]) -> (Vec<usize>, Vec<usize>, Vec<f64>) {
         let surf = self.implicit_surface.borrow();
         let query_points = self.contact_points.borrow();
-        let radius = surf.radius() * 0.9;
+        let radius = surf.radius() * 0.999;
         let query_indices = self
             .active_constraint_indices()
             .expect("Failed to retrieve constraint indices.");
@@ -305,7 +309,7 @@ impl PointContactConstraint {
                 if cf != 0.0
                     && surf.num_neighbours_within_distance(
                         query_points[query_indices[i]],
-                        radius * radius,
+                        radius,
                     ) > 0
                 {
                     Some((i, cf))
@@ -314,12 +318,12 @@ impl PointContactConstraint {
                 }
             })
             .unzip();
-        let active_contacts: Vec<usize> = active_constraint_subset
-            .iter()
-            .map(|&i| query_indices[i])
-            .collect();
 
-        (active_constraint_subset, active_contacts, contact_impulse)
+        let active_contact_indices: Vec<_> = active_constraint_subset
+            .iter()
+            .map(|&i| query_indices[i]).collect();
+
+        (active_constraint_subset, active_contact_indices, contact_impulse)
     }
 }
 
@@ -335,7 +339,7 @@ impl ContactConstraint for PointContactConstraint {
         self.frictional_contact.as_mut()
     }
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]> {
-        ARef::Plain(&[])
+        ARef::Plain(self.active_contact_indices.as_slice())
     }
 
     #[cfg(feature = "af")]
@@ -398,16 +402,20 @@ impl ContactConstraint for PointContactConstraint {
             return 0;
         }
 
-        let normals = self
-            .contact_normals(x)
-            .expect("Failed to compute contact normals.");
+        self.update_surface_with_mesh_pos(x[0]);
+        self.update_contact_points(x[1]);
 
         // Note that there is a distinction between active *contacts* and active *constraints*.
         // Active *constraints* correspond to to those points that are in the MLS neighbourhood of
         // influence to be part of the optimization. Active *contacts* are a subset of those that
         // are considered in contact.
-        let (active_constraint_subset, active_contact_indices, contact_impulse) =
-            self.in_contact_indices(contact_impulse);
+        let (active_constraint_subset, active_contact_indices, contact_impulse) = self.in_contact_indices(contact_impulse);
+        let normals = self
+            .contact_normals()
+            .expect("Failed to compute contact normals.");
+        let normals_subset = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
+        let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
+        normals_subset.clone_into_other(&mut normals);
 
         let FrictionalContact {
             contact_basis,
@@ -428,6 +436,10 @@ impl ContactConstraint for PointContactConstraint {
                 .for_each(|x| *x = [0.0; 3]);
             return 0;
         }
+
+        // Memoize active contact indices
+        self.active_contact_indices.clear();
+        self.active_contact_indices.extend_from_slice(active_contact_indices.as_slice());
 
         contact_basis.update_from_normals(normals.into());
 
@@ -493,10 +505,9 @@ impl ContactConstraint for PointContactConstraint {
 
         let success = if false {
             // Polar coords
-            let predictor_impulse_t: Vec<_> = active_constraint_subset
-                .iter()
-                .zip(predictor_impulse.iter())
-                .map(|(&aqi, &predictor_imp)| {
+            let predictor_impulse_t: Vec<_> =
+                predictor_impulse.iter().enumerate()
+                .map(|(aqi, &predictor_imp)| {
                     let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
                     r.tangent
                 })
@@ -514,9 +525,8 @@ impl ContactConstraint for PointContactConstraint {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
                         if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                            for ((&aqi, &r), r_out) in active_constraint_subset
-                                .iter()
-                                .zip(r_t.iter())
+                            for ((aqi, &r), r_out) in 
+                                r_t.iter().enumerate()
                                 .zip(collider_friction_impulse.iter_mut())
                             {
                                 let r_polar = Polar2 {
@@ -539,12 +549,11 @@ impl ContactConstraint for PointContactConstraint {
                     }
                 }
             } else {
-                for (&aqi, &pred_r_t, &cr, r_out) in zip!(
-                    active_constraint_subset.iter(),
+                for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
                     predictor_impulse_t.iter(),
                     contact_impulse.iter(),
                     collider_friction_impulse.iter_mut()
-                ) {
+                ).enumerate() {
                     let r_t = if pred_r_t.radius > 0.0 {
                         Polar2 {
                             radius: params.dynamic_friction * cr.abs(),
@@ -564,10 +573,9 @@ impl ContactConstraint for PointContactConstraint {
             }
         } else {
             // Euclidean coords
-            let predictor_impulse_t: Vec<_> = active_constraint_subset
-                .iter()
-                .zip(predictor_impulse.iter())
-                .map(|(&aqi, &pred_r)| {
+            let predictor_impulse_t: Vec<_> =
+                predictor_impulse.iter().enumerate()
+                .map(|(aqi, &pred_r)| {
                     let r = contact_basis.to_contact_coordinates(pred_r, aqi);
                     [r[1], r[2]]
                 })
@@ -584,8 +592,8 @@ impl ContactConstraint for PointContactConstraint {
                 );
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();
-                for ((&aqi, &r), r_out) in active_constraint_subset.iter()
-                    .zip(r_t.iter())
+                for ((aqi, &r), r_out) in
+                    r_t.iter().enumerate()
                     .zip(collider_friction_impulse.iter_mut()) {
                     *r_out = contact_basis
                         .from_contact_coordinates([0.0, r[0], r[1]], aqi)
@@ -593,12 +601,11 @@ impl ContactConstraint for PointContactConstraint {
                 }
                 true
             } else {
-                for (&aqi, &pred_r_t, &cr, r_out) in zip!(
-                    active_constraint_subset.iter(),
+                for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
                     predictor_impulse_t.iter(),
                     contact_impulse.iter(),
                     collider_friction_impulse.iter_mut(),
-                ) {
+                ).enumerate() {
                     let pred_r_t = Vector2(pred_r_t);
                     let pred_r_norm = pred_r_t.norm();
                     let r_t = if pred_r_norm > 0.0 {
@@ -742,51 +749,53 @@ impl ContactConstraint for PointContactConstraint {
                 .zip(frictional_contact.collider_impulse.iter())
                 .enumerate()
             {
-                // Project out normal component.
-                let r_t = if !frictional_contact.contact_basis.is_empty() {
-                    let f = frictional_contact
-                        .contact_basis
-                        .to_contact_coordinates(r, contact_idx);
-                    Vector3(
-                        frictional_contact
+                if let Some(i) = i.into() {
+                    // Project out normal component.
+                    let r_t = if !frictional_contact.contact_basis.is_empty() {
+                        let f = frictional_contact
                             .contact_basis
-                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                            .into(),
-                    )
-                } else {
-                    Vector3::zeros()
-                };
+                            .to_contact_coordinates(r, contact_idx);
+                        Vector3(
+                            frictional_contact
+                                .contact_basis
+                                .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                                .into(),
+                        )
+                    } else {
+                        Vector3::zeros()
+                    };
 
-                dissipation += Vector3(v[1][i]).dot(r_t);
+                    dissipation += Vector3(v[1][i]).dot(r_t);
+                }
             }
         }
 
         dissipation
     }
 
-    fn remap_frictional_contact(&mut self, old_set: &[usize], new_set: &[usize]) {
+    fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {
         // Remap friction forces the same way we remap constraint multipliers for the contact
         // solve.
-        if let Some(ref mut frictional_contact) = self.frictional_contact {
+        //if let Some(ref mut frictional_contact) = self.frictional_contact {
             // Remap collider contacts (since the set of contact points may have
             // changed).
-            let new_friction_impulses = crate::constraints::remap_values(
-                frictional_contact.collider_impulse.iter().cloned(),
-                [0.0; 3],
-                old_set.iter().cloned(),
-                new_set.iter().cloned(),
-            );
+            //let new_friction_impulses = crate::constraints::remap_values(
+            //    frictional_contact.collider_impulse.iter().cloned(),
+            //    [0.0; 3],
+            //    old_set.iter().cloned(),
+            //    new_set.iter().cloned(),
+            //);
 
-            std::mem::replace(
-                &mut frictional_contact.collider_impulse,
-                Chunked3::from_array_vec(new_friction_impulses),
-            );
+            //std::mem::replace(
+            //    &mut frictional_contact.collider_impulse,
+            //    Chunked3::from_array_vec(new_friction_impulses),
+            //);
 
             // Object impulses don't need to be remapped because we store them
             // on all the surface vertices regardless of the contact set.
 
-            frictional_contact.contact_basis.remap(old_set, new_set);
-        }
+            //frictional_contact.contact_basis.remap(old_set, new_set);
+        //}
     }
 
     /// For visualization purposes.
@@ -796,18 +805,27 @@ impl ContactConstraint for PointContactConstraint {
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
+        self.update_surface_with_mesh_pos(x[0]);
+        self.update_contact_points(x[1]);
+
+        let (active_constraint_subset, active_contact_indices, contact_impulse) = self.in_contact_indices(contact_impulse);
+
         let normals = self
-            .contact_normals(x)
+            .contact_normals()
             .expect("Failed to retrieve contact normals.");
-        let surf_indices = self
-            .active_constraint_indices()
-            .expect("Failed to retrieve constraint indices.");
+        let normals_subset = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
+        let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
+        normals_subset.clone_into_other(&mut normals);
+
+        //let surf_indices = self
+        //    .active_constraint_indices()
+        //    .expect("Failed to retrieve constraint indices.");
 
         assert_eq!(contact_impulse.len(), normals.len());
-        assert_eq!(surf_indices.len(), normals.len());
+        assert_eq!(active_contact_indices.len(), normals.len());
 
         for (surf_idx, nml, &cr) in zip!(
-            surf_indices.into_iter(),
+            active_contact_indices.into_iter(),
             normals.into_iter(),
             contact_impulse.iter()
         ) {
@@ -839,14 +857,9 @@ impl ContactConstraint for PointContactConstraint {
 
     fn contact_normals(
         &self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
     ) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at the vertex positions of the colliding mesh.
-        self.update_surface_with_mesh_pos(x[0]);
-
         let surf = self.implicit_surface.borrow();
-
-        self.update_contact_points(x[1]);
         let contact_points = self.contact_points.borrow_mut();
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()?];

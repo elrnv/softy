@@ -1082,12 +1082,12 @@ impl NonLinearProblem {
 
     /// Build a new set of multipliers from the old set and replace warm start multipliers with the
     /// new set.
-    pub fn remap_contacts(&mut self, old_constraint_set: ChunkedView<&[usize]>) {
+    pub fn remap_constraints(&mut self, old_constraint_set: ChunkedView<&[usize]>) {
         use crate::constraints::remap_values;
-        let active_set = self.active_constraint_set();
-        let new_values = active_set.data();
+        let active_constraint_set = self.active_constraint_set();
+        let new_values = active_constraint_set.data();
         let old_values = old_constraint_set.data();
-        let mut new_constraint_set = active_set.view().into_iter();
+        let mut new_constraint_set = active_constraint_set.view().into_iter();
         let mut old_constraint_set = old_constraint_set.iter();
 
         // Remap multipliers

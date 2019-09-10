@@ -51,9 +51,8 @@ impl TetMeshSolid {
 
     pub(crate) fn surface(&self) -> Ref<TetMeshSurface> {
         {
-            let mut surface = self.surface.borrow_mut();
-
-            if surface.is_none() {
+            if self.surface.borrow().is_none() {
+                let mut surface = self.surface.borrow_mut();
                 *surface = Some(TetMeshSurface::from(&self.tetmesh));
             }
         }

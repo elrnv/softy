@@ -512,7 +512,9 @@ impl SolverBuilder {
         let time_step = f64::from(params.time_step.unwrap_or(0.0f32));
 
         if frictional_contacts.iter().any(|(_, (i, j))| i == j) {
-            return Err(Error::UnimplementedFeature { description: String::from("Self contacts") });
+            return Err(Error::UnimplementedFeature {
+                description: String::from("Self contacts"),
+            });
         }
 
         let frictional_contacts = Self::build_frictional_contacts(
@@ -600,7 +602,9 @@ impl SolverBuilder {
             } else if params.derivative_test == 2 {
                 ipopt.set_option("derivative_test", "second-order");
             } else {
-                return Err(Error::InvalidParameter { name: "derivative_test".to_string() });
+                return Err(Error::InvalidParameter {
+                    name: "derivative_test".to_string(),
+                });
             }
         }
         if let Some(ref log_file) = params.log_file {

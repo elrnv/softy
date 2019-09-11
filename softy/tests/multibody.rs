@@ -6,7 +6,7 @@ pub use test_utils::*;
 use utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(100e6, 10e6))
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn stacking_boxes() -> Result<(), Error> {
         max_outer_iterations: 20,
         gravity: [0.0f32, -9.81, 0.0],
         time_step: Some(0.0208333),
-        friction_iterations: 1,
+        friction_iterations: 2,
         print_level: 5,
         ..DYNAMIC_PARAMS
     };
@@ -34,7 +34,7 @@ fn stacking_boxes() -> Result<(), Error> {
 
     let box_bottom = make_box([2, 2, 2]);
     let mut box_top = make_box([2, 2, 2]);
-    translate(&mut box_top, [0.0, 1.1, 0.0].into());
+    translate(&mut box_top, [0.0, 2.2, 0.0].into());
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -43,7 +43,7 @@ fn stacking_boxes() -> Result<(), Error> {
             tolerance: 0.0001,
         },
         friction_params: Some(FrictionParams {
-            dynamic_friction: 0.2,
+            dynamic_friction: 0.5,
             inner_iterations: 100,
             tolerance: 1e-5,
             print_level: 0,
@@ -57,6 +57,7 @@ fn stacking_boxes() -> Result<(), Error> {
         .add_frictional_contact(fc_params, (0, 1))
         .add_frictional_contact(fc_params, (0, 2))
         //.add_frictional_contact(fc_params, (1, 2))
+        //.add_frictional_contact(fc_params, (2, 1))
         .build()?;
 
     geo::io::save_polymesh(

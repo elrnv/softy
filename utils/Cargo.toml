@@ -3,10 +3,20 @@ name = "utils"
 version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
+license = "MPL-2.0"
 
 [dependencies]
-geo = { package = "geometry", git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
+geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 rand = "0.5"
+typenum = "1.10"
+reinterpret = "0.2"
+sprs = { version = "0.6.4", optional = true }
+image = "0.22"
+unroll = "0.1"
+num-traits = "0.2"
 
 [dev-dependencies]
 approx = "0.3"
+
+[features]
+default = ["sprs"]

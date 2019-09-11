@@ -128,7 +128,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::FrictionSolveError(e)),
+            e => Err(Error::FrictionSolveError { status: e }),
         }
     }
 }

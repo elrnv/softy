@@ -16,16 +16,11 @@ impl<T: Real> ImplicitSurface<T> {
 }
 
 /// Hessian indices with respect to samples.
-fn sample_hessian_indices<'a>(
-    nbrs: &'a [usize],
-    ) -> impl Iterator<Item = (usize, usize)> + 'a {
-    nbrs.iter()
-        .map(move |&i| (i, i))
-        .chain(nbrs.iter().flat_map(move |&i| {
-            nbrs.iter()
-                .filter(move |&&j| i < j)
-                .map(move |&j| (j, i))
-        }))
+fn sample_hessian_indices<'a>(nbrs: &'a [usize]) -> impl Iterator<Item = (usize, usize)> + 'a {
+    nbrs.iter().map(move |&i| (i, i)).chain(
+        nbrs.iter()
+            .flat_map(move |&i| nbrs.iter().filter(move |&&j| i < j).map(move |&j| (j, i))),
+    )
 }
 
 /// Indices for the surface Hessian product for a single face (meaning that samples are located
@@ -34,8 +29,7 @@ fn face_hessian_indices_iter<'a>(
     nbrs: &'a [usize],
     surface_topo: &'a [[usize; 3]],
     weighted: bool,
-) -> impl Iterator<Item = (usize, usize)> + 'a
-{
+) -> impl Iterator<Item = (usize, usize)> + 'a {
     let samples_to_vertices = move |row: usize, col: usize| {
         surface_topo[row].iter().flat_map(move |&r| {
             surface_topo[col]
@@ -72,23 +66,27 @@ fn face_hessian_indices_iter<'a>(
             surface_topo[sample_i]
                 .iter()
                 .flat_map(move |&i| {
-                    surface_topo[sample_i].iter().map(move |&j| {
-                        if i >= j {
-                            (i, j)
-                        } else {
-                            (j, i)
-                        }
-                    })
+                    surface_topo[sample_i].iter().map(
+                        move |&j| {
+                            if i >= j {
+                                (i, j)
+                            } else {
+                                (j, i)
+                            }
+                        },
+                    )
                 })
                 .chain(nbrs.iter().flat_map(move |&sample_j| {
                     surface_topo[sample_j].iter().flat_map(move |&j| {
-                        surface_topo[sample_i].iter().map(move |&i| {
-                            if j >= i {
-                                (j, i)
-                            } else {
-                                (i, j)
-                            }
-                        })
+                        surface_topo[sample_i].iter().map(
+                            move |&i| {
+                                if j >= i {
+                                    (j, i)
+                                } else {
+                                    (i, j)
+                                }
+                            },
+                        )
                     })
                 }))
         }));
@@ -282,7 +280,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match_kernel_as_spherical!(
             self.kernel,
             self.base_radius,
-            |kern| self.mls_surface_hessian_product_values(query_points, multipliers, kern, scale, values),
+            |kern| self.mls_surface_hessian_product_values(
+                query_points,
+                multipliers,
+                kern,
+                scale,
+                values
+            ),
             || Err(Error::UnsupportedKernel)
         )
     }
@@ -692,7 +696,13 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         match_kernel_as_spherical!(
             self.kernel,
             self.base_radius,
-            |kern| self.mls_query_hessian_product_values(query_points, multipliers, kern, scale, values),
+            |kern| self.mls_query_hessian_product_values(
+                query_points,
+                multipliers,
+                kern,
+                scale,
+                values
+            ),
             || Err(Error::UnsupportedKernel)
         )
     }

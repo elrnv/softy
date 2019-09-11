@@ -15,6 +15,7 @@ pub mod field;
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
 use geo::Real;
+use snafu::Snafu;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -88,16 +89,23 @@ pub fn surface_from_polymesh<T: Real + Send + Sync>(
     surface_from_trimesh::<T>(&surf_trimesh, params)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum Error {
+    /// Computation was interruped.
     Interrupted,
+    /// Normals are either missing or have the wrong type.
     MissingNormals,
+    /// Unsupported kernel is specified.
     UnsupportedKernel,
+    /// Unsupported sample type is specified.
     UnsupportedSampleType,
+    /// Missing neighbour data.
     MissingNeighbourData,
+    /// Invalid background field construction.
     InvalidBackgroundConstruction,
+    /// Failed to compute implicit surface.
     Failure,
-    IO(geo::io::Error),
+    IO { source: geo::io::Error },
 }
 
 impl From<attrib::Error> for Error {
@@ -111,7 +119,7 @@ impl From<attrib::Error> for Error {
 
 impl From<geo::io::Error> for Error {
     fn from(err: geo::io::Error) -> Self {
-        Error::IO(err)
+        Error::IO { source: err }
     }
 }
 
@@ -226,6 +234,48 @@ mod tests {
 
         Ok(())
     }
+
+//    #[test]
+//    fn ephemeral_test() -> Result<(), Error> {
+//        let mut grid = make_grid(22, 22);
+//
+//        let trimesh = utils::make_sample_octahedron();
+//
+//        let mut sphere = PolyMesh::from(trimesh);
+//
+//        compute_potential_debug(
+//            &mut grid,
+//            &mut sphere,
+//            Params {
+//                kernel: KernelType::Approximate {
+//                    tolerance: 0.00001,
+//                    radius_multiplier: 3.6742346141747673,
+//                },
+//                background_field: BackgroundFieldParams {
+//                    field_type: BackgroundFieldType::DistanceBased,
+//                    weighted: false,
+//                },
+//                sample_type: SampleType::Face,
+//                ..Default::default()
+//            },
+//            || false,
+//        )?;
+//
+//        //geo::io::save_polymesh(
+//        //    &grid,
+//        //    &PathBuf::from("out/octahedron_face_grid_expected.vtk"),
+//        //)
+//        //.unwrap();
+//
+//        let solution_potential_iter = grid.attrib_iter::<f32, VertexIndex>("potential")?;
+//        let alt_potential_iter = grid.attrib_iter::<f32, VertexIndex>("alt_potential")?;
+//
+//        for (sol_pot, alt_pot) in solution_potential_iter.zip(alt_potential_iter) {
+//            assert_relative_eq!(sol_pot, alt_pot, max_relative = 1e-6);
+//        }
+//
+//        Ok(())
+//    }
 
     /// Vertex centered HRBF surface test.
     #[test]
@@ -394,7 +444,7 @@ mod tests {
 
     /// Test the query jacobian of the implicit surface.
     #[test]
-    fn query_jacobian_test() -> Result<(), Error> {
+    fn complex_query_jacobian_test() -> Result<(), Error> {
         use autodiff::F;
         use geo::math::Vector3;
 
@@ -493,7 +543,7 @@ mod tests {
 
     /// Test the query Hessian of the implicit surface.
     #[test]
-    fn query_hessian_test() -> Result<(), Error> {
+    fn complex_query_hessian_test() -> Result<(), Error> {
         use autodiff::F;
         use geo::math::Vector3;
 

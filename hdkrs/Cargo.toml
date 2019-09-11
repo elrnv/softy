@@ -9,7 +9,7 @@ edition = "2018"
 #crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geometry = { git = "ssh://git@gitlab.com/elrnv/geometry.git", features = ["io"] }
+geometry = { git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
 libc = "*"
 reinterpret = "0.1"
 

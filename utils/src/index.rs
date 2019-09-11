@@ -271,6 +271,20 @@ impl fmt::Display for Index {
     }
 }
 
+// TODO: Implement these for SliceIndex if/when it gets stabilized
+//impl<T: std::ops::Index<usize>> std::ops::Index<Index> for T {
+//    type Output = T::Output;
+//    fn index(&self, idx: Index) -> &Self::Output {
+//        &self[idx.unwrap()]
+//    }
+//}
+//
+//impl<T: std::ops::IndexMut<usize>> std::ops::IndexMut<Index> for T {
+//    fn index_mut(&mut self, idx: Index) -> &Self::Output {
+//        &mut self[idx.unwrap()]
+//    }
+//}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,30 +1,73 @@
+pub mod elasticity;
 pub mod gravity;
-pub mod momentum;
-pub mod tet_nh;
+pub mod inertia;
+
+use crate::energy::*;
+use crate::matrix::MatrixElementIndex;
+use geo::Real;
+
+/// Define a nullable energy, which is used to represent zero energies. For example
+/// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
+
+impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
+    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+        self.as_ref().map_or(T::zero(), |e| e.energy(x0, x1))
+    }
+}
+
+impl<T: Real, E: EnergyGradient<T>> EnergyGradient<T> for Option<E> {
+    fn add_energy_gradient(&self, x0: &[T], x1: &[T], g: &mut [T]) {
+        match self {
+            Some(e) => e.add_energy_gradient(x0, x1, g),
+            None => {}
+        }
+    }
+}
+
+impl<E: EnergyHessian> EnergyHessian for Option<E> {
+    fn energy_hessian_size(&self) -> usize {
+        self.as_ref().map_or(0, |e| e.energy_hessian_size())
+    }
+    fn energy_hessian_indices_offset(
+        &self,
+        off: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
+        match self {
+            Some(e) => e.energy_hessian_indices_offset(off, indices),
+            None => {}
+        }
+    }
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        x0: &[T],
+        x1: &[T],
+        scale: T,
+        vals: &mut [T],
+    ) {
+        match self {
+            Some(e) => e.energy_hessian_values(x0, x1, scale, vals),
+            None => {}
+        }
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::energy::*;
-    use crate::fem::SolverBuilder;
     use crate::test_utils::*;
     use crate::TetMesh;
     use approx::*;
     use autodiff::F;
-    use geo::mesh::VertexPositions;
     use num_traits::Zero;
     use reinterpret::*;
 
-    /// Prepare test meshes
     pub(crate) fn test_meshes() -> Vec<TetMesh> {
-        let mut meshes = vec![
+        vec![
             make_one_tet_mesh(),
             make_one_deformed_tet_mesh(),
             make_three_tet_mesh(),
-        ];
-        for mesh in meshes.iter_mut() {
-            SolverBuilder::prepare_mesh_attributes(mesh).unwrap();
-        }
-        meshes
+        ]
     }
 
     fn random_displacement(n: usize) -> Vec<F> {
@@ -61,22 +104,19 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn gradient_tester<B, E>(build_energy: B, ty: EnergyType)
+    pub(crate) fn gradient_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
-        B: Fn(TetMesh) -> E,
         E: Energy<F> + EnergyGradient<F>,
     {
-        for mesh in test_meshes().into_iter() {
-            let pos = mesh.vertex_positions().to_vec();
+        for (energy, pos) in configurations.iter() {
             let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
-            let energy_model = build_energy(mesh);
 
             let mut grad = vec![F::zero(); 3 * pos.len()];
-            energy_model.add_energy_gradient(&x0, &x1, &mut grad);
+            energy.add_energy_gradient(&x0, &x1, &mut grad);
 
             for i in 0..x0.len() {
                 x1[i] = F::var(x1[i]);
-                let energy = energy_model.energy(&x0, &x1);
+                let energy = energy.energy(&x0, &x1);
                 assert_relative_eq!(
                     grad[i].value(),
                     energy.deriv(),
@@ -88,21 +128,18 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn hessian_tester<B, E>(build_energy: B, ty: EnergyType)
+    pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
-        B: Fn(TetMesh) -> E,
         E: EnergyGradient<F> + EnergyHessian,
     {
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
-        for mesh in test_meshes().into_iter() {
-            let pos = mesh.vertex_positions().to_vec();
+        for (energy, pos) in configurations.iter() {
             let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
-            let energy_model = build_energy(mesh);
 
             let mut hess_triplets =
-                vec![Triplet::new(0, 0, F::zero()); energy_model.energy_hessian_size()];
-            energy_model.energy_hessian(&x0, &x1, F::cst(1.0), &mut hess_triplets);
+                vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];
+            energy.energy_hessian(&x0, &x1, F::cst(1.0), &mut hess_triplets);
 
             // Build a dense hessian
             let mut hess = vec![vec![F::zero(); x0.len()]; x0.len()];
@@ -120,7 +157,7 @@ pub(crate) mod test_utils {
             for i in 0..x0.len() {
                 x1[i] = F::var(x1[i]);
                 let mut grad = vec![F::zero(); x0.len()];
-                energy_model.add_energy_gradient(&x0, &x1, &mut grad);
+                energy.add_energy_gradient(&x0, &x1, &mut grad);
                 for j in 0..x0.len() {
                     assert_relative_eq!(
                         hess[i][j].value(),

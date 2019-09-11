@@ -1,9 +1,12 @@
-/**
- * This crate provides convenience functions for building common meshes.
- */
+pub mod aref;
+pub mod index;
+pub mod soap;
 pub mod transform;
 pub mod zip;
 
+/**
+ * This crate provides convenience functions for building common meshes.
+ */
 pub use crate::transform::*;
 pub use crate::zip::*;
 use geo::math::Vector3;
@@ -67,6 +70,71 @@ pub fn make_grid(grid_params: Grid) -> PolyMesh<f64> {
     }
 
     PolyMesh::new(positions, &indices)
+}
+
+/// Generate a [-1,1]x[-1,1]x[-1,1] tetmesh box with the given cell resolution per axis.
+/// The tetrahedralization is a simple 6 tets per cube with a regular pattern.
+pub fn make_box(res: [usize; 3]) -> TetMesh<f64> {
+    let mut positions = Vec::new();
+    let [nx, ny, nz] = res;
+
+    // iterate over vertices
+    for ix in 0..=nx {
+        for iy in 0..=ny {
+            for iz in 0..=nz {
+                let x = -1.0 + 2.0 * (ix as f64) / nx as f64;
+                let y = -1.0 + 2.0 * (iy as f64) / ny as f64;
+                let z = -1.0 + 2.0 * (iz as f64) / nz as f64;
+                positions.push([x, y, z]);
+            }
+        }
+    }
+
+    let mut indices = Vec::new();
+
+    // iterate over faces
+    for ix in 0..nx {
+        for iy in 0..ny {
+            for iz in 0..nz {
+                let index = |x, y, z| ((ix + x) * (ny + 1) + (iy + y)) * (nz + 1) + (iz + z);
+                // Populate tets in a star pattern
+                let first = index(0, 0, 0);
+                let second = index(1, 1, 1);
+                // Tet 1
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(0, 1, 1));
+                indices.push(index(0, 1, 0));
+                // Tet 2
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(0, 1, 0));
+                indices.push(index(1, 1, 0));
+                // Tet 3
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(1, 1, 0));
+                indices.push(index(1, 0, 0));
+                // Tet 4
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(1, 0, 0));
+                indices.push(index(1, 0, 1));
+                // Tet 5
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(1, 0, 1));
+                indices.push(index(0, 0, 1));
+                // Tet 6
+                indices.push(first);
+                indices.push(second);
+                indices.push(index(0, 0, 1));
+                indices.push(index(0, 1, 1));
+            }
+        }
+    }
+
+    TetMesh::new(positions, indices)
 }
 
 pub fn make_sample_octahedron() -> TriMesh<f64> {
@@ -189,5 +257,14 @@ mod tests {
         for &v in icosa.vertex_positions() {
             assert_relative_eq!(geo::math::Vector3(v).norm(), 1.0);
         }
+    }
+
+    #[test]
+    fn grid_test() {
+        use geo::ops::*;
+        let grid = make_grid(Grid { rows: 1, cols: 1, orientation: AxisPlaneOrientation::ZX });
+        let bbox = grid.bounding_box();
+        assert_eq!(bbox.min_corner().into_inner(), [-1.0, 0.0, -1.0]);
+        assert_eq!(bbox.max_corner().into_inner(), [1.0, 0.0, 1.0]);
     }
 }

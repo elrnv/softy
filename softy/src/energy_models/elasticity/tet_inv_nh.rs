@@ -4,13 +4,13 @@
 //use geo::io::save_tetmesh;
 use crate::attrib_defines::*;
 use crate::energy::*;
+use crate::matrix::*;
+use crate::TetMesh;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
-use geo::Real;
 use geo::prim::Tetrahedron;
-use crate::matrix::*;
-use crate::TetMesh;
+use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
@@ -57,27 +57,31 @@ impl<T: Real> InvertibleNHTetEnergy<T> {
     #[inline]
     pub fn elastic_energy(&self) -> T {
         let InvertibleNHTetEnergy {
-            volume, mu, lambda, epsilon: eps ..
+            volume,
+            mu,
+            lambda,
+            epsilon: eps,
+            ..
         } = *self;
         let F = self.deformation_gradient();
         let I = F.norm_squared(); // tr(F^TF)
         let J = F.determinant();
+        let half = T::from(0.5).unwrap();
 
         let E = if J <= eps {
             let log_eps = eps.ln();
-            let half = T::from(0.5).unwrap();
             let two = T::from(2.0).unwrap();
-            let J_eps = (J - eps)/eps;
+            let J_eps = (J - eps) / eps;
             let logJ_approx = log_eps + J_eps - half * J_eps * J_eps;
-            let logJ2_approx = log_eps * log_eps + two * log_eps * J_eps + (T::one()-log_eps) * J_eps * J_eps;
+            let logJ2_approx =
+                log_eps * log_eps + two * log_eps * J_eps + (T::one() - log_eps) * J_eps * J_eps;
             half * lambda * logJ2_approx - mu * logJ_approx
         } else {
             let logJ = J.ln();
-            let half = T::from(0.5).unwrap();
             half * lambda * logJ * logJ - mu * logJ
         };
 
-        volume * (E + half * mu * (I - T::from(3.0).unwrap())
+        volume * (E + half * mu * (I - T::from(3.0).unwrap()))
     }
 
     /// Elastic energy gradient per element vertex.
@@ -187,6 +191,7 @@ impl<T: Real> TetEnergy<T> for InvertibleNHTetEnergy<T> {
             volume,
             lambda,
             mu,
+            epsilon: T::from(0.2).unwrap(),
         }
     }
 
@@ -377,12 +382,13 @@ impl<T: Real> Energy<T> for ElasticTetMeshEnergy {
                 let damping = T::from(damping).unwrap();
                 let tet_energy = InvertibleNHTetEnergy::new(Dx, DX_inv, vol, lambda, mu);
                 // elasticity
-                tet_energy.elastic_energy() + half * damping * {
-                    let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
-                    // damping (viscosity)
-                    (dH[0].dot(tet_dx.0) + dH[1].dot(tet_dx.1) + dH[2].dot(tet_dx.2)
-                        - (tet_dx.3.transpose() * dH).sum())
-                }
+                tet_energy.elastic_energy()
+                    + half * damping * {
+                        let dH = tet_energy.elastic_energy_hessian_product(&tet_dx);
+                        // damping (viscosity)
+                        (dH[0].dot(tet_dx.0) + dH[1].dot(tet_dx.1) + dH[2].dot(tet_dx.2)
+                            - (tet_dx.3.transpose() * dH).sum())
+                    }
             })
             .sum()
     }
@@ -435,7 +441,8 @@ impl<T: Real> EnergyGradient<T> for ElasticTetMeshEnergy {
             let mu = T::from(mu).unwrap();
             let damping = T::from(damping).unwrap();
 
-            let tet_energy = InvertibleNHTetEnergy::new(tet.shape_matrix(), DX_inv, vol, lambda, mu);
+            let tet_energy =
+                InvertibleNHTetEnergy::new(tet.shape_matrix(), DX_inv, vol, lambda, mu);
 
             let grad = tet_energy.elastic_energy_gradient();
 
@@ -510,8 +517,8 @@ impl EnergyHessian for ElasticTetMeshEnergy {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex;
-                      Self::NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(indices);
+            let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+                reinterpret_mut_slice(indices);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 
@@ -536,7 +543,13 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     }
 
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]) {
+    fn energy_hessian_values<T: Real + Send + Sync>(
+        &self,
+        x: &[T],
+        dx: &[T],
+        scale: T,
+        values: &mut [T],
+    ) {
         assert_eq!(values.len(), self.energy_hessian_size());
         let ElasticTetMeshEnergy {
             ref tetmesh,
@@ -612,11 +625,17 @@ mod tests {
 
     #[test]
     fn gradient() {
-        gradient_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        gradient_tester(
+            |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
+            EnergyType::Position,
+        );
     }
 
     #[test]
     fn hessian() {
-        hessian_tester(|mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(), EnergyType::Position);
+        hessian_tester(
+            |mesh| ElasticTetMeshEnergyBuilder::new(Rc::new(RefCell::new(mesh))).build(),
+            EnergyType::Position,
+        );
     }
 }

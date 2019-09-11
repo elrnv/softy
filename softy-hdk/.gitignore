@@ -3,4 +3,9 @@
 Cargo.lock
 /hdk/build
 /backup
+/scene
+/render
+/texture
+/hip/backup
+**/*.exr
 .vscode

@@ -83,71 +83,227 @@ static const char *theDsFile = R"THEDSFILE(
         name "material"
         label "Material"
 
-        parm {
-            name "density"
-            label "Density"
-            type float
-            default { "1000" }
-            range { 0 2000 }
-        }
-        parm {
-            name "damping"
-            label "Damping"
-            type float
-            default { "0.0" }
-            range { 0 1000 }
-        }
+        multiparm {
+            name  "materials"
+            label "Number of Materials"
+            default 0
+            parmtag { "multistartoffset" "1" }
 
-        parm {
-            name "stiffnesstype"
-            cppname "StiffnessType"
-            label "Stiffness Type"
-            type ordinal
-            default { "1" }
-            menu {
-                "shearbulk" "Shear and Bulk Moduli"
-                "youngpoisson" "Young's Modulus and Poisson's Ratio"
+            parm {
+                name "materialid#"
+                cppname "MaterialId"
+                label "Material Id"
+                type label
+                default { "#" }
+            }
+
+            parm {
+                name "objtype#"
+                cppname "ObjectType"
+                label "Object Type"
+                type ordinal
+                default { "0" }
+                menu {
+                    "solid" "Solid"
+                    "shell" "Shell"
+                }
+            }
+
+            parm {
+                name "density#"
+                label "Density"
+                type float
+                default { "1000" }
+                range { 0 2000 }
+            }
+            parm {
+                name "damping#"
+                label "Damping"
+                type float
+                default { "0.0" }
+                range { 0 1000 }
+            }
+
+            parm {
+                name "stiffnesstype#"
+                cppname "StiffnessType"
+                label "Stiffness Type"
+                type ordinal
+                default { "1" }
+                menu {
+                    "shearbulk" "Shear and Bulk Moduli"
+                    "youngpoisson" "Young's Modulus and Poisson's Ratio"
+                }
+            }
+
+            parm {
+                name "shapestiffness#"
+                cppname "ShapeStiffness"
+                label "Shape Stiffness"
+                type float
+                default { "10" }
+                range { 0 100 }
+                hidewhen "{ stiffnesstype# == youngpoisson }"
+            }
+
+            parm {
+                name "volumestiffness#"
+                cppname "VolumeStiffness"
+                label "Volume Stiffness"
+                type float
+                default { "1750" }
+                range { 0 10000 }
+                hidewhen "{ stiffnesstype# == youngpoisson }"
+            }
+
+            parm {
+                name "youngmodulus#"
+                cppname "YoungModulus"
+                label "Young Modulus"
+                type float
+                default { "3.24" }
+                range { 0 1000 }
+                hidewhen "{ stiffnesstype# == shearbulk }"
+            }
+
+            parm {
+                name "poissonratio#"
+                cppname "PoissonRatio"
+                label "Poisson Ratio"
+                type float
+                default { "0.49" }
+                range { 0 0.5 }
+                hidewhen "{ stiffnesstype# == shearbulk }"
             }
         }
+    }
+
+    group {
+        name "constraints"
+        label "Constraints"
 
         parm {
-            name "shapestiffness"
-            cppname "ShapeStiffness"
-            label "Shape Stiffness"
-            type float
-            default { "10" }
-            range { 0 100 }
-            hidewhen "{ stiffnesstype == youngpoisson }"
+            name "volumeconstraint"
+            cppname "VolumeConstraint"
+            label "Enable Volume Constraint"
+            type toggle
+            default { "off" }
         }
 
         parm {
-            name "volumestiffness"
-            cppname "VolumeStiffness"
-            label "Volume Stiffness"
-            type float
-            default { "1750" }
-            range { 0 10000 }
-            hidewhen "{ stiffnesstype == youngpoisson }"
+            name "frictioniterations"
+            cppname "FrictionIterations"
+            label "Friction Iterations"
+            type integer
+            default { "1" }
+            range { 0 10 }
         }
 
-        parm {
-            name "youngmodulus"
-            cppname "YoungModulus"
-            label "Young Modulus"
-            type float
-            default { "3.24" }
-            range { 0 1000 }
-            hidewhen "{ stiffnesstype == shearbulk }"
-        }
+        multiparm {
+            name    "frictionalcontacts"
+            cppname "FrictionalContacts"
+            label    "Frictional Contacts"
+            default 0
 
-        parm {
-            name "poissonratio"
-            cppname "PoissonRatio"
-            label "Poisson Ratio"
-            type float
-            default { "0.49" }
-            range { 0 0.5 }
-            hidewhen "{ stiffnesstype == shearbulk }"
+            parm {
+                name "objectmaterialid#"
+                cppname "ObjectMaterialId"
+                label "Object Material Id"
+                type integer
+                default { "1" }
+                range { 0! 1 }
+            }
+
+            parm {
+                name "collidermaterialid#"
+                cppname "ColliderMaterialId"
+                label "Collider Material Id"
+                type integer
+                default { "0" }
+                range { 0! 1 }
+            }
+
+            parm {
+                name "kernel#"
+                label "Kernel"
+                type ordinal
+                default { "1" }
+                menu {
+                    "interpolating" "Local Interpolating"
+                    "approximate" "Local approximately interpolating"
+                    "cubic" "Local cubic"
+                    "global" "Global inverse squared distance"
+                }
+            }
+
+            parm {
+                name "contacttype#"
+                cppname "ContactType"
+                label "Contact Type"
+                type ordinal
+                default { "0" }
+                menu {
+                    "implicit" "Implicit"
+                    "point" "Point"
+                }
+            }
+
+            parm {
+                name "radiusmult#"
+                cppname "RadiusMultiplier"
+                label "Radius Multiplier"
+                type float
+                default { "1" }
+                range { 0.0 10.0 }
+            }
+
+            parm {
+                name "smoothtol#"
+                cppname "SmoothTol"
+                label "Smoothness Tolerance"
+                type log
+                default { "1e-5" }
+                range { 0.0 1.0 }
+            }
+
+            parm {
+                name "friction#"
+                label "Friction"
+                type toggle
+                default { "off" }
+            }
+
+            groupsimple {
+                name "frictionparams#"
+                label "Friction Parameters"
+                grouptag { "group_type" "simple" }
+
+                parm {
+                    name "dynamiccof#"
+                    cppname "DynamicCof"
+                    label "Dynamic Coefficient"
+                    type float
+                    default { "0.5" }
+                    range { 0 2 }
+                }
+                parm {
+                    name "frictiontolerance#"
+                    cppname "FrictionTolerance"
+                    label "Tolerance"
+                    type log
+                    default { "1e-5" }
+                    range { 0.0 1.0 }
+                }
+                parm {
+                    name "frictioninneriterations#"
+                    cppname "FrictionInnerIterations"
+                    label "Inner Iterations"
+                    type integer
+                    default { "40" }
+                    range { 0 10 }
+                }
+            }
+
         }
     }
 
@@ -242,108 +398,6 @@ static const char *theDsFile = R"THEDSFILE(
 
     }
 
-    group {
-        name "constraints"
-        label "Constraints"
-
-        parm {
-            name "volumeconstraint"
-            cppname "VolumeConstraint"
-            label "Enable Volume Constraint"
-            type toggle
-            default { "off" }
-        }
-
-        groupsimple {
-            name "smoothcontact"
-            label "Smooth Contact"
-            grouptag { "group_type" "simple" }
-            disablewhen "{ hasinput(1) == 0 }"
-
-            parm {
-                name "kernel"
-                label "Kernel"
-                type ordinal
-                default { "1" }
-                menu {
-                    "interpolating" "Local Interpolating"
-                    "approximate" "Local approximately interpolating"
-                    "cubic" "Local cubic"
-                    "global" "Global inverse squared distance"
-                }
-            }
-
-            parm {
-                name "contacttype"
-                cppname "ContactType"
-                label "Contact Type"
-                type ordinal
-                default { "0" }
-                menu {
-                    "implicit" "Implicit"
-                    "point" "Point"
-                    "spimplicit" "Stag. Proj. Implicit"
-                }
-            }
-
-            parm {
-                name "contactradiusmult"
-                cppname "ContactRadiusMultiplier"
-                label "Contact Radius Multiplier"
-                type float
-                default { "1" }
-                range { 0.0 10.0 }
-            }
-
-            parm {
-                name "smoothtol"
-                cppname "SmoothTol"
-                label "Smoothness Tolerance"
-                type log
-                default { "1e-5" }
-                range { 0.0 1.0 }
-            }
-        }
-    }
-
-    group {
-        name "friction"
-        label "Friction"
-
-        parm {
-            name "dynamicfriction"
-            cppname "DynamicFriction"
-            label "Dynamic"
-            type float
-            default { "0.5" }
-            range { 0 2 }
-        }
-        parm {
-            name "frictiontolerance"
-            cppname "FrictionTolerance"
-            label "Tolerance"
-            type log
-            default { "1e-5" }
-            range { 0.0 1.0 }
-        }
-        parm {
-            name "frictioninneriterations"
-            cppname "FrictionInnerIterations"
-            label "Inner Iterations"
-            type integer
-            default { "40" }
-            range { 0 10 }
-        }
-        parm {
-            name "frictioniterations"
-            cppname "FrictionIterations"
-            label "Outer Iterations"
-            type integer
-            default { "1" }
-            range { 0 10 }
-        }
-    }
-
 }
 )THEDSFILE";
 
@@ -400,10 +454,10 @@ write_solver_data(GU_Detail *detail, EL_SoftyStepResult res, int64 solver_id) {
 
     // Add the simulation meshes into the current detail
     OwnedPtr<HR_TetMesh> tetmesh = res.tetmesh;
-    //OwnedPtr<PolyMesh> polymesh = res.polymesh;
+    OwnedPtr<HR_PolyMesh> polymesh = res.polymesh;
 
     add_tetmesh(detail, std::move(tetmesh));
-    //add_polymesh(detail, std::move(polymesh));
+    add_polymesh(detail, std::move(polymesh));
 }
 
 // Entry point to the SOP
@@ -418,42 +472,111 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Gather simulation parameters
     EL_SoftySimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
+    sim_params.gravity = sopparms.getGravity();
+    sim_params.log_file = sopparms.getLogFile().c_str();
 
-    if (sopparms.getStiffnessType() == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
-        sim_params.material.bulk_modulus = sopparms.getVolumeStiffness()*1e3;
-        sim_params.material.shear_modulus = sopparms.getShapeStiffness()*1e3;
-    } else {
-        // K = E / 3(1-2v)
-        // G = E / 2(1+v)
-        auto nu = sopparms.getPoissonRatio();
-        auto E = sopparms.getYoungModulus()*1e3;
-        sim_params.material.bulk_modulus = E / (3*(1.0 - 2*nu));
-        sim_params.material.shear_modulus = E / (2*(1+nu));
+    // Get material properties.
+    const auto &sop_materials = sopparms.getMaterials();
+    std::vector<EL_SoftyMaterialProperties> materials_vec;
+    for (const auto & sop_mtl : sop_materials) {
+        EL_SoftyMaterialProperties mtl_props;
+        auto sop_objtype = static_cast<SOP_SoftyEnums::ObjectType>(sop_mtl.objtype);
+        switch (sop_objtype) {
+            case SOP_SoftyEnums::ObjectType::SOLID:
+                mtl_props.object_type = EL_SoftyObjectType::Solid;
+                break;
+            case SOP_SoftyEnums::ObjectType::SHELL:
+                mtl_props.object_type = EL_SoftyObjectType::Shell;
+                break;
+        }
+
+        auto sop_stiffnesstype = static_cast<SOP_SoftyEnums::StiffnessType>(sop_mtl.stiffnesstype);
+        if (sop_stiffnesstype == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
+            mtl_props.bulk_modulus = sop_mtl.volumestiffness*1.0e3;
+            mtl_props.shear_modulus = sop_mtl.shapestiffness*1.0e3;
+        } else {
+            // K = E / 3(1-2v)
+            // G = E / 2(1+v)
+            auto nu = sop_mtl.poissonratio;
+            auto E = sop_mtl.youngmodulus*1.0e3;
+            mtl_props.bulk_modulus = E / (3.0*(1.0 - 2.0*nu));
+            mtl_props.shear_modulus = E / (2.0*(1.0 + nu));
+        }
+
+        mtl_props.damping = sop_mtl.damping;
+        mtl_props.density = sop_mtl.density;
+        materials_vec.push_back(mtl_props);
     }
 
-    sim_params.material.damping = sopparms.getDamping();
-    sim_params.material.density = sopparms.getDensity();
-    sim_params.gravity = sopparms.getGravity();
+    sim_params.materials
+        = EL_SoftyMaterials{ materials_vec.data(), materials_vec.size() };
+    
     sim_params.clear_velocity = sopparms.getClearVelocity();
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();
     sim_params.outer_tolerance = sopparms.getOuterTolerance();
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
+
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
-    sim_params.contact_kernel = static_cast<int>(sopparms.getKernel());
-    sim_params.contact_type = static_cast<int>(sopparms.getContactType());
-    sim_params.contact_radius_multiplier = sopparms.getContactRadiusMultiplier();
-    sim_params.smoothness_tolerance = sopparms.getSmoothTol();
-    sim_params.dynamic_friction = sopparms.getDynamicFriction();
     sim_params.friction_iterations = sopparms.getFrictionIterations();
-    sim_params.friction_tolerance = sopparms.getFrictionTolerance();
-    sim_params.friction_inner_iterations = sopparms.getFrictionInnerIterations();
-    sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
+
+    // Get frictional contact params.
+    const auto &sop_frictional_contacts = sopparms.getFrictionalContacts();
+    std::vector<EL_SoftyFrictionalContactParams> frictional_contact_vec;
+    for (const auto & sop_fc: sop_frictional_contacts) {
+        EL_SoftyFrictionalContactParams fc_params;
+        fc_params.object_material_id = sop_fc.objectmaterialid;
+        fc_params.collider_material_id = sop_fc.collidermaterialid;
+        
+        switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel)) {
+            case SOP_SoftyEnums::Kernel::INTERPOLATING:
+                fc_params.kernel = EL_SoftyKernel::Interpolating;
+                break;
+            case SOP_SoftyEnums::Kernel::APPROXIMATE:
+                fc_params.kernel = EL_SoftyKernel::Approximate;
+                break;
+            case SOP_SoftyEnums::Kernel::CUBIC:
+                fc_params.kernel = EL_SoftyKernel::Cubic;
+                break;
+            case SOP_SoftyEnums::Kernel::GLOBAL:
+                fc_params.kernel = EL_SoftyKernel::Global;
+                break;
+        }
+
+        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype)) {
+            case SOP_SoftyEnums::ContactType::IMPLICIT:
+                fc_params.contact_type = EL_SoftyContactType::Implicit;
+                break;
+            case SOP_SoftyEnums::ContactType::POINT:
+                fc_params.contact_type = EL_SoftyContactType::Point;
+                break;
+        }
+        fc_params.radius_multiplier = sop_fc.radiusmult;
+        fc_params.smoothness_tolerance = sop_fc.smoothtol;
+        fc_params.dynamic_cof = sop_fc.dynamiccof;
+        fc_params.friction_tolerance = sop_fc.frictiontolerance;
+        fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
+        frictional_contact_vec.push_back(fc_params);
+    }
+
+    sim_params.frictional_contacts = EL_SoftyFrictionalContacts{
+        frictional_contact_vec.data(),
+        frictional_contact_vec.size()
+    };
+    
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
-    sim_params.mu_strategy = static_cast<int>(sopparms.getMuStrategy());
+
+    switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy())) {
+        case SOP_SoftyEnums::MuStrategy::MONOTONE:
+            sim_params.mu_strategy = EL_SoftyMuStrategy::Monotone;
+            break;
+        case SOP_SoftyEnums::MuStrategy::ADAPTIVE:
+            sim_params.mu_strategy = EL_SoftyMuStrategy::Adaptive;
+            break;
+    }
+
     sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
-    sim_params.log_file = sopparms.getLogFile().c_str();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 

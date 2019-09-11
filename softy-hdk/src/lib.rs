@@ -7,39 +7,130 @@ use hdkrs::{cffi, interop};
 use std::sync::{Arc, Mutex};
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum EL_SoftyObjectType {
+    Solid,
+    Shell,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum EL_SoftyContactType {
+    Point,
+    Implicit,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum EL_SoftyKernel {
+    Interpolating,
+    Approximate,
+    Cubic,
+    Global,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum EL_SoftyMuStrategy {
+    Monotone,
+    Adaptive,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyMaterialProperties {
-    pub bulk_modulus: f32,
-    pub shear_modulus: f32,
+    pub object_type: EL_SoftyObjectType,
     pub density: f32,
     pub damping: f32,
+    pub bulk_modulus: f32,
+    pub shear_modulus: f32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct EL_SoftyFrictionalContactParams {
+    pub object_material_id: u32,
+    pub collider_material_id: u32,
+    pub kernel: EL_SoftyKernel,
+    pub contact_type: EL_SoftyContactType,
+    pub radius_multiplier: f32,
+    pub smoothness_tolerance: f32,
+    pub dynamic_cof: f32,
+    pub friction_tolerance: f32,
+    pub friction_inner_iterations: u32,
+}
+
+/// A Helper trait to access C arrays.
+pub(crate) trait AsSlice {
+    type T;
+    fn ptr(&self) -> *const Self::T;
+    fn size(&self) -> usize;
+    fn as_slice(&self) -> &[Self::T] {
+        unsafe { std::slice::from_raw_parts(self.ptr(), self.size()) }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct EL_SoftyMaterials {
+    pub ptr: *const EL_SoftyMaterialProperties,
+    pub size: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct EL_SoftyFrictionalContacts {
+    pub ptr: *const EL_SoftyFrictionalContactParams,
+    pub size: usize,
+}
+
+impl AsSlice for EL_SoftyMaterials {
+    type T = EL_SoftyMaterialProperties;
+    fn ptr(&self) -> *const Self::T {
+        self.ptr
+    }
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl AsSlice for EL_SoftyFrictionalContacts {
+    type T = EL_SoftyFrictionalContactParams;
+    fn ptr(&self) -> *const Self::T {
+        self.ptr
+    }
+    fn size(&self) -> usize {
+        self.size
+    }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct EL_SoftySimParams {
-    pub material: EL_SoftyMaterialProperties,
     pub time_step: f32,
     pub gravity: f32,
+    pub log_file: *const std::os::raw::c_char,
+
+    // Materials
+    pub materials: EL_SoftyMaterials,
+
+    // Constraints
+    pub volume_constraint: bool,
+    pub friction_iterations: u32,
+    pub frictional_contacts: EL_SoftyFrictionalContacts,
+
+    // Optimization
     pub clear_velocity: bool,
     pub tolerance: f32,
     pub max_iterations: u32,
     pub outer_tolerance: f32,
     pub max_outer_iterations: u32,
-    pub volume_constraint: bool,
-    pub contact_kernel: i32,
-    pub contact_type: i32,
-    pub contact_radius_multiplier: f32,
-    pub smoothness_tolerance: f32,
-    pub dynamic_friction: f32,
-    pub friction_iterations: u32,
-    pub friction_inner_iterations: u32,
-    pub friction_tolerance: f32,
+
+    // Ipopt
+    pub mu_strategy: EL_SoftyMuStrategy,
+    pub max_gradient_scaling: f32,
     pub print_level: u32,
     pub derivative_test: u32,
-    pub mu_strategy: i32,
-    pub max_gradient_scaling: f32,
-    pub log_file: *const std::os::raw::c_char,
 }
 
 /// Result reported from `register_new_solver` function.

@@ -39,7 +39,9 @@ fn tri_at<T: Copy>(slice: &[T], tri: &[usize; 3]) -> [T; 3] {
     [slice[tri[0]], slice[tri[1]], slice[tri[2]]]
 }
 
-impl Constraint<f64> for VolumeConstraint {
+impl<'a> Constraint<'a, f64> for VolumeConstraint {
+    type Input = &'a [f64];
+
     #[inline]
     fn constraint_size(&self) -> usize {
         1
@@ -51,7 +53,7 @@ impl Constraint<f64> for VolumeConstraint {
         (vec![6.0 * self.rest_volume], vec![6.0 * self.rest_volume])
     }
 
-    fn constraint(&self, _x0: &[f64], x1: &[f64], value: &mut [f64]) {
+    fn constraint(&self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         let pos1: &[[f64; 3]] = reinterpret_slice(x1);
         let mut total_volume = 0.0;
@@ -96,22 +98,22 @@ impl VolumeConstraint {
     }
 }
 
-impl ConstraintJacobian<f64> for VolumeConstraint {
+impl<'a> ConstraintJacobian<'a, f64> for VolumeConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
         3 * 3 * self.surface_topo.len()
     }
-    fn constraint_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+    fn constraint_jacobian_indices_iter<'b>(
+        &'b self,
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {
         Ok(Box::new(
             VolumeConstraint::constraint_jacobian_indices_iter(self),
         ))
     }
     fn constraint_jacobian_values(
         &self,
-        x0: &[f64],
-        x1: &[f64],
+        x0: &'a [f64],
+        x1: &'a [f64],
         values: &mut [f64],
     ) -> Result<(), Error> {
         debug_assert_eq!(values.len(), self.constraint_jacobian_size());
@@ -192,23 +194,25 @@ impl VolumeConstraint {
     }
 }
 
-impl ConstraintHessian<f64> for VolumeConstraint {
+impl<'a> ConstraintHessian<'a, f64> for VolumeConstraint {
+    type InputDual = &'a [f64];
+
     #[inline]
     fn constraint_hessian_size(&self) -> usize {
         6 * 3 * self.surface_topo.len()
     }
-    fn constraint_hessian_indices_iter<'a>(
-        &'a self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+    fn constraint_hessian_indices_iter<'b>(
+        &'b self,
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {
         Ok(Box::new(VolumeConstraint::constraint_hessian_indices_iter(
             self,
         )))
     }
     fn constraint_hessian_values(
         &self,
-        x0: &[f64],
-        x1: &[f64],
-        lambda: &[f64],
+        x0: &'a [f64],
+        x1: &'a [f64],
+        lambda: &'a [f64],
         scale: f64,
         values: &mut [f64],
     ) -> Result<(), Error> {

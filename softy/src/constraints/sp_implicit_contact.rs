@@ -1,6 +1,5 @@
 use super::*;
 use crate::constraint::*;
-use crate::constraints::compute_vertex_masses;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
@@ -32,7 +31,7 @@ pub struct SPImplicitContactConstraint {
     pub query_points: RefCell<Vec<[f64; 3]>>,
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
-    /// A mass for each vertex in the simulation mesh.
+    /// A mass for each vertex in the object mesh.
     pub vertex_masses: Vec<f64>,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
@@ -46,8 +45,8 @@ impl SPImplicitContactConstraint {
     /// Build an implicit surface from the given trimesh, and constrain the tetmesh vertices to lie
     /// strictly outside of it.
     pub fn new(
-        tetmesh_rc: &Rc<RefCell<TetMesh>>,
-        trimesh_rc: &Rc<RefCell<TriMesh>>,
+        object: &TriMesh,
+        collider: &TriMesh,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
         density: f64,
@@ -76,7 +75,9 @@ impl SPImplicitContactConstraint {
 
             let query_points = surf_mesh.vertex_positions();
 
-            let vertex_masses = compute_vertex_masses(&tetmesh, density);
+            let vertex_masses = object
+                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
+                .to_vec();
 
             let constraint = SPImplicitContactConstraint {
                 implicit_surface: RefCell::new(surface),

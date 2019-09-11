@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 use super::FrictionParams;
 use crate::contact::*;
-use geo::math::{Matrix3, Vector2};
 use reinterpret::*;
+use utils::soap::Vector2;
 
 use utils::zip;
 
 /// Friction solver.
-pub struct FrictionSolver<'a, CJI> {
-    /// A set of tangential velocities in contact space for active contacts. These are used to
+pub struct FrictionSolver<'a> {
+    /// A set of tangential momenta in contact space for active contacts. These are used to
     /// determine the applied frictional force.
-    velocity: &'a [Vector2<f64>],
+    predictor_momentum: &'a [Vector2<f64>],
     /// A set of contact forces for each contact point.
     contact_impulse: &'a [f64],
     /// Basis defining the normal and tangent space at each point of contact.
@@ -20,86 +20,86 @@ pub struct FrictionSolver<'a, CJI> {
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
-    contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
-    /// Vertex masses.
-    masses: &'a [f64],
+    contact_jacobian: Option<ContactJacobianView<'a>>,
+    mass_inv_mtx: EffectiveMassInvView<'a>,
 }
 
-impl<'a> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_impulse` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+impl<'a> FrictionSolver<'a> {
+    /// Build a new solver for the friction problem. The given `predictor_impulse` is a stacked
+    /// vector of tangential impulses for each contact point in contact space. `contact_impulse` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub fn without_contact_jacobian(
-        velocity: &'a [[f64; 2]],
+        predictor_momentum: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
-    ) -> FrictionSolver<'a, std::iter::Empty<(usize, usize)>> {
+    ) -> FrictionSolver<'a> {
         Self::new_impl(
-            velocity,
+            predictor_momentum,
             contact_impulse,
             contact_basis,
-            masses,
+            mass_inv_mtx,
             params,
             None,
         )
     }
 }
 
-impl<'a, CJI: Iterator<Item = (usize, usize)>> FrictionSolver<'a, CJI> {
-    /// Build a new solver for the friction problem. The given `velocity` is a stacked vector of
-    /// tangential velocities for each contact point in contact space. `contact_impulse` is the
-    /// normal component of the predictor frictional contact impulse at each contact point.
+impl<'a> FrictionSolver<'a> {
+    /// Build a new solver for the friction problem. The given `predictor_momentum` is a stacked
+    /// vector of tangential impulses for each contact point in contact space. `contact_impulse` is
+    /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
-    pub fn new(
-        velocity: &'a [[f64; 2]],
+    pub(crate) fn new(
+        predictor_momentum: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
-        contact_jacobian: (&'a [Matrix3<f64>], CJI),
-    ) -> FrictionSolver<'a, CJI> {
+        contact_jacobian: ContactJacobianView<'a>,
+    ) -> FrictionSolver<'a> {
         Self::new_impl(
-            velocity,
+            predictor_momentum,
             contact_impulse,
             contact_basis,
-            masses,
+            mass_inv_mtx,
             params,
             Some(contact_jacobian),
         )
     }
 
     fn new_impl(
-        velocity: &'a [[f64; 2]],
+        predictor_momentum: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
-        masses: &'a [f64],
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
-        contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
-    ) -> FrictionSolver<'a, CJI> {
+        contact_jacobian: Option<ContactJacobianView<'a>>,
+    ) -> FrictionSolver<'a> {
         FrictionSolver {
-            velocity: reinterpret_slice(velocity),
+            predictor_momentum: reinterpret_slice(predictor_momentum),
             contact_impulse,
             contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
-            masses,
+            mass_inv_mtx,
         }
     }
 
     /// Solve one step.
     pub fn step(&mut self) -> Vec<[f64; 2]> {
         // Solve quadratic optimization problem
-        let mut friction_impulse = vec![Vector2::zeros(); self.velocity.len()];
-        for (r, &v, &m, &cr) in zip!(
+        let mut friction_impulse = vec![Vector2::zeros(); self.predictor_momentum.len()];
+        for (r, &pred_p, &cr) in zip!(
             friction_impulse.iter_mut(),
-            self.velocity.iter(),
-            self.masses.iter(),
+            self.predictor_momentum.iter(),
+            //self.mass_inv_mtx.iter(),
             self.contact_impulse.iter()
         ) {
-            let rc = -v * m; // Impulse candidate
+            // This needs to incorporate effective mass.
+            let rc = -pred_p; // Impulse candidate
 
             // Project onto the unit circle.
             let radius = self.mu * cr.abs();
@@ -119,6 +119,7 @@ mod tests {
     use super::*;
     use crate::Error;
     use approx::*;
+    use utils::soap::*;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
@@ -127,11 +128,9 @@ mod tests {
         let (velocity, impulse) = sliding_point_tester(0.000001, mass)?;
 
         // Check that the point still has velocity in the positive x direction
-        dbg!(&velocity);
-        dbg!(&impulse);
         assert!(velocity[0] > 0.8);
 
-        // Sanity check that no perpendicular velocities or impulses were produced in the process
+        // Sanity check that no impulses were produced in the process
         assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
         Ok(())
@@ -142,10 +141,9 @@ mod tests {
         let mass = 10.0;
         let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
         // Check that the point gets stuck
-        dbg!(&impulse);
         assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
 
-        // Sanity check that no perpendicular velocities or impulses were produced in the process
+        // Sanity check that no perpendicular impulses were produced in the process
         assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
         assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
         Ok(())
@@ -159,24 +157,24 @@ mod tests {
             print_level: 5,
         };
 
-        let velocity = vec![[1.0, 0.0]]; // one point sliding right.
+        let predictor_momentum = vec![[1.0 * mass, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
-        let masses = vec![mass; 1];
+        let mass_inv_mtx: DSBlockMatrix3 = DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
 
         let mut solver = FrictionSolver::without_contact_jacobian(
-            &velocity,
+            &predictor_momentum,
             &contact_impulse,
             &contact_basis,
-            &masses,
+            mass_inv_mtx.view(),
             params,
         );
         let solution = solver.step();
 
-        let impulse = Vector2(solution[0]);
-        let final_velocity = Vector2(velocity[0]) + impulse / mass;
+        let impulse = Vector2::new(solution[0]);
+        let final_velocity = (Vector2::new(predictor_momentum[0]) + impulse) / mass;
 
         Ok((final_velocity, impulse))
     }
@@ -191,12 +189,24 @@ mod tests {
             print_level: 5,
         };
 
-        let velocity = vec![
-            [0.07225747944670913, 0.0000001280108566301736],
-            [0.06185827187696774, -0.0060040275393186595],
-        ]; // tet vertex velocities
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];
         let masses = vec![0.0003720701030949866, 0.0003720701030949866];
+        let predictor_momentum = vec![
+            [
+                0.07225747944670913 * masses[0],
+                0.0000001280108566301736 * masses[0],
+            ],
+            [
+                0.06185827187696774 * masses[1],
+                -0.0060040275393186595 * masses[1],
+            ],
+        ]; // tet vertex momenta
+
+        let mass_inv_mtx: DSBlockMatrix3 = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![
+            [1.0 / masses[0]; 3],
+            [1.0 / masses[1]; 3],
+        ]))
+        .into();
 
         let mut contact_basis = ContactBasis::new();
         let normals = vec![
@@ -206,23 +216,23 @@ mod tests {
         contact_basis.update_from_normals(normals);
 
         let mut solver = FrictionSolver::without_contact_jacobian(
-            &velocity,
+            &predictor_momentum,
             &contact_impulse,
             &contact_basis,
-            &masses,
+            mass_inv_mtx.view(),
             params,
         );
         let solution = solver.step();
 
-        let final_velocity: Vec<_> = zip!(velocity.iter(), solution.iter(), masses.iter())
-            .map(|(&v, &r, &m)| Vector2(v) + Vector2(r) / m)
+        let final_momentum: Vec<_> = zip!(predictor_momentum.iter(), solution.iter())
+            .map(|(&pred_p, &r)| (Vector2::flat(pred_p) + Vector2::flat(r)))
             .collect();
 
         for i in 0..2 {
             for j in 0..2 {
                 assert_relative_eq!(
-                    final_velocity[i][j],
-                    velocity[i][j],
+                    final_momentum[i][j],
+                    predictor_momentum[i][j],
                     max_relative = 1e-2,
                     epsilon = 1e-5
                 );

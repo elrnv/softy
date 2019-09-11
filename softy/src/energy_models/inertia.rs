@@ -1,81 +1,62 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::TetMesh;
+use crate::objects::solid::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
 use geo::Real;
 use num_traits::FromPrimitive;
-use rayon::prelude::*;
+//use rayon::prelude::*;
 use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
+use utils::zip;
 
-/// The potential energy responsible for maintaining the intertial motion of an object.
-#[derive(Debug, PartialEq)]
-pub struct MomentumPotential {
-    /// The discretization of the solid domain using a tetrahedral mesh. This field should never be
-    /// borrowed mutably.
-    pub tetmesh: Rc<RefCell<TetMesh>>,
-    /// The density of the material. Typically measured in kg/m³, however the actual value stored
-    /// in this struct may be normalized.
-    pub density: f64,
+pub trait Inertia<'a, E> {
+    fn inertia(&'a self) -> E;
 }
 
-impl MomentumPotential {
+pub struct TetMeshInertia<'a>(pub &'a TetMeshSolid);
+
+impl TetMeshInertia<'_> {
     const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 12;
-
-    /// Create a new Neo-Hookean energy model defining a non-linear problem that can be solved
-    /// using a non-linear solver like Ipopt.
-    /// This function takes a tetrahedron mesh specifying a discretization of the solid domain
-    pub fn new(tetmesh: Rc<RefCell<TetMesh>>, density: f64) -> Self {
-        MomentumPotential { tetmesh, density }
-    }
 }
 
-impl<T: Real> Energy<T> for MomentumPotential {
+impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
-        let MomentumPotential {
-            ref tetmesh,
-            density,
-            ..
-        } = *self;
-
-        let tetmesh = tetmesh.borrow();
+        let tetmesh = &self.0.tetmesh;
 
         let vel0: &[Vector3<T>] = reinterpret_slice(v0);
         let vel1: &[Vector3<T>] = reinterpret_slice(v1);
 
-        tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .zip(tetmesh.cell_iter())
-            .map(|(&vol, cell)| {
-                let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
-                let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
-                let tet_dv = tet_v1 - tet_v0;
+        zip!(
+            tetmesh
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tetmesh.cell_iter(),
+        )
+        .map(|(&vol, &density, cell)| {
+            let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+            let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
+            let tet_dv = tet_v1 - tet_v0;
 
-                T::from(0.5).unwrap() * {
-                    let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
-                    // momentum
-                    T::from(0.25 * vol * density).unwrap() * dvTdv
-                }
-            })
-            .sum()
+            T::from(0.5).unwrap() * {
+                let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
+                // momentum
+                T::from(0.25 * vol * density).unwrap() * dvTdv
+            }
+        })
+        .sum()
     }
 }
 
-impl<T: Real> EnergyGradient<T> for MomentumPotential {
+impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
-        let MomentumPotential {
-            ref tetmesh,
-            density,
-            ..
-        } = *self;
-
-        let tetmesh = tetmesh.borrow();
+        let tetmesh = &self.0.tetmesh;
 
         let vel0: &[Vector3<T>] = reinterpret_slice(v0);
         let vel1: &[Vector3<T>] = reinterpret_slice(v1);
@@ -84,12 +65,16 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
-        // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, cell) in tetmesh
-            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .zip(tetmesh.cell_iter())
-        {
+        // Transfer forces from cell-vertices to vertices themselves
+        for (&vol, &density, cell) in zip!(
+            tetmesh
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            tetmesh
+                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                .unwrap(),
+            tetmesh.cell_iter()
+        ) {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
             let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
             let tet_dv = (tet_v1 - tet_v0).into_array();
@@ -101,9 +86,9 @@ impl<T: Real> EnergyGradient<T> for MomentumPotential {
     }
 }
 
-impl EnergyHessian for MomentumPotential {
+impl EnergyHessian for TetMeshInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
-        self.tetmesh.borrow().num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
+        self.0.tetmesh.num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
@@ -115,19 +100,19 @@ impl EnergyHessian for MomentumPotential {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
-        let tetmesh = self.tetmesh.borrow();
+        let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_row_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_row_chunks: &mut [[I; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(rows);
-        let hess_col_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_col_chunks: &mut [[I; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(cols);
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
-            .par_iter_mut()
-            .zip(hess_col_chunks.par_iter_mut())
-            .zip(tetmesh.cells().par_iter())
+            .iter_mut()
+            .zip(hess_col_chunks.iter_mut())
+            .zip(tetmesh.cells().iter())
             .for_each(|((tet_hess_rows, tet_hess_cols), cell)| {
                 for vi in 0..4 {
                     // vertex index
@@ -149,16 +134,16 @@ impl EnergyHessian for MomentumPotential {
     ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
-        let tetmesh = self.tetmesh.borrow();
+        let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_chunks: &mut [[MatrixElementIndex; 12]] =//Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(indices);
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
-            .par_iter_mut()
-            .zip(tetmesh.cells().par_iter())
+            .iter_mut()
+            .zip(tetmesh.cells().iter())
             .for_each(|(tet_hess, cell)| {
                 for vi in 0..4 {
                     // vertex index
@@ -183,28 +168,29 @@ impl EnergyHessian for MomentumPotential {
     ) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
-        let MomentumPotential {
-            ref tetmesh,
-            density,
-            ..
-        } = *self;
-
-        let tetmesh = &*tetmesh.borrow();
+        let TetMeshInertia(ref solid) = *self;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[T; Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
+        let hess_chunks: &mut [[T; 12]] = //Self::NUM_HESSIAN_TRIPLETS_PER_TET]] =
             reinterpret_mut_slice(values);
 
-        let vol_iter = tetmesh
+        let vol_iter = solid
+            .tetmesh
             .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
             .unwrap()
-            .par_iter();
+            .iter();
+
+        let density_iter = solid
+            .tetmesh
+            .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+            .unwrap()
+            .iter();
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
-            .par_iter_mut()
-            .zip(vol_iter)
-            .for_each(|(tet_hess, &vol)| {
+            .iter_mut()
+            .zip(vol_iter.zip(density_iter))
+            .for_each(|(tet_hess, (&vol, &density))| {
                 for vi in 0..4 {
                     // vertex index
                     for j in 0..3 {
@@ -220,20 +206,46 @@ impl EnergyHessian for MomentumPotential {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
+    use crate::fem::SolverBuilder;
+    use crate::objects::material::*;
+    use crate::objects::TetMeshSolid;
+    use geo::mesh::VertexPositions;
+
+    fn material() -> SolidMaterial {
+        SolidMaterial::new(0).with_density(1000.0)
+    }
+
+    fn test_solids() -> Vec<TetMeshSolid> {
+        let material = material();
+
+        test_meshes()
+            .into_iter()
+            .map(|mut tetmesh| {
+                // Prepare attributes relevant for elasticity computations.
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
+                let mut solid = TetMeshSolid::new(tetmesh, material);
+                SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                solid
+            })
+            .collect()
+    }
+
+    fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshInertia, Vec<[f64; 3]>)> {
+        solids
+            .iter()
+            .map(|solid| (solid.inertia(), solid.tetmesh.vertex_positions().to_vec()))
+            .collect()
+    }
 
     #[test]
     fn gradient() {
-        gradient_tester(
-            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
-            EnergyType::Velocity,
-        );
+        let solids = test_solids();
+        gradient_tester(build_energies(&solids), EnergyType::Velocity);
     }
 
     #[test]
     fn hessian() {
-        hessian_tester(
-            |mesh| MomentumPotential::new(Rc::new(RefCell::new(mesh)), 1000.0),
-            EnergyType::Velocity,
-        );
+        let solids = test_solids();
+        hessian_tester(build_energies(&solids), EnergyType::Velocity);
     }
 }

@@ -1,67 +1,59 @@
 pub mod implicit_contact;
 pub mod point_contact;
-pub mod sp_implicit_contact;
+//pub mod sp_implicit_contact;
 pub mod volume;
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
+use crate::fem::problem::Var;
 use crate::friction::FrictionalContact;
 use crate::Index;
-use crate::TetMesh;
 use crate::TriMesh;
-use geo::{
-    math::Vector3,
-    mesh::{topology::*, Attrib},
-};
-use reinterpret::*;
-use std::{cell::RefCell, rc::Rc};
+use geo::math::Vector3;
 
 pub use self::implicit_contact::*;
 pub use self::point_contact::*;
-pub use self::sp_implicit_contact::*;
+//pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
+use utils::aref::*;
+use utils::soap::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
 pub fn build_contact_constraint(
-    tetmesh_rc: &Rc<RefCell<TetMesh>>,
-    trimesh_rc: &Rc<RefCell<TriMesh>>,
-    params: SmoothContactParams,
-    density: f64,
-    time_step: f64,
-    energy_model: ElasticTetMeshEnergy,
+    object: Var<&TriMesh>,
+    collider: Var<&TriMesh>,
+    params: FrictionalContactParams,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::SPImplicit => Box::new(SPImplicitContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
-            params.kernel,
-            params.friction_params,
-            density,
-        )?),
+        ContactType::SPImplicit =>
+        //    Box::new(SPImplicitContactConstraint::new(
+        //    object,
+        //    collider,
+        //    params.kernel,
+        //    params.friction_params,
+        //    )?)
+        {
+            unimplemented!()
+        }
         ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
+            object.untag(),
+            collider.untag(),
             params.kernel,
             params.friction_params,
-            density,
-            time_step,
-            energy_model,
         )?),
         ContactType::Point => Box::new(PointContactConstraint::new(
-            tetmesh_rc,
-            trimesh_rc,
+            object,
+            collider,
             params.kernel,
             params.friction_params,
-            density,
         )?),
     })
 }
 
-/// A common pattern occuring with contact constraints becoming active and inactive is remapping
+/// A common pattern occurring with contact constraints becoming active and inactive is remapping
 /// values computed in a simulation step to the values available in the next step with a different
 /// set of active constraints. This is necessary for pure contact warm starts as well as friction
 /// impulses being carried over to the next step.
@@ -100,7 +92,7 @@ pub fn remap_values<T: Copy>(
 
                 break;
             }
-            return default;
+            default
         })
         .collect()
 }
@@ -110,24 +102,46 @@ fn remap_values_identity_test() {
     let old_indices = vec![284, 288, 572, 573, 574, 575];
     let new_indices = vec![284, 288, 572, 573, 574, 575];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
     assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
 }
 
 #[test]
 fn remap_values_more_new_test() {
     let old_indices = vec![284, 288, 572, 573, 574, 575];
-    let new_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let new_indices = vec![
+        284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575,
+    ];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
-    assert_eq!(new_values, vec![284.0, 288.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 572.0, 573.0, 574.0, 575.0]);
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
+    assert_eq!(
+        new_values,
+        vec![284.0, 288.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 572.0, 573.0, 574.0, 575.0]
+    );
 }
 #[test]
 fn remap_values_more_old_test() {
-    let old_indices = vec![284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575];
+    let old_indices = vec![
+        284, 288, 295, 297, 304, 306, 316, 317, 318, 572, 573, 574, 575,
+    ];
     let new_indices = vec![284, 288, 572, 573, 574, 575];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
     assert_eq!(new_values, vec![284.0, 288.0, 572.0, 573.0, 574.0, 575.0]);
 }
 #[test]
@@ -135,88 +149,68 @@ fn remap_values_complex_test() {
     let old_indices = vec![1, 2, 6, 7, 10, 11];
     let new_indices = vec![0, 1, 3, 4, 5, 6, 7, 8, 11, 12];
     let values: Vec<f64> = old_indices.iter().map(|&x| (x as f64)).collect();
-    let new_values = remap_values(values.into_iter(), 0.0, old_indices.into_iter(), new_indices.into_iter());
-    assert_eq!(new_values, vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]);
-}
-
-/// Return a vector of masses per simulation mesh vertex.
-pub fn compute_vertex_masses(tetmesh: &TetMesh, density: f64) -> Vec<f64> {
-    let mut all_masses = vec![0.0; tetmesh.num_vertices()];
-
-    for (&vol, cell) in tetmesh
-        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-        .unwrap()
-        .zip(tetmesh.cell_iter())
-    {
-        for i in 0..4 {
-            all_masses[cell[i]] += 0.25 * vol * density;
-        }
-    }
-
-    all_masses
-}
-
-/// A reference abstracting over borrowed cell refs and plain old & style refs.
-pub enum ARef<'a, T: ?Sized> {
-    Plain(&'a T),
-    Cell(std::cell::Ref<'a, T>),
-}
-
-impl<'a, T: ?Sized> std::ops::Deref for ARef<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            ARef::Plain(r) => r,
-            ARef::Cell(r) => r,
-        }
-    }
+    let new_values = remap_values(
+        values.into_iter(),
+        0.0,
+        old_indices.into_iter(),
+        new_indices.into_iter(),
+    );
+    assert_eq!(
+        new_values,
+        vec![0.0, 1.0, 0.0, 0.0, 0.0, 6.0, 7.0, 0.0, 11.0, 0.0]
+    );
 }
 
 pub trait ContactConstraint:
-    Constraint<f64> + ConstraintJacobian<f64> + ConstraintHessian<f64>
+    for<'a> Constraint<'a, f64, Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
+    + for<'a> ConstraintJacobian<'a, f64>
+    + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
+    + std::fmt::Debug
 {
+    /// Total number of contacts that could occur.
+    fn num_potential_contacts(&self) -> usize;
     /// Provide the frictional contact data.
     fn frictional_contact(&self) -> Option<&FrictionalContact>;
     /// Provide the frictional contact mutable data.
     fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact>;
-
-    /// Return a slice that maps from a given surface vertex index to a corresponding simulation
-    /// mesh vertex.
-    fn vertex_index_mapping(&self) -> Option<&[usize]>;
-
     /// Return a set of surface vertex indices that could be in contact.
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]>;
 
     /// Clear the saved frictional contact impulse.
     fn clear_frictional_contact_impulse(&mut self) {
         if let Some(ref mut frictional_contact) = self.frictional_contact_mut() {
-            frictional_contact.impulse.clear();
+            frictional_contact.object_impulse.clear();
+            frictional_contact.collider_impulse.clear();
         }
     }
 
     /// Compute the contact Jacobian as an ArrayFire matrix.
+    #[cfg(feature = "af")]
     fn contact_jacobian_af(&self) -> af::Array<f64>;
-
-    /// Compute the contact Jacobian as a sparse matrix.
-    fn contact_jacobian_sprs(&self) -> sprs::CsMat<f64>;
 
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,
-        contact_force: &[f64],
-        x: &[[f64; 3]],
-        dx: &[[f64; 3]],
+        contact_impulse: &[f64],
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        dx: [SubsetView<Chunked3<&[f64]>>; 2],
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;
 
-    fn add_mass_weighted_frictional_contact_impulse(&self, x: &mut [f64]);
+    fn add_mass_weighted_frictional_contact_impulse(
+        &self,
+        x: [SubsetView<Chunked3<&mut [f64]>>; 2],
+    );
+
     /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(&self, grad: &mut [f64], multiplier: f64) {
-        let grad: &mut [Vector3<f64>] = reinterpret_mut_slice(grad);
+    fn add_friction_impulse(
+        &self,
+        mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        multiplier: f64,
+    ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if frictional_contact.impulse.is_empty() {
+            if frictional_contact.object_impulse.is_empty() {
                 return;
             }
 
@@ -225,10 +219,10 @@ pub trait ContactConstraint:
                 return;
             }
 
-            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
             for (contact_idx, (&i, &r)) in indices
                 .iter()
-                .zip(frictional_contact.impulse.iter())
+                .zip(frictional_contact.object_impulse.iter())
                 .enumerate()
             {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {
@@ -245,17 +239,16 @@ pub trait ContactConstraint:
                     Vector3::zeros()
                 };
 
-                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                grad[vertex_idx] += Vector3(r_t.into()) * multiplier;
+                grad[0][i] = (Vector3(grad[0][i]) + r_t * multiplier).into();
             }
         }
     }
+
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(&self, v: &[f64]) -> f64 {
-        let vel: &[Vector3<f64>] = reinterpret_slice(v);
+    fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
         let mut dissipation = 0.0;
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if frictional_contact.impulse.is_empty() {
+            if frictional_contact.object_impulse.is_empty() {
                 return dissipation;
             }
 
@@ -264,11 +257,11 @@ pub trait ContactConstraint:
                 return dissipation;
             }
 
-            assert_eq!(indices.len(), frictional_contact.impulse.len());
+            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
 
             for (contact_idx, (&i, &r)) in indices
                 .iter()
-                .zip(frictional_contact.impulse.iter())
+                .zip(frictional_contact.object_impulse.iter())
                 .enumerate()
             {
                 let r_t = if !frictional_contact.contact_basis.is_empty() {
@@ -285,8 +278,7 @@ pub trait ContactConstraint:
                     Vector3::zeros()
                 };
 
-                let vertex_idx = self.vertex_index_mapping().map_or(i, |m| m[i]);
-                dissipation += vel[vertex_idx].dot(r_t);
+                dissipation += Vector3(vel[0][i]).dot(r_t);
             }
         }
         dissipation
@@ -297,12 +289,19 @@ pub trait ContactConstraint:
     /// impulses to vertices. It may be not necessary to implement this function if friction
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-    fn compute_contact_impulse(&self, x: &[f64], contact_force: &[f64], impulse: &mut [[f64; 3]]);
+    fn add_contact_impulse(
+        &self,
+        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        contact_impulse: &[f64],
+        impulse: [Chunked3<&mut [f64]>; 2],
+    );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self, x: &[f64]) -> Result<Vec<[f64; 3]>, crate::Error>;
+    fn contact_normals(
+        &self,
+    ) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
@@ -314,7 +313,11 @@ pub trait ContactConstraint:
     /// Note that this function doesn't remap any data corresponding to the old neighbourhood
     /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
     /// old data needed to perform the remapping of any user data.
-    fn update_cache(&mut self, x: Option<&[f64]>) -> bool;
+    fn update_cache(
+        &mut self,
+        object_pos: SubsetView<Chunked3<&[f64]>>,
+        collider_pos: SubsetView<Chunked3<&[f64]>>,
+    ) -> bool;
     fn cached_neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser

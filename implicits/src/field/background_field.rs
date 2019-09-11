@@ -2,7 +2,7 @@ use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::{RadialKernel, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -129,6 +129,21 @@ where
         }
     }
 
+    /// A Helper function to compute the closest sample to the query point `q` in the given set of
+    /// samples. It is important to use this same function when determining closest points (as in
+    /// local and global field constructors below) because this ensures that in the precence of
+    /// discontinuities in the global field, the derivatives will be computed using the same
+    /// closest points as the potential field itself.
+    fn closest_sample(q: Vector3<T>, samples: SamplesView<'a, 'a, T>) -> Option<usize> {
+        samples
+            .iter()
+            .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
+            .min_by(|(_, d0), (_, d1)| {
+                d0.partial_cmp(d1)
+                    .unwrap_or_else(|| panic!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
+            }).map(|(index, _)| index)
+    }
+
     /// Build a local background field that is valid only when `local_samples_view` is non empty.
     /// This function returns the `InvalidBackgroundConstruction` error when `local_samples_view`
     /// is empty. This means that there is not enough information in the input to actually build
@@ -141,14 +156,7 @@ where
         bg_value: Option<V>,
     ) -> Result<Self, crate::Error> {
         let closest_sample_index = {
-            let min_sample = local_samples_view
-                .iter()
-                .map(|Sample { index, pos, .. }| (index, (q - pos).norm_squared()))
-                .min_by(|(_, d0), (_, d1)| {
-                    d0.partial_cmp(d1)
-                        .unwrap_or_else(|| panic!("Detected NaN. Please report this bug. Failed to compare distances {:?} and {:?}", d0, d1))
-                });
-            if let Some((index, _)) = min_sample {
+            if let Some(index) = Self::closest_sample(q, local_samples_view) {
                 ClosestIndex::Local(index)
             } else {
                 return Err(crate::Error::InvalidBackgroundConstruction);
@@ -177,14 +185,24 @@ where
         bg_params: BackgroundFieldParams,
         bg_value: Option<V>,
     ) -> Self {
-        // Determine if the closest sample is in our neighbourhood of samples.
-        let closest_sample_index = if let Some(sample) = local_samples_view
-            .iter()
-            .find(|&sample| sample.index == global_closest)
-        {
-            ClosestIndex::Local(sample.index)
-        } else {
-            ClosestIndex::Global(global_closest)
+        // Check that the closest sample is in our neighbourhood of samples.
+
+        // Note that the following assertion may sometimes fail. An issue has been filed with the
+        // author of rstar: https://github.com/Stoeoef/rstar/issues/13
+        // As such it shall remain a debug_assert.
+        debug_assert!(
+            local_samples_view.is_empty()
+                || local_samples_view
+                    .iter()
+                    .find(|&sample| sample.index == global_closest)
+                    .is_some()
+        );
+        let closest_sample_index = {
+            if let Some(index) = Self::closest_sample(q, local_samples_view) {
+                ClosestIndex::Local(index)
+            } else {
+                ClosestIndex::Global(global_closest)
+            }
         };
 
         Self::new_impl(
@@ -363,11 +381,10 @@ pub(crate) fn hessian_block_indices<'a>(
     let diag_iter = nbrs.iter().map(move |&i| (i, i));
 
     let off_diag_iter = if weighted {
-        Some(nbrs.iter().flat_map(move |&i| {
+        Some(
             nbrs.iter()
-                .filter(move |&&j| i < j)
-                .map(move |&j| (j, i))
-        }))
+                .flat_map(move |&i| nbrs.iter().filter(move |&&j| i < j).map(move |&j| (j, i))),
+        )
     } else {
         None
     };
@@ -414,7 +431,8 @@ where
                 // The strategy for removing NaNs here is that degenerate cases may produce NaNs
                 // that may otherwise be zeroed out elsewhere. This check ensures that this
                 // cancellation happens.
-                if dist != T::zero() { // Remove possibility of NaN
+                if dist != T::zero() {
+                    // Remove possibility of NaN
                     disp * (self.orientation() / dist)
                 } else {
                     Vector3::zeros()
@@ -438,7 +456,8 @@ where
         match bg_field_value {
             BackgroundFieldValue::Constant(_) => Matrix3::zeros(),
             BackgroundFieldValue::ClosestSampleSignedDistance => {
-                if dist != T::zero() { // Remove possibility of NaN
+                if dist != T::zero() {
+                    // Remove possibility of NaN
                     let dist_inv = self.orientation() / dist;
                     let dir = disp * dist_inv;
                     Matrix3::diag([dist_inv; 3]) - dir * (dir.transpose() * dist_inv)
@@ -491,7 +510,8 @@ where
             let mut grad = Vector3::zeros();
 
             if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
-                && index == closest_sample_index.get() {
+                && index == closest_sample_index.get()
+            {
                 grad -= bg_grad * wb;
             }
 
@@ -506,9 +526,10 @@ where
                 dwdp * (field * wb * weight_sum_inv)
             };
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance &&
-                index == closest_sample_index.get() {
-                    grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get()
+            {
+                grad += dwbdp * (field * weight_sum_inv * (T::one() - wb))
             }
 
             grad
@@ -560,8 +581,9 @@ where
         let diag_iter = samples.into_iter().map(move |Sample { index, pos, .. }| {
             let mut hess = Matrix3::zeros();
 
-            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance 
-                && index == closest_sample_index.get() {
+            if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
+                && index == closest_sample_index.get()
+            {
                 hess += ddf * wb;
             }
 
@@ -578,7 +600,8 @@ where
             };
 
             if bg_field_value == BackgroundFieldValue::ClosestSampleSignedDistance
-                && index == closest_sample_index.get() {
+                && index == closest_sample_index.get()
+            {
                 let factor = T::one() - wb * weight_sum_inv;
                 hess += ddwb * (factor * f)
                     - dwb * dwb.transpose() * (factor * _2 * f * weight_sum_inv)

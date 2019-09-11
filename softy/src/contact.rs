@@ -1,10 +1,12 @@
 mod solver;
 
 use crate::friction::FrictionParams;
-use utils::zip;
+use implicits::ImplicitSurface;
+use na::{Matrix3, Matrix3x2, RealField, Vector2, Vector3};
 use reinterpret::*;
-use na::{Matrix3, Matrix3x2, Real, Vector2, Vector3};
 pub use solver::ContactSolver;
+use utils::soap::*;
+use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -14,7 +16,7 @@ pub enum ContactType {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SmoothContactParams {
+pub struct FrictionalContactParams {
     pub kernel: implicits::KernelType,
     pub contact_type: ContactType,
     pub friction_params: Option<FrictionParams>,
@@ -22,7 +24,7 @@ pub struct SmoothContactParams {
 
 /// A two dimensional vector in polar coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Polar2<T: Real> {
+pub struct Polar2<T: RealField> {
     pub radius: T,
     pub angle: T,
 }
@@ -30,12 +32,12 @@ pub struct Polar2<T: Real> {
 /// An annotated set of Cylindrical coordinates. The standard Vector3 struct is not applicable here
 /// because arithmetic is different in cylindrical coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct VectorCyl<T: Real> {
+pub struct VectorCyl<T: RealField> {
     pub normal: T,
     pub tangent: Polar2<T>,
 }
 
-impl<T: Real> VectorCyl<T> {
+impl<T: RealField> VectorCyl<T> {
     pub fn new(normal: T, radius: T, angle: T) -> VectorCyl<T> {
         VectorCyl {
             normal,
@@ -70,19 +72,19 @@ impl<T: Real> VectorCyl<T> {
     }
 }
 
-impl<T: Real> From<Polar2<T>> for VectorCyl<T> {
+impl<T: RealField> From<Polar2<T>> for VectorCyl<T> {
     fn from(v: Polar2<T>) -> Self {
         Self::from_polar_tangent(v)
     }
 }
 
-impl<T: Real> From<Vector3<T>> for VectorCyl<T> {
+impl<T: RealField> From<Vector3<T>> for VectorCyl<T> {
     fn from(v: Vector3<T>) -> Self {
         Self::from_euclidean(v)
     }
 }
 
-impl<T: Real> Into<Vector3<T>> for VectorCyl<T> {
+impl<T: RealField> Into<Vector3<T>> for VectorCyl<T> {
     fn into(self) -> Vector3<T> {
         Self::to_euclidean(self)
     }
@@ -223,21 +225,25 @@ impl ContactBasis {
         let mut rows = vec![[0; 3]; n];
         let mut cols = vec![[0; 3]; n];
         let mut bases = vec![[0.0; 3]; n];
-        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+        for (contact_idx, (m, r, c)) in
+            zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
+        {
             let mtx = self.contact_basis_matrix(contact_idx);
             *m = mtx.column(0).into();
 
-            *r = row_mtx.add_scalar(3*contact_idx).into();
+            *r = row_mtx.add_scalar(3 * contact_idx).into();
             *c = col_mtx.add_scalar(contact_idx).into();
         }
-        
-        let num_rows = 3*n;
+
+        let num_rows = 3 * n;
         let num_cols = n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
             reinterpret_vec(rows),
             reinterpret_vec(cols),
-            reinterpret_vec(bases)).to_csr()
+            reinterpret_vec(bases),
+        )
+        .to_csr()
     }
 
     pub fn tangent_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
@@ -246,25 +252,29 @@ impl ContactBasis {
         // A vector of column major change of basis matrices
         let row_mtx = Matrix3x2::new(0, 0, 1, 1, 2, 2);
         let col_mtx = Matrix3x2::new(0, 1, 0, 1, 0, 1);
-        let mut rows = vec![[[0;3];2]; n];
-        let mut cols = vec![[[0;3];2]; n];
-        let mut bases = vec![[[0.0;3];2]; n];
-        for (contact_idx, (m, r, c)) in zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate() {
+        let mut rows = vec![[[0; 3]; 2]; n];
+        let mut cols = vec![[[0; 3]; 2]; n];
+        let mut bases = vec![[[0.0; 3]; 2]; n];
+        for (contact_idx, (m, r, c)) in
+            zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
+        {
             let mtx = self.contact_basis_matrix(contact_idx);
             m[0] = mtx.column(1).into();
             m[1] = mtx.column(2).into();
 
-            *r = row_mtx.add_scalar(3*contact_idx).into();
-            *c = col_mtx.add_scalar(2*contact_idx).into();
+            *r = row_mtx.add_scalar(3 * contact_idx).into();
+            *c = col_mtx.add_scalar(2 * contact_idx).into();
         }
-        
-        let num_rows = 3*n;
-        let num_cols = 2*n;
+
+        let num_rows = 3 * n;
+        let num_cols = 2 * n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
             reinterpret_vec(rows),
             reinterpret_vec(cols),
-            reinterpret_vec(bases)).to_csr()
+            reinterpret_vec(bases),
+        )
+        .to_csr()
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of
@@ -287,6 +297,141 @@ impl ContactBasis {
         }
     }
 }
+
+/// An intermediate representation of a contact jacobian that makes it easy to
+/// convert to other sparse representations.
+pub(crate) struct TripletContactJacobian<I> {
+    pub iter: I,
+    pub blocks: Vec<geo::math::Matrix3<f64>>,
+    pub num_rows: usize,
+    pub num_cols: usize,
+}
+
+pub(crate) fn build_triplet_contact_jacobian<'a>(
+    surf: &ImplicitSurface,
+    active_contact_points: SubsetView<'a, Chunked3<&'a [f64]>>,
+    query_points: Chunked3<&'a [f64]>,
+) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
+    let mut orig_cj_matrices = vec![
+        geo::math::Matrix3::zeros();
+        surf.num_contact_jacobian_matrices()
+            .expect("Failed to get contact Jacobian size.")
+    ];
+    surf.contact_jacobian_matrices(
+        query_points.into(),
+        reinterpret_mut_slice(&mut orig_cj_matrices),
+    )
+    .expect("Failed to compute contact Jacobian.");
+
+    let orig_cj_indices_iter = surf
+        .contact_jacobian_matrix_indices_iter()
+        .expect("Failed to get contact Jacobian indices.");
+
+    let cj_matrices: Vec<_> =
+        orig_cj_indices_iter.clone().zip(orig_cj_matrices.into_iter()).filter_map(
+            |((row, _), matrix)| active_contact_points.find_by_index(row).map(|_| matrix)
+        ).collect();
+
+
+    // Remap rows to match active constraints. This means that some entries of the raw jacobian
+    // will not have a valid entry in the pruned jacobian.
+    let cj_indices_iter = orig_cj_indices_iter
+        .filter_map(move |(row, col)| active_contact_points.find_by_index(row).map(|at| (at, col)));
+
+    TripletContactJacobian {
+        iter: cj_indices_iter,
+        blocks: cj_matrices,
+        num_rows: active_contact_points.len(),
+        num_cols: surf.surface_vertex_positions().len(),
+    }
+}
+
+/// Contact jacobian maps values at the surface vertex positions (of the object)
+/// to query points (contact points). Not all contact points are active, so rows
+/// are sparse, and not all surface vertex positions are affected by each query
+/// point, so columns are also sparse.
+pub type ContactJacobian<S = Vec<f64>, I = Vec<usize>> = SSBlockMatrix3<S, I>;
+pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
+
+impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
+    fn into(self) -> ContactJacobian {
+        let blocks = Chunked3::from_flat(Chunked3::from_flat(reinterpret_vec(self.blocks)));
+        ContactJacobian::from_triplets(self.iter, self.num_rows, self.num_cols, blocks)
+    }
+}
+//
+//impl<'a, I> std::ops::Mul<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>
+//    for &TripletContactJacobian<I>
+//where
+//    I: Clone + Iterator<Item = (usize, usize)>,
+//{
+//    type Output = Chunked3<Vec<f64>>;
+//    fn mul(self, rhs: Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>) -> Self::Output {
+//        assert_eq!(rhs.data.len(), self.num_cols);
+//
+//        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows]);
+//        for ((r, c), &block) in self.iter.clone().zip(self.blocks.iter()) {
+//            let out = geo::math::Vector3(res[r]) + block * geo::math::Vector3(rhs[c]);
+//            res[r] = out.into();
+//        }
+//
+//        res
+//    }
+//}
+
+impl<I> Into<sprs::CsMat<f64>> for TripletContactJacobian<I>
+where
+    I: Iterator<Item = (usize, usize)>,
+{
+    // Compute contact jacobian
+    fn into(self) -> sprs::CsMat<f64> {
+        let (rows, cols) = self
+            .iter
+            .flat_map(move |(row_mtx, col_mtx)| {
+                (0..3).flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
+            })
+            .unzip();
+
+        let values = reinterpret::reinterpret_vec(self.blocks);
+
+        sprs::TriMat::from_triplets((3 * self.num_rows, 3 * self.num_cols), rows, cols, values)
+            .to_csr()
+    }
+}
+
+//impl<I> TripletContactJacobian<I> {
+//pub(crate) fn transpose(&self) -> Transpose<&Self> {
+//    Transpose(&self)
+//}
+//}
+
+//impl<'a, I> Transpose<&TripletContactJacobian<I>>
+//where
+//    I: Clone + Iterator<Item = (usize, usize)>,
+//{
+//    fn mul_vector(self, rhs: Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>) -> Chunked3<Vec<f64>> {
+//        assert_eq!(rhs.data.len(), self.0.num_rows);
+//
+//        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols]);
+//
+//        for ((r, c), &block) in self.0.iter.clone().zip(self.0.blocks.iter()) {
+//            let out = geo::math::Vector3(res[c]) + block.transpose() * geo::math::Vector3(rhs[r]);
+//            res[c] = out.into();
+//        }
+//
+//        res
+//    }
+//}
+
+/// A diagonal mass matrix chunked by triplet blocks (one triplet for each vertex).
+pub type MassMatrix<S = Vec<f64>> = DiagonalBlockMatrix3<S>;
+pub type MassMatrixView<'a> = MassMatrix<&'a [f64]>;
+
+pub type Delassus<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
+pub type DelassusView<'a> = Delassus<&'a [f64], &'a [usize]>;
+
+pub(crate) type EffectiveMassInv<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
+pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usize]>;
 
 #[cfg(test)]
 mod tests {

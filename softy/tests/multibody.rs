@@ -6,7 +6,7 @@ pub use test_utils::*;
 use utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(100e6, 10e6))
+    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(10e6, 1e6))
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn stacking_boxes() -> Result<(), Error> {
         max_outer_iterations: 20,
         gravity: [0.0f32, -9.81, 0.0],
         time_step: Some(0.0208333),
-        friction_iterations: 2,
+        friction_iterations: 1,
         print_level: 5,
         ..DYNAMIC_PARAMS
     };
@@ -30,10 +30,11 @@ fn stacking_boxes() -> Result<(), Error> {
     });
 
     scale(&mut grid, [3.0, 1.0, 3.0].into());
-    translate(&mut grid, [0.0, -1.1, 0.0].into());
+    translate(&mut grid, [0.0, -1.4, 0.0].into());
 
     let box_bottom = make_box([2, 2, 2]);
-    let mut box_top = make_box([2, 2, 2]);
+    //let mut box_top = make_box([2, 2, 2]);
+    let mut box_top = make_regular_tet();
     translate(&mut box_top, [0.0, 2.2, 0.0].into());
 
     let fc_params = FrictionalContactParams {
@@ -66,7 +67,7 @@ fn stacking_boxes() -> Result<(), Error> {
     )
     .unwrap();
 
-    for i in 0..50 {
+    for i in 0..240 {
         let res = solver.step()?;
         println!("res = {:?}; rame = {:?}", res, i);
         geo::io::save_tetmesh(

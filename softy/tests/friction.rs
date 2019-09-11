@@ -22,7 +22,7 @@ fn friction_tester(
         max_outer_iterations: 20,
         gravity: [0.0f32, -9.81, 0.0],
         time_step: Some(0.01),
-        print_level: 5,
+        print_level: 0,
         max_gradient_scaling: 1e-7,
         friction_iterations,
         ..DYNAMIC_PARAMS

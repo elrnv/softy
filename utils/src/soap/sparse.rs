@@ -503,6 +503,39 @@ impl<S: Clear, T, I: Clear> Clear for Sparse<S, T, I> {
     }
 }
 
+impl<S, O, T, I> Sparse<Chunked<S, O>, T, I>
+where
+    S: Set + Truncate,
+    O: AsRef<[usize]> + Truncate + Set,
+    I: Truncate,
+{
+    /// Remove any empty elements (indexed chunks) at the end of the collection and any unindexed
+    /// data past the last offset.
+    /// Return the number of elements removed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut s = Sparse::from_dim(vec![0,1,2], 3, Chunked::from_sizes(vec![1,3,2], vec![1,2,3,4,5,6]));
+    /// assert_eq!(3, s.len());
+    ///
+    /// // Transferring the last two elements past the indexed stack.
+    /// // This creates an empty chunk at the end.
+    /// s.source_mut().transfer_forward(2, 2);
+    /// assert_eq!(6, s.storage().len());
+    /// assert_eq!(3, s.len());
+    ///
+    /// s.trim(); // remove unindexed elements.
+    /// assert_eq!(4, s.storage().len());
+    /// ```
+    pub fn trim(&mut self) -> usize {
+        let num_removed = self.source.trim();
+        self.selection.truncate(self.source.len());
+        num_removed
+    }
+}
+
 /*
  * Conversions
  */

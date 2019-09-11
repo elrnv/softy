@@ -686,12 +686,9 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
              }
         }
 
-        // TODO: The following two functions should be consolidated, and nz_row_idx should be
-        // inferred.
-        // There may be fewer non-zero rows than in self. Truncate those.
-        out.indices_mut().truncate(nz_row_idx);
-        // Also truncate the entries in storage we didn't use.
-        out.source_mut().trim();
+        // There may be fewer non-zero rows than in self. Truncate those
+        // and truncate the entries in storage we didn't use.
+        out.trim();
 
         Tensor::new(out)
     }

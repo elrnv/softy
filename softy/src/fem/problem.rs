@@ -1467,7 +1467,7 @@ impl NonLinearProblem {
 
             dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
-            let remaining_steps = fc.constraint.update_frictional_contact_impulse(
+            friction_steps[fc_idx] = fc.constraint.update_frictional_contact_impulse(
                 &contact_impulse,
                 [obj_prev_pos.view(), col_prev_pos.view()],
                 [obj_vel.view(), col_vel.view()],
@@ -1475,7 +1475,7 @@ impl NonLinearProblem {
                 friction_steps[fc_idx],
             );
 
-            is_finished &= remaining_steps == 0;
+            is_finished &= friction_steps[fc_idx] == 0;
             constraint_offset += n;
         }
 

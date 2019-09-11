@@ -99,7 +99,7 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
             tolerance: 0.001,
         },
         friction_params: Some(FrictionParams {
-            dynamic_friction: 0.2,
+            dynamic_friction: 0.5,
             inner_iterations: 100,
             tolerance: 1e-6,
             print_level: 5,

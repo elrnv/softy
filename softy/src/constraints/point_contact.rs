@@ -439,10 +439,6 @@ impl ContactConstraint for PointContactConstraint {
             return 0;
         }
 
-        // Memoize active contact indices
-        //self.active_contact_indices.clear();
-        //self.active_contact_indices.extend_from_slice(active_contact_indices.as_slice());
-
         contact_basis.update_from_normals(normals.into());
 
         let surf = self.implicit_surface.borrow();
@@ -684,13 +680,13 @@ impl ContactConstraint for PointContactConstraint {
         multiplier: f64,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if !frictional_contact.object_impulse.is_empty() {
+            if !frictional_contact.object_impulse.is_empty() && !grad[0].is_empty() {
                 for (i, &r) in frictional_contact.object_impulse.iter().enumerate() {
                     grad[0][i] = (Vector3(grad[0][i]) + Vector3(r) * multiplier).into();
                 }
             }
 
-            if frictional_contact.collider_impulse.is_empty() {
+            if frictional_contact.collider_impulse.is_empty() || grad[1].is_empty() {
                 return;
             }
 

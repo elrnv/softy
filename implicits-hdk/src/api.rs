@@ -151,6 +151,6 @@ fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
         Err(implicits::Error::UnsupportedSampleType) => CookResult::Error(
             "Given sample type is not supported by the chosen configuration.".to_string(),
         ),
-        Err(implicits::Error::IO(err)) => CookResult::Error(format!("IO Error: {:?}", err)),
+        Err(implicits::Error::IO { source }) => CookResult::Error(format!("IO Error: {:?}", source)),
     }
 }

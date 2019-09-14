@@ -985,6 +985,34 @@ where
     }
 }
 
+impl<'a, S, O> ViewIterator<'a> for Chunked<S, O>
+where
+    S: View<'a>,
+    O: View<'a, Type = Offsets<&'a [usize]>>,
+    <S as View<'a>>::Type: SplitAt + Set + Dummy,
+{
+    type Item = <S as View<'a>>::Type;
+    type Iter = VarIter<'a, <S as View<'a>>::Type>;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, S, O> ViewMutIterator<'a> for Chunked<S, O>
+where
+    S: ViewMut<'a>,
+    O: View<'a, Type = Offsets<&'a [usize]>>,
+    <S as ViewMut<'a>>::Type: SplitAt + Set + Dummy,
+{
+    type Item = <S as ViewMut<'a>>::Type;
+    type Iter = VarIter<'a, <S as ViewMut<'a>>::Type>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
+    }
+}
+
 impl<'a, S, O> Chunked<S, O>
 where
     S: View<'a>,
@@ -1415,6 +1443,23 @@ where
     }
 }
 
+impl<S, O> SplitFirst for Chunked<S, O>
+where
+    S: Viewed + Set + SplitAt,
+    O: Set + SplitOffsetsAt,
+{
+    type First = S;
+    fn split_first(self) -> Option<(Self::First, Self)> {
+        if self.is_empty() {
+            return None;
+        }
+        let (_, rest_chunks, off) = self.chunks.split_offsets_at(1);
+        let (first, rest) = self.data.split_at(off);
+        Some((first, Chunked { data: rest, chunks: rest_chunks }))
+    }
+}
+
+
 impl<S, N> IntoStaticChunkIterator<N> for ChunkedView<'_, S>
 where
     Self: Set + SplitPrefix<N> + Dummy,
@@ -1535,5 +1580,24 @@ mod tests {
         assert_eq!(c.at(3), 6..6);
         assert_eq!(c.at(4), 6..7);
         assert_eq!(c.into_flat(), 0..7);
+    }
+
+    #[test]
+    fn chunked_viewable() {
+        let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+        let v1 = s.into_view();
+        let v2 = v1.clone();
+        let mut view1_iter = v1.clone().into_iter();
+        assert_eq!(Some(&[0][..]), view1_iter.next());
+        assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
+        assert_eq!(Some(&[4,5][..]), view1_iter.next());
+        assert_eq!(None, view1_iter.next());
+        for (a,b) in v1.into_iter().zip(v2.into_iter()) {
+            assert_eq!(a,b);
+        }
+
+        let v_mut = (&mut s).into_view();
+        v_mut.isolate(0)[0] = 100;
+        assert_eq!(&[100][..], s.into_view().at(0));
     }
 }

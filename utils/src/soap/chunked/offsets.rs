@@ -52,6 +52,13 @@ impl<'a, O: AsMut<[usize]>> ViewMut<'a> for Offsets<O> {
     }
 }
 
+//impl<'a, O: AsRef<[usize]>> Viewable for &'a Offsets<O> {
+//    type View = Offsets<&'a [usize]>;
+//    fn into_view(self) -> Self::View {
+//        Offsets(self.0.as_ref())
+//    }
+//}
+
 impl<O: AsRef<[usize]>> From<O> for Offsets<O> {
     fn from(offsets: O) -> Self {
         Offsets::new(offsets)

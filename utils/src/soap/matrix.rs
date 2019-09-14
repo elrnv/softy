@@ -9,7 +9,7 @@ use super::*;
 use chunked::Offsets;
 use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
-use std::ops::{Add, AddAssign, Mul, MulAssign};
+use std::ops::{Add, Mul, MulAssign};
 
 /// This trait defines information provided by any matrx type.
 pub trait Matrix {
@@ -500,34 +500,6 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
         out.trim();
 
         Tensor::new(out)
-    }
-}
-
-impl AddAssign<Tensor<Chunked3<&[f64]>>> for Tensor<SubsetView<'_, Chunked3<&mut [f64]>>> {
-    fn add_assign(&mut self, other: Tensor<Chunked3<&[f64]>>) {
-        for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (Vector3(*out) + Vector3(b)).into();
-        }
-    }
-}
-
-impl AddAssign<Tensor<SubsetView<'_, Chunked3<&[f64]>>>>
-    for Tensor<SubsetView<'_, SubsetView<'_, Chunked3<&mut [f64]>>>>
-{
-    fn add_assign(&mut self, other: Tensor<SubsetView<'_, Chunked3<&[f64]>>>) {
-        for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (Vector3(*out) + Vector3(b)).into();
-        }
-    }
-}
-
-impl AddAssign<Tensor<Chunked3<&[f64]>>>
-    for Tensor<SubsetView<'_, SubsetView<'_, Chunked3<&mut [f64]>>>>
-{
-    fn add_assign(&mut self, other: Tensor<Chunked3<&[f64]>>) {
-        for (out, &b) in self.data.iter_mut().zip(other.data.iter()) {
-            *out = (Vector3(*out) + Vector3(b)).into();
-        }
     }
 }
 

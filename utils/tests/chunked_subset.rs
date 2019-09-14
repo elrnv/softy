@@ -92,11 +92,19 @@ fn subset_chunked() {
 }
 
 #[test]
+fn subset_clone_into() {
+    let v: Vec<usize> = (1..=15).collect();
+    let subset = Subset::from_indices(vec![1, 3, 4, 5], v);
+    let mut other = vec![0; 4];
+    subset.clone_into_other(&mut other);
+    assert_eq!(other, vec![2, 4, 5, 6]);
+}
+
+#[test]
 fn subset_unichunked_clone_into() {
     let v: Vec<usize> = (1..=15).collect();
     let uni = Chunked3::from_flat(v);
     let subset = Subset::from_indices(vec![1, 3, 4], uni);
-    let subset = subset.view();
     let mut other = Chunked3::from_flat(vec![0; 9]);
     subset.clone_into_other(&mut other);
     assert_eq!(other.into_inner(), vec![4, 5, 6, 10, 11, 12, 13, 14, 15]);

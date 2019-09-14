@@ -483,7 +483,7 @@ impl<'a, S, I> Subset<S, I>
 where
     S: Set + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: Get<'a, usize, Output = &'a <S as Set>::Elem> + IntoIterator<Item = &'a <S as Set>::Elem>,
+    <S as View<'a>>::Type: SplitFirst<First = &'a <S as Set>::Elem> + SplitAt + Set + Dummy,
     <S as Set>::Elem: 'a + Clone,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
@@ -761,6 +761,8 @@ pub struct SubsetIter<S, I> {
     data: S,
 }
 
+// TODO: This can be made more efficient with two distinct iterators, thus eliminating the branch
+// on indices.
 impl<S, I> Iterator for SubsetIter<S, I>
 where
     S: SplitAt + SplitFirst + Set + Dummy,
@@ -780,7 +782,11 @@ where
                     let (_, r) = right.split_at(*second.borrow() - *first.borrow() - 1);
                     *data = r;
                 } else {
-                    let n = data.len();
+                    // No more elements, the rest is empty, just discard the rest of data.
+                    // An alternative implementation simply assigns data to the empty version of S.
+                    // This would require additional traits so we settle for this possibly less
+                    // efficient version for now.
+                    let n = right.len();
                     let (_, r) = right.split_at(n);
                     *data = r;
                 }
@@ -799,29 +805,26 @@ impl<'a, S, I> Subset<S, I>
 where
     S: Set + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: Get<'a, usize> + IntoIterator<Item = <<S as View<'a>>::Type as Get<'a, usize>>::Output>,
 {
-    pub fn iter(&'a self) -> impl Iterator<Item = <<S as View<'a>>::Type as Get<'a, usize>>::Output> {
-        let view = self.view();
-        let iters = match view.indices {
-            Some(indices) => {
-                let first = *indices.first().unwrap_or(&0);
-                (
-                    None,
-                    Some(
-                        indices
-                            .iter()
-                            .filter_map(move |&i| view.data.get(i - first)),
-                    ),
-                )
-            }
-            None => (Some(view.data.into_iter()), None),
-        };
-        iters
-            .0
-            .into_iter()
-            .flatten()
-            .chain(iters.1.into_iter().flatten())
+    /// Immutably iterate over a borrowed subset.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let mut v = vec![1,2,3,4,5];
+    /// let mut subset = Subset::from_indices(vec![0,2,4], v.as_mut_slice());
+    /// let mut iter = subset.iter();
+    /// assert_eq!(Some(&1), iter.next());
+    /// assert_eq!(Some(&3), iter.next());
+    /// assert_eq!(Some(&5), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    pub fn iter(&'a self) -> SubsetIter<S::Type, &'a [usize]> {
+        SubsetIter {
+            indices: self.indices.as_ref().map(|indices| indices.as_ref()),
+            data: self.data.view(),
+        }
     }
 }
 
@@ -848,6 +851,34 @@ where
             indices: self.indices.as_ref().map(|indices| indices.as_ref()),
             data: self.data.view_mut(),
         }
+    }
+}
+
+impl<'a, S, I> ViewIterator<'a> for Subset<S, I>
+where
+    S: Set + View<'a>,
+    I: AsRef<[usize]>,
+    <S as View<'a>>::Type: SplitAt + SplitFirst + Set + Dummy,
+{
+    type Item = <<S as View<'a>>::Type as SplitFirst>::First;
+    type Iter = SubsetIter<S::Type, &'a [usize]>;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, S, I> ViewMutIterator<'a> for Subset<S, I>
+where
+    S: Set + ViewMut<'a>,
+    I: AsRef<[usize]>,
+    <S as ViewMut<'a>>::Type: SplitAt + SplitFirst + Set + Dummy,
+{
+    type Item = <<S as ViewMut<'a>>::Type as SplitFirst>::First;
+    type Iter = SubsetIter<S::Type, &'a [usize]>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
     }
 }
 

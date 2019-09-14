@@ -1202,6 +1202,34 @@ where
     }
 }
 
+impl<'a, S, N> ViewIterator<'a> for UniChunked<S, U<N>>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: IntoStaticChunkIterator<N>,
+    N: Unsigned,
+{
+    type Item = <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::Item;
+    type Iter = <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::IterType;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, S, N> ViewMutIterator<'a> for UniChunked<S, U<N>>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: IntoStaticChunkIterator<N>,
+    N: Unsigned,
+{
+    type Item = <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::Item;
+    type Iter = <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::IterType;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
+    }
+}
+
 /// A generic version of the `Chunks` iterator used by slices. This is used by
 /// uniformly (but not statically) chunked collections.
 pub struct Chunks<S> {
@@ -1273,7 +1301,7 @@ where
 
 impl<'a, S, N> View<'a> for UniChunked<S, N>
 where
-    S: Set + View<'a>,
+    S: View<'a>,
     N: Copy,
 {
     type Type = UniChunked<<S as View<'a>>::Type, N>;
@@ -1307,7 +1335,7 @@ where
 
 impl<'a, S, N> ViewMut<'a> for UniChunked<S, N>
 where
-    S: Set + ViewMut<'a>,
+    S: ViewMut<'a>,
     N: Copy,
 {
     type Type = UniChunked<<S as ViewMut<'a>>::Type, N>;
@@ -1334,6 +1362,32 @@ where
             data: self.data.view_mut(),
             chunks: self.chunks,
         }
+    }
+}
+
+impl<'a, S> ViewIterator<'a> for ChunkedN<S>
+where
+    S: View<'a>,
+    <S as View<'a>>::Type: SplitAt + Set + Dummy,
+{
+    type Item = S::Type;
+    type Iter = Chunks<S::Type>;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, S> ViewMutIterator<'a> for ChunkedN<S>
+where
+    S: ViewMut<'a>,
+    <S as ViewMut<'a>>::Type: SplitAt + Set + Dummy,
+{
+    type Item = S::Type;
+    type Iter = Chunks<S::Type>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
     }
 }
 
@@ -1390,11 +1444,11 @@ impl<S: SplitPrefix<N> + Set, N: Copy> SplitFirst for UniChunked<S, U<N>> {
     }
 }
 
-impl<
-        S: SplitPrefix<<N as std::ops::Mul<M>>::Output> + Set,
-        N: Unsigned + std::ops::Mul<M> + Copy,
-        M: Unsigned,
-    > SplitPrefix<M> for UniChunked<S, U<N>>
+impl<S, N, M> SplitPrefix<M> for UniChunked<S, U<N>>
+where
+    S: SplitPrefix<<N as std::ops::Mul<M>>::Output> + Set,
+    N: Unsigned + std::ops::Mul<M> + Copy,
+    M: Unsigned,
 {
     type Prefix = UniChunked<S::Prefix, U<N>>;
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
@@ -1612,3 +1666,19 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unichunked_viewable() {
+        let mut s = Chunked2::from_flat(vec![0,1,2,3]);
+        let mut v = (&mut s).into_view();
+        {
+            v.iter_mut().next().unwrap()[0] = 100;
+        }
+        let mut view_iter = v.iter();
+        assert_eq!(Some(&[100,1]), view_iter.next());
+        assert_eq!(Some(&[2,3]), view_iter.next());
+        assert_eq!(None, view_iter.next());
+    }
+}

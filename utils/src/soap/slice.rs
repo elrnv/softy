@@ -80,37 +80,6 @@ where
     }
 }
 
-//impl<'a, T, I> Isolate<I> for &'a [T]
-//where
-//    I: IsolateIndex<&'a [T]>,
-//{
-//    type Output = I::Output;
-//    fn try_isolate(self, idx: I) -> Option<Self::Output> {
-//        IsolateIndex::try_isolate(idx, self)
-//    }
-//}
-//
-//impl<'a, T, I> Isolate<I> for &'a mut [T]
-//where
-//    I: IsolateIndex<&'a mut [T]>,
-//{
-//    type Output = I::Output;
-//    /// Mutably index into a standard slice `[T]` using the `GetMut` trait.
-//    /// This function is not intended to be used directly, but it allows getters
-//    /// for chunked collections to work.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```rust
-//    /// let mut v = vec![1,2,3,4,5];
-//    /// *utils::soap::Isolate::try_isolate(v.as_mut_slice(), 2).unwrap() = 100;
-//    /// assert_eq!(v, vec![1,2,100,4,5]);
-//    /// ```
-//    fn try_isolate(self, idx: I) -> Option<Self::Output> {
-//        IsolateIndex::try_isolate(idx, self)
-//    }
-//}
-
 impl<T> Set for [T] {
     type Elem = T;
     fn len(&self) -> usize {
@@ -131,6 +100,23 @@ impl<'a, T: 'a> ViewMut<'a> for [T] {
 
     fn view_mut(&'a mut self) -> Self::Type {
         self
+    }
+}
+
+impl<'a, T: 'a> ViewIterator<'a> for [T] {
+    type Item = &'a T;
+    type Iter = std::slice::Iter<'a, T>;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+impl<'a, T: 'a> ViewMutIterator<'a> for [T] {
+    type Item = &'a mut T;
+    type Iter = std::slice::IterMut<'a, T>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
     }
 }
 

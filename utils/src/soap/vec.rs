@@ -31,6 +31,39 @@ impl<'a, T: 'a> ViewMut<'a> for Vec<T> {
     }
 }
 
+//impl<'a, T> Viewable for &'a Vec<T> {
+//    type View = &'a [T];
+//
+//    fn into_view(self) -> Self::View {
+//        self.as_slice()
+//    }
+//}
+
+//impl<'a, T> Viewable for &'a mut Vec<T> {
+//    type View = &'a mut [T];
+//
+//    fn into_view(self) -> Self::View {
+//        self.as_mut_slice()
+//    }
+//}
+//
+impl<'a, T: 'a> ViewIterator<'a> for Vec<T> {
+    type Item = &'a T;
+    type Iter = std::slice::Iter<'a, T>;
+
+    fn view_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+impl<'a, T: 'a> ViewMutIterator<'a> for Vec<T> {
+    type Item = &'a mut T;
+    type Iter = std::slice::IterMut<'a, T>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
+    }
+}
+
 impl<T> Push<T> for Vec<T> {
     fn push(&mut self, element: T) {
         Vec::push(self, element);

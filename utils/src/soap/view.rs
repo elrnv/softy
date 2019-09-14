@@ -45,3 +45,39 @@ impl<'a, S: ?Sized + 'a + ViewMut<'a>> ViewMut<'a> for &mut S {
         <S as ViewMut<'a>>::view_mut(*self)
     }
 }
+
+pub trait IntoView {
+    type View;
+    fn into_view(self) -> Self::View;
+}
+
+impl<'a, V: View<'a>> IntoView for &'a V {
+    type View = V::Type;
+    fn into_view(self) -> Self::View {
+        self.view()
+    }
+}
+
+impl<'a, V: ViewMut<'a>> IntoView for &'a mut V {
+    type View = V::Type;
+    fn into_view(self) -> Self::View {
+        self.view_mut()
+    }
+}
+
+/// A convenience trait to allow generic implementations to call an iterator over the view. This
+/// is necessary because the `View` trait has an explicit lifetime parameter, which makes it
+/// difficult or impossible to use in generic functions.
+pub trait ViewIterator<'a> {
+    type Item;
+    type Iter: Iterator<Item = Self::Item>;
+
+    fn view_iter(&'a self) -> Self::Iter;
+}
+
+pub trait ViewMutIterator<'a> {
+    type Item;
+    type Iter: Iterator<Item = Self::Item>;
+
+    fn view_mut_iter(&'a mut self) -> Self::Iter;
+}

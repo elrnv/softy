@@ -1,6 +1,6 @@
 [package]
 name = "cimplicits"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 

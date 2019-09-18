@@ -176,7 +176,7 @@ pub unsafe extern "C" fn el_iso_create_trimesh(
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_free_trimesh(trimesh: *mut EL_IsoTriMesh) {
     if !trimesh.is_null() {
-        let _ = Box::from_raw(trimesh);
+        let _ = Box::from_raw(trimesh as *mut geometry::mesh::TriMesh<f64>);
     }
 }
 
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn el_iso_create_implicit_surface(
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_free_implicit_surface(implicit_surface: *mut EL_IsoSurface) {
     if !implicit_surface.is_null() {
-        let _ = Box::from_raw(implicit_surface);
+        let _ = Box::from_raw(implicit_surface as *mut implicits::ImplicitSurface<f64>);
     }
 }
 

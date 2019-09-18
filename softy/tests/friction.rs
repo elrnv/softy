@@ -120,6 +120,42 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
     friction_tester(material, fc_params, tetmesh, surface, false)
 }
 
+/// A regular tetrahedron sliding on a flat surface.
+#[test]
+fn sliding_box_on_implicit() -> Result<(), Error> {
+    let material =
+        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e6, 0.45));
+
+    let fc_params = FrictionalContactParams {
+        contact_type: ContactType::Point,
+        kernel: KernelType::Approximate {
+            radius_multiplier: 1.5,
+            tolerance: 0.001,
+        },
+        friction_params: Some(FrictionParams {
+            dynamic_friction: 0.5,
+            inner_iterations: 100,
+            tolerance: 1e-6,
+            print_level: 5,
+        }),
+    };
+
+    let tetmesh = make_box([2, 2, 2]);
+    let mut surface = make_grid(Grid {
+        rows: 1,
+        cols: 1,
+        orientation: AxisPlaneOrientation::ZX,
+    });
+
+    let degrees = 5.0;
+    rotate(&mut surface, [1.0, 0.0, 0.0], degrees * std::f64::consts::PI / 180.0);
+    translate(&mut surface, [0.0, -1.3, 0.0].into());
+
+    //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
+
+    friction_tester(material, fc_params, tetmesh, surface, false)
+}
+
 /// No crash when self collisions are selected.
 #[test]
 fn self_contact() -> Result<(), Error> {

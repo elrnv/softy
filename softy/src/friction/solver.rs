@@ -389,7 +389,7 @@ impl<CJI> ipopt::BasicProblem for SemiImplicitFrictionProblem<'_, CJI> {
 
         let impulses: &[Vector2<f64>] = reinterpret_slice(r);
         if let Some(ref _contact_jacobian) = self.0.contact_jacobian {
-            // A contact jacobian is provided. This makes computing the non-linear contribution a
+            // A contact Jacobian is provided. This makes computing the non-linear contribution a
             // tad more expensive.
             // TODO: implement this
         } else {

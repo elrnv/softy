@@ -4,8 +4,8 @@
 //! it would otherwise be if using raw Tensors.
 //!
 use super::*;
-use std::ops::{Index, IndexMut, Add, AddAssign, Mul, MulAssign, Div, DivAssign};
-use num_traits::{Zero, Float, NumAssign};
+use num_traits::{Float, NumAssign, Zero};
+use std::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign};
 use unroll::unroll_for_loops;
 
 pub trait Scalar: Copy + Clone + std::fmt::Debug + PartialOrd + NumAssign {}
@@ -32,8 +32,9 @@ macro_rules! impl_array_vectors {
         impl<T: Copy, I> Tensor<[T; $n], I> {
             #[unroll_for_loops]
             pub fn map<U, F>(&self, mut f: F) -> Tensor<[U; $n], I>
-                where U: Copy + Zero,
-                      F: FnMut(T) -> U,
+            where
+                U: Copy + Zero,
+                F: FnMut(T) -> U,
             {
                 let mut out = Tensor::<[U; $n], I>::zeros();
                 for i in 0..$n {
@@ -52,7 +53,8 @@ macro_rules! impl_array_vectors {
         impl<T: Copy, I> Tensor<[T; $n], I> {
             #[unroll_for_loops]
             pub fn fold<B, F>(&self, mut init: B, mut f: F) -> B
-                where F: FnMut(B, T) -> B,
+            where
+                F: FnMut(B, T) -> B,
             {
                 for i in 0..$n {
                     init = f(init, self.data[i])
@@ -79,10 +81,9 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Zero + Copy + Mul<Output = T> + Add<Output = T>, I> Tensor<[T; $n], I>
-        {
+        impl<T: Zero + Copy + Mul<Output = T> + Add<Output = T>, I> Tensor<[T; $n], I> {
             pub fn norm_squared(&self) -> T {
-                (*self).map(|x| x*x).sum()
+                (*self).map(|x| x * x).sum()
             }
         }
 

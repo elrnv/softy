@@ -416,7 +416,8 @@ mod tests {
             angle: PI,
         }]; // one point sliding up.
         let contact_force = vec![10.0 * mass];
-        let mass_inv_mtx: DSBlockMatrix3 = DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
+        let mass_inv_mtx: DSBlockMatrix3 =
+            DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);

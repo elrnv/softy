@@ -456,9 +456,7 @@ impl ContactConstraint for ImplicitContactConstraint {
         }
     }
 
-    fn contact_normals(
-        &self,
-    ) -> Result<Chunked3<Vec<f64>>, Error> {
+    fn contact_normals(&self) -> Result<Chunked3<Vec<f64>>, Error> {
         // Contacts occur at vertex positions of the deforming volume mesh.
         let surf = self.implicit_surface.borrow();
         let contact_points = self.contact_points.borrow_mut();

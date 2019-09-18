@@ -262,7 +262,11 @@ mod tests {
     #[test]
     fn grid_test() {
         use geo::ops::*;
-        let grid = make_grid(Grid { rows: 1, cols: 1, orientation: AxisPlaneOrientation::ZX });
+        let grid = make_grid(Grid {
+            rows: 1,
+            cols: 1,
+            orientation: AxisPlaneOrientation::ZX,
+        });
         let bbox = grid.bounding_box();
         assert_eq!(bbox.min_corner().into_inner(), [-1.0, 0.0, -1.0]);
         assert_eq!(bbox.max_corner().into_inner(), [1.0, 0.0, 1.0]);

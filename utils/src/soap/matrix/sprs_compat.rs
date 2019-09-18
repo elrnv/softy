@@ -33,6 +33,6 @@ where
                 .unzip()
         };
 
-        sprs::TriMat::from_triplets((num_rows,  num_cols), rows, cols, values).to_csr()
+        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }
 }

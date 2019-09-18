@@ -649,13 +649,16 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
                     // additional entries.
                     // First append entries to the last chunk.
                     let num_new_elements = num_non_zero_cols - num_available;
-                    Chunked::extend_last(&mut out.source_mut(), std::iter::repeat((0, [[0.0; 3]; 3])).take(num_new_elements));
+                    Chunked::extend_last(
+                        &mut out.source_mut(),
+                        std::iter::repeat((0, [[0.0; 3]; 3])).take(num_new_elements),
+                    );
                     // Next we transfer all elements of the last chunk into the current row.
-                    for idx in (nz_row_idx+1..out.len()).rev() {
+                    for idx in (nz_row_idx + 1..out.len()).rev() {
                         out.source_mut().transfer_backward(idx, num_new_elements);
                     }
                 }
-             }
+            }
         }
 
         // There may be fewer non-zero rows than in self. Truncate those

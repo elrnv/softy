@@ -327,11 +327,11 @@ pub(crate) fn build_triplet_contact_jacobian<'a>(
         .contact_jacobian_matrix_indices_iter()
         .expect("Failed to get contact Jacobian indices.");
 
-    let cj_matrices: Vec<_> =
-        orig_cj_indices_iter.clone().zip(orig_cj_matrices.into_iter()).filter_map(
-            |((row, _), matrix)| active_contact_points.find_by_index(row).map(|_| matrix)
-        ).collect();
-
+    let cj_matrices: Vec<_> = orig_cj_indices_iter
+        .clone()
+        .zip(orig_cj_matrices.into_iter())
+        .filter_map(|((row, _), matrix)| active_contact_points.find_by_index(row).map(|_| matrix))
+        .collect();
 
     // Remap rows to match active constraints. This means that some entries of the raw jacobian
     // will not have a valid entry in the pruned jacobian.

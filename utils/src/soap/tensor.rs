@@ -1,6 +1,6 @@
 use super::*;
 use std::marker::PhantomData;
-use std::ops::{Neg, Add, AddAssign, Mul, MulAssign, Div, DivAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
 /// A generic type that accepts algebraic expressions.
@@ -37,7 +37,6 @@ pub trait AsTensor {
 pub trait AsMutTensor {
     fn as_mut_tensor<I>(&mut self) -> &mut Tensor<Self, I>;
 }
-
 
 impl<T: ?Sized> AsTensor for T {
     fn as_tensor<I>(&self) -> &Tensor<T, I> {
@@ -207,9 +206,9 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: SubAssign + Copy, I> SubAssign<&Tensor<[T;$n]>> for Tensor<[T; $n], I> {
+        impl<T: SubAssign + Copy, I> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n], I> {
             #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: &Tensor<[T;$n]>) {
+            fn sub_assign(&mut self, rhs: &Tensor<[T; $n]>) {
                 for i in 0..$n {
                     self.data[i] -= rhs.data[i];
                 }
@@ -466,14 +465,12 @@ impl<T: AddAssign + Copy> Add<Tensor<&[T]>> for Tensor<Vec<T>> {
 }
 
 macro_rules! impl_slice_add_assign {
-    ($self:ident, $other:ident) => {
-        {
-            assert_eq!($other.data.len(), $self.data.len());
-            for (a, &b) in $self.data.iter_mut().zip($other.data.iter()) {
-                *a += b;
-            }
+    ($self:ident, $other:ident) => {{
+        assert_eq!($other.data.len(), $self.data.len());
+        for (a, &b) in $self.data.iter_mut().zip($other.data.iter()) {
+            *a += b;
         }
-    }
+    }};
 }
 
 impl<T: AddAssign + Copy> AddAssign<&Tensor<[T]>> for Tensor<Vec<T>> {
@@ -1046,9 +1043,10 @@ impl<S, O> LocalGeneric for Chunked<S, O> {}
 impl<T> LocalGeneric for Tensor<T> {}
 
 impl<T: ?Sized, U, V: ?Sized> AddAssign<Tensor<U>> for Tensor<V>
-where V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,
-      U: LocalGeneric + Set + for<'c> ViewIterator<'c, Item = &'c T>,
-      Tensor<T>: for<'a> AddAssign<&'a Tensor<T>>,
+where
+    V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,
+    U: LocalGeneric + Set + for<'c> ViewIterator<'c, Item = &'c T>,
+    Tensor<T>: for<'a> AddAssign<&'a Tensor<T>>,
 {
     fn add_assign(&mut self, other: Tensor<U>) {
         for (out, b) in self.data.view_mut_iter().zip(other.view_iter()) {
@@ -1059,9 +1057,10 @@ where V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,
 }
 
 impl<T: ?Sized, U, V: ?Sized> SubAssign<Tensor<U>> for Tensor<V>
-where V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,
-      U: LocalGeneric + Set + for<'c> ViewIterator<'c, Item = &'c T>,
-      Tensor<T>: for<'a> SubAssign<&'a Tensor<T>>,
+where
+    V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,
+    U: LocalGeneric + Set + for<'c> ViewIterator<'c, Item = &'c T>,
+    Tensor<T>: for<'a> SubAssign<&'a Tensor<T>>,
 {
     fn sub_assign(&mut self, other: Tensor<U>) {
         for (out, b) in self.data.view_mut_iter().zip(other.view_iter()) {
@@ -1266,27 +1265,27 @@ mod tests {
 
         // As transient mutable tensor reference.
         *v0.view_mut().as_mut_tensor() += rhs;
-        assert_eq!(v0, vec![3,5,7,9]);
+        assert_eq!(v0, vec![3, 5, 7, 9]);
 
         // As a persistent owned tensor object.
         let mut t0 = Tensor::new(v0.as_mut_slice());
         t0 += rhs;
-        assert_eq!(&*t0.data, &[5,8,11,14]);
+        assert_eq!(&*t0.data, &[5, 8, 11, 14]);
 
         // With RHS being a persistent owned tensor object.
         let t1 = Tensor::new(v1.as_slice());
         t0 += t1;
-        assert_eq!(&*t0.data, &[7,11,15,19]);
+        assert_eq!(&*t0.data, &[7, 11, 15, 19]);
 
         *v0.view_mut().as_mut_tensor() += t1;
-        assert_eq!(v0, vec![9,14,19,24]);
+        assert_eq!(v0, vec![9, 14, 19, 24]);
     }
 
     #[test]
     fn tensor_add() {
-        let a = vec![1,2,3,4];
-        let b = vec![5,6,7,8];
-        let res = Tensor::new(vec![6,8,10,12]);
+        let a = vec![1, 2, 3, 4];
+        let b = vec![5, 6, 7, 8];
+        let res = Tensor::new(vec![6, 8, 10, 12]);
         assert_eq!(res, Tensor::new(a.view()) + Tensor::new(b.view()));
         assert_eq!(res, a.view().as_tensor() + Tensor::new(b.view()));
         assert_eq!(res, Tensor::new(a.view()) + b.view().as_tensor());

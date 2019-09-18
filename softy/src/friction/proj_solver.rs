@@ -159,7 +159,8 @@ mod tests {
 
         let predictor_momentum = vec![[1.0 * mass, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
-        let mass_inv_mtx: DSBlockMatrix3 = DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
+        let mass_inv_mtx: DSBlockMatrix3 =
+            DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
 
         let mut contact_basis = ContactBasis::new();
         contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
@@ -202,11 +203,12 @@ mod tests {
             ],
         ]; // tet vertex momenta
 
-        let mass_inv_mtx: DSBlockMatrix3 = DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![
-            [1.0 / masses[0]; 3],
-            [1.0 / masses[1]; 3],
-        ]))
-        .into();
+        let mass_inv_mtx: DSBlockMatrix3 =
+            DiagonalBlockMatrix::new(Chunked3::from_array_vec(vec![
+                [1.0 / masses[0]; 3],
+                [1.0 / masses[1]; 3],
+            ]))
+            .into();
 
         let mut contact_basis = ContactBasis::new();
         let normals = vec![

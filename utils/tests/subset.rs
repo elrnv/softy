@@ -18,15 +18,13 @@ fn subset_index() {
     assert_eq!(&5, subset.at(2));
 }
 
-
 #[test]
 fn subset_of_subsets_of_chunked_iter() {
-    let set = Chunked2::from_flat(vec![1,2,3,4,5,6,7,8,9,10,11,12]);
-    let subset = Subset::from_unique_ordered_indices(vec![1,3,5], set);
-    let subsubset = Subset::from_unique_ordered_indices(vec![0,2], subset);
+    let set = Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    let subset = Subset::from_unique_ordered_indices(vec![1, 3, 5], set);
+    let subsubset = Subset::from_unique_ordered_indices(vec![0, 2], subset);
     let mut iter = subsubset.iter();
-    assert_eq!(Some(&[3,4]), iter.next());
-    assert_eq!(Some(&[11,12]), iter.next());
+    assert_eq!(Some(&[3, 4]), iter.next());
+    assert_eq!(Some(&[11, 12]), iter.next());
     assert_eq!(None, iter.next());
 }
-

@@ -94,17 +94,18 @@ where
 */
 
 impl<'a, S, T> Extend<(usize, <S as Set>::Elem)> for Sparse<S, T>
-where S: Set + Extend<<S as Set>::Elem>,
+where
+    S: Set + Extend<<S as Set>::Elem>,
 {
-    fn extend<It: IntoIterator<Item=(usize, <S as Set>::Elem)>>(&mut self, iter: It) {
+    fn extend<It: IntoIterator<Item = (usize, <S as Set>::Elem)>>(&mut self, iter: It) {
         let Sparse {
             source,
-            selection: Select {
-                indices,
-                ..
-            }
+            selection: Select { indices, .. },
         } = self;
-        source.extend(iter.into_iter().map(|(idx, elem)| { indices.push(idx); elem }));
+        source.extend(iter.into_iter().map(|(idx, elem)| {
+            indices.push(idx);
+            elem
+        }));
     }
 }
 
@@ -382,9 +383,7 @@ where
 {
     pub fn source_iter(
         &'a self,
-    ) -> impl Iterator<
-        Item = <<S as View<'a>>::Type as IntoIterator>::Item,
-    > {
+    ) -> impl Iterator<Item = <<S as View<'a>>::Type as IntoIterator>::Item> {
         self.source.view().into_iter()
     }
 }
@@ -397,14 +396,10 @@ where
 {
     pub fn indexed_source_iter(
         &'a self,
-    ) -> impl Iterator<
-        Item = (
-            usize,
-            <<S as View<'a>>::Type as IntoIterator>::Item,
-        ),
-    > {
+    ) -> impl Iterator<Item = (usize, <<S as View<'a>>::Type as IntoIterator>::Item)> {
         self.selection
-            .index_iter().cloned()
+            .index_iter()
+            .cloned()
             .zip(self.source.view().into_iter())
     }
 }

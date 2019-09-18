@@ -510,12 +510,14 @@ where
 }
 
 impl<S, N> ExtendFromSlice for UniChunked<S, U<N>>
-where S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
-      N: Unsigned + Array<<S as Set>::Elem>,
+where
+    S: Set + ExtendFromSlice<Item = <S as Set>::Elem>,
+    N: Unsigned + Array<<S as Set>::Elem>,
 {
     type Item = N::Array;
     fn extend_from_slice(&mut self, other: &[Self::Item]) {
-        self.data.extend_from_slice(unsafe { reinterpret::reinterpret_slice(other) });
+        self.data
+            .extend_from_slice(unsafe { reinterpret::reinterpret_slice(other) });
     }
 }
 
@@ -711,9 +713,11 @@ impl<T: Clone, N: Array<T>> PushArrayToVec<N> for T {
 //}
 //
 
-impl<S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem> + Unsigned> AsRef<[N::Array]> for UniChunked<S, U<N>>
-where <S as ReinterpretAsGrouped<N>>::Output: AsRef<[N::Array]>,
-      S: AsRef<[<S as Set>::Elem]>,
+impl<S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem> + Unsigned> AsRef<[N::Array]>
+    for UniChunked<S, U<N>>
+where
+    <S as ReinterpretAsGrouped<N>>::Output: AsRef<[N::Array]>,
+    S: AsRef<[<S as Set>::Elem]>,
 {
     fn as_ref(&self) -> &[N::Array] {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data.as_ref()).as_ref()
@@ -1671,14 +1675,14 @@ mod tests {
     use super::*;
     #[test]
     fn unichunked_viewable() {
-        let mut s = Chunked2::from_flat(vec![0,1,2,3]);
+        let mut s = Chunked2::from_flat(vec![0, 1, 2, 3]);
         let mut v = (&mut s).into_view();
         {
             v.iter_mut().next().unwrap()[0] = 100;
         }
         let mut view_iter = v.iter();
-        assert_eq!(Some(&[100,1]), view_iter.next());
-        assert_eq!(Some(&[2,3]), view_iter.next());
+        assert_eq!(Some(&[100, 1]), view_iter.next());
+        assert_eq!(Some(&[2, 3]), view_iter.next());
         assert_eq!(None, view_iter.next());
     }
 }

@@ -784,9 +784,8 @@ impl ObjectData {
                     // 2. Compute the rigid rotation between that and the given
                     //    set of fixed points.
                     // 3. Add this rotation and translation to (prev_x/prev_v)
-                    return Err(crate::Error::UnimplementedFeature { description:
-                        String::from(
-                        "Rigid body update")
+                    return Err(crate::Error::UnimplementedFeature {
+                        description: String::from("Rigid body update"),
                     });
                 }
                 ShellProperties::Fixed => {

@@ -590,7 +590,7 @@ where
     /// assert_eq!(3, s.len());
     /// assert_eq!(&[100; 4][..], s.view().at(2));
     /// ```
-    pub fn push_iter<I: IntoIterator<Item=<S as Set>::Elem>>(&mut self, iter: I) {
+    pub fn push_iter<I: IntoIterator<Item = <S as Set>::Elem>>(&mut self, iter: I) {
         self.data.extend(iter);
         self.chunks.push(self.data.len());
     }
@@ -613,7 +613,7 @@ where
     /// assert_eq!(2, s.len());
     /// assert_eq!(&[4, 5, 100, 100][..], s.view().at(1));
     /// ```
-    pub fn extend_last<I: IntoIterator<Item=<S as Set>::Elem>>(&mut self, iter: I) {
+    pub fn extend_last<I: IntoIterator<Item = <S as Set>::Elem>>(&mut self, iter: I) {
         let init_len = self.data.len();
         self.data.extend(iter);
         self.chunks.extend_last(self.data.len() - init_len);
@@ -692,7 +692,7 @@ where
 // during initialization, for instance.
 impl<S> std::iter::FromIterator<Vec<<S as Set>::Elem>> for Chunked<S>
 where
-    S: Set + Default + ExtendFromSlice<Item = <S as Set>::Elem>,// + Push<<S as Set>::Elem>,
+    S: Set + Default + ExtendFromSlice<Item = <S as Set>::Elem>, // + Push<<S as Set>::Elem>,
 {
     /// Construct a `Chunked` from an iterator over `Vec` types.
     ///
@@ -1455,10 +1455,15 @@ where
         }
         let (_, rest_chunks, off) = self.chunks.split_offsets_at(1);
         let (first, rest) = self.data.split_at(off);
-        Some((first, Chunked { data: rest, chunks: rest_chunks }))
+        Some((
+            first,
+            Chunked {
+                data: rest,
+                chunks: rest_chunks,
+            },
+        ))
     }
 }
-
 
 impl<S, N> IntoStaticChunkIterator<N> for ChunkedView<'_, S>
 where
@@ -1584,16 +1589,16 @@ mod tests {
 
     #[test]
     fn chunked_viewable() {
-        let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0,1,4,6], vec![0,1,2,3,4,5]);
+        let mut s = Chunked::<Vec<usize>>::from_offsets(vec![0, 1, 4, 6], vec![0, 1, 2, 3, 4, 5]);
         let v1 = s.into_view();
         let v2 = v1.clone();
         let mut view1_iter = v1.clone().into_iter();
         assert_eq!(Some(&[0][..]), view1_iter.next());
-        assert_eq!(Some(&[1,2,3][..]), view1_iter.next());
-        assert_eq!(Some(&[4,5][..]), view1_iter.next());
+        assert_eq!(Some(&[1, 2, 3][..]), view1_iter.next());
+        assert_eq!(Some(&[4, 5][..]), view1_iter.next());
         assert_eq!(None, view1_iter.next());
-        for (a,b) in v1.into_iter().zip(v2.into_iter()) {
-            assert_eq!(a,b);
+        for (a, b) in v1.into_iter().zip(v2.into_iter()) {
+            assert_eq!(a, b);
         }
 
         let v_mut = (&mut s).into_view();

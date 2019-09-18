@@ -1,5 +1,5 @@
-use softy::{fem, Error, PointCloud, SolveResult, TetMesh, TriMesh};
 use geo::mesh::attrib::*;
+use softy::{fem, Error, PointCloud, SolveResult, TetMesh, TriMesh};
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856
@@ -28,7 +28,9 @@ impl Solver for fem::Solver {
         for solid in self.solids().iter() {
             tetmesh.merge(solid.tetmesh.clone());
         }
-        tetmesh.set_attrib::<i32, geo::CellIndex>("object_type", 0).unwrap();
+        tetmesh
+            .set_attrib::<i32, geo::CellIndex>("object_type", 0)
+            .unwrap();
         tetmesh
     }
     #[inline]
@@ -39,7 +41,9 @@ impl Solver for fem::Solver {
             trimesh.merge(shell.trimesh.clone());
         }
 
-        trimesh.set_attrib::<i32, geo::FaceIndex>("object_type", 1).unwrap();
+        trimesh
+            .set_attrib::<i32, geo::FaceIndex>("object_type", 1)
+            .unwrap();
         trimesh
     }
     #[inline]

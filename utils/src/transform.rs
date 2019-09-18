@@ -1,4 +1,8 @@
-use geo::{math::{Vector3, Matrix3}, mesh::VertexPositions, Real};
+use geo::{
+    math::{Matrix3, Vector3},
+    mesh::VertexPositions,
+    Real,
+};
 
 /// Rotate a mesh around a given vector using the right hand rule by `theta` radians.
 /// This function modifies the vertex positions of the given vertex mesh.
@@ -22,12 +26,13 @@ where
     let u_skew = u.skew();
     let cos_theta = theta.cos();
 
-    let rotation_matrix = id * cos_theta + u_skew * theta.sin() + u * (u.transpose() * (T::one() - cos_theta));
+    let rotation_matrix =
+        id * cos_theta + u_skew * theta.sin() + u * (u.transpose() * (T::one() - cos_theta));
 
     // Trnasform mesh.
     for p in mesh.vertex_position_iter_mut() {
         let pos: Vector3<T> = (*p).into();
-        *p = (rotation_matrix*pos).into();
+        *p = (rotation_matrix * pos).into();
     }
 }
 
@@ -88,8 +93,12 @@ mod tests {
 
     #[test]
     fn rotate_grid() {
-        let mut grid = make_grid(Grid { rows: 1, cols: 1, orientation: AxisPlaneOrientation::ZX });
-        rotate(&mut grid, [0.0, 1.0, 0.0], std::f64::consts::PI*0.25);
+        let mut grid = make_grid(Grid {
+            rows: 1,
+            cols: 1,
+            orientation: AxisPlaneOrientation::ZX,
+        });
+        rotate(&mut grid, [0.0, 1.0, 0.0], std::f64::consts::PI * 0.25);
         let bbox = grid.bounding_box();
 
         let bound = 2.0_f64.sqrt();

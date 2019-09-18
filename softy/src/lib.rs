@@ -48,20 +48,31 @@ pub enum Error {
     /// Size mismatch error
     SizeMismatch,
     #[snafu(display("Attribute error"))] //: {:?}", 0))]
-    AttribError { source: attrib::Error },
+    AttribError {
+        source: attrib::Error,
+    },
     InvertedReferenceElement,
     /// Error during main solve step. This reports iterations, objective value and max inner
     /// iterations.
-    SolveError { status: ipopt::SolveStatus, result: SolveResult },
+    SolveError {
+        status: ipopt::SolveStatus,
+        result: SolveResult,
+    },
     /// Error during an inner solve step. This reports iterations and objective value.
     InnerSolveError {
         status: ipopt::SolveStatus,
         objective_value: f64,
         iterations: u32,
     },
-    FrictionSolveError { status: ipopt::SolveStatus },
-    SolverCreateError { source: ipopt::CreateError },
-    InvalidParameter { name: String },
+    FrictionSolveError {
+        status: ipopt::SolveStatus,
+    },
+    SolverCreateError {
+        source: ipopt::CreateError,
+    },
+    InvalidParameter {
+        name: String,
+    },
     MissingSourceIndex,
     MissingDensityParam,
     MissingElasticityParams,
@@ -70,11 +81,19 @@ pub enum Error {
     NoSimulationMesh,
     NoKinematicMesh,
     /// Error during mesh IO. Typically during debugging.
-    MeshIOError { source: geo::io::Error },
-    FileIOError { source: std::io::Error },
+    MeshIOError {
+        source: geo::io::Error,
+    },
+    FileIOError {
+        source: std::io::Error,
+    },
     InvalidImplicitSurface,
-    ImplicitsError { source: implicits::Error },
-    UnimplementedFeature { description: String },
+    ImplicitsError {
+        source: implicits::Error,
+    },
+    UnimplementedFeature {
+        description: String,
+    },
 }
 
 impl From<std::io::Error> for Error {
@@ -164,7 +183,9 @@ impl From<Error> for SimResult {
             Error::MeshIOError { source } => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", source))
             }
-            Error::FileIOError { source } => SimResult::Error(format!("File I/O error: {:?}", source.kind())),
+            Error::FileIOError { source } => {
+                SimResult::Error(format!("File I/O error: {:?}", source.kind()))
+            }
             Error::InvalidImplicitSurface => {
                 SimResult::Error("Error creating an implicit surface".to_string())
             }

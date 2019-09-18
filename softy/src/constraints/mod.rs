@@ -299,9 +299,7 @@ pub trait ContactConstraint:
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(
-        &self,
-    ) -> Result<Chunked3<Vec<f64>>, crate::Error>;
+    fn contact_normals(&self) -> Result<Chunked3<Vec<f64>>, crate::Error>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.

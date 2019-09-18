@@ -148,7 +148,11 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
     });
 
     let degrees = 5.0;
-    rotate(&mut surface, [1.0, 0.0, 0.0], degrees * std::f64::consts::PI / 180.0);
+    rotate(
+        &mut surface,
+        [1.0, 0.0, 0.0],
+        degrees * std::f64::consts::PI / 180.0,
+    );
     translate(&mut surface, [0.0, -1.3, 0.0].into());
 
     //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
@@ -184,7 +188,7 @@ fn self_contact() -> Result<(), Error> {
     });
     rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     translate(&mut surface, [0.0, -0.7, 0.0].into());
- 
+
     let params = SimParams {
         max_iterations: 200,
         outer_tolerance: 0.1,
@@ -201,14 +205,15 @@ fn self_contact() -> Result<(), Error> {
         .add_solid(tetmesh.clone(), material.with_id(0))
         .add_fixed(surface.clone(), 1)
         .add_frictional_contact(fc_params, (0, 0)) // Self contact
-        .build().is_err());
+        .build()
+        .is_err());
 
     assert!(SolverBuilder::new(params.clone())
         .add_solid(tetmesh, material.with_id(0))
         .add_fixed(surface, 1)
         .add_frictional_contact(fc_params, (1, 1)) // Self contact
-        .build().is_err());
-
+        .build()
+        .is_err());
 
     Ok(())
 }

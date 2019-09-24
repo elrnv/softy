@@ -563,7 +563,7 @@ where
     I: AsRef<[usize]>,
     <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
-    pub fn iter(&'a self) -> impl Iterator<Item = (usize, <S as Get<'a, usize>>::Output)> {
+    pub fn iter(&'a self) -> impl Iterator<Item = (usize, <S as Get<'a, usize>>::Output)> + Clone {
         self.indices
             .as_ref()
             .iter()
@@ -576,7 +576,7 @@ impl<S, I> Select<S, I>
 where
     I: AsRef<[usize]>,
 {
-    pub fn index_iter(&self) -> impl Iterator<Item = &usize> {
+    pub fn index_iter(&self) -> impl Iterator<Item = &usize> + Clone {
         self.indices.as_ref().iter()
     }
 }

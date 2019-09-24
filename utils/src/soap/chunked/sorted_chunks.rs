@@ -6,6 +6,7 @@ use std::ops::Range;
 /// indexed chunks are indeed sorted.
 /// Note that `offsets` themeselves are *always* sorted. This type annotates whether the *data* is
 /// sorted when this type is used for the offsets in `Chunked` types.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SortedChunks<O = Vec<usize>> {
     pub(crate) sorted: bool,
     pub(crate) offsets: Offsets<O>,

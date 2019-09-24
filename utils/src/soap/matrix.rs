@@ -488,7 +488,7 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
 
         let mut rhs_iter = rhs.iter().enumerate();
 
-        let add_diagonal_entry = |out: Chunked3<&mut [f64]>, entry: &[f64; 3]| {
+        let add_diagonal_entry = |out: Chunked3<&mut [f64; 9]>, entry: &[f64; 3]| {
             let out_mtx = out.into_arrays();
             out_mtx[0][0] += entry[0];
             out_mtx[1][1] += entry[1];

@@ -712,7 +712,7 @@ mod tests {
     /// Test into_owned for selections.
     #[test]
     fn into_owned() {
-        let indices = vec![1,2,3];
+        let indices = vec![1, 2, 3];
         let target = 0..4;
         let select = Select {
             indices: indices.as_slice(),

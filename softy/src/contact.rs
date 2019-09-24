@@ -202,9 +202,7 @@ impl ContactBasis {
         physical
             .iter()
             .enumerate()
-            .map(|(i, &v)| {
-                self.to_contact_coordinates(v, i)[0]
-            })
+            .map(|(i, &v)| self.to_contact_coordinates(v, i)[0])
             .collect()
     }
     /// Transform a given vector of normal coordinates in contact space to vectors in physical space.
@@ -300,17 +298,21 @@ impl ContactBasis {
         let n = self.normals.len();
 
         // A vector of column major change of basis matrices
-        let bases: Chunked3<Vec<_>> = (0..n).map(|contact_idx| {
-            let mtx = self.contact_basis_matrix(contact_idx);
-            // Take the transpose of the basis [t, b] (ignoring the 0th normal component).
-            [
-                [mtx.column(1)[0], mtx.column(2)[0]],
-                [mtx.column(1)[1], mtx.column(2)[1]],
-                [mtx.column(1)[2], mtx.column(2)[2]],
-            ]
-        }).collect();
+        let bases: Chunked3<Vec<_>> = (0..n)
+            .map(|contact_idx| {
+                let mtx = self.contact_basis_matrix(contact_idx);
+                // Take the transpose of the basis [t, b] (ignoring the 0th normal component).
+                [
+                    [mtx.column(1)[0], mtx.column(2)[0]],
+                    [mtx.column(1)[1], mtx.column(2)[1]],
+                    [mtx.column(1)[2], mtx.column(2)[2]],
+                ]
+            })
+            .collect();
 
-        BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked2::from_array_vec(bases.into_flat())))
+        BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked2::from_array_vec(
+            bases.into_flat(),
+        )))
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of
@@ -510,7 +512,8 @@ mod tests {
                 }
             }
 
-            let reprojected_physical_vecs = basis.from_tangent_space(projected_contact_vecs.as_slice());
+            let reprojected_physical_vecs =
+                basis.from_tangent_space(projected_contact_vecs.as_slice());
 
             for (a, b) in projected_physical_vecs
                 .into_iter()

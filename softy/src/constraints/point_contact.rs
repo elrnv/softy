@@ -495,7 +495,11 @@ impl ContactConstraint for PointContactConstraint {
         let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
         normals_subset.clone_into_other(&mut normals);
 
-        self.frictional_contact.as_mut().unwrap().contact_basis.update_from_normals(normals.into());
+        self.frictional_contact
+            .as_mut()
+            .unwrap()
+            .contact_basis
+            .update_from_normals(normals.into());
 
         let jac = self.compute_contact_jacobian(&active_contact_indices);
         let effective_mass_inv =
@@ -618,8 +622,7 @@ impl ContactConstraint for PointContactConstraint {
                 true
             }
         } else {
-            let prev_friction_impulse_t =
-                contact_basis.to_tangent_space(&prev_friction_impulse);
+            let prev_friction_impulse_t = contact_basis.to_tangent_space(&prev_friction_impulse);
             // Euclidean coords
             if true {
                 // Switch between implicit solver and explicit solver here.
@@ -655,7 +658,8 @@ impl ContactConstraint for PointContactConstraint {
                     }
                 }
             } else {
-                let predictor_impulse_t = contact_basis.to_tangent_space(predictor_impulse.view().into());
+                let predictor_impulse_t =
+                    contact_basis.to_tangent_space(predictor_impulse.view().into());
                 for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
                     predictor_impulse_t.iter(),
                     contact_impulse.iter(),

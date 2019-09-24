@@ -6,8 +6,8 @@ use reinterpret::*;
 
 use super::FrictionSolveResult;
 use unroll::unroll_for_loops;
-use utils::zip;
 use utils::soap::*;
+use utils::zip;
 
 use crate::Error;
 
@@ -126,11 +126,14 @@ impl<'a> FrictionProblem<'a> {
             Chunked2::from_flat(r).iter_mut(),
             self.predictor_impulse.iter(),
             self.contact_impulse.iter()
-        ).enumerate() {
+        )
+        .enumerate()
+        {
             let p_norm = Tensor::flat(p).norm();
             if p_norm > 0.0 {
                 let pred = self.contact_basis.to_contact_coordinates(p, i);
-                *r = (Tensor::flat([pred[1], pred[2]]) * (-self.mu * cr.abs() / p_norm)).into_inner();
+                *r = (Tensor::flat([pred[1], pred[2]]) * (-self.mu * cr.abs() / p_norm))
+                    .into_inner();
             } else {
                 *r = [0.0; 2];
             }
@@ -303,10 +306,13 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let prev_r_t = Tensor::new(Chunked2::from_array_slice(self.0.prev_friction_impulse_t));
 
         // Compute the difference between current and previous impulses in tangent space.
-        let diff_t =  r_t - prev_r_t;
+        let diff_t = r_t - prev_r_t;
 
         // Convert to physical space.
-        let diff = self.0.contact_basis.from_tangent_space(diff_t.view().into_inner().into());
+        let diff = self
+            .0
+            .contact_basis
+            .from_tangent_space(diff_t.view().into_inner().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
         let predictor = Tensor::new(Chunked3::from_array_slice(self.0.predictor_impulse));
@@ -327,9 +333,12 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let prev_r_t = Tensor::new(Chunked2::from_array_slice(self.0.prev_friction_impulse_t));
 
         // Compute the difference between current and previous impulses in tangent space.
-        let diff_t =  r_t - prev_r_t;
+        let diff_t = r_t - prev_r_t;
 
-        let diff = self.0.contact_basis.from_tangent_space(diff_t.view().into_inner().into());
+        let diff = self
+            .0
+            .contact_basis
+            .from_tangent_space(diff_t.view().into_inner().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
         let predictor = Tensor::flat(Chunked3::from_array_slice(self.0.predictor_impulse));
@@ -337,7 +346,10 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
 
         let grad = self.0.mass_inv_mtx.view() * diff.view();
 
-        let grad_t = self.0.contact_basis.to_tangent_space(grad.view().into_inner().into());
+        let grad_t = self
+            .0
+            .contact_basis
+            .to_tangent_space(grad.view().into_inner().into());
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
@@ -409,8 +421,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
         // Objective Hessian is diagonal.
         // Constraint Hessian is diagonal.
-        2 * self.num_constraints()
-            + 2 * self.0.predictor_impulse.len()
+        2 * self.num_constraints() + 2 * self.0.predictor_impulse.len()
     }
 
     #[unroll_for_loops]
@@ -441,7 +452,10 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         let mut hess = Tensor::flat(Chunked2::from_flat(vals));
         let num_hess_entries = hess.len();
         let mut hess_iter_mut = hess.iter_mut();
-        assert_eq!(num_hess_entries, self.0.predictor_impulse.len() + lambda.len());
+        assert_eq!(
+            num_hess_entries,
+            self.0.predictor_impulse.len() + lambda.len()
+        );
         for h in &mut hess_iter_mut {
             // TODO: multiply by mass_inv_mtx
             *h = *(Tensor::flat([0.0; 2]) * (1.0 * obj_factor));
@@ -544,13 +558,18 @@ mod tests {
             ]))
             .into();
 
-        let prev_friction_impulse_t = vec![
-            [0.0, 0.0],
-            [0.0, 0.0],
-        ];
-        let predictor_impulse  = vec![
-            [0.0, 0.07225747944670913 * masses[0], 0.0000001280108566301736 * masses[0]],
-            [0.0, 0.06185827187696774 * masses[1], -0.0060040275393186595 * masses[1]],
+        let prev_friction_impulse_t = vec![[0.0, 0.0], [0.0, 0.0]];
+        let predictor_impulse = vec![
+            [
+                0.0,
+                0.07225747944670913 * masses[0],
+                0.0000001280108566301736 * masses[0],
+            ],
+            [
+                0.0,
+                0.06185827187696774 * masses[1],
+                -0.0060040275393186595 * masses[1],
+            ],
         ]; // tet vertex velocities
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];
 
@@ -574,7 +593,7 @@ mod tests {
 
         let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
         let final_velocity: Vec<_> = zip!(p_imp_t.iter(), solution.iter(), masses.iter())
-            .map(|(&pr, &r, &m)| (Vector2(pr) + Vector2(r))/m)
+            .map(|(&pr, &r, &m)| (Vector2(pr) + Vector2(r)) / m)
             .collect();
 
         dbg!(&solution);

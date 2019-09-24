@@ -63,13 +63,17 @@ impl<T, I> Tensor<T, I> {
 }
 
 impl<T, S, I> Tensor<S, I>
-where S: Storage<Storage = [T]>,
-      T: Scalar,
+where
+    S: Storage<Storage = [T]>,
+    T: Scalar,
 {
     // TODO: Fix this implementation to not contact over storage. This doesn't work for sparse
     // matrices for example.
     pub fn dot(&self, other: Self) -> T {
-        self.storage().iter().zip(other.storage().iter()).fold(T::zero(), |acc, (&a, &b)| acc + a * b)
+        self.storage()
+            .iter()
+            .zip(other.storage().iter())
+            .fold(T::zero(), |acc, (&a, &b)| acc + a * b)
     }
 }
 
@@ -151,7 +155,7 @@ impl<T, I, J> Tensor<T, (I, J)> {
  * Scalar trait
  */
 
-pub trait Scalar: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign { }
+pub trait Scalar: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign {}
 impl<T> Scalar for T where T: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign {}
 
 /*

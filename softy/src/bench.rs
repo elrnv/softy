@@ -59,5 +59,4 @@ mod bench {
                 .is_ok())
         })
     }
-
 }

@@ -627,7 +627,6 @@ where
 //    }
 //}
 
-
 impl<S> IsolateIndex<S> for std::ops::RangeFrom<usize>
 where
     S: Set + Owned,

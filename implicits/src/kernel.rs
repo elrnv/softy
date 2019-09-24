@@ -497,7 +497,6 @@ mod tests {
         test_derivatives(&kern, 1);
         test_radial_derivatives(&kern, 1);
     }
-
 }
 
 #[cfg(all(feature = "unstable", test))]

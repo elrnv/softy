@@ -299,13 +299,14 @@ impl ContactConstraint for ImplicitContactConstraint {
             if true {
                 // Implicit Friction
 
-                let mut solver = crate::friction::proj_solver::FrictionSolver::without_contact_jacobian(
-                    &velocity_t,
-                    &contact_impulse,
-                    &frictional_contact.contact_basis,
-                    object_mass_inv.view(),
-                    frictional_contact.params,
-                );
+                let mut solver =
+                    crate::friction::proj_solver::FrictionSolver::without_contact_jacobian(
+                        &velocity_t,
+                        &contact_impulse,
+                        &frictional_contact.contact_basis,
+                        object_mass_inv.view(),
+                        frictional_contact.params,
+                    );
 
                 eprintln!("#### Solving Friction");
                 let r_t = solver.step();

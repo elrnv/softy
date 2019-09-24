@@ -152,7 +152,8 @@ macro_rules! impl_array_vectors {
         // Rust's orphan rules. However, if we wrap a scalar in a tensor struct, this will
         // work.
         impl<T: Scalar> Mul<Tensor<[T; $n]>> for Tensor<T>
-            where Tensor<[T; $n]>: MulAssign<Tensor<T>>
+        where
+            Tensor<[T; $n]>: MulAssign<Tensor<T>>,
         {
             type Output = Tensor<[T; $n]>;
             fn mul(self, mut rhs: Tensor<[T; $n]>) -> Self::Output {

@@ -299,6 +299,8 @@ where
     }
 }
 
+impl_isolate_index_for_static_range!(impl<S, T, I> for Sparse<S, T, I>);
+
 //impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
 //where
 //    Idx: IsolateIndex<Self>,

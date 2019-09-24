@@ -823,6 +823,8 @@ where
     }
 }
 
+impl_isolate_index_for_static_range!(impl<S, O> for Chunked<S, O>);
+
 //impl<S, O, I> Isolate<I> for Chunked<S, O>
 //where
 //    I: IsolateIndex<Self>,

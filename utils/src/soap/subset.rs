@@ -568,6 +568,8 @@ where
     }
 }
 
+impl_isolate_index_for_static_range!(impl<S, O> for Subset<S, O>);
+
 //impl<S, I, O> Isolate<I> for Subset<S, O>
 //where
 //    I: IsolateIndex<Self>,

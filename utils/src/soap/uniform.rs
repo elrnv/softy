@@ -910,6 +910,22 @@ where
     }
 }
 
+impl<S, N, M> IsolateIndex<UniChunked<S, U<M>>> for StaticRange<N>
+where
+    S: Set,
+    M: Unsigned,
+    N: Unsigned + std::ops::Mul<M>,
+    StaticRange<<N as std::ops::Mul<M>>::Output>: IsolateIndex<S>,
+{
+    type Output = UniChunked<<StaticRange<N::Output> as IsolateIndex<S>>::Output, U<M>>;
+
+    fn try_isolate(self, set: UniChunked<S, U<M>>) -> Option<Self::Output> {
+        let rng = StaticRange::<N::Output>::new(self.start);
+        let UniChunked { data, chunks } = set;
+        IsolateIndex::try_isolate(rng, data).map(|data| UniChunked { data, chunks })
+    }
+}
+
 impl<S> IsolateIndex<ChunkedN<S>> for usize
 where
     S: Set + Isolate<std::ops::Range<usize>>,
@@ -953,30 +969,7 @@ where
     }
 }
 
-//impl<S, N, I> Isolate<I> for UniChunked<S, N>
-//where
-//    I: IsolateIndex<Self>,
-//{
-//    type Output = I::Output;
-//    /// Get a mutable subview from this `UniChunked` collection according to the
-//    /// given range. If the range is a single index, then a single chunk is
-//    /// returned instead.
-//    ///
-//    /// # Examples
-//    ///
-//    /// ```rust
-//    /// use utils::soap::*;
-//    /// let mut v = vec![1,2,3, 4,5,6, 0,0,0, 10,11,12];
-//    /// let mut s = Chunked3::from_flat(v.as_mut_slice());
-//    ///
-//    /// s.view_mut().try_isolate(2).unwrap().copy_from_slice(&[7,8,9]);
-//    /// assert_eq!(s.view().get(2), Some(&[7,8,9])); // Single index
-//    /// assert_eq!(v, vec![1,2,3, 4,5,6, 7,8,9, 10,11,12]);
-//    /// ```
-//    fn try_isolate(self, range: I) -> Option<I::Output> {
-//        range.try_isolate(self)
-//    }
-//}
+impl_isolate_index_for_static_range!(impl<S> for ChunkedN<S>);
 
 impl<T, N> std::ops::Index<usize> for UniChunked<Vec<T>, U<N>>
 where

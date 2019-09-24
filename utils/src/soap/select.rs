@@ -387,6 +387,8 @@ where
     }
 }
 
+impl_isolate_index_for_static_range!(impl<S, I> for Select<S, I>);
+
 //impl<S, I, Idx> Isolate<Idx> for Select<S, I>
 //where
 //    Idx: IsolateIndex<Self>,

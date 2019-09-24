@@ -11,6 +11,14 @@ use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
 use std::ops::{Add, Mul, MulAssign};
 
+pub trait SparseMatrix {
+    fn num_non_zeros(&self) -> usize;
+}
+
+pub trait SparseBlockMatrix {
+    fn num_non_zero_blocks(&self) -> usize;
+}
+
 /// This trait defines information provided by any matrx type.
 pub trait Matrix {
     type Transpose;
@@ -153,6 +161,24 @@ where
     }
     fn num_rows(&self) -> usize {
         self.num_chunked_rows() * self.num_rows_per_block()
+    }
+}
+
+impl<S, N: Dimension> SparseMatrix for DiagonalBlockMatrix<N, S>
+where
+    UniChunked<S, N>: Set,
+{
+    fn num_non_zeros(&self) -> usize {
+        self.num_rows()
+    }
+}
+
+impl<S, N: Dimension> SparseBlockMatrix for DiagonalBlockMatrix<N, S>
+where
+    UniChunked<S, N>: Set,
+{
+    fn num_non_zero_blocks(&self) -> usize {
+        self.num_chunked_rows()
     }
 }
 
@@ -350,6 +376,26 @@ where
     }
     fn num_rows(&self) -> usize {
         self.num_chunked_rows() * self.num_rows_per_block()
+    }
+}
+
+impl<S, I, N, M> SparseMatrix for DSBlockMatrix<N, M, S, I>
+where
+    Self: Storage,
+    <Self as Storage>::Storage: Set,
+{
+    fn num_non_zeros(&self) -> usize {
+        self.storage().len()
+    }
+}
+
+impl<S, I, N, M> SparseBlockMatrix for DSBlockMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    fn num_non_zero_blocks(&self) -> usize {
+        self.data.data().source().len()
     }
 }
 

@@ -36,10 +36,74 @@ pub trait BlockMatrix {
     fn num_chunked_cols(&self) -> usize;
 }
 
+/*
+ * One-dimentional vectors
+ */
+
+impl<T, I> Matrix for Tensor<Vec<T>, I> {
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
+    }
+    fn num_cols(&self) -> usize {
+        1
+    }
+    fn num_rows(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<T, I> Matrix for Tensor<&[T], I> {
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
+    }
+    fn num_cols(&self) -> usize {
+        1
+    }
+    fn num_rows(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<T, I> Matrix for Tensor<&mut [T], I> {
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
+    }
+    fn num_cols(&self) -> usize {
+        1
+    }
+    fn num_rows(&self) -> usize {
+        self.data.len()
+    }
+}
+
+/*
+ * Matrices
+ */
+
 /// Row-major dense matrix with dynamic number of rows and N columns, where N can be `usize` or a
 /// constant.
 pub type DMatrix<N = usize, S = Vec<f64>> = Tensor<UniChunked<S, N>>;
 pub type DMatrixView<'a, N = usize> = DMatrix<&'a [f64], N>;
+
+impl<N, S> Matrix for DMatrix<N, S>
+where
+    N: Dimension,
+    UniChunked<S, N>: Set,
+{
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
+    }
+    fn num_cols(&self) -> usize {
+        self.data.chunk_size()
+    }
+    fn num_rows(&self) -> usize {
+        self.data.len()
+    }
+}
 
 /// Row-major dense matrix of row-major NxM blocks where N is the number of rows an M number of
 /// columns.

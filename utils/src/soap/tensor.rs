@@ -61,6 +61,18 @@ impl<T, I> Tensor<T, I> {
         self.data
     }
 }
+
+impl<T, S, I> Tensor<S, I>
+where S: Storage<Storage = [T]>,
+      T: Scalar,
+{
+    // TODO: Fix this implementation to not contact over storage. This doesn't work for sparse
+    // matrices for example.
+    pub fn dot(&self, other: Self) -> T {
+        self.storage().iter().zip(other.storage().iter()).fold(T::zero(), |acc, (&a, &b)| acc + a * b)
+    }
+}
+
 impl<T: ?Sized, I> Tensor<T, I> {
     /// Create a reference to the given type as a `Tensor`.
     pub fn as_ref(c: &T) -> &Tensor<T, I> {
@@ -93,6 +105,19 @@ impl<T: Set, I> Set for Tensor<T, I> {
     type Elem = T::Elem;
     fn len(&self) -> usize {
         self.data.len()
+    }
+}
+
+impl<T: Storage, I> Storage for Tensor<T, I> {
+    type Storage = T::Storage;
+    fn storage(&self) -> &T::Storage {
+        self.data.storage()
+    }
+}
+
+impl<T: StorageMut, I> StorageMut for Tensor<T, I> {
+    fn storage_mut(&mut self) -> &mut T::Storage {
+        self.data.storage_mut()
     }
 }
 

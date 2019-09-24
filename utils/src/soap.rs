@@ -173,8 +173,8 @@ pub trait ReadSet<'a>:
     + Get<'a, std::ops::Range<usize>>
     + Isolate<usize>
     + Isolate<std::ops::Range<usize>>
-    + ToOwned
-    + ToOwnedData
+    + IntoOwned
+    + IntoOwnedData
     + SplitAt
     + SplitOff
     + SplitFirst
@@ -195,8 +195,8 @@ impl<'a, T> ReadSet<'a> for T where
         + Get<'a, std::ops::Range<usize>>
         + Isolate<usize>
         + Isolate<std::ops::Range<usize>>
-        + ToOwned
-        + ToOwnedData
+        + IntoOwned
+        + IntoOwnedData
         + SplitAt
         + SplitOff
         + SplitFirst
@@ -221,8 +221,8 @@ pub trait OwnedSet<'a>:
     + Get<'a, std::ops::Range<usize>>
     + Isolate<usize>
     + Isolate<std::ops::Range<usize>>
-    + ToOwned
-    + ToOwnedData
+    + IntoOwned
+    + IntoOwnedData
     + SplitOff
     + IntoFlat
     + Dummy
@@ -240,8 +240,8 @@ impl<'a, T> OwnedSet<'a> for T where
         + Get<'a, std::ops::Range<usize>>
         + Isolate<usize>
         + Isolate<std::ops::Range<usize>>
-        + ToOwned
-        + ToOwnedData
+        + IntoOwned
+        + IntoOwnedData
         + SplitOff
         + IntoFlat
         + Dummy
@@ -307,62 +307,63 @@ pub trait CloneWithStorage<S> {
 }
 
 /// An analog to the `ToOwned` trait from `std` that works for chunked views.
-pub trait ToOwned
+/// As the name suggests, this version of `ToOwned` takes `self` by value.
+pub trait IntoOwned
 where
     Self: Sized,
 {
     type Owned;
-    fn to_owned(self) -> Self::Owned;
+    fn into_owned(self) -> Self::Owned;
     fn clone_into(self, target: &mut Self::Owned) {
-        *target = self.to_owned();
+        *target = self.into_owned();
     }
 }
 
-/// Blanked implementation of `ToOwned` for references of types that are already
+/// Blanket implementation of `IntoOwned` for references of types that are already
 /// `std::borrow::ToOwned`.
-impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &S {
+impl<S: std::borrow::ToOwned + ?Sized> IntoOwned for &S {
     type Owned = S::Owned;
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         std::borrow::ToOwned::to_owned(self)
     }
 }
 
-/// Blanked implementation of `ToOwned` for mutable references of types that are
+/// Blanket implementation of `IntoOwned` for mutable references of types that are
 /// already `std::borrow::ToOwned`.
-impl<S: std::borrow::ToOwned + ?Sized> ToOwned for &mut S {
+impl<S: std::borrow::ToOwned + ?Sized> IntoOwned for &mut S {
     type Owned = S::Owned;
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         std::borrow::ToOwned::to_owned(self)
     }
 }
 
-/// In contrast to `ToOwned`, this trait produces a clone with owned data, but
+/// In contrast to `IntoOwned`, this trait produces a clone with owned data, but
 /// potentially borrowed structure of the collection.
-pub trait ToOwnedData
+pub trait IntoOwnedData
 where
     Self: Sized,
 {
     type OwnedData;
-    fn to_owned_data(self) -> Self::OwnedData;
+    fn into_owned_data(self) -> Self::OwnedData;
     fn clone_into(self, target: &mut Self::OwnedData) {
-        *target = self.to_owned_data();
+        *target = self.into_owned_data();
     }
 }
 
-/// Blanked implementation of `ToOwnedData` for references of types that are
+/// Blanked implementation of `IntoOwnedData` for references of types that are
 /// already `std::borrow::ToOwned`.
-impl<S: std::borrow::ToOwned + ?Sized> ToOwnedData for &S {
+impl<S: std::borrow::ToOwned + ?Sized> IntoOwnedData for &S {
     type OwnedData = S::Owned;
-    fn to_owned_data(self) -> Self::OwnedData {
+    fn into_owned_data(self) -> Self::OwnedData {
         std::borrow::ToOwned::to_owned(self)
     }
 }
 
-/// Blanked implementation of `ToOwnedData` for mutable references of types that are
+/// Blanked implementation of `IntoOwnedData` for mutable references of types that are
 /// already `std::borrow::ToOwned`.
-impl<S: std::borrow::ToOwned + ?Sized> ToOwnedData for &mut S {
+impl<S: std::borrow::ToOwned + ?Sized> IntoOwnedData for &mut S {
     type OwnedData = S::Owned;
-    fn to_owned_data(self) -> Self::OwnedData {
+    fn into_owned_data(self) -> Self::OwnedData {
         std::borrow::ToOwned::to_owned(self)
     }
 }

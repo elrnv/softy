@@ -740,12 +740,12 @@ where
 //    }
 //}
 
-impl<S, N> ToOwned for UniChunked<S, N>
+impl<S, N> IntoOwned for UniChunked<S, N>
 where
-    S: ToOwned,
+    S: IntoOwned,
     N: Copy,
 {
-    type Owned = UniChunked<<S as ToOwned>::Owned, N>;
+    type Owned = UniChunked<<S as IntoOwned>::Owned, N>;
 
     /// Convert this `UniChunked` collection to an owned one.
     ///
@@ -756,27 +756,27 @@ where
     /// let v = vec![1,2,3,4,5,6];
     /// let s_view = UniChunked::<_, U3>::from_flat(v.as_slice());
     /// let s_owned = UniChunked::<_, U3>::from_flat(v.clone());
-    /// assert_eq!(utils::soap::ToOwned::to_owned(s_view), s_owned);
+    /// assert_eq!(s_view.into_owned(), s_owned);
     /// ```
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         UniChunked {
-            data: self.data.to_owned(),
+            data: self.data.into_owned(),
             chunks: self.chunks,
         }
     }
 }
 
-impl<S, N> ToOwnedData for UniChunked<S, N>
+impl<S, N> IntoOwnedData for UniChunked<S, N>
 where
-    S: ToOwnedData,
+    S: IntoOwnedData,
     N: Copy,
 {
     type OwnedData = UniChunked<S::OwnedData, N>;
-    fn to_owned_data(self) -> Self::OwnedData {
+    fn into_owned_data(self) -> Self::OwnedData {
         let UniChunked { chunks, data } = self;
         UniChunked {
             chunks,
-            data: data.to_owned_data(),
+            data: data.into_owned_data(),
         }
     }
 }

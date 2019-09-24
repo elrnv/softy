@@ -97,9 +97,9 @@ impl<S: Set, I: AsRef<[usize]>> Select<S, I> {
 
 impl<'a, S, I> Select<S, I>
 where
-    S: Set + ToOwned + Get<'a, usize>,
-    <S as ToOwned>::Owned: std::iter::FromIterator<<S as Set>::Elem>,
-    <S as Get<'a, usize>>::Output: ToOwned<Owned = <S as Set>::Elem>,
+    S: Set + IntoOwned + Get<'a, usize>,
+    <S as IntoOwned>::Owned: std::iter::FromIterator<<S as Set>::Elem>,
+    <S as Get<'a, usize>>::Output: IntoOwned<Owned = <S as Set>::Elem>,
     I: AsRef<[usize]>,
 {
     /// Collapse the target values pointed to by `indices` into the structure
@@ -150,7 +150,7 @@ where
         self.indices
             .as_ref()
             .iter()
-            .map(|&i| self.target.at(i).to_owned())
+            .map(|&i| self.target.at(i).into_owned())
             .collect()
     }
 }

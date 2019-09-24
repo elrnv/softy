@@ -193,12 +193,12 @@ impl<O: RemovePrefix> RemovePrefix for SortedChunks<O> {
     }
 }
 
-impl<O: ToOwned> ToOwned for SortedChunks<O> {
+impl<O: IntoOwned> IntoOwned for SortedChunks<O> {
     type Owned = SortedChunks<O::Owned>;
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         SortedChunks {
             sorted: self.sorted,
-            offsets: self.offsets.to_owned(),
+            offsets: self.offsets.into_owned(),
         }
     }
 }

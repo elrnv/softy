@@ -243,10 +243,10 @@ impl<O: RemovePrefix> RemovePrefix for Offsets<O> {
     }
 }
 
-impl<O: ToOwned> ToOwned for Offsets<O> {
+impl<O: IntoOwned> IntoOwned for Offsets<O> {
     type Owned = Offsets<O::Owned>;
-    fn to_owned(self) -> Self::Owned {
-        Offsets(self.0.to_owned())
+    fn into_owned(self) -> Self::Owned {
+        Offsets(self.0.into_owned())
     }
 }
 

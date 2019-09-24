@@ -620,31 +620,31 @@ where
     }
 }
 
-impl<S, O> ToOwned for Chunked<S, O>
+impl<S, O> IntoOwned for Chunked<S, O>
 where
-    S: ToOwned,
-    O: ToOwned,
+    S: IntoOwned,
+    O: IntoOwned,
 {
     type Owned = Chunked<S::Owned, O::Owned>;
 
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         Chunked {
-            chunks: self.chunks.to_owned(),
-            data: self.data.to_owned(),
+            chunks: self.chunks.into_owned(),
+            data: self.data.into_owned(),
         }
     }
 }
 
-impl<S, O> ToOwnedData for Chunked<S, O>
+impl<S, O> IntoOwnedData for Chunked<S, O>
 where
-    S: ToOwnedData,
+    S: IntoOwnedData,
 {
     type OwnedData = Chunked<S::OwnedData, O>;
-    fn to_owned_data(self) -> Self::OwnedData {
+    fn into_owned_data(self) -> Self::OwnedData {
         let Chunked { chunks, data } = self;
         Chunked {
             chunks,
-            data: data.to_owned_data(),
+            data: data.into_owned_data(),
         }
     }
 }

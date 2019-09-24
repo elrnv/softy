@@ -64,17 +64,17 @@ impl<S, T, U> CloneWithStorage<U> for (S, T) {
     }
 }
 
-impl<S: ToOwned, T: ToOwned> ToOwned for (S, T) {
+impl<S: IntoOwned, T: IntoOwned> IntoOwned for (S, T) {
     type Owned = (S::Owned, T::Owned);
-    fn to_owned(self) -> Self::Owned {
-        (self.0.to_owned(), self.1.to_owned())
+    fn into_owned(self) -> Self::Owned {
+        (self.0.into_owned(), self.1.into_owned())
     }
 }
 
-impl<S: ToOwnedData, T: ToOwnedData> ToOwnedData for (S, T) {
+impl<S: IntoOwnedData, T: IntoOwnedData> IntoOwnedData for (S, T) {
     type OwnedData = (S::OwnedData, T::OwnedData);
-    fn to_owned_data(self) -> Self::OwnedData {
-        (self.0.to_owned_data(), self.1.to_owned_data())
+    fn into_owned_data(self) -> Self::OwnedData {
+        (self.0.into_owned_data(), self.1.into_owned_data())
     }
 }
 

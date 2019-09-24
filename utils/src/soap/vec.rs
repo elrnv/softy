@@ -169,17 +169,17 @@ impl<T> RemovePrefix for Vec<T> {
 }
 
 /// Since `Vec` already owns its data, this is simply a noop.
-impl<T> ToOwned for Vec<T> {
+impl<T> IntoOwned for Vec<T> {
     type Owned = Self;
-    fn to_owned(self) -> Self::Owned {
+    fn into_owned(self) -> Self::Owned {
         self
     }
 }
 
 /// Since `Vec` already owns its data, this is simply a noop.
-impl<T> ToOwnedData for Vec<T> {
+impl<T> IntoOwnedData for Vec<T> {
     type OwnedData = Self;
-    fn to_owned_data(self) -> Self::OwnedData {
+    fn into_owned_data(self) -> Self::OwnedData {
         self
     }
 }

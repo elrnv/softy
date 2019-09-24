@@ -56,6 +56,10 @@ impl<T, I> Tensor<T, I> {
             index: PhantomData,
         }
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 impl<T: ?Sized, I> Tensor<T, I> {
     /// Create a reference to the given type as a `Tensor`.

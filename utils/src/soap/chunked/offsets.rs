@@ -98,6 +98,12 @@ impl<O: AsRef<[usize]>> Offsets<O> {
     }
 }
 
+impl<O> Offsets<O> {
+    pub fn into_inner(self) -> O {
+        self.0
+    }
+}
+
 impl<O: AsMut<[usize]>> Offsets<O> {
     /// Moves an offset back by a specified amount, effectively transferring
     /// elements from the previous chunk to the specified chunk.

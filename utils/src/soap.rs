@@ -1,3 +1,22 @@
+macro_rules! impl_isolate_index_for_static_range {
+    (impl<$($type_vars:ident),*> for $type:ty) => {
+        impl_isolate_index_for_static_range! { impl<$($type_vars),*> for $type where }
+    };
+    (impl<$($type_vars:ident),*> for $type:ty where $($constraints:tt)*) => {
+        impl<$($type_vars,)* N: Unsigned> IsolateIndex<$type> for StaticRange<N>
+        where
+            std::ops::Range<usize>: IsolateIndex<$type>,
+            $($constraints)*
+        {
+            type Output = <std::ops::Range<usize> as IsolateIndex<$type>>::Output;
+
+            fn try_isolate(self, set: $type) -> Option<Self::Output> {
+                IsolateIndex::try_isolate(self.start..self.start + N::to_usize(), set)
+            }
+        }
+    }
+}
+
 mod array;
 mod array_math;
 mod boxed;
@@ -596,17 +615,18 @@ where
     }
 }
 
-impl<S, N: Unsigned> IsolateIndex<S> for StaticRange<N>
-where
-    S: Set + Owned,
-    std::ops::Range<usize>: IsolateIndex<S>,
-{
-    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
+//impl<S, N: Unsigned> IsolateIndex<S> for StaticRange<N>
+//where
+//    S: Set + Owned,
+//    std::ops::Range<usize>: IsolateIndex<S>,
+//{
+//    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
+//
+//    fn try_isolate(self, set: S) -> Option<Self::Output> {
+//        IsolateIndex::try_isolate(self.start..self.start + N::to_usize(), set)
+//    }
+//}
 
-    fn try_isolate(self, set: S) -> Option<Self::Output> {
-        IsolateIndex::try_isolate(self.start..self.start + N::to_usize(), set)
-    }
-}
 
 impl<S> IsolateIndex<S> for std::ops::RangeFrom<usize>
 where

@@ -740,6 +740,24 @@ impl<'a> DSBlockMatrix3View<'a> {
 
 
 */
+impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
+    type Output = Tensor<Chunked3<Vec<f64>>>;
+    fn mul(self, rhs: Tensor<Chunked3<&'a [f64]>>) -> Self::Output {
+        //let rhs = rhs.into();
+        assert_eq!(rhs.len(), self.num_chunked_cols());
+
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_chunked_rows()]);
+        for (row, out_row) in self.iter().zip(res.iter_mut()) {
+            for (col_idx, block, _) in row.iter() {
+                let out = Vector3(*out_row) + Matrix3(*block.into_arrays()) * Vector3(rhs[col_idx]);
+                *out_row = out.into();
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
 impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
     type Output = DSBlockMatrix3;
     fn add(self, rhs: DiagonalBlockMatrix3View<'_>) -> Self::Output {

@@ -1075,7 +1075,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
         impl<S, O> Add for Tensor<$chunked<S, O>>
         where
             $chunked<S, O>: Set,
-            S: ToOwnedData,
+            S: IntoOwnedData,
             Tensor<S>: Add<Output = Tensor<S::OwnedData>>,
         {
             type Output = Tensor<$chunked<S::OwnedData, O>>;
@@ -1093,7 +1093,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
         impl<S, O> Sub for Tensor<$chunked<S, O>>
         where
             $chunked<S, O>: Set,
-            S: ToOwnedData,
+            S: IntoOwnedData,
             Tensor<S>: Sub<Output = Tensor<S::OwnedData>>,
         {
             type Output = Tensor<$chunked<S::OwnedData, O>>;
@@ -1116,7 +1116,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
         impl<S, O, T> Mul<T> for Tensor<$chunked<S, O>>
         where
             $chunked<S, O>: Set,
-            S: ToOwnedData,
+            S: IntoOwnedData,
             Tensor<S>: Mul<T, Output = Tensor<S::OwnedData>>,
         {
             type Output = Tensor<$chunked<S::OwnedData, O>>;

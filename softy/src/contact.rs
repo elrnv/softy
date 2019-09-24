@@ -175,21 +175,21 @@ impl ContactBasis {
         self.contact_basis_matrix(contact_index) * v.into()
     }
 
-    /// Transform a given stacked vector of vectors in physical space to values in normal direction
-    /// to each contact point and stacked 2D vectors in the tangent space of the contact point.
-    pub fn to_tangent_space(&self, physical: Vec<[f64; 3]>) -> Vec<[f64; 2]> {
+    /// Transform a given stacked vector of vectors in physical space
+    /// to stacked 2D vectors in the tangent space of the contact point.
+    pub fn to_tangent_space(&self, physical: &[[f64; 3]]) -> Vec<[f64; 2]> {
         physical
             .iter()
             .enumerate()
             .map(|(i, &v)| {
-                let new_v: Vector3<f64> = self.to_contact_coordinates(v, i).into();
+                let new_v = self.to_contact_coordinates(v, i);
                 [new_v[1], new_v[2]]
             })
             .collect()
     }
 
     /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
-    pub fn from_tangent_space(&self, contact: Vec<[f64; 2]>) -> Vec<[f64; 3]> {
+    pub fn from_tangent_space(&self, contact: &[[f64; 2]]) -> Vec<[f64; 3]> {
         contact
             .iter()
             .enumerate()
@@ -197,7 +197,26 @@ impl ContactBasis {
             .collect()
     }
 
-    pub fn to_polar_tangent_space(&self, physical: Vec<[f64; 3]>) -> Vec<Polar2<f64>> {
+    /// Transform a given vector of vectors in physical space to values in normal direction.
+    pub fn to_normal_space(&self, physical: &[[f64; 3]]) -> Vec<f64> {
+        physical
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                self.to_contact_coordinates(v, i)[0]
+            })
+            .collect()
+    }
+    /// Transform a given vector of normal coordinates in contact space to vectors in physical space.
+    pub fn from_normal_space(&self, contact: &[f64]) -> Vec<[f64; 3]> {
+        contact
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| self.from_contact_coordinates([n, 0.0, 0.0], i).into())
+            .collect()
+    }
+
+    pub fn to_polar_tangent_space(&self, physical: &[[f64; 3]]) -> Vec<Polar2<f64>> {
         physical
             .iter()
             .enumerate()
@@ -205,7 +224,7 @@ impl ContactBasis {
             .collect()
     }
 
-    pub fn from_polar_tangent_space(&self, contact: Vec<Polar2<f64>>) -> Vec<[f64; 3]> {
+    pub fn from_polar_tangent_space(&self, contact: &[Polar2<f64>]) -> Vec<[f64; 3]> {
         contact
             .iter()
             .enumerate()
@@ -275,6 +294,23 @@ impl ContactBasis {
             reinterpret_vec(bases),
         )
         .to_csr()
+    }
+
+    pub fn tangent_basis_matrix(&self) -> BlockDiagonalMatrix3x2 {
+        let n = self.normals.len();
+
+        // A vector of column major change of basis matrices
+        let bases: Chunked3<Vec<_>> = (0..n).map(|contact_idx| {
+            let mtx = self.contact_basis_matrix(contact_idx);
+            // Take the transpose of the basis [t, b] (ignoring the 0th normal component).
+            [
+                [mtx.column(1)[0], mtx.column(2)[0]],
+                [mtx.column(1)[1], mtx.column(2)[1]],
+                [mtx.column(1)[2], mtx.column(2)[2]],
+            ]
+        }).collect();
+
+        BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked2::from_array_vec(bases.into_flat())))
     }
 
     /// Update the basis for the contact space at each contact point given the specified set of
@@ -463,10 +499,10 @@ mod tests {
             let vecs = utils::random_vectors(trimesh.num_vertices());
 
             // Test euclidean basis
-            let contact_vecs = basis.to_tangent_space(reinterpret_vec(vecs.clone()));
-            let projected_physical_vecs = basis.from_tangent_space(contact_vecs.clone());
+            let contact_vecs = basis.to_tangent_space(reinterpret_slice(vecs.as_slice()));
+            let projected_physical_vecs = basis.from_tangent_space(contact_vecs.as_slice());
             let projected_contact_vecs =
-                basis.to_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
+                basis.to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()));
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 for i in 0..2 {
@@ -474,7 +510,7 @@ mod tests {
                 }
             }
 
-            let reprojected_physical_vecs = basis.from_tangent_space(projected_contact_vecs);
+            let reprojected_physical_vecs = basis.from_tangent_space(projected_contact_vecs.as_slice());
 
             for (a, b) in projected_physical_vecs
                 .into_iter()
@@ -486,17 +522,17 @@ mod tests {
             }
 
             // Test cylindrical coordinates
-            let contact_vecs = basis.to_polar_tangent_space(reinterpret_vec(vecs.clone()));
-            let projected_physical_vecs = basis.from_polar_tangent_space(contact_vecs.clone());
+            let contact_vecs = basis.to_polar_tangent_space(reinterpret_slice(vecs.as_slice()));
+            let projected_physical_vecs = basis.from_polar_tangent_space(contact_vecs.as_slice());
             let projected_contact_vecs =
-                basis.to_polar_tangent_space(reinterpret_vec(projected_physical_vecs.clone()));
+                basis.to_polar_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()));
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 assert_relative_eq!(a.radius, b.radius);
                 assert_relative_eq!(a.angle, b.angle);
             }
 
-            let reprojected_physical_vecs = basis.from_polar_tangent_space(projected_contact_vecs);
+            let reprojected_physical_vecs = basis.from_polar_tangent_space(&projected_contact_vecs);
 
             for (a, b) in projected_physical_vecs
                 .into_iter()

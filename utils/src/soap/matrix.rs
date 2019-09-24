@@ -140,7 +140,7 @@ where
 {
     /// A generic constructor that transforms the input into the underlying storage type. This
     /// sometimes requires additional generic parameters to be explicitly specified.
-    /// This function assumes `Box<[usize]>` as a placeholder for indices sinces the subset is
+    /// This function assumes `Box<[usize]>` as a placeholder for indices where the subset is
     /// entire.
     pub fn new<T: Into<Subset<UniChunked<S, N>, Box<[usize]>>>>(chunks: T) -> Self {
         DiagonalBlockMatrix(chunks.into())
@@ -267,6 +267,158 @@ where
     type Type = DiagonalBlockMatrixViewMut<'a, N>;
     fn view_mut(&'a mut self) -> Self::Type {
         DiagonalBlockMatrix(ViewMut::view_mut(&mut self.0))
+    }
+}
+
+/*
+ * Block Diagonal matrices
+ */
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BlockDiagonalMatrix<N = usize, M = usize, S = Vec<f64>, I = Box<[usize]>>(
+    Subset<UniChunked<UniChunked<S, M>, N>, I>,
+);
+pub type BlockDiagonalMatrixView<'a, N = usize, M = usize> =
+    BlockDiagonalMatrix<N, M, &'a [f64], &'a [usize]>;
+pub type BlockDiagonalMatrixViewMut<'a, N = usize, M = usize> =
+    BlockDiagonalMatrix<N, M, &'a mut [f64], &'a [usize]>;
+
+pub type BlockDiagonalMatrix3x2<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U3, U2, S, I>;
+pub type BlockDiagonalMatrix3x2View<'a> = BlockDiagonalMatrix3x2<&'a [f64], &'a [usize]>;
+
+impl<S, N: Dimension, M: Dimension> BlockDiagonalMatrix<N, M, S, Box<[usize]>>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    /// A generic constructor that transforms the input into the underlying storage type. This
+    /// sometimes requires additional generic parameters to be explicitly specified.
+    /// This function assumes `Box<[usize]>` as a placeholder for indices where the subset is
+    /// entire.
+    pub fn new<T: Into<Subset<UniChunked<UniChunked<S, M>, N>, Box<[usize]>>>>(chunks: T) -> Self {
+        BlockDiagonalMatrix(chunks.into())
+    }
+}
+
+impl<S, I: AsRef<[usize]>, N: Dimension, M: Dimension> BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    /// Explicit constructor from subsets.
+    pub fn from_subset(chunks: Subset<UniChunked<UniChunked<S, M>, N>, I>) -> Self {
+        BlockDiagonalMatrix(chunks.into())
+    }
+}
+
+impl<S, N: Dimension, M: Dimension> BlockDiagonalMatrix<N, M, S, Box<[usize]>>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    /// Explicit constructor from uniformly chunked collections.
+    pub fn from_uniform(chunks: UniChunked<UniChunked<S, M>, N>) -> Self {
+        BlockDiagonalMatrix(Subset::all(chunks))
+    }
+}
+impl<S, N, M> BlockDiagonalMatrix<U<N>, U<M>, S, Box<[usize]>>
+where
+    UniChunked<UniChunked<S, U<M>>, U<N>>: Set,
+    UniChunked<S, U<M>>: Set,
+    N: Unsigned + Default,
+    M: Unsigned + Default,
+    S: Set,
+{
+    pub fn from_flat(chunks: S) -> Self {
+        BlockDiagonalMatrix(Subset::all(UniChunked::from_flat(UniChunked::from_flat(
+            chunks,
+        ))))
+    }
+}
+
+impl<S, I, N: Dimension, M: Dimension> BlockMatrix for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+    I: AsRef<[usize]>,
+{
+    fn num_cols_per_block(&self) -> usize {
+        self.0.chunk_size()
+    }
+    fn num_rows_per_block(&self) -> usize {
+        self.0.chunk_size()
+    }
+    fn num_chunked_cols(&self) -> usize {
+        self.0.len()
+    }
+    fn num_chunked_rows(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<S, I, N: Dimension, M: Dimension> Matrix for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+    I: AsRef<[usize]>,
+{
+    type Transpose = Self;
+    fn transpose(self) -> Self {
+        self
+    }
+    fn num_cols(&self) -> usize {
+        self.num_chunked_cols() * self.num_cols_per_block()
+    }
+    fn num_rows(&self) -> usize {
+        self.num_chunked_rows() * self.num_rows_per_block()
+    }
+}
+
+impl<S, I, N: Dimension, M: Dimension> SparseMatrix for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+    I: AsRef<[usize]>,
+{
+    fn num_non_zeros(&self) -> usize {
+        self.num_rows()
+    }
+}
+
+impl<S, I, N: Dimension, M: Dimension> SparseBlockMatrix for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+    I: AsRef<[usize]>,
+{
+    fn num_non_zero_blocks(&self) -> usize {
+        self.num_chunked_rows()
+    }
+}
+
+impl<S: Viewed, I, N, M> Viewed for BlockDiagonalMatrix<N, M, S, I> {}
+
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>, N: Copy, M: Copy> View<'a>
+    for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    type Type = BlockDiagonalMatrixView<'a, N, M>;
+    fn view(&'a self) -> Self::Type {
+        BlockDiagonalMatrix(View::view(&self.0))
+    }
+}
+
+impl<'a, S: Set + ViewMut<'a, Type = &'a mut [f64]>, I: AsRef<[usize]>, N: Copy, M: Copy>
+    ViewMut<'a> for BlockDiagonalMatrix<N, M, S, I>
+where
+    UniChunked<UniChunked<S, M>, N>: Set,
+    UniChunked<S, M>: Set,
+{
+    type Type = BlockDiagonalMatrixViewMut<'a, N, M>;
+    fn view_mut(&'a mut self) -> Self::Type {
+        BlockDiagonalMatrix(ViewMut::view_mut(&mut self.0))
     }
 }
 
@@ -403,6 +555,9 @@ impl SSBlockMatrix3 {
 pub type DSBlockMatrix<N = usize, M = usize, S = Vec<f64>, I = Vec<usize>> =
     Tensor<Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>, Offsets<I>>>;
 pub type DSBlockMatrixView<'a, N = usize, M = usize> = DSBlockMatrix<N, M, &'a [f64], &'a [usize]>;
+
+pub type DSBlockMatrix2<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U2, U2, S, I>;
+pub type DSBlockMatrix2View<'a> = DSBlockMatrix2<&'a [f64], &'a [usize]>;
 
 pub type DSBlockMatrix3<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U3, U3, S, I>;
 pub type DSBlockMatrix3View<'a> = DSBlockMatrix3<&'a [f64], &'a [usize]>;

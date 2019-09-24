@@ -112,6 +112,7 @@ fn unichunked_unichunked() {
     let v: Vec<usize> = (1..=12).collect();
     let uni0 = Chunked2::from_flat(v);
     let uni1 = Chunked3::from_flat(uni0);
+    assert_eq!(&[1, 2], uni1.view().at(0).at(0));
     let mut uni1_iter = uni1.iter();
     let uni0 = uni1_iter.next().unwrap();
     let mut uni0_iter = uni0.iter();

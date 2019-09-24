@@ -230,3 +230,16 @@ fn subset_nested_chunked() {
     assert_eq!(subset[0], [16, 17, 18]);
     assert_eq!(subset[1], [19, 20, 21]);
 }
+
+#[test]
+fn subset_nested_unichunked() {
+    let v: Vec<_> = (1..=24).collect();
+    let u = Chunked3::from_flat(v);
+    let set = Chunked2::from_flat(u);
+    let subset = Subset::from_unique_ordered_indices(&[0, 2], set);
+    let subset = subset.view();
+    assert_eq!(subset.at(0).at(0), &[1, 2, 3]);
+    assert_eq!(subset.at(0).at(1), &[4, 5, 6]);
+    assert_eq!(subset.at(1).at(0), &[13, 14, 15]);
+    assert_eq!(subset.at(1).at(1), &[16, 17, 18]);
+}

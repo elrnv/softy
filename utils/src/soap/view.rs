@@ -68,6 +68,7 @@ impl<'a, V: ViewMut<'a>> IntoView for &'a mut V {
 /// A convenience trait to allow generic implementations to call an iterator over the view. This
 /// is necessary because the `View` trait has an explicit lifetime parameter, which makes it
 /// difficult or impossible to use in generic functions.
+/// For instance it becomes difficult/impossible to impose constraints like `Set` on `View::Type`.
 pub trait ViewIterator<'a> {
     type Item;
     type Iter: Iterator<Item = Self::Item>;

@@ -119,6 +119,13 @@ impl<T, I, J> Tensor<T, (I, J)> {
 }
 
 /*
+ * Scalar trait
+ */
+
+pub trait Scalar: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign { }
+impl<T> Scalar for T where T: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign {}
+
+/*
  * Implement 0-tensor algebra.
  */
 
@@ -957,7 +964,7 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<[T]> {
  * Scalar multiplication
  */
 
-impl<T: Mul<Output = T> + Copy> Mul<T> for Tensor<&[T]> {
+impl<T: Scalar> Mul<T> for Tensor<&[T]> {
     type Output = Tensor<Vec<T>>;
 
     /// Multiply a tensor slice by a scalar producing a new `Vec` tensor.
@@ -974,7 +981,7 @@ impl<T: Mul<Output = T> + Copy> Mul<T> for Tensor<&[T]> {
     }
 }
 
-impl<T: MulAssign + Copy> MulAssign<T> for Tensor<&mut [T]> {
+impl<T: Scalar> MulAssign<T> for Tensor<&mut [T]> {
     /// Multiply this tensor slice by a scalar.
     ///
     /// # Example
@@ -993,7 +1000,7 @@ impl<T: MulAssign + Copy> MulAssign<T> for Tensor<&mut [T]> {
     }
 }
 
-impl<T: MulAssign + Copy> MulAssign<T> for Tensor<[T]> {
+impl<T: Scalar> MulAssign<T> for Tensor<[T]> {
     /// Multiply this tensor slice by a scalar.
     ///
     /// # Example
@@ -1115,6 +1122,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
 
         impl<S, O, T> Mul<T> for Tensor<$chunked<S, O>>
         where
+            T: Scalar,
             $chunked<S, O>: Set,
             S: IntoOwnedData,
             Tensor<S>: Mul<T, Output = Tensor<S::OwnedData>>,
@@ -1136,6 +1144,7 @@ macro_rules! impl_chunked_tensor_arithmetic {
 
         impl<S, O, T> MulAssign<T> for Tensor<$chunked<S, O>>
         where
+            T: Scalar,
             $chunked<S, O>: Set,
             Tensor<S>: MulAssign<T>,
         {

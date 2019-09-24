@@ -987,3 +987,31 @@ mod tests {
         assert_eq!(None, iter.next());
     }
 }
+
+/*
+ * Convert views to owned types
+ */
+
+impl<S: IntoOwned, I: IntoOwned> IntoOwned for Subset<S, I> {
+    type Owned = Subset<S::Owned, I::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        Subset {
+            indices: self.indices.map(|x| x.into_owned()),
+            data: self.data.into_owned(),
+        }
+    }
+}
+
+impl<S, I> IntoOwnedData for Subset<S, I>
+where
+    S: IntoOwnedData,
+{
+    type OwnedData = Subset<S::OwnedData, I>;
+    fn into_owned_data(self) -> Self::OwnedData {
+        Subset {
+            indices: self.indices,
+            data: self.data.into_owned_data(),
+        }
+    }
+}

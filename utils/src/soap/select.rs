@@ -674,3 +674,49 @@ impl<S: ChunkSize, I> ChunkSize for Select<S, I> {
         self.target.chunk_size()
     }
 }
+
+/*
+ * Convert views to owned types
+ */
+
+impl<S: IntoOwned, I: IntoOwned> IntoOwned for Select<S, I> {
+    type Owned = Select<S::Owned, I::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        Select {
+            indices: self.indices.into_owned(),
+            target: self.target.into_owned(),
+        }
+    }
+}
+
+impl<S, I> IntoOwnedData for Select<S, I>
+where
+    S: IntoOwnedData,
+{
+    type OwnedData = Select<S::OwnedData, I>;
+    fn into_owned_data(self) -> Self::OwnedData {
+        Select {
+            indices: self.indices,
+            target: self.target.into_owned_data(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test into_owned for selections.
+    #[test]
+    fn into_owned() {
+        let indices = vec![1,2,3];
+        let target = 0..4;
+        let select = Select {
+            indices: indices.as_slice(),
+            target: target.clone(),
+        };
+
+        assert_eq!(select.into_owned(), Select { indices, target });
+    }
+}

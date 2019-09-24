@@ -625,3 +625,31 @@ impl<S: ChunkSize, T, I> ChunkSize for Sparse<S, T, I> {
         self.source.chunk_size()
     }
 }
+
+/*
+ * Convert views to owned types
+ */
+
+impl<S: IntoOwned, T: IntoOwned, I: IntoOwned> IntoOwned for Sparse<S, T, I> {
+    type Owned = Sparse<S::Owned, T::Owned, I::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        Sparse {
+            selection: self.selection.into_owned(),
+            source: self.source.into_owned(),
+        }
+    }
+}
+
+impl<S, T, I> IntoOwnedData for Sparse<S, T, I>
+where
+    S: IntoOwnedData,
+{
+    type OwnedData = Sparse<S::OwnedData, T, I>;
+    fn into_owned_data(self) -> Self::OwnedData {
+        Sparse {
+            selection: self.selection,
+            source: self.source.into_owned_data(),
+        }
+    }
+}

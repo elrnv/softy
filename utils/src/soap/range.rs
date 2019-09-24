@@ -241,6 +241,20 @@ impl<T: IntBound> IsolateIndex<Range<T>> for std::ops::Range<usize> {
     }
 }
 
+impl<T> IntoOwned for std::ops::Range<T> {
+    type Owned = Self;
+    fn into_owned(self) -> Self::Owned {
+        self
+    }
+}
+
+impl<T> IntoOwnedData for std::ops::Range<T> {
+    type OwnedData = Self;
+    fn into_owned_data(self) -> Self::OwnedData {
+        self
+    }
+}
+
 // Ranges are lightweight and are considered to be viewed types since they are
 // cheap to operate on.
 impl<T> Viewed for Range<T> {}

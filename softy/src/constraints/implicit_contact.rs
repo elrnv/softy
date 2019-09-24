@@ -248,7 +248,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                             frictional_contact.object_impulse.extend_from_slice(
                                 &frictional_contact
                                     .contact_basis
-                                    .from_polar_tangent_space(reinterpret_vec(r_t)),
+                                    .from_polar_tangent_space(reinterpret_slice(r_t.as_slice())),
                             );
                             friction_steps -= 1;
                         } else {
@@ -299,7 +299,7 @@ impl ContactConstraint for ImplicitContactConstraint {
             if true {
                 // Implicit Friction
 
-                let mut solver = FrictionSolver::without_contact_jacobian(
+                let mut solver = crate::friction::proj_solver::FrictionSolver::without_contact_jacobian(
                     &velocity_t,
                     &contact_impulse,
                     &frictional_contact.contact_basis,
@@ -313,7 +313,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                 frictional_contact.object_impulse.extend_from_slice(
                     &frictional_contact
                         .contact_basis
-                        .from_tangent_space(reinterpret_vec(r_t)),
+                        .from_tangent_space(reinterpret_slice(r_t.as_slice())),
                 );
 
             //// This contact jacobian is a selection matrix or a mapping from contact vertices to

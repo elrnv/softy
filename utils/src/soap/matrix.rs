@@ -552,7 +552,7 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
 impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3View<'_> {
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, other: Tensor<Chunked3<&[f64]>>) -> Self::Output {
-        let mut out = crate::soap::ToOwned::to_owned(other.data);
+        let mut out = other.data.into_owned();
         for (&b, out) in self.0.iter().zip(out.iter_mut()) {
             for j in 0..3 {
                 out[j] *= b[j];
@@ -565,7 +565,7 @@ impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3View<'_> {
 impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3<&[f64]> {
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, other: Tensor<Chunked3<&[f64]>>) -> Self::Output {
-        let mut out = crate::soap::ToOwned::to_owned(other.data);
+        let mut out = other.data.into_owned();
         for (&b, out) in self.0.iter().zip(out.iter_mut()) {
             for j in 0..3 {
                 out[j] *= b[j];
@@ -926,5 +926,4 @@ mod tests {
             assert_relative_eq!(val, exp);
         }
     }
-
 }

@@ -682,6 +682,64 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
     }
 }
 
+/*
+ * The following is an attempt at generic implementation of the function below
+impl<'a, N> DSBlockMatrixView<'a, U<N>, U<N>>
+where
+    N: Copy + Default + Unsigned + Array<f64> + Array<<N as Array<f64>>::Array> + std::ops::Mul<N>,
+    <N as Mul<N>>::Output: Copy + Default + Unsigned + Array<f64>,
+{
+    /// A special congruence tranform of the form `A -> P^T A P` where `P` is a block diagonal matrix.
+    /// This is useful for instance as a change of basis transformation.
+    fn diagonal_congruence_transform<M>(self, p: BlockDiagonalMatrixView<U<N>, U<M>>) -> DSBlockMatrix<U<M>, U<M>>
+        where
+            N: Array<<M as Array<f64>>::Array> + std::ops::Mul<M>,
+            M: Copy + Default + Unsigned + Array<f64> + Array<<M as Array<f64>>::Array> + std::ops::Mul<M>,
+            <M as Mul<M>>::Output: Copy + Default + Unsigned + Array<f64>,
+            StaticRange<<N as std::ops::Mul<M>>::Output>: for<'b> IsolateIndex<&'b [f64]>,
+    {
+        let mut out = Chunked::from_offsets(
+            (*self.data.offsets()).into_owned().into_inner(),
+            Sparse::new(
+                self.data.data().selection().clone().into_owned(),
+                UniChunked::from_flat(UniChunked::from_flat(vec![0.0; self.num_non_zero_blocks() * 4]))
+            ),
+        );
+
+        for (out_row, row) in Iterator::zip(out.iter_mut(), self.iter()) {
+            for ((col_idx, out_entry), orig_entry) in out_row.indexed_source_iter_mut().zip(IntoIterator::into_iter(row.source().view())) {
+                *out_entry.as_mut_tensor() = p.0.view().isolate(col_idx).as_tensor().transpose() * orig_entry.as_tensor() * p.0.view().isolate(col_idx).as_tensor();
+            }
+        }
+
+        Tensor::new(out)
+    }
+}
+
+impl<'a> DSBlockMatrix3View<'a> {
+    /// A special congruence tranform of the form `A -> P^T A P` where `P` is a block diagonal matrix.
+    /// This is useful for instance as a change of basis transformation.
+    fn diagonal_congruence_transform(self, p: BlockDiagonalMatrix3x2View) -> DSBlockMatrix2 {
+        let mut out = Chunked::from_offsets(
+            (*self.data.offsets()).into_owned().into_inner(),
+            Sparse::new(
+                self.data.data().selection().clone().into_owned(),
+                UniChunked::from_flat(UniChunked::from_flat(vec![0.0; self.num_non_zero_blocks() * 4]))
+            ),
+        );
+
+        for (out_row, row) in Iterator::zip(out.iter_mut(), self.iter()) {
+            for ((col_idx, out_entry), orig_entry) in out_row.indexed_source_iter_mut().zip(IntoIterator::into_iter(row.source().view())) {
+                *out_entry.as_mut_tensor() = p.0.view().isolate(col_idx).as_tensor().transpose() * orig_entry.as_tensor() * p.0.view().isolate(col_idx).as_tensor();
+            }
+        }
+
+        Tensor::new(out)
+    }
+}
+
+
+*/
 impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
     type Output = DSBlockMatrix3;
     fn add(self, rhs: DiagonalBlockMatrix3View<'_>) -> Self::Output {

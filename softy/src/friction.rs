@@ -1,13 +1,12 @@
 //mod elastic_solver;
 mod polar_solver;
-mod proj_solver;
-mod solver;
+pub mod proj_solver;
+pub mod solver;
 
 use crate::contact::ContactBasis;
 use utils::soap::{Chunked3, Sparse};
 //pub use elastic_solver::*;
 pub use polar_solver::*;
-pub use proj_solver::*;
 
 /// Result from one inner friction step.
 #[derive(Clone, Debug, PartialEq)]

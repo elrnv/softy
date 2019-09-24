@@ -19,7 +19,7 @@ pub struct FrictionPolarSolver<'a> {
 
 impl<'a> FrictionPolarSolver<'a> {
     /// Build a new solver for the friction problem. The given a `predictor_impulse` as a stacked
-    /// vector of tangential impulses for each contact point in contact space. `contact_force` is
+    /// vector of tangential impulses for each contact point in contact space. `contact_impulse` is
     /// the normal component of the predictor frictional contact impulse at each contact point.
     /// Finally, `mu` is the friction coefficient.
     pub fn without_contact_jacobian(
@@ -66,18 +66,18 @@ impl<'a> FrictionPolarSolver<'a> {
     fn new_impl(
         predictor_impulse: &'a [Polar2<f64>],
         contact_force: &'a [f64],
-        _contact_basis: &'a ContactBasis,
-        _mass_inv_mtx: EffectiveMassInvView<'a>,
+        contact_basis: &'a ContactBasis,
+        mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
         contact_jacobian: Option<ContactJacobianView<'a>>,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         let problem = ExplicitFrictionPolarProblem(FrictionPolarProblem {
             predictor_impulse,
             contact_force,
-            //contact_basis,
+            contact_basis,
             mu: params.dynamic_friction,
             contact_jacobian,
-            //mass_inv_mtx,
+            mass_inv_mtx,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -123,8 +123,8 @@ pub(crate) struct FrictionPolarProblem<'a> {
     predictor_impulse: &'a [Polar2<f64>],
     /// A set of contact forces for each contact point.
     contact_force: &'a [f64],
-    ///// Basis defining the normal and tangent space at each point of contact.
-    //contact_basis: &'a ContactBasis,
+    /// Basis defining the normal and tangent space at each point of contact.
+    contact_basis: &'a ContactBasis,
     /// Coefficient of dynamic friction.
     mu: f64,
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
@@ -132,7 +132,7 @@ pub(crate) struct FrictionPolarProblem<'a> {
     /// meaning that contacts occur at vertex positions.
     #[allow(dead_code)]
     contact_jacobian: Option<ContactJacobianView<'a>>,
-    //mass_inv_mtx: EffectiveMassInvView<'a>,
+    mass_inv_mtx: EffectiveMassInvView<'a>,
 }
 
 impl FrictionPolarProblem<'_> {
@@ -317,6 +317,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
         *obj = 0.0;
 
         // Compute (negative of) frictional dissipation.
+        //let force_v = self.0.contact_basis.from_polar_tangent_space(forces);
         for (&r, &f) in self.0.predictor_impulse.iter().zip(forces.iter()) {
             *obj += f.radius * f64::cos(f.angle - r.angle);
         }

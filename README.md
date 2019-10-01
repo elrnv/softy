@@ -18,3 +18,11 @@ annotations in the generated C headers, the exported function symbols will be ma
 compiler and effectively lost.
 
 Ideally we would want to wrap any raw C calls in safer C++ wrappers.
+
+# License
+
+This repository is licensed under the [Mozilla Public License, v. 2.0](https://mozilla.org/MPL/2.0/).
+
+# Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.

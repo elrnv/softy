@@ -10,11 +10,11 @@ use unroll::unroll_for_loops;
 
 macro_rules! impl_array_vectors {
     ($vecn:ident, $rowvecn:ident; $n:expr) => {
-        pub type $vecn<T, I = ()> = Tensor<[T; $n], I>;
-        pub type $rowvecn<T, I = ()> = Tensor<[[T; $n]; 1], ((), I)>;
+        pub type $vecn<T> = Tensor<[T; $n]>;
+        pub type $rowvecn<T> = Tensor<[[T; $n]; 1]>;
 
-        impl<T: Scalar, I> Matrix for Tensor<[T; $n], I> {
-            type Transpose = $rowvecn<T, ((), I)>;
+        impl<T: Scalar> Matrix for Tensor<[T; $n]> {
+            type Transpose = $rowvecn<T>;
             fn transpose(self) -> Self::Transpose {
                 Tensor::new([self.data; 1])
             }
@@ -26,13 +26,13 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar, I> Tensor<[T; $n], I> {
-            pub fn zeros() -> Tensor<[T; $n], I> {
+        impl<T: Scalar> Tensor<[T; $n]> {
+            pub fn zeros() -> Tensor<[T; $n]> {
                 Tensor::new([T::zero(); $n])
             }
             #[allow(unused_mut)]
             #[unroll_for_loops]
-            pub fn dot(&self, other: Tensor<[T; $n], I>) -> T {
+            pub fn dot(&self, other: Tensor<[T; $n]>) -> T {
                 let mut prod = self.data[0] * other.data[0];
                 for i in 1..$n {
                     prod += self.data[i] * other.data[i];
@@ -44,9 +44,9 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Copy, I> Tensor<[T; $n], I> {
+        impl<T: Copy> Tensor<[T; $n]> {
             #[unroll_for_loops]
-            pub fn map<U, F>(&self, mut f: F) -> Tensor<[U; $n], I>
+            pub fn map<U, F>(&self, mut f: F) -> Tensor<[U; $n]>
             where
                 F: FnMut(T) -> U,
             {
@@ -74,22 +74,22 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: std::ops::Add<Output = T> + Zero + Copy, I> Tensor<[T; $n], I> {
+        impl<T: std::ops::Add<Output = T> + Zero + Copy> Tensor<[T; $n]> {
             pub fn sum(&self) -> T {
                 self.fold(T::zero(), |acc, x| acc + x)
             }
         }
 
-        impl<T: Float + Scalar, I> Tensor<[T; $n], I> {
+        impl<T: Float + Scalar> Tensor<[T; $n]> {
             pub fn norm(&self) -> T {
                 self.norm_squared().sqrt()
             }
         }
 
         // Right scalar multiply by a raw scalar.
-        impl<T: Scalar, I> Mul<T> for Tensor<[T; $n], I>
+        impl<T: Scalar> Mul<T> for Tensor<[T; $n]>
         where
-            Tensor<[T; $n], I>: MulAssign<T>,
+            Tensor<[T; $n]>: MulAssign<T>,
         {
             type Output = Self;
             fn mul(mut self, rhs: T) -> Self::Output {
@@ -99,9 +99,9 @@ macro_rules! impl_array_vectors {
         }
 
         // Scalar multiply assign by a raw scalar.
-        impl<T: Scalar, I> MulAssign<T> for Tensor<[T; $n], I>
+        impl<T: Scalar> MulAssign<T> for Tensor<[T; $n]>
         where
-            Tensor<[T; $n], I>: MulAssign<Tensor<T>>,
+            Tensor<[T; $n]>: MulAssign<Tensor<T>>,
         {
             fn mul_assign(&mut self, rhs: T) {
                 *self *= Tensor::new(rhs);
@@ -109,9 +109,9 @@ macro_rules! impl_array_vectors {
         }
 
         // Scalar divide by a raw scalar.
-        impl<T: Scalar, I> Div<T> for Tensor<[T; $n], I>
+        impl<T: Scalar> Div<T> for Tensor<[T; $n]>
         where
-            Tensor<[T; $n], I>: DivAssign<T>,
+            Tensor<[T; $n]>: DivAssign<T>,
         {
             type Output = Self;
             fn div(mut self, rhs: T) -> Self::Output {
@@ -121,9 +121,9 @@ macro_rules! impl_array_vectors {
         }
 
         // Scalar divide assign by a raw scalar.
-        impl<T: Scalar, I> DivAssign<T> for Tensor<[T; $n], I>
+        impl<T: Scalar> DivAssign<T> for Tensor<[T; $n]>
         where
-            Tensor<[T; $n], I>: DivAssign<Tensor<T>>,
+            Tensor<[T; $n]>: DivAssign<Tensor<T>>,
         {
             fn div_assign(&mut self, rhs: T) {
                 *self /= Tensor::new(rhs);
@@ -132,7 +132,7 @@ macro_rules! impl_array_vectors {
 
         // Right multiply by a scalar tensor.
         // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T: Scalar, I> Mul<Tensor<T>> for Tensor<[T; $n], I>
+        impl<T: Scalar> Mul<Tensor<T>> for Tensor<[T; $n]>
         where
             Self: MulAssign<Tensor<T>>,
         {
@@ -143,7 +143,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar, I> MulAssign<Tensor<T>> for Tensor<[T; $n], I>
+        impl<T: Scalar> MulAssign<Tensor<T>> for Tensor<[T; $n]>
         where
             Tensor<T>: MulAssign + Clone,
         {
@@ -156,7 +156,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar, I> Div<Tensor<T>> for Tensor<[T; $n], I>
+        impl<T: Scalar> Div<Tensor<T>> for Tensor<[T; $n]>
         where
             Self: DivAssign<Tensor<T>>,
         {
@@ -167,7 +167,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar, I> DivAssign<Tensor<T>> for Tensor<[T; $n], I>
+        impl<T: Scalar> DivAssign<Tensor<T>> for Tensor<[T; $n]>
         where
             Tensor<T>: DivAssign + Clone,
         {
@@ -180,13 +180,13 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar, I> Index<usize> for Tensor<[T; $n], I> {
+        impl<T: Scalar> Index<usize> for Tensor<[T; $n]> {
             type Output = T;
             fn index(&self, index: usize) -> &Self::Output {
                 &self.data[index]
             }
         }
-        impl<T: Scalar, I> IndexMut<usize> for Tensor<[T; $n], I> {
+        impl<T: Scalar> IndexMut<usize> for Tensor<[T; $n]> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
                 &mut self.data[index]
             }
@@ -196,17 +196,17 @@ macro_rules! impl_array_vectors {
         // Note that left scalar multiply cannot work generically with raw scalars because of
         // Rust's orphan rules. However, if we wrap a scalar in a tensor struct, this will
         // work.
-        impl<T: Scalar, I> Mul<Tensor<[T; $n], I>> for Tensor<T>
+        impl<T: Scalar> Mul<Tensor<[T; $n]>> for Tensor<T>
         where
-            Tensor<[T; $n], I>: MulAssign<Tensor<T>>,
+            Tensor<[T; $n]>: MulAssign<Tensor<T>>,
         {
-            type Output = Tensor<[T; $n], I>;
-            fn mul(self, mut rhs: Tensor<[T; $n], I>) -> Self::Output {
+            type Output = Tensor<[T; $n]>;
+            fn mul(self, mut rhs: Tensor<[T; $n]>) -> Self::Output {
                 rhs *= self;
                 rhs
             }
         }
-        impl<T: Zero + AddAssign + Copy + PartialEq, I> Zero for Tensor<[T; $n], I> {
+        impl<T: Zero + AddAssign + Copy + PartialEq> Zero for Tensor<[T; $n]> {
             fn zero() -> Self {
                 Tensor::new([Zero::zero(); $n])
             }
@@ -222,8 +222,8 @@ impl_array_vectors!(Vector2, RowVector2; 2);
 impl_array_vectors!(Vector3, RowVector3; 3);
 impl_array_vectors!(Vector4, RowVector4; 4);
 
-impl<T: Scalar, I> Tensor<[T; 3], I> {
-    pub fn cross(&self, other: Tensor<[T; 3], I>) -> Tensor<[T; 3], I> {
+impl<T: Scalar> Tensor<[T; 3]> {
+    pub fn cross(&self, other: Tensor<[T; 3]>) -> Tensor<[T; 3]> {
         Tensor::new([
             self[1] * other[2] - self[2] * other[1],
             self[2] * other[0] - self[0] * other[2],
@@ -235,11 +235,11 @@ impl<T: Scalar, I> Tensor<[T; 3], I> {
 macro_rules! impl_array_matrices {
     ($mtxn:ident; $r:expr, $c:expr) => {
         // Row-major square matrix.
-        pub type $mtxn<T, I = (), J = ()> = Tensor<[[T; $c]; $r], (I, J)>;
+        pub type $mtxn<T> = Tensor<[[T; $c]; $r]>;
 
         // Transposes of small matrices are implemented eagerly.
-        impl<T: Scalar, I, J> Matrix for Tensor<[[T; $c]; $r], (I, J)> {
-            type Transpose = Tensor<[[T; $r]; $c], (J, I)>;
+        impl<T: Scalar> Matrix for Tensor<[[T; $c]; $r]> {
+            type Transpose = Tensor<[[T; $r]; $c]>;
             #[unroll_for_loops]
             fn transpose(self) -> Self::Transpose {
                 let mut m = [[T::zero(); $r]; $c];
@@ -265,20 +265,16 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T: Scalar, I> Tensor<[[T; $c]; $r], I> {
+        impl<T: Scalar> Tensor<[[T; $c]; $r]> {
             /// Zip the rows of this matrix and another tensor with the given combinator.
             #[unroll_for_loops]
-            pub fn zip_with<B, U, F>(
-                &self,
-                other: Tensor<[B; $r], I>,
-                mut f: F,
-            ) -> Tensor<[U; $r], I>
+            pub fn zip_with<B, U, F>(&self, other: Tensor<[B; $r]>, mut f: F) -> Tensor<[U; $r]>
             where
                 B: Copy,
-                Tensor<[U; $r], I>: Zero,
+                Tensor<[U; $r]>: Zero,
                 F: FnMut([T; $c], B) -> U,
             {
-                let mut out = Tensor::<[U; $r], I>::zero();
+                let mut out = Tensor::<[U; $r]>::zero();
                 for i in 0..$r {
                     out[i] = f(self.data[i], other.data[i]);
                 }
@@ -287,30 +283,30 @@ macro_rules! impl_array_matrices {
 
             /// Similar to `map` but applies the given function to each inner element.
             #[unroll_for_loops]
-            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r], I>
+            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r]>
             where
                 U: Scalar,
                 F: FnMut(T) -> U,
             {
-                let mut out = Tensor::<[[U; $c]; $r], I>::zeros();
+                let mut out = Tensor::<[[U; $c]; $r]>::zeros();
                 for row in 0..$r {
                     out[row] = Tensor::flat(self[row]).map(|x| f(x)).into_inner();
                 }
                 out
             }
-            pub fn identity() -> Tensor<[[T; $c]; $r], I> {
+            pub fn identity() -> Tensor<[[T; $c]; $r]> {
                 Self::from_diag_iter(std::iter::repeat(T::one()))
             }
             pub fn from_diag_iter<Iter: IntoIterator<Item = T>>(
                 diag: Iter,
-            ) -> Tensor<[[T; $c]; $r], I> {
+            ) -> Tensor<[[T; $c]; $r]> {
                 let mut out = Self::zeros();
                 for (i, elem) in diag.into_iter().take($r.min($c)).enumerate() {
                     out[i][i] = elem;
                 }
                 out
             }
-            pub fn zeros() -> Tensor<[[T; $c]; $r], I> {
+            pub fn zeros() -> Tensor<[[T; $c]; $r]> {
                 Tensor::new([[T::zero(); $c]; $r])
             }
             #[unroll_for_loops]
@@ -341,7 +337,7 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T: Float + Scalar, I> Tensor<[[T; $c]; $r], I> {
+        impl<T: Float + Scalar> Tensor<[[T; $c]; $r]> {
             pub fn frob_norm(&self) -> T {
                 self.frob_norm_squared().sqrt()
             }
@@ -350,20 +346,20 @@ macro_rules! impl_array_matrices {
         /*
          * Matrix-vector multiply
          */
-        impl<T: Scalar, I, J> Mul<Tensor<[T; $c], J>> for Tensor<[[T; $c]; $r], (I, J)>
+        impl<T: Scalar> Mul<Tensor<[T; $c]>> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[T; $c], J>: MulAssign<Tensor<T>> + Clone,
+            Tensor<[T; $c]>: MulAssign<Tensor<T>> + Clone,
         {
-            type Output = Tensor<[T; $r], I>;
-            fn mul(self, rhs: Tensor<[T; $c], J>) -> Self::Output {
+            type Output = Tensor<[T; $r]>;
+            fn mul(self, rhs: Tensor<[T; $c]>) -> Self::Output {
                 Tensor::new(self.map(|row| row.as_tensor().dot(rhs.clone())).data)
             }
         }
 
         // Right scalar multiply by a raw scalar.
-        impl<T: Scalar, I> Mul<T> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[[T; $c]; $r], I>: MulAssign<T>,
+            Tensor<[[T; $c]; $r]>: MulAssign<T>,
         {
             type Output = Self;
             fn mul(mut self, rhs: T) -> Self::Output {
@@ -373,9 +369,9 @@ macro_rules! impl_array_matrices {
         }
 
         // Scalar multiply assign by a raw scalar.
-        impl<T: Scalar, I> MulAssign<T> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> MulAssign<T> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[[T; $c]; $r], I>: MulAssign<Tensor<T>>,
+            Tensor<[[T; $c]; $r]>: MulAssign<Tensor<T>>,
         {
             fn mul_assign(&mut self, rhs: T) {
                 *self *= Tensor::new(rhs);
@@ -383,9 +379,9 @@ macro_rules! impl_array_matrices {
         }
 
         // Scalar divide by a raw scalar.
-        impl<T: Scalar, I> Div<T> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> Div<T> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[[T; $c]; $r], I>: DivAssign<T>,
+            Tensor<[[T; $c]; $r]>: DivAssign<T>,
         {
             type Output = Self;
             fn div(mut self, rhs: T) -> Self::Output {
@@ -395,9 +391,9 @@ macro_rules! impl_array_matrices {
         }
 
         // Divide assign by a raw scalar.
-        impl<T: Scalar, I> DivAssign<T> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> DivAssign<T> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[[T; $c]; $r], I>: DivAssign<Tensor<T>>,
+            Tensor<[[T; $c]; $r]>: DivAssign<Tensor<T>>,
         {
             fn div_assign(&mut self, rhs: T) {
                 *self /= Tensor::new(rhs);
@@ -406,7 +402,7 @@ macro_rules! impl_array_matrices {
 
         // Right multiply by a tensor scalar.
         // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T: Scalar, I> Mul<Tensor<T>> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> Mul<Tensor<T>> for Tensor<[[T; $c]; $r]>
         where
             Self: MulAssign<Tensor<T>>,
         {
@@ -418,7 +414,7 @@ macro_rules! impl_array_matrices {
         }
 
         // Divide by a tensor scalar.
-        impl<T: Scalar, I> Div<Tensor<T>> for Tensor<[[T; $c]; $r], I>
+        impl<T: Scalar> Div<Tensor<T>> for Tensor<[[T; $c]; $r]>
         where
             Self: DivAssign<Tensor<T>>,
         {
@@ -430,9 +426,9 @@ macro_rules! impl_array_matrices {
         }
 
         // Multiply assign by a tensor scalar
-        impl<T: Scalar, I, J> MulAssign<Tensor<T>> for Tensor<[[T; $c]; $r], (I, J)>
+        impl<T: Scalar> MulAssign<Tensor<T>> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[T; $c], J>: MulAssign<Tensor<T>>,
+            Tensor<[T; $c]>: MulAssign<Tensor<T>>,
         {
             #[unroll_for_loops]
             fn mul_assign(&mut self, rhs: Tensor<T>) {
@@ -444,9 +440,9 @@ macro_rules! impl_array_matrices {
         }
 
         // Divide assign by a tensor scalar
-        impl<T: Scalar, I, J> DivAssign<Tensor<T>> for Tensor<[[T; $c]; $r], (I, J)>
+        impl<T: Scalar> DivAssign<Tensor<T>> for Tensor<[[T; $c]; $r]>
         where
-            Tensor<[T; $c], J>: DivAssign<Tensor<T>>,
+            Tensor<[T; $c]>: DivAssign<Tensor<T>>,
         {
             #[unroll_for_loops]
             fn div_assign(&mut self, rhs: Tensor<T>) {
@@ -461,12 +457,12 @@ macro_rules! impl_array_matrices {
         // Note that left scalar multiply cannot work generically with raw scalars because of
         // Rust's orphan rules. However, if we wrap a scalar in a tensor struct, this will
         // work.
-        impl<T: Scalar, I> Mul<Tensor<[[T; $c]; $r], I>> for Tensor<T>
+        impl<T: Scalar> Mul<Tensor<[[T; $c]; $r]>> for Tensor<T>
         where
-            Tensor<[[T; $c]; $r], I>: MulAssign<Tensor<T>>,
+            Tensor<[[T; $c]; $r]>: MulAssign<Tensor<T>>,
         {
-            type Output = Tensor<[[T; $c]; $r], I>;
-            fn mul(self, mut rhs: Tensor<[[T; $c]; $r], I>) -> Self::Output {
+            type Output = Tensor<[[T; $c]; $r]>;
+            fn mul(self, mut rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
                 rhs *= self;
                 rhs
             }
@@ -474,7 +470,7 @@ macro_rules! impl_array_matrices {
     };
 }
 
-pub type Matrix1<T, I = (), J = ()> = Tensor<[[T; 1]; 1], (I, J)>;
+pub type Matrix1<T> = Tensor<[[T; 1]; 1]>;
 impl_array_matrices!(Matrix2; 2, 2);
 impl_array_matrices!(Matrix3; 3, 3);
 impl_array_matrices!(Matrix4; 4, 4);
@@ -493,15 +489,12 @@ impl_array_matrices!(Matrix3x2; 3, 2);
 macro_rules! impl_matrix_matrix_mul {
     ($m:expr, $p:expr, $n:expr) => {
         // Implement A * B matrix multiplication where A is m-by-p and B is p-by-n.
-        impl<T: Scalar, I, J, K> Mul<Tensor<[[T; $n]; $p], (J, K)>>
-            for Tensor<[[T; $p]; $m], (I, J)>
+        impl<T: Scalar> Mul<Tensor<[[T; $n]; $p]>> for Tensor<[[T; $p]; $m]>
         where
-            J: Copy,
-            K: Copy,
-            Tensor<[T; $n], K>: Mul<Tensor<T>, Output = Tensor<[T; $n], K>>,
+            Tensor<[T; $n]>: Mul<Tensor<T>, Output = Tensor<[T; $n]>>,
         {
-            type Output = Tensor<[[T; $n]; $m], (I, K)>;
-            fn mul(self, rhs: Tensor<[[T; $n]; $p], (J, K)>) -> Self::Output {
+            type Output = Tensor<[[T; $n]; $m]>;
+            fn mul(self, rhs: Tensor<[[T; $n]; $p]>) -> Self::Output {
                 Tensor::new(
                     self.map(|row| {
                         rhs.zip_with(Tensor::new(row), |rhs_row, entry| {
@@ -588,7 +581,7 @@ impl_matrix_matrix_mul!(4, 4, 4);
 /*
  * Skew symmetric matrix representing the cross product operator
  */
-impl<T: Scalar + std::ops::Neg<Output = T>, I> Vector3<T, I> {
+impl<T: Scalar + std::ops::Neg<Output = T>> Vector3<T> {
     /// Convert this vector into a skew symmetric matrix, which represents the cross
     /// product operator (when applied to another vector).
     pub fn skew(&self) -> Matrix3<T> {
@@ -605,7 +598,7 @@ impl<T: Scalar + std::ops::Neg<Output = T>, I> Vector3<T, I> {
  */
 
 /// Determinant of a 1x1 Matrix.
-impl<T: Scalar, I> Tensor<[[T; 1]; 1], I> {
+impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     pub fn determinant(&self) -> T {
         self.data[0][0]
     }
@@ -614,16 +607,13 @@ impl<T: Scalar, I> Tensor<[[T; 1]; 1], I> {
 macro_rules! impl_determinant {
     ($n:expr) => {
         /// Determinant of a 2x2 Matrix.
-        impl<T: Scalar, I> Tensor<[[T; $n]; $n], I> {
+        impl<T: Scalar> Tensor<[[T; $n]; $n]> {
             /// Construct a matrix smaller in both dimensions by 1 that is the same as the
             /// original matrix but without the first row and a given column. Although this is
             /// a very specific function, it is useful for efficient co-factor expansions.
             #[inline]
             #[unroll_for_loops]
-            pub fn without_row_and_first_col(
-                &self,
-                col: usize,
-            ) -> Tensor<[[T; $n - 1]; $n - 1], I> {
+            pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
                 let mut m: [[T; $n - 1]; $n - 1] = unsafe { ::std::mem::uninitialized() };
                 for i in 0..$n - 1 {
                     m[i].copy_from_slice(&self[if i < col { i } else { i + 1 }][1..$n]);
@@ -658,7 +648,7 @@ impl_determinant!(4);
  * The inverse of a matrix
  */
 
-impl<T: Scalar, I> Tensor<[[T; 1]; 1], I> {
+impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     /// Compute the inverse of a 1x1 matrix.
     pub fn inverse(&self) -> Option<Self> {
         let denom = self[0][0];
@@ -680,9 +670,9 @@ impl<T: Scalar, I> Tensor<[[T; 1]; 1], I> {
     }
 }
 
-impl<T: Scalar + Float, I, J> Tensor<[[T; 2]; 2], (I, J)> {
+impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     /// Compute the inverse of a 2x2 matrix.
-    pub fn inverse(&self) -> Option<Tensor<[[T; 2]; 2], (J, I)>> {
+    pub fn inverse(&self) -> Option<Tensor<[[T; 2]; 2]>> {
         let det = self.determinant();
         if det != T::zero() {
             Some(Tensor::new([
@@ -706,7 +696,7 @@ impl<T: Scalar + Float, I, J> Tensor<[[T; 2]; 2], (I, J)> {
         }
     }
 }
-impl<T: Scalar + Float, I> Tensor<[[T; 2]; 2], (I, I)> {
+impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     /// Invert the 2x2 matrix in place. Return true if inversion was successful.
     pub fn invert(&mut self) -> bool {
         let det = self.determinant();
@@ -724,9 +714,9 @@ impl<T: Scalar + Float, I> Tensor<[[T; 2]; 2], (I, I)> {
         }
     }
 }
-impl<T: Scalar + Float, I, J> Tensor<[[T; 3]; 3], (I, J)> {
+impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
     /// Compute the inverse of a 3x3 matrix.
-    pub fn inverse(&self) -> Option<Tensor<[[T; 3]; 3], (J, I)>> {
+    pub fn inverse(&self) -> Option<Tensor<[[T; 3]; 3]>> {
         self.inverse_transpose().map(|x| x.transpose())
     }
     /// Compute the transpose of a 3x3 matrix inverse.
@@ -743,7 +733,7 @@ impl<T: Scalar + Float, I, J> Tensor<[[T; 3]; 3], (I, J)> {
         }
     }
 }
-impl<T: Scalar + Float, I> Tensor<[[T; 3]; 3], (I, I)> {
+impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
     /// Invert the 3x3 matrix in place. Return true if inversion was successful.
     pub fn invert(&mut self) -> bool {
         match self.inverse() {

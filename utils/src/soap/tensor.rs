@@ -10,11 +10,17 @@ use unroll::unroll_for_loops;
 /// outer index `I0` and inner index `I1`. This means that a transpose can be implemented simply by
 /// swapping positions of `I0` and `I1`, which means a matrix with `I == (I1, I0)` has structure
 /// that is transpose of the matix with `I = (I0, I1)`.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialOrd)]
 #[repr(transparent)]
 pub struct Tensor<T: ?Sized, I = ()> {
     index: PhantomData<I>,
     pub data: T,
+}
+
+impl<T: PartialEq + ?Sized, I> PartialEq for Tensor<T, I> {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
 }
 
 impl<T> Tensor<T> {
@@ -50,7 +56,7 @@ impl<T: ?Sized> AsMutTensor for T {
 }
 
 impl<T, I> Tensor<T, I> {
-    pub fn new(data: T) -> Tensor<T, I> {
+    pub const fn new(data: T) -> Tensor<T, I> {
         Tensor {
             data,
             index: PhantomData,
@@ -145,24 +151,29 @@ impl<'a, T: ViewMut<'a>, I> ViewMut<'a> for Tensor<T, I> {
     }
 }
 
-impl<T, I, J> Tensor<T, (I, J)> {
-    pub fn transpose(self) -> Tensor<T, (J, I)> {
-        Tensor::new(self.data)
-    }
-}
-
 /*
  * Scalar trait
  */
 
-pub trait Scalar: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign {}
-impl<T> Scalar for T where T: Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign {}
+pub trait Scalar:
+    Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum
+{
+}
+macro_rules! impl_scalar {
+    ($($types:ty),*) => {
+        $(
+            impl Scalar for $types { }
+        )*
+    }
+}
+
+impl_scalar!(f64, f32, usize, u64, u32, u16, u8, i64, i32, i16, i8);
 
 /*
  * Implement 0-tensor algebra.
  */
 
-impl<T: MulAssign> Mul for Tensor<T> {
+impl<T: Scalar> Mul for Tensor<T> {
     type Output = Self;
     fn mul(mut self, rhs: Self) -> Self {
         self *= rhs;
@@ -170,13 +181,13 @@ impl<T: MulAssign> Mul for Tensor<T> {
     }
 }
 
-impl<T: MulAssign> MulAssign for Tensor<T> {
+impl<T: Scalar> MulAssign for Tensor<T> {
     fn mul_assign(&mut self, rhs: Self) {
         self.data *= rhs.data;
     }
 }
 
-impl<T: DivAssign> Div for Tensor<T> {
+impl<T: Scalar> Div for Tensor<T> {
     type Output = Self;
     fn div(mut self, rhs: Self) -> Self {
         self /= rhs;
@@ -184,9 +195,17 @@ impl<T: DivAssign> Div for Tensor<T> {
     }
 }
 
-impl<T: DivAssign> DivAssign for Tensor<T> {
+impl<T: Scalar> DivAssign for Tensor<T> {
     fn div_assign(&mut self, rhs: Self) {
         self.data /= rhs.data;
+    }
+}
+
+impl<T: Neg<Output = T> + Scalar, I> Neg for Tensor<T, I> {
+    type Output = Self;
+    fn neg(mut self) -> Self::Output {
+        self.data = -self.data;
+        self
     }
 }
 
@@ -255,66 +274,27 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        // Right multiply by a tensor with one less degree than Self.
-        // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T, I> Mul<Tensor<T>> for Tensor<[T; $n], I>
+        impl<T: Copy, I> Neg for Tensor<[T; $n], I>
         where
-            Tensor<T>: MulAssign + Clone,
+            Tensor<T>: Neg<Output = Tensor<T>>,
         {
-            type Output = Self;
-            fn mul(mut self, rhs: Tensor<T>) -> Self::Output {
-                self *= rhs;
-                self
-            }
-        }
-
-        impl<T, I> MulAssign<Tensor<T>> for Tensor<[T; $n], I>
-        where
-            Tensor<T>: MulAssign + Clone,
-        {
-            #[unroll_for_loops]
-            fn mul_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
-                for i in 0..$n {
-                    let lhs = Tensor::as_mut(self.data.index_mut(i));
-                    *lhs *= rhs.clone();
-                }
-            }
-        }
-
-        impl<T, I> Div<Tensor<T>> for Tensor<[T; $n], I>
-        where
-            Tensor<T>: DivAssign + Clone,
-        {
-            type Output = Self;
-            fn div(mut self, rhs: Tensor<T>) -> Self::Output {
-                self /= rhs;
-                self
-            }
-        }
-
-        impl<T, I> DivAssign<Tensor<T>> for Tensor<[T; $n], I>
-        where
-            Tensor<T>: DivAssign + Clone,
-        {
-            #[unroll_for_loops]
-            fn div_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
-                for i in 0..$n {
-                    let lhs = Tensor::as_mut(self.data.index_mut(i));
-                    *lhs /= rhs.clone();
-                }
-            }
-        }
-
-        impl<T: Neg<Output = T> + Copy, I> Neg for Tensor<[T; $n], I> {
             type Output = Self;
             #[unroll_for_loops]
             fn neg(mut self) -> Self::Output {
                 for i in 0..$n {
-                    self.data[i] = -self.data[i];
+                    *self.data[i].as_mut_tensor() = -Tensor::new(self.data[i]);
                 }
                 self
+            }
+        }
+
+        impl<T: Copy, I> Neg for &Tensor<[T; $n], I>
+        where
+            Tensor<T>: Neg<Output = Tensor<T>>,
+        {
+            type Output = Tensor<[T; $n], I>;
+            fn neg(self) -> Self::Output {
+                Neg::neg(Tensor::new(self.data))
             }
         }
     };

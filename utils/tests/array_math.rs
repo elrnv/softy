@@ -14,31 +14,31 @@ fn fold() {
 }
 #[test]
 fn dot_product() {
-    let a = Vector3::flat([1.0, 2.0, 3.0]);
-    let b = Vector3::flat([3.0, 2.0, 1.0]);
+    let a = Vector3::new([1.0, 2.0, 3.0]);
+    let b = Vector3::new([3.0, 2.0, 1.0]);
     assert_eq!(a.dot(b), 10.0);
 }
 #[test]
 fn negation() {
     // for vectors
-    let a = Vector3::flat([1.0, -2.0, 3.0]);
-    assert_eq!(-a, Vector3::flat([-1.0, 2.0, -3.0]));
+    let a = Vector3::new([1.0, -2.0, 3.0]);
+    assert_eq!(-a, Vector3::new([-1.0, 2.0, -3.0]));
     // for matrices
-    assert_eq!(-A, Matrix2::def([[-1.0, -3.0], [-2.0, -4.0]]));
+    assert_eq!(-A, Matrix2::new([[-1.0, -3.0], [-2.0, -4.0]]));
 }
 #[test]
 fn norm() {
-    let a = Vector3::flat([1.0, 2.0, 3.0]);
+    let a = Vector3::new([1.0, 2.0, 3.0]);
     assert_eq!(a.norm_squared(), 14.0);
     assert_eq!(a.norm(), 14.0_f64.sqrt());
 }
 
 #[test]
 fn add_vec() {
-    let a = Vector3::flat([0.0, 1.0, -2.0]);
-    let b = Vector3::flat([3.0, 1.5, -2.5]);
-    assert_eq!(a - b, Vector3::flat([-3.0, -0.5, 0.5]));
-    assert_eq!(a + b, Vector3::flat([3.0, 2.5, -4.5]));
+    let a = Vector3::new([0.0, 1.0, -2.0]);
+    let b = Vector3::new([3.0, 1.5, -2.5]);
+    assert_eq!(a - b, Vector3::new([-3.0, -0.5, 0.5]));
+    assert_eq!(a + b, Vector3::new([3.0, 2.5, -4.5]));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn inverse() {
 
     // Test inversion of a singular matrix
     assert_eq!(
-        Matrix3::def([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]).inverse(),
+        Matrix3::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]).inverse(),
         None
     );
 }
@@ -126,7 +126,7 @@ fn invert() {
     assert_eq!(B.inverse(), Some(b));
 
     // Test inverting a singular matrix.
-    let sing = Matrix3::def([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]);
+    let sing = Matrix3::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]);
     let mut a = sing.clone();
     assert!(!a.invert()); // check that inversion failed.
     assert_eq!(a, sing); // check that it was unchanged
@@ -134,7 +134,7 @@ fn invert() {
 
 #[test]
 fn rowvec_vec_mult() {
-    let a = Vector3::flat([0.5, 1.0, -2.0]);
+    let a = Vector3::new([0.5, 1.0, -2.0]);
     let b = RowVector3::new([[1.0, -4.0, 2.0]]);
     assert_eq!(b * a, Tensor::new([-7.5]));
 }

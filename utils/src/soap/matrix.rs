@@ -40,7 +40,7 @@ pub trait BlockMatrix {
  * One-dimentional vectors
  */
 
-impl<T, I> Matrix for Tensor<Vec<T>, I> {
+impl<T> Matrix for Tensor<Vec<T>> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)
@@ -53,7 +53,7 @@ impl<T, I> Matrix for Tensor<Vec<T>, I> {
     }
 }
 
-impl<T, I> Matrix for Tensor<&[T], I> {
+impl<T> Matrix for Tensor<&[T]> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)
@@ -66,7 +66,7 @@ impl<T, I> Matrix for Tensor<&[T], I> {
     }
 }
 
-impl<T, I> Matrix for Tensor<&mut [T], I> {
+impl<T> Matrix for Tensor<&mut [T]> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)

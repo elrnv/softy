@@ -1,5 +1,4 @@
 use super::*;
-use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
@@ -10,57 +9,34 @@ use unroll::unroll_for_loops;
 /// outer index `I0` and inner index `I1`. This means that a transpose can be implemented simply by
 /// swapping positions of `I0` and `I1`, which means a matrix with `I == (I1, I0)` has structure
 /// that is transpose of the matix with `I = (I0, I1)`.
-#[derive(Copy, Clone, Debug, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Tensor<T: ?Sized, I = ()> {
-    index: PhantomData<I>,
+pub struct Tensor<T: ?Sized> {
     pub data: T,
-}
-
-impl<T: PartialEq + ?Sized, I> PartialEq for Tensor<T, I> {
-    fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
-    }
-}
-
-impl<T> Tensor<T> {
-    /// Construct a tensor without any indexing information.
-    /// This is convenient for one-off computations where the indexing structure is not important.
-    /// In other words, this creates a shallow or `flat` tensor without information about the
-    /// deeper structures.
-    pub fn flat(data: T) -> Tensor<T> {
-        Tensor {
-            data,
-            index: PhantomData,
-        }
-    }
 }
 
 /// Synonymous with `AsRef<Tensor<_>>`.
 pub trait AsTensor {
-    fn as_tensor<I>(&self) -> &Tensor<Self, I>;
+    fn as_tensor(&self) -> &Tensor<Self>;
 }
 pub trait AsMutTensor {
-    fn as_mut_tensor<I>(&mut self) -> &mut Tensor<Self, I>;
+    fn as_mut_tensor(&mut self) -> &mut Tensor<Self>;
 }
 
 impl<T: ?Sized> AsTensor for T {
-    fn as_tensor<I>(&self) -> &Tensor<T, I> {
+    fn as_tensor(&self) -> &Tensor<T> {
         Tensor::as_ref(self)
     }
 }
 impl<T: ?Sized> AsMutTensor for T {
-    fn as_mut_tensor<I>(&mut self) -> &mut Tensor<T, I> {
+    fn as_mut_tensor(&mut self) -> &mut Tensor<T> {
         Tensor::as_mut(self)
     }
 }
 
-impl<T, I> Tensor<T, I> {
-    pub const fn new(data: T) -> Tensor<T, I> {
-        Tensor {
-            data,
-            index: PhantomData,
-        }
+impl<T> Tensor<T> {
+    pub const fn new(data: T) -> Tensor<T> {
+        Tensor { data }
     }
 
     pub fn into_inner(self) -> T {
@@ -68,7 +44,7 @@ impl<T, I> Tensor<T, I> {
     }
 }
 
-impl<T, S, I> Tensor<S, I>
+impl<T, S> Tensor<S>
 where
     S: Storage<Storage = [T]>,
     T: Scalar,
@@ -83,25 +59,25 @@ where
     }
 }
 
-impl<T: ?Sized, I> Tensor<T, I> {
+impl<T: ?Sized> Tensor<T> {
     /// Create a reference to the given type as a `Tensor`.
-    pub fn as_ref(c: &T) -> &Tensor<T, I> {
-        unsafe { &*(c as *const T as *const Tensor<T, I>) }
+    pub fn as_ref(c: &T) -> &Tensor<T> {
+        unsafe { &*(c as *const T as *const Tensor<T>) }
     }
     /// Same as `as_ref` but creates a mutable reference to the given type as a `Tensor`.
-    pub fn as_mut(c: &mut T) -> &mut Tensor<T, I> {
-        unsafe { &mut *(c as *mut T as *mut Tensor<T, I>) }
+    pub fn as_mut(c: &mut T) -> &mut Tensor<T> {
+        unsafe { &mut *(c as *mut T as *mut Tensor<T>) }
     }
 }
 
-impl<T, I> std::ops::Deref for Tensor<T, I> {
+impl<T> std::ops::Deref for Tensor<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl<T, I> std::ops::DerefMut for Tensor<T, I> {
+impl<T> std::ops::DerefMut for Tensor<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
     }
@@ -111,21 +87,21 @@ impl<T, I> std::ops::DerefMut for Tensor<T, I> {
  * Tensor as a Set
  */
 
-impl<T: Set, I> Set for Tensor<T, I> {
+impl<T: Set> Set for Tensor<T> {
     type Elem = T::Elem;
     fn len(&self) -> usize {
         self.data.len()
     }
 }
 
-impl<T: Storage, I> Storage for Tensor<T, I> {
+impl<T: Storage> Storage for Tensor<T> {
     type Storage = T::Storage;
     fn storage(&self) -> &T::Storage {
         self.data.storage()
     }
 }
 
-impl<T: StorageMut, I> StorageMut for Tensor<T, I> {
+impl<T: StorageMut> StorageMut for Tensor<T> {
     fn storage_mut(&mut self) -> &mut T::Storage {
         self.data.storage_mut()
     }
@@ -135,16 +111,16 @@ impl<T: StorageMut, I> StorageMut for Tensor<T, I> {
  * View Impls
  */
 
-impl<T: Viewed, I> Viewed for Tensor<T, I> {}
+impl<T: Viewed> Viewed for Tensor<T> {}
 
-impl<'a, T: View<'a>, I> View<'a> for Tensor<T, I> {
+impl<'a, T: View<'a>> View<'a> for Tensor<T> {
     type Type = Tensor<T::Type>;
     fn view(&'a self) -> Self::Type {
         Tensor::new(self.data.view())
     }
 }
 
-impl<'a, T: ViewMut<'a>, I> ViewMut<'a> for Tensor<T, I> {
+impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
     type Type = Tensor<T::Type>;
     fn view_mut(&'a mut self) -> Self::Type {
         Tensor::new(self.data.view_mut())
@@ -201,7 +177,7 @@ impl<T: Scalar> DivAssign for Tensor<T> {
     }
 }
 
-impl<T: Neg<Output = T> + Scalar, I> Neg for Tensor<T, I> {
+impl<T: Neg<Output = T> + Scalar> Neg for Tensor<T> {
     type Output = Self;
     fn neg(mut self) -> Self::Output {
         self.data = -self.data;
@@ -221,7 +197,7 @@ macro_rules! impl_array_tensors {
     ($n:expr) => {
         impl<T> LocalGeneric for &Tensor<[T; $n]> {}
 
-        impl<T: AddAssign + Copy, I> Add for Tensor<[T; $n], I> {
+        impl<T: AddAssign + Copy> Add for Tensor<[T; $n]> {
             type Output = Self;
 
             /// Add two tensor arrays together.
@@ -231,7 +207,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: AddAssign + Copy, I> AddAssign for Tensor<[T; $n], I> {
+        impl<T: AddAssign + Copy> AddAssign for Tensor<[T; $n]> {
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Self) {
                 for i in 0..$n {
@@ -239,7 +215,7 @@ macro_rules! impl_array_tensors {
                 }
             }
         }
-        impl<T: AddAssign + Copy, I> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n], I> {
+        impl<T: AddAssign + Copy> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: &Tensor<[T; $n]>) {
                 for i in 0..$n {
@@ -247,7 +223,7 @@ macro_rules! impl_array_tensors {
                 }
             }
         }
-        impl<T: SubAssign + Copy, I> Sub for Tensor<[T; $n], I> {
+        impl<T: SubAssign + Copy> Sub for Tensor<[T; $n]> {
             type Output = Self;
 
             fn sub(mut self, rhs: Self) -> Self::Output {
@@ -256,7 +232,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: SubAssign + Copy, I> SubAssign for Tensor<[T; $n], I> {
+        impl<T: SubAssign + Copy> SubAssign for Tensor<[T; $n]> {
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Self) {
                 for i in 0..$n {
@@ -265,7 +241,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: SubAssign + Copy, I> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n], I> {
+        impl<T: SubAssign + Copy> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: &Tensor<[T; $n]>) {
                 for i in 0..$n {
@@ -274,7 +250,7 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: Copy, I> Neg for Tensor<[T; $n], I>
+        impl<T: Copy> Neg for Tensor<[T; $n]>
         where
             Tensor<T>: Neg<Output = Tensor<T>>,
         {
@@ -288,11 +264,11 @@ macro_rules! impl_array_tensors {
             }
         }
 
-        impl<T: Copy, I> Neg for &Tensor<[T; $n], I>
+        impl<T: Copy> Neg for &Tensor<[T; $n]>
         where
             Tensor<T>: Neg<Output = Tensor<T>>,
         {
-            type Output = Tensor<[T; $n], I>;
+            type Output = Tensor<[T; $n]>;
             fn neg(self) -> Self::Output {
                 Neg::neg(Tensor::new(self.data))
             }
@@ -1031,23 +1007,6 @@ impl<T: Scalar> MulAssign<T> for Tensor<[T]> {
     }
 }
 
-//struct AddOp<L, R> {
-//    lhs: L,
-//    rhs: R,
-//}
-//
-//impl AddOp<L, R>
-//    where L: Add<R>
-//{
-//    fn eval() ->
-//}
-//
-//struct BinaryOp<Op, Lhs, Rhs> {
-//    lhs: Lhs,
-//    rhs: Rhs,
-//    op: Op,
-//}
-
 /*
  * All additions and subtractions on 1-tensors represented by chunked vectors can be performed at the lowest level (flat)
  */
@@ -1244,36 +1203,36 @@ mod tests {
 
     #[test]
     fn small_tensor_add() {
-        let a = Tensor::flat([1, 2, 3, 4]);
-        let b = Tensor::flat([5, 6, 7, 8]);
-        assert_eq!(Tensor::flat([6, 8, 10, 12]), a + b);
+        let a = Tensor::new([1, 2, 3, 4]);
+        let b = Tensor::new([5, 6, 7, 8]);
+        assert_eq!(Tensor::new([6, 8, 10, 12]), a + b);
 
-        let mut c = Tensor::flat([0, 1, 2, 3]);
+        let mut c = Tensor::new([0, 1, 2, 3]);
         c += a;
-        assert_eq!(Tensor::flat([1, 3, 5, 7]), c);
+        assert_eq!(Tensor::new([1, 3, 5, 7]), c);
     }
 
     #[test]
     fn small_tensor_sub() {
-        let a = Tensor::flat([1, 2, 3, 4]);
-        let b = Tensor::flat([5, 6, 7, 8]);
-        assert_eq!(Tensor::flat([4, 4, 4, 4]), b - a);
+        let a = Tensor::new([1, 2, 3, 4]);
+        let b = Tensor::new([5, 6, 7, 8]);
+        assert_eq!(Tensor::new([4, 4, 4, 4]), b - a);
 
-        let mut c = Tensor::flat([1, 3, 5, 7]);
+        let mut c = Tensor::new([1, 3, 5, 7]);
         c -= a;
-        assert_eq!(Tensor::flat([0, 1, 2, 3]), c);
+        assert_eq!(Tensor::new([0, 1, 2, 3]), c);
     }
 
     #[test]
     fn small_tensor_scalar_mul() {
-        let mut a = Tensor::flat([1, 2, 3, 4]);
+        let mut a = Tensor::new([1, 2, 3, 4]);
 
         // Right multiply by wrapped scalar.
-        assert_eq!(Tensor::flat([3, 6, 9, 12]), a * Tensor::flat(3));
+        assert_eq!(Tensor::new([3, 6, 9, 12]), a * Tensor::new(3));
 
         // Right assign multiply by wrapped scalar.
-        a *= Tensor::flat(2);
-        assert_eq!(Tensor::flat([2, 4, 6, 8]), a);
+        a *= Tensor::new(2);
+        assert_eq!(Tensor::new([2, 4, 6, 8]), a);
     }
 
     // This test demonstrates the different ways to use tensors for assignment ops like AddAssign.

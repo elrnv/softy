@@ -259,12 +259,6 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T> $mtxn<T> {
-            pub const fn def(data: [[T; $c]; $r]) -> Self {
-                Self::new(data)
-            }
-        }
-
         impl<T: Scalar> Tensor<[[T; $c]; $r]> {
             /// Zip the rows of this matrix and another tensor with the given combinator.
             #[unroll_for_loops]
@@ -290,7 +284,7 @@ macro_rules! impl_array_matrices {
             {
                 let mut out = Tensor::<[[U; $c]; $r]>::zeros();
                 for row in 0..$r {
-                    out[row] = Tensor::flat(self[row]).map(|x| f(x)).into_inner();
+                    out[row] = Tensor::new(self[row]).map(|x| f(x)).into_inner();
                 }
                 out
             }
@@ -315,7 +309,7 @@ macro_rules! impl_array_matrices {
                 F: FnMut(B, T) -> B,
             {
                 for i in 0..$r {
-                    init = Tensor::flat(self[i]).fold(init, |acc, x| f(acc, x));
+                    init = Tensor::new(self[i]).fold(init, |acc, x| f(acc, x));
                 }
                 init
             }
@@ -724,9 +718,9 @@ impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
         let det = self.determinant();
         if det != T::zero() {
             Some(Self::new([
-                (Tensor::flat(self[1]).cross(Tensor::new(self[2])) / det).into_inner(),
-                (Tensor::flat(self[2]).cross(Tensor::new(self[0])) / det).into_inner(),
-                (Tensor::flat(self[0]).cross(Tensor::new(self[1])) / det).into_inner(),
+                (Tensor::new(self[1]).cross(Tensor::new(self[2])) / det).into_inner(),
+                (Tensor::new(self[2]).cross(Tensor::new(self[0])) / det).into_inner(),
+                (Tensor::new(self[0]).cross(Tensor::new(self[1])) / det).into_inner(),
             ]))
         } else {
             None
@@ -752,25 +746,25 @@ mod tests {
 
     #[test]
     fn vector_scalar_mul() {
-        let mut a = Tensor::flat([1, 2, 3, 4]);
+        let mut a = Tensor::new([1, 2, 3, 4]);
 
         // Right multiply by raw scalar.
         assert_eq!(Tensor::new([3, 6, 9, 12]), a * 3);
 
         // Right assign multiply by raw scalar.
         a *= 2;
-        assert_eq!(Tensor::flat([2, 4, 6, 8]), a);
+        assert_eq!(Tensor::new([2, 4, 6, 8]), a);
     }
 
     #[test]
     fn vector_scalar_div() {
-        let mut a = Tensor::flat([1.0, 2.0, 4.0, 8.0]);
+        let mut a = Tensor::new([1.0, 2.0, 4.0, 8.0]);
 
         // Right divide by raw scalar.
         assert_eq!(Tensor::new([0.5, 1.0, 2.0, 4.0]), a / 2.0);
 
         // Right assign divide by raw scalar.
         a /= 2.0;
-        assert_eq!(Tensor::flat([0.5, 1.0, 2.0, 4.0]), a);
+        assert_eq!(Tensor::new([0.5, 1.0, 2.0, 4.0]), a);
     }
 }

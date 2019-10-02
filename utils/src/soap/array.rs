@@ -5,8 +5,14 @@
 use super::*;
 
 /// Wrapper around `typenum` types to prevent downstream trait implementations.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct U<N>(N);
+
+impl<N: Unsigned> std::fmt::Debug for U<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(&format!("U{}", N::to_usize())).finish()
+    }
+}
 
 impl<N: Default> Default for U<N> {
     fn default() -> Self {

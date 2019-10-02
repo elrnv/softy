@@ -715,22 +715,34 @@ where
         Tensor::new(out)
     }
 }
+*/
 
 impl<'a> DSBlockMatrix3View<'a> {
     /// A special congruence tranform of the form `A -> P^T A P` where `P` is a block diagonal matrix.
     /// This is useful for instance as a change of basis transformation.
-    fn diagonal_congruence_transform(self, p: BlockDiagonalMatrix3x2View) -> DSBlockMatrix2 {
+    pub fn diagonal_congruence_transform(self, p: BlockDiagonalMatrix3x2View) -> DSBlockMatrix2 {
         let mut out = Chunked::from_offsets(
             (*self.data.offsets()).into_owned().into_inner(),
             Sparse::new(
                 self.data.data().selection().clone().into_owned(),
-                UniChunked::from_flat(UniChunked::from_flat(vec![0.0; self.num_non_zero_blocks() * 4]))
+                Chunked2::from_flat(Chunked2::from_flat(vec![
+                    0.0;
+                    self.num_non_zero_blocks() * 4
+                ])),
             ),
         );
 
-        for (out_row, row) in Iterator::zip(out.iter_mut(), self.iter()) {
-            for ((col_idx, out_entry), orig_entry) in out_row.indexed_source_iter_mut().zip(IntoIterator::into_iter(row.source().view())) {
-                *out_entry.as_mut_tensor() = p.0.view().isolate(col_idx).as_tensor().transpose() * orig_entry.as_tensor() * p.0.view().isolate(col_idx).as_tensor();
+        // TODO: It is annoying to always have to call into_arrays to construct small matrices.
+        // We should implement array math on UniChunked<Array> types or find another solution.
+        for (mut out_row, row) in Iterator::zip(out.iter_mut(), self.data.iter()) {
+            for ((col_idx, out_entry), orig_entry) in out_row
+                .indexed_source_iter_mut()
+                .zip(IntoIterator::into_iter(row.source().view()))
+            {
+                let basis = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
+                let basis_tr = r.transpose();
+                let mass = *orig_entry.into_arrays().as_tensor();
+                *out_entry.into_arrays().as_mut_tensor() = basis_tr * mass * basis;
             }
         }
 
@@ -738,8 +750,6 @@ impl<'a> DSBlockMatrix3View<'a> {
     }
 }
 
-
-*/
 impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, rhs: Tensor<Chunked3<&'a [f64]>>) -> Self::Output {

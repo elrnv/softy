@@ -62,6 +62,22 @@ macro_rules! impl_array_for_typenum {
                 }
             }
         }
+
+        impl<'a, T, N> IsolateIndex<&'a [T; $n]> for StaticRange<N>
+        where
+            N: Unsigned + Array<T>,
+            <N as Array<T>>::Array: 'a,
+        {
+            type Output = &'a N::Array;
+            fn try_isolate(self, set: &'a [T; $n]) -> Option<Self::Output> {
+                if self.end() <= set.len() {
+                    Some(unsafe { &*(set.as_ptr().add(self.start()) as *const N::Array) })
+                } else {
+                    None
+                }
+            }
+        }
+
         impl<T> Array<T> for consts::$nty {
             type Array = [T; $n];
 

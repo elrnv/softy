@@ -91,7 +91,7 @@ impl<'a> FrictionSolver<'a> {
     /// Solve one step.
     pub fn step(&mut self) -> Vec<[f64; 2]> {
         // Solve quadratic optimization problem
-        let mut friction_impulse = vec![Vector2::zeros(); self.predictor_momentum.len()];
+        let mut friction_impulse = vec![Vector2::<f64>::zeros(); self.predictor_momentum.len()];
         for (r, &pred_p, &cr) in zip!(
             friction_impulse.iter_mut(),
             self.predictor_momentum.iter(),
@@ -227,7 +227,7 @@ mod tests {
         let solution = solver.step();
 
         let final_momentum: Vec<_> = zip!(predictor_momentum.iter(), solution.iter())
-            .map(|(&pred_p, &r)| (Vector2::flat(pred_p) + Vector2::flat(r)))
+            .map(|(&pred_p, &r)| (Vector2::new(pred_p) + Vector2::new(r)))
             .collect();
 
         for i in 0..2 {

@@ -70,18 +70,18 @@ impl<T: ?Sized> Tensor<T> {
     }
 }
 
-impl<T> std::ops::Deref for Tensor<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl<T> std::ops::DerefMut for Tensor<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
-    }
-}
+//impl<T> std::ops::Deref for Tensor<T> {
+//    type Target = T;
+//    fn deref(&self) -> &Self::Target {
+//        &self.data
+//    }
+//}
+//
+//impl<T> std::ops::DerefMut for Tensor<T> {
+//    fn deref_mut(&mut self) -> &mut Self::Target {
+//        &mut self.data
+//    }
+//}
 
 /*
  * Tensor as a Set
@@ -1028,7 +1028,7 @@ where
     Tensor<T>: for<'a> AddAssign<&'a Tensor<T>>,
 {
     fn add_assign(&mut self, other: Tensor<U>) {
-        for (out, b) in self.data.view_mut_iter().zip(other.view_iter()) {
+        for (out, b) in self.data.view_mut_iter().zip(other.data.view_iter()) {
             let out_tensor = Tensor::as_mut(out);
             *out_tensor += Tensor::as_ref(b);
         }
@@ -1042,7 +1042,7 @@ where
     Tensor<T>: for<'a> SubAssign<&'a Tensor<T>>,
 {
     fn sub_assign(&mut self, other: Tensor<U>) {
-        for (out, b) in self.data.view_mut_iter().zip(other.view_iter()) {
+        for (out, b) in self.data.view_mut_iter().zip(other.data.view_iter()) {
             let out_tensor = Tensor::as_mut(out);
             *out_tensor -= Tensor::as_ref(b);
         }

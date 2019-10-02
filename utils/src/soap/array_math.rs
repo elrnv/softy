@@ -246,7 +246,7 @@ macro_rules! impl_array_matrices {
 
                 for row in 0..$r {
                     for col in 0..$c {
-                        m[col][row] = self[row][col];
+                        m[col][row] = self.data[row][col];
                     }
                 }
                 Tensor::new(m)
@@ -270,7 +270,7 @@ macro_rules! impl_array_matrices {
             {
                 let mut out = Tensor::<[U; $r]>::zero();
                 for i in 0..$r {
-                    out[i] = f(self.data[i], other.data[i]);
+                    out.data[i] = f(self.data[i], other.data[i]);
                 }
                 out
             }
@@ -284,7 +284,7 @@ macro_rules! impl_array_matrices {
             {
                 let mut out = Tensor::<[[U; $c]; $r]>::zeros();
                 for row in 0..$r {
-                    out[row] = Tensor::new(self[row]).map(|x| f(x)).into_inner();
+                    out.data[row] = Tensor::new(self.data[row]).map(|x| f(x)).into_inner();
                 }
                 out
             }
@@ -296,7 +296,7 @@ macro_rules! impl_array_matrices {
             ) -> Tensor<[[T; $c]; $r]> {
                 let mut out = Self::zeros();
                 for (i, elem) in diag.into_iter().take($r.min($c)).enumerate() {
-                    out[i][i] = elem;
+                    out.data[i][i] = elem;
                 }
                 out
             }
@@ -309,7 +309,7 @@ macro_rules! impl_array_matrices {
                 F: FnMut(B, T) -> B,
             {
                 for i in 0..$r {
-                    init = Tensor::new(self[i]).fold(init, |acc, x| f(acc, x));
+                    init = Tensor::new(self.data[i]).fold(init, |acc, x| f(acc, x));
                 }
                 init
             }
@@ -320,9 +320,9 @@ macro_rules! impl_array_matrices {
             }
 
             pub fn trace(&self) -> T {
-                let mut tr = self[0][0];
+                let mut tr = self.data[0][0];
                 for i in 1..$r.min($c) {
-                    tr += self[i][i];
+                    tr += self.data[i][i];
                 }
                 tr
             }
@@ -610,7 +610,7 @@ macro_rules! impl_determinant {
             pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
                 let mut m: [[T; $n - 1]; $n - 1] = unsafe { ::std::mem::uninitialized() };
                 for i in 0..$n - 1 {
-                    m[i].copy_from_slice(&self[if i < col { i } else { i + 1 }][1..$n]);
+                    m[i].copy_from_slice(&self.data[if i < col { i } else { i + 1 }][1..$n]);
                 }
                 Tensor::new(m)
             }
@@ -619,9 +619,10 @@ macro_rules! impl_determinant {
             #[inline]
             #[unroll_for_loops]
             pub fn determinant(&self) -> T {
-                let mut det = self[0][0] * self.without_row_and_first_col(0).determinant();
+                let mut det = self.data[0][0] * self.without_row_and_first_col(0).determinant();
                 for row in 1..$n {
-                    let cofactor = self[row][0] * self.without_row_and_first_col(row).determinant();
+                    let cofactor =
+                        self.data[row][0] * self.without_row_and_first_col(row).determinant();
                     if row & 1 == 0 {
                         det += cofactor;
                     } else {
@@ -645,7 +646,7 @@ impl_determinant!(4);
 impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     /// Compute the inverse of a 1x1 matrix.
     pub fn inverse(&self) -> Option<Self> {
-        let denom = self[0][0];
+        let denom = self.data[0][0];
         if denom != T::zero() {
             Some(Self::new([[T::one() / denom]]))
         } else {
@@ -654,9 +655,9 @@ impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     }
     /// Invert the 1x1 matrix in place. Return true if inversion was successful.
     pub fn invert(&mut self) -> bool {
-        let denom = self[0][0];
+        let denom = self.data[0][0];
         if denom != T::zero() {
-            self[0][0] = T::one() / denom;
+            self.data[0][0] = T::one() / denom;
             true
         } else {
             false
@@ -670,8 +671,8 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
         let det = self.determinant();
         if det != T::zero() {
             Some(Tensor::new([
-                [self[1][1] / det, -self[0][1] / det],
-                [-self[1][0] / det, self[0][0] / det],
+                [self.data[1][1] / det, -self.data[0][1] / det],
+                [-self.data[1][0] / det, self.data[0][0] / det],
             ]))
         } else {
             None
@@ -682,8 +683,8 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
         let det = self.determinant();
         if det != T::zero() {
             Some(Self::new([
-                [self[1][1] / det, -self[1][0] / det],
-                [-self[0][1] / det, self[0][0] / det],
+                [self.data[1][1] / det, -self.data[1][0] / det],
+                [-self.data[0][1] / det, self.data[0][0] / det],
             ]))
         } else {
             None
@@ -699,8 +700,8 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
                 let (a, b) = self.data.split_at_mut(1);
                 std::mem::swap(&mut a[0][0], &mut b[0][1]);
             }
-            self[0][1] = -self[0][1];
-            self[1][0] = -self[1][0];
+            self.data[0][1] = -self.data[0][1];
+            self.data[1][0] = -self.data[1][0];
             *self /= det;
             true
         } else {
@@ -718,9 +719,9 @@ impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
         let det = self.determinant();
         if det != T::zero() {
             Some(Self::new([
-                (Tensor::new(self[1]).cross(Tensor::new(self[2])) / det).into_inner(),
-                (Tensor::new(self[2]).cross(Tensor::new(self[0])) / det).into_inner(),
-                (Tensor::new(self[0]).cross(Tensor::new(self[1])) / det).into_inner(),
+                (Tensor::new(self.data[1]).cross(Tensor::new(self.data[2])) / det).into_inner(),
+                (Tensor::new(self.data[2]).cross(Tensor::new(self.data[0])) / det).into_inner(),
+                (Tensor::new(self.data[0]).cross(Tensor::new(self.data[1])) / det).into_inner(),
             ]))
         } else {
             None

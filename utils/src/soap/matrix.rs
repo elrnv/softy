@@ -747,9 +747,10 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
         assert_eq!(rhs.len(), self.num_chunked_cols());
 
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_chunked_rows()]);
-        for (row, out_row) in self.iter().zip(res.iter_mut()) {
+        for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
             for (col_idx, block, _) in row.iter() {
-                let out = Vector3(*out_row) + Matrix3(*block.into_arrays()) * Vector3(rhs[col_idx]);
+                let out =
+                    Vector3(*out_row) + Matrix3(*block.into_arrays()) * Vector3(rhs.data[col_idx]);
                 *out_row = out.into();
             }
         }
@@ -880,10 +881,10 @@ where
         assert_eq!(rhs.len(), self.num_chunked_cols());
 
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_chunked_rows()]);
-        for (row_idx, row, _) in self.iter() {
+        for (row_idx, row, _) in self.data.iter() {
             for (col_idx, block, _) in row.iter() {
-                let out =
-                    Vector3(res[row_idx]) + Matrix3(*block.into_arrays()) * Vector3(rhs[col_idx]);
+                let out = Vector3(res[row_idx])
+                    + Matrix3(*block.into_arrays()) * Vector3(rhs.data[col_idx]);
                 res[row_idx] = out.into();
             }
         }
@@ -902,10 +903,10 @@ where
         assert_eq!(rhs.len(), self.0.num_chunked_rows());
 
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_chunked_cols()]);
-        for (row_idx, row, _) in self.0.iter() {
+        for (row_idx, row, _) in self.0.data.iter() {
             for (col_idx, block, _) in row.iter() {
-                let out =
-                    Vector3(res[col_idx]) + Matrix3(*block.into_arrays()) * Vector3(rhs[row_idx]);
+                let out = Vector3(res[col_idx])
+                    + Matrix3(*block.into_arrays()) * Vector3(rhs.data[row_idx]);
                 res[col_idx] = out.into();
             }
         }
@@ -922,7 +923,7 @@ where
     fn mul_assign(&mut self, rhs: DiagonalBlockMatrix3<S, I>) {
         let rhs = View::view(&rhs);
         assert_eq!(rhs.0.len(), self.num_chunked_cols());
-        for (_, mut row) in self.view_mut().iter_mut() {
+        for (_, mut row) in self.view_mut().data.iter_mut() {
             for (col_idx, mut block) in row.iter_mut() {
                 let mass_vec = *rhs.0.at(*col_idx);
                 for (block_row, &mass) in block.iter_mut().zip(mass_vec.iter()) {
@@ -942,7 +943,7 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
 
         let lhs_nnz = self.data.source.data.source.len();
         let rhs_nnz = rhs_t.data.source.data.source.len();
-        let num_non_zero_cols = rhs_t.indices().len();
+        let num_non_zero_cols = rhs_t.data.indices().len();
         let num_non_zero_blocks = (lhs_nnz + rhs_nnz).max(num_non_zero_cols);
 
         // Allocate enough offsets for all non-zero rows in self. and assign the
@@ -952,7 +953,7 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
         non_zero_row_offsets[0] = 0;
 
         let mut out = Sparse::from_dim(
-            self.indices().to_vec(),
+            self.data.indices().to_vec(),
             num_rows,
             Chunked::from_offsets(
                 non_zero_row_offsets,
@@ -965,7 +966,7 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
         );
 
         let mut nz_row_idx = 0;
-        for (row_idx, row_l, _) in self.iter() {
+        for (row_idx, row_l, _) in self.data.iter() {
             let (_, out_row, _) = out.view_mut().isolate(nz_row_idx);
             let num_non_zero_blocks_in_row = rhs_t
                 .view()
@@ -1036,17 +1037,17 @@ impl SSBlockMatrix3View<'_> {
     {
         let rhs = rhs.view();
         // The output iterator will advance when we see a non-zero result.
-        let mut out_iter_mut = out.iter_mut();
+        let mut out_iter_mut = out.data.iter_mut();
         let mut num_non_zeros = 0;
 
-        for (row_idx, row, _) in self.iter() {
+        for (row_idx, row, _) in self.data.iter() {
             // Initialize output
             let mut sum_mtx = geo::math::Matrix3::zeros();
             let mut row_nnz = 0;
 
             // Compute the dot product of the two sparse vectors.
             let mut row_iter = row.iter();
-            let mut rhs_iter = rhs.iter();
+            let mut rhs_iter = rhs.data.iter();
 
             let mut col_mb = row_iter.next();
             let mut rhs_mb = rhs_iter.next();

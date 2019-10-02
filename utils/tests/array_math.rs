@@ -139,22 +139,22 @@ fn rowvec_vec_mult() {
     assert_eq!(b * a, Tensor::new([-7.5]));
 }
 
-/*
 #[test]
-fn map_and_apply_test() {
+fn map_inner() {
     let expected = Matrix3::new([[2.0, 4.0, 5.0], [3.0, 3.0, 3.0], [5.0, 4.0, 3.0]]);
-    assert_eq!(*B.apply(|x| x + 1.0), expected);
-    assert_eq!(B.map(|x| x + 1.0), expected);
+    assert_eq!(B.map_inner(|x| x + 1.0), expected);
 }
+
 #[test]
 fn vec_rowvec_mult_test() {
     let a = Vector3::new([0.5, 1.0, -2.0]);
-    let b = RowVector3::new([1.0, -4.0, 2.0]);
+    let b = RowVector3::new([[1.0, -4.0, 2.0]]);
     assert_eq!(
         a * b,
-        Matrix3::new([[0.5, 1.0, -2.0], [-2.0, -4.0, 8.0], [1.0, 2.0, -4.0]])
+        Matrix3::new([[0.5, -2.0, 1.0], [1.0, -4.0, 2.0], [-2.0, 8.0, -4.0]])
     );
 }
+/*
 #[test]
 fn matrix_vectorize_test() {
     let expected = Vector4::new([1.0, 3.0, 2.0, 4.0]);

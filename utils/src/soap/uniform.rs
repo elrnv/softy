@@ -904,7 +904,7 @@ where
     type Output = UniChunked<<StaticRange<N::Output> as IsolateIndex<S>>::Output, U<M>>;
 
     fn try_isolate(self, set: UniChunked<S, U<M>>) -> Option<Self::Output> {
-        let rng = StaticRange::<N::Output>::new(self.start);
+        let rng = StaticRange::<N::Output>::new(self.start * M::to_usize());
         let UniChunked { data, chunk_size } = set;
         IsolateIndex::try_isolate(rng, data).map(|data| UniChunked { data, chunk_size })
     }

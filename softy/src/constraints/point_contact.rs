@@ -366,7 +366,7 @@ impl PointContactConstraint {
                     .unwrap_or_else(|| collider_zero_mass_inv.view()),
             ));
 
-        let mut jac_mass = Tensor::new(utils::soap::ToOwned::to_owned(jac.data.clone()));
+        let mut jac_mass = Tensor::new(jac.data.clone().into_owned());
         jac_mass *= object_mass_inv.view();
 
         //jac_mass.write_img("./out/jac_mass.png");

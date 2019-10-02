@@ -129,11 +129,11 @@ impl<'a> FrictionProblem<'a> {
         )
         .enumerate()
         {
-            let p_norm = Tensor::flat(p).norm();
+            let p_norm = Tensor::new(p).norm();
             if p_norm > 0.0 {
                 let pred = self.contact_basis.to_contact_coordinates(p, i);
-                *r = (Tensor::flat([pred[1], pred[2]]) * (-self.mu * cr.abs() / p_norm))
-                    .into_inner();
+                *r =
+                    (Tensor::new([pred[1], pred[2]]) * (-self.mu * cr.abs() / p_norm)).into_inner();
             } else {
                 *r = [0.0; 2];
             }

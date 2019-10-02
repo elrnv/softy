@@ -740,7 +740,7 @@ impl<'a> DSBlockMatrix3View<'a> {
                 .zip(IntoIterator::into_iter(row.source().view()))
             {
                 let basis = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
-                let basis_tr = r.transpose();
+                let basis_tr = basis.transpose();
                 let mass = *orig_entry.into_arrays().as_tensor();
                 *out_entry.into_arrays().as_mut_tensor() = basis_tr * mass * basis;
             }

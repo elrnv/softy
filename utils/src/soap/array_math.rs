@@ -86,6 +86,17 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        /*
+         * Vector-RowVector multiply
+         * This sepecial case treats Vectors as column vectors
+         */
+        impl<T: Scalar> Mul<Tensor<[[T; $n]; 1]>> for Tensor<[T; $n]> {
+            type Output = Tensor<[[T; $n]; $n]>;
+            fn mul(self, rhs: Tensor<[[T; $n]; 1]>) -> Self::Output {
+                self.map(|row| (Tensor::new(rhs.data[0]) * Tensor::new(row)).data)
+            }
+        }
+
         // Right scalar multiply by a raw scalar.
         impl<T: Scalar> Mul<T> for Tensor<[T; $n]>
         where

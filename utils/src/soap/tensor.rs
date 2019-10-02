@@ -1050,7 +1050,7 @@ where
 }
 
 macro_rules! impl_chunked_tensor_arithmetic {
-    ($chunked:ident) => {
+    ($chunked:ident, $chunks:ident) => {
         impl<S, O> Add for Tensor<$chunked<S, O>>
         where
             $chunked<S, O>: Set,
@@ -1060,10 +1060,10 @@ macro_rules! impl_chunked_tensor_arithmetic {
             type Output = Tensor<$chunked<S::OwnedData, O>>;
             fn add(self, other: Self) -> Self::Output {
                 assert_eq!(self.data.len(), other.data.len());
-                let $chunked { chunks, data } = self.data;
+                let $chunked { $chunks, data } = self.data;
 
                 Tensor::new($chunked {
-                    chunks,
+                    $chunks,
                     data: (Tensor::new(data) + Tensor::new(other.data.data)).data,
                 })
             }
@@ -1080,9 +1080,9 @@ macro_rules! impl_chunked_tensor_arithmetic {
             /// Subtract a tensor of chunked from another.
             fn sub(self, other: Self) -> Self::Output {
                 assert_eq!(self.data.len(), other.data.len());
-                let $chunked { chunks, data } = self.data;
+                let $chunked { $chunks, data } = self.data;
                 Tensor::new($chunked {
-                    chunks,
+                    $chunks,
                     data: (Tensor::new(data) - Tensor::new(other.data.data)).data,
                 })
             }
@@ -1102,9 +1102,9 @@ macro_rules! impl_chunked_tensor_arithmetic {
             type Output = Tensor<$chunked<S::OwnedData, O>>;
 
             fn mul(self, other: T) -> Self::Output {
-                let $chunked { chunks, data } = self.data;
+                let $chunked { $chunks, data } = self.data;
                 Tensor::new($chunked {
-                    chunks,
+                    $chunks,
                     data: (Tensor::new(data) * other).data,
                 })
             }
@@ -1128,8 +1128,8 @@ macro_rules! impl_chunked_tensor_arithmetic {
     };
 }
 
-impl_chunked_tensor_arithmetic!(Chunked);
-impl_chunked_tensor_arithmetic!(UniChunked);
+impl_chunked_tensor_arithmetic!(Chunked, chunks);
+impl_chunked_tensor_arithmetic!(UniChunked, chunk_size);
 
 #[cfg(test)]
 mod tests {

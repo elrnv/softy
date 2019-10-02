@@ -17,7 +17,7 @@ use std::convert::{AsMut, AsRef};
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct UniChunked<S, N> {
     pub(crate) data: S,
-    pub(crate) chunks: N,
+    pub(crate) chunk_size: N,
 }
 
 impl<T, N: Default + Array<T>> UniChunked<Vec<T>, U<N>> {
@@ -33,7 +33,7 @@ impl<T, N: Default + Array<T>> UniChunked<Vec<T>, U<N>> {
     /// ```
     pub fn from_array_vec(data: Vec<N::Array>) -> UniChunked<Vec<T>, U<N>> {
         UniChunked {
-            chunks: Default::default(),
+            chunk_size: Default::default(),
             data: unsafe { reinterpret::reinterpret_vec(data) },
         }
     }
@@ -52,7 +52,7 @@ impl<'a, T, N: Default + Array<T>> UniChunked<&'a [T], U<N>> {
     /// ```
     pub fn from_array_slice(data: &[N::Array]) -> UniChunked<&[T], U<N>> {
         UniChunked {
-            chunks: Default::default(),
+            chunk_size: Default::default(),
             data: unsafe { reinterpret::reinterpret_slice(data) },
         }
     }
@@ -71,7 +71,7 @@ impl<'a, T, N: Default + Array<T>> UniChunked<&'a mut [T], U<N>> {
     /// ```
     pub fn from_array_slice_mut(data: &'a mut [N::Array]) -> UniChunked<&'a mut [T], U<N>> {
         UniChunked {
-            chunks: Default::default(),
+            chunk_size: Default::default(),
             data: unsafe { reinterpret::reinterpret_mut_slice(data) },
         }
     }
@@ -103,25 +103,6 @@ impl<'a, S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem>> UniChunke
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
     }
 }
-
-//impl<'a, S: Set, N: Array<<S as Set>::Elem>, M: Unsigned + Array<<Set> UniChunked<&'a mut N::Array, U<N>>
-//    where &'a mut <N as Array<<S as Set>::Elem>>::Array: ReinterpretAsGrouped<N>
-//{
-//    /// Convert this `UniChunked` collection into arrays.
-//    ///
-//    /// # Example
-//    ///
-//    /// ```
-//    /// use utils::soap::*;
-//    /// let mut v = vec![[1,2,3],[4,5,6],[7,8,9]];
-//    /// let mut v_exp = v.clone();
-//    /// let v_result = Chunked3::from_array_slice_mut(v.as_mut_slice()).into_arrays();
-//    /// assert_eq!(v_exp.as_mut_slice(), v_result);
-//    /// ```
-//    pub fn into_arrays(self) -> &'a mut [N::Array] {
-//        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
-//    }
-//}
 
 // Note: These must be separate in order to avoid conflict with standard library.
 impl<T: Clone, N: Array<T> + Unsigned> Into<Vec<N::Array>> for UniChunked<Vec<T>, U<N>> {
@@ -174,7 +155,7 @@ impl Dimension for usize {
 impl<S, N: Dimension> ChunkSize for UniChunked<S, N> {
     /// Get the size of each chunk in this collection.
     fn chunk_size(&self) -> usize {
-        self.chunks.value()
+        self.chunk_size.value()
     }
 }
 
@@ -211,7 +192,7 @@ impl<S, N> UniChunked<S, N> {
 
 impl<S: Default, N: Default> UniChunked<S, U<N>> {
     /// Create an empty `UniChunked` collection that groups elements into `N`
-    /// chunks.
+    /// sized chunks.
     ///
     /// # Example
     ///
@@ -226,7 +207,7 @@ impl<S: Default, N: Default> UniChunked<S, U<N>> {
     /// ```
     pub fn new() -> Self {
         UniChunked {
-            chunks: Default::default(), // Zero sized type.
+            chunk_size: Default::default(), // Zero sized type.
             data: S::default(),
         }
     }
@@ -249,7 +230,7 @@ impl<S: Set, N: Unsigned + Default> UniChunked<S, U<N>> {
     pub fn from_flat(data: S) -> Self {
         assert_eq!(data.len() % N::to_usize(), 0);
         UniChunked {
-            chunks: Default::default(), // Zero sized type.
+            chunk_size: Default::default(), // Zero sized type.
             data,
         }
     }
@@ -264,7 +245,7 @@ impl<S, N> UniChunked<S, N> {
 
 impl<S: Default> ChunkedN<S> {
     /// Create an empty `UniChunked` collection that groups elements into `n`
-    /// chunks.
+    /// sized chunks.
     ///
     /// # Example
     ///
@@ -278,7 +259,7 @@ impl<S: Default> ChunkedN<S> {
     /// ```
     pub fn with_stride(n: usize) -> Self {
         UniChunked {
-            chunks: n,
+            chunk_size: n,
             data: S::default(),
         }
     }
@@ -300,7 +281,10 @@ impl<S: Set> ChunkedN<S> {
     /// ```
     pub fn from_flat_with_stride(data: S, n: usize) -> Self {
         assert_eq!(data.len() % n, 0);
-        UniChunked { chunks: n, data }
+        UniChunked {
+            chunk_size: n,
+            data,
+        }
     }
 }
 
@@ -362,7 +346,7 @@ impl<T, N: Unsigned + Array<T>> UniChunked<Vec<T>, U<N>> {
 
 impl<T> ChunkedN<Vec<T>> {
     pub fn reserve(&mut self, new_length: usize) {
-        self.data.reserve(new_length * self.chunks);
+        self.data.reserve(new_length * self.chunk_size);
     }
 }
 
@@ -454,7 +438,7 @@ impl<S: Set> Set for ChunkedN<S> {
     /// assert_eq!(s.len(), 2);
     /// ```
     fn len(&self) -> usize {
-        self.data.len() / self.chunks
+        self.data.len() / self.chunk_size
     }
 }
 
@@ -566,7 +550,7 @@ where
     /// assert_eq!(None, iter.next());
     /// ```
     fn into_iter(self) -> Self::IntoIter {
-        self.data.into_chunk_iter(self.chunks)
+        self.data.into_chunk_iter(self.chunk_size)
     }
 }
 
@@ -761,7 +745,7 @@ where
     fn into_owned(self) -> Self::Owned {
         UniChunked {
             data: self.data.into_owned(),
-            chunks: self.chunks,
+            chunk_size: self.chunk_size,
         }
     }
 }
@@ -773,9 +757,9 @@ where
 {
     type OwnedData = UniChunked<S::OwnedData, N>;
     fn into_owned_data(self) -> Self::OwnedData {
-        let UniChunked { chunks, data } = self;
+        let UniChunked { chunk_size, data } = self;
         UniChunked {
-            chunks,
+            chunk_size,
             data: data.into_owned_data(),
         }
     }
@@ -817,7 +801,7 @@ where
                 .get(N::to_usize() * self.start..N::to_usize() * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: Default::default(),
+                    chunk_size: Default::default(),
                 })
         } else {
             None
@@ -834,7 +818,7 @@ where
     /// Get an element of the given `ChunkedN` collection.
     fn get(self, chunked: &ChunkedN<S>) -> Option<Self::Output> {
         if self < chunked.len() {
-            let stride = chunked.chunks;
+            let stride = chunked.chunk_size;
             chunked.data.get(std::ops::Range {
                 start: self * stride,
                 end: (self + 1) * stride,
@@ -854,13 +838,13 @@ where
     /// Get a `[begin..end)` subview of the given `ChunkedN` collection.
     fn get(self, chunked: &ChunkedN<S>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
-            let stride = chunked.chunks;
+            let stride = chunked.chunk_size;
             chunked
                 .data
                 .get(stride * self.start..stride * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: stride,
+                    chunk_size: stride,
                 })
         } else {
             None
@@ -902,7 +886,7 @@ where
                 .try_isolate(N::to_usize() * self.start..N::to_usize() * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: Default::default(),
+                    chunk_size: Default::default(),
                 })
         } else {
             None
@@ -921,8 +905,8 @@ where
 
     fn try_isolate(self, set: UniChunked<S, U<M>>) -> Option<Self::Output> {
         let rng = StaticRange::<N::Output>::new(self.start);
-        let UniChunked { data, chunks } = set;
-        IsolateIndex::try_isolate(rng, data).map(|data| UniChunked { data, chunks })
+        let UniChunked { data, chunk_size } = set;
+        IsolateIndex::try_isolate(rng, data).map(|data| UniChunked { data, chunk_size })
     }
 }
 
@@ -935,7 +919,7 @@ where
     /// Isolate a chunk of the given `ChunkedN` collection.
     fn try_isolate(self, chunked: ChunkedN<S>) -> Option<Self::Output> {
         if self < chunked.len() {
-            let stride = chunked.chunks;
+            let stride = chunked.chunk_size;
             chunked.data.try_isolate(std::ops::Range {
                 start: self * stride,
                 end: (self + 1) * stride,
@@ -955,13 +939,13 @@ where
     /// Isolate a `[begin..end)` range of the given `ChunkedN` collection.
     fn try_isolate(self, chunked: ChunkedN<S>) -> Option<Self::Output> {
         if self.start <= self.end && self.end <= chunked.len() {
-            let stride = chunked.chunks;
+            let stride = chunked.chunk_size;
             chunked
                 .data
                 .try_isolate(stride * self.start..stride * self.end)
                 .map(|data| UniChunked {
                     data,
-                    chunks: stride,
+                    chunk_size: stride,
                 })
         } else {
             None
@@ -1258,9 +1242,9 @@ where
     S: View<'a>,
 {
     pub fn iter(&'a self) -> Chunks<S::Type> {
-        let UniChunked { chunks, data } = self;
+        let UniChunked { chunk_size, data } = self;
         Chunks {
-            chunk_size: *chunks,
+            chunk_size: *chunk_size,
             data: data.view(),
         }
     }
@@ -1284,9 +1268,9 @@ where
     /// assert_eq!(None, iter.next());
     /// ```
     pub fn iter_mut(&'a mut self) -> Chunks<S::Type> {
-        let UniChunked { chunks, data } = self;
+        let UniChunked { chunk_size, data } = self;
         Chunks {
-            chunk_size: *chunks,
+            chunk_size: *chunk_size,
             data: data.view_mut(),
         }
     }
@@ -1325,7 +1309,7 @@ where
     fn view(&'a self) -> Self::Type {
         UniChunked {
             data: self.data.view(),
-            chunks: self.chunks,
+            chunk_size: self.chunk_size,
         }
     }
 }
@@ -1357,7 +1341,7 @@ where
     fn view_mut(&'a mut self) -> Self::Type {
         UniChunked {
             data: self.data.view_mut(),
-            chunks: self.chunks,
+            chunk_size: self.chunk_size,
         }
     }
 }
@@ -1401,11 +1385,17 @@ impl<S: SplitAt + Set, N: Copy + Unsigned> SplitAt for UniChunked<S, U<N>> {
     /// assert_eq!(r, Chunked2::from_flat(vec![2,3]));
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
-        let UniChunked { data, chunks } = self;
+        let UniChunked { data, chunk_size } = self;
         let (l, r) = data.split_at(mid * N::to_usize());
         (
-            UniChunked { data: l, chunks },
-            UniChunked { data: r, chunks },
+            UniChunked {
+                data: l,
+                chunk_size,
+            },
+            UniChunked {
+                data: r,
+                chunk_size,
+            },
         )
     }
 }
@@ -1423,11 +1413,17 @@ impl<S: SplitAt + Set> SplitAt for ChunkedN<S> {
     /// assert_eq!(r, ChunkedN::from_flat_with_stride(vec![2,3], 2));
     /// ```
     fn split_at(self, mid: usize) -> (Self, Self) {
-        let UniChunked { data, chunks } = self;
-        let (l, r) = data.split_at(mid * chunks);
+        let UniChunked { data, chunk_size } = self;
+        let (l, r) = data.split_at(mid * chunk_size);
         (
-            UniChunked { data: l, chunks },
-            UniChunked { data: r, chunks },
+            UniChunked {
+                data: l,
+                chunk_size,
+            },
+            UniChunked {
+                data: r,
+                chunk_size,
+            },
         )
     }
 }
@@ -1435,9 +1431,16 @@ impl<S: SplitAt + Set> SplitAt for ChunkedN<S> {
 impl<S: SplitPrefix<N> + Set, N: Copy> SplitFirst for UniChunked<S, U<N>> {
     type First = S::Prefix;
     fn split_first(self) -> Option<(Self::First, Self)> {
-        let UniChunked { data, chunks } = self;
-        data.split_prefix()
-            .map(|(prefix, rest)| (prefix, UniChunked { data: rest, chunks }))
+        let UniChunked { data, chunk_size } = self;
+        data.split_prefix().map(|(prefix, rest)| {
+            (
+                prefix,
+                UniChunked {
+                    data: rest,
+                    chunk_size,
+                },
+            )
+        })
     }
 }
 
@@ -1449,14 +1452,17 @@ where
 {
     type Prefix = UniChunked<S::Prefix, U<N>>;
     fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
-        let UniChunked { data, chunks } = self;
+        let UniChunked { data, chunk_size } = self;
         data.split_prefix().map(|(prefix, rest)| {
             (
                 UniChunked {
                     data: prefix,
-                    chunks,
+                    chunk_size,
                 },
-                UniChunked { data: rest, chunks },
+                UniChunked {
+                    data: rest,
+                    chunk_size,
+                },
             )
         })
     }
@@ -1478,7 +1484,7 @@ impl<S: Dummy, N: Default> Dummy for UniChunked<S, N> {
     unsafe fn dummy() -> Self {
         UniChunked {
             data: Dummy::dummy(),
-            chunks: N::default(),
+            chunk_size: N::default(),
         }
     }
 }
@@ -1491,7 +1497,7 @@ impl<S: Truncate, N: Unsigned> Truncate for UniChunked<S, U<N>> {
 
 impl<S: Truncate> Truncate for ChunkedN<S> {
     fn truncate(&mut self, new_len: usize) {
-        self.data.truncate(new_len * self.chunks);
+        self.data.truncate(new_len * self.chunk_size);
     }
 }
 
@@ -1506,7 +1512,7 @@ impl<T, S: CloneWithStorage<T>, N: Clone> CloneWithStorage<T> for UniChunked<S, 
     type CloneType = UniChunked<S::CloneType, N>;
     fn clone_with_storage(&self, storage: T) -> Self::CloneType {
         UniChunked {
-            chunks: self.chunks.clone(),
+            chunk_size: self.chunk_size.clone(),
             data: self.data.clone_with_storage(storage),
         }
     }
@@ -1558,7 +1564,7 @@ impl<S: RemovePrefix, N: Unsigned> RemovePrefix for UniChunked<S, U<N>> {
 
 impl<S: RemovePrefix> RemovePrefix for ChunkedN<S> {
     fn remove_prefix(&mut self, n: usize) {
-        self.data.remove_prefix(n * self.chunks);
+        self.data.remove_prefix(n * self.chunk_size);
     }
 }
 
@@ -1574,7 +1580,7 @@ impl<S: StorageInto<T>, N, T> StorageInto<T> for UniChunked<S, N> {
     fn storage_into(self) -> Self::Output {
         UniChunked {
             data: self.data.storage_into(),
-            chunks: self.chunks,
+            chunk_size: self.chunk_size,
         }
     }
 }
@@ -1583,9 +1589,9 @@ impl<S: SwapChunks> SwapChunks for ChunkedN<S> {
     fn swap_chunks(&mut self, begin_a: usize, begin_b: usize, chunk_size: usize) {
         assert!(begin_a + chunk_size <= begin_b || begin_b + chunk_size <= begin_a);
         self.data.swap_chunks(
-            self.chunks * begin_a,
-            self.chunks * begin_b,
-            self.chunks * chunk_size,
+            self.chunk_size * begin_a,
+            self.chunk_size * begin_b,
+            self.chunk_size * chunk_size,
         );
     }
 }
@@ -1633,7 +1639,7 @@ impl<S: Set + SwapChunks> PermuteInPlace for ChunkedN<S> {
                 }
 
                 self.data
-                    .swap_chunks(self.chunks * i, self.chunks * idx, self.chunks);
+                    .swap_chunks(self.chunk_size * i, self.chunk_size * idx, self.chunk_size);
 
                 seen[i] = true;
                 i = idx;
@@ -1654,7 +1660,7 @@ where
     fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
         let data = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         let mut chunked = UniChunked {
-            chunks: N::to_usize(),
+            chunk_size: N::to_usize(),
             data,
         };
         chunked.permute_in_place(permutation, seen);

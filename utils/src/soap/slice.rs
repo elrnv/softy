@@ -422,6 +422,10 @@ impl<T> PermuteInPlace for &mut [T] {
     /// larger than this slice.
     fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
         let data = std::mem::replace(self, &mut []);
-        UniChunked { chunks: 1, data }.permute_in_place(permutation, seen);
+        UniChunked {
+            chunk_size: 1,
+            data,
+        }
+        .permute_in_place(permutation, seen);
     }
 }

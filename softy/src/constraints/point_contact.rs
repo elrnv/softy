@@ -357,14 +357,14 @@ impl PointContactConstraint {
         );
 
         // Collider mass matrix is constructed at active contacts only.
-        let collider_mass_inv =
-            DiagonalBlockMatrix::from_subset(Subset::from_unique_ordered_indices(
-                active_contact_indices,
-                self.collider_mass_inv
-                    .as_ref()
-                    .map(|mass_inv| mass_inv.view())
-                    .unwrap_or_else(|| collider_zero_mass_inv.view()),
-            ));
+        let collider_mass_inv = DiagonalBlockMatrix::from_subset(
+            self.collider_mass_inv
+                .as_ref()
+                .map(|mass_inv| {
+                    Subset::from_unique_ordered_indices(active_contact_indices, mass_inv.view())
+                })
+                .unwrap_or_else(|| Subset::all(collider_zero_mass_inv.view())),
+        );
 
         let mut jac_mass = Tensor::new(jac.data.clone().into_owned());
         jac_mass *= object_mass_inv.view();
@@ -398,8 +398,11 @@ impl PointContactConstraint {
         //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
         let mut rhs = rhs.storage().to_vec();
-        sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
-            .unwrap();
+
+        if !rhs.is_empty() {
+            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
+                .unwrap();
+        }
         Chunked3::from_flat(rhs)
     }
 }
@@ -549,7 +552,7 @@ impl ContactConstraint for PointContactConstraint {
         *predictor_impulse.as_mut_tensor() -=
             Tensor::new(Chunked3::from_array_vec(contact_impulse_vectors));
 
-        let success = if true {
+        let success = if false {
             // Polar coords
             let predictor_impulse_t: Vec<_> = predictor_impulse
                 .iter()
@@ -729,7 +732,12 @@ impl ContactConstraint for PointContactConstraint {
                 .active_constraint_indices()
                 .expect("Failed to retrieve constraint indices.");
 
-            let add_vel = DiagonalBlockMatrix::new(self.collider_mass_inv.as_ref().unwrap().view())
+            let collider_mass_inv =
+                DiagonalBlockMatrix::from_subset(Subset::from_unique_ordered_indices(
+                    indices.as_slice(),
+                    self.collider_mass_inv.as_ref().unwrap().view(),
+                ));
+            let add_vel = collider_mass_inv
                 * Tensor::new(frictional_contact.collider_impulse.source().view());
             let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(
                 indices.as_slice(),

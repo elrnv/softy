@@ -31,6 +31,11 @@ impl<'a> FrictionSolver<'a> {
         //.max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
         //.unwrap_or(1.0);
 
+        let basis_mtx = contact_basis.tangent_basis_matrix();
+        let hessian = mass_inv_mtx
+            .clone()
+            .diagonal_congruence_transform(basis_mtx.view());
+
         let problem = SemiImplicitFrictionProblem(FrictionProblem {
             predictor_impulse,
             prev_friction_impulse_t,
@@ -38,6 +43,7 @@ impl<'a> FrictionSolver<'a> {
             contact_basis,
             mu: params.dynamic_friction,
             mass_inv_mtx,
+            hessian,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
@@ -45,9 +51,10 @@ impl<'a> FrictionSolver<'a> {
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-3);
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-4);
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
+        ipopt.set_option("hessian_constant", "yes");
         ipopt.set_option("max_iter", params.inner_iterations as i32);
 
         Ok(FrictionSolver { solver: ipopt })
@@ -300,56 +307,63 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
 
     fn objective(&self, r_t: &[Number], obj: &mut Number) -> bool {
         let r_t = Tensor::new(Chunked2::from_flat(r_t));
-        assert_eq!(self.0.predictor_impulse.len(), r_t.len());
+        let FrictionProblem {
+            predictor_impulse,
+            prev_friction_impulse_t,
+            contact_basis,
+            mass_inv_mtx,
+            ..
+        } = &self.0;
+
+        assert_eq!(predictor_impulse.len(), r_t.len());
 
         // Compute (negative of) frictional dissipation.
-        let prev_r_t = Tensor::new(Chunked2::from_array_slice(self.0.prev_friction_impulse_t));
+        let prev_r_t = Tensor::new(Chunked2::from_array_slice(prev_friction_impulse_t));
 
         // Compute the difference between current and previous impulses in tangent space.
         let diff_t = r_t - prev_r_t;
 
         // Convert to physical space.
-        let diff = self
-            .0
-            .contact_basis
-            .from_tangent_space(diff_t.view().into_inner().into());
+        let diff = contact_basis.from_tangent_space(diff_t.view().into_inner().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
-        let predictor = Tensor::new(Chunked3::from_array_slice(self.0.predictor_impulse));
-        diff -= predictor;
+        let predictor = Tensor::new(Chunked3::from_array_slice(predictor_impulse));
+        diff += predictor;
 
-        let rhs = self.0.mass_inv_mtx.view() * diff.view();
+        let rhs = mass_inv_mtx.view() * diff.view();
 
-        *obj = diff.view().dot(rhs.view());
+        *obj = 0.5 * diff.view().dot(rhs.view());
 
         true
     }
 
     fn objective_grad(&self, r_t: &[Number], grad_f_t: &mut [Number]) -> bool {
         let r_t = Tensor::new(Chunked2::from_flat(r_t));
-        assert_eq!(self.0.predictor_impulse.len(), r_t.len());
+        let FrictionProblem {
+            predictor_impulse,
+            prev_friction_impulse_t,
+            contact_basis,
+            mass_inv_mtx,
+            ..
+        } = &self.0;
 
-        // Compute deriviative of (negative of) frictional dissipation.
-        let prev_r_t = Tensor::new(Chunked2::from_array_slice(self.0.prev_friction_impulse_t));
+        assert_eq!(predictor_impulse.len(), r_t.len());
+
+        // Compute derivative of (negative of) frictional dissipation.
+        let prev_r_t = Tensor::new(Chunked2::from_array_slice(prev_friction_impulse_t));
 
         // Compute the difference between current and previous impulses in tangent space.
         let diff_t = r_t - prev_r_t;
 
-        let diff = self
-            .0
-            .contact_basis
-            .from_tangent_space(diff_t.view().into_inner().into());
+        let diff = contact_basis.from_tangent_space(diff_t.view().into_inner().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
-        let predictor = Tensor::flat(Chunked3::from_array_slice(self.0.predictor_impulse));
-        diff -= predictor;
+        let predictor = Tensor::new(Chunked3::from_array_slice(predictor_impulse));
+        diff += predictor;
 
-        let grad = self.0.mass_inv_mtx.view() * diff.view();
+        let grad = mass_inv_mtx.view() * diff.view();
 
-        let grad_t = self
-            .0
-            .contact_basis
-            .to_tangent_space(grad.view().into_inner().into());
+        let grad_t = contact_basis.to_tangent_space(grad.view().into_inner().into());
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
@@ -370,11 +384,11 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
     }
 
     fn constraint(&self, r: &[Number], g: &mut [Number]) -> bool {
-        let r = Tensor::flat(Chunked2::from_flat(r));
+        let r = Chunked2::from_flat(r);
         assert_eq!(r.len(), g.len());
-        //for (c, &r) in zip!(g.iter_mut(), impulses.iter()) {
-        //    *c = r.dot(r);
-        //}
+        for (c, &r) in zip!(g.iter_mut(), r.iter()) {
+            *c = r.as_tensor().norm_squared();
+        }
         true
     }
 
@@ -393,7 +407,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = self.0.mu * cr.abs();
-            *u *= *u;
+            *u *= *u; // square
         }
         true
     }
@@ -410,32 +424,44 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
     }
 
     fn constraint_jacobian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
-        let mut jacobian = Tensor::flat(Chunked2::from_flat(vals));
+        let mut jacobian = Chunked2::from_flat(vals);
         let r = Chunked2::from_flat(r);
         for (jac, &r) in zip!(jacobian.iter_mut(), r.iter()) {
-            *jac.as_mut_tensor::<()>() = Tensor::new(r) * 2.0;
+            *jac.as_mut_tensor() = Tensor::new(r) * 2.0;
         }
         true
     }
 
     fn num_hessian_non_zeros(&self) -> usize {
-        // Objective Hessian is diagonal.
         // Constraint Hessian is diagonal.
-        2 * self.num_constraints() + 2 * self.0.predictor_impulse.len()
+        2 * self.num_constraints() + self.0.hessian.num_non_zeros()
     }
 
     #[unroll_for_loops]
     fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         // Diagonal objective Hessian.
-        let num_diagonal_entries = 2 * self.num_constraints();
         let offset = {
-            for idx in 0..num_diagonal_entries {
-                rows[idx] = idx as Index;
-                cols[idx] = idx as Index;
+            let mut idx = 0;
+            for (row_idx, row) in self.0.hessian.data.iter().enumerate() {
+                for (col_idx, _, _) in row.iter() {
+                    rows[idx] = (2 * row_idx) as Index;
+                    cols[idx] = (2 * col_idx) as Index;
+
+                    rows[idx + 1] = (2 * row_idx) as Index;
+                    cols[idx + 1] = (2 * col_idx + 1) as Index;
+
+                    rows[idx + 2] = (2 * row_idx + 1) as Index;
+                    cols[idx + 2] = (2 * col_idx) as Index;
+
+                    rows[idx + 3] = (2 * row_idx + 1) as Index;
+                    cols[idx + 3] = (2 * col_idx + 1) as Index;
+                    idx += 4;
+                }
             }
-            2 * self.num_constraints()
+            idx
         };
         // Diagonal Constraint matrix.
+        let num_diagonal_entries = 2 * self.num_constraints();
         for idx in 0..num_diagonal_entries {
             rows[offset + idx] = idx as Index;
             cols[offset + idx] = idx as Index;
@@ -449,19 +475,23 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         lambda: &[Number],
         vals: &mut [Number],
     ) -> bool {
-        let mut hess = Tensor::flat(Chunked2::from_flat(vals));
-        let num_hess_entries = hess.len();
-        let mut hess_iter_mut = hess.iter_mut();
-        assert_eq!(
-            num_hess_entries,
-            self.0.predictor_impulse.len() + lambda.len()
-        );
-        for h in &mut hess_iter_mut {
-            // TODO: multiply by mass_inv_mtx
-            *h = *(Tensor::flat([0.0; 2]) * (1.0 * obj_factor));
+        let mut obj_hess = Chunked2::from_flat(Chunked2::from_flat(
+            &mut vals[..self.0.hessian.num_non_zeros()],
+        ));
+        let mut obj_hess_iter_mut = obj_hess.iter_mut();
+        for row in self.0.hessian.data.iter() {
+            for (_, block, _) in row.iter() {
+                *obj_hess_iter_mut
+                    .next()
+                    .unwrap()
+                    .into_arrays()
+                    .as_mut_tensor() = *block.into_arrays().as_tensor() * obj_factor;
+            }
         }
-        for (&l, h) in zip!(lambda.iter(), &mut hess_iter_mut) {
-            *h = *(Tensor::flat([2.0; 2]) * l);
+
+        let mut hess = Chunked2::from_flat(&mut vals[self.0.hessian.num_non_zeros()..]);
+        for (&l, h) in zip!(lambda.iter(), hess.iter_mut()) {
+            *h.as_mut_tensor() = Tensor::new([2.0; 2]) * l;
         }
 
         true
@@ -483,11 +513,11 @@ mod tests {
         // Check that the point still has velocity in the positive x direction
         dbg!(&velocity);
         dbg!(&impulse);
-        assert!(velocity[0] > 0.8);
+        assert!(velocity[1] > 0.8);
 
         // Sanity check that no perpendicular velocities or impulses were produced in the process
-        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
-        assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(impulse[0], 0.0, max_relative = 1e-6);
         Ok(())
     }
 
@@ -497,11 +527,12 @@ mod tests {
         let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
         // Check that the point gets stuck
         dbg!(&impulse);
-        assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6, epsilon = 1e-8);
+        dbg!(&velocity);
+        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6, epsilon = 1e-5);
 
         // Sanity check that no perpendicular velocities or impulses were produced in the process
-        assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6);
-        assert_relative_eq!(impulse[1], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-6);
+        assert_relative_eq!(impulse[0], 0.0, max_relative = 1e-6);
         Ok(())
     }
 
@@ -509,12 +540,12 @@ mod tests {
         let params = FrictionParams {
             dynamic_friction: mu,
             inner_iterations: 30,
-            tolerance: 1e-10,
-            print_level: 5,
+            tolerance: 1e-12,
+            print_level: 0,
         };
 
         let prev_friction_impulse_t = vec![[0.0, 0.0]]; // one point sliding right.
-        let predictor_impulse = vec![[0.0, 1.0 * mass, 0.0]]; // one point sliding right.
+        let predictor_impulse = vec![[1.0 * mass, 0.0, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
         let mass_inv_mtx: DSBlockMatrix3 =
             DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
@@ -535,7 +566,7 @@ mod tests {
 
         let impulse = Vector2(solution[0]);
         let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
-        let final_velocity = Vector2(p_imp_t[0]) + impulse / mass;
+        let final_velocity = (Vector2(p_imp_t[0]) + impulse) / mass;
 
         Ok((final_velocity, impulse))
     }
@@ -546,7 +577,7 @@ mod tests {
         let params = FrictionParams {
             dynamic_friction: 0.001,
             inner_iterations: 40,
-            tolerance: 1e-10,
+            tolerance: 1e-12,
             print_level: 0,
         };
 

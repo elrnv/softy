@@ -505,6 +505,11 @@ where
     /// let mut iter_owned = owned.iter();
     /// assert_eq!(owned, vec![1,3,5,0]);
     /// ```
+    // TODO: Currently it's impossible to clone a subset of nested unichunked
+    // elements into another nested unichunked. The reason is that Set::Elem is
+    // an array for all unichunked types, but the iterator for unichunked types
+    // returns UniChunked instead of an array. This dichotomy causes problems
+    // and should be resolved eventually.
     pub fn clone_into_other<V>(&'a self, other: &'a mut V)
     where
         V: ViewMut<'a> + ?Sized,

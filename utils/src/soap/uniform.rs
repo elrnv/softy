@@ -159,6 +159,12 @@ impl<S, N: Dimension> ChunkSize for UniChunked<S, N> {
     }
 }
 
+impl<S: ChunkSize, N: Dimension> UniChunked<S, N> {
+    pub fn inner_chunk_size(&self) -> usize {
+        self.data.chunk_size()
+    }
+}
+
 impl<S, N> UniChunked<S, N> {
     /// Get a immutable reference to the underlying data.
     ///

@@ -974,6 +974,12 @@ impl<S: ChunkSize, I> ChunkSize for Subset<S, I> {
     }
 }
 
+impl<S: ChunkSize, I, N: Dimension> Subset<UniChunked<S, N>, I> {
+    pub fn inner_chunk_size(&self) -> usize {
+        self.data.inner_chunk_size()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

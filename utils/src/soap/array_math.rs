@@ -520,6 +520,79 @@ impl_matrix_matrix_mul!(4, 4, 2);
 impl_matrix_matrix_mul!(4, 4, 3);
 impl_matrix_matrix_mul!(4, 4, 4);
 
+pub trait AsMatrix {
+    type Matrix;
+    fn as_matrix(self) -> Self::Matrix;
+}
+
+macro_rules! impl_as_matrix {
+    ($outer_n:expr; $inner_n:expr, $inner_nty:ident) => {
+        // Convert UniChunked arrays into matrices
+        impl<'a, T: Scalar> AsMatrix for UniChunked<&'a [T; $outer_n], $inner_nty> {
+            type Matrix = &'a Tensor<[[T; $inner_n]; $outer_n / $inner_n]>;
+            fn as_matrix(self) -> Self::Matrix {
+                self.into_arrays().as_tensor()
+            }
+        }
+        impl<'a, T: Scalar> AsMatrix for UniChunked<&'a mut [T; $outer_n], $inner_nty> {
+            type Matrix = &'a mut Tensor<[[T; $inner_n]; $outer_n / $inner_n]>;
+            fn as_matrix(self) -> Self::Matrix {
+                self.into_arrays().as_mut_tensor()
+            }
+        }
+    };
+}
+
+impl_as_matrix!(1; 1, U1);
+impl_as_matrix!(2; 1, U1);
+impl_as_matrix!(2; 2, U2);
+impl_as_matrix!(3; 1, U1);
+impl_as_matrix!(3; 3, U3);
+impl_as_matrix!(4; 1, U1);
+impl_as_matrix!(4; 2, U2);
+impl_as_matrix!(4; 4, U4);
+impl_as_matrix!(5; 1, U1);
+impl_as_matrix!(5; 5, U5);
+impl_as_matrix!(6; 1, U1);
+impl_as_matrix!(6; 2, U2);
+impl_as_matrix!(6; 3, U3);
+impl_as_matrix!(6; 6, U6);
+impl_as_matrix!(7; 1, U1);
+impl_as_matrix!(7; 7, U7);
+impl_as_matrix!(8; 1, U1);
+impl_as_matrix!(8; 2, U2);
+impl_as_matrix!(8; 4, U4);
+impl_as_matrix!(8; 8, U8);
+impl_as_matrix!(9; 1, U1);
+impl_as_matrix!(9; 3, U3);
+impl_as_matrix!(9; 9, U9);
+impl_as_matrix!(10; 1, U1);
+impl_as_matrix!(10; 2, U2);
+impl_as_matrix!(10; 5, U5);
+impl_as_matrix!(10; 10, U10);
+impl_as_matrix!(11; 1, U1);
+impl_as_matrix!(11; 11, U11);
+impl_as_matrix!(12; 1, U1);
+impl_as_matrix!(12; 2, U2);
+impl_as_matrix!(12; 3, U3);
+impl_as_matrix!(12; 4, U4);
+impl_as_matrix!(12; 6, U6);
+impl_as_matrix!(12; 12, U12);
+impl_as_matrix!(13; 1, U1);
+impl_as_matrix!(13; 13, U13);
+impl_as_matrix!(14; 1, U1);
+impl_as_matrix!(14; 7, U7);
+impl_as_matrix!(14; 14, U14);
+impl_as_matrix!(15; 1, U1);
+impl_as_matrix!(15; 3, U3);
+impl_as_matrix!(15; 5, U5);
+impl_as_matrix!(15; 15, U15);
+impl_as_matrix!(16; 1, U1);
+impl_as_matrix!(16; 2, U2);
+impl_as_matrix!(16; 4, U4);
+impl_as_matrix!(16; 8, U8);
+impl_as_matrix!(16; 16, U16);
+
 /*
  * The following section defines functions on specific small matrix types.
  */

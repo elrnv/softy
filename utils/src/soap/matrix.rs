@@ -6,6 +6,7 @@ mod sprs_compat;
 pub use sprs_compat::*;
 
 use super::*;
+use crate::zip;
 use chunked::Offsets;
 use geo::math::{Matrix3, Vector3};
 use std::convert::AsRef;
@@ -286,6 +287,12 @@ pub type BlockDiagonalMatrixViewMut<'a, N = usize, M = usize> =
 pub type BlockDiagonalMatrix3x2<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U3, U2, S, I>;
 pub type BlockDiagonalMatrix3x2View<'a> = BlockDiagonalMatrix3x2<&'a [f64], &'a [usize]>;
 
+pub type BlockDiagonalMatrix2<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U2, U2, S, I>;
+pub type BlockDiagonalMatrix2View<'a> = BlockDiagonalMatrix2<&'a [f64], &'a [usize]>;
+
+pub type BlockDiagonalMatrix3<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U3, U3, S, I>;
+pub type BlockDiagonalMatrix3View<'a> = BlockDiagonalMatrix3<&'a [f64], &'a [usize]>;
+
 impl<S, N: Dimension, M: Dimension> BlockDiagonalMatrix<N, M, S, Box<[usize]>>
 where
     UniChunked<UniChunked<S, M>, N>: Set,
@@ -362,9 +369,9 @@ where
     UniChunked<S, M>: Set,
     I: AsRef<[usize]>,
 {
-    type Transpose = Self;
-    fn transpose(self) -> Self {
-        self
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
     }
     fn num_cols(&self) -> usize {
         self.num_chunked_cols() * self.num_cols_per_block()
@@ -419,6 +426,30 @@ where
     type Type = BlockDiagonalMatrixViewMut<'a, N, M>;
     fn view_mut(&'a mut self) -> Self::Type {
         BlockDiagonalMatrix(ViewMut::view_mut(&mut self.0))
+    }
+}
+
+// TODO: make this generic over the number
+impl<S: Set, I: AsRef<[usize]>, J: AsRef<[usize]>> Mul<BlockDiagonalMatrix3x2<S, J>>
+    for Transpose<BlockDiagonalMatrix3x2<S, I>>
+where
+    S: Set<Elem = f64> + for<'a> View<'a, Type = &'a [f64]>,
+{
+    type Output = BlockDiagonalMatrix2;
+    fn mul(self, other: BlockDiagonalMatrix3x2<S, J>) -> Self::Output {
+        let ref self_data = (self.0).0;
+        let ref other_data = other.0;
+        assert_eq!(Set::len(self_data), other_data.len());
+        let outer_chunk_size = self_data.inner_chunk_size();
+        let mut out =
+            BlockDiagonalMatrix::from_flat(vec![0.0; outer_chunk_size * outer_chunk_size]);
+        for (out_block, lhs_block, rhs_block) in
+            zip!(out.0.iter_mut(), self_data.iter(), other_data.iter())
+        {
+            let out_mtx: &mut Matrix2<f64> = out_block.as_matrix();
+            *out_mtx = lhs_block.as_matrix().transpose() * *rhs_block.as_matrix();
+        }
+        out
     }
 }
 
@@ -677,6 +708,23 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
                 (0..num_cols).collect(), // Diagonal sparsity pattern
                 num_cols,
                 Chunked3::from_flat(Chunked3::from_array_vec(data.into_flat())),
+            ),
+        ))
+    }
+}
+
+impl From<BlockDiagonalMatrix2> for DSBlockMatrix2 {
+    fn from(diag: BlockDiagonalMatrix2) -> DSBlockMatrix2 {
+        let mut out_data = Chunked2::from_flat(Chunked2::from_flat(vec![0.0; diag.0.len() * 4]));
+        Subset::clone_into_other(&diag.0, &mut out_data);
+
+        let num_cols = diag.num_chunked_cols();
+        Tensor::new(Chunked::from_sizes(
+            vec![1; diag.num_chunked_rows()], // One block in every row.
+            Sparse::from_dim(
+                (0..num_cols).collect(), // Diagonal sparsity pattern
+                num_cols,
+                out_data,
             ),
         ))
     }

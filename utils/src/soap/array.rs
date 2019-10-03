@@ -166,6 +166,7 @@ impl_array_for_typenum!(U4, 4);
 impl_array_for_typenum!(U5, 5);
 impl_array_for_typenum!(U6, 6);
 impl_array_for_typenum!(U7, 7);
+impl_array_for_typenum!(U8, 8);
 impl_array_for_typenum!(U9, 9);
 impl_array_for_typenum!(U10, 10);
 impl_array_for_typenum!(U11, 11);

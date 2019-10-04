@@ -463,10 +463,94 @@ impl<T: AddAssign + Copy> Add<Tensor<&[T]>> for Tensor<Vec<T>> {
 macro_rules! impl_slice_add_assign {
     ($self:ident, $other:ident) => {{
         assert_eq!($other.data.len(), $self.data.len());
-        for (a, &b) in $self.data.iter_mut().zip($other.data.iter()) {
+        for (a, &b) in $self.data.iter_mut().zip($other.data.view_iter()) {
             *a += b;
         }
     }};
+}
+
+impl<T, S> AddAssign<Tensor<S>> for Tensor<Vec<T>>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: AddAssign + Copy,
+{
+    /// Add a generic tensor to this tensor `Vec`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let b = vec![5,6,7,8];
+    /// let mut tensor = Tensor::new(b.clone());
+    /// tensor += Tensor::new(a.view());
+    /// assert_eq!(vec![7,10,12,14], tensor.data);
+    /// ```
+    fn add_assign(&mut self, other: Tensor<S>) {
+        impl_slice_add_assign!(self, other);
+    }
+}
+
+
+impl<T, S> AddAssign<&Tensor<S>> for Tensor<Vec<T>>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: AddAssign + Copy,
+{
+    /// Add a generic tensor to this tensor `Vec`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let b = vec![5,6,7,8];
+    /// let mut tensor = Tensor::new(b.clone());
+    /// tensor += a.as_tensor();
+    /// assert_eq!(vec![7,10,12,14], tensor.data);
+    /// ```
+    fn add_assign(&mut self, other: &Tensor<S>) {
+        impl_slice_add_assign!(self, other);
+    }
+}
+
+impl<T, S> AddAssign<Tensor<S>> for Tensor<[T]>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: AddAssign + Copy,
+{
+    /// Add a generic tensor to this slice tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut b = vec![5,6,7,8];
+    /// *b.as_mut_tensor() += Tensor::new(a.view());
+    /// assert_eq!(vec![7,10,12,14], b);
+    /// ```
+    fn add_assign(&mut self, other: Tensor<S>) {
+        impl_slice_add_assign!(self, other);
+    }
+}
+
+
+impl<T, S> AddAssign<&Tensor<S>> for Tensor<[T]>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: AddAssign + Copy,
+{
+    /// Add a generic tensor to this slice tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut b = vec![5,6,7,8];
+    /// *b.as_mut_tensor() += a.as_tensor();
+    /// assert_eq!(vec![7,10,12,14], b);
+    /// ```
+    fn add_assign(&mut self, other: &Tensor<S>) {
+        impl_slice_add_assign!(self, other);
+    }
 }
 
 impl<T: AddAssign + Copy> AddAssign<&Tensor<[T]>> for Tensor<Vec<T>> {
@@ -769,7 +853,7 @@ impl<T: Sub<Output = T> + Copy> Sub<Tensor<Vec<T>>> for Tensor<&[T]> {
     }
 }
 
-impl<T: SubAssign + Copy> Sub<&Tensor<[T]>> for Tensor<Vec<T>> {
+impl<T: Scalar> Sub<&Tensor<[T]>> for Tensor<Vec<T>> {
     type Output = Self;
 
     /// Subtract a tensor slice from another.
@@ -791,7 +875,7 @@ impl<T: SubAssign + Copy> Sub<&Tensor<[T]>> for Tensor<Vec<T>> {
     }
 }
 
-impl<T: SubAssign + Copy> Sub<Tensor<&[T]>> for Tensor<Vec<T>> {
+impl<T: Scalar> Sub<Tensor<&[T]>> for Tensor<Vec<T>> {
     type Output = Self;
 
     /// Subtract a slice tensor from a `Vec` tensor.
@@ -814,13 +898,91 @@ impl<T: SubAssign + Copy> Sub<Tensor<&[T]>> for Tensor<Vec<T>> {
 }
 
 macro_rules! impl_sub_assign {
-    ($other:ty) => {
-        fn sub_assign(&mut self, other: $other) {
-            assert_eq!(other.data.len(), self.data.len());
-            for (a, &b) in self.data.iter_mut().zip(other.data.iter()) {
-                *a -= b;
-            }
+    ($self:ident, $other:ident) => {
+        assert_eq!($other.data.len(), $self.data.len());
+        for (a, &b) in $self.data.iter_mut().zip($other.data.view_iter()) {
+            *a -= b;
         }
+    }
+}
+
+impl<T, S> SubAssign<Tensor<S>> for Tensor<Vec<T>>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: SubAssign + Copy,
+{
+    /// Subtract a generic tensor from this `Vec` tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut tensor = Tensor::new(vec![5,6,7,8]);
+    /// tensor -= Tensor::new(a);
+    /// assert_eq!(vec![3,2,2,2], tensor.data);
+    /// ```
+    fn sub_assign(&mut self, other: Tensor<S>) {
+        impl_sub_assign!(self, other);
+    }
+}
+
+impl<T, S> SubAssign<&Tensor<S>> for Tensor<Vec<T>>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: SubAssign + Copy,
+{
+    /// Subtract a generic tensor reference from this `Vec` tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut tensor = Tensor::new(vec![5,6,7,8]);
+    /// tensor -= a.as_tensor();
+    /// assert_eq!(vec![3,2,2,2], tensor.data);
+    /// ```
+    fn sub_assign(&mut self, other: &Tensor<S>) {
+        impl_sub_assign!(self, other);
+    }
+}
+
+impl<T, S> SubAssign<Tensor<S>> for Tensor<[T]>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: SubAssign + Copy,
+{
+    /// Subtract a generic tensor from this slice tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut b = vec![5,6,7,8];
+    /// *b.as_mut_tensor() -= Tensor::new(a);
+    /// assert_eq!(vec![3,2,2,2], b);
+    /// ```
+    fn sub_assign(&mut self, other: Tensor<S>) {
+        impl_sub_assign!(self, other);
+    }
+}
+
+impl<T, S> SubAssign<&Tensor<S>> for Tensor<[T]>
+where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+      T: SubAssign + Copy,
+{
+    /// Subtract a generic tensor reference from this slice tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = Subset::from_unique_ordered_indices(vec![1,3,4,5], vec![1,2,3,4,5,6,7]);
+    /// let mut b = vec![5,6,7,8];
+    /// *b.as_mut_tensor() -= a.as_tensor();
+    /// assert_eq!(vec![3,2,2,2], b);
+    /// ```
+    fn sub_assign(&mut self, other: &Tensor<S>) {
+        impl_sub_assign!(self, other);
     }
 }
 
@@ -832,12 +994,13 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<Vec<T>> {
     /// ```
     /// use utils::soap::*;
     /// let a = vec![1,2,3,4];
-    /// let mut b = vec![5,6,7,8];
-    /// let mut tensor = Tensor::new(b);
+    /// let mut tensor = Tensor::new(vec![5,6,7,8]);
     /// tensor -= Tensor::new(a.view());
-    /// assert_eq!(vec![4,4,4,4], b);
+    /// assert_eq!(vec![4,4,4,4], tensor.data);
     /// ```
-    impl_sub_assign!(Tensor<&[T]>);
+    fn sub_assign(&mut self, other: Tensor<&[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<Vec<T>> {
@@ -848,12 +1011,13 @@ impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<Vec<T>> {
     /// ```
     /// use utils::soap::*;
     /// let a = vec![1,2,3,4];
-    /// let mut b = vec![5,6,7,8];
-    /// let mut tensor = Tensor::new(b);
+    /// let mut tensor = Tensor::new(vec![5,6,7,8]);
     /// tensor -= a.view().as_tensor();
-    /// assert_eq!(vec![4,4,4,4], b);
+    /// assert_eq!(vec![4,4,4,4], tensor.data);
     /// ```
-    impl_sub_assign!(&Tensor<[T]>);
+    fn sub_assign(&mut self, other: &Tensor<[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<Tensor<Vec<T>>> for Tensor<&mut [T]> {
@@ -869,7 +1033,9 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<Vec<T>>> for Tensor<&mut [T]> {
     /// view -= Tensor::new(a);
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(Tensor<Vec<T>>);
+    fn sub_assign(&mut self, other: Tensor<Vec<T>>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<&mut [T]> {
@@ -885,7 +1051,9 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<&mut [T]> {
     /// view -= Tensor::new(a.view());
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(Tensor<&[T]>);
+    fn sub_assign(&mut self, other: Tensor<&[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<&mut [T]> {
@@ -901,7 +1069,9 @@ impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<&mut [T]> {
     /// view -= Tensor::as_ref(a.view());
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(&Tensor<[T]>);
+    fn sub_assign(&mut self, other: &Tensor<[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<Tensor<Vec<T>>> for Tensor<[T]> {
@@ -916,7 +1086,9 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<Vec<T>>> for Tensor<[T]> {
     /// *b.view_mut().as_mut_tensor() -= Tensor::new(a);
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(Tensor<Vec<T>>);
+    fn sub_assign(&mut self, other: Tensor<Vec<T>>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<[T]> {
@@ -931,7 +1103,9 @@ impl<T: SubAssign + Copy> SubAssign<&Tensor<[T]>> for Tensor<[T]> {
     /// *b.view_mut().as_mut_tensor() -= a.view().as_tensor();
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(&Tensor<[T]>);
+    fn sub_assign(&mut self, other: &Tensor<[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<[T]> {
@@ -943,10 +1117,12 @@ impl<T: SubAssign + Copy> SubAssign<Tensor<&[T]>> for Tensor<[T]> {
     /// use utils::soap::*;
     /// let a = vec![1,2,3,4];
     /// let mut b = vec![5,6,7,8];
-    /// *b.view_mut().as_mut_tensor() -= Tensor::new(a.view().as_tensor();
+    /// *b.as_mut_tensor() -= Tensor::new(a.view());
     /// assert_eq!(vec![4,4,4,4], b);
     /// ```
-    impl_sub_assign!(Tensor<&[T]>);
+    fn sub_assign(&mut self, other: Tensor<&[T]>) {
+        impl_sub_assign!(self, other);
+    }
 }
 
 /*
@@ -1016,9 +1192,10 @@ impl<T: Scalar> MulAssign<T> for Tensor<[T]> {
 /// workaround for specialization.
 pub trait LocalGeneric {}
 
-impl<'a, S> LocalGeneric for SubsetView<'a, S> {}
+impl<S, I> LocalGeneric for Subset<S, I> {}
 impl<S, N> LocalGeneric for UniChunked<S, N> {}
 impl<S, O> LocalGeneric for Chunked<S, O> {}
+impl<S, T, I> LocalGeneric for Sparse<S, T, I> {}
 impl<T> LocalGeneric for Tensor<T> {}
 
 impl<T: ?Sized, U, V: ?Sized> AddAssign<Tensor<U>> for Tensor<V>

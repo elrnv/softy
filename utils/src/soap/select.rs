@@ -576,7 +576,7 @@ impl<S, I> Select<S, I>
 where
     I: AsRef<[usize]>,
 {
-    pub fn index_iter(&self) -> impl Iterator<Item = &usize> + Clone {
+    pub fn index_iter(&self) -> std::slice::Iter<'_, usize> {
         self.indices.as_ref().iter()
     }
 }
@@ -585,7 +585,7 @@ impl<S, I> Select<S, I>
 where
     I: AsMut<[usize]>,
 {
-    pub fn index_iter_mut(&mut self) -> impl Iterator<Item = &mut usize> {
+    pub fn index_iter_mut(&mut self) -> std::slice::IterMut<'_, usize> {
         self.indices.as_mut().iter_mut()
     }
 }

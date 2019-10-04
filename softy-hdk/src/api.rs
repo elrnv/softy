@@ -130,7 +130,7 @@ impl Into<softy::SimParams> for EL_SoftySimParams {
 /// Build a material from the given parameters and set it to the specified id.
 fn get_solid_material(
     params: EL_SoftySimParams,
-    material_id: i32,
+    material_id: u32,
 ) -> Result<softy::SolidMaterial, Error> {
     let EL_SoftySimParams {
         materials,
@@ -174,7 +174,7 @@ fn get_solid_material(
 /// Build a shell material from the given parameters and set it to the specified id.
 fn get_shell_material(
     params: EL_SoftySimParams,
-    material_id: i32,
+    material_id: u32,
 ) -> Result<softy::ShellMaterial, Error> {
     let EL_SoftySimParams {
         materials,
@@ -267,28 +267,32 @@ fn get_frictional_contacts(
 /// Given a slice of integers, compute the mode and return it along with its
 /// frequency.
 /// If the slice is empty just return 0.
-fn mode(data: &[i32]) -> (i32, usize) {
-    let max_int = data.iter().cloned().max().map(|x| x + 1).unwrap_or(0) as usize;
-    let mut bins = vec![0; max_int];
-    for &x in data.iter() {
-        bins[x as usize] += 1;
+fn mode<I: IntoIterator<Item = u32>>(data: I) -> (u32, usize) {
+    let data_iter = data.into_iter();
+    let mut bins = Vec::with_capacity(100);
+    for x in data_iter {
+        let i = x as usize;
+        if i >= bins.len() {
+            bins.resize(i + 1, 0usize);
+        }
+        bins[i] += 1;
     }
     bins.iter()
         .cloned()
         .enumerate()
         .max_by_key(|&(_, f)| f)
-        .map(|(m, f)| (m as i32, f))
-        .unwrap_or((0i32, 0))
+        .map(|(m, f)| (m as u32, f))
+        .unwrap_or((0u32, 0))
 }
 
 #[test]
 fn mode_test() {
-    let v = vec![1i32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
-    assert_eq!(mode(&v), (1, 6));
+    let v = vec![1u32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
+    assert_eq!(mode(v), (1, 6));
     let v = vec![];
-    assert_eq!(mode(&v), (0, 0));
-    let v = vec![0i32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
-    assert_eq!(mode(&v), (1, 4));
+    assert_eq!(mode(v), (0, 0));
+    let v = vec![0u32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+    assert_eq!(mode(v), (1, 4));
 }
 
 /// Register a new solver in the registry. (Rust side)
@@ -309,7 +313,7 @@ pub(crate) fn register_new_solver(
     for mesh in tetmesh.split_into_connected_components() {
         let material_id = mesh
             .attrib_as_slice::<i32, CellIndex>("mtl_id")
-            .map(|slice| mode(slice).0)
+            .map(|slice| mode(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
             .unwrap_or(0);
         let solid_material = get_solid_material(params, material_id)?;
         solver_builder.add_solid(mesh, solid_material);
@@ -320,7 +324,7 @@ pub(crate) fn register_new_solver(
         for mesh in (*polymesh).reversed().split_into_connected_components() {
             let material_id = mesh
                 .attrib_as_slice::<i32, FaceIndex>("mtl_id")
-                .map(|slice| mode(slice).0)
+                .map(|slice| mode(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
                 .unwrap_or(0);
             let shell_material = get_shell_material(params, material_id)?;
             solver_builder.add_shell(mesh, shell_material);

@@ -553,9 +553,14 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         }
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
-        fc_params.dynamic_cof = sop_fc.dynamiccof;
+        if (sop_fc.friction) {
+            fc_params.dynamic_cof = sop_fc.dynamiccof;
+            fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
+        } else {
+            fc_params.dynamic_cof = 0.0;
+            fc_params.friction_inner_iterations = 0;
+        }
         fc_params.friction_tolerance = sop_fc.frictiontolerance;
-        fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
         frictional_contact_vec.push_back(fc_params);
     }
 

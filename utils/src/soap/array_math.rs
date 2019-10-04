@@ -633,11 +633,19 @@ macro_rules! impl_determinant {
             #[inline]
             #[unroll_for_loops]
             pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
-                let mut m: [[T; $n - 1]; $n - 1] = unsafe { ::std::mem::uninitialized() };
+                // Ensure that T has the same size as MaybeUninit.
+                assert_eq!(
+                    std::mem::size_of::<[[MaybeUninit<T>; $n - 1]; $n - 1]>(),
+                    std::mem::size_of::<[[T; $n - 1]; $n - 1]>()
+                );
+                let mut m: [[MaybeUninit<T>; $n - 1]; $n - 1] = unsafe { MaybeUninit::uninit().assume_init() };
                 for i in 0..$n - 1 {
-                    m[i].copy_from_slice(&self.data[if i < col { i } else { i + 1 }][1..$n]);
+                    // Transmute to a MaybeUninit slice.
+                    let slice = unsafe { std::mem::transmute(&self.data[if i < col { i } else { i + 1 }][1..$n]) };
+                    m[i].copy_from_slice(slice);
                 }
-                Tensor::new(m)
+                // Transmute back to initialized type.
+                Tensor::new(unsafe { std::mem::transmute_copy(&m) })
             }
 
             /// Compute the determinant of the matrix recursively.

@@ -35,6 +35,7 @@ impl<'a> FrictionSolver<'a> {
         let hessian = mass_inv_mtx
             .clone()
             .diagonal_congruence_transform(basis_mtx.view());
+        //let hessian = basis_mtx.view().transpose() * basis_mtx.view();
 
         let problem = SemiImplicitFrictionProblem(FrictionProblem {
             predictor_impulse,
@@ -331,6 +332,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         diff += predictor;
 
         let rhs = mass_inv_mtx.view() * diff.view();
+        //let rhs = diff.view();
 
         *obj = 0.5 * diff.view().dot(rhs.view());
 
@@ -362,6 +364,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         diff += predictor;
 
         let grad = mass_inv_mtx.view() * diff.view();
+        //let grad = diff.view();
 
         let grad_t = contact_basis.to_tangent_space(grad.view().into_inner().into());
 

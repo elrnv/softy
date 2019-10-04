@@ -638,10 +638,13 @@ macro_rules! impl_determinant {
                     std::mem::size_of::<[[MaybeUninit<T>; $n - 1]; $n - 1]>(),
                     std::mem::size_of::<[[T; $n - 1]; $n - 1]>()
                 );
-                let mut m: [[MaybeUninit<T>; $n - 1]; $n - 1] = unsafe { MaybeUninit::uninit().assume_init() };
+                let mut m: [[MaybeUninit<T>; $n - 1]; $n - 1] =
+                    unsafe { MaybeUninit::uninit().assume_init() };
                 for i in 0..$n - 1 {
                     // Transmute to a MaybeUninit slice.
-                    let slice = unsafe { std::mem::transmute(&self.data[if i < col { i } else { i + 1 }][1..$n]) };
+                    let slice = unsafe {
+                        std::mem::transmute(&self.data[if i < col { i } else { i + 1 }][1..$n])
+                    };
                     m[i].copy_from_slice(slice);
                 }
                 // Transmute back to initialized type.

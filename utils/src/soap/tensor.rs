@@ -470,8 +470,9 @@ macro_rules! impl_slice_add_assign {
 }
 
 impl<T, S> AddAssign<Tensor<S>> for Tensor<Vec<T>>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: AddAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: AddAssign + Copy,
 {
     /// Add a generic tensor to this tensor `Vec`.
     ///
@@ -490,10 +491,10 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
     }
 }
 
-
 impl<T, S> AddAssign<&Tensor<S>> for Tensor<Vec<T>>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: AddAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: AddAssign + Copy,
 {
     /// Add a generic tensor to this tensor `Vec`.
     ///
@@ -513,8 +514,9 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
 }
 
 impl<T, S> AddAssign<Tensor<S>> for Tensor<[T]>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: AddAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: AddAssign + Copy,
 {
     /// Add a generic tensor to this slice tensor.
     ///
@@ -532,10 +534,10 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
     }
 }
 
-
 impl<T, S> AddAssign<&Tensor<S>> for Tensor<[T]>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: AddAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: AddAssign + Copy,
 {
     /// Add a generic tensor to this slice tensor.
     ///
@@ -903,12 +905,13 @@ macro_rules! impl_sub_assign {
         for (a, &b) in $self.data.iter_mut().zip($other.data.view_iter()) {
             *a -= b;
         }
-    }
+    };
 }
 
 impl<T, S> SubAssign<Tensor<S>> for Tensor<Vec<T>>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: SubAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: SubAssign + Copy,
 {
     /// Subtract a generic tensor from this `Vec` tensor.
     ///
@@ -927,8 +930,9 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
 }
 
 impl<T, S> SubAssign<&Tensor<S>> for Tensor<Vec<T>>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: SubAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: SubAssign + Copy,
 {
     /// Subtract a generic tensor reference from this `Vec` tensor.
     ///
@@ -947,8 +951,9 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
 }
 
 impl<T, S> SubAssign<Tensor<S>> for Tensor<[T]>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: SubAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: SubAssign + Copy,
 {
     /// Subtract a generic tensor from this slice tensor.
     ///
@@ -967,8 +972,9 @@ where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
 }
 
 impl<T, S> SubAssign<&Tensor<S>> for Tensor<[T]>
-where S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
-      T: SubAssign + Copy,
+where
+    S: Set + LocalGeneric + for<'a> ViewIterator<'a, Item = &'a T>,
+    T: SubAssign + Copy,
 {
     /// Subtract a generic tensor reference from this slice tensor.
     ///

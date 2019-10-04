@@ -398,9 +398,10 @@ where
 {
     pub fn indexed_source_iter(
         &'a self,
-    ) ->
-        std::iter::Zip<std::iter::Cloned<std::slice::Iter<'a, usize>>, <<S as View<'a>>::Type as IntoIterator>::IntoIter>
-        {
+    ) -> std::iter::Zip<
+        std::iter::Cloned<std::slice::Iter<'a, usize>>,
+        <<S as View<'a>>::Type as IntoIterator>::IntoIter,
+    > {
         self.selection
             .index_iter()
             .cloned()
@@ -414,10 +415,7 @@ where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
 {
-    pub fn source_iter_mut(
-        &'a mut self,
-    ) -> <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter
-        {
+    pub fn source_iter_mut(&'a mut self) -> <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter {
         self.source.view_mut().into_iter()
     }
 }
@@ -452,8 +450,10 @@ where
 {
     pub fn iter_mut(
         &'a mut self,
-    ) -> std::iter::Zip<std::slice::IterMut<'a, usize>, <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter>
-    {
+    ) -> std::iter::Zip<
+        std::slice::IterMut<'a, usize>,
+        <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter,
+    > {
         self.selection
             .index_iter_mut()
             .zip(self.source.view_mut().into_iter())
@@ -483,9 +483,10 @@ where
     I: AsRef<[usize]>,
 {
     type Item = (usize, <<S as View<'a>>::Type as IntoIterator>::Item);
-    type Iter = 
-        std::iter::Zip<std::iter::Cloned<std::slice::Iter<'a, usize>>, <<S as View<'a>>::Type as IntoIterator>::IntoIter>
-;
+    type Iter = std::iter::Zip<
+        std::iter::Cloned<std::slice::Iter<'a, usize>>,
+        <<S as View<'a>>::Type as IntoIterator>::IntoIter,
+    >;
 
     fn view_iter(&'a self) -> Self::Iter {
         self.indexed_source_iter()
@@ -498,8 +499,14 @@ where
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
     I: AsMut<[usize]>,
 {
-    type Item = (&'a mut usize, <<S as ViewMut<'a>>::Type as IntoIterator>::Item);
-    type Iter = std::iter::Zip<std::slice::IterMut<'a, usize>, <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter>;
+    type Item = (
+        &'a mut usize,
+        <<S as ViewMut<'a>>::Type as IntoIterator>::Item,
+    );
+    type Iter = std::iter::Zip<
+        std::slice::IterMut<'a, usize>,
+        <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter,
+    >;
 
     fn view_mut_iter(&'a mut self) -> Self::Iter {
         self.iter_mut()

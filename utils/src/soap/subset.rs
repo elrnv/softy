@@ -505,8 +505,7 @@ where
     pub fn clone_into_other<V>(&'a self, other: &'a mut V)
     where
         V: Set + ViewMutIterator<'a> + ?Sized,
-        <Self as ViewIterator<'a>>::Item: 
-            CloneIntoOther<<V as ViewMutIterator<'a>>::Item>,
+        <Self as ViewIterator<'a>>::Item: CloneIntoOther<<V as ViewMutIterator<'a>>::Item>,
     {
         assert_eq!(other.len(), self.len());
         for (mut theirs, mine) in other.view_mut_iter().zip(self.view_iter()) {

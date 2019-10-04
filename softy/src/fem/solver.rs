@@ -1618,9 +1618,6 @@ impl Solver {
         // On success, update the mesh with useful metrics.
         self.problem_mut().update_mesh_data();
 
-        // Clear friction forces.
-        self.problem_mut().clear_friction_impulses();
-
         Ok(result)
     }
 

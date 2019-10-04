@@ -626,6 +626,10 @@ impl ContactConstraint for PointContactConstraint {
             }
         } else {
             let prev_friction_impulse_t = contact_basis.to_tangent_space(&prev_friction_impulse);
+
+            //TODO: undo tmp change
+            let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
+
             // Euclidean coords
             if true {
                 // Switch between implicit solver and explicit solver here.

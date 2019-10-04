@@ -481,9 +481,10 @@ impl<S: Set + RemovePrefix, I: RemovePrefix + AsRef<[usize]>> RemovePrefix for S
 
 impl<'a, S, I> Subset<S, I>
 where
-    S: Set + View<'a>,
-    I: AsRef<[usize]>,
-    <S as View<'a>>::Type: SplitFirst + SplitAt + Set + Dummy,
+    Self: Set + ViewIterator<'a>,
+    //S: Set + View<'a>,
+    //I: AsRef<[usize]>,
+    //<S as View<'a>>::Type: SplitFirst + SplitAt + Set + Dummy,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
     /// into an owned `S` type.
@@ -504,22 +505,23 @@ where
     /// let mut iter_owned = owned.iter();
     /// assert_eq!(owned, vec![1,3,5,0]);
     /// ```
-    // TODO: Currently it's impossible to clone a subset of nested unichunked
-    // elements into another nested unichunked. The reason is that Set::Elem is
-    // an array for all unichunked types, but the iterator for unichunked types
-    // returns UniChunked instead of an array. This dichotomy causes problems
-    // and should be resolved eventually.
     pub fn clone_into_other<V>(&'a self, other: &'a mut V)
     where
-        V: ViewMut<'a> + ?Sized,
-        <V as ViewMut<'a>>::Type: Set + IntoIterator,
-        <<S as View<'a>>::Type as SplitFirst>::First:
-            CloneIntoOther<<<V as ViewMut<'a>>::Type as IntoIterator>::Item>,
+        V: Set + ViewMutIterator<'a> + ?Sized,
+        <Self as ViewIterator<'a>>::Item: 
+            CloneIntoOther<<V as ViewMutIterator<'a>>::Item>,
+        //V: ViewMut<'a> + ?Sized,
+        //<V as ViewMut<'a>>::Type: Set + IntoIterator,
+        //<<S as View<'a>>::Type as SplitFirst>::First:
+        //    CloneIntoOther<<<V as ViewMut<'a>>::Type as IntoIterator>::Item>,
     {
-        let other_view = other.view_mut();
-        assert_eq!(other_view.len(), self.len());
-        for (mut theirs, mine) in other_view.into_iter().zip(self.iter()) {
-            //theirs.clone_from(&mine);
+        //let other_view = other.view_mut();
+        //assert_eq!(other_view.len(), self.len());
+        //for (mut theirs, mine) in other_view.into_iter().zip(self.iter()) {
+        //    mine.clone_into_other(&mut theirs);
+        //}
+        assert_eq!(other.len(), self.len());
+        for (mut theirs, mine) in other.view_mut_iter().zip(self.view_iter()) {
             mine.clone_into_other(&mut theirs);
         }
     }

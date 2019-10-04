@@ -418,7 +418,7 @@ impl_isolate_index_for_static_range!(impl<S, I> for Select<S, I>);
 
 impl<'a, S, I> std::ops::Index<usize> for Select<S, I>
 where
-    S: std::ops::Index<usize> + Set + Owned,
+    S: std::ops::Index<usize> + Set + ValueType,
     I: AsRef<[usize]>,
 {
     type Output = S::Output;
@@ -446,7 +446,7 @@ where
 
 impl<'a, S, I> std::ops::IndexMut<usize> for Select<S, I>
 where
-    S: std::ops::IndexMut<usize> + Set + Owned,
+    S: std::ops::IndexMut<usize> + Set + ValueType,
     I: AsRef<[usize]>,
 {
     /// Mutably index the selection.

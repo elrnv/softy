@@ -4,7 +4,7 @@
 use super::*;
 
 /// A tuple wraps its containers, so itself is a value type and not a borrow.
-impl<S, T> Owned for (S, T) {}
+impl<S, T> ValueType for (S, T) {}
 impl<S: Viewed, T: Viewed> Viewed for (S, T) {}
 
 impl<A, B, S: Push<A>, T: Push<B>> Push<(A, B)> for (S, T) {

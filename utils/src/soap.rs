@@ -119,14 +119,12 @@ pub trait Array<T> {
 
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
-//TODO: Rename this, since Chunked Views are also considered "Owned", this is a misnomer.
-// Maybe "ValueType" makes sense
-pub trait Owned {}
-impl<S, T, I> Owned for Sparse<S, T, I> {}
-impl<S, I> Owned for Select<S, I> {}
-impl<S, I> Owned for Subset<S, I> {}
-impl<S, I> Owned for Chunked<S, I> {}
-impl<S, N> Owned for UniChunked<S, N> {}
+pub trait ValueType {}
+impl<S, T, I> ValueType for Sparse<S, T, I> {}
+impl<S, I> ValueType for Select<S, I> {}
+impl<S, I> ValueType for Subset<S, I> {}
+impl<S, I> ValueType for Chunked<S, I> {}
+impl<S, N> ValueType for UniChunked<S, N> {}
 
 impl<S: Viewed, T: Viewed, I: Viewed> Viewed for Sparse<S, T, I> {}
 impl<S: Viewed, I: Viewed> Viewed for Select<S, I> {}
@@ -248,7 +246,7 @@ pub trait OwnedSet<'a>:
     + RemovePrefix
     + IntoChunkIterator
     + StaticallySplittable
-    + Owned
+    + ValueType
 {
 }
 impl<'a, T> OwnedSet<'a> for T where
@@ -267,7 +265,7 @@ impl<'a, T> OwnedSet<'a> for T where
         + RemovePrefix
         + IntoChunkIterator
         + StaticallySplittable
-        + Owned
+        + ValueType
 {
 }
 
@@ -542,7 +540,7 @@ where
 
 impl<'a, S, N> GetIndex<'a, S> for StaticRange<N>
 where
-    S: Set + Owned,
+    S: Set + ValueType,
     N: Unsigned,
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
@@ -555,7 +553,7 @@ where
 
 impl<'a, S> GetIndex<'a, S> for std::ops::RangeFrom<usize>
 where
-    S: Set + Owned,
+    S: Set + ValueType,
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
     type Output = <std::ops::Range<usize> as GetIndex<'a, S>>::Output;
@@ -565,7 +563,7 @@ where
     }
 }
 
-impl<'a, S: Owned> GetIndex<'a, S> for std::ops::RangeTo<usize>
+impl<'a, S: ValueType> GetIndex<'a, S> for std::ops::RangeTo<usize>
 where
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
@@ -576,7 +574,7 @@ where
     }
 }
 
-impl<'a, S: Owned> GetIndex<'a, S> for std::ops::RangeFull
+impl<'a, S: ValueType> GetIndex<'a, S> for std::ops::RangeFull
 where
     S: Set,
     std::ops::Range<usize>: GetIndex<'a, S>,
@@ -588,7 +586,7 @@ where
     }
 }
 
-impl<'a, S: Owned> GetIndex<'a, S> for std::ops::RangeInclusive<usize>
+impl<'a, S: ValueType> GetIndex<'a, S> for std::ops::RangeInclusive<usize>
 where
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
@@ -604,7 +602,7 @@ where
     }
 }
 
-impl<'a, S: Owned> GetIndex<'a, S> for std::ops::RangeToInclusive<usize>
+impl<'a, S: ValueType> GetIndex<'a, S> for std::ops::RangeToInclusive<usize>
 where
     std::ops::Range<usize>: GetIndex<'a, S>,
 {
@@ -617,7 +615,7 @@ where
 
 //impl<S, N: Unsigned> IsolateIndex<S> for StaticRange<N>
 //where
-//    S: Set + Owned,
+//    S: Set + ValueType,
 //    std::ops::Range<usize>: IsolateIndex<S>,
 //{
 //    type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
@@ -629,7 +627,7 @@ where
 
 impl<S> IsolateIndex<S> for std::ops::RangeFrom<usize>
 where
-    S: Set + Owned,
+    S: Set + ValueType,
     std::ops::Range<usize>: IsolateIndex<S>,
 {
     type Output = <std::ops::Range<usize> as IsolateIndex<S>>::Output;
@@ -639,7 +637,7 @@ where
     }
 }
 
-impl<S: Owned> IsolateIndex<S> for std::ops::RangeTo<usize>
+impl<S: ValueType> IsolateIndex<S> for std::ops::RangeTo<usize>
 where
     std::ops::Range<usize>: IsolateIndex<S>,
 {
@@ -650,7 +648,7 @@ where
     }
 }
 
-impl<S: Owned> IsolateIndex<S> for std::ops::RangeFull
+impl<S: ValueType> IsolateIndex<S> for std::ops::RangeFull
 where
     S: Set,
     std::ops::Range<usize>: IsolateIndex<S>,
@@ -662,7 +660,7 @@ where
     }
 }
 
-impl<S: Owned> IsolateIndex<S> for std::ops::RangeInclusive<usize>
+impl<S: ValueType> IsolateIndex<S> for std::ops::RangeInclusive<usize>
 where
     S: Set,
     std::ops::Range<usize>: IsolateIndex<S>,
@@ -679,7 +677,7 @@ where
     }
 }
 
-impl<S: Owned> IsolateIndex<S> for std::ops::RangeToInclusive<usize>
+impl<S: ValueType> IsolateIndex<S> for std::ops::RangeToInclusive<usize>
 where
     S: Set,
     std::ops::Range<usize>: IsolateIndex<S>,

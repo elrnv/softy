@@ -48,7 +48,7 @@ impl<T: IntBound> BoundedRange for RangeToInclusive<T> {
 
 macro_rules! impls_for_range {
     ($range:ident) => {
-        impl<T> Owned for $range<T> {}
+        impl<T> ValueType for $range<T> {}
         impl<I: IntBound> Set for $range<I> {
             type Elem = <Self as BoundedRange>::Index;
             fn len(&self) -> usize {

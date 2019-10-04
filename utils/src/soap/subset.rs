@@ -601,7 +601,7 @@ macro_rules! impl_index_fn {
 
 impl<'a, S, I> std::ops::Index<usize> for Subset<S, I>
 where
-    S: std::ops::Index<usize> + Set + Owned,
+    S: std::ops::Index<usize> + Set + ValueType,
     I: AsRef<[usize]>,
 {
     type Output = S::Output;
@@ -629,7 +629,7 @@ where
 
 impl<'a, S, I> std::ops::IndexMut<usize> for Subset<S, I>
 where
-    S: std::ops::IndexMut<usize> + Set + Owned,
+    S: std::ops::IndexMut<usize> + Set + ValueType,
     I: AsRef<[usize]>,
 {
     /// Mutably index the subset.

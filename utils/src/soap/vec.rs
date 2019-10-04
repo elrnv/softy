@@ -1,6 +1,6 @@
 use super::*;
 
-impl<T> Owned for Vec<T> {}
+impl<T> ValueType for Vec<T> {}
 
 impl<T> Clear for Vec<T> {
     fn clear(&mut self) {

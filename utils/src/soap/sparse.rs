@@ -655,3 +655,11 @@ where
         }
     }
 }
+
+/*
+ * Impls for uniformly chunked sparse types
+ */
+
+impl<S, T, I, M> UniChunkable<M> for Sparse<S, T, I> {
+    type Chunk = Sparse<S, T, I>;
+}

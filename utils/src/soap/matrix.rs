@@ -430,10 +430,14 @@ where
 }
 
 // TODO: make this generic over the number
-impl<S: Set, I: AsRef<[usize]>, J: AsRef<[usize]>> Mul<BlockDiagonalMatrix3x2<S, J>>
+impl<S, I: AsRef<[usize]>, J: AsRef<[usize]>> Mul<BlockDiagonalMatrix3x2<S, J>>
     for Transpose<BlockDiagonalMatrix3x2<S, I>>
 where
-    S: Set<Elem = f64> + for<'a> View<'a, Type = &'a [f64]>,
+    S: Set<Elem = f64>
+        + UniChunkable<typenum::consts::U3>
+        + UniChunkable<typenum::consts::U2>
+        + UniChunkable<typenum::consts::U6>
+        + for<'a> View<'a, Type = &'a [f64]>,
 {
     type Output = BlockDiagonalMatrix2;
     fn mul(self, other: BlockDiagonalMatrix3x2<S, J>) -> Self::Output {
@@ -653,8 +657,8 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> DSBlockMa
     pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
         use image::ImageBuffer;
 
-        let nrows = self.num_rows();
-        let ncols = self.num_cols();
+        let nrows = self.view().num_rows();
+        let ncols = self.view().num_cols();
 
         if nrows == 0 || ncols == 0 {
             return;
@@ -716,7 +720,7 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
 impl From<BlockDiagonalMatrix2> for DSBlockMatrix2 {
     fn from(diag: BlockDiagonalMatrix2) -> DSBlockMatrix2 {
         let mut out_data = Chunked2::from_flat(Chunked2::from_flat(vec![0.0; diag.0.len() * 4]));
-        Subset::clone_into_other(&diag.0, &mut out_data);
+        Subset::clone_into_other(&diag.0.view(), &mut out_data);
 
         let num_cols = diag.num_chunked_cols();
         Tensor::new(Chunked::from_sizes(
@@ -975,7 +979,7 @@ where
 
 impl<S, I> MulAssign<DiagonalBlockMatrix3<S, I>> for SSBlockMatrix3
 where
-    S: Set + for<'a> View<'a, Type = &'a [f64]>,
+    S: Set + UniChunkable<typenum::consts::U3> + for<'a> View<'a, Type = &'a [f64]>,
     I: AsRef<[usize]>,
 {
     fn mul_assign(&mut self, rhs: DiagonalBlockMatrix3<S, I>) {
@@ -1051,7 +1055,8 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
                     let num_new_elements = num_non_zero_cols - num_available;
                     Chunked::extend_last(
                         &mut out.source_mut(),
-                        std::iter::repeat((0, [[0.0; 3]; 3])).take(num_new_elements),
+                        std::iter::repeat((0, Chunked3::from_flat([0.0; 9])))
+                            .take(num_new_elements),
                     );
                     // Next we transfer all elements of the last chunk into the current row.
                     for idx in (nz_row_idx + 1..out.len()).rev() {

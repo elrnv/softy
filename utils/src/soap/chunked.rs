@@ -1467,6 +1467,11 @@ where
     }
 }
 
+impl<S, I, N> UniChunkable<N> for Chunked<S, I> {
+    type Chunk = Chunked<S, I>;
+}
+
+
 impl<S, N> IntoStaticChunkIterator<N> for ChunkedView<'_, S>
 where
     Self: Set + SplitPrefix<N> + Dummy,

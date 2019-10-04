@@ -483,8 +483,7 @@ impl<'a, S, I> Subset<S, I>
 where
     S: Set + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: SplitFirst<First = &'a <S as Set>::Elem> + SplitAt + Set + Dummy,
-    <S as Set>::Elem: 'a + Clone,
+    <S as View<'a>>::Type: SplitFirst + SplitAt + Set + Dummy,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
     /// into an owned `S` type.
@@ -513,12 +512,15 @@ where
     pub fn clone_into_other<V>(&'a self, other: &'a mut V)
     where
         V: ViewMut<'a> + ?Sized,
-        <V as ViewMut<'a>>::Type: Set + IntoIterator<Item = &'a mut <S as Set>::Elem>,
+        <V as ViewMut<'a>>::Type: Set + IntoIterator,
+        <<S as View<'a>>::Type as SplitFirst>::First:
+            CloneIntoOther<<<V as ViewMut<'a>>::Type as IntoIterator>::Item>,
     {
         let other_view = other.view_mut();
         assert_eq!(other_view.len(), self.len());
-        for (theirs, mine) in other_view.into_iter().zip(self.iter()) {
-            theirs.clone_from(&mine);
+        for (mut theirs, mine) in other_view.into_iter().zip(self.iter()) {
+            //theirs.clone_from(&mine);
+            mine.clone_into_other(&mut theirs);
         }
     }
 }
@@ -985,22 +987,6 @@ impl<S: ChunkSize, I, N: Dimension> Subset<UniChunked<S, N>, I> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn subset_of_subsets_iter() {
-        let set = vec![1, 2, 3, 4, 5, 6];
-        let subset = Subset::from_unique_ordered_indices(vec![1, 3, 5], set);
-        let subsubset = Subset::from_unique_ordered_indices(vec![0, 2], subset);
-        let mut iter = subsubset.iter();
-        assert_eq!(Some(&2), iter.next());
-        assert_eq!(Some(&6), iter.next());
-        assert_eq!(None, iter.next());
-    }
-}
-
 /*
  * Convert views to owned types
  */
@@ -1026,5 +1012,29 @@ where
             indices: self.indices,
             data: self.data.into_owned_data(),
         }
+    }
+}
+
+/*
+ * Impls for uniformly chunked sparse types
+ */
+
+impl<S, I, M> UniChunkable<M> for Subset<S, I> {
+    type Chunk = Subset<S, I>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subset_of_subsets_iter() {
+        let set = vec![1, 2, 3, 4, 5, 6];
+        let subset = Subset::from_unique_ordered_indices(vec![1, 3, 5], set);
+        let subsubset = Subset::from_unique_ordered_indices(vec![0, 2], subset);
+        let mut iter = subsubset.iter();
+        assert_eq!(Some(&2), iter.next());
+        assert_eq!(Some(&6), iter.next());
+        assert_eq!(None, iter.next());
     }
 }

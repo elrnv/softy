@@ -134,6 +134,34 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
+        impl<T, N: Array<T>> UniChunkable<N> for [T; $n] {
+            type Chunk = N::Array;
+        }
+
+        impl<'a, T, N: Array<T>> UniChunkable<N> for &'a [T; $n]
+            where <N as Array<T>>::Array: 'a,
+        {
+            type Chunk = &'a N::Array;
+        }
+
+        impl<'a, T, N: Array<T>> UniChunkable<N> for &'a mut [T; $n]
+            where <N as Array<T>>::Array: 'a,
+        {
+            type Chunk = &'a mut N::Array;
+        }
+
+        impl<T: Clone> CloneIntoOther<[T; $n]> for [T; $n] {
+            fn clone_into_other(&self, other: &mut [T; $n]) {
+                other.clone_from(self);
+            }
+        }
+
+        impl<T: Clone> CloneIntoOther<&mut [T; $n]> for [T; $n] {
+            fn clone_into_other(&self, other: &mut &mut [T; $n]) {
+                (*other).clone_from(self);
+            }
+        }
+
         // TODO: Figure out how to compile the below code.
         //        impl<T, N> ReinterpretAsGrouped<N> for [T; $n]
         //        where

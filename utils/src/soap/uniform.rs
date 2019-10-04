@@ -317,7 +317,11 @@ impl<S, N> UniChunked<S, N> {
     }
 }
 
-impl<S: Set, N: Unsigned> UniChunked<S, U<N>> {
+impl<S, N> UniChunked<S, U<N>>
+where
+    S: Set + UniChunkable<N>,
+    N: Unsigned,
+{
     /// This function panics if `src` has doesn't have a length equal to `self.len()`.
     pub fn copy_from_arrays(&mut self, src: &[N::Array])
     where
@@ -406,10 +410,10 @@ where
 
 /// An implementation of `Set` for a `UniChunked` collection of any type that
 /// can be grouped as `N` sub-elements.
-impl<S: Set, N: Unsigned + Array<<S as Set>::Elem>> Set for UniChunked<S, U<N>> {
+impl<S: Set + UniChunkable<N>, N: Unsigned> Set for UniChunked<S, U<N>> {
     // TODO: This elem type poses problems because it's different than what an
     // iterator over unichunked returns.
-    type Elem = N::Array;
+    type Elem = S::Chunk;
 
     /// Compute the length of this `UniChunked` collection as the number of
     /// grouped elements in the set.
@@ -450,11 +454,10 @@ impl<S: Set> Set for ChunkedN<S> {
     }
 }
 
-impl<S, N> Push<N::Array> for UniChunked<S, U<N>>
+impl<'a, S, N> Push<<S as UniChunkable<N>>::Chunk> for UniChunked<S, U<N>>
 where
-    N: Unsigned + Array<<S as Set>::Elem>,
-    <S as Set>::Elem: PushArrayTo<S, N>,
-    S: Set + Push<<S as Set>::Elem>,
+    N: Unsigned,
+    S: Set + UniChunkable<N> + PushChunk<N>,
 {
     /// Push a grouped element onto the `UniChunked` type. The pushed element must
     /// have exactly `N` sub-elements.
@@ -470,8 +473,8 @@ where
     /// assert_eq!(Some(&[4,5,6]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    fn push(&mut self, element: N::Array) {
-        S::Elem::push_to(element, &mut self.data);
+    fn push(&mut self, element: S::Chunk) {
+        self.data.push_chunk(element);
     }
 }
 
@@ -480,18 +483,17 @@ where
     S: Set + Push<<S as Set>::Elem>,
     <S as Set>::Elem: Clone,
 {
-    /// Push a grouped element onto the `UniChunked` type. The pushed element must
-    /// have exactly `N` sub-elements.
+    /// Push a grouped element onto the `ChunkedN` type.
     ///
     /// # Example
     ///
     /// ```rust
     /// use utils::soap::*;
-    /// let mut s = Chunked3::from_flat(vec![1,2,3]);
-    /// s.push([4,5,6]);
+    /// let mut s = ChunkedN::from_flat_with_stride(vec![1,2,3], 3);
+    /// s.push(&[4,5,6]);
     /// let mut iter = s.iter();
-    /// assert_eq!(Some(&[1,2,3]), iter.next());
-    /// assert_eq!(Some(&[4,5,6]), iter.next());
+    /// assert_eq!(Some(&[1,2,3][..]), iter.next());
+    /// assert_eq!(Some(&[4,5,6][..]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
     fn push(&mut self, element: &[<S as Set>::Elem]) {
@@ -562,11 +564,10 @@ where
     }
 }
 
-impl<S, N> std::iter::FromIterator<N::Array> for UniChunked<S, U<N>>
+impl<S, N> std::iter::FromIterator<<Self as Set>::Elem> for UniChunked<S, U<N>>
 where
-    N: Unsigned + Array<<S as Set>::Elem> + Default,
-    <S as Set>::Elem: PushArrayTo<S, N>,
-    S: Set + Default + Push<<S as Set>::Elem>,
+    N: Unsigned + Default,
+    S: Set + UniChunkable<N> + PushChunk<N> + Default,
 {
     /// Construct a `UniChunked` collection from an iterator that produces
     /// chunked elements.
@@ -584,23 +585,25 @@ where
     /// ```
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = N::Array>,
+        T: IntoIterator<Item = S::Chunk>,
     {
-        let mut s = UniChunked::default();
-        for i in iter {
-            s.push(i);
+        let mut s: UniChunked<S, U<N>> = UniChunked::default();
+        for elem in iter {
+            s.data.push_chunk(elem);
         }
         s
     }
 }
 
-impl<S, N> std::iter::Extend<N::Array> for UniChunked<S, U<N>>
+impl<S, N> std::iter::Extend<<Self as Set>::Elem> for UniChunked<S, U<N>>
 where
-    N: Unsigned + Array<<S as Set>::Elem> + Default,
-    <S as Set>::Elem: PushArrayTo<S, N>,
-    S: Set + Default + Push<<S as Set>::Elem>,
+    N: Unsigned,
+    S: Set + UniChunkable<N> + PushChunk<N>,
+    //N: Unsigned + Array<<S as Set>::Elem> + Default,
+    //<S as Set>::Elem: PushArrayTo<S, N>,
+    //S: Set + UniChunkable<N> + Default + Push<<S as Set>::Elem>,
 {
-    /// Extend a `UniChunked` collection from an iterator over arrays.
+    /// Extend a `UniChunked` collection from an iterator over set elements.
     ///
     /// # Example
     ///
@@ -621,13 +624,48 @@ where
     /// ```
     fn extend<T>(&mut self, iter: T)
     where
-        T: IntoIterator<Item = N::Array>,
+        T: IntoIterator<Item = <Self as Set>::Elem>,
     {
         for i in iter {
-            self.push(i);
+            self.data.push_chunk(i);
         }
     }
 }
+
+//impl<S, N> std::iter::Extend<N::Array> for UniChunked<S, U<N>>
+//where
+//    N: Unsigned + Array<<S as Set>::Elem> + Default,
+//    <S as Set>::Elem: PushArrayTo<S, N>,
+//    S: Set + Default + Push<<S as Set>::Elem>,
+//{
+//    /// Extend a `UniChunked` collection from an iterator over arrays.
+//    ///
+//    /// # Example
+//    ///
+//    /// ```rust
+//    /// use utils::soap::*;
+//    ///
+//    /// let v = vec![[1,2,3],[4,5,6]];
+//    /// let mut s = Chunked3::from_array_vec(v);
+//    ///
+//    /// let more = vec![[7,8,9],[10,11,12]];
+//    /// s.extend(more.iter().cloned());
+//    /// let mut iter = s.iter();
+//    /// assert_eq!(Some(&[1,2,3]), iter.next());
+//    /// assert_eq!(Some(&[4,5,6]), iter.next());
+//    /// assert_eq!(Some(&[7,8,9]), iter.next());
+//    /// assert_eq!(Some(&[10,11,12]), iter.next());
+//    /// assert_eq!(None, iter.next());
+//    /// ```
+//    fn extend<T>(&mut self, iter: T)
+//    where
+//        T: IntoIterator<Item = N::Array>,
+//    {
+//        for i in iter {
+//            self.push(i);
+//        }
+//    }
+//}
 
 impl<S: Set + Default, N: Unsigned + Default> Default for UniChunked<S, U<N>> {
     fn default() -> Self {
@@ -650,6 +688,11 @@ where
     fn reinterpret_as_grouped(self) -> Self::Output {
         self.data.reinterpret_as_grouped().reinterpret_as_grouped()
     }
+}
+
+pub trait PushChunk<N>: UniChunkable<N> {
+    /// Push a chunk with size `N`.
+    fn push_chunk(&mut self, chunk: Self::Chunk);
 }
 
 pub trait PushArrayTo<S, N>
@@ -779,8 +822,8 @@ where
 
 impl<'a, S, N> GetIndex<'a, UniChunked<S, U<N>>> for usize
 where
-    S: Set + Get<'a, StaticRange<N>>,
-    N: Unsigned + Array<<S as Set>::Elem>,
+    S: Set + UniChunkable<N> + Get<'a, StaticRange<N>>,
+    N: Unsigned,
 {
     type Output = S::Output;
 
@@ -796,8 +839,8 @@ where
 
 impl<'a, S, N> GetIndex<'a, UniChunked<S, U<N>>> for std::ops::Range<usize>
 where
-    S: Set + Get<'a, std::ops::Range<usize>>,
-    N: Unsigned + Default + Array<<S as Set>::Elem>,
+    S: Set + UniChunkable<N> + Get<'a, std::ops::Range<usize>>,
+    N: Unsigned + Default,
 {
     type Output = UniChunked<S::Output, U<N>>;
 
@@ -862,8 +905,8 @@ where
 
 impl<S, N> IsolateIndex<UniChunked<S, U<N>>> for usize
 where
-    S: Set + Isolate<StaticRange<N>>,
-    N: Unsigned + Array<<S as Set>::Elem>,
+    S: Set + UniChunkable<N> + Isolate<StaticRange<N>>,
+    N: Unsigned,
 {
     type Output = S::Output;
 
@@ -881,8 +924,8 @@ where
 
 impl<S, N> IsolateIndex<UniChunked<S, U<N>>> for std::ops::Range<usize>
 where
-    S: Set + Isolate<std::ops::Range<usize>>,
-    N: Unsigned + Default + Array<<S as Set>::Elem>,
+    S: Set + UniChunkable<N> + Isolate<std::ops::Range<usize>>,
+    N: Unsigned + Default,
 {
     type Output = UniChunked<S::Output, U<N>>;
 
@@ -1476,6 +1519,30 @@ where
     }
 }
 
+impl<S, M> UniChunkable<M> for ChunkedN<S> {
+    type Chunk = ChunkedN<S>; // The exact size is determined at run-time
+}
+
+impl<S, N, M> UniChunkable<M> for UniChunked<S, U<N>>
+where
+    S: UniChunkable<<N as std::ops::Mul<M>>::Output>,
+    N: std::ops::Mul<M>,
+{
+    type Chunk = UniChunked<S::Chunk, U<N>>;
+}
+
+impl<S, M, N> PushChunk<M> for UniChunked<S, U<N>>
+where
+    S: Set
+        + PushChunk<<N as std::ops::Mul<M>>::Output>
+        + UniChunkable<<N as std::ops::Mul<M>>::Output>,
+    N: std::ops::Mul<M>,
+{
+    fn push_chunk(&mut self, chunk: Self::Chunk) {
+        self.data.push_chunk(chunk.data);
+    }
+}
+
 impl<S, N, M> IntoStaticChunkIterator<N> for UniChunked<S, M>
 where
     Self: Set + SplitPrefix<N> + Dummy,
@@ -1674,6 +1741,12 @@ where
         chunked.permute_in_place(permutation, seen);
 
         self.data = chunked.data;
+    }
+}
+
+impl<T, S: CloneIntoOther<T>, N> CloneIntoOther<UniChunked<T, N>> for UniChunked<S, N> {
+    fn clone_into_other(&self, other: &mut UniChunked<T, N>) {
+        self.data.clone_into_other(&mut other.data);
     }
 }
 

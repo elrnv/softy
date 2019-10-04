@@ -107,6 +107,16 @@ where
     }
 }
 
+impl<T, N: Array<T>> UniChunkable<N> for Vec<T> {
+    type Chunk = N::Array;
+}
+
+impl<T: Clone, N: Array<T>> PushChunk<N> for Vec<T> {
+    fn push_chunk(&mut self, chunk: Self::Chunk) {
+        self.extend_from_slice(N::as_slice(&chunk));
+    }
+}
+
 impl<T, N> IntoStaticChunkIterator<N> for Vec<T>
 where
     N: Unsigned + Array<T>,
@@ -274,5 +284,37 @@ impl<T> PermuteInPlace for Vec<T> {
     /// larger than this collection.
     fn permute_in_place(&mut self, permutation: &[usize], seen: &mut [bool]) {
         self.as_mut_slice().permute_in_place(permutation, seen);
+    }
+}
+
+impl<T: Clone> CloneIntoOther for Vec<T> {
+    fn clone_into_other(&self, other: &mut Vec<T>) {
+        other.clone_from(self);
+    }
+}
+
+impl<T: Clone> CloneIntoOther<[T]> for Vec<T> {
+    fn clone_into_other(&self, other: &mut [T]) {
+        other.clone_from_slice(self.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_into_other() {
+        let a = vec![1, 2, 3, 4];
+
+        // vec -> mut vec
+        let mut b = vec![5, 6, 7, 8];
+        a.clone_into_other(&mut b);
+        assert_eq!(b, a);
+
+        // vec -> mut slice
+        let mut b = vec![5, 6, 7, 8];
+        a.clone_into_other(b.as_mut_slice());
+        assert_eq!(b, a);
     }
 }

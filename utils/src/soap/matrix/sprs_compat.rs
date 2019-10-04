@@ -11,16 +11,17 @@ where
     S: Set,
     I: Set + AsRef<[usize]>,
     // Needed for view
-    DSBlockMatrix3<S, I>: for<'a> View<'a, Type = DSBlockMatrix3View<'a>>,
+    Self: for<'a> View<'a, Type = DSBlockMatrix3View<'a>>,
 {
     fn into(self) -> sprs::CsMat<f64> {
-        let num_rows = self.num_rows();
-        let num_cols = self.num_cols();
+        let view = self.view();
+        let num_rows = view.num_rows();
+        let num_cols = view.num_cols();
 
-        let values = self.view().data.into_flat().as_ref().to_vec();
+        let view = view.data;
+        let values = view.clone().into_flat().as_ref().to_vec();
 
         let (rows, cols) = {
-            let view = self.view().data;
             view.into_iter()
                 .enumerate()
                 .flat_map(move |(row_idx, row)| {

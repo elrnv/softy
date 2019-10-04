@@ -705,6 +705,14 @@ where
     }
 }
 
+/*
+ * Impls for uniformly chunked sparse types
+ */
+
+impl<S, I, M> UniChunkable<M> for Select<S, I> {
+    type Chunk = Select<S, I>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

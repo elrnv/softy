@@ -816,6 +816,13 @@ where
     }
 }
 
+/// A trait intended to be implemented on collection types to define the type of
+/// a statically sized chunk in this collection.
+/// This trait is required for composing with `UniChunked`.
+pub trait UniChunkable<N> {
+    type Chunk;
+}
+
 /// Iterate over chunks whose size is determined at compile time.
 /// Note that each chunk may not be a simple array, although a statically sized
 /// chunk of a slice is an array.
@@ -885,6 +892,20 @@ pub trait PermuteInPlace {
 /// elements.
 pub trait ChunkSize {
     fn chunk_size(&self) -> usize;
+}
+
+/// Clone self into a potentially different collection.
+pub trait CloneIntoOther<T = Self>
+where
+    T: ?Sized,
+{
+    fn clone_into_other(&self, other: &mut T);
+}
+
+impl<T: Clone> CloneIntoOther<&mut T> for &T {
+    fn clone_into_other(&self, other: &mut &mut T) {
+        other.clone_from(self);
+    }
 }
 
 /*

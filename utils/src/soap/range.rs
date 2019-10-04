@@ -55,6 +55,10 @@ macro_rules! impls_for_range {
                 (BoundedRange::end(self) - BoundedRange::start(self)).into()
             }
         }
+
+        impl<N, I> UniChunkable<N> for $range<I> {
+            type Chunk = StaticRange<N>;
+        }
         impl<'a, I: IntBound> View<'a> for $range<I>
         where
             Self: IntoIterator,

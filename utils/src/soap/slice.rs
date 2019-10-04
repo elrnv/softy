@@ -160,6 +160,24 @@ where
     }
 }
 
+impl<T, N: Array<T>> UniChunkable<N> for [T] {
+    type Chunk = N::Array;
+}
+
+impl<'a, T, N: Array<T>> UniChunkable<N> for &'a [T]
+where
+    <N as Array<T>>::Array: 'a,
+{
+    type Chunk = &'a N::Array;
+}
+
+impl<'a, T, N: Array<T>> UniChunkable<N> for &'a mut [T]
+where
+    <N as Array<T>>::Array: 'a,
+{
+    type Chunk = &'a mut N::Array;
+}
+
 impl<'a, T, N> IntoStaticChunkIterator<N> for &'a [T]
 where
     Self: SplitPrefix<N>,
@@ -427,5 +445,34 @@ impl<T> PermuteInPlace for &mut [T] {
             data,
         }
         .permute_in_place(permutation, seen);
+    }
+}
+
+impl<T: Clone> CloneIntoOther<Vec<T>> for [T] {
+    fn clone_into_other(&self, other: &mut Vec<T>) {
+        other.clear();
+        other.extend_from_slice(self);
+    }
+}
+
+impl<T: Clone> CloneIntoOther for [T] {
+    fn clone_into_other(&self, other: &mut [T]) {
+        assert_eq!(self.len(), other.len());
+        other.clone_from_slice(self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_into_other() {
+        let a = vec![1, 2, 3, 4];
+
+        // slice -> mut slice
+        let mut b = vec![5, 6, 7, 8];
+        a.as_slice().clone_into_other(b.as_mut_slice());
+        assert_eq!(b, a);
     }
 }

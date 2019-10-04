@@ -482,9 +482,6 @@ impl<S: Set + RemovePrefix, I: RemovePrefix + AsRef<[usize]>> RemovePrefix for S
 impl<'a, S, I> Subset<S, I>
 where
     Self: Set + ViewIterator<'a>,
-    //S: Set + View<'a>,
-    //I: AsRef<[usize]>,
-    //<S as View<'a>>::Type: SplitFirst + SplitAt + Set + Dummy,
 {
     /// The typical way to use this function is to clone from a `SubsetView`
     /// into an owned `S` type.
@@ -510,16 +507,7 @@ where
         V: Set + ViewMutIterator<'a> + ?Sized,
         <Self as ViewIterator<'a>>::Item: 
             CloneIntoOther<<V as ViewMutIterator<'a>>::Item>,
-        //V: ViewMut<'a> + ?Sized,
-        //<V as ViewMut<'a>>::Type: Set + IntoIterator,
-        //<<S as View<'a>>::Type as SplitFirst>::First:
-        //    CloneIntoOther<<<V as ViewMut<'a>>::Type as IntoIterator>::Item>,
     {
-        //let other_view = other.view_mut();
-        //assert_eq!(other_view.len(), self.len());
-        //for (mut theirs, mine) in other_view.into_iter().zip(self.iter()) {
-        //    mine.clone_into_other(&mut theirs);
-        //}
         assert_eq!(other.len(), self.len());
         for (mut theirs, mine) in other.view_mut_iter().zip(self.view_iter()) {
             mine.clone_into_other(&mut theirs);

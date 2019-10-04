@@ -64,7 +64,7 @@ pub trait ConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
         let indices_iter = self
             .constraint_jacobian_indices_iter()?
             .map(|idx| idx + offset);
-        let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
+        let mut values = vec![T::zero(); n];
         self.constraint_jacobian_values(x, dx, values.as_mut_slice())?;
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
@@ -194,7 +194,7 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
         let indices_iter = self
             .constraint_hessian_indices_iter()?
             .map(|idx| idx + offset);
-        let mut values = unsafe { vec![::std::mem::uninitialized(); n] };
+        let mut values = vec![T::zero(); n];
         self.constraint_hessian_values(x, dx, lambda, scale, values.as_mut_slice())?;
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);

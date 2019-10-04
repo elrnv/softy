@@ -476,7 +476,7 @@ impl ContactConstraint for PointContactConstraint {
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         v: [SubsetView<Chunked3<&[f64]>>; 2],
         _potential_values: &[f64],
-        friction_steps: u32,
+        mut friction_steps: u32,
     ) -> u32 {
         if self.frictional_contact.is_none() || friction_steps == 0 {
             return 0;
@@ -643,20 +643,37 @@ impl ContactConstraint for PointContactConstraint {
                 ) {
                     Ok(mut solver) => {
                         eprintln!("#### Solving Friction");
-                        if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                            for ((aqi, &r), r_out) in r_t
-                                .iter()
-                                .enumerate()
-                                .zip(collider_friction_impulse.source_iter_mut())
-                            {
-                                *r_out = contact_basis
-                                    .from_contact_coordinates([0.0, r[0], r[1]], aqi)
-                                    .into();
+
+                        loop {
+                            if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
+                                for ((aqi, &r), r_out) in r_t
+                                    .iter()
+                                    .enumerate()
+                                    .zip(collider_friction_impulse.source_iter_mut())
+                                {
+                                    *r_out = contact_basis
+                                        .from_contact_coordinates([0.0, r[0], r[1]], aqi)
+                                        .into();
+                                }
+
+                                let f_prev = prev_friction_impulse.as_tensor();
+                                let f_delta = collider_friction_impulse.as_tensor() - f_prev;
+                                let rel_err_numerator = f_delta.transpose() * effective_mass_inv * f_delta;
+                                let rel_err = rel_err_numerator / (f_prev.transpose() * effective_mass_inv * f_prev);
+
+                                if rel_err < 1e-5 {
+                                    break true;
+                                }
+
+                                if friction_steps == 0 {
+                                    break true;
+                                }
+
+                                friction_steps -= 1;
+                            } else {
+                                eprintln!("Failed friction solve");
+                                break false;
                             }
-                            true
-                        } else {
-                            eprintln!("Failed friction solve");
-                            false
                         }
                     }
                     Err(err) => {
@@ -711,7 +728,11 @@ impl ContactConstraint for PointContactConstraint {
             .iter_mut()
             .for_each(|imp| *imp = -*imp);
 
-        friction_steps - 1
+        if friction_steps > 0 {
+            friction_steps - 1
+        } else {
+            0
+        }
     }
 
     fn add_mass_weighted_frictional_contact_impulse(

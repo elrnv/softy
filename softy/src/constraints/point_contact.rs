@@ -656,10 +656,11 @@ impl ContactConstraint for PointContactConstraint {
                                         .into();
                                 }
 
-                                let f_prev = prev_friction_impulse.as_tensor();
-                                let f_delta = collider_friction_impulse.as_tensor() - f_prev;
-                                let rel_err_numerator = f_delta.transpose() * effective_mass_inv * f_delta;
-                                let rel_err = rel_err_numerator / (f_prev.transpose() * effective_mass_inv * f_prev);
+                                let mut f_delta = Tensor::new(Chunked3::from_array_vec(prev_friction_impulse.clone()));
+                                let f_prev = f_delta.clone();
+                                f_delta -= *(&*collider_friction_impulse).as_tensor();
+                                let rel_err_numerator = f_delta.transpose() * (effective_mass_inv * f_delta);
+                                let rel_err = rel_err_numerator / (f_prev.transpose() * (effective_mass_inv * f_prev));
 
                                 if rel_err < 1e-5 {
                                     break true;

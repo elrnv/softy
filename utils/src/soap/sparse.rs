@@ -383,9 +383,7 @@ where
     S: View<'a>,
     <S as View<'a>>::Type: Set + IntoIterator,
 {
-    pub fn source_iter(
-        &'a self,
-    ) -> impl Iterator<Item = <<S as View<'a>>::Type as IntoIterator>::Item> {
+    pub fn source_iter(&'a self) -> <<S as View<'a>>::Type as IntoIterator>::IntoIter {
         self.source.view().into_iter()
     }
 }
@@ -480,16 +478,12 @@ impl<'a, S, T, I> ViewIterator<'a> for Sparse<S, T, I>
 where
     S: View<'a>,
     <S as View<'a>>::Type: Set + IntoIterator,
-    I: AsRef<[usize]>,
 {
-    type Item = (usize, <<S as View<'a>>::Type as IntoIterator>::Item);
-    type Iter = std::iter::Zip<
-        std::iter::Cloned<std::slice::Iter<'a, usize>>,
-        <<S as View<'a>>::Type as IntoIterator>::IntoIter,
-    >;
+    type Item = <<S as View<'a>>::Type as IntoIterator>::Item;
+    type Iter = <<S as View<'a>>::Type as IntoIterator>::IntoIter;
 
     fn view_iter(&'a self) -> Self::Iter {
-        self.indexed_source_iter()
+        self.source_iter()
     }
 }
 
@@ -497,19 +491,12 @@ impl<'a, S, T, I> ViewMutIterator<'a> for Sparse<S, T, I>
 where
     S: ViewMut<'a>,
     <S as ViewMut<'a>>::Type: Set + IntoIterator,
-    I: AsMut<[usize]>,
 {
-    type Item = (
-        &'a mut usize,
-        <<S as ViewMut<'a>>::Type as IntoIterator>::Item,
-    );
-    type Iter = std::iter::Zip<
-        std::slice::IterMut<'a, usize>,
-        <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter,
-    >;
+    type Item = <<S as ViewMut<'a>>::Type as IntoIterator>::Item;
+    type Iter = <<S as ViewMut<'a>>::Type as IntoIterator>::IntoIter;
 
     fn view_mut_iter(&'a mut self) -> Self::Iter {
-        self.iter_mut()
+        self.source_iter_mut()
     }
 }
 

@@ -44,18 +44,38 @@ impl<T> Tensor<T> {
     }
 }
 
-impl<T, S> Tensor<S>
-where
-    S: Storage<Storage = [T]>,
-    T: Scalar,
-{
-    // TODO: Fix this implementation to not contact over storage. This doesn't work for sparse
-    // matrices for example.
-    pub fn dot(&self, other: Self) -> T {
-        self.storage()
-            .iter()
-            .zip(other.storage().iter())
-            .fold(T::zero(), |acc, (&a, &b)| acc + a * b)
+impl<S: Lazy> Tensor<S> {
+    pub fn dot<'a, T>(&'a self, rhs: &'a T) -> Dot<<Self as View<'a>>::Type, T::Type>
+    where T: View<'a>,
+          <T as View<'a>>::Type: TensorOp,
+          Self: View<'a>,
+          <Self as View<'a>>::Type: TensorOp,
+    {
+        self.view().dot(rhs.view())
+    }
+}
+
+impl<S> Tensor<S> {
+    /// Negate all elements in this tensor. This works on any tensor whose
+    /// underlying elements are copyable negateable types.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut v = vec![1.0, -2.0, 3.0];
+    /// v.as_mut_tensor().negate();
+    /// assert_eq!(v, vec![-1.0, 2.0, -3.0]);
+    /// ```
+    pub fn negate<'a>(&'a mut self)
+    where
+        S: Set + StorageMut,
+        <S as Storage>::Storage: ViewMutIterator<'a, Item = &'a mut S::Atom>,
+        <S as Set>::Atom: std::ops::Neg<Output = S::Atom> + Copy,
+    {
+        for v in self.storage_mut().view_mut_iter() {
+            *v = -*v;
+        }
     }
 }
 
@@ -70,18 +90,176 @@ impl<T: ?Sized> Tensor<T> {
     }
 }
 
-//impl<T> std::ops::Deref for Tensor<T> {
-//    type Target = T;
-//    fn deref(&self) -> &Self::Target {
-//        &self.data
-//    }
-//}
-//
-//impl<T> std::ops::DerefMut for Tensor<T> {
-//    fn deref_mut(&mut self) -> &mut Self::Target {
-//        &mut self.data
-//    }
-//}
+/*
+ * Lazy tensor arithmetic
+ */
+
+pub trait TensorOp {
+    type Item: TensorOp;
+    type Iter: Iterator<Item = Self::Item>;
+    type Value;
+
+    fn into_tensor_iter(self) -> Self::Iter;
+    /// Evaluate the tensor operation into a concrete value.
+    fn eval(self) -> Tensor<Self::Value>;
+    /// Outer dimension of this tensor operation.
+    fn dim(&self) -> usize;
+    fn dot<T: TensorOp>(self, rhs: T) -> Dot<Self, T>
+    where Self: Sized
+    {
+        Dot {
+            lhs: self,
+            rhs,
+        }
+    }
+    //fn add<T: TensorOp>(self, rhs: T) -> AddOp<Self, T>
+    //    where Self: Sized
+    //{
+    //    AddOp {
+    //        lhs: self,
+    //        rhs,
+    //    }
+    //}
+}
+
+// Wraps iters into iters over tensors.
+pub struct TensorIter<I> {
+    iter: I,
+}
+
+impl<I: Iterator> Iterator for TensorIter<I> {
+    type Item = Tensor<I::Item>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|x| Tensor::new(x))
+    }
+}
+
+impl<T: Scalar> TensorOp for Tensor<T> {
+    type Item = Tensor<T>;
+    type Iter = std::iter::Once<Tensor<T>>;
+    type Value = T;
+    fn into_tensor_iter(self) -> Self::Iter {
+        std::iter::once(Tensor::new(self.data))
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        self
+    }
+    fn dim(&self) -> usize {
+        1
+    }
+}
+impl<T: Scalar> TensorOp for Tensor<Vec<T>> {
+    type Item = Tensor<T>;
+    type Iter = TensorIter<std::vec::IntoIter<T>>;
+    type Value = Vec<T>;
+    fn into_tensor_iter(self) -> Self::Iter {
+        TensorIter { iter: self.data.into_iter() }
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        self
+    }
+    fn dim(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<'a, T: Scalar + 'a> TensorOp for Tensor<&'a [T]> {
+    type Item = Tensor<T>;
+    type Iter = TensorIter<std::iter::Cloned<std::slice::Iter<'a, T>>>;
+    type Value = &'a [T];
+    fn into_tensor_iter(self) -> Self::Iter {
+        TensorIter { iter: self.data.into_iter().cloned() }
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        self
+    }
+    fn dim(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<'a, T: Scalar + 'a> TensorOp for &'a Tensor<[T]> {
+    type Item = Tensor<T>;
+    type Iter = TensorIter<std::iter::Cloned<std::slice::Iter<'a, T>>>;
+    type Value = &'a [T];
+    fn into_tensor_iter(self) -> Self::Iter {
+        TensorIter { iter: self.data.into_iter().cloned() }
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        Tensor::new(&self.data)
+    }
+    fn dim(&self) -> usize {
+        self.data.len()
+    }
+}
+
+/// Marker trait for distinguishing types with lazy operations from types with
+/// eager operations. For example small array tensors are eager while `Vec`
+/// tensors are lazy.
+pub trait Lazy {}
+impl<T> Lazy for Vec<T> {}
+impl<T> Lazy for [T] {}
+impl<S, I> Lazy for Subset<S, I> {}
+impl<S, N> Lazy for UniChunked<S, N> {}
+impl<S, O> Lazy for Chunked<S, O> {}
+impl<S, T, I> Lazy for Sparse<S, T, I> {}
+impl<T: Lazy + ?Sized> Lazy for Tensor<T> {}
+impl<T: Lazy + ?Sized> Lazy for &T {}
+impl<T: Lazy + ?Sized> Lazy for &mut T {}
+
+/*
+pub struct AddOp<L, R> {
+    lhs: L,
+    rhs: R
+}
+
+impl<L, R, T: Scalar> TensorOp for AddOp<L, R>
+where I: Iterator + ExactSizeIterator,
+      F: FnMut(I::Item) -> Tensor<T>,
+{
+    type Item = Tensor<T>;
+    type Iter = std::iter::Map<I, F>;
+    type Value = Vec<T>;
+    fn into_tensor_iter(self) -> Self::Iter {
+        self.iter.map(self.f)
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        Tensor::new(self.into_tensor_iter().map(|x| x.into_inner()).collect())
+    }
+    fn dim(&self) -> usize { self.iter.len() }
+}
+*/
+
+/*
+ * Lazy tensor contraction operator
+ */
+
+pub struct Dot<L, R> {
+    pub lhs: L,
+    pub rhs: R,
+}
+
+impl<L, R, T> TensorOp for Dot<L,R>
+where L: Lazy + TensorOp,
+      <L as TensorOp>::Item: TensorOp<Value = T>,
+      R: Lazy + TensorOp,
+      <R as TensorOp>::Item: TensorOp<Value = T>,
+      T: Scalar,
+{
+    type Item = Tensor<T>;
+    type Iter = std::iter::Once<Tensor<T>>;
+    type Value = T;
+    fn into_tensor_iter(self) -> Self::Iter {
+        std::iter::once(self.eval())
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        self.lhs.into_tensor_iter().zip(
+            self.rhs.into_tensor_iter())
+            .fold(Tensor::new(T::zero()), |acc, (a, b)| acc + a.eval() * b.eval())
+    }
+    fn dim(&self) -> usize { 1 }
+}
 
 /*
  * Tensor as a Set
@@ -136,6 +314,7 @@ pub trait Scalar:
     Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum
 {
 }
+
 macro_rules! impl_scalar {
     ($($types:ty),*) => {
         $(
@@ -175,6 +354,13 @@ impl<T: Scalar> Div for Tensor<T> {
 impl<T: Scalar> DivAssign for Tensor<T> {
     fn div_assign(&mut self, rhs: Self) {
         self.data /= rhs.data;
+    }
+}
+
+impl<T: Scalar> Add for Tensor<T> {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Tensor::new(self.data + rhs.data)
     }
 }
 
@@ -1203,7 +1389,6 @@ impl<S, I> LocalGeneric for Subset<S, I> {}
 impl<S, N> LocalGeneric for UniChunked<S, N> {}
 impl<S, O> LocalGeneric for Chunked<S, O> {}
 impl<S, T, I> LocalGeneric for Sparse<S, T, I> {}
-impl<T> LocalGeneric for Tensor<T> {}
 
 impl<T: ?Sized, U, V: ?Sized> AddAssign<Tensor<U>> for Tensor<V>
 where
@@ -1455,5 +1640,14 @@ mod tests {
         assert_eq!(res, a.view().as_tensor() + Tensor::new(b.view()));
         assert_eq!(res, Tensor::new(a.view()) + b.view().as_tensor());
         assert_eq!(res, a.view().as_tensor() + b.view().as_tensor());
+    }
+
+    #[test]
+    fn tensor_dot() {
+        let a = vec![1, 2, 3, 4];
+        let b = vec![5, 6, 7, 8];
+        assert_eq!(Tensor::new(70), Tensor::new(a.view()).dot(Tensor::new(b.view())).eval());
+        assert_eq!(Tensor::new(70), a.view().as_tensor().dot(b.view().as_tensor()).eval());
+        assert_eq!(Tensor::new(70), a.as_tensor().dot(b.as_tensor()).eval());
     }
 }

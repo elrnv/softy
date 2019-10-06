@@ -77,6 +77,27 @@ impl<'a, T, N: Default + Array<T>> UniChunked<&'a mut [T], U<N>> {
     }
 }
 
+impl<S, N: Copy> UniChunked<S, N> {
+    pub fn view<'a>(&'a self) -> UniChunked<S::Type, N>
+    where
+        S: View<'a>,
+    {
+        UniChunked {
+            data: self.data.view(),
+            chunk_size: self.chunk_size,
+        }
+    }
+    fn view_mut<'a>(&'a mut self) -> UniChunked<S::Type, N>
+    where
+        S: ViewMut<'a>,
+    {
+        UniChunked {
+            data: self.data.view_mut(),
+            chunk_size: self.chunk_size,
+        }
+    }
+}
+
 impl<'a, S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem>> UniChunked<S, U<N>> {
     /// Convert this `UniChunked` collection into arrays.
     ///
@@ -1132,10 +1153,8 @@ where
  * Iteration
  */
 
-impl<'a, S, N> UniChunked<S, U<N>>
+impl<S, N> UniChunked<S, U<N>>
 where
-    S: View<'a>,
-    <S as View<'a>>::Type: IntoStaticChunkIterator<N>,
     N: Unsigned,
 {
     /// Produce an iterator over borrowed grouped elements of the `UniChunked`.
@@ -1173,17 +1192,14 @@ where
     /// assert_eq!(Some(&[11,12]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter(&'a self) -> <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::IterType {
+    pub fn iter<'a>(&'a self) -> <S::Type as IntoStaticChunkIterator<N>>::IterType
+    where
+        S: View<'a>,
+        <S as View<'a>>::Type: IntoStaticChunkIterator<N>,
+    {
         self.data.view().into_static_chunk_iter()
     }
-}
 
-impl<'a, S, N> UniChunked<S, U<N>>
-where
-    S: ViewMut<'a>,
-    <S as ViewMut<'a>>::Type: IntoStaticChunkIterator<N>,
-    N: Unsigned,
-{
     /// Produce an iterator over mutably borrowed grouped elements of `UniChunked`.
     ///
     /// # Examples
@@ -1229,9 +1245,11 @@ where
     /// assert_eq!(Some(&[12,14]), iter0.next());
     /// assert_eq!(None, iter0.next());
     /// ```
-    pub fn iter_mut(
-        &'a mut self,
-    ) -> <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::IterType {
+    pub fn iter_mut<'a>(&'a mut self) -> <S::Type as IntoStaticChunkIterator<N>>::IterType
+    where
+        S: ViewMut<'a>,
+        <S as ViewMut<'a>>::Type: IntoStaticChunkIterator<N>,
+    {
         self.data.view_mut().into_static_chunk_iter()
     }
 }
@@ -1242,8 +1260,8 @@ where
     <S as View<'a>>::Type: IntoStaticChunkIterator<N>,
     N: Unsigned,
 {
-    type Item = <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::Item;
-    type Iter = <<S as View<'a>>::Type as IntoStaticChunkIterator<N>>::IterType;
+    type Item = <S::Type as IntoStaticChunkIterator<N>>::Item;
+    type Iter = <S::Type as IntoStaticChunkIterator<N>>::IterType;
 
     fn view_iter(&'a self) -> Self::Iter {
         self.iter()
@@ -1256,8 +1274,8 @@ where
     <S as ViewMut<'a>>::Type: IntoStaticChunkIterator<N>,
     N: Unsigned,
 {
-    type Item = <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::Item;
-    type Iter = <<S as ViewMut<'a>>::Type as IntoStaticChunkIterator<N>>::IterType;
+    type Item = <S::Type as IntoStaticChunkIterator<N>>::Item;
+    type Iter = <S::Type as IntoStaticChunkIterator<N>>::IterType;
 
     fn view_mut_iter(&'a mut self) -> Self::Iter {
         self.iter_mut()
@@ -1290,23 +1308,18 @@ where
     }
 }
 
-impl<'a, S> UniChunked<S, usize>
-where
-    S: View<'a>,
-{
-    pub fn iter(&'a self) -> Chunks<S::Type> {
+impl<S> UniChunked<S, usize> {
+    pub fn iter<'a>(&'a self) -> Chunks<S::Type>
+    where
+        S: View<'a>,
+    {
         let UniChunked { chunk_size, data } = self;
         Chunks {
             chunk_size: *chunk_size,
             data: data.view(),
         }
     }
-}
 
-impl<'a, S> UniChunked<S, usize>
-where
-    S: ViewMut<'a>,
-{
     /// Mutably iterate over `Chunked` data.
     ///
     /// # Example
@@ -1320,7 +1333,10 @@ where
     /// assert_eq!(Some(&[0,0,0][..]), iter.next());
     /// assert_eq!(None, iter.next());
     /// ```
-    pub fn iter_mut(&'a mut self) -> Chunks<S::Type> {
+    pub fn iter_mut<'a>(&'a mut self) -> Chunks<S::Type>
+    where
+        S: ViewMut<'a>,
+    {
         let UniChunked { chunk_size, data } = self;
         Chunks {
             chunk_size: *chunk_size,
@@ -1360,10 +1376,7 @@ where
     /// }
     /// ```
     fn view(&'a self) -> Self::Type {
-        UniChunked {
-            data: self.data.view(),
-            chunk_size: self.chunk_size,
-        }
+        UniChunked::view(self)
     }
 }
 
@@ -1392,10 +1405,7 @@ where
     /// assert_eq!(None, view_iter.next());
     /// ```
     fn view_mut(&'a mut self) -> Self::Type {
-        UniChunked {
-            data: self.data.view_mut(),
-            chunk_size: self.chunk_size,
-        }
+        UniChunked::view_mut(self)
     }
 }
 

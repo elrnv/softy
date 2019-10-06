@@ -44,6 +44,34 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> TensorOp for Tensor<[T; $n]> {
+            type Item = Tensor<[T; $n]>;
+            type Iter = std::iter::Once<Tensor<[T; $n]>>;
+            type Value = [T; $n];
+            fn into_tensor_iter(self) -> Self::Iter {
+                std::iter::once(self)
+            }
+            fn eval(self) -> Tensor<Self::Value> {
+                self
+            }
+            fn dim(&self) -> usize {
+                self.len()
+            }
+        }
+
+        impl<T: Scalar> TensorOp for Dot<Tensor<[T; $n]>,Tensor<[T; $n]>> {
+            type Item = Tensor<T>;
+            type Iter = std::iter::Once<Tensor<T>>;
+            type Value = T;
+            fn into_tensor_iter(self) -> Self::Iter {
+                std::iter::once(self.eval())
+            }
+            fn eval(self) -> Tensor<Self::Value> {
+                Tensor::new(Tensor::<[T; $n]>::dot(self.lhs, self.rhs))
+            }
+            fn dim(&self) -> usize { 1 }
+        }
+
         impl<T: Copy> Tensor<[T; $n]> {
             #[unroll_for_loops]
             pub fn map<U, F>(&self, mut f: F) -> Tensor<[U; $n]>

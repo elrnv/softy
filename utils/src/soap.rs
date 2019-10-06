@@ -62,6 +62,10 @@ use typenum::Unsigned;
 pub trait Set {
     /// Owned element of the set.
     type Elem;
+    /// The most basic element contained by this collection.
+    /// If this collection contains other collections, this type should be
+    /// different than `Elem`.
+    type Atom;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -70,6 +74,7 @@ pub trait Set {
 
 impl<N: Unsigned> Set for StaticRange<N> {
     type Elem = usize;
+    type Atom = usize;
     fn len(&self) -> usize {
         N::to_usize()
     }
@@ -77,12 +82,14 @@ impl<N: Unsigned> Set for StaticRange<N> {
 
 impl<S: Set + ?Sized> Set for &S {
     type Elem = <S as Set>::Elem;
+    type Atom = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
 }
 impl<S: Set + ?Sized> Set for &mut S {
     type Elem = <S as Set>::Elem;
+    type Atom = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
@@ -90,6 +97,7 @@ impl<S: Set + ?Sized> Set for &mut S {
 
 impl<S: Set + ?Sized> Set for std::cell::Ref<'_, S> {
     type Elem = <S as Set>::Elem;
+    type Atom = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
@@ -97,6 +105,7 @@ impl<S: Set + ?Sized> Set for std::cell::Ref<'_, S> {
 
 impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
     type Elem = <S as Set>::Elem;
+    type Atom = <S as Set>::Elem;
     fn len(&self) -> usize {
         <S as Set>::len(self)
     }
@@ -904,6 +913,18 @@ impl<T: Clone> CloneIntoOther<&mut T> for &T {
     fn clone_into_other(&self, other: &mut &mut T) {
         other.clone_from(self);
     }
+}
+
+pub trait AtomIter {
+    type Item;
+    type Iter: Iterator<Item = Self::Item>;
+    fn atom_iter(&self) -> Self::Iter;
+}
+
+pub trait AtomIterMut {
+    type Item;
+    type Iter: Iterator<Item = Self::Item>;
+    fn atom_iter_mut(&mut self) -> Self::Iter;
 }
 
 /*

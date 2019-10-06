@@ -10,6 +10,7 @@ impl<T> Clear for Vec<T> {
 
 impl<T> Set for Vec<T> {
     type Elem = T;
+    type Atom = T;
     fn len(&self) -> usize {
         Vec::len(self)
     }

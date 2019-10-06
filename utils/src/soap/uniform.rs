@@ -414,6 +414,7 @@ impl<S: Set + UniChunkable<N>, N: Unsigned> Set for UniChunked<S, U<N>> {
     // TODO: This elem type poses problems because it's different than what an
     // iterator over unichunked returns.
     type Elem = S::Chunk;
+    type Atom = S::Atom;
 
     /// Compute the length of this `UniChunked` collection as the number of
     /// grouped elements in the set.
@@ -436,6 +437,7 @@ impl<S: Set + UniChunkable<N>, N: Unsigned> Set for UniChunked<S, U<N>> {
 /// can be grouped into sub-elements whose size is determined at run-time.
 impl<S: Set> Set for ChunkedN<S> {
     type Elem = Vec<S::Elem>;
+    type Atom = S::Atom;
 
     /// Compute the length of this `UniChunked` collection as the number of
     /// grouped elements in the set.

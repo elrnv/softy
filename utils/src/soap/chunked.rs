@@ -408,6 +408,7 @@ where
     O: Set,
 {
     type Elem = Vec<S::Elem>;
+    type Atom = S::Atom;
 
     /// Get the number of elements in a `Chunked`.
     ///

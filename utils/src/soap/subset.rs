@@ -292,6 +292,7 @@ impl<'a, S: Set, I: AsRef<[usize]>> Subset<S, I> {
 /// Required for `Chunked` and `UniChunked` subsets.
 impl<S: Set, I: AsRef<[usize]>> Set for Subset<S, I> {
     type Elem = S::Elem;
+    type Atom = S::Atom;
     /// Get the length of this subset.
     ///
     /// # Example

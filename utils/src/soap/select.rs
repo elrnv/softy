@@ -165,6 +165,7 @@ where
 // Required for `Chunked` and `UniChunked` selections.
 impl<S: Set, I: AsRef<[usize]>> Set for Select<S, I> {
     type Elem = S::Elem;
+    type Atom = S::Atom;
     /// Get the number of selected elements.
     ///
     /// # Example

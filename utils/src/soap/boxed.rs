@@ -6,6 +6,7 @@ use super::*;
 
 impl<S: Set> Set for Box<S> {
     type Elem = S::Elem;
+    type Atom = S::Atom;
     fn len(&self) -> usize {
         S::len(self)
     }

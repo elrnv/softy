@@ -89,6 +89,7 @@ impl<T: ?Sized> Tensor<T> {
 
 impl<T: Set> Set for Tensor<T> {
     type Elem = T::Elem;
+    type Atom = T::Atom;
     fn len(&self) -> usize {
         self.data.len()
     }

@@ -11,6 +11,7 @@ pub struct Offsets<O = Vec<usize>>(pub(crate) O);
 
 impl<O: Set> Set for Offsets<O> {
     type Elem = O::Elem;
+    type Atom = O::Atom;
     fn len(&self) -> usize {
         self.0.len()
     }

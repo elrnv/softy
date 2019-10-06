@@ -147,6 +147,7 @@ impl<'a, S, T, I> Sparse<S, T, I> {
 // Required for `Chunked` and `UniChunked` subsets.
 impl<S: Set, T, I> Set for Sparse<S, T, I> {
     type Elem = (usize, S::Elem);
+    type Atom = S::Atom;
     /// Get the length of this sparse collection.
     ///
     /// # Example

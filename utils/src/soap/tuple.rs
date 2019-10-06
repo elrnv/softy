@@ -128,6 +128,7 @@ where
 
 impl<S: Set, T: Set> Set for (S, T) {
     type Elem = (S::Elem, T::Elem);
+    type Atom = (S::Atom, T::Atom);
     fn len(&self) -> usize {
         debug_assert_eq!(self.0.len(), self.1.len());
         self.0.len()

@@ -25,6 +25,7 @@ macro_rules! impl_array_for_typenum {
         pub type $nty = U<consts::$nty>;
         impl<T> Set for [T; $n] {
             type Elem = T;
+            type Atom = T;
             fn len(&self) -> usize {
                 $n
             }

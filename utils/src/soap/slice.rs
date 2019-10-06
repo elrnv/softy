@@ -82,6 +82,7 @@ where
 
 impl<T> Set for [T] {
     type Elem = T;
+    type Atom = T;
     fn len(&self) -> usize {
         <[T]>::len(self)
     }

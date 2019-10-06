@@ -51,6 +51,7 @@ macro_rules! impls_for_range {
         impl<T> ValueType for $range<T> {}
         impl<I: IntBound> Set for $range<I> {
             type Elem = <Self as BoundedRange>::Index;
+            type Atom = <Self as BoundedRange>::Index;
             fn len(&self) -> usize {
                 (BoundedRange::end(self) - BoundedRange::start(self)).into()
             }

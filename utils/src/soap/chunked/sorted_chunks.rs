@@ -26,6 +26,7 @@ impl<O: AsMut<[usize]>> AsMut<[usize]> for SortedChunks<O> {
 
 impl<O: Set> Set for SortedChunks<O> {
     type Elem = O::Elem;
+    type Atom = O::Atom;
     fn len(&self) -> usize {
         self.offsets.len()
     }

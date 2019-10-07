@@ -194,6 +194,25 @@ impl<'a, T: Scalar + 'a> TensorOp for &'a Tensor<[T]> {
     }
 }
 
+/*
+impl<S, N> TensorOp for Tensor<UniChunked<S, N>>
+    where S: TensorOp,
+{
+    type Item = Tensor<S::Item>;
+    type Iter = TensorIter<std::vec::IntoIter<T>>;
+    type Value = UniChunked<S, N>;
+    fn into_tensor_iter(self) -> Self::Iter {
+        TensorIter { iter: self.data.into_iter() }
+    }
+    fn eval(self) -> Tensor<Self::Value> {
+        self
+    }
+    fn dim(&self) -> usize {
+        self.data.len()
+    }
+}
+*/
+
 /// Marker trait for distinguishing types with lazy operations from types with
 /// eager operations. For example small array tensors are eager while `Vec`
 /// tensors are lazy.
@@ -1646,6 +1665,15 @@ mod tests {
     fn tensor_dot() {
         let a = vec![1, 2, 3, 4];
         let b = vec![5, 6, 7, 8];
+        assert_eq!(Tensor::new(70), Tensor::new(a.view()).dot(Tensor::new(b.view())).eval());
+        assert_eq!(Tensor::new(70), a.view().as_tensor().dot(b.view().as_tensor()).eval());
+        assert_eq!(Tensor::new(70), a.as_tensor().dot(b.as_tensor()).eval());
+    }
+
+    #[test]
+    fn tensor_unichunked_dot() {
+        let a = Chunked2::from_flat(vec![1, 2, 3, 4]);
+        let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
         assert_eq!(Tensor::new(70), Tensor::new(a.view()).dot(Tensor::new(b.view())).eval());
         assert_eq!(Tensor::new(70), a.view().as_tensor().dot(b.view().as_tensor()).eval());
         assert_eq!(Tensor::new(70), a.as_tensor().dot(b.as_tensor()).eval());

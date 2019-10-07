@@ -432,8 +432,6 @@ where
 /// An implementation of `Set` for a `UniChunked` collection of any type that
 /// can be grouped as `N` sub-elements.
 impl<S: Set + UniChunkable<N>, N: Unsigned> Set for UniChunked<S, U<N>> {
-    // TODO: This elem type poses problems because it's different than what an
-    // iterator over unichunked returns.
     type Elem = S::Chunk;
     type Atom = S::Atom;
 

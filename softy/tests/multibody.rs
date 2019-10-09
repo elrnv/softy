@@ -67,7 +67,7 @@ fn stacking_boxes() -> Result<(), Error> {
     )
     .unwrap();
 
-    for i in 0..240 {
+    for i in 0..50 {
         let res = solver.step()?;
         println!("res = {:?}; rame = {:?}", res, i);
         geo::io::save_tetmesh(

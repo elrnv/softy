@@ -1430,17 +1430,20 @@ pub enum LpNorm {
     Inf,
 }
 
-pub trait TensorNorm<T> {
+pub trait Norm<T> {
     fn lp_norm(&self, norm: LpNorm) -> T
     where
         T: Float;
     fn norm_squared(&self) -> T;
     fn norm(&self) -> T
     where
-        T: Float;
+        T: Float,
+    {
+        self.norm_squared().sqrt()
+    }
 }
 
-impl<S, T> TensorNorm<T> for Tensor<S>
+impl<S, T> Norm<T> for Tensor<S>
 where
     T: Scalar,
     S: for<'a> AtomIterator<'a, Item = &'a T>,
@@ -1470,12 +1473,6 @@ where
     }
     fn norm_squared(&self) -> T {
         self.data.atom_iter().map(|&x| x * x).sum::<T>()
-    }
-    fn norm(&self) -> T
-    where
-        T: Float,
-    {
-        self.norm_squared().sqrt()
     }
 }
 
@@ -1623,11 +1620,11 @@ mod tests {
 
     #[test]
     fn tensor_norm() {
-        let a = vec![1,2,3,4];
+        let a = vec![1, 2, 3, 4];
         assert_eq!(a.as_tensor().norm_squared(), 30);
         assert_eq!(Tensor::new(a).norm_squared(), 30);
 
-        let f = vec![1.0,2.0,3.0,1.0,4.0,2.0,1.0];
+        let f = vec![1.0, 2.0, 3.0, 1.0, 4.0, 2.0, 1.0];
         assert_eq!(f.as_tensor().norm(), 6.0);
         assert_eq!(Tensor::new(f.clone()).norm(), 6.0);
 

@@ -9,6 +9,7 @@ use super::*;
 use crate::zip;
 use chunked::Offsets;
 use geo::math::{Matrix3, Vector3};
+use num_traits::Float;
 use std::convert::AsRef;
 use std::ops::{Add, Mul, MulAssign};
 
@@ -20,9 +21,8 @@ pub trait SparseBlockMatrix {
     fn num_non_zero_blocks(&self) -> usize;
 }
 
-
 /// This trait defines information provided by any matrx type.
-pub trait Matrix {//<T>: TensorNorm<T> {
+pub trait Matrix {
     type Transpose;
     fn transpose(self) -> Self::Transpose;
     fn num_rows(&self) -> usize;
@@ -230,6 +230,43 @@ where
     }
 }
 
+impl<T, S, I> Norm<T> for DiagonalBlockMatrix3<S, I>
+where
+    T: Scalar,
+    Subset<Chunked3<S>, I>: for<'a> ViewIterator<'a, Item = &'a [T; 3]>,
+    T: num_traits::FromPrimitive,
+{
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float,
+    {
+        match norm {
+            LpNorm::P(p) => self
+                .0
+                .view_iter()
+                .map(|v| v.as_tensor().map(|x| x.abs().powi(p)).sum())
+                .sum::<T>()
+                .powf(T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type.")),
+            LpNorm::Inf => self
+                .0
+                .view_iter()
+                .flat_map(|v| v.iter())
+                .max_by(|x, y| {
+                    x.partial_cmp(y)
+                        .expect("Detected NaN when computing Inf-norm.")
+                })
+                .cloned()
+                .unwrap_or(T::zero()),
+        }
+    }
+    fn norm_squared(&self) -> T {
+        self.0
+            .view_iter()
+            .map(|&x| x.as_tensor().norm_squared())
+            .sum::<T>()
+    }
+}
+
 impl<S, N: Dimension> SparseMatrix for DiagonalBlockMatrix<N, S>
 where
     UniChunked<S, N>: Set,
@@ -379,6 +416,43 @@ where
     }
     fn num_rows(&self) -> usize {
         self.num_chunked_rows() * self.num_rows_per_block()
+    }
+}
+
+impl<T, S, I> Norm<T> for BlockDiagonalMatrix3<S, I>
+where
+    T: Scalar,
+    Subset<Chunked3<Chunked3<S>>, I>: for<'a> ViewIterator<'a, Item = &'a [[T; 3]; 3]>,
+    T: num_traits::FromPrimitive,
+{
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float,
+    {
+        match norm {
+            LpNorm::P(p) => self
+                .0
+                .view_iter()
+                .map(|v| v.as_tensor().map_inner(|x| x.abs().powi(p)).sum_inner())
+                .sum::<T>()
+                .powf(T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type.")),
+            LpNorm::Inf => self
+                .0
+                .view_iter()
+                .flat_map(|v| v.iter().flat_map(|v| v.iter()))
+                .max_by(|x, y| {
+                    x.partial_cmp(y)
+                        .expect("Detected NaN when computing Inf-norm.")
+                })
+                .cloned()
+                .unwrap_or(T::zero()),
+        }
+    }
+    fn norm_squared(&self) -> T {
+        self.0
+            .view_iter()
+            .map(|&x| x.as_tensor().frob_norm_squared())
+            .sum::<T>()
     }
 }
 
@@ -1181,6 +1255,21 @@ impl<M: Matrix> Matrix for Transpose<M> {
     }
     fn num_rows(&self) -> usize {
         self.0.num_cols()
+    }
+}
+
+impl<T, M> Norm<T> for Transpose<M>
+where
+    M: Norm<T>,
+{
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float,
+    {
+        self.0.lp_norm(norm)
+    }
+    fn norm_squared(&self) -> T {
+        self.0.norm_squared()
     }
 }
 

@@ -1016,6 +1016,8 @@ where
     }
 }
 
+impl_atom_iterators_recursive!(impl<S, O> for Chunked<S, O> { data });
+
 impl<'a, S, O> Chunked<S, O>
 where
     S: View<'a>,

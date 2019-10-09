@@ -206,7 +206,6 @@ impl_array_vectors!(Vector2, RowVector2; 2);
 impl_array_vectors!(Vector3, RowVector3; 3);
 impl_array_vectors!(Vector4, RowVector4; 4);
 
-
 impl<T: Scalar> Tensor<[T; 3]> {
     pub fn cross(self, other: Tensor<[T; 3]>) -> Tensor<[T; 3]> {
         Tensor::new([

@@ -20,8 +20,9 @@ pub trait SparseBlockMatrix {
     fn num_non_zero_blocks(&self) -> usize;
 }
 
+
 /// This trait defines information provided by any matrx type.
-pub trait Matrix {
+pub trait Matrix {//<T>: TensorNorm<T> {
     type Transpose;
     fn transpose(self) -> Self::Transpose;
     fn num_rows(&self) -> usize;
@@ -41,7 +42,7 @@ pub trait BlockMatrix {
  * One-dimentional vectors
  */
 
-impl<T> Matrix for Tensor<Vec<T>> {
+impl<T: Scalar> Matrix for Tensor<Vec<T>> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)
@@ -54,7 +55,7 @@ impl<T> Matrix for Tensor<Vec<T>> {
     }
 }
 
-impl<T> Matrix for Tensor<&[T]> {
+impl<T: Scalar> Matrix for Tensor<&[T]> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)
@@ -67,7 +68,7 @@ impl<T> Matrix for Tensor<&[T]> {
     }
 }
 
-impl<T> Matrix for Tensor<&mut [T]> {
+impl<T: Scalar> Matrix for Tensor<&mut [T]> {
     type Transpose = Transpose<Self>;
     fn transpose(self) -> Self::Transpose {
         Transpose(self)

@@ -1280,6 +1280,8 @@ where
     }
 }
 
+impl_atom_iterators_recursive!(impl<S, N> for UniChunked<S, N> { data });
+
 /// A generic version of the `Chunks` iterator used by slices. This is used by
 /// uniformly (but not statically) chunked collections.
 pub struct Chunks<S> {

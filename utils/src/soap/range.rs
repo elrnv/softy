@@ -198,10 +198,10 @@ where
     }
 }
 
-impl<'a, T> StorageView<'a> for Range<T> {
+impl<'a, T: Clone> StorageView<'a> for Range<T> {
     type StorageView = Self;
     fn storage_view(&'a self) -> Self::StorageView {
-        self
+        self.clone()
     }
 }
 

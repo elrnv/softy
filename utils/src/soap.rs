@@ -1,3 +1,31 @@
+/*
+ * Define macros to be used for implementing various traits in submodules
+ */
+
+macro_rules! impl_atom_iterators_recursive {
+    (impl<S, $($type_vars_decl:tt),*> for $type:ident<S, $($type_vars:tt),*> { $data_field:ident }) => {
+        impl<'a, S, $($type_vars_decl,)*> AtomIterator<'a> for $type<S, $($type_vars,)*>
+        where S: AtomIterator<'a>,
+        {
+            type Item = S::Item;
+            type Iter = S::Iter;
+            fn atom_iter(&'a self) -> Self::Iter {
+                self.$data_field.atom_iter()
+            }
+        }
+
+        impl<'a, S, $($type_vars_decl,)*> AtomMutIterator<'a> for $type<S, $($type_vars,)*>
+        where S: AtomMutIterator<'a>
+        {
+            type Item = S::Item;
+            type Iter = S::Iter;
+            fn atom_mut_iter(&'a mut self) -> Self::Iter {
+                self.$data_field.atom_mut_iter()
+            }
+        }
+    }
+}
+
 macro_rules! impl_isolate_index_for_static_range {
     (impl<$($type_vars:ident),*> for $type:ty) => {
         impl_isolate_index_for_static_range! { impl<$($type_vars),*> for $type where }
@@ -920,16 +948,37 @@ impl<T: Clone> CloneIntoOther<&mut T> for &T {
     }
 }
 
-pub trait AtomIter {
+pub trait AtomIterator<'a> {
     type Item;
     type Iter: Iterator<Item = Self::Item>;
-    fn atom_iter(&self) -> Self::Iter;
+    fn atom_iter(&'a self) -> Self::Iter;
 }
 
-pub trait AtomIterMut {
+pub trait AtomMutIterator<'a> {
     type Item;
     type Iter: Iterator<Item = Self::Item>;
-    fn atom_iter_mut(&mut self) -> Self::Iter;
+    fn atom_mut_iter(&'a mut self) -> Self::Iter;
+}
+
+// Blanket implementations of AtomIterator/AtomMutIterator for references
+impl<'a, S: ?Sized> AtomIterator<'a> for &S
+where S: AtomIterator<'a>,
+{
+    type Item = S::Item;
+    type Iter = S::Iter;
+    fn atom_iter(&'a self) -> Self::Iter {
+        S::atom_iter(self)
+    }
+}
+
+impl<'a, S: ?Sized> AtomMutIterator<'a> for &mut S
+where S: AtomMutIterator<'a>
+{
+    type Item = S::Item;
+    type Iter = S::Iter;
+    fn atom_mut_iter(&'a mut self) -> Self::Iter {
+        S::atom_mut_iter(self)
+    }
 }
 
 /*

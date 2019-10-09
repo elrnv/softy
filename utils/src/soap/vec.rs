@@ -49,6 +49,24 @@ impl<'a, T: 'a> ViewMutIterator<'a> for Vec<T> {
     }
 }
 
+impl<'a, T: 'a> AtomIterator<'a> for Vec<T>
+{
+    type Item = &'a T;
+    type Iter = std::slice::Iter<'a, T>;
+    fn atom_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, T: 'a> AtomMutIterator<'a> for Vec<T>
+{
+    type Item = &'a mut T;
+    type Iter = std::slice::IterMut<'a, T>;
+    fn atom_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
+    }
+}
+
 impl<T> Push<T> for Vec<T> {
     fn push(&mut self, element: T) {
         Vec::push(self, element);
@@ -124,7 +142,7 @@ impl<T> IntoFlat for Vec<T> {
     }
 }
 
-impl<'a, T> StorageView<'a> for Vec<T> {
+impl<'a, T: 'a> StorageView<'a> for Vec<T> {
     type StorageView = &'a [T];
     fn storage_view(&'a self) -> Self::StorageView {
         self.as_slice()

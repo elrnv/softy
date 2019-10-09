@@ -121,6 +121,24 @@ impl<'a, T: 'a> ViewMutIterator<'a> for [T] {
     }
 }
 
+impl<'a, T: 'a> AtomIterator<'a> for [T]
+{
+    type Item = &'a T;
+    type Iter = std::slice::Iter<'a, T>;
+    fn atom_iter(&'a self) -> Self::Iter {
+        self.iter()
+    }
+}
+
+impl<'a, T: 'a> AtomMutIterator<'a> for [T]
+{
+    type Item = &'a mut T;
+    type Iter = std::slice::IterMut<'a, T>;
+    fn atom_mut_iter(&'a mut self) -> Self::Iter {
+        self.iter_mut()
+    }
+}
+
 impl<'a, T, N> SplitPrefix<N> for &'a [T]
 where
     N: Unsigned + Array<T>,

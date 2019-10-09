@@ -501,6 +501,8 @@ where
     }
 }
 
+impl_atom_iterators_recursive!(impl<S, T, I> for Sparse<S, T, I> { source });
+
 impl<S: Dummy, T: Dummy, I: Dummy> Dummy for Sparse<S, T, I> {
     unsafe fn dummy() -> Self {
         Sparse {
@@ -607,7 +609,7 @@ impl<'a, S: StorageView<'a>, T, I> StorageView<'a> for Sparse<S, T, I> {
     /// let s1 = Sparse::from_dim(vec![0, 2, 2, 0], 4, s0.clone());
     /// assert_eq!(s1.storage_view(), v.as_slice());
     /// ```
-    fn storage_view(&'a self) -> Self::Storage {
+    fn storage_view(&'a self) -> Self::StorageView {
         self.source.storage_view()
     }
 }

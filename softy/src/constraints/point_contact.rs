@@ -523,14 +523,19 @@ impl ContactConstraint for PointContactConstraint {
 
         // A new set of contacts have been determined. We should remap the previous friction
         // impulses to match new impulses.
-        let prev_friction_impulse: Vec<[f64; 3]> =
-            Chunked3::from_array_vec(crate::constraints::remap_values(
-                collider_friction_impulse.source_iter().cloned(),
-                [0.0; 3], // Previous impulse for unmatched contacts.
-                collider_friction_impulse.selection().index_iter().cloned(),
-                active_contact_indices.iter().cloned(),
-            ))
-            .into();
+        let mut prev_friction_impulse = Chunked3::from_array_vec(crate::constraints::remap_values(
+            collider_friction_impulse.source_iter().cloned(),
+            [0.0; 3], // Previous impulse for unmatched contacts.
+            collider_friction_impulse.selection().index_iter().cloned(),
+            active_contact_indices.iter().cloned(),
+        ));
+
+        // Negate the previous friction impulse to be consistent with following
+        // computation of collider_friction_impulse which corresponds to the
+        // impulse on the object, instead of by the object.
+        //prev_friction_impulse.as_mut_tensor().negate();
+
+        let prev_friction_impulse: Vec<[f64; 3]> = prev_friction_impulse.into();
 
         // Initialize the new friction impulse in physical space at active contacts.
         *collider_friction_impulse = Sparse::from_dim(
@@ -628,7 +633,7 @@ impl ContactConstraint for PointContactConstraint {
             let prev_friction_impulse_t = contact_basis.to_tangent_space(&prev_friction_impulse);
 
             //TODO: undo tmp change
-            //let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
+            let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
 
             // Euclidean coords
             if true {
@@ -656,22 +661,30 @@ impl ContactConstraint for PointContactConstraint {
                                         .into();
                                 }
 
-                                let mut f_delta = Tensor::new(Chunked3::from_array_vec(
-                                    prev_friction_impulse.clone(),
-                                ));
-                                let f_prev = f_delta.clone();
-                                f_delta -= Tensor::new(collider_friction_impulse.view());
-                                let rel_err_numerator = f_delta
-                                    .view()
-                                    .dot((effective_mass_inv.view() * f_delta.view()).view());
-                                let rel_err = rel_err_numerator
-                                    / (f_prev
-                                        .view()
-                                        .dot((effective_mass_inv.view() * f_prev.view()).view()));
+                                break true;
 
-                                if rel_err < 1e-5 {
-                                    break true;
-                                }
+                                //let mut f_delta = Tensor::new(Chunked3::from_array_vec(
+                                //    prev_friction_impulse.clone(),
+                                //));
+                                //let f_prev = f_delta.clone();
+                                //f_delta -= Tensor::new(collider_friction_impulse.view());
+                                //let rel_err_numerator = f_delta.view().ddot(
+                                //    (effective_mass_inv.view() * f_delta.view())
+                                //        .view()
+                                //        .as_tensor(),
+                                //    d,
+                                //);
+                                //let rel_err = rel_err_numerator
+                                //    / (Dot::dot(
+                                //        &f_prev.view(),
+                                //        &(effective_mass_inv.view() * f_prev.view())
+                                //            .view()
+                                //            .as_tensor(),
+                                //    ));
+
+                                //if rel_err < 1e-5 {
+                                //    break true;
+                                //}
 
                                 if friction_steps == 0 {
                                     break true;

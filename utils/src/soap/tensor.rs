@@ -1,7 +1,8 @@
 mod lazy;
 
-pub use lazy::*;
 use super::*;
+pub use lazy::*;
+use num_traits::Float;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
@@ -195,7 +196,9 @@ impl<T: Neg<Output = T> + Scalar> Neg for Tensor<T> {
 
 impl<T: Scalar> std::iter::Sum<T> for Tensor<T> {
     fn sum<I: Iterator<Item = T>>(iter: I) -> Tensor<T> {
-        Tensor { data: std::iter::Sum::sum(iter) }
+        Tensor {
+            data: std::iter::Sum::sum(iter),
+        }
     }
 }
 
@@ -1204,6 +1207,64 @@ impl<T: Scalar> MulAssign<T> for Tensor<[T]> {
 }
 
 /*
+ * Scalar division
+ */
+
+impl<T: Scalar> Div<T> for Tensor<&[T]> {
+    type Output = Tensor<Vec<T>>;
+
+    /// Divide a tensor slice by a scalar producing a new `Vec` tensor.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let a = vec![3,6,9,12];
+    /// assert_eq!(Tensor::new(vec![1,2,3,4]), Tensor::new(a.view()) / 3);
+    /// ```
+    fn div(self, other: T) -> Self::Output {
+        Tensor::new(self.data.iter().map(|&a| a / other).collect::<Vec<_>>())
+    }
+}
+
+impl<T: Scalar> DivAssign<T> for Tensor<&mut [T]> {
+    /// Divide this tensor slice by a scalar.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut a = vec![3,6,9,12];
+    /// let mut view = Tensor::new(a.view_mut());
+    /// view /= 3;
+    /// assert_eq!(vec![1,2,3,4], a);
+    /// ```
+    fn div_assign(&mut self, other: T) {
+        for a in self.data.iter_mut() {
+            *a /= other;
+        }
+    }
+}
+
+impl<T: Scalar> DivAssign<T> for Tensor<[T]> {
+    /// Divide this tensor slice by a scalar.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let mut a = vec![3,6,9,12];
+    /// *a.view_mut().as_mut_tensor() /= 3;
+    /// assert_eq!(vec![1,2,3,4], a);
+    /// ```
+    fn div_assign(&mut self, other: T) {
+        for a in self.data.iter_mut() {
+            *a /= other;
+        }
+    }
+}
+
+/*
  * All additions and subtractions on 1-tensors represented by chunked vectors can be performed at the lowest level (flat)
  */
 
@@ -1305,9 +1366,30 @@ macro_rules! impl_chunked_tensor_arithmetic {
                 })
             }
         }
+        /*
+         * Scalar division
+         */
+
+        impl<S, O, T> Div<T> for Tensor<$chunked<S, O>>
+        where
+            T: Scalar,
+            $chunked<S, O>: Set,
+            S: IntoOwnedData,
+            Tensor<S>: Div<T, Output = Tensor<S::OwnedData>>,
+        {
+            type Output = Tensor<$chunked<S::OwnedData, O>>;
+
+            fn div(self, other: T) -> Self::Output {
+                let $chunked { $chunks, data } = self.data;
+                Tensor::new($chunked {
+                    $chunks,
+                    data: (Tensor::new(data) / other).data,
+                })
+            }
+        }
 
         /*
-         * Add/Sub/Mul assign variants of the above operators.
+         * Mul/Div assign variants of the above operators.
          */
 
         impl<S, O, T> MulAssign<T> for Tensor<$chunked<S, O>>
@@ -1321,11 +1403,81 @@ macro_rules! impl_chunked_tensor_arithmetic {
                 *tensor *= other;
             }
         }
+
+        impl<S, O, T> DivAssign<T> for Tensor<$chunked<S, O>>
+        where
+            T: Scalar,
+            $chunked<S, O>: Set,
+            Tensor<S>: DivAssign<T>,
+        {
+            fn div_assign(&mut self, other: T) {
+                let tensor = Tensor::as_mut(&mut self.data.data);
+                *tensor /= other;
+            }
+        }
     };
 }
 
 impl_chunked_tensor_arithmetic!(Chunked, chunks);
 impl_chunked_tensor_arithmetic!(UniChunked, chunk_size);
+
+/*
+ * Tensor norms
+ */
+
+pub enum LpNorm {
+    P(i32),
+    Inf,
+}
+
+pub trait TensorNorm<T> {
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float;
+    fn norm_squared(&self) -> T;
+    fn norm(&self) -> T
+    where
+        T: Float;
+}
+
+impl<S, T> TensorNorm<T> for Tensor<S>
+where
+    T: Scalar,
+    S: for<'a> AtomIterator<'a, Item = &'a T>,
+    T: num_traits::FromPrimitive,
+{
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float,
+    {
+        match norm {
+            LpNorm::P(p) => self
+                .data
+                .atom_iter()
+                .map(|&x| x.abs().powi(p))
+                .sum::<T>()
+                .powf(T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type.")),
+            LpNorm::Inf => self
+                .data
+                .atom_iter()
+                .map(|&x| x.abs())
+                .max_by(|x, y| {
+                    x.partial_cmp(y)
+                        .expect("Detected NaN when computing Inf-norm.")
+                })
+                .unwrap_or(T::zero()),
+        }
+    }
+    fn norm_squared(&self) -> T {
+        self.data.atom_iter().map(|&x| x * x).sum::<T>()
+    }
+    fn norm(&self) -> T
+    where
+        T: Float,
+    {
+        self.norm_squared().sqrt()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1470,22 +1622,17 @@ mod tests {
     }
 
     #[test]
-    fn tensor_dot() {
-        let a = vec![1, 2, 3, 4];
-        let b = vec![5, 6, 7, 8];
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
-        assert_eq!(Tensor::new(70), a.view().as_tensor().expr().dot(b.view().as_tensor().expr()).eval());
-        assert_eq!(Tensor::new(70), a.as_tensor().expr().dot(b.as_tensor().expr()).eval());
-    }
+    fn tensor_norm() {
+        let a = vec![1,2,3,4];
+        assert_eq!(a.as_tensor().norm_squared(), 30);
+        assert_eq!(Tensor::new(a).norm_squared(), 30);
 
-    #[test]
-    fn tensor_unichunked_dot() {
-        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
-        let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
+        let f = vec![1.0,2.0,3.0,1.0,4.0,2.0,1.0];
+        assert_eq!(f.as_tensor().norm(), 6.0);
+        assert_eq!(Tensor::new(f.clone()).norm(), 6.0);
 
-        let a = Chunked2::from_flat(vec![1, 2, 3, 4]);
-        let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
+        assert_eq!(f.as_tensor().lp_norm(LpNorm::P(2)), 6.0);
+        assert_eq!(f.as_tensor().lp_norm(LpNorm::P(1)), 14.0);
+        assert_eq!(f.as_tensor().lp_norm(LpNorm::Inf), 4.0);
     }
 }

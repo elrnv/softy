@@ -124,6 +124,13 @@ impl<T> IntoFlat for Vec<T> {
     }
 }
 
+impl<'a, T> StorageView<'a> for Vec<T> {
+    type StorageView = &'a [T];
+    fn storage_view(&'a self) -> Self::StorageView {
+        self.as_slice()
+    }
+}
+
 impl<T> Storage for Vec<T> {
     type Storage = Vec<T>;
     /// `Vec` is a type of storage, simply return an immutable reference to self.

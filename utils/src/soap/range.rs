@@ -198,6 +198,13 @@ where
     }
 }
 
+impl<'a, T> StorageView<'a> for Range<T> {
+    type StorageView = Self;
+    fn storage_view(&'a self) -> Self::StorageView {
+        self
+    }
+}
+
 impl<T> Storage for Range<T> {
     type Storage = Range<T>;
     /// A range is a type of storage, simply return an immutable reference to self.

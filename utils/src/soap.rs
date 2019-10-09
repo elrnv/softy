@@ -743,6 +743,11 @@ pub trait Storage {
     fn storage(&self) -> &Self::Storage;
 }
 
+pub trait StorageView<'a> {
+    type StorageView;
+    fn storage_view(&'a self) -> Self::StorageView;
+}
+
 /// Get a mutable reference to the underlying storage type.
 pub trait StorageMut: Storage {
     fn storage_mut(&mut self) -> &mut Self::Storage;

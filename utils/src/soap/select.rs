@@ -633,6 +633,24 @@ impl<S: StorageInto<T>, I, T> StorageInto<T> for Select<S, I> {
  * Target data Access
  */
 
+impl<'a, S: StorageView<'a>, I> StorageView<'a> for Select<S, I> {
+    type StorageView = S::StorageView;
+    /// Return a view to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked3::from_flat(v.clone());
+    /// let s1 = Select::new(vec![1, 1, 0, 2], s0.clone());
+    /// assert_eq!(s1.storage_view(), v.as_slice());
+    /// ```
+    fn storage_view(&'a self) -> Self::StorageView {
+        self.target.storage_view()
+    }
+}
+
 impl<S: Storage, I> Storage for Select<S, I> {
     type Storage = S::Storage;
     /// Return an immutable reference to the underlying storage type.

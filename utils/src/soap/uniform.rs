@@ -1603,6 +1603,25 @@ impl<T, S: CloneWithStorage<T>, N: Clone> CloneWithStorage<T> for UniChunked<S, 
     }
 }
 
+impl<'a, S: StorageView<'a>, N> StorageView<'a> for UniChunked<S, N> {
+    type StorageView = S::StorageView;
+    /// Return a view to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked2::from_flat(v.clone());
+    /// let s1 = ChunkedN::from_flat_with_stride(s0.clone(), 3);
+    /// assert_eq!(s1.storage_view(), v.as_slice());
+    /// assert_eq!(s0.storage_view(), v.as_slice());
+    /// ```
+    fn storage_view(&'a self) -> Self::StorageView {
+        self.data.storage_view()
+    }
+}
+
 impl<S: Storage, N> Storage for UniChunked<S, N> {
     type Storage = S::Storage;
     /// Return an immutable reference to the underlying storage type.

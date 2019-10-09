@@ -594,6 +594,24 @@ impl<T: Clone, S: CloneWithStorage<U>, I: Clone, U> CloneWithStorage<U> for Spar
  * Storage Access
  */
 
+impl<'a, S: StorageView<'a>, T, I> StorageView<'a> for Sparse<S, T, I> {
+    type StorageView = S::StorageView;
+    /// Return a view to the underlying storage type of source data.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11,12];
+    /// let s0 = Chunked3::from_flat(v.clone());
+    /// let s1 = Sparse::from_dim(vec![0, 2, 2, 0], 4, s0.clone());
+    /// assert_eq!(s1.storage_view(), v.as_slice());
+    /// ```
+    fn storage_view(&'a self) -> Self::Storage {
+        self.source.storage_view()
+    }
+}
+
 impl<S: Storage, T, I> Storage for Sparse<S, T, I> {
     type Storage = S::Storage;
     /// Return an immutable reference to the underlying storage type of source data.

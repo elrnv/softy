@@ -233,6 +233,13 @@ impl<'a, T> IntoFlat for &'a mut [T] {
     }
 }
 
+impl<'a, T> StorageView<'a> for &'a [T] {
+    type StorageView = &'a [T];
+    fn storage_view(&'a self) -> Self::StorageView {
+        self
+    }
+}
+
 impl<'a, T> Storage for &'a [T] {
     type Storage = [T];
     fn storage(&self) -> &Self::Storage {

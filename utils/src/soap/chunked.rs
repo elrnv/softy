@@ -1332,6 +1332,25 @@ impl<S: IntoFlat, O> IntoFlat for Chunked<S, O> {
     }
 }
 
+impl<'a, S: StorageView<'a>, O> StorageView<'a> for Chunked<S, O> {
+    type StorageView = S::StorageView;
+    /// Return a view to the underlying storage type.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6,7,8,9,10,11];
+    /// let s0 = Chunked::from_offsets(vec![0,3,4,6,9,11], v.clone());
+    /// let s1 = Chunked::from_offsets(vec![0,1,4,5], s0.clone());
+    /// assert_eq!(s1.storage_view(), v.as_slice());
+    /// assert_eq!(s0.storage_view(), v.as_slice());
+    /// ```
+    fn storage_view(&'a self) -> Self::StorageView {
+        self.data.storage_view()
+    }
+}
+
 impl<S: Storage, O> Storage for Chunked<S, O> {
     type Storage = S::Storage;
     /// Return an immutable reference to the underlying storage type.

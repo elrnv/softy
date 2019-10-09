@@ -37,6 +37,9 @@ impl<'a> FrictionSolver<'a> {
             .diagonal_congruence_transform(basis_mtx.view());
         //let hessian = basis_mtx.view().transpose() * basis_mtx.view();
 
+        // Compute a constraint scale to ensure constraints are computed around 1.0.
+        let mass_avg = mass_inv_mtx.norm();
+
         let problem = SemiImplicitFrictionProblem(FrictionProblem {
             predictor_impulse,
             prev_friction_impulse_t,
@@ -45,14 +48,15 @@ impl<'a> FrictionSolver<'a> {
             mu: params.dynamic_friction,
             mass_inv_mtx,
             hessian,
+            scale: 1.0 / mass_avg,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
+        ipopt.set_option("nlp_scaling_max_gradient", 1e-1);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-4);
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("hessian_constant", "yes");
@@ -104,15 +108,12 @@ pub(crate) struct FrictionProblem<'a> {
     mass_inv_mtx: EffectiveMassInvView<'a>,
     /// Workspace Hessian matrix.
     hessian: DSBlockMatrix2,
+
+    /// Scale factor. Contact impulses make the cone radius very small in important scenarios.
+    scale: f64,
 }
 
 impl<'a> FrictionProblem<'a> {
-    pub fn variable_scales(&'a self) -> impl Iterator<Item = f64> + Clone + 'a {
-        self.contact_impulse
-            .iter()
-            .map(move |&cr| 1.0 / (self.mu * cr.abs()))
-    }
-
     pub fn num_contacts(&self) -> usize {
         self.predictor_impulse.len()
     }
@@ -307,7 +308,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
     }
 
     fn objective(&self, r_t: &[Number], obj: &mut Number) -> bool {
-        let r_t = Tensor::new(Chunked2::from_flat(r_t));
+        let r_t = Chunked2::from_flat(r_t);
         let FrictionProblem {
             predictor_impulse,
             prev_friction_impulse_t,
@@ -319,13 +320,13 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         assert_eq!(predictor_impulse.len(), r_t.len());
 
         // Compute (negative of) frictional dissipation.
-        let prev_r_t = Tensor::new(Chunked2::from_array_slice(prev_friction_impulse_t));
+        let prev_r_t = Chunked2::from_array_slice(prev_friction_impulse_t);
 
         // Compute the difference between current and previous impulses in tangent space.
-        let diff_t = r_t - prev_r_t;
+        let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
         // Convert to physical space.
-        let diff = contact_basis.from_tangent_space(diff_t.view().into_inner().into());
+        let diff = contact_basis.from_tangent_space(diff_t.view().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
         let predictor = Tensor::new(Chunked3::from_array_slice(predictor_impulse));
@@ -334,13 +335,13 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let rhs = mass_inv_mtx.view() * diff.view();
         //let rhs = diff.view();
 
-        *obj = 0.5 * diff.view().dot(rhs.view());
+        *obj = 0.5 * diff.expr().dot(rhs.expr()).eval::<f64>();
 
         true
     }
 
     fn objective_grad(&self, r_t: &[Number], grad_f_t: &mut [Number]) -> bool {
-        let r_t = Tensor::new(Chunked2::from_flat(r_t));
+        let r_t = Chunked2::from_flat(r_t);
         let FrictionProblem {
             predictor_impulse,
             prev_friction_impulse_t,
@@ -352,12 +353,12 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         assert_eq!(predictor_impulse.len(), r_t.len());
 
         // Compute derivative of (negative of) frictional dissipation.
-        let prev_r_t = Tensor::new(Chunked2::from_array_slice(prev_friction_impulse_t));
+        let prev_r_t = Chunked2::from_array_slice(prev_friction_impulse_t);
 
         // Compute the difference between current and previous impulses in tangent space.
-        let diff_t = r_t - prev_r_t;
+        let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
-        let diff = contact_basis.from_tangent_space(diff_t.view().into_inner().into());
+        let diff = contact_basis.from_tangent_space(diff_t.view().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
         let predictor = Tensor::new(Chunked3::from_array_slice(predictor_impulse));
@@ -370,7 +371,8 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
-            *g_out = g;
+            *g_out = g; //(Tensor::new(g)).into_inner();
+                        //dbg!(f64::max(g_out[0].abs(), g_out[1].abs()));
         }
 
         true
@@ -390,14 +392,14 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         let r = Chunked2::from_flat(r);
         assert_eq!(r.len(), g.len());
         for (c, &r) in zip!(g.iter_mut(), r.iter()) {
-            *c = r.as_tensor().norm_squared();
+            *c = r.as_tensor().norm_squared() * self.0.scale;
         }
         true
     }
 
     //fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
-    //    for (gs, &cr) in zip!(g_scaling.iter_mut(), self.0.contact_impulse.iter()) {
-    //        *gs = 1.0/cr;
+    //    for gs in g_scaling.iter_mut() {
+    //        *gs = self.0.scale;
     //    }
     //    true
     //}
@@ -410,7 +412,8 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = self.0.mu * cr.abs();
-            *u *= *u; // square
+            *u *= *u * self.0.scale; // square
+                                     //dbg!(*u);
         }
         true
     }
@@ -430,7 +433,8 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         let mut jacobian = Chunked2::from_flat(vals);
         let r = Chunked2::from_flat(r);
         for (jac, &r) in zip!(jacobian.iter_mut(), r.iter()) {
-            *jac.as_mut_tensor() = Tensor::new(r) * 2.0;
+            *jac.as_mut_tensor() = Tensor::new(r) * 2.0 * self.0.scale;
+            //dbg!(f64::max(jac[0].abs(), jac[1].abs()));
         }
         true
     }
@@ -494,7 +498,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
 
         let mut hess = Chunked2::from_flat(&mut vals[self.0.hessian.num_non_zeros()..]);
         for (&l, h) in zip!(lambda.iter(), hess.iter_mut()) {
-            *h.as_mut_tensor() = Tensor::new([2.0; 2]) * l;
+            *h.as_mut_tensor() = Tensor::new([2.0; 2]) * l * self.0.scale;
         }
 
         true
@@ -528,6 +532,7 @@ mod tests {
     fn sticking_point() -> Result<(), Error> {
         let mass = 10.0;
         let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
+
         // Check that the point gets stuck
         dbg!(&impulse);
         dbg!(&velocity);
@@ -543,8 +548,8 @@ mod tests {
         let params = FrictionParams {
             dynamic_friction: mu,
             inner_iterations: 30,
-            tolerance: 1e-12,
-            print_level: 0,
+            tolerance: 1e-9,
+            print_level: 5,
         };
 
         let prev_friction_impulse_t = vec![[0.0, 0.0]]; // one point sliding right.
@@ -580,8 +585,8 @@ mod tests {
         let params = FrictionParams {
             dynamic_friction: 0.001,
             inner_iterations: 40,
-            tolerance: 1e-12,
-            print_level: 0,
+            tolerance: 1e-9,
+            print_level: 5,
         };
 
         let masses = vec![0.0003720701030949866, 0.0003720701030949866];

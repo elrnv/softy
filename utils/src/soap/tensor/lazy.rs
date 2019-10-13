@@ -135,7 +135,7 @@ impl<'a, A: DenseExpr, B: DenseExpr> DenseExpr for Sub<A, B> {}
 impl<'a, A: DenseExpr, B: DenseExpr> DenseExpr for Dot<A, B> {}
 
 /// A trait describing types that can be evaluated.
-pub trait Expression {
+pub trait Expression: Iterator {
     fn eval<T>(self) -> T
     where
         Self: Sized,
@@ -163,12 +163,18 @@ impl<'a, T: Clone> Iterator for SliceIterExpr<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|x| x.clone())
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
 }
 
 impl<'a, T> Iterator for VecIterExpr<T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
     }
 }
 
@@ -190,6 +196,10 @@ where
             prefix.into_expr()
         })
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.data.len() / N::to_usize();
+        (n, Some(n))
+    }
 }
 
 impl<'a, S> Iterator for ChunkedNIterExpr<S>
@@ -207,6 +217,11 @@ where
         self.data = r;
         Some(l.into_expr())
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.data.len() / self.chunk_size;
+        (n, Some(n))
+    }
 }
 
 impl<'a, S> Iterator for ChunkedIterExpr<'a, S>
@@ -221,6 +236,10 @@ where
             self.data = r;
             l.into_expr()
         })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.offsets.len() - 1;
+        (n, Some(n))
     }
 }
 
@@ -305,6 +324,10 @@ where
             self.indices = &self.indices[1..];
             (*first_idx, first.into_expr()).into()
         })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.indices.len();
+        (n, Some(n))
     }
 }
 
@@ -464,6 +487,14 @@ where
             .next()
             .and_then(|l| self.right.next().map(|r| l + r))
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.left.size_hint();
+        let right = self.right.size_hint();
+        (
+            left.0.min(right.0),
+            left.1.and_then(|l| right.1.map(|r| l.max(r))),
+        )
+    }
 }
 
 macro_rules! impl_iterator_for_bin_op_sparse {
@@ -539,6 +570,14 @@ where
             .next()
             .and_then(|l| self.right.next().map(|r| l - r))
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.left.size_hint();
+        let right = self.right.size_hint();
+        (
+            left.0.min(right.0),
+            left.1.and_then(|l| right.1.map(|r| l.max(r))),
+        )
+    }
 }
 
 impl_iterator_for_bin_op_sparse!(Sub; SubOp::sub);
@@ -553,6 +592,14 @@ where
         self.left
             .next()
             .and_then(|l| self.right.next().map(|r| l.dot(r)))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.left.size_hint();
+        let right = self.right.size_hint();
+        (
+            left.0.min(right.0),
+            left.1.and_then(|l| right.1.map(|r| l.max(r))),
+        )
     }
 }
 
@@ -623,6 +670,15 @@ where
             }
         }
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.left.size_hint();
+        let right = self.right.size_hint();
+        (
+            left.0.min(right.0),
+            // Yes min because excess elements must vanish when multiplied by zero.
+            left.1.and_then(|l| right.1.map(|r| l.min(r))),
+        )
+    }
 }
 
 // Scalar multiplication
@@ -671,7 +727,7 @@ where
     }
 }
 
-impl<I, S, T, J> Evaluate<I> for Sparse<S, T, J>
+impl<I: Iterator, S, T, J> Evaluate<I> for Sparse<S, T, J>
 where
     I: Iterator<Item = IndexedExpr<S::Elem>> + Target<Target = T>,
     T: Set + Clone + PartialEq + std::fmt::Debug,
@@ -894,4 +950,38 @@ mod tests {
             Evaluate::eval(a.expr() + b.expr())
         );
     }
+
+    //#[test]
+    //fn sparse_matrix_add() {
+    //    let blocks = vec![
+    //        // Block 1
+    //        [1.0, 2.0, 3.0],
+    //        [4.0, 5.0, 6.0],
+    //        [7.0, 8.0, 9.0],
+    //        // Block 2
+    //        [1.1, 2.2, 3.3],
+    //        [4.4, 5.5, 6.6],
+    //        [7.7, 8.8, 9.9],
+    //    ];
+    //    let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+    //    let indices = vec![(1, 1), (3, 2)];
+    //    let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+
+    //    let mtx2 = Evaluate::eval(mtx.expr() + mtx.expr());
+
+    //    let blocks = vec![
+    //        // Block 1
+    //        [2.0, 4.0, 6.0],
+    //        [8.0, 10.0, 12.0],
+    //        [14.0, 16.0, 18.0],
+    //        // Block 2
+    //        [2.2, 4.4, 6.6],
+    //        [8.8, 11.0, 13.2],
+    //        [15.4, 17.6, 19.8],
+    //    ];
+    //    let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+    //    let exp_mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+
+    //    assert_eq!(exp_mtx, mtx2);
+    //}
 }

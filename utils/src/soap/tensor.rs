@@ -133,14 +133,26 @@ impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
  */
 
 pub trait Scalar:
-    Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum
+    Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum + Dummy
 {
 }
 
 macro_rules! impl_scalar {
-    ($($types:ty),*) => {
+    ($($type:ty),*) => {
         $(
-            impl Scalar for $types { }
+            impl Scalar for $type { }
+            impl Dummy for $type {
+                unsafe fn dummy() -> Self {
+                    Self::default()
+                }
+            }
+
+            impl IntoExpr for &$type {
+                type Expr = $type;
+                fn into_expr(self) -> Self::Expr {
+                    *self
+                }
+            }
         )*
     }
 }

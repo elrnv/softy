@@ -66,12 +66,12 @@ impl<T: Scalar> DotOp for Tensor<T> {
 
 /// A wrapper around a cloned iterator over a slice.
 #[derive(Clone, Debug)]
-pub struct SliceIterExpr<'a, T>(std::iter::Cloned<std::slice::Iter<'a, T>>);
+pub struct SliceIterExpr<'a, T>(std::slice::Iter<'a, T>);
 
 #[derive(Clone, Debug)]
 pub struct VecIterExpr<T>(std::vec::IntoIter<T>);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UniChunkedIterExpr<S, N> {
     data: S,
     chunk_size: N,
@@ -79,10 +79,49 @@ pub struct UniChunkedIterExpr<S, N> {
 
 pub type ChunkedNIterExpr<S> = UniChunkedIterExpr<S, usize>;
 
-#[derive(Clone, Debug)]
-pub struct SparseIterExpr<'a, S> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct SparseIterExpr<'a, S, T> {
     indices: &'a [usize],
     source: S,
+    target: T,
+}
+
+/// A trait to retrieve the target type of a sparse expression.
+pub trait Target {
+    type Target;
+    fn target(&self) -> &Self::Target;
+}
+
+impl<'a, S, T> Target for SparseIterExpr<'a, S, T> {
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        &self.target
+    }
+}
+
+impl<'a, L, R, T> Target for Add<SparseIterExpr<'a, L, T>, SparseIterExpr<'a, R, T>>
+where
+    T: PartialEq + std::fmt::Debug,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        debug_assert_eq!(self.left.target, self.right.target);
+        &self.left.target
+    }
+}
+
+impl<'a, L, R, T> Target for Sub<SparseIterExpr<'a, L, T>, SparseIterExpr<'a, R, T>>
+where
+    T: PartialEq + std::fmt::Debug,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        debug_assert_eq!(self.left.target, self.right.target);
+        &self.left.target
+    }
 }
 
 // Trait that indicates that an iterator produces elements from a dense or
@@ -110,15 +149,18 @@ pub trait EvalIterator<I> {
     fn eval(iter: I) -> Self;
 }
 
-impl<T: Clone> Iterator for SliceIterExpr<'_, T> {
+impl<'a, T: Clone> Iterator for SliceIterExpr<'a, T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
+        self.0.next().map(|x| x.clone())
     }
 }
 
-impl<'a, T: Clone, N: Dimension> Iterator for UniChunkedIterExpr<&'a [T], N> {
-    type Item = SliceIterExpr<'a, T>;
+impl<'a, S> Iterator for ChunkedNIterExpr<S>
+where
+    S: Set + SplitAt + Dummy + IntoExpr,
+{
+    type Item = S::Expr;
     fn next(&mut self) -> Option<Self::Item> {
         if self.data.is_empty() {
             return None;
@@ -127,47 +169,81 @@ impl<'a, T: Clone, N: Dimension> Iterator for UniChunkedIterExpr<&'a [T], N> {
         let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         let (l, r) = data_slice.split_at(self.chunk_size.value());
         self.data = r;
-        Some(SliceIterExpr(l.iter().cloned()))
+        Some(l.into_expr())
+    }
+}
+
+impl<S, N> Iterator for UniChunkedIterExpr<S, U<N>>
+where
+    S: Set + SplitPrefix<N> + Dummy,
+    S::Prefix: IntoExpr,
+    N: Unsigned,
+{
+    type Item = <S::Prefix as IntoExpr>::Expr;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.data.is_empty() {
+            return None;
+        }
+
+        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
+        data_slice.split_prefix().map(|(prefix, rest)| {
+            self.data = rest;
+            prefix.into_expr()
+        })
     }
 }
 
 /// An expression with an associated index into some larger set. This allows us
 /// to implement operations on sparse structures.
 pub struct IndexedExpr<E> {
-    index: Index,
+    index: usize,
     expr: E,
 }
 
 impl<E> From<(usize, E)> for IndexedExpr<E> {
     fn from(pair: (usize, E)) -> Self {
         IndexedExpr {
-            index: Index::new(pair.0),
+            index: pair.0,
             expr: pair.1,
         }
     }
 }
 
-/// Analogous to `SplitFirst`, but this trait converts the first element into an
-/// iterator automatically. This lets us abstract over types that store
-/// primitive types vs. types that contain other iterable collections when
-/// implementing sparse expressions.
-pub trait SplitFirstExpr
-where Self: Sized,
-{
-    type First;
-    fn split_first_expr(self) -> Option<(Self::First, Self)>;
+pub trait IntoExpr {
+    type Expr;
+    fn into_expr(self) -> Self::Expr;
 }
 
-//impl<S, O> SplitFirstExpr for Chunked<S, O>
-//{
-//    type FirstExpr = S;
-//    fn split_first_expr(self) -> Option<(Self::FirstExpr, Self)> {
-//
-//    }
-//}
+impl<S> IntoExpr for S
+where
+    S: IntoIterator + LocalGeneric,
+{
+    type Expr = S::IntoIter;
+    fn into_expr(self) -> Self::Expr {
+        self.into_iter()
+    }
+}
 
-impl<'a, T: Scalar> Iterator for SparseIterExpr<'a, &'a [T]> {
-    type Item = IndexedExpr<T>;
+impl<'a, T: Clone> IntoExpr for &'a [T] {
+    type Expr = SliceIterExpr<'a, T>;
+    fn into_expr(self) -> Self::Expr {
+        self.expr()
+    }
+}
+
+impl<T: Clone> IntoExpr for Vec<T> {
+    type Expr = VecIterExpr<T>;
+    fn into_expr(self) -> Self::Expr {
+        VecIterExpr(self.into_iter())
+    }
+}
+
+impl<'a, S, T> Iterator for SparseIterExpr<'a, S, T>
+where
+    S: SplitFirst + Dummy,
+    S::First: IntoExpr,
+{
+    type Item = IndexedExpr<<S::First as IntoExpr>::Expr>;
     fn next(&mut self) -> Option<Self::Item> {
         let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
         source_slice.split_first().map(|(first, rest)| {
@@ -175,28 +251,10 @@ impl<'a, T: Scalar> Iterator for SparseIterExpr<'a, &'a [T]> {
             // We know that sparse has at least one element, no need to check again
             let first_idx = unsafe { self.indices.get_unchecked(0) };
             self.indices = &self.indices[1..];
-            (*first_idx, *first).into()
+            (*first_idx, first.into_expr()).into()
         })
     }
 }
-
-//impl<'a, S> Iterator for SparseIterExpr<'a, S>
-//where
-//    S: SplitFirst + Dummy,
-//    S::First: IntoIterator,
-//{
-//    type Item = IndexedExpr<S::First>;
-//    fn next(&mut self) -> Option<Self::Item> {
-//        let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
-//        source_slice.split_first().map(|(first, rest)| {
-//            self.source = rest;
-//            // We know that sparse has at least one element, no need to check again
-//            let first_idx = unsafe { self.indices.get_unchecked(0) };
-//            self.indices = &self.indices[1..];
-//            (*first_idx, first).into()
-//        })
-//    }
-//}
 
 pub trait Expr<'a> {
     type Output;
@@ -206,21 +264,21 @@ pub trait Expr<'a> {
 impl<'a, T: 'a + Clone> Expr<'a> for [T] {
     type Output = SliceIterExpr<'a, T>;
     fn expr(&'a self) -> Self::Output {
-        SliceIterExpr(self.iter().cloned())
+        SliceIterExpr(self.iter())
     }
 }
 
 impl<'a, T: 'a + Clone> Expr<'a> for &'a [T] {
     type Output = SliceIterExpr<'a, T>;
     fn expr(&'a self) -> Self::Output {
-        SliceIterExpr(self.iter().cloned())
+        SliceIterExpr(self.iter())
     }
 }
 
 impl<'a, T: 'a + Clone> Expr<'a> for Vec<T> {
     type Output = SliceIterExpr<'a, T>;
     fn expr(&'a self) -> Self::Output {
-        SliceIterExpr(self.iter().cloned())
+        SliceIterExpr(self.iter())
     }
 }
 
@@ -234,12 +292,13 @@ impl<'a, S: View<'a>, N: Copy> Expr<'a> for UniChunked<S, N> {
     }
 }
 
-impl<'a, S: View<'a>, T, I: View<'a, Type = &'a [usize]>> Expr<'a> for Sparse<S, T, I> {
-    type Output = SparseIterExpr<'a, S::Type>;
+impl<'a, S: View<'a>, T: View<'a>, I: View<'a, Type = &'a [usize]>> Expr<'a> for Sparse<S, T, I> {
+    type Output = SparseIterExpr<'a, S::Type, T::Type>;
     fn expr(&'a self) -> Self::Output {
         SparseIterExpr {
-            indices: self.indices().view(),
+            indices: self.selection.indices.view(),
             source: self.source.view(),
+            target: self.selection.target.view(),
         }
     }
 }
@@ -265,30 +324,39 @@ macro_rules! impl_bin_op {
     }
 }
 
+impl_bin_op!(impl<T> AddOp for VecIterExpr<T> { Add::add });
 impl_bin_op!(impl<'a, T> AddOp for SliceIterExpr<'a, T> { Add::add });
 impl_bin_op!(impl<'a, T, N> AddOp for UniChunkedIterExpr<&'a [T], N> { Add::add });
-impl_bin_op!(impl<'a, S> AddOp for SparseIterExpr<'a, S> { Add::add });
+impl_bin_op!(impl<'a, S, T> AddOp for SparseIterExpr<'a, S, T> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Sub<A, B> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Add<A, B> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Dot<A, B> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for ScalarMul<A, B> { Add::add });
 
+impl_bin_op!(impl<T> SubOp for VecIterExpr<T> { Sub::sub });
 impl_bin_op!(impl<'a, T> SubOp for SliceIterExpr<'a, T> { Sub::sub });
 impl_bin_op!(impl<'a, T, N> SubOp for UniChunkedIterExpr<&'a [T], N> { Sub::sub });
-impl_bin_op!(impl<'a, S> SubOp for SparseIterExpr<'a, S> { Sub::sub });
+impl_bin_op!(impl<'a, S, T> SubOp for SparseIterExpr<'a, S, T> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Sub<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Add<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Dot<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for ScalarMul<A, B> { Sub::sub });
 
+impl_bin_op!(impl<T> DotOp for VecIterExpr<T> { Dot::dot });
 impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot });
 impl_bin_op!(impl<'a, T, N> DotOp for UniChunkedIterExpr<&'a [T], N> { Dot::dot });
-impl_bin_op!(impl<'a, S> DotOp for SparseIterExpr<'a, S> { Dot::dot });
+impl_bin_op!(impl<'a, S, T> DotOp for SparseIterExpr<'a, S, T> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for ScalarMul<A, B> { Dot::dot });
 
+impl<T> MulOp<T> for VecIterExpr<T> {
+    type Output = ScalarMul<Self, T>;
+    fn mul(self, rhs: T) -> Self::Output {
+        ScalarMul::new(self, rhs)
+    }
+}
 impl<'a, T> MulOp<T> for SliceIterExpr<'a, T> {
     type Output = ScalarMul<Self, T>;
     fn mul(self, rhs: T) -> Self::Output {
@@ -301,9 +369,9 @@ impl<'a, T, N> MulOp<T> for UniChunkedIterExpr<&'a [T], N> {
         ScalarMul::new(self, rhs)
     }
 }
-impl<'a, S, T> MulOp<T> for SparseIterExpr<'a, S> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
+impl<'a, S, T, U> MulOp<U> for SparseIterExpr<'a, S, T> {
+    type Output = ScalarMul<Self, U>;
+    fn mul(self, rhs: U) -> Self::Output {
         ScalarMul::new(self, rhs)
     }
 }
@@ -323,7 +391,7 @@ impl_bin_op!(impl<A, B> MulOp for Dot<A, B> { ScalarMul::mul(tensor, scalar) });
 impl_bin_op!(impl<A, B> MulOp for ScalarMul<A, B> { ScalarMul::mul(tensor, scalar) });
 
 // Addition
-impl<L: Iterator, R: Iterator> Iterator for Add<L, R>
+impl<L: Iterator + Dense, R: Iterator + Dense> Iterator for Add<L, R>
 where
     L::Item: AddOp<R::Item>,
 {
@@ -332,6 +400,61 @@ where
         self.left
             .next()
             .and_then(|l| self.right.next().map(|r| l + r))
+    }
+}
+
+impl<'l, 'r, L, R, A, B, T> Iterator for Add<SparseIterExpr<'l, L, T>, SparseIterExpr<'r, R, T>>
+where
+    SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
+    SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
+    A: AddOp<B>,
+    A: Into<<A as AddOp<B>>::Output>,
+    B: Into<<A as AddOp<B>>::Output>,
+{
+    type Item = IndexedExpr<<A as AddOp<B>>::Output>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let left_first_index = self
+            .left
+            .indices
+            .first()
+            .cloned()
+            .unwrap_or(std::usize::MAX);
+        let right_first_index = self
+            .right
+            .indices
+            .first()
+            .cloned()
+            .unwrap_or(std::usize::MAX);
+        if left_first_index < right_first_index {
+            self.left
+                .next()
+                .map(|IndexedExpr { index, expr }| IndexedExpr {
+                    index,
+                    expr: expr.into(),
+                })
+        } else if left_first_index > right_first_index {
+            self.right
+                .next()
+                .map(|IndexedExpr { index, expr }| IndexedExpr {
+                    index,
+                    expr: expr.into(),
+                })
+        } else {
+            if left_first_index == std::usize::MAX {
+                return None;
+            }
+            Some(
+                (
+                    left_first_index,
+                    self.left
+                        .next()
+                        .unwrap()
+                        .expr
+                        .add(self.right.next().unwrap().expr),
+                )
+                    .into(),
+            )
+        }
     }
 }
 
@@ -361,11 +484,12 @@ where
     }
 }
 
-impl<'l, 'r, L, R, A, B> Iterator for Dot<SparseIterExpr<'l, L>, SparseIterExpr<'r, R>>
+impl<'l, 'r, L, R, A, B, T> Iterator for Dot<SparseIterExpr<'l, L, T>, SparseIterExpr<'r, R, T>>
 where
-    SparseIterExpr<'l, L>: Iterator<Item = IndexedExpr<A>>,
-    SparseIterExpr<'r, R>: Iterator<Item = IndexedExpr<B>>,
+    SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
+    SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
     A: DotOp<B>,
+{
     type Item = <A as DotOp<B>>::Output;
     fn next(&mut self) -> Option<Self::Item> {
         if self.left.indices.is_empty() || self.right.indices.is_empty() {
@@ -424,6 +548,25 @@ where
             .collect();
         let chunk_size = data.len() / outer_len;
         UniChunked::from_flat_with_stride(data, chunk_size)
+    }
+}
+
+impl<I, S, T, J> EvalIterator<I> for Sparse<S, T, J>
+where
+    I: Iterator<Item = IndexedExpr<S::Elem>> + Target<Target = T>,
+    T: Set + Clone + PartialEq + std::fmt::Debug,
+    J: Push<usize> + Default + AsRef<[usize]>,
+    S: Set + Default + Push<<S as Set>::Elem>,
+{
+    fn eval(iter: I) -> Self {
+        let mut indices = J::default();
+        let mut source = S::default();
+        let target = iter.target().clone();
+        for IndexedExpr { index, expr } in iter {
+            indices.push(index);
+            source.push(expr);
+        }
+        Sparse::new(Select::new(indices, target), source)
     }
 }
 
@@ -537,15 +680,15 @@ mod tests {
         );
     }
 
-    //#[test]
-    //fn sparse_add() {
-    //    let a = Sparse::from_dim(vec![0, 3, 5], 6, vec![1, 2, 3]);
-    //    let b = Sparse::from_dim(vec![2, 4, 5], 6, vec![1, 2, 3]);
-    //    assert_eq!(
-    //        Sparse::from_dim(vec![0, 2, 3, 4, 5], 6, vec![1, 1, 2, 2, 6]),
-    //        EvalIterator::eval(a.expr().add(b.expr()))
-    //    );
-    //}
+    #[test]
+    fn sparse_add() {
+        let a = Sparse::from_dim(vec![0, 3, 5], 6, vec![1, 2, 3]);
+        let b = Sparse::from_dim(vec![2, 4, 5], 6, vec![1, 2, 3]);
+        assert_eq!(
+            Sparse::from_dim(vec![0, 2, 3, 4, 5], 6, vec![1, 1, 2, 2, 6]),
+            EvalIterator::eval(a.expr().add(b.expr()))
+        );
+    }
 
     #[test]
     fn sparse_dot() {

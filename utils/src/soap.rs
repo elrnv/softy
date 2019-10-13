@@ -927,7 +927,8 @@ pub trait AtomMutIterator<'a> {
 
 // Blanket implementations of AtomIterator/AtomMutIterator for references
 impl<'a, S: ?Sized> AtomIterator<'a> for &S
-where S: AtomIterator<'a>,
+where
+    S: AtomIterator<'a>,
 {
     type Item = S::Item;
     type Iter = S::Iter;
@@ -937,7 +938,8 @@ where S: AtomIterator<'a>,
 }
 
 impl<'a, S: ?Sized> AtomMutIterator<'a> for &mut S
-where S: AtomMutIterator<'a>
+where
+    S: AtomMutIterator<'a>,
 {
     type Item = S::Item;
     type Iter = S::Iter;

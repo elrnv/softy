@@ -1,5 +1,4 @@
 use super::*;
-use crate::index::Index;
 use std::ops::Add as AddOp;
 use std::ops::Mul as MulOp;
 use std::ops::Sub as SubOp;

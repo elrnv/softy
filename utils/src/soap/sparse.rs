@@ -169,8 +169,6 @@ where
     S: View<'a>,
     T: View<'a>,
     I: AsRef<[usize]>,
-    //Select<<T as View<'a>>::Type, &'a [usize]>: IntoIterator,
-    //Sparse<<S as View<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Sparse<S::Type, T::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -186,7 +184,6 @@ where
     S: Set + ViewMut<'a>,
     T: Set + View<'a>,
     I: AsMut<[usize]>,
-    //Sparse<<S as ViewMut<'a>>::Type, <T as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Sparse<S::Type, T::Type, &'a mut [usize]>;
     fn view_mut(&'a mut self) -> Self::Type {
@@ -301,17 +298,6 @@ where
 }
 
 impl_isolate_index_for_static_range!(impl<S, T, I> for Sparse<S, T, I>);
-
-//impl<S, T, I, Idx> Isolate<Idx> for Sparse<S, T, I>
-//where
-//    Idx: IsolateIndex<Self>,
-//{
-//    type Output = Idx::Output;
-//
-//    fn try_isolate(self, range: Idx) -> Option<Self::Output> {
-//        range.try_isolate(self)
-//    }
-//}
 
 /*
  * Iteration

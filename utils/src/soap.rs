@@ -154,6 +154,16 @@ pub trait Array<T> {
  * Marker and utility traits to help with Coherence rules of Rust.
  */
 
+/// A marker trait for local types which use generic implementations of various std::ops traits.
+/// Special types which use optimized implementations will not implement this marker. This is a
+/// workaround for specialization.
+pub trait LocalGeneric {}
+
+impl<S, I> LocalGeneric for Subset<S, I> {}
+impl<S, N> LocalGeneric for UniChunked<S, N> {}
+impl<S, O> LocalGeneric for Chunked<S, O> {}
+impl<S, T, I> LocalGeneric for Sparse<S, T, I> {}
+
 /// A marker trait to indicate an owned collection type. This is to distinguish
 /// them from borrowed slices, which essential to resolve implementation collisions.
 pub trait ValueType {}

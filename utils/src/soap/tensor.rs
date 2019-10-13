@@ -1268,16 +1268,6 @@ impl<T: Scalar> DivAssign<T> for Tensor<[T]> {
  * All additions and subtractions on 1-tensors represented by chunked vectors can be performed at the lowest level (flat)
  */
 
-/// A marker trait for local types which use generic implementations of various std::ops traits.
-/// Special types which use optimized implementations will not implement this marker. This is a
-/// workaround for specialization.
-pub trait LocalGeneric {}
-
-impl<S, I> LocalGeneric for Subset<S, I> {}
-impl<S, N> LocalGeneric for UniChunked<S, N> {}
-impl<S, O> LocalGeneric for Chunked<S, O> {}
-impl<S, T, I> LocalGeneric for Sparse<S, T, I> {}
-
 impl<T: ?Sized, U, V: ?Sized> AddAssign<Tensor<U>> for Tensor<V>
 where
     V: LocalGeneric + Set + for<'b> ViewMutIterator<'b, Item = &'b mut T>,

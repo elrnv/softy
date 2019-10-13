@@ -331,12 +331,12 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
-        source_slice.split_first().and_then(|(first, rest)| {
+        source_slice.split_first().map(|(first, rest)| {
             self.source = rest;
-            self.indices.split_first().map(|(first_idx, rest_indices)| {
-                self.indices = rest_indices;
-                (*first_idx, first)
-            })
+            // We know that sparse has at least one element, no need to check again.
+            let first_idx = unsafe { self.indices.get_unchecked(0) };
+            self.indices = &self.indices[1..];
+            (*first_idx, first)
         })
     }
 }

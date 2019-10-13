@@ -833,29 +833,6 @@ where
     }
 }
 
-pub struct ChunkedNIter<S> {
-    chunk_size: usize,
-    data: S,
-}
-
-impl<S> Iterator for ChunkedNIter<S>
-where
-    S: Set + SplitAt + Dummy,
-{
-    type Item = S;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.data.is_empty() {
-            return None;
-        }
-
-        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
-        let (l, r) = data_slice.split_at(self.chunk_size);
-        self.data = r;
-        Some(l)
-    }
-}
-
 /// A trait intended to be implemented on collection types to define the type of
 /// a statically sized chunk in this collection.
 /// This trait is required for composing with `UniChunked`.
@@ -885,28 +862,6 @@ where
             chunk_size: std::marker::PhantomData,
             data: self,
         }
-    }
-}
-
-/// Generic static sized chunk iterater appropriate for any lightweight view type collection.
-pub struct UniChunkedIter<S, N> {
-    chunk_size: std::marker::PhantomData<N>,
-    data: S,
-}
-
-impl<S, N> Iterator for UniChunkedIter<S, N>
-where
-    S: Set + SplitPrefix<N> + Dummy,
-    N: Unsigned,
-{
-    type Item = S::Prefix;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
-        data_slice.split_prefix().map(|(prefix, rest)| {
-            self.data = rest;
-            prefix
-        })
     }
 }
 

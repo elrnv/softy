@@ -1,4 +1,5 @@
 use super::*;
+use crate::index::Index;
 use std::ops::Add as AddOp;
 use std::ops::Mul as MulOp;
 use std::ops::Sub as SubOp;
@@ -79,6 +80,19 @@ pub struct UniChunkedIterExpr<S, N> {
 
 pub type ChunkedNIterExpr<S> = UniChunkedIterExpr<S, usize>;
 
+#[derive(Clone, Debug)]
+pub struct SparseIterExpr<'a, S> {
+    indices: &'a [usize],
+    source: S,
+}
+
+// Trait that indicates that an iterator produces elements from a dense or
+// contiguous collection as opposed to a sparse one.
+pub trait Dense {}
+impl<'a, T> Dense for SliceIterExpr<'a, T> {}
+impl<T> Dense for VecIterExpr<T> {}
+impl<S, N> Dense for UniChunkedIterExpr<S, N> {}
+
 /// A trait describing iterator types that can be evaluated.
 pub trait IterExpr: Iterator {
     fn eval<I: EvalIterator<Self>>(self) -> I
@@ -118,6 +132,73 @@ impl<'a, T: Clone, N: Dimension> Iterator for UniChunkedIterExpr<&'a [T], N> {
     }
 }
 
+/// An expression with an associated index into some larger set. This allows us
+/// to implement operations on sparse structures.
+pub struct IndexedExpr<E> {
+    index: Index,
+    expr: E,
+}
+
+impl<E> From<(usize, E)> for IndexedExpr<E> {
+    fn from(pair: (usize, E)) -> Self {
+        IndexedExpr {
+            index: Index::new(pair.0),
+            expr: pair.1,
+        }
+    }
+}
+
+/// Analogous to `SplitFirst`, but this trait converts the first element into an
+/// iterator automatically. This lets us abstract over types that store
+/// primitive types vs. types that contain other iterable collections when
+/// implementing sparse expressions.
+pub trait SplitFirstExpr
+where Self: Sized,
+{
+    type First;
+    fn split_first_expr(self) -> Option<(Self::First, Self)>;
+}
+
+//impl<S, O> SplitFirstExpr for Chunked<S, O>
+//{
+//    type FirstExpr = S;
+//    fn split_first_expr(self) -> Option<(Self::FirstExpr, Self)> {
+//
+//    }
+//}
+
+impl<'a, T: Scalar> Iterator for SparseIterExpr<'a, &'a [T]> {
+    type Item = IndexedExpr<T>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
+        source_slice.split_first().map(|(first, rest)| {
+            self.source = rest;
+            // We know that sparse has at least one element, no need to check again
+            let first_idx = unsafe { self.indices.get_unchecked(0) };
+            self.indices = &self.indices[1..];
+            (*first_idx, *first).into()
+        })
+    }
+}
+
+//impl<'a, S> Iterator for SparseIterExpr<'a, S>
+//where
+//    S: SplitFirst + Dummy,
+//    S::First: IntoIterator,
+//{
+//    type Item = IndexedExpr<S::First>;
+//    fn next(&mut self) -> Option<Self::Item> {
+//        let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
+//        source_slice.split_first().map(|(first, rest)| {
+//            self.source = rest;
+//            // We know that sparse has at least one element, no need to check again
+//            let first_idx = unsafe { self.indices.get_unchecked(0) };
+//            self.indices = &self.indices[1..];
+//            (*first_idx, first).into()
+//        })
+//    }
+//}
+
 pub trait Expr<'a> {
     type Output;
     fn expr(&'a self) -> Self::Output;
@@ -154,6 +235,16 @@ impl<'a, S: View<'a>, N: Copy> Expr<'a> for UniChunked<S, N> {
     }
 }
 
+impl<'a, S: View<'a>, T, I: View<'a, Type = &'a [usize]>> Expr<'a> for Sparse<S, T, I> {
+    type Output = SparseIterExpr<'a, S::Type>;
+    fn expr(&'a self) -> Self::Output {
+        SparseIterExpr {
+            indices: self.indices().view(),
+            source: self.source.view(),
+        }
+    }
+}
+
 impl<'a, T: Expr<'a> + ?Sized> Expr<'a> for Tensor<T> {
     type Output = T::Output;
     fn expr(&'a self) -> Self::Output {
@@ -177,6 +268,7 @@ macro_rules! impl_bin_op {
 
 impl_bin_op!(impl<'a, T> AddOp for SliceIterExpr<'a, T> { Add::add });
 impl_bin_op!(impl<'a, T, N> AddOp for UniChunkedIterExpr<&'a [T], N> { Add::add });
+impl_bin_op!(impl<'a, S> AddOp for SparseIterExpr<'a, S> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Sub<A, B> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Add<A, B> { Add::add });
 impl_bin_op!(impl<A, B> AddOp for Dot<A, B> { Add::add });
@@ -184,6 +276,7 @@ impl_bin_op!(impl<A, B> AddOp for ScalarMul<A, B> { Add::add });
 
 impl_bin_op!(impl<'a, T> SubOp for SliceIterExpr<'a, T> { Sub::sub });
 impl_bin_op!(impl<'a, T, N> SubOp for UniChunkedIterExpr<&'a [T], N> { Sub::sub });
+impl_bin_op!(impl<'a, S> SubOp for SparseIterExpr<'a, S> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Sub<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Add<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Dot<A, B> { Sub::sub });
@@ -191,6 +284,7 @@ impl_bin_op!(impl<A, B> SubOp for ScalarMul<A, B> { Sub::sub });
 
 impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot });
 impl_bin_op!(impl<'a, T, N> DotOp for UniChunkedIterExpr<&'a [T], N> { Dot::dot });
+impl_bin_op!(impl<'a, S> DotOp for SparseIterExpr<'a, S> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot });
 impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot });
@@ -203,6 +297,12 @@ impl<'a, T> MulOp<T> for SliceIterExpr<'a, T> {
     }
 }
 impl<'a, T, N> MulOp<T> for UniChunkedIterExpr<&'a [T], N> {
+    type Output = ScalarMul<Self, T>;
+    fn mul(self, rhs: T) -> Self::Output {
+        ScalarMul::new(self, rhs)
+    }
+}
+impl<'a, S, T> MulOp<T> for SparseIterExpr<'a, S> {
     type Output = ScalarMul<Self, T>;
     fn mul(self, rhs: T) -> Self::Output {
         ScalarMul::new(self, rhs)
@@ -250,7 +350,7 @@ where
 }
 
 // Tensor contraction
-impl<L: Iterator, R: Iterator> Iterator for Dot<L, R>
+impl<L: Iterator + Dense, R: Iterator + Dense> Iterator for Dot<L, R>
 where
     L::Item: DotOp<R::Item>,
 {
@@ -259,6 +359,43 @@ where
         self.left
             .next()
             .and_then(|l| self.right.next().map(|r| l.dot(r)))
+    }
+}
+
+impl<'l, 'r, L, R, A, B> Iterator for Dot<SparseIterExpr<'l, L>, SparseIterExpr<'r, R>>
+where
+    SparseIterExpr<'l, L>: Iterator<Item = IndexedExpr<A>>,
+    SparseIterExpr<'r, R>: Iterator<Item = IndexedExpr<B>>,
+    A: DotOp<B>,
+    type Item = <A as DotOp<B>>::Output;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left.indices.is_empty() || self.right.indices.is_empty() {
+            return None;
+        }
+        loop {
+            let left_first_index = unsafe { self.left.indices.get_unchecked(0) };
+            let right_first_index = unsafe { self.right.indices.get_unchecked(0) };
+            if left_first_index < right_first_index {
+                self.left.next();
+                if self.left.indices.is_empty() {
+                    return None;
+                }
+            } else if left_first_index > right_first_index {
+                self.right.next();
+                if self.right.indices.is_empty() {
+                    return None;
+                }
+            } else {
+                // ==
+                return Some(
+                    self.left
+                        .next()
+                        .unwrap()
+                        .expr
+                        .dot(self.right.next().unwrap().expr),
+                );
+            }
+        }
     }
 }
 
@@ -302,14 +439,30 @@ where
     }
 }
 
+//impl<T: Scalar, L: Dummy, R: Dummy> std::iter::Sum<Dot<IndexedExpr<L>, IndexedExpr<R>>> for Tensor<T>
+//where
+//    Dot<L, R>: Iterator,
+//Tensor<T>: std::iter::Sum<<Dot<L, R> as Iterator>::Item>,
+//{
+//    fn sum<I: Iterator<Item = Dot<L, R>>>(iter: I) -> Tensor<T> {
+//        iter.fold(Tensor { data: T::zero() }, |acc, x| {
+//            acc + EvalIterator::eval(x)
+//        })
+//    }
+//}
+
 impl<T: Scalar, L: Iterator, R: Iterator> std::iter::Sum<Dot<L, R>> for Tensor<T>
 where
-    L::Item: DotOp<R::Item>,
-    Tensor<T>: std::iter::Sum<<L::Item as DotOp<R::Item>>::Output>,
+    Dot<L, R>: Iterator + std::fmt::Debug,
+    Tensor<T>: EvalIterator<Dot<L, R>> + std::fmt::Debug,
 {
     fn sum<I: Iterator<Item = Dot<L, R>>>(iter: I) -> Tensor<T> {
+        println!("tensor sum");
         iter.fold(Tensor { data: T::zero() }, |acc, x| {
-            acc + EvalIterator::eval(x)
+            println!("x = {:?}", x);
+            let res = EvalIterator::eval(x);
+            println!("adding to acc: {:?} + {:?}", acc, res);
+            acc + res
         })
     }
 }
@@ -319,8 +472,10 @@ where
     T: Scalar,
     I: Iterator,
     Tensor<T>: std::iter::Sum<I::Item>,
+    I: std::fmt::Debug,
 {
     fn eval(iter: I) -> Self {
+        println!("tensor eval: {:?}", iter);
         std::iter::Sum::sum(iter)
     }
 }
@@ -330,8 +485,10 @@ where
     T: Scalar,
     I: Iterator,
     Tensor<T>: std::iter::Sum<I::Item>,
+    I: std::fmt::Debug,
 {
     fn eval(iter: I) -> Self {
+        println!("scalar eval: {:?}", iter);
         let tensor: Tensor<T> = std::iter::Sum::sum(iter);
         tensor.into_inner()
     }
@@ -340,6 +497,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn dot() {
         let a = vec![1, 2, 3, 4];
@@ -371,12 +529,29 @@ mod tests {
     }
 
     #[test]
-    fn add() {
+    fn chunkedn_add() {
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
         let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
         assert_eq!(
             ChunkedN::from_flat_with_stride(vec![6, 8, 10, 12], 2),
             (a.expr() + b.expr()).eval()
         );
+    }
+
+    //#[test]
+    //fn sparse_add() {
+    //    let a = Sparse::from_dim(vec![0, 3, 5], 6, vec![1, 2, 3]);
+    //    let b = Sparse::from_dim(vec![2, 4, 5], 6, vec![1, 2, 3]);
+    //    assert_eq!(
+    //        Sparse::from_dim(vec![0, 2, 3, 4, 5], 6, vec![1, 1, 2, 2, 6]),
+    //        EvalIterator::eval(a.expr().add(b.expr()))
+    //    );
+    //}
+
+    #[test]
+    fn sparse_dot() {
+        let a = Sparse::from_dim(vec![0, 3, 5], 6, vec![1, 2, 3]);
+        let b = Sparse::from_dim(vec![2, 4, 5], 6, vec![1, 2, 3]);
+        assert_eq!(9, EvalIterator::eval(a.expr().dot(b.expr())));
     }
 }

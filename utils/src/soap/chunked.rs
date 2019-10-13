@@ -576,7 +576,7 @@ where
 
 impl<S, O> Chunked<S, O>
 where
-    S: Set + Extend<<S as Set>::Elem>,
+    S: Set,
     O: Push<usize>,
 {
     /// Push a chunk using an iterator over chunk elements.
@@ -591,7 +591,10 @@ where
     /// assert_eq!(3, s.len());
     /// assert_eq!(&[100; 4][..], s.view().at(2));
     /// ```
-    pub fn push_iter<I: IntoIterator<Item = <S as Set>::Elem>>(&mut self, iter: I) {
+    pub fn push_iter<I: IntoIterator>(&mut self, iter: I)
+    where
+        S: Extend<I::Item>,
+    {
         self.data.extend(iter);
         self.chunks.push(self.data.len());
     }

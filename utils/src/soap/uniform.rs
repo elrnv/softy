@@ -585,7 +585,7 @@ where
     }
 }
 
-impl<S, N> std::iter::FromIterator<<Self as Set>::Elem> for UniChunked<S, U<N>>
+impl<S, N> std::iter::FromIterator<S::Chunk> for UniChunked<S, U<N>>
 where
     N: Unsigned + Default,
     S: Set + UniChunkable<N> + PushChunk<N> + Default,
@@ -620,9 +620,6 @@ impl<S, N> std::iter::Extend<<Self as Set>::Elem> for UniChunked<S, U<N>>
 where
     N: Unsigned,
     S: Set + UniChunkable<N> + PushChunk<N>,
-    //N: Unsigned + Array<<S as Set>::Elem> + Default,
-    //<S as Set>::Elem: PushArrayTo<S, N>,
-    //S: Set + UniChunkable<N> + Default + Push<<S as Set>::Elem>,
 {
     /// Extend a `UniChunked` collection from an iterator over set elements.
     ///

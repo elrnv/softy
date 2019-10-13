@@ -26,13 +26,6 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> IntoExpr for &[T; $n] {
-            type Expr = Tensor<[T; $n]>;
-            fn into_expr(self) -> Self::Expr {
-                Tensor::new(*self)
-            }
-        }
-
         impl<T: Scalar> DotOp for Tensor<[T; $n]> {
             type Output = T;
             fn dot(self, rhs: Self) -> Self::Output {

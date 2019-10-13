@@ -47,14 +47,6 @@ pub trait DotOp<R = Self> {
     fn dot(self, rhs: R) -> Self::Output;
 }
 
-/// A blanket implementation of `DotOp` for all scalar types.
-impl<T: Scalar> DotOp for T {
-    type Output = T;
-    fn dot(self, rhs: T) -> Self::Output {
-        self * rhs
-    }
-}
-
 impl<T: Scalar> DotOp for Tensor<T> {
     type Output = Tensor<T>;
     fn dot(self, rhs: Tensor<T>) -> Self::Output {
@@ -132,34 +124,51 @@ where
 
 // Trait that indicates that an iterator produces elements from a dense or
 // contiguous collection as opposed to a sparse one.
-pub trait Dense {}
-impl<'a, T> Dense for SliceIterExpr<'a, T> {}
-impl<T> Dense for VecIterExpr<T> {}
-impl<S, N> Dense for UniChunkedIterExpr<S, N> {}
-impl<'a, S> Dense for ChunkedIterExpr<'a, S> {}
+pub trait DenseExpr {}
+impl<'a, T> DenseExpr for SliceIterExpr<'a, T> {}
+impl<T> DenseExpr for VecIterExpr<T> {}
+impl<S, N> DenseExpr for UniChunkedIterExpr<S, N> {}
+impl<'a, S> DenseExpr for ChunkedIterExpr<'a, S> {}
+impl<'a, T: DenseExpr, S> DenseExpr for ScalarMul<T, S> {}
+impl<'a, A: DenseExpr, B: DenseExpr> DenseExpr for Add<A, B> {}
+impl<'a, A: DenseExpr, B: DenseExpr> DenseExpr for Sub<A, B> {}
+impl<'a, A: DenseExpr, B: DenseExpr> DenseExpr for Dot<A, B> {}
 
-/// A trait describing iterator types that can be evaluated.
-pub trait IterExpr: Iterator {
-    fn eval<I: EvalIterator<Self>>(self) -> I
+/// A trait describing types that can be evaluated.
+pub trait Expression {
+    fn eval<T>(self) -> T
     where
         Self: Sized,
+        T: Evaluate<Self>,
     {
-        EvalIterator::eval(self)
+        Evaluate::eval(self)
     }
 }
 
-/// Blanket implementation of `IterExpr` for all `Iterator` types.
-impl<T: Iterator> IterExpr for T {}
+impl<I: Iterator> Expression for I {}
 
 /// A trait describing how a value can be constructed from an iterator expression.
-pub trait EvalIterator<I> {
+pub trait Evaluate<I> {
     fn eval(iter: I) -> Self;
+}
+
+/// Analogous to `std::iter::Extend` this trait allows us to reuse existing
+/// buffers to store evaluated results.
+pub trait EvalExtend<I> {
+    fn eval_extend(&mut self, iter: I);
 }
 
 impl<'a, T: Clone> Iterator for SliceIterExpr<'a, T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|x| x.clone())
+    }
+}
+
+impl<'a, T> Iterator for VecIterExpr<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
     }
 }
 
@@ -236,13 +245,34 @@ pub trait IntoExpr {
     fn into_expr(self) -> Self::Expr;
 }
 
-impl<S> IntoExpr for S
-where
-    S: IntoIterator + LocalGeneric,
-{
-    type Expr = S::IntoIter;
+impl<S, N> IntoExpr for UniChunked<S, N> {
+    type Expr = UniChunkedIterExpr<S, N>;
     fn into_expr(self) -> Self::Expr {
-        self.into_iter()
+        UniChunkedIterExpr {
+            data: self.data,
+            chunk_size: self.chunk_size,
+        }
+    }
+}
+
+impl<'a, S> IntoExpr for ChunkedView<'a, S> {
+    type Expr = ChunkedIterExpr<'a, S>;
+    fn into_expr(self) -> Self::Expr {
+        ChunkedIterExpr {
+            data: self.data,
+            offsets: self.chunks,
+        }
+    }
+}
+
+impl<'a, S, T> IntoExpr for SparseView<'a, S, T> {
+    type Expr = SparseIterExpr<'a, S, T>;
+    fn into_expr(self) -> Self::Expr {
+        SparseIterExpr {
+            indices: self.selection.indices,
+            source: self.source,
+            target: self.selection.target,
+        }
     }
 }
 
@@ -385,63 +415,46 @@ impl_bin_op!(impl<A, B> SubOp for Add<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Dot<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for ScalarMul<A, B> { Sub::sub });
 
-impl_bin_op!(impl<T> DotOp for VecIterExpr<T> { Dot::dot });
-impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot });
-impl_bin_op!(impl<S, N> DotOp for UniChunkedIterExpr<S, N> { Dot::dot });
-impl_bin_op!(impl<'a, S> DotOp for ChunkedIterExpr<'a, S> { Dot::dot });
-impl_bin_op!(impl<'a, S, T> DotOp for SparseIterExpr<'a, S, T> { Dot::dot });
-impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot });
-impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot });
-impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot });
-impl_bin_op!(impl<A, B> DotOp for ScalarMul<A, B> { Dot::dot });
+// Decided to make all DotOp impls evaluate eagerly.
+//impl_bin_op!(impl<T> DotOp for VecIterExpr<T> { Dot::dot });
+//impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot });
+//impl_bin_op!(impl<S, N> DotOp for UniChunkedIterExpr<S, N> { Dot::dot });
+//impl_bin_op!(impl<'a, S> DotOp for ChunkedIterExpr<'a, S> { Dot::dot });
+//impl_bin_op!(impl<'a, S, T> DotOp for SparseIterExpr<'a, S, T> { Dot::dot });
+//impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot });
+//impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot });
+//impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot });
+//impl_bin_op!(impl<A, B> DotOp for ScalarMul<A, B> { Dot::dot });
 
-impl<T> MulOp<T> for VecIterExpr<T> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
+macro_rules! impl_scalar_mul {
+    (impl<$($type_vars:tt),*> for $type:ty) => {
+        impl<$($type_vars),*> MulOp<T> for $type where T: Scalar {
+            type Output = ScalarMul<Self, T>;
+            fn mul(self, rhs: T) -> Self::Output {
+                ScalarMul::new(self, rhs)
+            }
+        }
+        impl<$($type_vars),*> MulOp<$type> for Tensor<T> where T: Scalar {
+            type Output = ScalarMul<$type, T>;
+            fn mul(self, rhs: $type) -> Self::Output {
+                ScalarMul::new(rhs, self.into_inner())
+            }
+        }
     }
 }
-impl<'a, T> MulOp<T> for SliceIterExpr<'a, T> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
-impl<S, N, T> MulOp<T> for UniChunkedIterExpr<S, N> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
-impl<'a, S, T> MulOp<T> for ChunkedIterExpr<'a, S> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
-impl<'a, S, T, U> MulOp<U> for SparseIterExpr<'a, S, T> {
-    type Output = ScalarMul<Self, U>;
-    fn mul(self, rhs: U) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
-impl<'a, A, B, T: Scalar> MulOp<T> for Add<A, B> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
-impl<'a, A, B, T: Scalar> MulOp<T> for Sub<A, B> {
-    type Output = ScalarMul<Self, T>;
-    fn mul(self, rhs: T) -> Self::Output {
-        ScalarMul::new(self, rhs)
-    }
-}
+
+impl_scalar_mul!(impl<T> for VecIterExpr<T>);
+impl_scalar_mul!(impl<'a, T> for SliceIterExpr<'a, T>);
+impl_scalar_mul!(impl<S, N, T> for UniChunkedIterExpr<S, N>);
+impl_scalar_mul!(impl<'a, S, T> for ChunkedIterExpr<'a, S>);
+impl_scalar_mul!(impl<'a, S, T, U> for SparseIterExpr<'a, S, U>);
+impl_scalar_mul!(impl<A, B, T> for Add<A, B>);
+impl_scalar_mul!(impl<A, B, T> for Sub<A, B>);
 impl_bin_op!(impl<A, B> MulOp for Dot<A, B> { ScalarMul::mul(tensor, scalar) });
 impl_bin_op!(impl<A, B> MulOp for ScalarMul<A, B> { ScalarMul::mul(tensor, scalar) });
 
 // Addition
-impl<L: Iterator + Dense, R: Iterator + Dense> Iterator for Add<L, R>
+impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr> Iterator for Add<L, R>
 where
     L::Item: AddOp<R::Item>,
 {
@@ -516,7 +529,7 @@ macro_rules! impl_iterator_for_bin_op_sparse {
 impl_iterator_for_bin_op_sparse!(Add; AddOp::add);
 
 // Subtraction
-impl<L: Iterator + Dense, R: Iterator + Dense> Iterator for Sub<L, R>
+impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr> Iterator for Sub<L, R>
 where
     L::Item: SubOp<R::Item>,
 {
@@ -531,7 +544,7 @@ where
 impl_iterator_for_bin_op_sparse!(Sub; SubOp::sub);
 
 // Tensor contraction
-impl<L: Iterator + Dense, R: Iterator + Dense> Iterator for Dot<L, R>
+impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr> Iterator for Dot<L, R>
 where
     L::Item: DotOp<R::Item>,
 {
@@ -540,6 +553,38 @@ where
         self.left
             .next()
             .and_then(|l| self.right.next().map(|r| l.dot(r)))
+    }
+}
+
+impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr> DotOp<R> for L
+where
+    L::Item: DotOp<R::Item>,
+    <L::Item as DotOp<R::Item>>::Output: Scalar,
+{
+    type Output = <L::Item as DotOp<R::Item>>::Output;
+    fn dot(self, rhs: R) -> Self::Output {
+        Dot {
+            left: self,
+            right: rhs,
+        }
+        .eval()
+    }
+}
+
+impl<'l, 'r, L, R, A, B, T> DotOp<SparseIterExpr<'r, R, T>> for SparseIterExpr<'l, L, T>
+where
+    SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
+    SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
+    A: DotOp<B>,
+    <A as DotOp<B>>::Output: Scalar,
+{
+    type Output = <A as DotOp<B>>::Output;
+    fn dot(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
+        Dot {
+            left: self,
+            right: rhs,
+        }
+        .eval()
     }
 }
 
@@ -568,7 +613,6 @@ where
                     return None;
                 }
             } else {
-                // ==
                 return Some(
                     self.left
                         .next()
@@ -592,41 +636,42 @@ where
     }
 }
 
-impl<I: Iterator, S> EvalIterator<I> for ChunkedN<S>
+impl<I: Iterator, S> Evaluate<I> for ChunkedN<S>
 where
-    I::Item: Iterator,
-    S: Set + std::iter::FromIterator<<I::Item as Iterator>::Item>,
+    S: Set + Default + EvalExtend<I::Item>,
 {
     fn eval(iter: I) -> Self {
-        let mut outer_len = 0;
-        let data: S = iter
-            .flat_map(|x| {
-                outer_len += 1;
-                x
-            })
-            .collect();
-        let chunk_size = data.len() / outer_len;
-        UniChunked::from_flat_with_stride(data, chunk_size)
-    }
-}
-
-impl<I: Iterator, S> EvalIterator<I> for Chunked<S>
-where
-    I::Item: Iterator,
-    S: Set + Default + Extend<<I::Item as Iterator>::Item>,
-{
-    fn eval(iter: I) -> Self {
-        let mut chunked = Chunked::default();
-
+        let mut data = S::default();
+        let mut chunk_size = None;
         for elem in iter {
-            chunked.push_iter(elem);
+            let orig_len = data.len();
+            data.eval_extend(elem);
+            if chunk_size.is_none() {
+                chunk_size = Some(data.len());
+            } else {
+                debug_assert_eq!(data.len() - orig_len, chunk_size.unwrap());
+            }
         }
-
-        chunked
+        UniChunked::from_flat_with_stride(data, chunk_size.unwrap())
     }
 }
 
-impl<I, S, T, J> EvalIterator<I> for Sparse<S, T, J>
+impl<I: Iterator, S> Evaluate<I> for Chunked<S>
+where
+    S: Set + Default + EvalExtend<I::Item>,
+{
+    fn eval(iter: I) -> Self {
+        let mut data = S::default();
+        let mut offsets = vec![0];
+        for elem in iter {
+            data.eval_extend(elem);
+            offsets.push(data.len());
+        }
+        Chunked::from_offsets(offsets, data)
+    }
+}
+
+impl<I, S, T, J> Evaluate<I> for Sparse<S, T, J>
 where
     I: Iterator<Item = IndexedExpr<S::Elem>> + Target<Target = T>,
     T: Set + Clone + PartialEq + std::fmt::Debug,
@@ -645,56 +690,107 @@ where
     }
 }
 
-impl<I: Iterator, S, N: Unsigned + Default> EvalIterator<I> for UniChunked<S, U<N>>
+// Teach `Vec` types to extend themselves with small tensors.
+macro_rules! impl_array_tensor_traits {
+    () => {};
+    ($n:expr) => { // Allow optional trailing comma
+        impl_array_tensor_traits!($n,);
+    };
+    ($n:expr, $($ns:tt)*) => {
+        impl<T: Scalar> EvalExtend<Tensor<[T; $n]>> for Vec<T> {
+            #[unroll_for_loops]
+            fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
+                self.reserve($n);
+                for i in 0..$n {
+                    self.push(tensor[i]);
+                }
+            }
+        }
+
+        impl<T: Scalar> IntoExpr for [T; $n] {
+            type Expr = Tensor<[T; $n]>;
+            fn into_expr(self) -> Self::Expr {
+                Tensor::new(self)
+            }
+        }
+        impl<T: Scalar> IntoExpr for &[T; $n] {
+            type Expr = Tensor<[T; $n]>;
+            fn into_expr(self) -> Self::Expr {
+                Tensor::new(*self)
+            }
+        }
+        impl_array_tensor_traits!($($ns)*);
+    };
+}
+
+impl_array_tensor_traits!(1, 2, 3, 4);
+
+impl<I, T> EvalExtend<I> for Vec<T>
 where
-    I::Item: Iterator,
-    S: Set + UniChunkable<N> + std::iter::FromIterator<<I::Item as Iterator>::Item>,
+    I: Iterator<Item = T>,
+{
+    fn eval_extend(&mut self, iter: I) {
+        self.extend(iter);
+    }
+}
+
+impl<I, S, N> EvalExtend<I> for UniChunked<S, N>
+where
+    I: Iterator,
+    S: EvalExtend<I::Item>,
+{
+    fn eval_extend(&mut self, iter: I) {
+        for elem in iter {
+            self.data.eval_extend(elem);
+        }
+    }
+}
+
+impl<I, S, N> Evaluate<I> for UniChunked<S, U<N>>
+where
+    Self: EvalExtend<I>,
+    S: Default + Set,
+    N: Unsigned + Default,
 {
     fn eval(iter: I) -> Self {
-        let data: S = iter.flat_map(|x| x).collect();
-        UniChunked::from_flat(data)
+        let mut s = Self::default();
+        s.eval_extend(iter);
+        s
     }
 }
 
 impl<T: Scalar, L: Iterator, R: Iterator> std::iter::Sum<Dot<L, R>> for Tensor<T>
 where
-    Dot<L, R>: Iterator + std::fmt::Debug,
-    Tensor<T>: EvalIterator<Dot<L, R>> + std::fmt::Debug,
+    Dot<L, R>: Iterator,
+    Tensor<T>: Evaluate<Dot<L, R>>,
 {
     fn sum<I: Iterator<Item = Dot<L, R>>>(iter: I) -> Tensor<T> {
-        println!("tensor sum");
         iter.fold(Tensor { data: T::zero() }, |acc, x| {
-            println!("x = {:?}", x);
-            let res = EvalIterator::eval(x);
-            println!("adding to acc: {:?} + {:?}", acc, res);
+            let res = Evaluate::eval(x);
             acc + res
         })
     }
 }
 
-impl<T, I> EvalIterator<I> for Tensor<T>
+impl<T, A, B> Evaluate<Dot<A, B>> for Tensor<T>
 where
     T: Scalar,
-    I: Iterator,
-    Tensor<T>: std::iter::Sum<I::Item>,
-    I: std::fmt::Debug,
+    Dot<A, B>: Iterator,
+    Tensor<T>: std::iter::Sum<<Dot<A, B> as Iterator>::Item>,
 {
-    fn eval(iter: I) -> Self {
-        println!("tensor eval: {:?}", iter);
+    fn eval(iter: Dot<A, B>) -> Self {
         std::iter::Sum::sum(iter)
     }
 }
 
-impl<T, I> EvalIterator<I> for T
+impl<T, A, B> Evaluate<Dot<A, B>> for T
 where
     T: Scalar,
-    I: Iterator,
-    Tensor<T>: std::iter::Sum<I::Item>,
-    I: std::fmt::Debug,
+    Dot<A, B>: Iterator,
+    Tensor<T>: std::iter::Sum<<Dot<A, B> as Iterator>::Item>,
 {
-    fn eval(iter: I) -> Self {
-        println!("scalar eval: {:?}", iter);
-        let tensor: Tensor<T> = std::iter::Sum::sum(iter);
+    fn eval(iter: Dot<A, B>) -> Self {
+        let tensor: Tensor<T> = Evaluate::eval(iter);
         tensor.into_inner()
     }
 }
@@ -707,30 +803,23 @@ mod tests {
     fn dot() {
         let a = vec![1, 2, 3, 4];
         let b = vec![5, 6, 7, 8];
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
+        assert_eq!(70, a.expr().dot(b.expr()));
         assert_eq!(
-            Tensor::new(70),
-            a.view()
-                .as_tensor()
-                .expr()
-                .dot(b.view().as_tensor().expr())
-                .eval()
+            70,
+            a.view().as_tensor().expr().dot(b.view().as_tensor().expr())
         );
-        assert_eq!(
-            Tensor::new(70),
-            a.as_tensor().expr().dot(b.as_tensor().expr()).eval()
-        );
+        assert_eq!(70, a.as_tensor().expr().dot(b.as_tensor().expr()));
     }
 
     #[test]
     fn unichunked_dot() {
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
         let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
+        assert_eq!(70, a.expr().dot(b.expr()));
 
         let a = Chunked2::from_flat(vec![1, 2, 3, 4]);
         let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
-        assert_eq!(Tensor::new(70), a.expr().dot(b.expr()).eval());
+        assert_eq!(70, a.expr().dot(b.expr()));
     }
 
     #[test]
@@ -740,6 +829,35 @@ mod tests {
         assert_eq!(
             ChunkedN::from_flat_with_stride(vec![6, 8, 10, 12], 2),
             (a.expr() + b.expr()).eval()
+        );
+    }
+
+    #[test]
+    fn chunkedn_unichunked_add() {
+        let a =
+            ChunkedN::from_flat_with_stride(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]), 2);
+        let b = ChunkedN::from_flat_with_stride(
+            Chunked2::from_flat(vec![9, 10, 11, 12, 13, 14, 15, 16]),
+            2,
+        );
+        assert_eq!(
+            ChunkedN::from_flat_with_stride(
+                Chunked2::from_flat(vec![10, 12, 14, 16, 18, 20, 22, 24]),
+                2
+            ),
+            Evaluate::eval(a.expr() + b.expr())
+        );
+    }
+
+    #[test]
+    fn complex_exprs() {
+        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
+        let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
+        let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
+        assert_eq!(
+            19626,
+            (Tensor::new(2) * c.expr() + b.expr() * a.expr().dot(c.expr()) - a.expr())
+                .dot(b.expr())
         );
     }
 
@@ -757,14 +875,14 @@ mod tests {
     fn sparse_dot() {
         let a = Sparse::from_dim(vec![0, 3, 5], 6, vec![1, 2, 3]);
         let b = Sparse::from_dim(vec![2, 4, 5], 6, vec![1, 2, 3]);
-        assert_eq!(9, a.expr().dot(b.expr()).eval());
+        assert_eq!(9, a.expr().dot(b.expr()));
     }
 
     #[test]
     fn chunked_dot() {
         let a = Chunked::from_sizes(vec![0, 2, 1], vec![1, 2, 3]);
         let b = Chunked::from_sizes(vec![0, 2, 1], vec![4, 5, 6]);
-        assert_eq!(32, a.expr().dot(b.expr()).eval());
+        assert_eq!(32, a.expr().dot(b.expr()));
     }
 
     #[test]
@@ -773,7 +891,7 @@ mod tests {
         let b = Chunked::from_sizes(vec![0, 2, 1], vec![4, 5, 6]);
         assert_eq!(
             Chunked::from_sizes(vec![0, 2, 1], vec![5, 7, 9]),
-            EvalIterator::eval(a.expr() + b.expr())
+            Evaluate::eval(a.expr() + b.expr())
         );
     }
 }

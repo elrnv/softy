@@ -724,6 +724,14 @@ where
     }
 }
 
+impl<S, I: Reserve> Reserve for Select<S, I> {
+    fn reserve(&mut self, n: usize) {
+        self.indices.reserve(n);
+        // Target is not necessarily modified when adding elements to a
+        // selection.
+    }
+}
+
 /*
  * Impls for uniformly chunked sparse types
  */

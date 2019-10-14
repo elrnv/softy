@@ -49,8 +49,7 @@ impl<'a, T: 'a> ViewMutIterator<'a> for Vec<T> {
     }
 }
 
-impl<'a, T: 'a> AtomIterator<'a> for Vec<T>
-{
+impl<'a, T: 'a> AtomIterator<'a> for Vec<T> {
     type Item = &'a T;
     type Iter = std::slice::Iter<'a, T>;
     fn atom_iter(&'a self) -> Self::Iter {
@@ -58,8 +57,7 @@ impl<'a, T: 'a> AtomIterator<'a> for Vec<T>
     }
 }
 
-impl<'a, T: 'a> AtomMutIterator<'a> for Vec<T>
-{
+impl<'a, T: 'a> AtomMutIterator<'a> for Vec<T> {
     type Item = &'a mut T;
     type Iter = std::slice::IterMut<'a, T>;
     fn atom_mut_iter(&'a mut self) -> Self::Iter {
@@ -306,6 +304,11 @@ impl<T: Clone> CloneIntoOther for Vec<T> {
 impl<T: Clone> CloneIntoOther<[T]> for Vec<T> {
     fn clone_into_other(&self, other: &mut [T]) {
         other.clone_from_slice(self.as_slice());
+    }
+}
+impl<T> Reserve for Vec<T> {
+    fn reserve(&mut self, n: usize) {
+        self.reserve(n);
     }
 }
 

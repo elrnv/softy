@@ -1822,6 +1822,11 @@ impl<T, S: CloneIntoOther<T>, N> CloneIntoOther<UniChunked<T, N>> for UniChunked
         self.data.clone_into_other(&mut other.data);
     }
 }
+impl<S: Reserve, N: Dimension> Reserve for UniChunked<S, N> {
+    fn reserve(&mut self, n: usize) {
+        self.data.reserve(n * self.chunk_size());
+    }
+}
 
 #[cfg(test)]
 mod tests {

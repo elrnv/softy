@@ -686,6 +686,13 @@ where
     }
 }
 
+impl<S: Reserve, T, I: Reserve> Reserve for Sparse<S, T, I> {
+    fn reserve(&mut self, n: usize) {
+        self.selection.reserve(n);
+        self.source.reserve(n);
+    }
+}
+
 /*
  * Impls for uniformly chunked sparse types
  */

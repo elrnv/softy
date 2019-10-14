@@ -257,6 +257,12 @@ impl<O: IntoOwned> IntoOwned for Offsets<O> {
     }
 }
 
+impl<O: Reserve> Reserve for Offsets<O> {
+    fn reserve(&mut self, n: usize) {
+        self.0.reserve(n);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

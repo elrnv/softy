@@ -875,6 +875,19 @@ where
     }
 }
 
+/// A trait that allows the container to allocate additional space without
+/// changing any of the data. The container should allocate space for at least
+/// `n` additional elements.
+///
+/// Composite collections such a `Chunked` or `Select` may choose to only
+/// reserve primary level storage if the amount of total storage required cannot
+/// be specified by a single number. For this reason it is advised to check the
+/// individual implementations of `Reserve` to get a better idea of how calling
+/// `reserve` may actually affect performance.
+pub trait Reserve {
+    fn reserve(&mut self, n: usize);
+}
+
 /*
  * New experimental traits below
  */

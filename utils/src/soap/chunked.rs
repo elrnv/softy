@@ -1556,6 +1556,15 @@ impl<S: StorageInto<T>, O, T> StorageInto<T> for Chunked<S, O> {
 //    }
 //}
 
+impl<S, O: Reserve> Reserve for Chunked<S, O> {
+    fn reserve(&mut self, n: usize) {
+        self.chunks.reserve(n);
+        // We don't know how much memory to reserve for the data, so we leave it
+        // to the caller for making the appropriate call to reserve through
+        // `data_mut()`.
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

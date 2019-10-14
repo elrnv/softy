@@ -13,6 +13,8 @@ use num_traits::Float;
 use std::convert::AsRef;
 use std::ops::{Add, Mul, MulAssign};
 
+type Dim = std::ops::RangeTo<usize>;
+
 pub trait SparseMatrix {
     fn num_non_zeros(&self) -> usize;
 }
@@ -533,13 +535,8 @@ where
 }
 
 /// Sparse-row sparse-column 3x3 block matrix.
-pub type SSBlockMatrix<N = usize, M = usize, S = Vec<f64>, I = Vec<usize>> = Tensor<
-    Sparse<
-        Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>, Offsets<I>>,
-        std::ops::Range<usize>,
-        I,
-    >,
->;
+pub type SSBlockMatrix<N = usize, M = usize, S = Vec<f64>, I = Vec<usize>> =
+    Tensor<Sparse<Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, Dim, I>, Offsets<I>>, Dim, I>>;
 
 pub type SSBlockMatrixView<'a, N = usize, M = usize> = SSBlockMatrix<N, M, &'a [f64], &'a [usize]>;
 
@@ -663,7 +660,7 @@ impl SSBlockMatrix3 {
 
 /// Dense-row sparse-column row-major 3x3 block matrix. Block version of CSR.
 pub type DSBlockMatrix<N = usize, M = usize, S = Vec<f64>, I = Vec<usize>> =
-    Tensor<Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>, Offsets<I>>>;
+    Tensor<Chunked<Sparse<UniChunked<UniChunked<S, M>, N>, Dim, I>, Offsets<I>>>;
 pub type DSBlockMatrixView<'a, N = usize, M = usize> = DSBlockMatrix<N, M, &'a [f64], &'a [usize]>;
 
 pub type DSBlockMatrix2<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U2, U2, S, I>;
@@ -1152,7 +1149,7 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
 // A row vector of row-major 3x3 matrix blocks.
 // This can also be interpreted as a column vector of column-major 3x3 matrix blocks.
 pub type SparseBlockVector<N = usize, M = usize, S = Vec<f64>, I = Offsets> =
-    Tensor<Sparse<UniChunked<UniChunked<S, M>, N>, std::ops::Range<usize>, I>>;
+    Tensor<Sparse<UniChunked<UniChunked<S, M>, N>, Dim, I>>;
 pub type SparseBlockVectorView<'a, N = usize, M = usize> =
     SparseBlockVector<N, M, &'a [f64], &'a [usize]>;
 pub type SparseBlockVector3<S = Vec<f64>, I = Offsets> = SparseBlockVector<U3, U3, S, I>;

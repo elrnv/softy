@@ -562,7 +562,6 @@ impl<'a, S, I> Select<S, I>
 where
     S: Set + Get<'a, usize> + View<'a>,
     I: AsRef<[usize]>,
-    <S as View<'a>>::Type: IntoIterator<Item = S::Output>,
 {
     pub fn iter(&'a self) -> impl Iterator<Item = (usize, <S as Get<'a, usize>>::Output)> + Clone {
         self.indices

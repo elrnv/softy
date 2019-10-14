@@ -60,12 +60,8 @@ macro_rules! impls_for_range {
         impl<N, I> UniChunkable<N> for $range<I> {
             type Chunk = StaticRange<N>;
         }
-        impl<'a, I: IntBound> View<'a> for $range<I>
-        where
-            Self: IntoIterator,
-        {
+        impl<'a, I: IntBound> View<'a> for $range<I> {
             type Type = Self;
-
             fn view(&'a self) -> Self::Type {
                 self.clone()
             }
@@ -189,6 +185,15 @@ where
     }
 }
 
+impl<T> Dummy for RangeTo<T>
+where
+    T: Default,
+{
+    unsafe fn dummy() -> Self {
+        RangeTo { end: T::default() }
+    }
+}
+
 impl<T> RemovePrefix for Range<T>
 where
     T: From<usize>,
@@ -253,14 +258,54 @@ impl<T: IntBound> IsolateIndex<Range<T>> for std::ops::Range<usize> {
     }
 }
 
-impl<T> IntoOwned for std::ops::Range<T> {
+impl<T: IntBound> IsolateIndex<RangeTo<T>> for usize {
+    type Output = T;
+    fn try_isolate(self, rng: RangeTo<T>) -> Option<Self::Output> {
+        if self < rng.distance().into() {
+            Some(self.into())
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: IntBound> IsolateIndex<RangeTo<T>> for std::ops::Range<usize> {
+    type Output = Range<T>;
+
+    fn try_isolate(self, rng: RangeTo<T>) -> Option<Self::Output> {
+        if self.start >= rng.distance().into() || self.end > rng.distance().into() {
+            return None;
+        }
+
+        Some(Range {
+            start: self.start.into(),
+            end: self.end.into(),
+        })
+    }
+}
+
+impl<T> IntoOwned for Range<T> {
     type Owned = Self;
     fn into_owned(self) -> Self::Owned {
         self
     }
 }
 
-impl<T> IntoOwnedData for std::ops::Range<T> {
+impl<T> IntoOwnedData for Range<T> {
+    type OwnedData = Self;
+    fn into_owned_data(self) -> Self::OwnedData {
+        self
+    }
+}
+
+impl<T> IntoOwned for RangeTo<T> {
+    type Owned = Self;
+    fn into_owned(self) -> Self::Owned {
+        self
+    }
+}
+
+impl<T> IntoOwnedData for RangeTo<T> {
     type OwnedData = Self;
     fn into_owned_data(self) -> Self::OwnedData {
         self

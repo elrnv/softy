@@ -1,6 +1,5 @@
 use super::*;
 use std::convert::{AsMut, AsRef};
-use std::ops::Range;
 
 /// A `Sparse` data set `S` where the sparsity pattern is given by `I` as select
 /// indices into a larger range.
@@ -13,7 +12,7 @@ pub struct Sparse<S, T, I = Vec<usize>> {
 /// A borrowed view of a sparse collection.
 pub type SparseView<'a, S, T> = Sparse<S, T, &'a [usize]>;
 
-impl<S, I> Sparse<S, Range<usize>, I>
+impl<S, I> Sparse<S, std::ops::RangeTo<usize>, I>
 where
     S: Set,
     I: AsRef<[usize]>,
@@ -44,7 +43,7 @@ where
     /// assert_eq!(None, iter.next());
     /// ```
     pub fn from_dim(indices: I, dim: usize, values: S) -> Self {
-        Sparse::new(Select::new(indices, 0..dim), values)
+        Sparse::new(Select::new(indices, ..dim), values)
     }
 }
 
@@ -346,7 +345,6 @@ where
     S: View<'a>,
     <S as View<'a>>::Type: Set + IntoIterator,
     T: Set + Get<'a, usize> + View<'a>,
-    <T as View<'a>>::Type: IntoIterator<Item = T::Output>,
     I: AsRef<[usize]>,
 {
     pub fn iter(

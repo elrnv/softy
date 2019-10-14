@@ -148,16 +148,16 @@ macro_rules! impl_scalar {
             }
 
             impl IntoExpr for $type {
-                type Expr = $type;
+                type Expr = Tensor<$type>;
                 fn into_expr(self) -> Self::Expr {
-                    self
+                    Tensor::new(self)
                 }
             }
 
             impl IntoExpr for &$type {
-                type Expr = $type;
+                type Expr = Tensor<$type>;
                 fn into_expr(self) -> Self::Expr {
-                    *self
+                    Tensor::new(*self)
                 }
             }
             impl DotOp for $type {
@@ -219,7 +219,7 @@ impl<T: Neg<Output = T> + Scalar> Neg for Tensor<T> {
     }
 }
 
-impl<T: Scalar> std::iter::Sum<T> for Tensor<T> {
+impl<T: std::iter::Sum> std::iter::Sum<T> for Tensor<T> {
     fn sum<I: Iterator<Item = T>>(iter: I) -> Tensor<T> {
         Tensor {
             data: std::iter::Sum::sum(iter),
@@ -227,7 +227,7 @@ impl<T: Scalar> std::iter::Sum<T> for Tensor<T> {
     }
 }
 
-impl<T: Scalar> std::iter::Sum<Tensor<T>> for Tensor<T> {
+impl<T: std::iter::Sum> std::iter::Sum<Tensor<T>> for Tensor<T> {
     fn sum<I: Iterator<Item = Tensor<T>>>(iter: I) -> Tensor<T> {
         Tensor {
             data: std::iter::Sum::sum(iter.map(|x| x.into_inner())),

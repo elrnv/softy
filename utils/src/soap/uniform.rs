@@ -1823,8 +1823,9 @@ impl<T, S: CloneIntoOther<T>, N> CloneIntoOther<UniChunked<T, N>> for UniChunked
     }
 }
 impl<S: Reserve, N: Dimension> Reserve for UniChunked<S, N> {
-    fn reserve(&mut self, n: usize) {
-        self.data.reserve(n * self.chunk_size());
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.data
+            .reserve_with_storage(n * self.chunk_size(), storage_n);
     }
 }
 

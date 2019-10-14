@@ -307,8 +307,8 @@ impl<T: Clone> CloneIntoOther<[T]> for Vec<T> {
     }
 }
 impl<T> Reserve for Vec<T> {
-    fn reserve(&mut self, n: usize) {
-        self.reserve(n);
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.reserve(n.max(storage_n));
     }
 }
 

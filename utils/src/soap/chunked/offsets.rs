@@ -258,8 +258,8 @@ impl<O: IntoOwned> IntoOwned for Offsets<O> {
 }
 
 impl<O: Reserve> Reserve for Offsets<O> {
-    fn reserve(&mut self, n: usize) {
-        self.0.reserve(n);
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.0.reserve_with_storage(n, storage_n);
     }
 }
 

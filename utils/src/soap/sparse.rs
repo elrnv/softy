@@ -685,9 +685,9 @@ where
 }
 
 impl<S: Reserve, T, I: Reserve> Reserve for Sparse<S, T, I> {
-    fn reserve(&mut self, n: usize) {
-        self.selection.reserve(n);
-        self.source.reserve(n);
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.selection.reserve_with_storage(n, storage_n);
+        self.source.reserve_with_storage(n, storage_n);
     }
 }
 

@@ -881,11 +881,15 @@ where
 ///
 /// Composite collections such a `Chunked` or `Select` may choose to only
 /// reserve primary level storage if the amount of total storage required cannot
-/// be specified by a single number. For this reason it is advised to check the
-/// individual implementations of `Reserve` to get a better idea of how calling
-/// `reserve` may actually affect performance.
+/// be specified by a single number in `reserve`. This is the default behaviour
+/// of the `reserve` function below. The `reserve_with_storage` method allows
+/// the caller to also specify the amount of storage needed for the container at
+/// the lowest level.
 pub trait Reserve {
-    fn reserve(&mut self, n: usize);
+    fn reserve(&mut self, n: usize) {
+        self.reserve_with_storage(n, 0); // By default we ignore storage.
+    }
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize);
 }
 
 /*

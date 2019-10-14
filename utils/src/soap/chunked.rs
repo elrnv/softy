@@ -1556,12 +1556,10 @@ impl<S: StorageInto<T>, O, T> StorageInto<T> for Chunked<S, O> {
 //    }
 //}
 
-impl<S, O: Reserve> Reserve for Chunked<S, O> {
-    fn reserve(&mut self, n: usize) {
+impl<S: Reserve, O: Reserve> Reserve for Chunked<S, O> {
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
         self.chunks.reserve(n);
-        // We don't know how much memory to reserve for the data, so we leave it
-        // to the caller for making the appropriate call to reserve through
-        // `data_mut()`.
+        self.data.reserve_with_storage(n, storage_n);
     }
 }
 

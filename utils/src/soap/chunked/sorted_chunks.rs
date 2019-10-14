@@ -206,7 +206,7 @@ impl<O: IntoOwned> IntoOwned for SortedChunks<O> {
 }
 
 impl<O: Reserve> Reserve for SortedChunks<O> {
-    fn reserve(&mut self, n: usize) {
-        self.offsets.reserve(n);
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.offsets.reserve_with_storage(n, storage_n);
     }
 }

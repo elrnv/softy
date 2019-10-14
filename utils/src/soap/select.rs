@@ -724,8 +724,8 @@ where
 }
 
 impl<S, I: Reserve> Reserve for Select<S, I> {
-    fn reserve(&mut self, n: usize) {
-        self.indices.reserve(n);
+    fn reserve_with_storage(&mut self, n: usize, storage_n: usize) {
+        self.indices.reserve_with_storage(n, storage_n);
         // Target is not necessarily modified when adding elements to a
         // selection.
     }

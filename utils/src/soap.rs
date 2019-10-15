@@ -144,7 +144,7 @@ impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
  */
 
 pub trait Array<T> {
-    type Array;
+    type Array: Set<Elem = T>;
     fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T>;
     fn iter(array: &Self::Array) -> std::slice::Iter<T>;
     fn as_slice(array: &Self::Array) -> &[T];
@@ -158,7 +158,6 @@ pub trait Array<T> {
 /// Special types which use optimized implementations will not implement this marker. This is a
 /// workaround for specialization.
 pub trait LocalGeneric {}
-
 impl<S, I> LocalGeneric for Subset<S, I> {}
 impl<S, N> LocalGeneric for UniChunked<S, N> {}
 impl<S, O> LocalGeneric for Chunked<S, O> {}
@@ -178,6 +177,19 @@ impl<S: Viewed, I: Viewed> Viewed for Select<S, I> {}
 impl<S: Viewed, I: Viewed> Viewed for Subset<S, I> {}
 impl<S: Viewed, I: Viewed> Viewed for Chunked<S, I> {}
 impl<S: Viewed, N> Viewed for UniChunked<S, N> {}
+
+/// A marker trait identifying types that have dynamically determined sizes. These are basically all non-array types.
+pub trait DynamicCollection {}
+impl<S, I> DynamicCollection for Select<S, I> {}
+impl<S, I> DynamicCollection for Subset<S, I> {}
+impl<S, N> DynamicCollection for UniChunked<S, N> {}
+impl<S, O> DynamicCollection for Chunked<S, O> {}
+impl<S, T, I> DynamicCollection for Sparse<S, T, I> {}
+impl<T> DynamicCollection for std::ops::Range<T> {}
+impl<T> DynamicCollection for Vec<T> {}
+impl<T> DynamicCollection for [T] {}
+impl<'a, T> DynamicCollection for &'a [T] {}
+impl<'a, T> DynamicCollection for &'a mut [T] {}
 
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
 //pub trait Chunkable<'a>:
@@ -861,7 +873,8 @@ where
     type Item;
     type IterType: Iterator<Item = Self::Item>;
 
-    /// This function panics if this collection length is not a multiple of `N`.
+    /// This function should panic if this collection length is not a multiple
+    /// of `N`.
     fn into_static_chunk_iter(self) -> Self::IterType;
 
     /// Simply call this method for all types that implement `SplitPrefix<N>`.

@@ -163,6 +163,14 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
+        impl<T, S> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
+            where Self: Push<[T; $n]>
+        {
+            fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
+                self.push(tensor.into_inner());
+            }
+        }
+
         // TODO: Figure out how to compile the below code.
         //        impl<T, N> ReinterpretAsGrouped<N> for [T; $n]
         //        where

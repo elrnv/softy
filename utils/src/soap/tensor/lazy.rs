@@ -315,7 +315,7 @@ pub trait IntoExpr {
     fn into_expr(self) -> Self::Expr;
 }
 
-impl<S, N> IntoExpr for UniChunked<S, N> {
+impl<S: DynamicCollection, N> IntoExpr for UniChunked<S, N> {
     type Expr = UniChunkedIterExpr<S, N>;
     fn into_expr(self) -> Self::Expr {
         UniChunkedIterExpr {
@@ -907,7 +907,6 @@ macro_rules! impl_array_tensor_traits {
                 }
             }
         }
-
         impl<T: Scalar> IntoExpr for [T; $n] {
             type Expr = Tensor<[T; $n]>;
             fn into_expr(self) -> Self::Expr {
@@ -918,6 +917,15 @@ macro_rules! impl_array_tensor_traits {
             type Expr = Tensor<[T; $n]>;
             fn into_expr(self) -> Self::Expr {
                 Tensor::new(*self)
+            }
+        }
+        impl<'a, T, N> IntoExpr for UniChunked<&'a [T; $n], N> {
+            type Expr = UniChunkedIterExpr<&'a [T], N>;
+            fn into_expr(self) -> Self::Expr {
+                UniChunkedIterExpr {
+                    data: self.data.view(),
+                    chunk_size: self.chunk_size,
+                }
             }
         }
         impl_array_tensor_traits!($($ns)*);
@@ -973,34 +981,8 @@ where
 {
     fn sum<I: Iterator<Item = Dot<L, R>>>(iter: I) -> Tensor<T> {
         iter.map(|x| Evaluate::eval(x)).sum()
-        //iter.fold(Tensor { data: T::zero() }, |acc, x| {
-        //    let res = Evaluate::eval(x);
-        //    acc + res
-        //})
     }
 }
-
-//impl<T: Scalar, A, B> Evaluate<Dot<A, B>> for Tensor<T>
-//where
-//    Dot<A, B>: Iterator,
-//    Tensor<T>: std::iter::Sum<<Dot<A, B> as Iterator>::Item>,
-//{
-//    fn eval(iter: Dot<A, B>) -> Self {
-//        std::iter::Sum::sum(iter)
-//    }
-//}
-
-//impl<T: Scalar, A, B> Evaluate<Dot<A, B>> for T
-//where
-//    Dot<A, B>: Iterator,
-//    //Tensor<T>: std::iter::Sum<<Dot<A, B> as Iterator>::Item>,
-//{
-//    fn eval(iter: Dot<A, B>) -> Self {
-//
-//        //let tensor: Tensor<T> = Evaluate::eval(iter);
-//        //tensor.into_inner()
-//    }
-//}
 
 #[cfg(test)]
 mod tests {
@@ -1116,7 +1098,61 @@ mod tests {
                 vec![1, 2, 2],
                 Sparse::from_dim(vec![0, 3, 4, 3, 5], 6, vec![1, 4, 5, 8, 3])
             ),
-            Evaluate::eval(a.expr() + b.expr())
+            (a.expr() + b.expr()).eval()
+        );
+    }
+
+    #[test]
+    fn sparse_chunked_add() {
+        let a = Sparse::from_dim(
+            vec![0, 3, 5],
+            6,
+            Chunked::from_sizes(vec![0, 2, 1], vec![1, 2, 3]),
+        );
+        let b = Sparse::from_dim(
+            vec![0, 2, 5],
+            6,
+            Chunked::from_sizes(vec![0, 3, 1], vec![1, 2, 3, 4]),
+        );
+        //assert_eq!(
+        //    Sparse::from_dim(
+        //        vec![0, 2, 3, 5],
+        //        6,
+        //        Chunked::from_sizes(vec![0, 3, 2, 1], vec![1, 2, 3, 1, 2, 7]),
+        //    ),
+        //    Evaluate::eval(a.expr() + b.expr())
+        //);
+    }
+
+    #[test]
+    fn sparse_unichunked_add() {
+        let a = Sparse::from_dim(
+            vec![0, 3, 5],
+            6,
+            Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6]),
+        );
+        let b = Sparse::from_dim(
+            vec![3, 4, 3],
+            6,
+            Chunked2::from_flat(vec![7, 8, 9, 10, 11, 12]),
+        );
+        assert_eq!(
+            Sparse::from_dim(
+                vec![0, 3, 4, 3, 5],
+                6,
+                Chunked2::from_flat(vec![1, 2, 10, 12, 9, 10, 11, 12, 5, 6])
+            ),
+            (a.expr() + b.expr()).eval()
+        );
+    }
+
+    #[test]
+    fn nested_unichunked_add() {
+        let a = Chunked2::from_flat(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]));
+        let b = Chunked2::from_flat(Chunked2::from_flat(vec![8, 7, 6, 5, 4, 3, 2, 1]));
+        assert_eq!(
+            Chunked2::from_flat(Chunked2::from_flat(vec![9, 9, 9, 9, 9, 9, 9, 9])),
+            (a.expr() + b.expr()).eval()
         );
     }
 

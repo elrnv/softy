@@ -5,7 +5,7 @@ use utils::soap::*;
 fn vec() {
     let v: Vec<usize> = (1..=15).collect();
     for (a, b) in v.atom_iter().zip(v.iter()) {
-        assert_eq!(a,b);
+        assert_eq!(a, b);
     }
 }
 

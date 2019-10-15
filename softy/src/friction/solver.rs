@@ -11,12 +11,12 @@ use utils::zip;
 use crate::Error;
 
 // Convenience function for computing scales.
-fn variable_scales<'a>(contact_impulse: &'a [f64], mu: f64) -> impl Iterator<Item = f64> + Clone + 'a {
-    contact_impulse
-        .iter()
-        .map(move |&cr| 1.0 / (mu * cr.abs()))
+fn variable_scales<'a>(
+    contact_impulse: &'a [f64],
+    mu: f64,
+) -> impl Iterator<Item = f64> + Clone + 'a {
+    contact_impulse.iter().map(move |&cr| 1.0 / (mu * cr.abs()))
 }
-
 
 /// Friction solver.
 pub struct FrictionSolver<'a> {
@@ -39,7 +39,7 @@ impl<'a> FrictionSolver<'a> {
             .diagonal_congruence_transform(basis_mtx.view());
         //let hessian = (basis_mtx.view().transpose() * basis_mtx.view()).into();
 
-        let max_contact_impulse = contact_impulse
+        let min_contact_impulse = contact_impulse
             .iter()
             .map(|&x| x.abs())
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
@@ -67,14 +67,14 @@ impl<'a> FrictionSolver<'a> {
             mu,
             mass_inv_mtx,
             hessian,
-            objective_scale: max_contact_impulse * max_contact_impulse,
+            objective_scale: min_contact_impulse * min_contact_impulse,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", 1e-1);
+        ipopt.set_option("nlp_scaling_max_gradient", 1.0);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
@@ -99,10 +99,14 @@ impl<'a> FrictionSolver<'a> {
             ..
         } = self.solver.solve();
 
-        let (cr, mu) = (solver_data.problem.0.contact_impulse, solver_data.problem.0.mu);
+        let (cr, mu) = (
+            solver_data.problem.0.contact_impulse,
+            solver_data.problem.0.mu,
+        );
         let solution: Vec<[f64; 2]> = variable_scales(cr, mu)
             .zip(Chunked2::from_flat(solver_data.solution.primal_variables).iter())
-            .map(|(s, &r)| (Tensor::new(r) / s).into_inner()).collect();
+            .map(|(s, &r)| (Tensor::new(r) / s).into_inner())
+            .collect();
 
         let result = FrictionSolveResult {
             objective_value,
@@ -154,19 +158,16 @@ impl<'a> FrictionProblem<'a> {
     }
 
     pub fn initial_point(&self, r: &mut [Number]) -> bool {
-        for (i, (r, &p, &cr)) in zip!(
+        for (i, (r, &p)) in zip!(
             Chunked2::from_flat(r).iter_mut(),
             self.predictor_impulse.iter(),
-            self.contact_impulse.iter()
         )
         .enumerate()
         {
             let p_norm = Tensor::new(p).norm();
             if p_norm > 0.0 {
                 let pred = self.contact_basis.to_contact_coordinates(p, i);
-                *r =
-                    //(Tensor::new([pred[1], pred[2]]) * (-self.mu * cr.abs() / p_norm)).into_inner();
-                    (Tensor::new([pred[1], pred[2]]) * (-1.0 / p_norm)).into_inner();
+                *r = (Tensor::new([pred[1], pred[2]]) * (1.0 / p_norm)).into_inner();
             } else {
                 *r = [0.0; 2];
             }
@@ -349,15 +350,15 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
         // Convert to physical space.
-        let diff = contact_basis.from_tangent_space(diff_t.view().into());
-        let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
+        let mut diff =
+            Chunked3::from_array_vec(contact_basis.from_tangent_space(diff_t.view().into()));
 
-        diff += Tensor::new(predictor_impulse.view());
+        *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
 
-        let rhs = mass_inv_mtx.view() * diff.view();
+        let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
         //let rhs = diff.view();
 
-        *obj = 0.5 * diff.expr().dot(rhs.expr()).eval::<f64>() * self.0.objective_scale;
+        *obj = 0.5 * diff.expr().dot(rhs.expr()) * self.0.objective_scale;
 
         true
     }
@@ -382,7 +383,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let diff = contact_basis.from_tangent_space(diff_t.view().into());
         let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
 
-        diff += Tensor::new(predictor_impulse.view());
+        diff -= Tensor::new(predictor_impulse.view());
 
         let grad = mass_inv_mtx.view() * diff.view();
         //let grad = diff.view();
@@ -400,15 +401,14 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
     }
     fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
         let mut r_scaling = Chunked2::from_flat(r_scaling);
-        for (out, s) in r_scaling.iter_mut().zip(variable_scales(self.0.contact_impulse, self.0.mu)) {
+        for (out, s) in r_scaling
+            .iter_mut()
+            .zip(variable_scales(self.0.contact_impulse, self.0.mu))
+        {
             out[0] = s;
             out[1] = s;
         }
         false
-    }
-
-    fn objective_scaling(&self) -> f64 {
-        1.0 //self.0.objective_scale
     }
 }
 
@@ -431,13 +431,6 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         true
     }
 
-    //fn constraint_scaling(&self, g_scaling: &mut [Number]) -> bool {
-    //    for gs in g_scaling.iter_mut() {
-    //        *gs = self.0.scale;
-    //    }
-    //    true
-    //}
-
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
         for /*(*/(l, u)/*, &cr)*/ in g_l
             .iter_mut()
@@ -446,9 +439,6 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = 1.0;
-            //*u = self.0.mu * cr.abs();
-            //*u *= *u; // square
-                      //dbg!(*u);
         }
         true
     }
@@ -527,7 +517,8 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
                     .next()
                     .unwrap()
                     .into_arrays()
-                    .as_mut_tensor() = *block.into_arrays().as_tensor() * obj_factor * self.0.objective_scale;
+                    .as_mut_tensor() =
+                    *block.into_arrays().as_tensor() * obj_factor * self.0.objective_scale;
             }
         }
 
@@ -553,8 +544,6 @@ mod tests {
         let (velocity, impulse) = sliding_point_tester(0.000001, mass)?;
 
         // Check that the point still has velocity in the positive x direction
-        dbg!(&velocity);
-        dbg!(&impulse);
         assert!(velocity[1] > 0.8);
 
         // Sanity check that no perpendicular velocities or impulses were produced in the process
@@ -569,8 +558,6 @@ mod tests {
         let (velocity, impulse) = sliding_point_tester(1.5, mass)?;
 
         // Check that the point gets stuck
-        dbg!(&impulse);
-        dbg!(&velocity);
         assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-6, epsilon = 1e-5);
 
         // Sanity check that no perpendicular velocities or impulses were produced in the process
@@ -583,12 +570,12 @@ mod tests {
         let params = FrictionParams {
             dynamic_friction: mu,
             inner_iterations: 30,
-            tolerance: 1e-7,
+            tolerance: 1e-15,
             print_level: 5,
         };
 
         let prev_friction_impulse_t = vec![[0.0, 0.0]];
-        let predictor_impulse = vec![[1.0 * mass, 0.0, 0.0]]; // one point sliding right.
+        let predictor_impulse = vec![[-1.0 * mass, 0.0, 0.0]]; // one point sliding right.
         let contact_impulse = vec![10.0 * mass];
         let mass_inv_mtx: DSBlockMatrix3 =
             DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
@@ -608,8 +595,15 @@ mod tests {
         let FrictionSolveResult { solution, .. } = result;
 
         let impulse = Vector2(solution[0]);
+        let new_vel = impulse / mass;
         let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
-        let final_velocity = (Vector2(p_imp_t[0]) + impulse) / mass;
+        let prev_vel = -Vector2(p_imp_t[0]) / mass;
+        // Add the previous velocity to the new impulse.
+        let final_velocity = prev_vel + new_vel;
+
+        dbg!(&p_imp_t);
+        dbg!(&impulse);
+        dbg!(&final_velocity);
 
         Ok((final_velocity, impulse))
     }
@@ -636,13 +630,13 @@ mod tests {
         let predictor_impulse = vec![
             [
                 0.0,
-                0.07225747944670913 * masses[0],
-                0.0000001280108566301736 * masses[0],
+                -0.07225747944670913 * masses[0],
+                -0.0000001280108566301736 * masses[0],
             ],
             [
                 0.0,
-                0.06185827187696774 * masses[1],
-                -0.0060040275393186595 * masses[1],
+                -0.06185827187696774 * masses[1],
+                0.0060040275393186595 * masses[1],
             ],
         ]; // tet vertex velocities
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];
@@ -667,7 +661,7 @@ mod tests {
 
         let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
         let final_velocity: Vec<_> = zip!(p_imp_t.iter(), solution.iter(), masses.iter())
-            .map(|(&pr, &r, &m)| (Vector2(pr) + Vector2(r)) / m)
+            .map(|(&pr, &r, &m)| (-Vector2(pr) + Vector2(r)) / m)
             .collect();
 
         dbg!(&solution);

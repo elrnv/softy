@@ -388,21 +388,24 @@ impl PointContactConstraint {
     ) -> Chunked3<Vec<f64>> {
         let collider_velocity = Subset::from_unique_ordered_indices(active_contact_indices, v[1]);
 
-        let mut velocity = jac.view() * Tensor::new(v[0]);
-        let mut rhs = velocity.view_mut();
-        rhs -= Tensor::new(collider_velocity.view());
+        let mut object_velocity = jac.view() * Tensor::new(v[0]);
+        let mut relative_velocity = object_velocity.view_mut();
+        relative_velocity -= Tensor::new(collider_velocity.view());
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         //        let ldlt_solver =
         //            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
         //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
-        let mut rhs = rhs.storage().to_vec();
+        // Prepare velocity vector for llt solve by stripping velocity grouping info.
+        let mut rhs = relative_velocity.storage().to_vec();
 
         if !rhs.is_empty() {
             sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
                 .unwrap();
         }
+
+        // The solve turns our relative velocity into a relative impulse.
         Chunked3::from_flat(rhs)
     }
 }
@@ -530,11 +533,6 @@ impl ContactConstraint for PointContactConstraint {
             active_contact_indices.iter().cloned(),
         ));
 
-        // Negate the previous friction impulse to be consistent with following
-        // computation of collider_friction_impulse which corresponds to the
-        // impulse on the object, instead of by the object.
-        //prev_friction_impulse.as_mut_tensor().negate();
-
         let prev_friction_impulse: Vec<[f64; 3]> = prev_friction_impulse.into();
 
         // Initialize the new friction impulse in physical space at active contacts.
@@ -553,6 +551,7 @@ impl ContactConstraint for PointContactConstraint {
             return 0;
         }
 
+        // Subtract contact_impulse (normal contribution) from the predictor impulse.
         let contact_impulse_vectors = contact_basis.from_normal_space(&contact_impulse);
         *predictor_impulse.as_mut_tensor() -=
             Tensor::new(Chunked3::from_array_vec(contact_impulse_vectors));
@@ -633,7 +632,7 @@ impl ContactConstraint for PointContactConstraint {
             let prev_friction_impulse_t = contact_basis.to_tangent_space(&prev_friction_impulse);
 
             //TODO: undo tmp change
-            let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
+            //let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
 
             // Euclidean coords
             if true {
@@ -715,7 +714,7 @@ impl ContactConstraint for PointContactConstraint {
                     let pred_r_t = Vector2(pred_r_t);
                     let pred_r_norm = pred_r_t.norm();
                     let r_t = if pred_r_norm > 0.0 {
-                        pred_r_t * (-params.dynamic_friction * cr.abs() / pred_r_norm)
+                        pred_r_t * (params.dynamic_friction * cr.abs() / pred_r_norm)
                     } else {
                         Vector2::zeros()
                     };
@@ -737,17 +736,18 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
-        *object_friction_impulse = (jac.view().transpose()
-            * Tensor::new(collider_friction_impulse.source().view().into()))
-        .data;
+        let mut object_friction_impulse_tensor = (jac.view().transpose()
+            * Tensor::new(collider_friction_impulse.source().view().into()));
+        object_friction_impulse_tensor.negate();
+        *object_friction_impulse = object_friction_impulse_tensor.data;
 
-        // The last thing to do is to ensure that collider friction impulses are
-        // the impulses ON the collider and not BY the collider.
-        collider_friction_impulse
-            .view_mut()
-            .into_flat()
-            .iter_mut()
-            .for_each(|imp| *imp = -*imp);
+//        // The last thing to do is to ensure that collider friction impulses are
+//        // the impulses ON the collider and not BY the collider.
+//        collider_friction_impulse
+//            .view_mut()
+//            .into_flat()
+//            .iter_mut()
+//            .for_each(|imp| *imp = -*imp);
 
         if friction_steps > 0 {
             friction_steps - 1

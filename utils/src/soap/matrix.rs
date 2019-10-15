@@ -669,6 +669,9 @@ pub type DSBlockMatrix2View<'a> = DSBlockMatrix2<&'a [f64], &'a [usize]>;
 pub type DSBlockMatrix3<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U3, U3, S, I>;
 pub type DSBlockMatrix3View<'a> = DSBlockMatrix3<&'a [f64], &'a [usize]>;
 
+pub type DSBlockMatrix1x3<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix<U1, U3, S, I>;
+pub type DSBlockMatrix1x3View<'a> = DSBlockMatrix1x3<&'a [f64], &'a [usize]>;
+
 impl<S: Set, I: Set, N: Dimension, M: Dimension> BlockMatrix for DSBlockMatrix<N, M, S, I>
 where
     UniChunked<UniChunked<S, M>, N>: Set,
@@ -722,6 +725,66 @@ where
 {
     fn num_non_zero_blocks(&self) -> usize {
         self.data.data().source().len()
+    }
+}
+
+impl<S, I> DSBlockMatrix3<S, I>
+where
+    Self: for<'a> View<'a, Type = DSBlockMatrix3View<'a>>,
+{
+    /// Compress the matrix representation by consolidating duplicate entries.
+    pub fn compressed(&self) -> DSBlockMatrix3 {
+        Tensor::new(
+            self.view().data.compressed(|a, b| {
+                *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
+            }),
+        )
+    }
+}
+
+impl<S, I> DSBlockMatrix3<S, I>
+where
+    Self: for<'a> View<'a, Type = DSBlockMatrix3View<'a>>,
+{
+    /// Remove all elements that do not satisfy the given predicate and compress the resulting matrix.
+    pub fn pruned(
+        &self,
+        keep: impl Fn(usize, usize, &Tensor<[[f64; 3]; 3]>) -> bool,
+    ) -> DSBlockMatrix3 {
+        Tensor::new(self.view().data.pruned(
+            |a, b| *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor(),
+            |i, j, e| keep(i, j, e.as_arrays().as_tensor()),
+        ))
+    }
+}
+
+impl<S, I> DSBlockMatrix1x3<S, I>
+where
+    Self: for<'a> View<'a, Type = DSBlockMatrix1x3View<'a>>,
+{
+    /// Compress the matrix representation by consolidating duplicate entries.
+    pub fn compressed(&self) -> DSBlockMatrix1x3 {
+        Tensor::new(
+            self.view().data.compressed(|a, b| {
+                *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
+            }),
+        )
+    }
+}
+
+impl<S, I> DSBlockMatrix1x3<S, I>
+where
+    Self: for<'a> View<'a, Type = DSBlockMatrix1x3View<'a>>,
+{
+    /// Remove all elements that do not satisfy the given predicate and compress the resulting matrix.
+    pub fn pruned(
+        &self,
+        keep: impl Fn(usize, usize, &Tensor<[[f64; 3]; 1]>) -> bool,
+    ) -> DSBlockMatrix1x3 {
+        Tensor::new(self.view().data.pruned(
+            |a, b| *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor(),
+            |i, j, e| keep(i, j, e.as_arrays().as_tensor()),
+        ))
     }
 }
 

@@ -247,59 +247,6 @@ macro_rules! impl_array_tensors {
     ($n:expr) => {
         impl<T> LocalGeneric for &Tensor<[T; $n]> {}
 
-        impl<T: AddAssign + Copy> Add for Tensor<[T; $n]> {
-            type Output = Self;
-
-            /// Add two tensor arrays together.
-            fn add(mut self, rhs: Self) -> Self::Output {
-                self += rhs;
-                self
-            }
-        }
-
-        impl<T: AddAssign + Copy> AddAssign for Tensor<[T; $n]> {
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: Self) {
-                for i in 0..$n {
-                    self.data[i] += rhs.data[i];
-                }
-            }
-        }
-        impl<T: AddAssign + Copy> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: &Tensor<[T; $n]>) {
-                for i in 0..$n {
-                    self.data[i] += rhs.data[i];
-                }
-            }
-        }
-        impl<T: SubAssign + Copy> Sub for Tensor<[T; $n]> {
-            type Output = Self;
-
-            fn sub(mut self, rhs: Self) -> Self::Output {
-                self -= rhs;
-                self
-            }
-        }
-
-        impl<T: SubAssign + Copy> SubAssign for Tensor<[T; $n]> {
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: Self) {
-                for i in 0..$n {
-                    self.data[i] -= rhs.data[i];
-                }
-            }
-        }
-
-        impl<T: SubAssign + Copy> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: &Tensor<[T; $n]>) {
-                for i in 0..$n {
-                    self.data[i] -= rhs.data[i];
-                }
-            }
-        }
-
         impl<T: Copy> Neg for Tensor<[T; $n]>
         where
             Tensor<T>: Neg<Output = Tensor<T>>,

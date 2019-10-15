@@ -27,7 +27,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```
     /// use utils::soap::*;
     /// let v = vec![1,2,3,4,5,6];
     /// let sparse = Sparse::from_dim(vec![0,2,0,2,0,3], 4, v.as_slice());
@@ -70,6 +70,62 @@ where
     }
 }
 
+impl<S, T, I> Sparse<S, T, I> {
+    /// Extend the current sparse collection with a pruned and compressed version of the given
+    /// sparse collection, `other`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use utils::soap::*;
+    /// let v = vec![1,2,3,4,5,6];
+    /// let sparse = Sparse::from_dim(vec![0,2,2,2,0,3], 4, v.as_slice());
+    /// let mut compressed = Sparse::from_dim(Vec::new(), 4, Vec::new());
+    /// compressed.extend_pruned(sparse, |a, b| *a += *b, |_, _| true);
+    /// let mut iter = compressed.iter(); // Returns (position, source, target) pairs
+    /// assert_eq!(Some((0, &1, 0)), iter.next());
+    /// assert_eq!(Some((2, &9, 2)), iter.next());
+    /// assert_eq!(Some((0, &5, 0)), iter.next());
+    /// assert_eq!(Some((3, &6, 3)), iter.next());
+    /// assert_eq!(None, iter.next());
+    /// ```
+    pub fn extend_pruned<S2, T2, I2, B>(
+        &mut self,
+        other: Sparse<S2, T2, I2>,
+        mut combine: impl FnMut(&mut B::Owned, B),
+        mut keep: impl FnMut(usize, &B::Owned) -> bool,
+    ) where
+        S2: IntoIterator<Item = B>,
+        I2: AsRef<[usize]>,
+        B: IntoOwned,
+        Self: Push<(usize, B::Owned)>,
+    {
+        let mut it = other
+            .selection
+            .index_iter()
+            .cloned()
+            .zip(other.source.into_iter());
+        if let Some((mut prev_idx, prev)) = it.next() {
+            let mut elem = prev.into_owned();
+
+            while let Some((idx, cur)) = it.next() {
+                if prev_idx != idx {
+                    if keep(prev_idx, &elem) {
+                        self.push((prev_idx, elem));
+                    }
+                    elem = cur.into_owned();
+                    prev_idx = idx;
+                } else {
+                    combine(&mut elem, cur);
+                }
+            }
+            if keep(prev_idx, &elem) {
+                self.push((prev_idx, elem)); // Push the last element
+            }
+        }
+    }
+}
+
 /*
 impl<S, T, I> Sparse<S, T, I>
 where
@@ -92,7 +148,7 @@ where
 }
 */
 
-impl<'a, S, T> Extend<(usize, <S as Set>::Elem)> for Sparse<S, T>
+impl<S, T> Extend<(usize, <S as Set>::Elem)> for Sparse<S, T>
 where
     S: Set + Extend<<S as Set>::Elem>,
 {
@@ -105,6 +161,17 @@ where
             indices.push(idx);
             elem
         }));
+    }
+}
+
+impl<S, T, I, A> Push<(usize, A)> for Sparse<S, T, I>
+where
+    S: Set<Elem = A> + Push<A>,
+    I: Push<usize>,
+{
+    fn push(&mut self, (index, elem): (usize, A)) {
+        self.source.push(elem);
+        self.selection.indices.push(index);
     }
 }
 
@@ -697,4 +764,30 @@ impl<S: Reserve, T, I: Reserve> Reserve for Sparse<S, T, I> {
 
 impl<S, T, I, M> UniChunkable<M> for Sparse<S, T, I> {
     type Chunk = Sparse<S, T, I>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extend_pruned() {
+        // Empty test
+        let empty = Sparse::from_dim(Vec::new(), 4, Vec::new());
+        let mut compressed = empty.clone();
+        compressed.extend_pruned(empty.view(), |a, b| *a += *b, |_, _| true);
+        assert!(compressed.is_empty());
+
+        // The basic tests from the example
+        let v = vec![1, 2, 3, 4, 5, 6];
+        let sparse = Sparse::from_dim(vec![0, 2, 2, 2, 0, 3], 4, v.as_slice());
+        let mut compressed = empty.clone();
+        compressed.extend_pruned(sparse.view(), |a, b| *a += *b, |_, _| true);
+        let mut iter = compressed.iter(); // Returns (position, source, target) pairs
+        assert_eq!(Some((0, &1, 0)), iter.next());
+        assert_eq!(Some((2, &9, 2)), iter.next());
+        assert_eq!(Some((0, &5, 0)), iter.next());
+        assert_eq!(Some((3, &6, 3)), iter.next());
+        assert_eq!(None, iter.next());
+    }
 }

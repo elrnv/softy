@@ -98,7 +98,7 @@ impl<S, N: Copy> UniChunked<S, N> {
     }
 }
 
-impl<'a, S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem>> UniChunked<S, U<N>> {
+impl<S: Set, N: Array<<S as Set>::Elem>> UniChunked<S, U<N>> {
     /// Convert this `UniChunked` collection into arrays.
     ///
     /// # Example
@@ -120,8 +120,23 @@ impl<'a, S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem>> UniChunke
     /// let v_result = Chunked3::from_array_slice_mut(v.as_mut_slice()).into_arrays();
     /// assert_eq!(v_exp.as_mut_slice(), v_result);
     /// ```
-    pub fn into_arrays(self) -> S::Output {
+    pub fn into_arrays(self) -> S::Output
+    where
+        S: ReinterpretAsGrouped<N>,
+    {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
+    }
+    pub fn as_mut_arrays<'a>(&'a mut self) -> <&'a mut S as ReinterpretAsGrouped<N>>::Output
+    where
+        &'a mut S: ReinterpretAsGrouped<N>,
+    {
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data_mut())
+    }
+    pub fn as_arrays<'a>(&'a self) -> <&'a S as ReinterpretAsGrouped<N>>::Output
+    where
+        &'a S: ReinterpretAsGrouped<N>,
+    {
+        ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data())
     }
 }
 
@@ -746,25 +761,6 @@ impl<T: Clone, N: Array<T>> PushArrayToVec<N> for T {
         set.extend_from_slice(N::as_slice(&element));
     }
 }
-
-//impl<T, N> AsRef<[T]> for UniChunked<&[T], N> {
-//    fn borrow(&self) -> &[T] {
-//        self.data
-//    }
-//}
-//
-//impl<T, N> AsRef<[T]> for UniChunked<&mut [T], N> {
-//    fn borrow(&self) -> &[T] {
-//        self.data
-//    }
-//}
-//
-//impl<T, N> AsMut<[T]> for UniChunked<&mut [T], N> {
-//    fn borrow_mut(&mut self) -> &mut [T] {
-//        self.data
-//    }
-//}
-//
 
 impl<S: Set + ReinterpretAsGrouped<N>, N: Array<<S as Set>::Elem> + Unsigned> AsRef<[N::Array]>
     for UniChunked<S, U<N>>

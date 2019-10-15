@@ -30,7 +30,7 @@ pub struct FrictionalContact {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
     pub object_impulse: Chunked3<Vec<f64>>,
-    pub collider_impulse: Sparse<Chunked3<Vec<f64>>, std::ops::Range<usize>>,
+    pub collider_impulse: Sparse<Chunked3<Vec<f64>>, std::ops::RangeTo<usize>>,
 }
 
 impl FrictionalContact {

@@ -160,12 +160,12 @@ fn get_solid_material(
             }
             Ok(softy::SolidMaterial::new(material_id as usize)
                 .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
-                    bulk_modulus as f64,
-                    shear_modulus as f64,
+                    bulk_modulus,
+                    shear_modulus,
                 ))
                 .with_volume_preservation(volume_constraint)
-                .with_density(density as f64)
-                .with_damping(damping as f64, time_step as f64))
+                .with_density(density)
+                .with_damping(damping, time_step))
         }
         None => Ok(softy::SolidMaterial::new(material_id as usize)),
     }
@@ -203,27 +203,27 @@ fn get_shell_material(
             }
             Ok(softy::ShellMaterial::new(material_id as usize)
                 .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
-                    bulk_modulus as f64,
-                    shear_modulus as f64,
+                    bulk_modulus,
+                    shear_modulus,
                 ))
-                .with_density(density as f64)
-                .with_damping(damping as f64, time_step as f64))
+                .with_density(density)
+                .with_damping(damping, time_step))
         }
         None => Ok(softy::ShellMaterial::new(material_id as usize)),
     }
 }
 
-fn get_frictional_contacts(
-    params: &EL_SoftySimParams,
-) -> Vec<(softy::FrictionalContactParams, (usize, usize))> {
+fn get_frictional_contacts<'a>(
+    params: &'a EL_SoftySimParams,
+) -> Vec<(softy::FrictionalContactParams, (usize, &'a [u32]))> {
     params
         .frictional_contacts
         .as_slice()
         .iter()
-        .map(|&frictional_contact| {
+        .map(|frictional_contact| {
             let EL_SoftyFrictionalContactParams {
                 object_material_id,
-                collider_material_id,
+                ref collider_material_ids,
                 kernel,
                 contact_type,
                 radius_multiplier,
@@ -231,7 +231,7 @@ fn get_frictional_contacts(
                 dynamic_cof,
                 friction_tolerance,
                 friction_inner_iterations,
-            } = frictional_contact;
+            } = *frictional_contact;
             let radius_multiplier = f64::from(radius_multiplier);
             let tolerance = f64::from(smoothness_tolerance);
             (
@@ -258,7 +258,7 @@ fn get_frictional_contacts(
                         print_level: 5,
                     }),
                 },
-                (object_material_id as usize, collider_material_id as usize),
+                (object_material_id as usize, collider_material_ids.as_slice()),
             )
         })
         .collect()
@@ -332,7 +332,9 @@ pub(crate) fn register_new_solver(
     }
 
     for (frictional_contact, indices) in get_frictional_contacts(&params) {
-        solver_builder.add_frictional_contact(frictional_contact, indices);
+        for &collider_index in indices.1.iter() {
+            solver_builder.add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));
+        }
     }
 
     let solver = solver_builder.build()?;

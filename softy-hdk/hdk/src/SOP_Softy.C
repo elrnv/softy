@@ -23,6 +23,7 @@
 #include <vector>
 #include <array>
 #include <cassert>
+#include <string>
 #include <sstream>
 
 const UT_StringHolder SOP_Softy::theSOPTypeName("hdk_softy"_sh);
@@ -207,20 +208,17 @@ static const char *theDsFile = R"THEDSFILE(
 
             parm {
                 name "objectmaterialid#"
-                cppname "ObjectMaterialId"
-                label "Object Material Id"
+                label "Implicit Material Id"
                 type integer
-                default { "1" }
+                default { "0" }
                 range { 0! 1 }
             }
 
             parm {
-                name "collidermaterialid#"
-                cppname "ColliderMaterialId"
-                label "Collider Material Id"
-                type integer
-                default { "0" }
-                range { 0! 1 }
+                name "collidermaterialids#"
+                label "Point Material Ids"
+                type string
+                default { "" }
             }
 
             parm {
@@ -233,18 +231,6 @@ static const char *theDsFile = R"THEDSFILE(
                     "approximate" "Local approximately interpolating"
                     "cubic" "Local cubic"
                     "global" "Global inverse squared distance"
-                }
-            }
-
-            parm {
-                name "contacttype#"
-                cppname "ContactType"
-                label "Contact Type"
-                type ordinal
-                default { "0" }
-                menu {
-                    "implicit" "Implicit"
-                    "point" "Point"
                 }
             }
 
@@ -520,14 +506,38 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.volume_constraint = sopparms.getVolumeConstraint();
     sim_params.friction_iterations = sopparms.getFrictionIterations();
 
+    bool collider_material_id_parse_error = false;
+
     // Get frictional contact params.
     const auto &sop_frictional_contacts = sopparms.getFrictionalContacts();
     std::vector<EL_SoftyFrictionalContactParams> frictional_contact_vec;
+    std::vector<std::vector<uint32_t>> fc_collider_material_ids;
     for (const auto & sop_fc: sop_frictional_contacts) {
         EL_SoftyFrictionalContactParams fc_params;
         fc_params.object_material_id = sop_fc.objectmaterialid;
-        fc_params.collider_material_id = sop_fc.collidermaterialid;
         
+        // Parse a string of integers into an std::vector<uint32_t>
+        UT_String ut_collider_material_ids_str(sop_fc.collidermaterialids);
+
+        fc_collider_material_ids.push_back(std::vector<uint32_t>());
+        std::stringstream ss(ut_collider_material_ids_str.toStdString());
+        std::string token;
+        while (std::getline(ss, token, ' ')) {
+            if (!token.empty()) {
+                try {
+                    fc_collider_material_ids.back().push_back(std::stoul(token));
+                }
+                catch (...) {
+                    collider_material_id_parse_error = true;
+                }
+            }
+        }
+
+        fc_params.collider_material_ids = EL_SoftyColliderMaterialIds {
+            fc_collider_material_ids.back().data(),
+            fc_collider_material_ids.back().size(),
+        };
+
         switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel)) {
             case SOP_SoftyEnums::Kernel::INTERPOLATING:
                 fc_params.kernel = EL_SoftyKernel::Interpolating;
@@ -543,14 +553,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
                 break;
         }
 
-        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype)) {
-            case SOP_SoftyEnums::ContactType::IMPLICIT:
-                fc_params.contact_type = EL_SoftyContactType::Implicit;
-                break;
-            case SOP_SoftyEnums::ContactType::POINT:
-                fc_params.contact_type = EL_SoftyContactType::Point;
-                break;
-        }
+        fc_params.contact_type = EL_SoftyContactType::Point;
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         if (sop_fc.friction) {
@@ -658,6 +661,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
             cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message);
             std::cerr << res.cook_result.message << std::endl;
             break;
+    }
+    if (collider_material_id_parse_error) {
+        cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, "Failed to parse some of the frictional contact collider material ids");
     }
 
     GU_Detail *detail = cookparms.gdh().gdpNC();

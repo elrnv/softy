@@ -1,3 +1,41 @@
+/*!
+ * # `softy-hdk`
+ *
+ * ## Material Properties
+ *
+ * Materials can be defined in a two main ways: via global material settings defined in the
+ * `Material` tab of the `Softy SOP` or via variable material properties defined as primitive
+ * attributes on the input meshes themselves. In either case the solver expects the input meshes to
+ * have a corresponding material id starting with `1`. Material id `0` is reserved for a fixed
+ * static object like the ground plane.
+ *
+ * If an input mesh contains a variable material property attribute, then its corresponding
+ * property defined in the `Material` tab (if any) is ignored. This applies on a per material
+ * property basis, which means that if `mu` is variable, `lambda` can be taken from the `Material`
+ * tab.
+ *
+ * Currently there are 3 material properties required for simulation all expected to be in SI
+ * units:
+ *
+ *  - `lambda` --- the first Lame paramter, which is similar to the bulk modulus.
+ *  - `mu` --- the second Lame parameter, which is also called shear modulus.
+ *  - `density` --- the density of the material.
+ * 
+ * If both variable and global material properties are absent, an error is thrown.
+ * 
+ */
+
+// Future Plans:
+// ### Friction and Contact
+// 
+// Variable friction parameters identified by "cof\_#" float attributes where the # indicates the material
+// id of the contacting material. These will be vertex attributes because they are more widely
+// supported than tet face attributes (since there are surface only paramters).
+// If such an attribute exists, then obviously a contact constraint is introduced between the current
+// material and the referenced material.
+// 
+// If no friction attributes exist, then contact is frictionless.
+
 #[macro_use]
 extern crate lazy_static;
 
@@ -50,7 +88,7 @@ pub struct EL_SoftyMaterialProperties {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyFrictionalContactParams {
     pub object_material_id: u32,
-    pub collider_material_id: u32,
+    pub collider_material_ids: EL_SoftyColliderMaterialIds,
     pub kernel: EL_SoftyKernel,
     pub contact_type: EL_SoftyContactType,
     pub radius_multiplier: f32,
@@ -71,6 +109,13 @@ pub(crate) trait AsSlice {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct EL_SoftyColliderMaterialIds {
+    pub ptr: *const u32,
+    pub size: usize,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct EL_SoftyMaterials {
     pub ptr: *const EL_SoftyMaterialProperties,
@@ -82,6 +127,16 @@ pub struct EL_SoftyMaterials {
 pub struct EL_SoftyFrictionalContacts {
     pub ptr: *const EL_SoftyFrictionalContactParams,
     pub size: usize,
+}
+
+impl AsSlice for EL_SoftyColliderMaterialIds {
+    type T = u32;
+    fn ptr(&self) -> *const Self::T {
+        self.ptr
+    }
+    fn size(&self) -> usize {
+        self.size
+    }
 }
 
 impl AsSlice for EL_SoftyMaterials {

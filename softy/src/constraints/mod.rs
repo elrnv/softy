@@ -1,4 +1,4 @@
-pub mod implicit_contact;
+//pub mod implicit_contact;
 pub mod point_contact;
 //pub mod sp_implicit_contact;
 pub mod volume;
@@ -12,9 +12,8 @@ use crate::Index;
 use crate::TriMesh;
 use geo::math::Vector3;
 
-pub use self::implicit_contact::*;
+//pub use self::implicit_contact::*;
 pub use self::point_contact::*;
-//pub use self::sp_implicit_contact::*;
 pub use self::volume::*;
 use utils::aref::*;
 use utils::soap::*;
@@ -28,22 +27,8 @@ pub fn build_contact_constraint(
     params: FrictionalContactParams,
 ) -> Result<Box<dyn ContactConstraint>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::SPImplicit =>
-        //    Box::new(SPImplicitContactConstraint::new(
-        //    object,
-        //    collider,
-        //    params.kernel,
-        //    params.friction_params,
-        //    )?)
-        {
-            unimplemented!()
-        }
-        ContactType::Implicit => Box::new(ImplicitContactConstraint::new(
-            object.untag(),
-            collider.untag(),
-            params.kernel,
-            params.friction_params,
-        )?),
+        ContactType::SPImplicit => unimplemented!(),
+        ContactType::Implicit => unimplemented!(),
         ContactType::Point => Box::new(PointContactConstraint::new(
             object,
             collider,

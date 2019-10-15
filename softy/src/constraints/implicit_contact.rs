@@ -299,8 +299,10 @@ impl ContactConstraint for ImplicitContactConstraint {
             if true {
                 // Implicit Friction
 
+                // TODO: Either retire implicit contact or revive this code
+                /*
                 let mut solver =
-                    crate::friction::proj_solver::FrictionSolver::without_contact_jacobian(
+                    crate::friction::proj_solver::FrictionSolver::new(
                         &velocity_t,
                         &contact_impulse,
                         &frictional_contact.contact_basis,
@@ -316,6 +318,7 @@ impl ContactConstraint for ImplicitContactConstraint {
                         .contact_basis
                         .from_tangent_space(reinterpret_slice(r_t.as_slice())),
                 );
+                */
 
             //// This contact jacobian is a selection matrix or a mapping from contact vertices to
             //// simulation vertices, because contacts are colocated with a subset of  simulation

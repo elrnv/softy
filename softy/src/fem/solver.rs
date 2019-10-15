@@ -125,7 +125,7 @@ impl SolverBuilder {
     }
 
     /// Add a rigid polygon mesh representing an rigid solid.
-    pub fn add_rigid(&mut self, shell: PolyMesh, density: f64, id: usize) -> &mut Self {
+    pub fn add_rigid(&mut self, shell: PolyMesh, density: f32, id: usize) -> &mut Self {
         self.shells.push((shell, ShellMaterial::rigid(id, density)));
         self
     }
@@ -463,8 +463,8 @@ impl SolverBuilder {
 
     /// Helper function to compute the maximum elastic modulus of all given meshes.
     /// This aids in figuring out the correct scaling for the convergence tolerances.
-    fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f64, Error> {
-        let mut max_modulus = 0.0_f64;
+    fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
+        let mut max_modulus = 0.0_f32;
 
         for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
             max_modulus = max_modulus
@@ -594,9 +594,9 @@ impl SolverBuilder {
         // tet volume: Larger stiffnesses and volumes cause proportionally
         // larger gradients. Thus our tolerance should reflect these properties.
         let max_area = max_size * max_size;
-        let tol = f64::from(params.tolerance) * max_area * max_modulus;
+        let tol = f64::from(params.tolerance * max_modulus) * max_area;
         params.tolerance = tol as f32;
-        params.outer_tolerance *= (max_area * max_modulus) as f32;
+        params.outer_tolerance *= max_modulus * max_area as f32;
 
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
@@ -752,13 +752,14 @@ impl SolverBuilder {
         let tetmesh = &mut solid.tetmesh;
         let mut masses = vec![0.0; tetmesh.num_vertices()];
 
-        for (&vol, &density, cell) in zip!(
+        for (&vol, density, cell) in zip!(
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tetmesh.cell_iter()
         ) {
             for i in 0..4 {
@@ -783,7 +784,8 @@ impl SolverBuilder {
                 .unwrap(),
             trimesh
                 .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             trimesh.face_iter()
         ) {
             for i in 0..3 {
@@ -804,7 +806,7 @@ impl SolverBuilder {
                 .mesh_mut()
                 .add_attrib_data::<DensityType, Obj::ElementIndex>(
                     DENSITY_ATTRIB,
-                    vec![density; num_elements],
+                    vec![density as f32; num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
                 Err(attrib::Error::AlreadyExists(_)) => {}

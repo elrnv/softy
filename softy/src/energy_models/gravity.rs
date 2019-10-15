@@ -50,10 +50,11 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
                 .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tet_iter
         )
-        .map(|(&vol, &density, tet)| {
+        .map(|(&vol, density, tet)| {
             // We really want mass here. Since mass is conserved we can rely on reference
             // volume and density.
             g.dot(tet.centroid()) * T::from(-vol * density).unwrap()
@@ -73,13 +74,14 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
         let g = self.g.map(|x| T::from(x).unwrap());
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&vol, &density, cell) in zip!(
+        for (&vol, density, cell) in zip!(
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tetmesh.cell_iter()
         ) {
             for i in 0..4 {
@@ -136,10 +138,11 @@ impl<T: Real> Energy<T> for TriMeshGravity<'_> {
                 .unwrap(),
             trimesh
                 .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tri_iter
         )
-        .map(|(&area, &density, tri)| {
+        .map(|(&area, density, tri)| {
             // We really want mass here. Since mass is conserved we can rely on reference
             // volume and density.
             g.dot(tri.centroid()) * T::from(-area * density).unwrap()
@@ -159,13 +162,14 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
         let g = self.g.map(|x| T::from(x).unwrap());
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (&area, &density, face) in zip!(
+        for (&area, density, face) in zip!(
             trimesh
                 .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
                 .unwrap(),
             trimesh
                 .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             trimesh.face_iter()
         ) {
             for i in 0..3 {

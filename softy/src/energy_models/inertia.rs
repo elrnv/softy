@@ -35,10 +35,11 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
                 .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tetmesh.cell_iter(),
         )
-        .map(|(&vol, &density, cell)| {
+        .map(|(&vol, density, cell)| {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
             let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
             let tet_dv = tet_v1 - tet_v0;
@@ -66,13 +67,14 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themselves
-        for (&vol, &density, cell) in zip!(
+        for (&vol, density, cell) in zip!(
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
             tetmesh
                 .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .unwrap(),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             tetmesh.cell_iter()
         ) {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
@@ -176,21 +178,20 @@ impl EnergyHessian for TetMeshInertia<'_> {
 
         let vol_iter = solid
             .tetmesh
-            .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-            .unwrap()
-            .iter();
+            .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+            .unwrap();
 
         let density_iter = solid
             .tetmesh
-            .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
             .unwrap()
-            .iter();
+            .map(|&x| f64::from(x));
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
             .iter_mut()
             .zip(vol_iter.zip(density_iter))
-            .for_each(|(tet_hess, (&vol, &density))| {
+            .for_each(|(tet_hess, (&vol, density))| {
                 for vi in 0..4 {
                     // vertex index
                     for j in 0..3 {

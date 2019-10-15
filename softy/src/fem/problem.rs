@@ -12,6 +12,8 @@ use ipopt::{self, Number};
 use std::cell::RefCell;
 use utils::{soap::*, zip};
 
+const FORWARD_FRICTION: bool = true;
+
 #[derive(Clone)]
 pub struct Solution {
     /// This is the solution of the solve.
@@ -1400,12 +1402,14 @@ impl NonLinearProblem {
         // If time_step is 0.0, this is a pure static solve, which means that
         // there cannot be friction.
         if !self.is_static() {
-            for fc in self.frictional_contacts.iter() {
-                let obj_v = self.object_data.cur_vel(v, fc.object_index);
-                let col_v = self.object_data.cur_vel(v, fc.collider_index);
-                obj -= fc
-                    .constraint
-                    .frictional_dissipation([obj_v.view(), col_v.view()]);
+            if FORWARD_FRICTION {
+                for fc in self.frictional_contacts.iter() {
+                    let obj_v = self.object_data.cur_vel(v, fc.object_index);
+                    let col_v = self.object_data.cur_vel(v, fc.collider_index);
+                    obj -= fc
+                        .constraint
+                        .frictional_dissipation([obj_v.view(), col_v.view()]);
+                }
             }
         }
 
@@ -1493,18 +1497,29 @@ impl NonLinearProblem {
             .iter_mut::<f64>()
             .unwrap()
             .zip(zip!(
-                solid.tetmesh.attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                    .unwrap(),
-                solid.tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap(),
-                solid.tetmesh.attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                    .unwrap(),
-                solid.tetmesh.attrib_iter::<RefShapeMtxInvType, CellIndex>(
-                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                )
-                .unwrap(),
-                solid.tetmesh.tet_iter()
-            ))
-            .for_each(|(strain, (&lambda, &mu, &vol, &ref_shape_mtx_inv, tet))| {
+                    solid
+                        .tetmesh
+                        .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                        .unwrap()
+                        .map(|&x| f64::from(x)),
+                    solid
+                        .tetmesh
+                        .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
+                        .unwrap()
+                        .map(|&x| f64::from(x)),
+                    solid
+                        .tetmesh
+                        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                        .unwrap(),
+                    solid
+                        .tetmesh
+                        .attrib_iter::<RefShapeMtxInvType, CellIndex>(
+                            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                        )
+                        .unwrap(),
+                    solid.tetmesh.tet_iter()
+                ))
+            .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
                 *strain =
                     NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
                         .elastic_energy()
@@ -1532,15 +1547,16 @@ impl NonLinearProblem {
             *f = [0.0; 3];
         }
 
-        let grad_iter = zip!(
+        let grad_iter =
+            zip!(
             solid
                 .tetmesh
                 .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                .unwrap(),
+                .unwrap().map(|&x| f64::from(x)),
             solid
                 .tetmesh
                 .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
-                .unwrap(),
+                .unwrap().map(|&x| f64::from(x)),
             solid
                 .tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -1551,10 +1567,10 @@ impl NonLinearProblem {
                 .unwrap(),
             solid.tetmesh.tet_iter()
         )
-        .map(|(&lambda, &mu, &vol, &ref_shape_mtx_inv, tet)| {
-            NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
-                .elastic_energy_gradient()
-        });
+            .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
+                NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
+                    .elastic_energy_gradient()
+            });
 
         for (grad, cell) in grad_iter.zip(solid.tetmesh.cells().iter()) {
             for j in 0..4 {
@@ -2023,8 +2039,11 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     None,
                     [fc.object_index, fc.collider_index],
                 );
-                fc.constraint
-                    .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+
+                if FORWARD_FRICTION {
+                    fc.constraint
+                        .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+                }
             }
         }
 

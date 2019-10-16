@@ -442,6 +442,17 @@ where
 
 impl<'a, S, T, I> Sparse<S, T, I>
 where
+    I: AsRef<[usize]>,
+{
+    pub fn index_iter(
+        &'a self,
+    ) -> std::iter::Cloned<std::slice::Iter<'a, usize>> {
+        self.selection.index_iter().cloned()
+    }
+}
+
+impl<'a, S, T, I> Sparse<S, T, I>
+where
     S: View<'a>,
     <S as View<'a>>::Type: Set + IntoIterator,
     I: AsRef<[usize]>,

@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use super::{FrictionParams, FrictionSolveResult};
 use crate::contact::*;
-use reinterpret::*;
 use utils::soap::*;
 
 use utils::zip;

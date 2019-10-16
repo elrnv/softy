@@ -1,4 +1,5 @@
 //mod elastic_solver;
+pub mod contact_solver;
 mod polar_solver;
 pub mod proj_solver;
 pub mod solver;
@@ -13,7 +14,7 @@ pub use polar_solver::*;
 pub struct FrictionSolveResult {
     /// The value of the dissipation objective at the end of the step.
     pub objective_value: f64,
-    /// Resultant friction force in contact space.
+    /// Resultant friction impulse in contact space.
     pub solution: Vec<[f64; 2]>,
 }
 

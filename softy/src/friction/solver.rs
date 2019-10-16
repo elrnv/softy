@@ -350,8 +350,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
         // Convert to physical space.
-        let mut diff =
-            Chunked3::from_array_vec(contact_basis.from_tangent_space(diff_t.view().into()));
+        let mut diff: Chunked3<Vec<f64>> = contact_basis.from_tangent_space(diff_t.view().into()).collect();
 
         *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
 
@@ -380,8 +379,8 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         // Compute the difference between current and previous impulses in tangent space.
         let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
-        let diff = contact_basis.from_tangent_space(diff_t.view().into());
-        let mut diff = Tensor::new(Chunked3::from_array_vec(diff.into()));
+        let diff: Chunked3<Vec<f64>> = contact_basis.from_tangent_space(diff_t.view().into()).collect();
+        let mut diff = Tensor::new(diff);
 
         diff -= Tensor::new(predictor_impulse.view());
 

@@ -189,29 +189,26 @@ impl ContactBasis {
     }
 
     /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
-    pub fn from_tangent_space(&self, contact: &[[f64; 2]]) -> Vec<[f64; 3]> {
+    pub fn from_tangent_space<'a>(&'a self, contact: &'a [[f64; 2]]) -> impl Iterator<Item = [f64; 3]> + 'a {
         contact
             .iter()
             .enumerate()
-            .map(|(i, &v)| self.from_contact_coordinates([0.0, v[0], v[1]], i).into())
-            .collect()
+            .map(move |(i, &v)| self.from_contact_coordinates([0.0, v[0], v[1]], i).into())
     }
 
     /// Transform a given vector of vectors in physical space to values in normal direction.
-    pub fn to_normal_space(&self, physical: &[[f64; 3]]) -> Vec<f64> {
+    pub fn to_normal_space<'a>(&'a self, physical: &'a [[f64; 3]]) -> impl Iterator<Item = f64> + 'a {
         physical
             .iter()
             .enumerate()
-            .map(|(i, &v)| self.to_contact_coordinates(v, i)[0])
-            .collect()
+            .map(move |(i, &v)| self.to_contact_coordinates(v, i)[0])
     }
     /// Transform a given vector of normal coordinates in contact space to vectors in physical space.
-    pub fn from_normal_space(&self, contact: &[f64]) -> Vec<[f64; 3]> {
+    pub fn from_normal_space<'a>(&'a self, contact: &'a [f64]) -> impl Iterator<Item = [f64; 3]> + 'a {
         contact
             .iter()
             .enumerate()
-            .map(|(i, &n)| self.from_contact_coordinates([n, 0.0, 0.0], i).into())
-            .collect()
+            .map(move |(i, &n)| self.from_contact_coordinates([n, 0.0, 0.0], i).into())
     }
 
     pub fn to_polar_tangent_space(&self, physical: &[[f64; 3]]) -> Vec<Polar2<f64>> {
@@ -292,6 +289,27 @@ impl ContactBasis {
             reinterpret_vec(bases),
         )
         .to_csr()
+    }
+
+    pub fn normal_basis_matrix(&self) -> BlockDiagonalMatrix3x1 {
+        let n = self.normals.len();
+
+        // A vector of column major change of basis matrices
+        let bases: Chunked3<Vec<_>> = (0..n)
+            .map(|contact_idx| {
+                let mtx = self.contact_basis_matrix(contact_idx);
+                // Take the transpose of the basis [nml] (ignoring the tangential components).
+                [
+                    [mtx.column(0)[0]],
+                    [mtx.column(0)[1]],
+                    [mtx.column(0)[2]],
+                ]
+            })
+            .collect();
+
+        BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked1::from_array_vec(
+            bases.into_flat(),
+        )))
     }
 
     pub fn tangent_basis_matrix(&self) -> BlockDiagonalMatrix3x2 {

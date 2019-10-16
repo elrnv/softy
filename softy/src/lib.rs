@@ -67,6 +67,9 @@ pub enum Error {
     FrictionSolveError {
         status: ipopt::SolveStatus,
     },
+    ContactSolveError {
+        status: ipopt::SolveStatus,
+    },
     SolverCreateError {
         source: ipopt::CreateError,
     },
@@ -156,6 +159,9 @@ impl From<Error> for SimResult {
             )),
             Error::FrictionSolveError { status } => {
                 SimResult::Error(format!("Friction Solve failed: {:?}", status))
+            }
+            Error::ContactSolveError { status } => {
+                SimResult::Error(format!("Contact Solve failed: {:?}", status))
             }
             Error::MissingSourceIndex => {
                 SimResult::Error("Missing source index vertex attribute".to_string())

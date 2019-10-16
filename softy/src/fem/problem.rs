@@ -12,7 +12,7 @@ use ipopt::{self, Number};
 use std::cell::RefCell;
 use utils::{soap::*, zip};
 
-const FORWARD_FRICTION: bool = true;
+const FORWARD_FRICTION: bool = false;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -1017,6 +1017,7 @@ impl NonLinearProblem {
         active_set
     }
 
+    #[allow(dead_code)]
     pub fn clear_friction_impulses(&mut self) {
         for fc in self.frictional_contacts.iter_mut() {
             fc.constraint.clear_frictional_contact_impulse();

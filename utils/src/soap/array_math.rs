@@ -545,6 +545,9 @@ impl_array_matrices!(Matrix3; 3, 3);
 impl_array_matrices!(Matrix4; 4, 4);
 
 // Common Rectangular matrices
+impl_array_matrices!(Matrix2x1; 2, 1);
+impl_array_matrices!(Matrix3x1; 3, 1);
+impl_array_matrices!(Matrix4x1; 4, 1);
 impl_array_matrices!(Matrix1x2; 1, 2);
 impl_array_matrices!(Matrix1x3; 1, 3);
 impl_array_matrices!(Matrix1x4; 1, 4);
@@ -576,66 +579,82 @@ macro_rules! impl_matrix_matrix_mul {
     };
 }
 
+impl_matrix_matrix_mul!(1, 1, 1);
 impl_matrix_matrix_mul!(1, 1, 2);
 impl_matrix_matrix_mul!(1, 1, 3);
 impl_matrix_matrix_mul!(1, 1, 4);
 
+impl_matrix_matrix_mul!(1, 2, 1);
 impl_matrix_matrix_mul!(1, 2, 2);
 impl_matrix_matrix_mul!(1, 2, 3);
 impl_matrix_matrix_mul!(1, 2, 4);
 
+impl_matrix_matrix_mul!(1, 3, 1);
 impl_matrix_matrix_mul!(1, 3, 2);
 impl_matrix_matrix_mul!(1, 3, 3);
 impl_matrix_matrix_mul!(1, 3, 4);
 
+impl_matrix_matrix_mul!(1, 4, 1);
 impl_matrix_matrix_mul!(1, 4, 2);
 impl_matrix_matrix_mul!(1, 4, 3);
 impl_matrix_matrix_mul!(1, 4, 4);
 
+impl_matrix_matrix_mul!(2, 1, 1);
 impl_matrix_matrix_mul!(2, 1, 2);
 impl_matrix_matrix_mul!(2, 1, 3);
 impl_matrix_matrix_mul!(2, 1, 4);
 
+impl_matrix_matrix_mul!(2, 2, 1);
 impl_matrix_matrix_mul!(2, 2, 2);
 impl_matrix_matrix_mul!(2, 2, 3);
 impl_matrix_matrix_mul!(2, 2, 4);
 
+impl_matrix_matrix_mul!(2, 3, 1);
 impl_matrix_matrix_mul!(2, 3, 2);
 impl_matrix_matrix_mul!(2, 3, 3);
 impl_matrix_matrix_mul!(2, 3, 4);
 
+impl_matrix_matrix_mul!(2, 4, 1);
 impl_matrix_matrix_mul!(2, 4, 2);
 impl_matrix_matrix_mul!(2, 4, 3);
 impl_matrix_matrix_mul!(2, 4, 4);
 
+impl_matrix_matrix_mul!(3, 1, 1);
 impl_matrix_matrix_mul!(3, 1, 2);
 impl_matrix_matrix_mul!(3, 1, 3);
 impl_matrix_matrix_mul!(3, 1, 4);
 
+impl_matrix_matrix_mul!(3, 2, 1);
 impl_matrix_matrix_mul!(3, 2, 2);
 impl_matrix_matrix_mul!(3, 2, 3);
 impl_matrix_matrix_mul!(3, 2, 4);
 
+impl_matrix_matrix_mul!(3, 3, 1);
 impl_matrix_matrix_mul!(3, 3, 2);
 impl_matrix_matrix_mul!(3, 3, 3);
 impl_matrix_matrix_mul!(3, 3, 4);
 
+impl_matrix_matrix_mul!(3, 4, 1);
 impl_matrix_matrix_mul!(3, 4, 2);
 impl_matrix_matrix_mul!(3, 4, 3);
 impl_matrix_matrix_mul!(3, 4, 4);
 
+impl_matrix_matrix_mul!(4, 1, 1);
 impl_matrix_matrix_mul!(4, 1, 2);
 impl_matrix_matrix_mul!(4, 1, 3);
 impl_matrix_matrix_mul!(4, 1, 4);
 
+impl_matrix_matrix_mul!(4, 2, 1);
 impl_matrix_matrix_mul!(4, 2, 2);
 impl_matrix_matrix_mul!(4, 2, 3);
 impl_matrix_matrix_mul!(4, 2, 4);
 
+impl_matrix_matrix_mul!(4, 3, 1);
 impl_matrix_matrix_mul!(4, 3, 2);
 impl_matrix_matrix_mul!(4, 3, 3);
 impl_matrix_matrix_mul!(4, 3, 4);
 
+impl_matrix_matrix_mul!(4, 4, 1);
 impl_matrix_matrix_mul!(4, 4, 2);
 impl_matrix_matrix_mul!(4, 4, 3);
 impl_matrix_matrix_mul!(4, 4, 4);

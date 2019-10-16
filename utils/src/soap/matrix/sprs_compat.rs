@@ -15,8 +15,8 @@ where
 {
     fn into(self) -> sprs::CsMat<f64> {
         let view = self.view();
-        let num_rows = view.num_rows();
-        let num_cols = view.num_cols();
+        let num_rows = view.num_total_rows();
+        let num_cols = view.num_total_cols();
 
         let view = view.data;
         let values = view.clone().into_flat().as_ref().to_vec();
@@ -33,6 +33,28 @@ where
                 })
                 .unzip()
         };
+
+        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
+    }
+}
+
+impl Into<sprs::CsMat<f64>> for DSMatrix {
+    fn into(self) -> sprs::CsMat<f64> {
+        let num_rows = self.num_rows();
+        let num_cols = self.num_cols();
+
+        let (rows, cols) = {
+            self.data.view().into_iter()
+                .enumerate()
+                .flat_map(move |(row_idx, row)| {
+                    row.into_iter().map(move |(col_idx, _)| {
+                        (row_idx, col_idx)
+                    })
+                })
+                .unzip()
+        };
+
+        let values = self.data.into_flat();
 
         sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }

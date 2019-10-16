@@ -219,7 +219,7 @@ where
     /// ```
     pub fn compressed<E>(
         &'a self,
-        mut combine: impl FnMut(&mut E::Owned, E),
+        combine: impl FnMut(&mut E::Owned, E),
     ) -> Chunked<Sparse<S::Owned, T>, Offsets>
     where
         <S as View<'a>>::Type: IntoIterator<Item = E>,

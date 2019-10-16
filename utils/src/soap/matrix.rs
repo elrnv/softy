@@ -36,8 +36,8 @@ pub trait Matrix {
 pub trait BlockMatrix {
     fn num_rows_per_block(&self) -> usize;
     fn num_cols_per_block(&self) -> usize;
-    fn num_chunked_rows(&self) -> usize;
-    fn num_chunked_cols(&self) -> usize;
+    fn num_total_rows(&self) -> usize;
+    fn num_total_cols(&self) -> usize;
 }
 
 /*
@@ -118,6 +118,34 @@ pub type DBlockMatrixView<'a, N = usize, M = usize> = DBlockMatrix<N, M, &'a [f6
 /// Row-major dense matrix of row-major 3x3 blocks.
 pub type DBlockMatrix3<S = Vec<f64>> = DBlockMatrix<Chunked3<Chunked3<S>>>;
 pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
+
+/// Dense-row sparse-column row-major matrix. AKA CSR matrix.
+pub type DSMatrix<S = Vec<f64>, I = Vec<usize>> =
+    Tensor<Chunked<Sparse<S, Dim, I>, Offsets<I>>>;
+pub type DSMatrixView<'a> = DSMatrix<&'a [f64], &'a [usize]>;
+
+impl<S: Set, I: Set> Matrix for DSMatrix<S, I> {
+    type Transpose = Transpose<Self>;
+    fn transpose(self) -> Self::Transpose {
+        Transpose(self)
+    }
+    fn num_cols(&self) -> usize {
+        self.data.data().selection().target.distance()
+    }
+    fn num_rows(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<S, I> SparseMatrix for DSMatrix<S, I>
+where
+    S: Storage,
+    S::Storage: Set,
+{
+    fn num_non_zeros(&self) -> usize {
+        self.storage().len()
+    }
+}
 
 /*
  * A diagonal matrix has the same structure as a vector, so it needs a newtype to distinguish it
@@ -208,11 +236,11 @@ where
     fn num_rows_per_block(&self) -> usize {
         self.0.chunk_size()
     }
-    fn num_chunked_cols(&self) -> usize {
-        self.0.len()
+    fn num_total_cols(&self) -> usize {
+        self.num_cols() * self.num_cols_per_block()
     }
-    fn num_chunked_rows(&self) -> usize {
-        self.0.len()
+    fn num_total_rows(&self) -> usize {
+        self.num_rows() * self.num_rows_per_block()
     }
 }
 
@@ -225,10 +253,10 @@ where
         self
     }
     fn num_cols(&self) -> usize {
-        self.num_chunked_cols() * self.num_cols_per_block()
+        self.0.len()
     }
     fn num_rows(&self) -> usize {
-        self.num_chunked_rows() * self.num_rows_per_block()
+        self.0.len()
     }
 }
 
@@ -274,7 +302,7 @@ where
     UniChunked<S, N>: Set,
 {
     fn num_non_zeros(&self) -> usize {
-        self.num_rows()
+        self.num_total_rows()
     }
 }
 
@@ -283,7 +311,7 @@ where
     UniChunked<S, N>: Set,
 {
     fn num_non_zero_blocks(&self) -> usize {
-        self.num_chunked_rows()
+        self.num_rows()
     }
 }
 
@@ -326,6 +354,9 @@ pub type BlockDiagonalMatrixViewMut<'a, N = usize, M = usize> =
 
 pub type BlockDiagonalMatrix3x2<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U3, U2, S, I>;
 pub type BlockDiagonalMatrix3x2View<'a> = BlockDiagonalMatrix3x2<&'a [f64], &'a [usize]>;
+
+pub type BlockDiagonalMatrix3x1<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U3, U1, S, I>;
+pub type BlockDiagonalMatrix3x1View<'a> = BlockDiagonalMatrix3x1<&'a [f64], &'a [usize]>;
 
 pub type BlockDiagonalMatrix2<S = Vec<f64>, I = Box<[usize]>> = BlockDiagonalMatrix<U2, U2, S, I>;
 pub type BlockDiagonalMatrix2View<'a> = BlockDiagonalMatrix2<&'a [f64], &'a [usize]>;
@@ -395,11 +426,11 @@ where
     fn num_rows_per_block(&self) -> usize {
         self.0.chunk_size()
     }
-    fn num_chunked_cols(&self) -> usize {
-        self.0.len()
+    fn num_total_cols(&self) -> usize {
+        self.num_cols() * self.num_cols_per_block()
     }
-    fn num_chunked_rows(&self) -> usize {
-        self.0.len()
+    fn num_total_rows(&self) -> usize {
+        self.num_rows() * self.num_rows_per_block()
     }
 }
 
@@ -414,10 +445,10 @@ where
         Transpose(self)
     }
     fn num_cols(&self) -> usize {
-        self.num_chunked_cols() * self.num_cols_per_block()
+        self.0.len()
     }
     fn num_rows(&self) -> usize {
-        self.num_chunked_rows() * self.num_rows_per_block()
+        self.0.len()
     }
 }
 
@@ -465,7 +496,7 @@ where
     I: AsRef<[usize]>,
 {
     fn num_non_zeros(&self) -> usize {
-        self.num_rows()
+        self.num_total_rows()
     }
 }
 
@@ -476,7 +507,7 @@ where
     I: AsRef<[usize]>,
 {
     fn num_non_zero_blocks(&self) -> usize {
-        self.num_chunked_rows()
+        self.num_rows()
     }
 }
 
@@ -551,11 +582,11 @@ impl<S: Set, I, N: Dimension, M: Dimension> BlockMatrix for SSBlockMatrix<N, M, 
     fn num_rows_per_block(&self) -> usize {
         self.data.source().data().source().chunk_size()
     }
-    fn num_chunked_cols(&self) -> usize {
-        self.data.source().data().selection().target.distance()
+    fn num_total_cols(&self) -> usize {
+        self.num_cols() * self.num_cols_per_block()
     }
-    fn num_chunked_rows(&self) -> usize {
-        self.data.selection().target.distance()
+    fn num_total_rows(&self) -> usize {
+        self.num_rows() * self.num_rows_per_block()
     }
 }
 
@@ -565,10 +596,10 @@ impl<S: Set, I, N: Dimension, M: Dimension> Matrix for SSBlockMatrix<N, M, S, I>
         Transpose(self)
     }
     fn num_cols(&self) -> usize {
-        self.num_chunked_cols() * self.num_cols_per_block()
+        self.data.source().data().selection().target.distance()
     }
     fn num_rows(&self) -> usize {
-        self.num_chunked_rows() * self.num_rows_per_block()
+        self.data.selection().target.distance()
     }
 }
 
@@ -576,8 +607,8 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> SSBlockMa
     pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
         use image::ImageBuffer;
 
-        let nrows = self.num_rows();
-        let ncols = self.num_cols();
+        let nrows = self.num_total_rows();
+        let ncols = self.num_total_cols();
         if nrows == 0 || ncols == 0 {
             return;
         }
@@ -683,38 +714,11 @@ where
     fn num_rows_per_block(&self) -> usize {
         self.data.data().source().chunk_size()
     }
-    fn num_chunked_cols(&self) -> usize {
-        self.data.data().selection().target.distance()
+    fn num_total_cols(&self) -> usize {
+        self.num_cols() * self.num_cols_per_block()
     }
-    fn num_chunked_rows(&self) -> usize {
-        self.data.len()
-    }
-}
-
-impl<S: Set, I: Set, N: Dimension, M: Dimension> Matrix for DSBlockMatrix<N, M, S, I>
-where
-    UniChunked<UniChunked<S, M>, N>: Set,
-    UniChunked<S, M>: Set,
-{
-    type Transpose = Transpose<Self>;
-    fn transpose(self) -> Self::Transpose {
-        Transpose(self)
-    }
-    fn num_cols(&self) -> usize {
-        self.num_chunked_cols() * self.num_cols_per_block()
-    }
-    fn num_rows(&self) -> usize {
-        self.num_chunked_rows() * self.num_rows_per_block()
-    }
-}
-
-impl<S, I, N, M> SparseMatrix for DSBlockMatrix<N, M, S, I>
-where
-    Self: Storage,
-    <Self as Storage>::Storage: Set,
-{
-    fn num_non_zeros(&self) -> usize {
-        self.storage().len()
+    fn num_total_rows(&self) -> usize {
+        self.num_rows() * self.num_rows_per_block()
     }
 }
 
@@ -792,8 +796,8 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> DSBlockMa
     pub fn write_img<P: AsRef<std::path::Path>>(&'a self, path: P) {
         use image::ImageBuffer;
 
-        let nrows = self.view().num_rows();
-        let ncols = self.view().num_cols();
+        let nrows = self.view().num_total_rows();
+        let ncols = self.view().num_total_cols();
 
         if nrows == 0 || ncols == 0 {
             return;
@@ -840,9 +844,9 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
             .map(|&[x, y, z]| [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, z]])
             .collect();
 
-        let num_cols = diag.num_chunked_cols();
+        let num_cols = diag.num_cols();
         Tensor::new(Chunked::from_sizes(
-            vec![1; diag.num_chunked_rows()], // One block in every row.
+            vec![1; diag.num_rows()], // One block in every row.
             Sparse::from_dim(
                 (0..num_cols).collect(), // Diagonal sparsity pattern
                 num_cols,
@@ -857,9 +861,9 @@ impl From<BlockDiagonalMatrix2> for DSBlockMatrix2 {
         let mut out_data = Chunked2::from_flat(Chunked2::from_flat(vec![0.0; diag.0.len() * 4]));
         Subset::clone_into_other(&diag.0.view(), &mut out_data);
 
-        let num_cols = diag.num_chunked_cols();
+        let num_cols = diag.num_cols();
         Tensor::new(Chunked::from_sizes(
-            vec![1; diag.num_chunked_rows()], // One block in every row.
+            vec![1; diag.num_rows()], // One block in every row.
             Sparse::from_dim(
                 (0..num_cols).collect(), // Diagonal sparsity pattern
                 num_cols,
@@ -937,13 +941,43 @@ impl<'a> DSBlockMatrix3View<'a> {
     }
 }
 
+impl<'a> DSBlockMatrix3View<'a> {
+    /// A special congruence tranform of the form `A -> P^T A P` where `P` is a block diagonal matrix.
+    /// This is useful for instance as a change of basis transformation.
+    pub fn diagonal_congruence_transform3x1(self, p: BlockDiagonalMatrix3x1View) -> DSMatrix {
+        let mut out = Chunked::from_offsets(
+            (*self.data.offsets()).into_owned().into_inner(),
+            Sparse::new(
+                self.data.data().selection().clone().into_owned(),
+                vec![ 0.0; self.num_non_zero_blocks() ],
+            ),
+        );
+
+        // TODO: It is annoying to always have to call into_arrays to construct small matrices.
+        // We should implement array math on UniChunked<Array> types or find another solution.
+        for (mut out_row, row) in Iterator::zip(out.iter_mut(), self.data.iter()) {
+            for ((col_idx, out_entry), orig_entry) in out_row
+                .indexed_source_iter_mut()
+                .zip(IntoIterator::into_iter(row.source().view()))
+            {
+                let basis = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
+                let basis_tr = basis.transpose();
+                let mass = *orig_entry.into_arrays().as_tensor();
+                *out_entry = (basis_tr * mass * basis).into_inner()[0][0];
+            }
+        }
+
+        Tensor::new(out)
+    }
+}
+
 impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, rhs: Tensor<Chunked3<&'a [f64]>>) -> Self::Output {
         //let rhs = rhs.into();
-        assert_eq!(rhs.len(), self.num_chunked_cols());
+        assert_eq!(rhs.len(), self.num_cols());
 
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_chunked_rows()]);
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
             for (col_idx, block, _) in row.iter() {
                 let out =
@@ -960,8 +994,8 @@ impl Add<DiagonalBlockMatrix3View<'_>> for SSBlockMatrix3View<'_> {
     type Output = DSBlockMatrix3;
     fn add(self, rhs: DiagonalBlockMatrix3View<'_>) -> Self::Output {
         let rhs = rhs.0;
-        let num_rows = self.num_chunked_rows();
-        let num_cols = self.num_chunked_cols();
+        let num_rows = self.num_rows();
+        let num_cols = self.num_cols();
 
         let lhs_nnz = self.data.source.data.source.len();
         let rhs_nnz = rhs.len();
@@ -1068,20 +1102,20 @@ impl Mul<Tensor<Chunked3<&[f64]>>> for DiagonalBlockMatrix3<&[f64]> {
     }
 }
 
-impl<'a, Rhs> Mul<Rhs> for SSBlockMatrix3View<'_>
+impl<'a, Rhs> Mul<Tensor<Rhs>> for SSBlockMatrix3View<'_>
 where
-    Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
 {
     type Output = Tensor<Chunked3<Vec<f64>>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        let rhs = rhs.into();
-        assert_eq!(rhs.len(), self.num_chunked_cols());
+    fn mul(self, rhs: Tensor<Rhs>) -> Self::Output {
+        let rhs_data = rhs.data.into();
+        assert_eq!(rhs_data.len(), self.num_cols());
 
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_chunked_rows()]);
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row_idx, row, _) in self.data.iter() {
             for (col_idx, block, _) in row.iter() {
                 let out = Vector3(res[row_idx])
-                    + Matrix3(*block.into_arrays()) * Vector3(rhs.data[col_idx]);
+                    + Matrix3(*block.into_arrays()) * Vector3(rhs_data[col_idx]);
                 res[row_idx] = out.into();
             }
         }
@@ -1090,20 +1124,20 @@ where
     }
 }
 
-impl<'a, Rhs> Mul<Rhs> for Transpose<SSBlockMatrix3View<'_>>
+impl<'a, Rhs> Mul<Tensor<Rhs>> for Transpose<SSBlockMatrix3View<'_>>
 where
-    Rhs: Into<Tensor<SubsetView<'a, Chunked3<&'a [f64]>>>>,
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
 {
     type Output = Tensor<Chunked3<Vec<f64>>>;
-    fn mul(self, rhs: Rhs) -> Self::Output {
-        let rhs = rhs.into();
-        assert_eq!(rhs.len(), self.0.num_chunked_rows());
+    fn mul(self, rhs: Tensor<Rhs>) -> Self::Output {
+        let rhs_data = rhs.data.into();
+        assert_eq!(rhs_data.len(), self.0.num_rows());
 
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_chunked_cols()]);
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols()]);
         for (row_idx, row, _) in self.0.data.iter() {
             for (col_idx, block, _) in row.iter() {
                 let out = Vector3(res[col_idx])
-                    + Matrix3(*block.into_arrays()) * Vector3(rhs.data[row_idx]);
+                    + Matrix3(*block.into_arrays()) * Vector3(rhs_data[row_idx]);
                 res[col_idx] = out.into();
             }
         }
@@ -1119,7 +1153,7 @@ where
 {
     fn mul_assign(&mut self, rhs: DiagonalBlockMatrix3<S, I>) {
         let rhs = View::view(&rhs);
-        assert_eq!(rhs.0.len(), self.num_chunked_cols());
+        assert_eq!(rhs.0.len(), self.num_cols());
         for (_, mut row) in self.view_mut().data.iter_mut() {
             for (col_idx, mut block) in row.iter_mut() {
                 let mass_vec = *rhs.0.at(*col_idx);
@@ -1135,8 +1169,8 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
     type Output = SSBlockMatrix3;
     fn mul(self, rhs: Transpose<SSBlockMatrix3View>) -> Self::Output {
         let rhs_t = rhs.0;
-        let num_rows = self.num_chunked_rows();
-        let num_cols = rhs_t.num_chunked_rows();
+        let num_rows = self.num_rows();
+        let num_cols = rhs_t.num_rows();
 
         let lhs_nnz = self.data.source.data.source.len();
         let rhs_nnz = rhs_t.data.source.data.source.len();
@@ -1291,11 +1325,11 @@ impl SSBlockMatrix3View<'_> {
 pub struct Transpose<M>(pub M);
 
 impl<M: BlockMatrix> BlockMatrix for Transpose<M> {
-    fn num_chunked_cols(&self) -> usize {
-        self.0.num_chunked_rows()
+    fn num_total_cols(&self) -> usize {
+        self.0.num_total_rows()
     }
-    fn num_chunked_rows(&self) -> usize {
-        self.0.num_chunked_cols()
+    fn num_total_rows(&self) -> usize {
+        self.0.num_total_cols()
     }
     fn num_cols_per_block(&self) -> usize {
         self.0.num_rows_per_block()

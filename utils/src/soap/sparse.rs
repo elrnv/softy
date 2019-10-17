@@ -444,9 +444,7 @@ impl<'a, S, T, I> Sparse<S, T, I>
 where
     I: AsRef<[usize]>,
 {
-    pub fn index_iter(
-        &'a self,
-    ) -> std::iter::Cloned<std::slice::Iter<'a, usize>> {
+    pub fn index_iter(&'a self) -> std::iter::Cloned<std::slice::Iter<'a, usize>> {
         self.selection.index_iter().cloned()
     }
 }

@@ -120,8 +120,7 @@ pub type DBlockMatrix3<S = Vec<f64>> = DBlockMatrix<Chunked3<Chunked3<S>>>;
 pub type DBlockMatrix3View<'a> = DBlockMatrix3<&'a [f64]>;
 
 /// Dense-row sparse-column row-major matrix. AKA CSR matrix.
-pub type DSMatrix<S = Vec<f64>, I = Vec<usize>> =
-    Tensor<Chunked<Sparse<S, Dim, I>, Offsets<I>>>;
+pub type DSMatrix<S = Vec<f64>, I = Vec<usize>> = Tensor<Chunked<Sparse<S, Dim, I>, Offsets<I>>>;
 pub type DSMatrixView<'a> = DSMatrix<&'a [f64], &'a [usize]>;
 
 impl<S: Set, I: Set> Matrix for DSMatrix<S, I> {
@@ -153,15 +152,12 @@ where
  */
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DiagonalMatrix<S = Vec<f64>, I = Box<[usize]>>(
-    Subset<S, I>,
-);
+pub struct DiagonalMatrix<S = Vec<f64>, I = Box<[usize]>>(Subset<S, I>);
 
 pub type DiagonalMatrixView<'a> = DiagonalMatrix<&'a [f64], &'a [usize]>;
 pub type DiagonalMatrixViewMut<'a> = DiagonalMatrix<&'a mut [f64], &'a [usize]>;
 
-impl<S: Set> DiagonalMatrix<S, Box<[usize]>>
-{
+impl<S: Set> DiagonalMatrix<S, Box<[usize]>> {
     /// A generic constructor that transforms the input into the underlying storage type. This
     /// sometimes requires additional generic parameters to be explicitly specified.
     /// This function assumes `Box<[usize]>` as a placeholder for indices where the subset is
@@ -171,8 +167,7 @@ impl<S: Set> DiagonalMatrix<S, Box<[usize]>>
     }
 }
 
-impl<S: Set, I: AsRef<[usize]>> DiagonalMatrix<S, I>
-{
+impl<S: Set, I: AsRef<[usize]>> DiagonalMatrix<S, I> {
     /// Explicit constructor from subsets.
     pub fn from_subset(subset: Subset<S, I>) -> Self {
         DiagonalMatrix(subset.into())
@@ -220,12 +215,11 @@ where
         T: Float,
     {
         match norm {
-            LpNorm::P(p) => self
-                .0
-                .view_iter()
-                .map(|x| x.abs().powi(p))
-                .sum::<T>()
-                .powf(T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type.")),
+            LpNorm::P(p) => {
+                self.0.view_iter().map(|x| x.abs().powi(p)).sum::<T>().powf(
+                    T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type."),
+                )
+            }
             LpNorm::Inf => self
                 .0
                 .view_iter()
@@ -238,15 +232,11 @@ where
         }
     }
     fn norm_squared(&self) -> T {
-        self.0
-            .view_iter()
-            .map(|&x| x * x)
-            .sum::<T>()
+        self.0.view_iter().map(|&x| x * x).sum::<T>()
     }
 }
 
-impl<S: Set> SparseMatrix for DiagonalMatrix<S>
-{
+impl<S: Set> SparseMatrix for DiagonalMatrix<S> {
     fn num_non_zeros(&self) -> usize {
         self.num_rows()
     }
@@ -254,9 +244,7 @@ impl<S: Set> SparseMatrix for DiagonalMatrix<S>
 
 impl<S: Viewed, I> Viewed for DiagonalMatrix<S, I> {}
 
-impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>> View<'a>
-    for DiagonalMatrix<S, I>
-{
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>> View<'a> for DiagonalMatrix<S, I> {
     type Type = DiagonalMatrixView<'a>;
     fn view(&'a self) -> Self::Type {
         DiagonalMatrix(View::view(&self.0))
@@ -495,7 +483,6 @@ where
     pub fn new<T: Into<Subset<UniChunked<UniChunked<S, M>, N>, Box<[usize]>>>>(chunks: T) -> Self {
         BlockDiagonalMatrix(chunks.into())
     }
-
 }
 
 impl BlockDiagonalMatrix3x1 {
@@ -685,8 +672,7 @@ where
         let ref other_data = other.0;
         assert_eq!(Set::len(self_data), other_data.len());
         assert_eq!(2, self_data.inner_chunk_size());
-        let mut out =
-            BlockDiagonalMatrix::from_flat(vec![0.0; 4 * self_data.len()]);
+        let mut out = BlockDiagonalMatrix::from_flat(vec![0.0; 4 * self_data.len()]);
         for (out_block, lhs_block, rhs_block) in
             zip!(out.0.iter_mut(), self_data.iter(), other_data.iter())
         {
@@ -869,14 +855,12 @@ where
         // Check that there are no duplicate rows. This should not happen when crating from
         // triplets.
         assert!(is_unique(self.data.selection.indices.as_ref()));
-        Tensor::new(
-            Sparse::new(
-                self.data.selection.view().into_owned(),
-                self.view().data.source.compressed(|a, b| {
-                    *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
-                }),
-            )
-        )
+        Tensor::new(Sparse::new(
+            self.data.selection.view().into_owned(),
+            self.view().data.source.compressed(|a, b| {
+                *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
+            }),
+        ))
     }
 }
 
@@ -893,15 +877,13 @@ where
         // Check that there are no duplicate rows. This should not happen when crating from
         // triplets.
         assert!(is_unique(self.data.selection.indices.as_ref()));
-        Tensor::new(
-            Sparse::new(
-                self.data.selection.view().into_owned(),
-                self.view().data.source.pruned(|a, b| {
-                    *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
-                },
-                |i, j, e| keep(i, j, e.as_arrays().as_tensor()))
-            )
-        )
+        Tensor::new(Sparse::new(
+            self.data.selection.view().into_owned(),
+            self.view().data.source.pruned(
+                |a, b| *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor(),
+                |i, j, e| keep(i, j, e.as_arrays().as_tensor()),
+            ),
+        ))
     }
 }
 
@@ -1158,7 +1140,9 @@ impl<'a> DSBlockMatrix3View<'a> {
 
         // TODO: It is annoying to always have to call into_arrays to construct small matrices.
         // We should implement array math on UniChunked<Array> types or find another solution.
-        for (row_idx, (mut out_row, row)) in Iterator::zip(out.iter_mut(), self.data.iter()).enumerate() {
+        for (row_idx, (mut out_row, row)) in
+            Iterator::zip(out.iter_mut(), self.data.iter()).enumerate()
+        {
             for ((col_idx, out_entry), orig_entry) in out_row
                 .indexed_source_iter_mut()
                 .zip(IntoIterator::into_iter(row.source().view()))
@@ -1183,7 +1167,7 @@ impl<'a> DSBlockMatrix3View<'a> {
             (*self.data.offsets()).into_owned().into_inner(),
             Sparse::new(
                 self.data.data().selection().clone().into_owned(),
-                vec![ 0.0; self.num_non_zero_blocks() ],
+                vec![0.0; self.num_non_zero_blocks()],
             ),
         );
 
@@ -1392,7 +1376,9 @@ where
 
         let mut res = vec![0.0; self.0.num_cols()];
         for (idx, block) in (self.0).0.iter().enumerate() {
-            res[idx] += (Tensor::new(*block.into_arrays()).transpose() * Tensor::new(rhs_data[idx])).data[0];
+            res[idx] += (Tensor::new(*block.into_arrays()).transpose()
+                * Tensor::new(rhs_data[idx]))
+            .data[0];
         }
 
         Tensor::new(res)
@@ -1528,7 +1514,7 @@ impl SSBlockMatrix3View<'_> {
 
         for (row_idx, row, _) in self.data.iter() {
             // Initialize output
-            let mut sum_mtx = Tensor::new([[0.0; 3];3]);
+            let mut sum_mtx = Tensor::new([[0.0; 3]; 3]);
             let mut row_nnz = 0;
 
             // Compute the dot product of the two sparse vectors.
@@ -1553,7 +1539,8 @@ impl SSBlockMatrix3View<'_> {
                         continue;
                     } else {
                         // rhs_idx == row_idx
-                        sum_mtx += Tensor::new(*rhs_block.into_arrays()) * Tensor::new(*col_block.into_arrays()).transpose();
+                        sum_mtx += Tensor::new(*rhs_block.into_arrays())
+                            * Tensor::new(*col_block.into_arrays()).transpose();
                         row_nnz += 1;
                         rhs_mb = rhs_iter.next();
                         col_mb = row_iter.next();
@@ -1729,6 +1716,46 @@ mod tests {
             14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 68.0, 104.0, 140.0, 167.0,
             257.0, 347.0, 266.0, 410.0, 554.0, 68.0, 167.0, 266.0, 104.0, 257.0, 410.0, 140.0,
             347.0, 554.0, 955.0, 1405.0, 1855.0, 1405.0, 2071.0, 2737.0, 1855.0, 2737.0, 3619.0,
+        ];
+
+        let val_vec = sym.storage();
+        for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
+            assert_relative_eq!(val, exp);
+        }
+    }
+
+    #[test]
+    fn sparse_sparse_mul_non_diag_uncompressed() {
+        let blocks = vec![
+            // Block 1
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            // Block 2
+            [10.0, 11.0, 12.0],
+            [16.0, 17.0, 18.0],
+            [22.0, 23.0, 24.0],
+            // Block 3
+            [0.1, 0.1, 0.1],
+            [0.1, 0.1, 0.1],
+            [0.1, 0.1, 0.1],
+            // Block 4
+            [13.0, 14.0, 15.0],
+            [19.0, 20.0, 21.0],
+            [25.0, 26.0, 27.0],
+        ];
+        let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
+        let indices = vec![(1, 0), (2, 0), (2, 0), (2, 1)];
+        let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 3, 2, chunked_blocks);
+        let mtx = mtx.compressed();
+
+        let sym = mtx.view() * mtx.view().transpose();
+
+        let exp_vec = vec![
+            14.0, 32.0, 50.0, 32.0, 77.0, 122.0, 50.0, 122.0, 194.0, 68.6, 104.6, 140.6, 168.5,
+            258.5, 348.5, 268.4, 412.4, 556.4, 68.6, 168.5, 268.4, 104.6, 258.5, 412.4, 140.6,
+            348.5, 556.4, 961.63, 1413.43, 1865.23, 1413.43, 2081.23, 2749.03, 1865.23, 2749.03,
+            3632.83,
         ];
 
         let val_vec = sym.storage();

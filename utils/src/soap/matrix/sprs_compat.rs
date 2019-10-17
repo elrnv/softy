@@ -44,12 +44,12 @@ impl Into<sprs::CsMat<f64>> for DSMatrix {
         let num_cols = self.num_cols();
 
         let (rows, cols) = {
-            self.data.view().into_iter()
+            self.data
+                .view()
+                .into_iter()
                 .enumerate()
                 .flat_map(move |(row_idx, row)| {
-                    row.into_iter().map(move |(col_idx, _)| {
-                        (row_idx, col_idx)
-                    })
+                    row.into_iter().map(move |(col_idx, _)| (row_idx, col_idx))
                 })
                 .unzip()
         };

@@ -3,10 +3,10 @@ mod solver;
 use crate::friction::FrictionParams;
 use implicits::ImplicitSurface;
 use na::{Matrix3, Matrix3x2, RealField, Vector2, Vector3};
-use reinterpret::*;
 pub use solver::ContactSolver;
 use utils::soap::*;
 use utils::zip;
+use reinterpret::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -177,15 +177,14 @@ impl ContactBasis {
 
     /// Transform a given stacked vector of vectors in physical space
     /// to stacked 2D vectors in the tangent space of the contact point.
-    pub fn to_tangent_space(&self, physical: &[[f64; 3]]) -> Vec<[f64; 2]> {
+    pub fn to_tangent_space<'a>(&'a self, physical: &'a [[f64; 3]]) -> impl Iterator<Item = [f64; 2]> + 'a {
         physical
             .iter()
             .enumerate()
-            .map(|(i, &v)| {
+            .map(move |(i, &v)| {
                 let new_v = self.to_contact_coordinates(v, i);
                 [new_v[1], new_v[2]]
             })
-            .collect()
     }
 
     /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
@@ -337,7 +336,7 @@ impl ContactBasis {
     /// normals. The tangent space is chosen arbitrarily
     pub fn update_from_normals(&mut self, normals: Vec<[f64; 3]>) {
         self.tangents.resize(normals.len(), Vector3::zeros());
-        self.normals = reinterpret::reinterpret_vec(normals);
+        self.normals = reinterpret_vec(normals);
 
         for (&n, t) in self.normals.iter().zip(self.tangents.iter_mut()) {
             // Find the axis that is most aligned with the normal, then use the next axis for the
@@ -493,36 +492,40 @@ pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usiz
 mod tests {
     use super::*;
     use approx::*;
+    use geo::mesh::{topology::*, TriMesh, VertexPositions};
+
+    fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>) -> ContactBasis {
+        let mut normals = vec![geo::math::Vector3::zeros(); trimesh.num_vertices()];
+        geo::algo::compute_vertex_area_weighted_normals(
+            trimesh.vertex_positions(),
+            reinterpret_slice(trimesh.indices.as_slice()),
+            &mut normals,
+        );
+
+        for n in normals.iter_mut() {
+            *n /= n.norm();
+        }
+
+        let mut basis = ContactBasis::new();
+        basis.update_from_normals(reinterpret_vec(normals));
+        basis
+    }
 
     // Verify that converting to contact space and back to physical space produces the same
     // vectors.
     #[test]
     fn contact_physical_space_conversion_test() -> Result<(), crate::Error> {
-        use geo::mesh::{topology::*, TriMesh, VertexPositions};
-        use reinterpret::*;
 
         let run = |trimesh: TriMesh<f64>| -> Result<(), crate::Error> {
-            let mut normals = vec![geo::math::Vector3::zeros(); trimesh.num_vertices()];
-            geo::algo::compute_vertex_area_weighted_normals(
-                trimesh.vertex_positions(),
-                reinterpret_slice(trimesh.indices.as_slice()),
-                &mut normals,
-            );
-
-            for n in normals.iter_mut() {
-                *n /= n.norm();
-            }
-
-            let mut basis = ContactBasis::new();
-            basis.update_from_normals(reinterpret_vec(normals));
+            let basis = contact_basis_from_trimesh(&trimesh);
 
             let vecs = utils::random_vectors(trimesh.num_vertices());
 
             // Test euclidean basis
-            let contact_vecs = basis.to_tangent_space(reinterpret_slice(vecs.as_slice()));
-            let projected_physical_vecs = basis.from_tangent_space(contact_vecs.as_slice());
-            let projected_contact_vecs =
-                basis.to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()));
+            let contact_vecs: Vec<_> = basis.to_tangent_space(reinterpret_slice(vecs.as_slice())).collect();
+            let projected_physical_vecs: Vec<_> = basis.from_tangent_space(contact_vecs.as_slice()).collect();
+            let projected_contact_vecs: Vec<_> =
+                basis.to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice())).collect();
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 for i in 0..2 {
@@ -570,5 +573,22 @@ mod tests {
         run(trimesh)?;
         let trimesh = utils::make_regular_icosahedron();
         run(trimesh)
+    }
+
+    // Verify that multiplying by the basis matrix has the same effect as converting a vector using
+    // an iterator function like `from_tangent_space`.
+    #[test]
+    fn contact_basis_matrix_test() {
+        let trimesh = utils::make_sample_octahedron();
+        let basis = contact_basis_from_trimesh(&trimesh);
+
+        let vecs = Chunked3::from_array_vec(utils::random_vectors(trimesh.num_vertices()));
+
+        let nml_basis_mtx = basis.normal_basis_matrix();
+
+        let exp_contact_vecs: Vec<_> = basis.to_normal_space(vecs.view().into_arrays()).collect();
+        let contact_vecs = nml_basis_mtx.view().transpose() * Tensor::new(vecs.view());
+
+        assert_eq!(exp_contact_vecs, contact_vecs.into_inner());
     }
 }

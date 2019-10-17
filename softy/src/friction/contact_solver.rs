@@ -19,14 +19,12 @@ impl<'a> ContactSolver<'a> {
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<ContactSolver<'a>, Error> {
-        let basis_mtx = contact_basis.normal_basis_matrix();
+        let mut basis_mtx = contact_basis.normal_basis_matrix();
         let hessian = mass_inv_mtx
             .clone()
             .diagonal_congruence_transform3x1(basis_mtx.view());
-        //let hessian = (basis_mtx.view().transpose() * basis_mtx.view()).into();
+        //dbg!(&hessian);
 
-        // Scale predictor and prev_friction_impulse to ensure that the minimization variables are
-        // well scaled at the minimum.
         let predictor_impulse = Chunked3::from_array_slice(predictor_impulse);
 
         let problem = ContactProblem {
@@ -41,18 +39,14 @@ impl<'a> ContactSolver<'a> {
         ipopt.set_option("print_level", params.print_level as i32);
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
-        ipopt.set_option("nlp_scaling_max_gradient", 1.0);
+        //ipopt.set_option("nlp_scaling_max_gradient", 1.0);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        //ipopt.set_option("derivative_test", "second-order");
+        ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("hessian_constant", "yes");
         ipopt.set_option("max_iter", params.inner_iterations as i32);
 
         Ok(ContactSolver { solver: ipopt })
-    }
-
-    pub(crate) fn problem(&self) -> &ContactProblem<'a> {
-        self.solver.solver_data().problem
     }
 
     /// Solve one step.
@@ -122,6 +116,7 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
         let mut diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
         *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
         let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
+        //let rhs = diff.view();
 
         *obj = 0.5 * diff.expr().dot(rhs.expr());
 
@@ -140,6 +135,7 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
         let mut diff = Tensor::new(diff);
         diff -= Tensor::new(predictor_impulse.view());
         let grad = mass_inv_mtx.view() * diff.view();
+        //let grad = diff.view();
         let grad_n = contact_basis.to_normal_space(grad.view().into_inner().into());
 
         for (g_out, g) in grad_f_n.iter_mut().zip(grad_n) {
@@ -159,7 +155,7 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
         // Diagonal objective Hessian.
         let mut idx = 0;
         for (row_idx, row) in self.hessian.data.iter().enumerate() {
-            for (col_idx, _, _) in row.iter() {
+            for col_idx in row.index_iter() {
                 rows[idx] = row_idx as Index;
                 cols[idx] = col_idx as Index;
                 idx += 1;
@@ -176,5 +172,43 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
         vals.copy_from_slice(self.hessian.data.storage());
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn penetrating_point() -> Result<(), Error> {
+        let mass = 1.0;
+
+        let params = FrictionParams {
+            dynamic_friction: 0.0, // ignored
+            inner_iterations: 30,
+            tolerance: 1e-15,
+            print_level: 0,
+        };
+
+        let predictor_impulse = vec![[0.0, 0.1 * mass, 0.0]];
+        let init_contact_impulse = vec![0.0];
+        let mass_inv_mtx: DSBlockMatrix3 =
+            DiagonalBlockMatrix::new(Chunked3::from_flat(vec![1.0 / mass; 3])).into();
+
+        let mut contact_basis = ContactBasis::new();
+        contact_basis.update_from_normals(vec![[0.0, 1.0, 0.0]]);
+
+        let mut solver = ContactSolver::new(
+            &predictor_impulse,
+            &init_contact_impulse,
+            &contact_basis,
+            mass_inv_mtx.view(),
+            params,
+        )?;
+
+        let soln = solver.step()?;
+
+        dbg!(&soln);
+        assert!(soln[0] <= 0.0);
+        Ok(())
     }
 }

@@ -67,7 +67,7 @@ impl<'a> FrictionSolver<'a> {
             mu,
             mass_inv_mtx,
             hessian,
-            objective_scale: min_contact_impulse * min_contact_impulse,
+            objective_scale: 1000.0 * min_contact_impulse * min_contact_impulse,
         });
 
         let mut ipopt = Ipopt::new(problem)?;
@@ -158,163 +158,25 @@ impl<'a> FrictionProblem<'a> {
     }
 
     pub fn initial_point(&self, r: &mut [Number]) -> bool {
-        for (i, (r, &p)) in zip!(
+        for (i, (r, &p, &cr)) in zip!(
             Chunked2::from_flat(r).iter_mut(),
             self.predictor_impulse.iter(),
+            self.contact_impulse.iter(),
         )
         .enumerate()
         {
             let p_norm = Tensor::new(p).norm();
-            if p_norm > 0.0 {
-                let pred = self.contact_basis.to_contact_coordinates(p, i);
+            let pred = self.contact_basis.to_contact_coordinates(p, i);
+            if p_norm > 1.0 {
+            //if p_norm > cr.abs() * self.mu {
                 *r = (Tensor::new([pred[1], pred[2]]) * (1.0 / p_norm)).into_inner();
             } else {
-                *r = [0.0; 2];
+                *r = (Tensor::new([pred[1], pred[2]])).into_inner();
             }
         }
         true
     }
 }
-
-/*
-pub(crate) struct ExplicitFrictionProblem<'a>(FrictionProblem<'a>);
-
-/// Prepare the problem for Newton iterations.
-impl ipopt::BasicProblem for ExplicitFrictionProblem<'_> {
-    fn num_variables(&self) -> usize {
-        self.0.num_variables()
-    }
-
-    fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
-        self.0.bounds(x_l, x_u)
-    }
-
-    fn initial_point(&self, f: &mut [Number]) -> bool {
-        self.0.initial_point(f)
-    }
-
-    fn objective(&self, r: &[Number], obj: &mut Number) -> bool {
-        let impulses: &[Vector2<f64>] = reinterpret_slice(r);
-        assert_eq!(self.0.predictor_impulse.len(), impulses.len());
-
-        // Clear objective value.
-        *obj = 0.0;
-
-        // Compute (negative of) frictional dissipation.
-        for (&v, &r) in zip!(self.0.predictor_impulse.iter(), impulses.iter()) {
-            *obj += v.dot(r) * self.0.scale;
-        }
-
-        *obj *= self.0.scale;
-
-        true
-    }
-
-    fn objective_grad(&self, _r: &[Number], grad_f: &mut [Number]) -> bool {
-        let impulse_values: &[f64] = reinterpret_slice(self.0.predictor_impulse);
-        assert_eq!(impulse_values.len(), grad_f.len());
-
-        for g in grad_f.iter_mut() {
-            *g = 0.0;
-        }
-
-        for (g, r) in zip!(grad_f.iter_mut(), impulse_values) {
-            *g += r;
-        }
-
-        true
-    }
-
-    //fn variable_scaling(&self, r_scaling: &mut [Number]) -> bool {
-    //    for (out, s) in r_scaling.iter_mut().zip(self.0.variable_scales()) {
-    //        *out = s;
-    //    }
-    //    true
-    //}
-}
-
-impl ipopt::ConstrainedProblem for ExplicitFrictionProblem<'_> {
-    fn num_constraints(&self) -> usize {
-        self.0.contact_impulse.len()
-    }
-
-    fn num_constraint_jacobian_non_zeros(&self) -> usize {
-        2 * self.num_constraints()
-    }
-
-    fn constraint(&self, r: &[Number], g: &mut [Number]) -> bool {
-        let impulses: &[Vector2<f64>] = reinterpret_slice(r);
-        assert_eq!(impulses.len(), g.len());
-        for (c, r) in zip!(g.iter_mut(), impulses.iter()) {
-            *c = r.dot(*r) * self.0.scale * self.0.scale;
-        }
-        true
-    }
-
-    fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-        for ((l, u), &cr) in g_l
-            .iter_mut()
-            .zip(g_u.iter_mut())
-            .zip(self.0.contact_impulse.iter())
-        {
-            *l = -2e19; // inner product can never be negative, so leave this unconstrained.
-            *u = self.0.mu * cr.abs();
-            *u *= *u;
-        }
-        true
-    }
-
-    #[unroll_for_loops]
-    fn constraint_jacobian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        for constraint_idx in 0..self.num_constraints() {
-            for j in 0..2 {
-                rows[2 * constraint_idx + j] = constraint_idx as Index;
-                cols[2 * constraint_idx + j] = (2 * constraint_idx + j) as Index;
-            }
-        }
-        true
-    }
-
-    fn constraint_jacobian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
-        let jacobian: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
-        let impulses: &[Vector2<f64>] = reinterpret_slice(r);
-        for (jac, &r) in zip!(jacobian.iter_mut(), impulses.iter()) {
-            *jac = r * 2.0 * self.0.scale;
-        }
-        true
-    }
-
-    fn num_hessian_non_zeros(&self) -> usize {
-        // Objective Hessian is zero.
-        // Constraint hessian is diagonal.
-        2 * self.num_constraints()
-    }
-
-    #[unroll_for_loops]
-    fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
-        // Diagonal matrix
-        for idx in 0..self.num_hessian_non_zeros() {
-            rows[idx] = idx as Index;
-            cols[idx] = idx as Index;
-        }
-        true
-    }
-    fn hessian_values(
-        &self,
-        _r: &[Number],
-        _obj_factor: Number,
-        lambda: &[Number],
-        vals: &mut [Number],
-    ) -> bool {
-        let hess_vals: &mut [Vector2<f64>] = reinterpret_mut_slice(vals);
-        assert_eq!(hess_vals.len(), lambda.len());
-        for (h, &l) in zip!(hess_vals.iter_mut(), lambda.iter()) {
-            *h = Vector2([2.0, 2.0]) * l;
-        }
-        true
-    }
-}
-*/
 
 pub(crate) struct SemiImplicitFrictionProblem<'a>(FrictionProblem<'a>);
 
@@ -387,7 +249,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let grad = mass_inv_mtx.view() * diff.view();
         //let grad = diff.view();
 
-        let grad_t = contact_basis.to_tangent_space(grad.view().into_inner().into());
+        let grad_t: Vec<_> = contact_basis.to_tangent_space(grad.view().into_inner().into()).collect();
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
@@ -431,13 +293,14 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
     }
 
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
-        for /*(*/(l, u)/*, &cr)*/ in g_l
+        for ((l, u), &cr) in g_l
             .iter_mut()
             .zip(g_u.iter_mut())
-            //.zip(self.0.contact_impulse.iter())
+            .zip(self.0.contact_impulse.iter())
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
             *u = 1.0;
+            //*u = cr.abs() * self.0.mu;
         }
         true
     }
@@ -568,7 +431,7 @@ mod tests {
     fn sliding_point_tester(mu: f64, mass: f64) -> Result<(Vector2<f64>, Vector2<f64>), Error> {
         let params = FrictionParams {
             dynamic_friction: mu,
-            inner_iterations: 30,
+            inner_iterations: 100,
             tolerance: 1e-15,
             print_level: 5,
         };
@@ -595,7 +458,7 @@ mod tests {
 
         let impulse = Vector2(solution[0]);
         let new_vel = impulse / mass;
-        let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
+        let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
         let prev_vel = -Vector2(p_imp_t[0]) / mass;
         // Add the previous velocity to the new impulse.
         let final_velocity = prev_vel + new_vel;
@@ -658,7 +521,7 @@ mod tests {
         let result = solver.step()?;
         let FrictionSolveResult { solution, .. } = result;
 
-        let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
+        let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
         let final_velocity: Vec<_> = zip!(p_imp_t.iter(), solution.iter(), masses.iter())
             .map(|(&pr, &r, &m)| (-Vector2(pr) + Vector2(r)) / m)
             .collect();

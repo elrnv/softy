@@ -336,7 +336,7 @@ impl PointContactConstraint {
             build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
         jac.write_img("./out/jac.png");
-        jac
+        jac.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3])
     }
 
     fn compute_effective_mass_inv(
@@ -349,12 +349,15 @@ impl PointContactConstraint {
         let collider_zero_mass_inv =
             Chunked3::from_array_vec(vec![[0.0; 3]; jac.num_rows()]);
 
+        //dbg!(&jac);
+
         let object_mass_inv = DiagonalBlockMatrix::from_uniform(
             self.object_mass_inv
                 .as_ref()
                 .map(|mass_inv| mass_inv.view())
                 .unwrap_or_else(|| object_zero_mass_inv.view()),
         );
+        //dbg!(&object_mass_inv);
 
         // Collider mass matrix is constructed at active contacts only.
         let collider_mass_inv = DiagonalBlockMatrix::from_subset(
@@ -365,6 +368,7 @@ impl PointContactConstraint {
                 })
                 .unwrap_or_else(|| Subset::all(collider_zero_mass_inv.view())),
         );
+        //dbg!(&collider_mass_inv);
 
         let mut jac_mass = Tensor::new(jac.data.clone().into_owned());
         jac_mass *= object_mass_inv.view();
@@ -375,12 +379,12 @@ impl PointContactConstraint {
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
 
         effective_mass_inv.write_img("./out/effective_mass_inv.png");
-
+        //let out = effective_mass_inv.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3]);
+        //dbg!(&effective_mass_inv);
         effective_mass_inv
     }
 
     fn compute_predictor_impulse(
-        &self,
         v: [SubsetView<Chunked3<&[f64]>>; 2],
         active_contact_indices: &[usize],
         jac: ContactJacobianView,
@@ -500,7 +504,6 @@ impl ContactConstraint for PointContactConstraint {
         let normals_subset = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
         let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
         normals_subset.clone_into_other(&mut normals);
-        dbg!(&normals);
 
         self.frictional_contact
             .as_mut()
@@ -511,13 +514,6 @@ impl ContactConstraint for PointContactConstraint {
         let jac = self.compute_contact_jacobian(&active_contact_indices);
         let effective_mass_inv =
             self.compute_effective_mass_inv(&active_contact_indices, jac.view());
-
-        let predictor_impulse = self.compute_predictor_impulse(
-            v,
-            &active_contact_indices,
-            jac.view(),
-            effective_mass_inv.view(),
-        );
 
         let FrictionalContact {
             contact_basis,
@@ -548,8 +544,19 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         let mut contact_impulse: Chunked3<Vec<f64>> = contact_basis.from_normal_space(&orig_contact_impulse_n).collect();
+        // Prepare true predictor for the friction solve.
+        let predictor_impulse = Self::compute_predictor_impulse(
+            v,
+            &active_contact_indices,
+            jac.view(),
+            effective_mass_inv.view(),
+        );
+        // Project out the normal component.
+        let predictor_impulse: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse.into_arrays()).collect();
+        let predictor_impulse: Chunked3<Vec<_>> = contact_basis.from_tangent_space(&predictor_impulse).collect();
+
+        let predictor_impulse: Chunked3<Vec<f64>> = (predictor_impulse.expr() + contact_impulse.expr()).eval();
         let success = if false {
-            let predictor_impulse: Chunked3<Vec<f64>> = (predictor_impulse.expr() - contact_impulse.expr()).eval();
             // Polar coords
             let predictor_impulse_t: Vec<_> = predictor_impulse
                 .iter()
@@ -623,7 +630,7 @@ impl ContactConstraint for PointContactConstraint {
             }
         } else {
             let mut contact_impulse_n = orig_contact_impulse_n.clone();
-            let prev_friction_impulse_t = contact_basis.to_tangent_space(&prev_friction_impulse);
+            let prev_friction_impulse_t: Vec<_> = contact_basis.to_tangent_space(&prev_friction_impulse).collect();
 
             //TODO: undo tmp change
             let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
@@ -632,9 +639,9 @@ impl ContactConstraint for PointContactConstraint {
             if true {
                 // Switch between implicit solver and explicit solver here.
                 loop {
-                    println!("predictor: {:?}", Tensor::new(predictor_impulse.view()).norm());
+                    //println!("predictor: {:?}", predictor_impulse.view());
                     let friction_predictor: Chunked3<Vec<f64>> = (predictor_impulse.expr() - contact_impulse.expr()).eval();
-                    println!("f_predictor: {:?}", Tensor::new(friction_predictor.view()).norm());
+                    //println!("f_predictor: {:?}", friction_predictor.view());
                     match crate::friction::solver::FrictionSolver::new(
                         friction_predictor.view().into(),
                         &prev_friction_impulse_t,
@@ -659,9 +666,9 @@ impl ContactConstraint for PointContactConstraint {
                         }
                     }
 
-                    println!("c_before: {:?}", contact_impulse_n);
+                    //println!("c_before: {:?}", contact_impulse_n);
                     let contact_predictor: Chunked3<Vec<f64>> = (predictor_impulse.expr() - friction_impulse.expr()).eval();
-                    println!("c_predictor: {:?}", Tensor::new(contact_predictor.view()).norm());
+                    //println!("c_predictor: {:?}", contact_predictor.view());
 
                     let contact_impulse_n_copy = contact_impulse_n.clone();
                     match crate::friction::contact_solver::ContactSolver::new(
@@ -689,12 +696,13 @@ impl ContactConstraint for PointContactConstraint {
                         }
                     }
 
-                    println!("c_after: {:?}", contact_impulse_n);
+                    //println!("c_after: {:?}", contact_impulse_n);
+                    //println!("c_after_full: {:?}", contact_impulse.view());
 
                     let f_prev = Tensor::new(Chunked3::from_array_slice(prev_friction_impulse.as_slice()));
                     let f_cur = Tensor::new(friction_impulse.view());
-                    println!("prev friction impulse: {:?}", f_prev.norm());
-                    println!("cur friction impulse: {:?}", f_cur.norm());
+                    //println!("prev friction impulse: {:?}", f_prev.norm());
+                    //println!("cur friction impulse: {:?}", f_cur.norm());
 
                     let f_delta = f_prev - f_cur;
                     let rel_err_numerator = f_delta
@@ -707,6 +715,7 @@ impl ContactConstraint for PointContactConstraint {
 
                     dbg!(rel_err);
                     if rel_err < 1e-5 {
+                        friction_steps = 0;
                         break true;
                     }
 
@@ -723,9 +732,8 @@ impl ContactConstraint for PointContactConstraint {
 
                 }
             } else {
-                let predictor_impulse: Chunked3<Vec<f64>> = (predictor_impulse.expr() - contact_impulse.expr()).eval();
-                let predictor_impulse_t =
-                    contact_basis.to_tangent_space(predictor_impulse.view().into());
+                let predictor_impulse_t: Vec<_> =
+                    contact_basis.to_tangent_space(predictor_impulse.view().into()).collect();
                 for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
                     predictor_impulse_t.iter(),
                     orig_contact_impulse_n.iter(),

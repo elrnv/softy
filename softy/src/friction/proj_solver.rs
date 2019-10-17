@@ -44,7 +44,7 @@ impl<'a> FrictionSolver<'a> {
         // Solve quadratic optimization problem
         let mut friction_impulse = Chunked2::from_array_vec(vec![[0.0; 2]; self.predictor_impulse.len()]);
         //let predictor_impulse = (self.mass_inv_mtx.view() * Tensor::new(self.predictor_impulse)).into_inner();
-        let predictor_impulse_t = self.contact_basis.to_tangent_space(self.predictor_impulse.view().into());
+        let predictor_impulse_t: Vec<_> = self.contact_basis.to_tangent_space(self.predictor_impulse.view().into()).collect();
         for (r, &pred_p, &prev_r, &cr) in zip!(
             friction_impulse.iter_mut(),
             predictor_impulse_t.iter(),
@@ -133,7 +133,7 @@ mod tests {
         let result = solver.step().unwrap();
 
         let impulse = Vector2::new(result.solution[0]);
-        let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
+        let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
         let final_velocity = (impulse - Vector2::new(p_imp_t[0])) / mass;
 
         dbg!(&p_imp_t);
@@ -193,7 +193,7 @@ mod tests {
         ).unwrap();
         let result = solver.step().unwrap();
 
-        let p_imp_t = contact_basis.to_tangent_space(&predictor_impulse);
+        let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
         let final_momentum: Vec<_> = zip!(p_imp_t.iter(), result.solution.iter())
             .map(|(&pred_p, &r)| (Vector2::new(r) - Vector2::new(pred_p)))
             .collect();

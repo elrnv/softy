@@ -186,8 +186,6 @@ impl<'a, S, I> View<'a> for Select<S, I>
 where
     S: View<'a>,
     I: AsRef<[usize]>,
-    //<S as View<'a>>::Type: Set,
-    //Select<<S as View<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
     fn view(&'a self) -> Self::Type {
@@ -202,7 +200,6 @@ impl<'a, S, I> ViewMut<'a> for Select<S, I>
 where
     S: Set + ViewMut<'a>,
     I: AsRef<[usize]>,
-    //Select<<S as ViewMut<'a>>::Type, &'a [usize]>: IntoIterator,
 {
     type Type = Select<S::Type, &'a [usize]>;
     /// Create a mutable view of this selection.

@@ -9,7 +9,6 @@ pub mod zip;
  */
 pub use crate::transform::*;
 pub use crate::zip::*;
-use geo::math::Vector3;
 use geo::mesh::{PolyMesh, TetMesh, TriMesh};
 
 /// Parameters that define a grid that lies in one of the 3 axis planes in 3D space.
@@ -233,13 +232,13 @@ pub fn make_regular_icosahedron() -> TriMesh<f64> {
 //
 //}
 
-/// Generate a random vector of `Vector3`s.
-pub fn random_vectors(n: usize) -> Vec<Vector3<f64>> {
+/// Generate a random vector of triplets.
+pub fn random_vectors(n: usize) -> Vec<[f64; 3]> {
     use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     let range = Uniform::new(-1.0, 1.0);
     (0..n)
-        .map(move |_| Vector3([rng.sample(range), rng.sample(range), rng.sample(range)]))
+        .map(move |_| [rng.sample(range), rng.sample(range), rng.sample(range)])
         .collect()
 }
 

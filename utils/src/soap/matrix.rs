@@ -152,6 +152,126 @@ where
  * from such.
  */
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DiagonalMatrix<S = Vec<f64>, I = Box<[usize]>>(
+    Subset<S, I>,
+);
+
+pub type DiagonalMatrixView<'a> = DiagonalMatrix<&'a [f64], &'a [usize]>;
+pub type DiagonalMatrixViewMut<'a> = DiagonalMatrix<&'a mut [f64], &'a [usize]>;
+
+impl<S: Set> DiagonalMatrix<S, Box<[usize]>>
+{
+    /// A generic constructor that transforms the input into the underlying storage type. This
+    /// sometimes requires additional generic parameters to be explicitly specified.
+    /// This function assumes `Box<[usize]>` as a placeholder for indices where the subset is
+    /// entire.
+    pub fn new<T: Into<Subset<S, Box<[usize]>>>>(set: T) -> Self {
+        DiagonalMatrix(set.into())
+    }
+}
+
+impl<S: Set, I: AsRef<[usize]>> DiagonalMatrix<S, I>
+{
+    /// Explicit constructor from subsets.
+    pub fn from_subset(subset: Subset<S, I>) -> Self {
+        DiagonalMatrix(subset.into())
+    }
+    /// Produce a mutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
+    /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
+    pub fn tensor_view_mut<'a>(&'a mut self) -> Tensor<SubsetView<'a, S::Type>>
+    where
+        S: Set + ViewMut<'a>,
+    {
+        Tensor::new(ViewMut::view_mut(&mut self.0))
+    }
+
+    /// Produce an immutable view of this diagonal block matrix as a tensor. When interprepted as a tensor the data
+    /// contained in this matrix represents a dense matrix with `self.0.len()` rows and `N` columns.
+    pub fn tensor_view<'a>(&'a self) -> Tensor<SubsetView<'a, S::Type>>
+    where
+        S: Set + View<'a>,
+    {
+        Tensor::new(self.0.view())
+    }
+}
+
+impl<S: Set> Matrix for DiagonalMatrix<S> {
+    type Transpose = Self;
+    fn transpose(self) -> Self {
+        self
+    }
+    fn num_cols(&self) -> usize {
+        self.0.len()
+    }
+    fn num_rows(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<T, S, I> Norm<T> for DiagonalMatrix<S, I>
+where
+    T: Scalar,
+    Subset<S, I>: for<'a> ViewIterator<'a, Item = &'a T>,
+    T: num_traits::FromPrimitive,
+{
+    fn lp_norm(&self, norm: LpNorm) -> T
+    where
+        T: Float,
+    {
+        match norm {
+            LpNorm::P(p) => self
+                .0
+                .view_iter()
+                .map(|x| x.abs().powi(p))
+                .sum::<T>()
+                .powf(T::one() / T::from_i32(p).expect("Failed to convert integer to flaot type.")),
+            LpNorm::Inf => self
+                .0
+                .view_iter()
+                .map(|x| x.abs())
+                .max_by(|x, y| {
+                    x.partial_cmp(y)
+                        .expect("Detected NaN when computing Inf-norm.")
+                })
+                .unwrap_or(T::zero()),
+        }
+    }
+    fn norm_squared(&self) -> T {
+        self.0
+            .view_iter()
+            .map(|&x| x * x)
+            .sum::<T>()
+    }
+}
+
+impl<S: Set> SparseMatrix for DiagonalMatrix<S>
+{
+    fn num_non_zeros(&self) -> usize {
+        self.num_rows()
+    }
+}
+
+impl<S: Viewed, I> Viewed for DiagonalMatrix<S, I> {}
+
+impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: AsRef<[usize]>> View<'a>
+    for DiagonalMatrix<S, I>
+{
+    type Type = DiagonalMatrixView<'a>;
+    fn view(&'a self) -> Self::Type {
+        DiagonalMatrix(View::view(&self.0))
+    }
+}
+
+impl<'a, S: Set + ViewMut<'a, Type = &'a mut [f64]>, I: AsRef<[usize]>> ViewMut<'a>
+    for DiagonalMatrix<S, I>
+{
+    type Type = DiagonalMatrixViewMut<'a>;
+    fn view_mut(&'a mut self) -> Self::Type {
+        DiagonalMatrix(ViewMut::view_mut(&mut self.0))
+    }
+}
+
 /// A diagonal matrix of `N` sized chunks. this is not to be confused with block diagonal matrix,
 /// which may contain off-diagonal elements in each block. This is a purely diagonal matrix, whose
 /// diagonal elements are grouped into `N` sized chunks.
@@ -280,12 +400,11 @@ where
             LpNorm::Inf => self
                 .0
                 .view_iter()
-                .flat_map(|v| v.iter())
+                .flat_map(|v| v.iter().map(|x| x.abs()))
                 .max_by(|x, y| {
                     x.partial_cmp(y)
                         .expect("Detected NaN when computing Inf-norm.")
                 })
-                .cloned()
                 .unwrap_or(T::zero()),
         }
     }
@@ -375,6 +494,19 @@ where
     /// entire.
     pub fn new<T: Into<Subset<UniChunked<UniChunked<S, M>, N>, Box<[usize]>>>>(chunks: T) -> Self {
         BlockDiagonalMatrix(chunks.into())
+    }
+
+}
+
+impl BlockDiagonalMatrix3x1 {
+    pub fn negate(&mut self) {
+        for mut x in self.0.iter_mut() {
+            for x in x.iter_mut() {
+                for x in x.iter_mut() {
+                    *x = -*x;
+                }
+            }
+        }
     }
 }
 
@@ -552,14 +684,38 @@ where
         let ref self_data = (self.0).0;
         let ref other_data = other.0;
         assert_eq!(Set::len(self_data), other_data.len());
-        let outer_chunk_size = self_data.inner_chunk_size();
+        assert_eq!(2, self_data.inner_chunk_size());
         let mut out =
-            BlockDiagonalMatrix::from_flat(vec![0.0; outer_chunk_size * outer_chunk_size]);
+            BlockDiagonalMatrix::from_flat(vec![0.0; 4 * self_data.len()]);
         for (out_block, lhs_block, rhs_block) in
             zip!(out.0.iter_mut(), self_data.iter(), other_data.iter())
         {
             let out_mtx: &mut Matrix2<f64> = out_block.as_matrix();
             *out_mtx = lhs_block.as_matrix().transpose() * *rhs_block.as_matrix();
+        }
+        out
+    }
+}
+
+impl<S, I: AsRef<[usize]>, J: AsRef<[usize]>> Mul<BlockDiagonalMatrix3x1<S, J>>
+    for Transpose<BlockDiagonalMatrix3x1<S, I>>
+where
+    S: Set<Elem = f64>
+        + UniChunkable<typenum::consts::U1>
+        + UniChunkable<typenum::consts::U3>
+        + for<'a> View<'a, Type = &'a [f64]>,
+{
+    type Output = DiagonalMatrix;
+    fn mul(self, other: BlockDiagonalMatrix3x1<S, J>) -> Self::Output {
+        let ref self_data = (self.0).0;
+        let ref other_data = other.0;
+        assert_eq!(Set::len(self_data), other_data.len());
+        assert_eq!(self_data.inner_chunk_size(), 1);
+        let mut out = DiagonalMatrix::new(vec![0.0; self_data.len()]);
+        for (out_entry, lhs_block, rhs_block) in
+            zip!(out.0.iter_mut(), self_data.iter(), other_data.iter())
+        {
+            *out_entry = (lhs_block.as_matrix().transpose() * *rhs_block.as_matrix()).data[0][0];
         }
         out
     }
@@ -686,6 +842,66 @@ impl SSBlockMatrix3 {
         col_data.sort_chunks_by_index();
 
         Tensor::new(Sparse::from_dim(rows, num_rows, col_data))
+    }
+}
+
+fn is_unique(indices: &[usize]) -> bool {
+    if indices.is_empty() {
+        return true;
+    }
+    let mut prev_index = indices[0];
+    for &index in indices[1..].iter() {
+        if index == prev_index {
+            return false;
+        }
+        prev_index = index;
+    }
+    true
+}
+
+impl<S, I: AsRef<[usize]>> SSBlockMatrix3<S, I>
+where
+    Self: for<'a> View<'a, Type = SSBlockMatrix3View<'a>>,
+    I: IntoOwned<Owned = Vec<usize>>,
+{
+    /// Compress the matrix representation by consolidating duplicate entries.
+    pub fn compressed(&self) -> SSBlockMatrix3 {
+        // Check that there are no duplicate rows. This should not happen when crating from
+        // triplets.
+        assert!(is_unique(self.data.selection.indices.as_ref()));
+        Tensor::new(
+            Sparse::new(
+                self.data.selection.view().into_owned(),
+                self.view().data.source.compressed(|a, b| {
+                    *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
+                }),
+            )
+        )
+    }
+}
+
+impl<S, I: AsRef<[usize]>> SSBlockMatrix3<S, I>
+where
+    Self: for<'a> View<'a, Type = SSBlockMatrix3View<'a>>,
+    I: IntoOwned<Owned = Vec<usize>>,
+{
+    /// Remove all elements that do not satisfy the given predicate and compress the resulting matrix.
+    pub fn pruned(
+        &self,
+        keep: impl Fn(usize, usize, &Tensor<[[f64; 3]; 3]>) -> bool,
+    ) -> SSBlockMatrix3 {
+        // Check that there are no duplicate rows. This should not happen when crating from
+        // triplets.
+        assert!(is_unique(self.data.selection.indices.as_ref()));
+        Tensor::new(
+            Sparse::new(
+                self.data.selection.view().into_owned(),
+                self.view().data.source.pruned(|a, b| {
+                    *a.as_mut_arrays().as_mut_tensor() += b.into_arrays().as_tensor()
+                },
+                |i, j, e| keep(i, j, e.as_arrays().as_tensor()))
+            )
+        )
     }
 }
 
@@ -856,6 +1072,23 @@ impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
     }
 }
 
+impl From<DiagonalMatrix> for DSMatrix {
+    fn from(diag: DiagonalMatrix) -> DSMatrix {
+        let mut out_data = vec![0.0; diag.0.len()];
+        Subset::clone_into_other(&diag.0.view(), &mut out_data);
+
+        let num_cols = diag.num_cols();
+        Tensor::new(Chunked::from_sizes(
+            vec![1; diag.num_rows()], // One block in every row.
+            Sparse::from_dim(
+                (0..num_cols).collect(), // Diagonal sparsity pattern
+                num_cols,
+                out_data,
+            ),
+        ))
+    }
+}
+
 impl From<BlockDiagonalMatrix2> for DSBlockMatrix2 {
     fn from(diag: BlockDiagonalMatrix2) -> DSBlockMatrix2 {
         let mut out_data = Chunked2::from_flat(Chunked2::from_flat(vec![0.0; diag.0.len() * 4]));
@@ -925,15 +1158,16 @@ impl<'a> DSBlockMatrix3View<'a> {
 
         // TODO: It is annoying to always have to call into_arrays to construct small matrices.
         // We should implement array math on UniChunked<Array> types or find another solution.
-        for (mut out_row, row) in Iterator::zip(out.iter_mut(), self.data.iter()) {
+        for (row_idx, (mut out_row, row)) in Iterator::zip(out.iter_mut(), self.data.iter()).enumerate() {
             for ((col_idx, out_entry), orig_entry) in out_row
                 .indexed_source_iter_mut()
                 .zip(IntoIterator::into_iter(row.source().view()))
             {
-                let basis = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
-                let basis_tr = basis.transpose();
-                let mass = *orig_entry.into_arrays().as_tensor();
-                *out_entry.into_arrays().as_mut_tensor() = basis_tr * mass * basis;
+                let basis_lhs = *p.0.view().isolate(row_idx).into_arrays().as_tensor();
+                let basis_rhs = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
+                let basis_lhs_tr = basis_lhs.transpose();
+                let orig_block = *orig_entry.into_arrays().as_tensor();
+                *out_entry.into_arrays().as_mut_tensor() = basis_lhs_tr * orig_block * basis_rhs;
             }
         }
 
@@ -955,15 +1189,16 @@ impl<'a> DSBlockMatrix3View<'a> {
 
         // TODO: It is annoying to always have to call into_arrays to construct small matrices.
         // We should implement array math on UniChunked<Array> types or find another solution.
-        for (mut out_row, row) in Iterator::zip(out.iter_mut(), self.data.iter()) {
+        for (row_idx, (mut out_row, row)) in out.iter_mut().zip(self.data.iter()).enumerate() {
             for ((col_idx, out_entry), orig_entry) in out_row
                 .indexed_source_iter_mut()
                 .zip(IntoIterator::into_iter(row.source().view()))
             {
-                let basis = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
-                let basis_tr = basis.transpose();
-                let mass = *orig_entry.into_arrays().as_tensor();
-                *out_entry = (basis_tr * mass * basis).into_inner()[0][0];
+                let basis_lhs = *p.0.view().isolate(row_idx).into_arrays().as_tensor();
+                let basis_rhs = *p.0.view().isolate(col_idx).into_arrays().as_tensor();
+                let basis_lhs_tr = basis_lhs.transpose();
+                let orig_block = Tensor::new(*orig_entry.into_arrays());
+                *out_entry = (basis_lhs_tr * orig_block * basis_rhs).into_inner()[0][0];
             }
         }
 
@@ -1146,6 +1381,24 @@ where
     }
 }
 
+impl<'a, Rhs> Mul<Tensor<Rhs>> for Transpose<BlockDiagonalMatrix3x1View<'a>>
+where
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Tensor<Vec<f64>>;
+    fn mul(self, rhs: Tensor<Rhs>) -> Self::Output {
+        let rhs_data = rhs.data.into();
+        assert_eq!(rhs_data.len(), self.0.num_rows());
+
+        let mut res = vec![0.0; self.0.num_cols()];
+        for (idx, block) in (self.0).0.iter().enumerate() {
+            res[idx] += (Tensor::new(*block.into_arrays()).transpose() * Tensor::new(rhs_data[idx])).data[0];
+        }
+
+        Tensor::new(res)
+    }
+}
+
 impl<S, I> MulAssign<DiagonalBlockMatrix3<S, I>> for SSBlockMatrix3
 where
     S: Set + UniChunkable<typenum::consts::U3> + for<'a> View<'a, Type = &'a [f64]>,
@@ -1199,6 +1452,7 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
         let mut nz_row_idx = 0;
         for (row_idx, row_l, _) in self.data.iter() {
             let (_, out_row, _) = out.view_mut().isolate(nz_row_idx);
+            dbg!(row_idx);
             let num_non_zero_blocks_in_row = rhs_t
                 .view()
                 .mul_sparse_matrix3_vector(Tensor::new(row_l), Tensor::new(out_row));
@@ -1274,7 +1528,7 @@ impl SSBlockMatrix3View<'_> {
 
         for (row_idx, row, _) in self.data.iter() {
             // Initialize output
-            let mut sum_mtx = geo::math::Matrix3::zeros();
+            let mut sum_mtx = Tensor::new([[0.0; 3];3]);
             let mut row_nnz = 0;
 
             // Compute the dot product of the two sparse vectors.
@@ -1299,9 +1553,7 @@ impl SSBlockMatrix3View<'_> {
                         continue;
                     } else {
                         // rhs_idx == row_idx
-                        // col here is transposed because geo::matrix::Matrix3 is interpreted as col major.
-                        sum_mtx += geo::math::Matrix3(*col_block.into_arrays()).transpose()
-                            * geo::math::Matrix3(*rhs_block.into_arrays());
+                        sum_mtx += Tensor::new(*rhs_block.into_arrays()) * Tensor::new(*col_block.into_arrays()).transpose();
                         row_nnz += 1;
                         rhs_mb = rhs_iter.next();
                         col_mb = row_iter.next();
@@ -1312,7 +1564,7 @@ impl SSBlockMatrix3View<'_> {
             if row_nnz > 0 {
                 let (index, out_block) = out_iter_mut.next().unwrap();
                 *index = row_idx;
-                *(out_block.into_arrays()) = sum_mtx.into();
+                *out_block.into_arrays().as_mut_tensor() = sum_mtx;
                 num_non_zeros += 1;
             }
         }
@@ -1366,6 +1618,21 @@ where
         self.0.norm_squared()
     }
 }
+
+impl<'a, M: View<'a>> View<'a> for Transpose<M> {
+    type Type = Transpose<M::Type>;
+    fn view(&'a self) -> Self::Type {
+        Transpose(self.0.view())
+    }
+}
+impl<'a, M: ViewMut<'a>> ViewMut<'a> for Transpose<M> {
+    type Type = Transpose<M::Type>;
+    fn view_mut(&'a mut self) -> Self::Type {
+        Transpose(self.0.view_mut())
+    }
+}
+
+impl<M: Viewed> Viewed for Transpose<M> {}
 
 #[cfg(test)]
 mod tests {

@@ -1446,7 +1446,6 @@ impl Mul<Transpose<SSBlockMatrix3View<'_>>> for SSBlockMatrix3View<'_> {
         let mut nz_row_idx = 0;
         for (row_idx, row_l, _) in self.data.iter() {
             let (_, out_row, _) = out.view_mut().isolate(nz_row_idx);
-            dbg!(row_idx);
             let num_non_zero_blocks_in_row = rhs_t
                 .view()
                 .mul_sparse_matrix3_vector(Tensor::new(row_l), Tensor::new(out_row));

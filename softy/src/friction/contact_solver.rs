@@ -19,13 +19,27 @@ impl<'a> ContactSolver<'a> {
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<ContactSolver<'a>, Error> {
-        let mut basis_mtx = contact_basis.normal_basis_matrix();
+        let basis_mtx = contact_basis.normal_basis_matrix();
         let hessian = mass_inv_mtx
             .clone()
             .diagonal_congruence_transform3x1(basis_mtx.view());
-        //dbg!(&hessian);
 
         let predictor_impulse = Chunked3::from_array_slice(predictor_impulse);
+
+        // TODO: Remove this test
+
+        {
+            use approx::*;
+            let r: Chunked3<Vec<f64>> = contact_basis.from_normal_space(contact_impulse_n).collect();
+            let test_rhs = mass_inv_mtx.view() * *r.view().as_tensor();
+            let test_rhs_n: Vec<f64> = contact_basis.to_normal_space(test_rhs.view().into_inner().into()).collect();
+
+            let rhs_n = hessian.view() * Tensor::new(contact_impulse_n);
+
+            assert!(rhs_n.into_inner().iter().zip(test_rhs_n.iter()).all(|(&a, &b)| relative_eq!(a, b)));
+        }
+
+        // End of test
 
         let problem = ContactProblem {
             predictor_impulse,
@@ -34,6 +48,7 @@ impl<'a> ContactSolver<'a> {
             mass_inv_mtx,
             hessian,
         };
+
 
         let mut ipopt = Ipopt::new_newton(problem)?;
         ipopt.set_option("print_level", params.print_level as i32);
@@ -107,18 +122,23 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
             predictor_impulse,
             contact_basis,
             mass_inv_mtx,
+            hessian,
             ..
         } = self;
 
         assert_eq!(predictor_impulse.len(), r_n.len());
 
         // Convert to physical space.
-        let mut diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
-        *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
-        let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
-        //let rhs = diff.view();
+        //let mut diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
+        //*diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
+        //let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
+        //let rhs: Vec<f64> = contact_basis.to_normal_space(rhs.view().into_inner().into()).collect();
+        let mut rhs = hessian.view() * (Tensor::new(r_n) * 0.5).view();
+        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
+        let pred_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
+        rhs -= pred_n.view().as_tensor();
 
-        *obj = 0.5 * diff.expr().dot(rhs.expr());
+        *obj = r_n.expr().dot(rhs.expr());
 
         true
     }
@@ -128,19 +148,24 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
             predictor_impulse,
             contact_basis,
             mass_inv_mtx,
+            hessian,
             ..
         } = self;
 
-        let diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
-        let mut diff = Tensor::new(diff);
-        diff -= Tensor::new(predictor_impulse.view());
-        let grad = mass_inv_mtx.view() * diff.view();
-        //let grad = diff.view();
-        let grad_n = contact_basis.to_normal_space(grad.view().into_inner().into());
+        //let diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
+        //let mut diff = Tensor::new(diff);
+        //diff -= Tensor::new(predictor_impulse.view());
+        //let grad = mass_inv_mtx.view() * diff.view();
+        ////let grad = diff.view();
+        //let grad_n = contact_basis.to_normal_space(grad.view().into_inner().into());
 
-        for (g_out, g) in grad_f_n.iter_mut().zip(grad_n) {
-            *g_out = g
-        }
+        let mut rhs = hessian.view() * Tensor::new(r_n);
+        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
+        let pred_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
+        rhs -= pred_n.view().as_tensor();
+
+        assert_eq!(grad_f_n.len(), rhs.len());
+        grad_f_n.copy_from_slice(rhs.view().into_inner());
 
         true
     }
@@ -170,7 +195,6 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
     ) -> bool {
         assert_eq!(self.hessian.num_non_zeros(), vals.len());
         vals.copy_from_slice(self.hessian.data.storage());
-
         true
     }
 }

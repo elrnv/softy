@@ -335,8 +335,9 @@ impl PointContactConstraint {
         let jac_triplets =
             build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
+        let jac = jac.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3]);
         jac.write_img("./out/jac.png");
-        jac.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3])
+        jac
     }
 
     fn compute_effective_mass_inv(
@@ -349,15 +350,12 @@ impl PointContactConstraint {
         let collider_zero_mass_inv =
             Chunked3::from_array_vec(vec![[0.0; 3]; jac.num_rows()]);
 
-        //dbg!(&jac);
-
         let object_mass_inv = DiagonalBlockMatrix::from_uniform(
             self.object_mass_inv
                 .as_ref()
                 .map(|mass_inv| mass_inv.view())
                 .unwrap_or_else(|| object_zero_mass_inv.view()),
         );
-        //dbg!(&object_mass_inv);
 
         // Collider mass matrix is constructed at active contacts only.
         let collider_mass_inv = DiagonalBlockMatrix::from_subset(
@@ -368,7 +366,6 @@ impl PointContactConstraint {
                 })
                 .unwrap_or_else(|| Subset::all(collider_zero_mass_inv.view())),
         );
-        //dbg!(&collider_mass_inv);
 
         let mut jac_mass = Tensor::new(jac.data.clone().into_owned());
         jac_mass *= object_mass_inv.view();
@@ -379,8 +376,6 @@ impl PointContactConstraint {
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
 
         effective_mass_inv.write_img("./out/effective_mass_inv.png");
-        //let out = effective_mass_inv.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3]);
-        //dbg!(&effective_mass_inv);
         effective_mass_inv
     }
 

@@ -8,7 +8,6 @@ pub use sprs_compat::*;
 use super::*;
 use crate::zip;
 use chunked::Offsets;
-use geo::math::{Matrix3, Vector3};
 use num_traits::Float;
 use std::convert::AsRef;
 use std::ops::{Add, Mul, MulAssign};
@@ -1190,21 +1189,33 @@ impl<'a> DSBlockMatrix3View<'a> {
     }
 }
 
+impl<'a> Mul<Tensor<&'a [f64]>> for DSMatrixView<'_> {
+    type Output = Tensor<Vec<f64>>;
+    fn mul(self, rhs: Tensor<&'a [f64]>) -> Self::Output {
+        assert_eq!(rhs.len(), self.num_cols());
+
+        let mut res = vec![0.0; self.num_rows()];
+        for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
+            for (col_idx, entry, _) in row.iter() {
+                *out_row += *entry * rhs.data[col_idx];
+            }
+        }
+
+        Tensor::new(res)
+    }
+}
+
 impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, rhs: Tensor<Chunked3<&'a [f64]>>) -> Self::Output {
-        //let rhs = rhs.into();
         assert_eq!(rhs.len(), self.num_cols());
 
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
             for (col_idx, block, _) in row.iter() {
-                let out =
-                    Vector3(*out_row) + Matrix3(*block.into_arrays()) * Vector3(rhs.data[col_idx]);
-                *out_row = out.into();
+                *out_row.as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
             }
         }
-
         Tensor::new(res)
     }
 }
@@ -1333,9 +1344,7 @@ where
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row_idx, row, _) in self.data.iter() {
             for (col_idx, block, _) in row.iter() {
-                let out = Vector3(res[row_idx])
-                    + Matrix3(*block.into_arrays()) * Vector3(rhs_data[col_idx]);
-                res[row_idx] = out.into();
+                *res[row_idx].as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx]);
             }
         }
 
@@ -1350,14 +1359,13 @@ where
     type Output = Tensor<Chunked3<Vec<f64>>>;
     fn mul(self, rhs: Tensor<Rhs>) -> Self::Output {
         let rhs_data = rhs.data.into();
-        assert_eq!(rhs_data.len(), self.0.num_rows());
+        assert_eq!(rhs_data.len(), self.num_cols());
 
-        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.0.num_cols()]);
-        for (row_idx, row, _) in self.0.data.iter() {
-            for (col_idx, block, _) in row.iter() {
-                let out = Vector3(res[col_idx])
-                    + Matrix3(*block.into_arrays()) * Vector3(rhs_data[row_idx]);
-                res[col_idx] = out.into();
+        let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
+        for (col_idx, col, _) in self.0.data.iter() {
+            let rhs = Tensor::new(rhs_data[col_idx]);
+            for (row_idx, block, _) in col.iter() {
+                *res[row_idx].as_mut_tensor() += Tensor::new((rhs.transpose() * Tensor::new(*block.into_arrays())).data[0]);
             }
         }
 

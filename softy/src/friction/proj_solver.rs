@@ -198,20 +198,26 @@ mod tests {
             .map(|(&pred_p, &r)| (Vector2::new(r) - Vector2::new(pred_p)))
             .collect();
 
+        dbg!(&p_imp_t);
         dbg!(&result.solution);
         dbg!(&final_momentum);
 
+         // Check that the tet continues with sligtly less momentum
         for i in 0..2 {
             for j in 0..2 {
                 assert_relative_eq!(
                     final_momentum[i][j],
-                    predictor_impulse[i][j],
+                    -p_imp_t[i][j],
                     max_relative = 1e-2,
                     epsilon = 1e-5
                 );
+                if j == 0 {
+                    assert!(
+                        final_momentum[i][j].abs() < p_imp_t[i][j].abs()
+                    );
+                }
             }
         }
-
         Ok(())
     }
 }

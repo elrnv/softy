@@ -636,7 +636,7 @@ impl ContactConstraint for PointContactConstraint {
                 loop {
                     //println!("predictor: {:?}", predictor_impulse.view());
                     let friction_predictor: Chunked3<Vec<f64>> = (predictor_impulse.expr() - contact_impulse.expr()).eval();
-                    //println!("f_predictor: {:?}", friction_predictor.view());
+                    println!("f_predictor: {:?}", friction_predictor.view());
                     match crate::friction::solver::FrictionSolver::new(
                         friction_predictor.view().into(),
                         &prev_friction_impulse_t,

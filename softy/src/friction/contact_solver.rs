@@ -25,30 +25,16 @@ impl<'a> ContactSolver<'a> {
             .diagonal_congruence_transform3x1(basis_mtx.view());
 
         let predictor_impulse = Chunked3::from_array_slice(predictor_impulse);
-
-        // TODO: Remove this test
-
-        {
-            use approx::*;
-            let r: Chunked3<Vec<f64>> = contact_basis.from_normal_space(contact_impulse_n).collect();
-            let test_rhs = mass_inv_mtx.view() * *r.view().as_tensor();
-            let test_rhs_n: Vec<f64> = contact_basis.to_normal_space(test_rhs.view().into_inner().into()).collect();
-
-            let rhs_n = hessian.view() * Tensor::new(contact_impulse_n);
-
-            assert!(rhs_n.into_inner().iter().zip(test_rhs_n.iter()).all(|(&a, &b)| relative_eq!(a, b)));
-        }
-
-        // End of test
+        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
+        let predictor_impulse_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
 
         let problem = ContactProblem {
-            predictor_impulse,
+            predictor_impulse_n,
             init_contact_impulse_n: contact_impulse_n,
             contact_basis,
             mass_inv_mtx,
             hessian,
         };
-
 
         let mut ipopt = Ipopt::new_newton(problem)?;
         ipopt.set_option("print_level", params.print_level as i32);
@@ -56,7 +42,7 @@ impl<'a> ContactSolver<'a> {
         ipopt.set_option("sb", "yes");
         //ipopt.set_option("nlp_scaling_max_gradient", 1.0);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
-        ipopt.set_option("derivative_test", "second-order");
+        //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");
         ipopt.set_option("hessian_constant", "yes");
         ipopt.set_option("max_iter", params.inner_iterations as i32);
@@ -84,7 +70,7 @@ impl<'a> ContactSolver<'a> {
 }
 
 pub(crate) struct ContactProblem<'a> {
-    predictor_impulse: Chunked3<&'a [f64]>,
+    predictor_impulse_n: Vec<f64>,
     init_contact_impulse_n: &'a [f64],
     /// Basis defining the normal and tangent space at each point of contact.
     contact_basis: &'a ContactBasis,
@@ -96,7 +82,7 @@ pub(crate) struct ContactProblem<'a> {
 
 impl<'a> ContactProblem<'a> {
     pub fn num_contacts(&self) -> usize {
-        self.predictor_impulse.len()
+        self.predictor_impulse_n.len()
     }
 }
 
@@ -119,24 +105,17 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
 
     fn objective(&self, r_n: &[Number], obj: &mut Number) -> bool {
         let ContactProblem {
-            predictor_impulse,
+            predictor_impulse_n,
             contact_basis,
             mass_inv_mtx,
             hessian,
             ..
         } = self;
 
-        assert_eq!(predictor_impulse.len(), r_n.len());
+        assert_eq!(predictor_impulse_n.len(), r_n.len());
 
-        // Convert to physical space.
-        //let mut diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
-        //*diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
-        //let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
-        //let rhs: Vec<f64> = contact_basis.to_normal_space(rhs.view().into_inner().into()).collect();
         let mut rhs = hessian.view() * (Tensor::new(r_n) * 0.5).view();
-        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
-        let pred_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
-        rhs -= pred_n.view().as_tensor();
+        rhs -= predictor_impulse_n.view().as_tensor();
 
         *obj = r_n.expr().dot(rhs.expr());
 
@@ -145,24 +124,15 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
 
     fn objective_grad(&self, r_n: &[Number], grad_f_n: &mut [Number]) -> bool {
         let ContactProblem {
-            predictor_impulse,
+            predictor_impulse_n,
             contact_basis,
             mass_inv_mtx,
             hessian,
             ..
         } = self;
 
-        //let diff: Chunked3<Vec<f64>> = contact_basis.from_normal_space(r_n.view().into()).collect();
-        //let mut diff = Tensor::new(diff);
-        //diff -= Tensor::new(predictor_impulse.view());
-        //let grad = mass_inv_mtx.view() * diff.view();
-        ////let grad = diff.view();
-        //let grad_n = contact_basis.to_normal_space(grad.view().into_inner().into());
-
         let mut rhs = hessian.view() * Tensor::new(r_n);
-        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
-        let pred_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
-        rhs -= pred_n.view().as_tensor();
+        rhs -= predictor_impulse_n.view().as_tensor();
 
         assert_eq!(grad_f_n.len(), rhs.len());
         grad_f_n.copy_from_slice(rhs.view().into_inner());
@@ -173,7 +143,15 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
 
 impl ipopt::NewtonProblem for ContactProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
-        self.hessian.num_non_zeros()
+        let mut idx = 0;
+        for (row_idx, row) in self.hessian.data.iter().enumerate() {
+            for col_idx in row.index_iter() {
+                if row_idx >= col_idx {
+                    idx += 1;
+                }
+            }
+        }
+        idx
     }
 
     fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
@@ -181,20 +159,31 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
         let mut idx = 0;
         for (row_idx, row) in self.hessian.data.iter().enumerate() {
             for col_idx in row.index_iter() {
-                rows[idx] = row_idx as Index;
-                cols[idx] = col_idx as Index;
-                idx += 1;
+                if row_idx >= col_idx {
+                    rows[idx] = row_idx as Index;
+                    cols[idx] = col_idx as Index;
+                    idx += 1;
+                }
             }
         }
         true
     }
+
     fn hessian_values(
         &self,
         _r: &[Number],
         vals: &mut [Number],
     ) -> bool {
-        assert_eq!(self.hessian.num_non_zeros(), vals.len());
-        vals.copy_from_slice(self.hessian.data.storage());
+        let mut idx = 0;
+        for (row_idx, row) in self.hessian.data.iter().enumerate() {
+            for (col_idx, &entry) in row.indexed_source_iter() {
+                if row_idx >= col_idx {
+                    vals[idx] = entry;
+                    idx += 1;
+                }
+            }
+        }
+
         true
     }
 }

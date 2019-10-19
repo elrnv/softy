@@ -336,7 +336,7 @@ impl PointContactConstraint {
             build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
         let jac = jac.pruned(|_,_,block| block.into_inner() != [[0.0; 3]; 3]);
-        jac.write_img("./out/jac.png");
+        //jac.write_img("./out/jac.png");
         jac
     }
 
@@ -375,7 +375,7 @@ impl PointContactConstraint {
         let effective_mass_inv = jac_mass.view() * jac.view().transpose();
         let effective_mass_inv = effective_mass_inv.view() + collider_mass_inv.view();
 
-        effective_mass_inv.write_img("./out/effective_mass_inv.png");
+        //effective_mass_inv.write_img("./out/effective_mass_inv.png");
         effective_mass_inv
     }
 
@@ -636,7 +636,7 @@ impl ContactConstraint for PointContactConstraint {
                 loop {
                     //println!("predictor: {:?}", predictor_impulse.view());
                     let friction_predictor: Chunked3<Vec<f64>> = (predictor_impulse.expr() - contact_impulse.expr()).eval();
-                    println!("f_predictor: {:?}", friction_predictor.view());
+                    //println!("f_predictor: {:?}", friction_predictor.view());
                     match crate::friction::solver::FrictionSolver::new(
                         friction_predictor.view().into(),
                         &prev_friction_impulse_t,
@@ -709,7 +709,7 @@ impl ContactConstraint for PointContactConstraint {
                         .dot((effective_mass_inv.view() * f_prev.view()).expr());
 
                     dbg!(rel_err);
-                    if rel_err < 1e-5 {
+                    if rel_err < 1e-3 {
                         friction_steps = 0;
                         break true;
                     }

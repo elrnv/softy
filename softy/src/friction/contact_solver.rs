@@ -31,8 +31,6 @@ impl<'a> ContactSolver<'a> {
         let problem = ContactProblem {
             predictor_impulse_n,
             init_contact_impulse_n: contact_impulse_n,
-            contact_basis,
-            mass_inv_mtx,
             hessian,
         };
 
@@ -72,10 +70,6 @@ impl<'a> ContactSolver<'a> {
 pub(crate) struct ContactProblem<'a> {
     predictor_impulse_n: Vec<f64>,
     init_contact_impulse_n: &'a [f64],
-    /// Basis defining the normal and tangent space at each point of contact.
-    contact_basis: &'a ContactBasis,
-    /// Vertex masses.
-    mass_inv_mtx: EffectiveMassInvView<'a>,
     /// Workspace Hessian matrix.
     hessian: DSMatrix,
 }
@@ -106,8 +100,6 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
     fn objective(&self, r_n: &[Number], obj: &mut Number) -> bool {
         let ContactProblem {
             predictor_impulse_n,
-            contact_basis,
-            mass_inv_mtx,
             hessian,
             ..
         } = self;
@@ -125,8 +117,6 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
     fn objective_grad(&self, r_n: &[Number], grad_f_n: &mut [Number]) -> bool {
         let ContactProblem {
             predictor_impulse_n,
-            contact_basis,
-            mass_inv_mtx,
             hessian,
             ..
         } = self;

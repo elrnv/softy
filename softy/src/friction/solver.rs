@@ -15,7 +15,14 @@ fn variable_scales<'a>(
     contact_impulse: &'a [f64],
     mu: f64,
 ) -> impl Iterator<Item = f64> + Clone + 'a {
-    contact_impulse.iter().map(move |&cr| 1.0 / (mu * cr.abs()))
+    contact_impulse.iter().map(move |&cr| {
+        let radius = mu * cr.abs();
+        if radius > 0.0 {
+            1.0 / radius
+        } else {
+            1.0
+        }
+    })
 }
 
 /// Friction solver.
@@ -167,11 +174,16 @@ impl<'a> FrictionProblem<'a> {
         {
             let p_norm = Tensor::new(p).norm();
             let pred = self.contact_basis.to_contact_coordinates(p, i);
-            let radius = 1.0;//cr.abs() * self.mu;
-            if p_norm > radius {
-                *r = (Tensor::new([pred[1], pred[2]]) * (radius / p_norm)).into_inner();
+            let radius = cr.abs() * self.mu;
+            if radius > 0.0 {
+                let constraint_radius = 1.0;
+                if p_norm > constraint_radius {
+                    *r = (Tensor::new([pred[1], pred[2]]) * (constraint_radius / p_norm)).into_inner();
+                } else {
+                    *r = (Tensor::new([pred[1], pred[2]])).into_inner();
+                }
             } else {
-                *r = (Tensor::new([pred[1], pred[2]])).into_inner();
+                *r = [0.0; 2];
             }
         }
         true
@@ -307,8 +319,14 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
             .zip(self.0.contact_impulse.iter())
         {
             *l = -2e19; // inner product can never be negative, so leave this unconstrained.
-            *u = 1.0;
-            //*u = cr.abs() * self.0.mu;
+            let radius = cr.abs() * self.0.mu;
+            if radius > 0.0 {
+                *u = 1.0;
+            } else {
+                // Turn into an equality constraint.
+                *l = 0.0;
+                *u = 0.0;
+            }
         }
         true
     }

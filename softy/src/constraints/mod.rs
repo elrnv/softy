@@ -1,6 +1,5 @@
-//pub mod implicit_contact;
 pub mod point_contact;
-//pub mod sp_implicit_contact;
+pub mod linearized_point_contact;
 pub mod volume;
 
 use crate::attrib_defines::*;
@@ -12,8 +11,7 @@ use crate::Index;
 use crate::TriMesh;
 use geo::math::Vector3;
 
-//pub use self::implicit_contact::*;
-pub use self::point_contact::*;
+pub use self::linearized_point_contact::*;
 pub use self::volume::*;
 use utils::aref::*;
 use utils::soap::*;
@@ -29,7 +27,7 @@ pub fn build_contact_constraint(
     Ok(match params.contact_type {
         ContactType::SPImplicit => unimplemented!(),
         ContactType::Implicit => unimplemented!(),
-        ContactType::Point => Box::new(PointContactConstraint::new(
+        ContactType::Point => Box::new(LinearizedPointContactConstraint::new(
             object,
             collider,
             params.kernel,

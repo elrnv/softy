@@ -19,8 +19,9 @@ use utils::zip;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
+/// This is the linearized version of `PointContactConstraint`.
 #[derive(Clone, Debug)]
-pub struct PointContactConstraint {
+pub struct LinearizedPointContactConstraint {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: RefCell<ImplicitSurface>,
     /// Points where collision and contact occurs. I.e. all surface vertex positions on the
@@ -49,8 +50,7 @@ pub struct PointContactConstraint {
     constraint_buffer: RefCell<Vec<f64>>,
 }
 
-impl PointContactConstraint {
-    #[allow(dead_code)]
+impl LinearizedPointContactConstraint {
     pub fn new(
         // Main object experiencing contact against its implicit surface representation.
         object: Var<&TriMesh>,
@@ -108,7 +108,7 @@ impl PointContactConstraint {
                 })
                 .ok();
 
-            let constraint = PointContactConstraint {
+            let constraint = LinearizedPointContactConstraint {
                 implicit_surface: RefCell::new(surface),
                 contact_points: RefCell::new(Chunked3::from_array_vec(query_points.to_vec())),
                 frictional_contact: friction_params.and_then(|fparams| {
@@ -410,7 +410,7 @@ impl PointContactConstraint {
     }
 }
 
-impl ContactConstraint for PointContactConstraint {
+impl ContactConstraint for LinearizedPointContactConstraint {
     // Get the total number of contacts that could potentially occur.
     fn num_potential_contacts(&self) -> usize {
         self.contact_points.borrow().len()
@@ -1065,7 +1065,7 @@ impl ContactConstraint for PointContactConstraint {
     }
 }
 
-impl<'a> Constraint<'a, f64> for PointContactConstraint {
+impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
     type Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]; // Object and collider vertices
 
     #[inline]
@@ -1132,7 +1132,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
     }
 }
 
-impl ConstraintJacobian<'_, f64> for PointContactConstraint {
+impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
     #[inline]
     fn constraint_jacobian_size(&self) -> usize {
         let num_obj = if !self.object_is_fixed {
@@ -1229,7 +1229,7 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
     }
 }
 
-impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
+impl<'a> ConstraintHessian<'a, f64> for LinearizedPointContactConstraint {
     type InputDual = &'a [f64];
     #[inline]
     fn constraint_hessian_size(&self) -> usize {
@@ -1354,7 +1354,7 @@ mod tests {
             }
         }
 
-        PointContactConstraint::fill_background_potential(&grid, &bg_pts, radius, &mut values);
+        LinearizedPointContactConstraint::fill_background_potential(&grid, &bg_pts, radius, &mut values);
 
         grid.set_attrib_data::<_, VertexIndex>("potential", &values)
             .expect("Failed to set potential field on grid");

@@ -795,19 +795,34 @@ impl<'a, S: Set + View<'a, Type = &'a [f64]>, I: Set + AsRef<[usize]>> SSBlockMa
 }
 
 impl SSBlockMatrix3 {
-    pub fn from_triplets<It: Iterator<Item = (usize, usize)>>(
+    pub fn from_index_iter_and_data<It: Iterator<Item = (usize, usize)>>(
         index_iter: It,
         num_rows: usize,
         num_cols: usize,
         blocks: Chunked3<Chunked3<Vec<f64>>>,
     ) -> Self {
-        let num_blocks = blocks.len();
-        let mut rows = Vec::with_capacity(num_blocks);
-        let mut cols = Vec::with_capacity(num_blocks);
+        Self::from_block_triplets_iter(
+            index_iter
+                .zip(blocks.iter())
+                .map(|((i, j), x)| (i, j, *x.into_arrays())),
+            num_rows,
+            num_cols,
+        )
+    }
+
+    /// Assume that rows are monotonically increasing in the iterator.
+    pub fn from_block_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, [[f64; 3]; 3])>,
+    {
+        let cap = iter.size_hint().0;
+        let mut rows = Vec::with_capacity(cap);
+        let mut cols = Vec::with_capacity(cap);
+        let mut blocks: Vec<[f64; 3]> = Vec::with_capacity(cap);
         let mut offsets = Vec::with_capacity(num_rows);
 
         let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
-        for (row, col) in index_iter {
+        for (row, col, block) in iter {
             assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
 
             if row + 1 != prev_row {
@@ -817,16 +832,27 @@ impl SSBlockMatrix3 {
             }
 
             cols.push(col);
+            // Push each row at a time to produce a Vec<[f64; 3]>
+            blocks.push(block[0]);
+            blocks.push(block[1]);
+            blocks.push(block[2]);
         }
         offsets.push(cols.len());
         offsets.shrink_to_fit();
         rows.shrink_to_fit();
 
-        let mut col_data = Chunked::from_offsets(offsets, Sparse::from_dim(cols, num_cols, blocks));
+        let mut col_data = Chunked::from_offsets(
+            offsets,
+            Sparse::from_dim(
+                cols,
+                num_cols,
+                Chunked3::from_flat(Chunked3::from_array_vec(blocks)),
+            ),
+        );
 
         col_data.sort_chunks_by_index();
 
-        Tensor::new(Sparse::from_dim(rows, num_rows, col_data))
+        Tensor::new(Sparse::from_dim(rows, num_rows, col_data)).compressed()
     }
 }
 
@@ -926,6 +952,51 @@ where
 {
     fn num_non_zero_blocks(&self) -> usize {
         self.data.data().source().len()
+    }
+}
+
+impl DSBlockMatrix3 {
+    /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
+    /// restriction.
+    pub fn from_block_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, [[f64; 3]; 3])>,
+    {
+        let cap = iter.size_hint().0;
+        let mut cols = Vec::with_capacity(cap);
+        let mut blocks: Vec<[f64; 3]> = Vec::with_capacity(cap);
+        let mut offsets = Vec::with_capacity(num_rows);
+
+        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
+        for (row, col, block) in iter {
+            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
+
+            if row + 1 != prev_row {
+                prev_row = row + 1;
+                offsets.push(cols.len());
+            }
+
+            cols.push(col);
+            // Push each row at a time to produce a Vec<[f64; 3]>
+            blocks.push(block[0]);
+            blocks.push(block[1]);
+            blocks.push(block[2]);
+        }
+        offsets.push(cols.len());
+        offsets.shrink_to_fit();
+
+        let mut col_data = Chunked::from_offsets(
+            offsets,
+            Sparse::from_dim(
+                cols,
+                num_cols,
+                Chunked3::from_flat(Chunked3::from_array_vec(blocks)),
+            ),
+        );
+
+        col_data.sort_chunks_by_index();
+
+        Tensor::new(col_data).compressed()
     }
 }
 
@@ -1213,7 +1284,8 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
             for (col_idx, block, _) in row.iter() {
-                *out_row.as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
+                *out_row.as_mut_tensor() +=
+                    Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
             }
         }
         Tensor::new(res)
@@ -1344,7 +1416,8 @@ where
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row_idx, row, _) in self.data.iter() {
             for (col_idx, block, _) in row.iter() {
-                *res[row_idx].as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx]);
+                *res[row_idx].as_mut_tensor() +=
+                    Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx]);
             }
         }
 
@@ -1365,7 +1438,8 @@ where
         for (col_idx, col, _) in self.0.data.iter() {
             let rhs = Tensor::new(rhs_data[col_idx]);
             for (row_idx, block, _) in col.iter() {
-                *res[row_idx].as_mut_tensor() += Tensor::new((rhs.transpose() * Tensor::new(*block.into_arrays())).data[0]);
+                *res[row_idx].as_mut_tensor() +=
+                    Tensor::new((rhs.transpose() * Tensor::new(*block.into_arrays())).data[0]);
             }
         }
 
@@ -1647,7 +1721,8 @@ mod tests {
         ];
         let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
         let indices = vec![(1, 1), (3, 2)];
-        let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+        let mtx =
+            SSBlockMatrix3::from_index_iter_and_data(indices.iter().cloned(), 4, 3, chunked_blocks);
 
         let sym = mtx.view() * mtx.view().transpose();
 
@@ -1676,7 +1751,8 @@ mod tests {
         ];
         let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
         let indices = vec![(1, 1), (3, 2)];
-        let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 4, 3, chunked_blocks);
+        let mtx =
+            SSBlockMatrix3::from_index_iter_and_data(indices.iter().cloned(), 4, 3, chunked_blocks);
 
         let sym = mtx.view() * mtx.view().transpose();
 
@@ -1715,7 +1791,8 @@ mod tests {
         ];
         let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
         let indices = vec![(1, 0), (2, 0), (2, 1)];
-        let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 3, 2, chunked_blocks);
+        let mtx =
+            SSBlockMatrix3::from_index_iter_and_data(indices.iter().cloned(), 3, 2, chunked_blocks);
 
         let sym = mtx.view() * mtx.view().transpose();
 
@@ -1753,8 +1830,8 @@ mod tests {
         ];
         let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
         let indices = vec![(1, 0), (2, 0), (2, 0), (2, 1)];
-        let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 3, 2, chunked_blocks);
-        let mtx = mtx.compressed();
+        let mtx =
+            SSBlockMatrix3::from_index_iter_and_data(indices.iter().cloned(), 3, 2, chunked_blocks);
 
         let sym = mtx.view() * mtx.view().transpose();
 

@@ -16,6 +16,7 @@ use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
 use utils::zip;
+use lazycell::LazyCell;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -48,6 +49,8 @@ pub struct LinearizedPointContactConstraint {
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
+
+    //hessian: DSBlockMatrix3,
 }
 
 impl LinearizedPointContactConstraint {
@@ -107,6 +110,9 @@ impl LinearizedPointContactConstraint {
                         .collect()
                 })
                 .ok();
+
+            //let hessian = Tensor::new(
+            //    Chunked::from_offsets(
 
             let constraint = LinearizedPointContactConstraint {
                 implicit_surface: RefCell::new(surface),

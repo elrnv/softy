@@ -411,7 +411,7 @@ pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
     fn into(self) -> ContactJacobian {
         let blocks = Chunked3::from_flat(Chunked3::from_flat(reinterpret_vec(self.blocks)));
-        ContactJacobian::from_triplets(self.iter, self.num_rows, self.num_cols, blocks)
+        ContactJacobian::from_index_iter_and_data(self.iter, self.num_rows, self.num_cols, blocks)
     }
 }
 //

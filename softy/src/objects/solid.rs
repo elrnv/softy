@@ -5,7 +5,7 @@ use crate::energy_models::inertia::*;
 use crate::objects::{material::*, Object};
 use crate::{TetMesh, TriMesh};
 use geo::mesh::{topology::*, Attrib};
-use std::cell::{Ref, RefCell};
+use lazycell::LazyCell;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
 /// physical material properties that govern how it behaves.
@@ -15,7 +15,7 @@ use std::cell::{Ref, RefCell};
 pub struct TetMeshSolid {
     pub tetmesh: TetMesh,
     pub material: SolidMaterial,
-    pub(crate) surface: RefCell<Option<TetMeshSurface>>,
+    pub(crate) surface: LazyCell<TetMeshSurface>,
 }
 
 // TODO: This impl can be automated with a derive macro
@@ -45,21 +45,14 @@ impl TetMeshSolid {
         TetMeshSolid {
             tetmesh,
             material,
-            surface: RefCell::new(None),
+            surface: LazyCell::new(),
         }
     }
 
-    pub(crate) fn surface(&self) -> Ref<TetMeshSurface> {
-        {
-            if self.surface.borrow().is_none() {
-                let mut surface = self.surface.borrow_mut();
-                *surface = Some(TetMeshSurface::from(&self.tetmesh));
-            }
-        }
-
-        let surface = self.surface.borrow();
-
-        Ref::map(surface, |surface| surface.as_ref().unwrap())
+    pub(crate) fn surface(&self) -> &TetMeshSurface {
+        self.surface.borrow_with(|| {
+            TetMeshSurface::from(&self.tetmesh)
+        })
     }
 }
 

@@ -21,7 +21,7 @@ macro_rules! apply_kernel_fn {
             MLS::Local(LocalMLS { kernel, base_radius, .. }) => {
                 apply_as_spherical!(*kernel, *base_radius, $f)
             },
-            MLS::Global(GlobalMLS { kernel, surf_base } ) => {
+            MLS::Global(GlobalMLS { kernel, .. } ) => {
                 apply_as_spherical!(*kernel, $f)
             }
         }
@@ -43,6 +43,8 @@ pub use self::spatial_tree::*;
 pub(crate) use self::background_field::*;
 pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::neighbour_cache::Neighbourhood;
+
+const PARALLEL_CHUNK_SIZE: usize = 5000;
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SampleType {
@@ -156,6 +158,14 @@ impl<T: Real + Send + Sync> MLS<T> {
             | MLS::Global(GlobalMLS { surf_base, .. }) => surf_base
         }
     }
+
+    fn base_mut(&mut self) -> &mut ImplicitSurfaceBase<T> {
+        match self {
+            MLS::Local(LocalMLS { surf_base, .. })
+            | MLS::Global(GlobalMLS { surf_base, .. }) => surf_base
+        }
+    }
+
     /// Radius of influence ( kernel radius ) for this implicit surface.
     pub fn radius(&self) -> f64 {
         match self {
@@ -234,7 +244,6 @@ impl<T: Real + Send + Sync> MLS<T> {
                     max_step,
                     query_neighbourhood,
                     surf_base: ImplicitSurfaceBase {
-                        samples,
                         surface_topo,
                         dual_topo,
                         sample_type,
@@ -709,17 +718,17 @@ impl<T: Real + Send + Sync> MLS<T> {
             normals_chunk,
             tangents_chunk,
         ) in zip!(
-            query_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            neigh_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            closest_points.chunks(Self::PARALLEL_CHUNK_SIZE),
-            num_neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            neighs_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            bg_weight_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            weight_sum_attrib_data.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            alt_potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            normals.chunks_mut(Self::PARALLEL_CHUNK_SIZE),
-            tangents.chunks_mut(Self::PARALLEL_CHUNK_SIZE)
+            query_points.chunks(PARALLEL_CHUNK_SIZE),
+            neigh_points.chunks(PARALLEL_CHUNK_SIZE),
+            closest_points.chunks(PARALLEL_CHUNK_SIZE),
+            num_neighs_attrib_data.chunks_mut(PARALLEL_CHUNK_SIZE),
+            neighs_attrib_data.chunks_mut(PARALLEL_CHUNK_SIZE),
+            bg_weight_attrib_data.chunks_mut(PARALLEL_CHUNK_SIZE),
+            weight_sum_attrib_data.chunks_mut(PARALLEL_CHUNK_SIZE),
+            potential.chunks_mut(PARALLEL_CHUNK_SIZE),
+            alt_potential.chunks_mut(PARALLEL_CHUNK_SIZE),
+            normals.chunks_mut(PARALLEL_CHUNK_SIZE),
+            tangents.chunks_mut(PARALLEL_CHUNK_SIZE)
         ) {
             if interrupt() {
                 return Err(super::Error::Interrupted);
@@ -875,11 +884,17 @@ impl<T: Real + Send + Sync> MLS<T> {
 }
 
 impl<T: Real + Send + Sync> ImplicitSurface<T> {
-    const PARALLEL_CHUNK_SIZE: usize = 5000;
 
     fn base(&self) -> &ImplicitSurfaceBase<T> {
         match self {
             ImplicitSurface::MLS(mls)  => mls.base(),
+            ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => surf_base,
+        }
+    }
+
+    fn base_mut(&mut self) -> &mut ImplicitSurfaceBase<T> {
+        match self {
+            ImplicitSurface::MLS(mls)  => mls.base_mut(),
             ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => surf_base,
         }
     }
@@ -920,7 +935,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ref surface_vertex_positions,
             sample_type,
             ..
-        } = self.base();
+        } = self.base_mut();
 
         match sample_type {
             SampleType::Vertex => {
@@ -957,7 +972,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         // First we update the surface vertex positions.
         let mut num_updated = 0;
-        for (p, new_p) in self.base().surface_vertex_positions.iter_mut().zip(vertex_iter) {
+        for (p, new_p) in self.base_mut().surface_vertex_positions.iter_mut().zip(vertex_iter) {
             *p = new_p.into();
             num_updated += 1;
         }
@@ -1319,7 +1334,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             ImplicitSurface::MLS(mls) => {
                 apply_kernel_fn!(mls, |kernel| mls.compute_vector_field(query_points, kernel, out_vectors))
             },
-            ImplicitSurface::Hrbf(HrbfSurface { surf_base } ) => {
+            ImplicitSurface::Hrbf(HrbfSurface { .. } ) => {
                 Err(super::Error::UnsupportedKernel)
             }
         }
@@ -1342,7 +1357,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         match self {
             ImplicitSurface::MLS(mls) => {
-                apply_kernel_fn!(mls, |kernel| self.compute_on_mesh(mesh, kernel, interrupt))
+                apply_kernel_fn!(mls, |kernel| mls.compute_on_mesh(mesh, kernel, interrupt))
             },
             ImplicitSurface::Hrbf(HrbfSurface { surf_base } ) => {
                 Self::compute_hrbf_on_mesh(mesh, &surf_base.samples, interrupt)
@@ -1475,8 +1490,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         hrbf.fit_offset(&pts, &hrbf_values, &nmls);
 
         for (q_chunk, potential_chunk) in sample_pos
-            .chunks(Self::PARALLEL_CHUNK_SIZE)
-            .zip(potential.chunks_mut(Self::PARALLEL_CHUNK_SIZE))
+            .chunks(PARALLEL_CHUNK_SIZE)
+            .zip(potential.chunks_mut(PARALLEL_CHUNK_SIZE))
         {
             if interrupt() {
                 return Err(super::Error::Interrupted);
@@ -1498,7 +1513,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 }
 
 impl<T: Real> LocalMLS<T> {
-    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
+    pub fn um_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
         let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
         self.spatial_tree
             .locate_within_distance(q_pos, radius * radius)
@@ -1786,19 +1801,21 @@ mod tests {
                 dual_topo,
                 sample_type,
             } = serde_json::from_str(&contents).expect("Failed to deserialize torus surface.");
-            ImplicitSurface {
-                kernel,
+            ImplicitSurface::MLS(MLS::Local(LocalMLS {
+                kernel: kernel.into(),
                 base_radius,
-                bg_field_params,
-                spatial_tree: build_rtree_from_samples(&samples),
-                surface_topo,
-                surface_vertex_positions,
-                samples,
                 max_step,
                 query_neighbourhood,
-                dual_topo,
-                sample_type,
-            }
+                spatial_tree: build_rtree_from_samples(&samples),
+                surf_base: ImplicitSurfaceBase {
+                    bg_field_params,
+                    surface_topo,
+                    surface_vertex_positions,
+                    samples,
+                    dual_topo,
+                    sample_type,
+                }
+            }))
         };
 
         let init_potential = {

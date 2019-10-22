@@ -89,37 +89,34 @@ macro_rules! apply_as_spherical {
     }
 }
 
-/// Apply a function with an instantiated kernel. This function allows users to branch on the
-/// kernel type outside of inner loops, which can be costly.
-/// `base_radius` gives the absolute radius of the kernel which is then scaled by the
-/// corresponding `radius_multiplier` (if any) provided by the specific kernel type.
-/// Global kernels simply ignore radius values.
-macro_rules! match_kernel_as_spherical {
-    ($kernel:expr, $base_radius:expr, $mls:expr, $hrbf:expr) => {
-        match $kernel {
-            KernelType::Interpolating { radius_multiplier } => $mls(
-                $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
-            ),
+impl From<KernelType> for LocalKernel {
+    fn from(kernel: KernelType) -> Self {
+        match kernel {
+            KernelType::Interpolating { radius_multiplier } => {
+                LocalKernel::Interpolating { radius_multiplier }
+            }
+            KernelType::Cubic { radius_multiplier } => {
+                LocalKernel::Cubic { radius_multiplier }
+            }
             KernelType::Approximate {
-                tolerance,
-                radius_multiplier,
-            } => $mls($crate::kernel::LocalApproximate::new(
-                $base_radius * radius_multiplier,
-                tolerance,
-            )),
-            KernelType::Cubic { radius_multiplier } => $mls($crate::kernel::LocalCubic::new(
-                $base_radius * radius_multiplier,
-            )),
-            KernelType::Global { tolerance } => {
-                // Global kernel, all points are neighbours
-                $mls($crate::kernel::GlobalInvDistance2::new(tolerance))
+                radius_multiplier, tolerance,
+            } => {
+                LocalKernel::Approximate { radius_multiplier, tolerance }
             }
-            KernelType::Hrbf => {
-                // Global kernel, all points are neighbours.
-                $hrbf()
-            }
+            _ => panic!("Incorrect kernel type conversion")
         }
-    };
+    }
+}
+
+impl From<KernelType> for GlobalKernel {
+    fn from(kernel: KernelType) -> Self {
+        match kernel {
+            KernelType::Global { tolerance } => {
+                GlobalKernel::InvDistance2 { tolerance }
+            }
+            _ => panic!("Incorrect kernel type conversion")
+        }
+    }
 }
 
 impl KernelType {

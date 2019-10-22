@@ -6,11 +6,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     /// Jacobian with respect to surface points. If neighbourhoods haven't been precomputed, this
     /// function will return `None`.
     pub fn num_surface_jacobian_entries(&self) -> Option<usize> {
-        let neigh_points = match self.sample_type {
+        let neigh_points = match self.base().sample_type {
             SampleType::Vertex => self.extended_neighbourhood_borrow().ok()?,
             SampleType::Face => self.trivial_neighbourhood_borrow().ok()?,
         };
-        let num_pts_per_sample = match self.sample_type {
+        let num_pts_per_sample = match self.base().sample_type {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
@@ -52,7 +52,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     ) -> Result<(), Error> {
         match self {
             ImplicitSurface::MLS(mls) =>
-                mls.apply_kernel_fn(|kernel| mls.surface_jacobian_values(query_points,kernel,values)),
+                apply_kernel_fn!(mls, |kernel| mls.surface_jacobian_values(query_points,kernel,values)),
             _ => Err(Error::UnsupportedKernel),
         }
     }
@@ -166,7 +166,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     pub fn num_contact_jacobian_matrices(&self) -> Result<usize, Error> {
         let neigh_points = self.trivial_neighbourhood_borrow()?;
-        let num_pts_per_sample = match self.sample_type {
+        let num_pts_per_sample = match self.base().sample_type {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
         };
@@ -182,7 +182,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     ) -> Result<(), Error> {
         match self {
             ImplicitSurface::MLS(mls) =>
-                mls.apply_kernel_fn(|kernel| mls.contact_jacobian_matrices(query_points, kernel, matrices)),
+                apply_kernel_fn!(mls, |kernel| mls.contact_jacobian_matrices(query_points, kernel, matrices)),
             _ => Err(Error::UnsupportedKernel),
         }
     }
@@ -201,7 +201,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
      */
 }
 
-impl<T: Real> MLS<T> {
+impl<T: Real + Send + Sync> MLS<T> {
     pub(crate) fn query_jacobian_values<K>(
         &self,
         query_points: &[[T; 3]],
@@ -1175,7 +1175,7 @@ mod tests {
         let view = SamplesView::new(neighbours.as_ref(), &samples);
 
         // Compute the complete jacobian.
-        let vert_jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(
+        let vert_jac: Vec<_> = MLS::vertex_jacobian_at(
             q,
             view,
             kernel,
@@ -1200,7 +1200,7 @@ mod tests {
             // Compute the local potential function. After calling this function, calling
             // `.deriv()` on the potential output will give us the derivative with resepct to the
             // preset variable.
-            ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
+            MLS::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
             // Check the derivative of the autodiff with our previously computed Jacobian.
             assert_relative_eq!(
@@ -1271,7 +1271,7 @@ mod tests {
 
             let vert_jac = match sample_type {
                 SampleType::Face => {
-                    let jac: Vec<_> = ImplicitSurface::face_jacobian_at(
+                    let jac: Vec<_> = MLS::face_jacobian_at(
                         q,
                         view,
                         kernel,
@@ -1286,7 +1286,7 @@ mod tests {
                     consolidate_face_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
                 }
                 SampleType::Vertex => {
-                    let jac: Vec<_> = ImplicitSurface::vertex_jacobian_at(
+                    let jac: Vec<_> = MLS::vertex_jacobian_at(
                         q,
                         view,
                         kernel,
@@ -1312,7 +1312,7 @@ mod tests {
 
                     let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
                     let mut p = F::cst(0.0);
-                    ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
+                    MLS::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                     assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 
@@ -1380,7 +1380,7 @@ mod tests {
         let view = SamplesView::new(indices.as_ref(), &samples);
 
         let grad: Vec<_> = match sample_type {
-            SampleType::Vertex => ImplicitSurface::compute_vertex_unit_normals_gradient_products(
+            SampleType::Vertex => MLS::compute_vertex_unit_normals_gradient_products(
                 view,
                 &tet_faces,
                 &dual_topo,
@@ -1676,7 +1676,7 @@ mod tests {
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
-            let jac = ImplicitSurface::query_jacobian_at(q, view, None, kernel, bg_field_params);
+            let jac = MLS::query_jacobian_at(q, view, None, kernel, bg_field_params);
 
             let mut q = q.map(|x| F::cst(x));
 
@@ -1689,7 +1689,7 @@ mod tests {
                 let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
+                MLS::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                 assert_relative_eq!(jac[i], p.deriv(), max_relative = 1e-5, epsilon = 1e-10);
 

@@ -180,32 +180,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         }
     }
 
-    /// Compute the normalized sum of all sample weight gradients.
-    pub(crate) fn normalized_neighbour_weight_hessian<'a, K, V>(
-        q: Vector3<T>,
-        samples: SamplesView<'a, 'a, T>,
-        kernel: K,
-        bg: BackgroundField<'a, T, V, K>,
-    ) -> Matrix3<T>
-    where
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
-        V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
-    {
-        let closest_d = bg.closest_sample_dist();
-
-        let weight_sum_inv = bg.weight_sum_inv();
-
-        let mut ddw_neigh: Matrix3<T> = samples
-            .iter()
-            .map(|s| kernel.with_closest_dist(closest_d).hess(q, s.pos))
-            .sum();
-
-        // Contribution from the background potential
-        ddw_neigh += bg.background_weight_hessian(None);
-
-        ddw_neigh * weight_sum_inv // normalize the neighbourhood derivative
-    }
-
     pub fn query_hessian_product_values(
         &self,
         query_points: &[[T; 3]],
@@ -224,23 +198,39 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         scale: T,
         values: &mut [T],
     ) -> Result<(), Error> {
-        match_kernel_as_spherical!(
-            self.kernel,
-            self.base_radius,
-            |kern| self.mls_query_hessian_product_values(
-                query_points,
-                multipliers,
-                kern,
-                scale,
-                values
-            ),
-            || Err(Error::UnsupportedKernel)
-        )
+        match self {
+            ImplicitSurface::MLS(mls) =>
+                apply_kernel_fn!(mls, |kernel| mls.query_hessian_product_values(
+                    query_points,
+                    multipliers,
+                    kernel,
+                    scale,
+                    values
+                )),
+            _ => Err(Error::UnsupportedKernel),
+        }
+    }
+}
+
+impl<T: Real + Send + Sync> MLS<T> {
+    pub fn query_hessian_product_indices_iter(
+        &self,
+    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
+        let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
+            s.iter()
+                .enumerate()
+                .filter(move |(_, nbrs)| !nbrs.is_empty())
+                .flat_map(move |(i, _)| {
+                    (0..3).flat_map(move |c| (c..3).map(move |r| (3 * i + r, 3 * i + c)))
+                })
+                .collect()
+        });
+        indices.map(std::iter::IntoIterator::into_iter)
     }
 
     /// This function populates the values of the hessian product matrix with 6 (lower trianglar)
     /// entries per diagonal 3x3 block of the hessian product.
-    pub(crate) fn mls_query_hessian_product_values<K>(
+    pub(crate) fn query_hessian_product_values<K>(
         &self,
         query_points: &[[T; 3]],
         multipliers: &[T],
@@ -248,8 +238,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         scale: T,
         values: &mut [T],
     ) -> Result<(), Error>
-    where
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        where
+            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         self.cache_neighbours(query_points);
         let neigh_points = self.trivial_neighbourhood_borrow()?;
@@ -294,8 +284,8 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         kernel: K,
         bg_field_params: BackgroundFieldParams,
     ) -> Matrix3<T>
-    where
-        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+        where
+            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let bg: BackgroundField<T, T, K> =
             BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
@@ -328,30 +318,40 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                         - sym_outer(dw_neigh, dw) * psi
                         - ddw_neigh * psi * w
                         + (dw_neigh * (dw_neigh.transpose() * (T::from(2.0).unwrap() * w)) + ddw)
-                            * psi
+                        * psi
                 },
             )
             .sum::<Matrix3<T>>()
             * weight_sum_inv
             + bg_hess
     }
-}
 
-impl<T: Real + Send + Sync> MLS<T> {
-    pub fn query_hessian_product_indices_iter(
-        &self,
-    ) -> Result<impl Iterator<Item = (usize, usize)>, Error> {
-        let indices: Result<Vec<_>, Error> = self.trivial_neighbourhood_borrow().map(move |s| {
-            s.iter()
-                .enumerate()
-                .filter(move |(_, nbrs)| !nbrs.is_empty())
-                .flat_map(move |(i, _)| {
-                    (0..3).flat_map(move |c| (c..3).map(move |r| (3 * i + r, 3 * i + c)))
-                })
-                .collect()
-        });
-        indices.map(std::iter::IntoIterator::into_iter)
+    /// Compute the normalized sum of all sample weight gradients.
+    pub(crate) fn normalized_neighbour_weight_hessian<'a, K, V>(
+        q: Vector3<T>,
+        samples: SamplesView<'a, 'a, T>,
+        kernel: K,
+        bg: BackgroundField<'a, T, V, K>,
+    ) -> Matrix3<T>
+        where
+            K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
+            V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
+    {
+        let closest_d = bg.closest_sample_dist();
+
+        let weight_sum_inv = bg.weight_sum_inv();
+
+        let mut ddw_neigh: Matrix3<T> = samples
+            .iter()
+            .map(|s| kernel.with_closest_dist(closest_d).hess(q, s.pos))
+            .sum();
+
+        // Contribution from the background potential
+        ddw_neigh += bg.background_weight_hessian(None);
+
+        ddw_neigh * weight_sum_inv // normalize the neighbourhood derivative
     }
+
 
     /// Compute the indices for the implicit surface potential Hessian with respect to surface
     /// points. This returns an iterator over all the hessian product indices.
@@ -1184,7 +1184,7 @@ mod tests {
         let view = SamplesView::new(neighbours.as_ref(), &samples);
 
         // Compute the complete hessian.
-        let hess: Vec<(usize, usize, Matrix3<F>)> = ImplicitSurface::face_hessian_at(
+        let hess: Vec<(usize, usize, Matrix3<F>)> = MLS::face_hessian_at(
             q,
             view,
             kernel,
@@ -1230,7 +1230,7 @@ mod tests {
 
                 // Compute the Jacobian. After calling this function, calling
                 // `.deriv()` on the output will give us the second derivative.
-                let jac: Vec<_> = ImplicitSurface::face_jacobian_at(
+                let jac: Vec<_> = MLS::face_jacobian_at(
                     q,
                     view,
                     kernel,
@@ -1244,7 +1244,7 @@ mod tests {
 
                 // Compute the potential and test the jacobian for good measure.
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
+                MLS::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                 // Test the surface Jacobian against autodiff on the potential computation.
                 //println!("jac {:9.5} vs {:9.5}", vert_jac[vtx][i].value(), p.deriv());
@@ -1426,7 +1426,7 @@ mod tests {
 
             let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
-            ImplicitSurface::sample_hessian_at(q, view, kernel, bg.clone()).collect()
+            MLS::sample_hessian_at(q, view, kernel, bg.clone()).collect()
         };
 
         let mut success = true;
@@ -1450,7 +1450,7 @@ mod tests {
                 // `.deriv()` on the output will give us the second derivative.
                 let mut jac = vec![Vector3::zeros(); num_samples];
                 for (jac_val, &idx) in
-                    ImplicitSurface::sample_jacobian_at(q, view, kernel, bg.clone())
+                    MLS::sample_jacobian_at(q, view, kernel, bg.clone())
                         .zip(neighbours.iter())
                 {
                     jac[idx] = jac_val;
@@ -1458,7 +1458,7 @@ mod tests {
 
                 // Compute the potential and test the jacobian for good measure.
                 let mut p = F::cst(0.0);
-                ImplicitSurface::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
+                MLS::compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                 // Test the surface Jacobian against autodiff on the potential computation.
                 if !p.deriv().is_nan() {

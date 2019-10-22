@@ -1,5 +1,4 @@
 use super::*;
-use crate::kernel::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, PointCloud, TriMesh, VertexMesh};
 use std::cell::RefCell;
@@ -320,6 +319,8 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         // Build the dual topology.
         let dual_topo = ImplicitSurfaceBuilder::compute_dual_topo(vertices.len(), &triangles);
 
+        let spatial_tree = build_rtree_from_samples(&samples);
+
         let surf_base = ImplicitSurfaceBase {
             bg_field_params: bg_field,
             surface_topo: triangles,
@@ -329,32 +330,22 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             sample_type,
         };
 
-        let build_local = |kernel| {
-            ImplicitSurface::MLS(MLS::Local(LocalMLS {
-                kernel,
-                base_radius,
-                spatial_tree: build_rtree_from_samples(&samples),
-                query_neighbourhood: RefCell::new(Neighbourhood::new()),
-                max_step: T::from(max_step).unwrap(),
-                surf_base
-            }))
-        };
-
         match kernel {
-            KernelType::Interpolating { radius_multiplier } => {
-                Some(build_local(LocalKernel::Interpolating { radius_multiplier }))
+            KernelType::Interpolating { .. }
+            | KernelType::Cubic { ..}
+            | KernelType::Approximate { .. } => {
+                Some(ImplicitSurface::MLS(MLS::Local(LocalMLS {
+                    kernel: kernel.into(),
+                    base_radius,
+                    spatial_tree,
+                    query_neighbourhood: RefCell::new(Neighbourhood::new()),
+                    max_step: T::from(max_step).unwrap(),
+                    surf_base
+                })))
             }
-            KernelType::Cubic { radius_multiplier } => {
-                Some(build_local(LocalKernel::Cubic { radius_multiplier }))
-            }
-            KernelType::Approximate {
-                radius_multiplier, tolerance,
-            } => {
-                Some(build_local(LocalKernel::Approximate { radius_multiplier, tolerance }))
-            }
-            KernelType::Global { tolerance } => {
+            KernelType::Global { .. } => {
                 Some(ImplicitSurface::MLS(MLS::Global(GlobalMLS {
-                    kernel: GlobalKernel::InvDistance2 { tolerance },
+                    kernel: kernel.into(),
                     surf_base
                 })))
             }

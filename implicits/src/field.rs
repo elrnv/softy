@@ -3,7 +3,7 @@
 //! potential and its derivatives.
 //!
 
-use crate::kernel::{KernelType, SphericalKernel};
+use crate::kernel::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
@@ -14,6 +14,19 @@ use rstar::RTree;
 use serde::{Deserialize, Serialize};
 use std::cell::{Ref, RefCell};
 use utils::zip;
+
+macro_rules! apply_kernel_fn {
+    ($surf:expr, $f:expr) => {
+        match $surf {
+            MLS::Local(LocalMLS { kernel, base_radius, .. }) => {
+                apply_as_spherical!(*kernel, *base_radius, $f)
+            },
+            MLS::Global(GlobalMLS { kernel, surf_base } ) => {
+                apply_as_spherical!(*kernel, $f)
+            }
+        }
+    }
+}
 
 pub mod background_field;
 pub mod builder;
@@ -46,25 +59,15 @@ pub enum Side {
     Below,
 }
 
-/// Implicit surface type. `V` is the value type of the implicit function. Note that if `V` is a
-/// vector, this type will fit a vector field.
+/// Implicit surface type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ImplicitSurface<T = f64>
+pub struct ImplicitSurfaceBase<T = f64>
 where
     T: Real,
 {
-    /// The type of kernel to use for fitting the data.
-    kernel: KernelType,
-
-    /// The base radius or local feature size used to
-    base_radius: f64,
-
     /// Enum for choosing how to compute a background potential field that may be mixed in with
     /// the local potentials.
     bg_field_params: BackgroundFieldParams,
-
-    /// Local search tree for fast proximity queries.
-    spatial_tree: RTree<Sample<T>>,
 
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
@@ -77,19 +80,6 @@ where
     /// Sample points defining the entire implicit surface.
     samples: Samples<T>,
 
-    /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
-    /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
-    /// than then needed, which typically results in slower performance.  If it is set too low,
-    /// there may be errors in the derivative. It is the callers responsibility to set this step
-    /// accurately using `update_max_step`. If the implicit surface is not changing, leave this at
-    /// 0.0.
-    max_step: T,
-
-    /// Cache the neighbouring sample points for each query point we see. This cache can be
-    /// invalidated explicitly when the sparsity pattern is expected to change. This is wrapped in
-    /// a `RefCell` because it may be updated in non mutable functions since it's a cache.
-    query_neighbourhood: RefCell<Neighbourhood>,
-
     /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
     dual_topo: Vec<Vec<usize>>,
@@ -99,151 +89,170 @@ where
     sample_type: SampleType,
 }
 
-impl<T: Real + Send + Sync> ImplicitSurface<T> {
-    const PARALLEL_CHUNK_SIZE: usize = 5000;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum MLS<T = f64>
+where T: Real,
+{
+    Local(LocalMLS<T>),
+    Global(GlobalMLS<T>),
+}
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LocalMLS<T = f64>
+where
+    T: Real,
+{
+    kernel: LocalKernel,
+
+    base_radius: f64,
+
+    /// Local search tree for fast proximity queries.
+    spatial_tree: RTree<Sample<T>>,
+
+    /// Store the neighbouring sample points for each query point we see. This info can be
+    /// invalidated explicitly when the sparsity pattern is expected to change.
+    query_neighbourhood: RefCell<Neighbourhood>,
+
+    /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
+    /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
+    /// than then needed, which typically results in slower performance.  If it is set too low,
+    /// there may be errors in the derivative. It is the callers responsibility to set this step
+    /// accurately using `update_max_step`. If the implicit surface is not changing, leave this at
+    /// 0.0.
+    max_step: T,
+
+    surf_base: ImplicitSurfaceBase<T>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GlobalMLS<T = f64>
+where
+    T: Real,
+{
+    kernel: GlobalKernel,
+    surf_base: ImplicitSurfaceBase<T>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HrbfSurface<T = f64>
+where
+    T: Real,
+{
+    surf_base: ImplicitSurfaceBase<T>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ImplicitSurface<T = f64>
+where T: Real,
+{
+    Hrbf(HrbfSurface<T>),
+    MLS(MLS<T>),
+}
+
+impl<T: Real + Send + Sync> MLS<T> {
+    fn base(&self) -> &ImplicitSurfaceBase<T> {
+        match self {
+            MLS::Local(LocalMLS { surf_base, .. })
+            | MLS::Global(GlobalMLS { surf_base, .. }) => surf_base
+        }
+    }
     /// Radius of influence ( kernel radius ) for this implicit surface.
     pub fn radius(&self) -> f64 {
-        self.base_radius
-            * match self.kernel {
-                KernelType::Interpolating { radius_multiplier }
-                | KernelType::Approximate {
-                    radius_multiplier, ..
-                }
-                | KernelType::Cubic { radius_multiplier } => radius_multiplier,
-                KernelType::Global { .. } | KernelType::Hrbf => std::f64::INFINITY,
+        match self {
+            MLS::Local(local) =>
+                local.kernel.radius_multiplier() * local.base_radius,
+            MLS::Global(_) => std::f64::INFINITY,
+        }
+    }
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn trivial_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        if let MLS::Local(local) = self {
+            // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+            // cache and actually retrieving the neighbour points is done separately
+            let valid = local.query_neighbourhood.borrow().trivial_set().is_some();
+            if valid {
+                Ok(Ref::map(local.query_neighbourhood.borrow(), |c| {
+                    c.trivial_set().unwrap()
+                }))
+            } else {
+                Err(super::Error::MissingNeighbourData)
             }
-    }
-
-    /// Return the surface vertex positions used by this implicit surface.
-    pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
-        &self.surface_vertex_positions
-    }
-
-    /// Return the surface topology used by this implicit surface.
-    pub fn surface_topology(&self) -> &[[usize; 3]] {
-        &self.surface_topo
-    }
-
-    /// Return the number of samples used by this implicit surface.
-    pub fn samples(&self) -> &Samples<T> {
-        &self.samples
-    }
-
-    /// Return the number of samples used by this implicit surface.
-    pub fn num_samples(&self) -> usize {
-        self.samples.len()
-    }
-
-    /// Update the stored samples. This assumes that vertex positions have been updated.
-    fn update_samples(&mut self) {
-        let ImplicitSurface {
-            ref mut samples,
-            ref surface_topo,
-            ref surface_vertex_positions,
-            sample_type,
-            ..
-        } = self;
-
-        match sample_type {
-            SampleType::Vertex => {
-                let Samples {
-                    ref mut points,
-                    ref mut normals,
-                    // ref mut tangents
-                    ..
-                } = samples;
-
-                for (vertex_pos, sample_pos) in
-                    surface_vertex_positions.iter().zip(points.iter_mut())
-                {
-                    *sample_pos = *vertex_pos;
-                }
-
-                // Compute unnormalized area weighted vertex normals given a triangle topology.
-                geo::algo::compute_vertex_area_weighted_normals(points, surface_topo, normals);
-            }
-            SampleType::Face => {
-                samples.update_triangle_samples(surface_topo, &surface_vertex_positions);
-            }
+        } else {
+            // should generate all samples
+            unimplemented!();
         }
     }
 
-    /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
-    /// permissive `update` function, which will update as many positions as possible and recompute
-    /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
-    /// positions were specified to cover all surface vertices. This function will return the
-    /// number of vertices that were indeed updated.
-    pub fn update<I>(&mut self, vertex_iter: I) -> usize
-    where
-        I: Iterator<Item = [T; 3]>,
-    {
-        // First we update the surface vertex positions.
-        let mut num_updated = 0;
-        for (p, new_p) in self.surface_vertex_positions.iter_mut().zip(vertex_iter) {
-            *p = new_p.into();
-            num_updated += 1;
+    /// This function returns previously cached closest samples if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn closest_samples_borrow(&self) -> Result<Ref<'_, [usize]>, super::Error> {
+        if let MLS::Local(local) = self {
+            // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+            // cache and actually retrieving the neighbour points is done separately
+            let valid = local.query_neighbourhood.borrow().closest_set().is_some();
+            if valid {
+                Ok(Ref::map(local.query_neighbourhood.borrow(), |c| {
+                    c.closest_set().unwrap()
+                }))
+            } else {
+                Err(super::Error::MissingNeighbourData)
+            }
+        } else {
+            // should generate closest sample iter on the fly
+            unimplemented!();
         }
-
-        // Then update the samples that determine the shape of the implicit surface.
-        self.update_samples();
-
-        let ImplicitSurface {
-            ref samples,
-            ref mut spatial_tree,
-            ..
-        } = self;
-
-        // Funally update the rtree responsible for neighbour search.
-        *spatial_tree = build_rtree_from_samples(samples);
-
-        num_updated
     }
 
-    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
-        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
-        self.spatial_tree
-            .locate_within_distance(q_pos, radius * radius)
-            .count()
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn extended_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        if let MLS::Local(local) = self {
+            // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
+            // cache and actually retrieving the neighbour points is done separately
+            let valid = local.query_neighbourhood.borrow().extended_set().is_some();
+            if valid {
+                Ok(Ref::map(local.query_neighbourhood.borrow(), |c| {
+                    c.extended_set().unwrap()
+                }))
+            } else {
+                Err(super::Error::MissingNeighbourData)
+            }
+        } else {
+            // should generate all neighbours
+            unimplemented!();
+        }
     }
-
-    pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
-        let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-        self.spatial_tree.nearest_neighbor_iter(&q_pos).next()
-    }
-
     /// Compute neighbour cache if it has been invalidated. Return true if neighbour cache has
     /// changed.
     pub fn cache_neighbours(&self, query_points: &[[T; 3]]) -> bool {
-        let ImplicitSurface {
-            ref kernel,
-            base_radius,
-            ref spatial_tree,
-            ref samples,
-            ref surface_topo,
-            ref dual_topo,
-            max_step,
-            sample_type,
-            ..
-        } = *self;
+        match self {
+            MLS::Local(LocalMLS {
+                    base_radius,
+                    kernel,
+                    spatial_tree,
+                    max_step,
+                    query_neighbourhood,
+                    surf_base: ImplicitSurfaceBase {
+                        samples,
+                        surface_topo,
+                        dual_topo,
+                        sample_type,
+                        ..
+                    },
+                    ..
+            }) => {
 
-        match *kernel {
-            KernelType::Interpolating { radius_multiplier }
-            | KernelType::Approximate {
-                radius_multiplier, ..
-            }
-            | KernelType::Cubic { radius_multiplier } => {
-                let radius = base_radius * radius_multiplier;
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
+                let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
+                let radius_ext = radius + cast::<_, f64>(*max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neigh = |q| {
                     let q_pos = Vector3(q).cast::<f64>().unwrap().into();
                     spatial_tree
                         .locate_within_distance(q_pos, radius2)
-                        .into_iter()
                         .cloned()
                 };
-                let mut cache = self.query_neighbourhood.borrow_mut();
+                let mut cache = query_neighbourhood.borrow_mut();
                 cache.compute_neighbourhoods(
                     query_points,
                     neigh,
@@ -255,328 +264,141 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     },
                     surface_topo,
                     dual_topo,
-                    sample_type,
+                    *sample_type,
                 )
             }
-            KernelType::Global { .. } | KernelType::Hrbf => {
-                // Global kernel, all points are neighbours
-                let neigh = |_| samples.iter();
-                let mut cache = self.query_neighbourhood.borrow_mut();
-                cache.compute_neighbourhoods(
-                    query_points,
-                    neigh,
-                    |q| {
-                        spatial_tree
-                            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
-                            .expect("Empty spatial tree")
-                    },
-                    surface_topo,
-                    dual_topo,
-                    sample_type,
-                )
+            _ => {
+                true
+                // Nothing to be done here, each query point neighbours all samples.
+                //// Global kernel, all points are neighbours
+                //let neigh = |_| samples.iter();
+                //let mut cache = self.query_neighbourhood.borrow_mut();
+                //cache.compute_neighbourhoods(
+                //    query_points,
+                //    neigh,
+                //    |q| {
+                //        spatial_tree
+                //            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                //            .expect("Empty spatial tree")
+                //    },
+                //    surface_topo,
+                //    dual_topo,
+                //    sample_type,
+                //)
             }
         }
     }
+    
+    /*
+     * Derivative and normal computation utils
+     */
 
-    /// This function returns previously cached neighbours if the neighbour cache is
-    /// valid, and `None` otherwise.
-    fn trivial_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
-        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
-        // cache and actually retrieving the neighbour points is done separately
-        let valid = self.query_neighbourhood.borrow().trivial_set().is_some();
-        if valid {
-            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
-                c.trivial_set().unwrap()
-            }))
-        } else {
-            Err(super::Error::MissingNeighbourData)
-        }
-    }
-
-    /// This function returns previously cached closest samples if the neighbour cache is
-    /// valid, and `None` otherwise.
-    fn closest_samples_borrow(&self) -> Result<Ref<'_, [usize]>, super::Error> {
-        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
-        // cache and actually retrieving the neighbour points is done separately
-        let valid = self.query_neighbourhood.borrow().closest_set().is_some();
-        if valid {
-            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
-                c.closest_set().unwrap()
-            }))
-        } else {
-            Err(super::Error::MissingNeighbourData)
-        }
-    }
-
-    /// This function returns previously cached neighbours if the neighbour cache is
-    /// valid, and `None` otherwise.
-    fn extended_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
-        // Note there is no RefMut -> Ref map as of this writing, which is why recomputing the
-        // cache and actually retrieving the neighbour points is done separately
-        let valid = self.query_neighbourhood.borrow().extended_set().is_some();
-        if valid {
-            Ok(Ref::map(self.query_neighbourhood.borrow(), |c| {
-                c.extended_set().unwrap()
-            }))
-        } else {
-            Err(super::Error::MissingNeighbourData)
-        }
-    }
-
-    /// Set `query_neighbourhood` to None. This triggers recomputation of the neighbour cache next time
-    /// the potential or its derivatives are requested.
-    pub fn invalidate_query_neighbourhood(&self) {
-        let mut cache = self.query_neighbourhood.borrow_mut();
-        cache.invalidate();
-    }
-
-    /// The number of query points in the cache (regardless if their neighbourhood is empty).
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_cached_query_points(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_borrow()
-            .map(|neighbourhoods| neighbourhoods.len())
-    }
-
-    /// The number of query points with non-empty neighbourhoods in the cache.
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_cached_neighbourhoods(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_borrow()
-            .map(|neighbourhoods| neighbourhoods.iter().filter(|x| !x.is_empty()).count())
-    }
-
-    /// Return a vector of indices for query points with non-empty neighbourhoods.
-    pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
-        let set = match self.sample_type {
-            SampleType::Vertex => self.extended_neighbourhood_borrow(),
-            SampleType::Face => self.trivial_neighbourhood_borrow(),
-        };
-
-        set.map(|neighbourhoods| {
-            neighbourhoods
-                .iter()
-                .enumerate()
-                .filter(|(_, x)| !x.is_empty())
-                .map(|(i, _)| i)
-                .collect()
+    /// Compute the gradient vector product of the face normals with respect to
+    /// surface vertices.
+    ///
+    /// This function returns an iterator with the same size as `surface_vertices.len()`.
+    ///
+    /// Note that the product vector is given by a closure `multiplier` which must give a valid
+    /// vector value for any vertex index, however not all indices will be used since only the
+    /// neighbourhood of vertex at `index` will have non-zero gradients.
+    pub(crate) fn compute_face_unit_normals_gradient_products<'a, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_vertices: &'a [Vector3<T>],
+        surface_topo: &'a [[usize; 3]],
+        mut multiplier: F,
+    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    {
+        samples.into_iter().flat_map(move |sample| {
+            let mult = multiplier(sample);
+            let grad = Self::face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
+            grad.map(move |g| g * mult)
         })
     }
 
-    /// Return a vector over query points, giving the sizes of each cached neighbourhood.
-    pub fn cached_neighbourhood_sizes(&self) -> Result<Vec<usize>, super::Error> {
-        let set = match self.sample_type {
-            SampleType::Vertex => self.extended_neighbourhood_borrow(),
-            SampleType::Face => self.trivial_neighbourhood_borrow(),
-        };
-
-        set.map(|neighbourhoods| neighbourhoods.iter().map(std::vec::Vec::len).collect())
+    /// Compute the gradient of the face normal at the given sample with respect to
+    /// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
+    /// three matrices corresponding to each triangle vertex, which together construct the actual
+    /// `9x3` component-wise gradient.
+    pub(crate) fn face_unit_normal_gradient_iter(
+        sample: Sample<T>,
+        surface_vertices: &[Vector3<T>],
+        surface_topo: &[[usize; 3]],
+    ) -> impl Iterator<Item = Matrix3<T>> {
+        let nml_proj = Self::scaled_tangent_projection(sample);
+        let tri_indices = &surface_topo[sample.index];
+        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+        (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
     }
 
-    /// The `max_step` parameter sets the maximum position change allowed between calls to
-    /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
-    /// derivative will be denser than then needed, which typically results in slower performance.
-    /// If it is set too low, there will be errors in the derivative. It is the callers
-    /// responsibility to set this step accurately.
-    pub fn update_max_step(&mut self, max_step: T) {
-        self.max_step = max_step;
+    /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
+    /// by the local area (normal norm reciprocal).
+    pub(crate) fn scaled_tangent_projection(sample: Sample<T>) -> Matrix3<T> {
+        let nml_norm_inv = T::one() / sample.nml.norm();
+        let nml = sample.nml * nml_norm_inv;
+        Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
     }
 
-    pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
-        match self.kernel {
-            KernelType::Interpolating {
-                ref mut radius_multiplier,
-            }
-            | KernelType::Approximate {
-                ref mut radius_multiplier,
-                ..
-            }
-            | KernelType::Cubic {
-                ref mut radius_multiplier,
-            } => {
-                *radius_multiplier = new_radius_multiplier;
-            }
-            _ => {}
-        }
-    }
 
-    /// Project the given set of positions to be below the specified iso-value along the gradient.
-    /// If the query point is already below the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far below the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness below the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_below(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Below, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above the specified iso-value along the gradient.
-    /// If the query point is already above the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness above the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_above(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Above, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above (below) the specified iso-value along the
-    /// gradient.  If the query point is already above (below) the given iso-value, then it is not
-    /// modified.  The given `epsilon` determines how far above (below) the iso-surface the point
-    /// is allowed to be projected, essentially it is the thickness above (below) the iso-surface
-    /// of value projections.  This function will return true if convergence is achieved and false
-    /// if the projection needed more iterations.
-    pub fn project(
-        &self,
-        side: Side,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        let multiplier = match side {
-            Side::Above => T::one(),
-            Side::Below => -T::one(),
-        };
-        let iso_value = iso_value * multiplier;
-
-        let mut candidate_points = query_points.to_vec();
-        let mut potential = vec![T::zero(); query_points.len()];
-        let mut candidate_potential = vec![T::zero(); query_points.len()];
-        let mut steps = vec![[T::zero(); 3]; query_points.len()];
-        let mut nml_sizes = vec![T::zero(); query_points.len()];
-
-        let max_steps = 20;
-        let max_binary_search_iters = 10;
-
-        let mut convergence = true;
-
-        for i in 0..max_steps {
-            self.potential(query_points, &mut potential)?;
-            potential.iter_mut().for_each(|x| *x *= multiplier);
-
-            // The transpose of the potential gradient at each of the query points.
-            self.query_jacobian_full(query_points, &mut steps)?;
-
-            for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
-                *norm = Vector3(*step).norm();
-            }
-
-            // Count the number of points with values less than iso_value.
-            let count_violations = potential
-                .iter()
-                .zip(nml_sizes.iter())
-                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
-                .count();
-
-            if count_violations == 0 {
-                break;
-            }
-
-            // Compute initial step directions
-            for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
-                .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
-            {
-                let nml = Vector3(*step);
-                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
-                *step = (nml * (multiplier * offset)).into();
-            }
-
-            for j in 0..max_binary_search_iters {
-                // Try this step
-                for (p, q, &step, _, _) in zip!(
-                    candidate_points.iter_mut(),
-                    query_points.iter(),
-                    steps.iter(),
-                    nml_sizes.iter(),
-                    potential.iter()
-                )
-                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
-                {
-                    *p = (Vector3(*q) + Vector3(step)).into();
+    /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
+    /// vertices given in the sample view.
+    ///
+    /// This function returns an iterator with the same size as `samples.len()`.
+    ///
+    /// Note that the product vector is given by a closure `dx` which must give a valid vector
+    /// value for any vertex index, however not all indices will be used since only the
+    /// neighbourhood of vertex at `index` will have non-zero gradients.
+    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, F>(
+        samples: SamplesView<'a, 'a, T>,
+        surface_topo: &'a [[usize; 3]],
+        dual_topo: &'a [Vec<usize>],
+        mut dx: F,
+    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    where
+        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    {
+        samples.into_iter().map(move |sample| {
+            let Sample { index, nml, .. } = sample;
+            let norm_inv = T::one() / nml.norm();
+            // Compute the normal component of the derivative
+            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
+            let mut nml_deriv = Vector3::zeros();
+            // Look at the ring of triangles around the vertex with respect to which we are
+            // taking the derivative.
+            for &tri_idx in dual_topo[index].iter() {
+                let tri_indices = &surface_topo[tri_idx];
+                // Pull contributions from all neighbours on the surface, not just ones part of the
+                // neighbourhood,
+                let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
+                let nml_grad = tri.area_normal_gradient(
+                    tri_indices
+                        .iter()
+                        .position(|&j| j == index)
+                        .expect("Triangle mesh topology corruption."),
+                );
+                let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
+                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
+                    if sample.index != index {
+                        let normk_inv = T::one() / sample.nml.norm();
+                        let nmlk_proj = Matrix3::identity()
+                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
+                        tri_grad += nmlk_proj * (dx(sample) * normk_inv);
+                    }
                 }
-
-                self.potential(&candidate_points, &mut candidate_potential)?;
-                candidate_potential
-                    .iter_mut()
-                    .for_each(|x| *x *= multiplier);
-
-                let mut count_overshoots = 0;
-                for (step, _, _, _) in zip!(
-                    steps.iter_mut(),
-                    nml_sizes.iter(),
-                    potential.iter(),
-                    candidate_potential.iter()
-                )
-                .filter(|(_, &norm, &old, &new)| {
-                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
-                }) {
-                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
-                    count_overshoots += 1;
-                }
-
-                if count_overshoots == 0 {
-                    break;
-                }
-
-                if j == max_binary_search_iters - 1 {
-                    convergence = false;
-                }
+                nml_deriv += nml_grad * tri_grad;
             }
-
-            // Update query points
-            query_points
-                .iter_mut()
-                .zip(candidate_points.iter())
-                .for_each(|(q, p)| *q = *p);
-
-            // Since the query points have changed position, we invalidate the cache to force a
-            // recomputation of neighbourhoods.
-            self.invalidate_query_neighbourhood();
-
-            if i == max_steps - 1 {
-                convergence = false;
-            }
-        }
-
-        Ok(convergence)
+            nml_deriv
+        })
     }
 
-    /// Compute the implicit surface potential.
-    pub fn potential(
-        &self,
-        query_points: &[[T; 3]],
-        out_field: &mut [T],
-    ) -> Result<(), super::Error> {
-        debug_assert!(
-            query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
-            "Detected NaNs in query points. Please report this bug."
-        );
 
-        let ImplicitSurface {
-            kernel,
-            base_radius,
-            ref samples,
-            ..
-        } = *self;
-
-        match_kernel_as_spherical!(
-            kernel,
-            base_radius,
-            |kern| self.compute_mls(query_points, kern, out_field),
-            || Self::compute_hrbf(query_points, samples, out_field)
-        )
-    }
+    /*
+     * Main potential computation
+     */
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls<'a, K>(
+    fn compute_potential<'a, K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
@@ -590,11 +412,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         assert_eq!(neigh_points.len(), out_field.len());
 
-        let ImplicitSurface {
+        let ImplicitSurfaceBase {
             ref samples,
             bg_field_params,
             ..
-        } = *self;
+        } = *self.base();
 
         zip!(
             query_points.par_iter(),
@@ -723,25 +545,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /*
-     * The following functions interpolate vector fields instead of potentials
+     * Vector field computation
      */
 
-    /// Compute vector field on the surface.
-    pub fn vector_field(
-        &self,
-        query_points: &[[T; 3]],
-        out_vectors: &mut [[T; 3]],
-    ) -> Result<(), super::Error> {
-        match_kernel_as_spherical!(
-            self.kernel,
-            self.base_radius,
-            |kern| self.compute_mls_vector_field(query_points, kern, out_vectors),
-            || Err(super::Error::UnsupportedKernel)
-        )
-    }
-
     /// Interpolate the given vector field at the given query points.
-    fn compute_mls_vector_field<'a, K>(
+    fn compute_vector_field<'a, K>(
         &self,
         query_points: &[[T; 3]],
         kernel: K,
@@ -755,11 +563,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         assert_eq!(neigh_points.len(), out_vectors.len());
 
-        let ImplicitSurface {
+        let ImplicitSurfaceBase {
             ref samples,
             bg_field_params,
             ..
-        } = *self;
+        } = *self.base();
 
         zip!(
             query_points.par_iter(),
@@ -823,36 +631,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 
     /*
-     * The methods below are designed for debugging and visualization.
+     * Compute MLS potential on mesh
      */
 
-    /// Compute the implicit surface potential on the given polygon mesh.
-    pub fn compute_potential_on_mesh<F, M>(
-        &self,
-        mesh: &mut M,
-        interrupt: F,
-    ) -> Result<(), super::Error>
-    where
-        F: Fn() -> bool + Sync + Send,
-        M: VertexMesh<T>,
-        T: na::RealField,
-    {
-        let ImplicitSurface {
-            kernel,
-            ref samples,
-            ..
-        } = *self;
-
-        match_kernel_as_spherical!(
-            kernel,
-            self.base_radius,
-            |kern| self.compute_mls_on_mesh(mesh, kern, interrupt),
-            || Self::compute_hrbf_on_mesh(mesh, samples, interrupt)
-        )
-    }
-
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_mls_on_mesh<K, F, M>(
+    fn compute_on_mesh<K, F, M>(
         &self,
         mesh: &mut M,
         kernel: K,
@@ -864,11 +647,11 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         M: VertexMesh<T>,
         T: na::RealField,
     {
-        let ImplicitSurface {
+        let ImplicitSurfaceBase {
             ref samples,
             bg_field_params,
             ..
-        } = *self;
+        } = *self.base();
 
         // Move the potential attrib out of the mesh. We will reinsert it after we are done.
         let potential_attrib = mesh
@@ -1089,96 +872,484 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
         Ok(())
     }
+}
 
-    /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
-    /// vertices given in the sample view.
-    ///
-    /// This function returns an iterator with the same size as `samples.len()`.
-    ///
-    /// Note that the product vector is given by a closure `dx` which must give a valid vector
-    /// value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_topo: &'a [[usize; 3]],
-        dual_topo: &'a [Vec<usize>],
-        mut dx: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        samples.into_iter().map(move |sample| {
-            let Sample { index, nml, .. } = sample;
-            let norm_inv = T::one() / nml.norm();
-            // Compute the normal component of the derivative
-            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
-            let mut nml_deriv = Vector3::zeros();
-            // Look at the ring of triangles around the vertex with respect to which we are
-            // taking the derivative.
-            for &tri_idx in dual_topo[index].iter() {
-                let tri_indices = &surface_topo[tri_idx];
-                // Pull contributions from all neighbours on the surface, not just ones part of the
-                // neighbourhood,
-                let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
-                let nml_grad = tri.area_normal_gradient(
-                    tri_indices
-                        .iter()
-                        .position(|&j| j == index)
-                        .expect("Triangle mesh topology corruption."),
-                );
-                let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
-                    if sample.index != index {
-                        let normk_inv = T::one() / sample.nml.norm();
-                        let nmlk_proj = Matrix3::identity()
-                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
-                        tri_grad += nmlk_proj * (dx(sample) * normk_inv);
-                    }
+impl<T: Real + Send + Sync> ImplicitSurface<T> {
+    const PARALLEL_CHUNK_SIZE: usize = 5000;
+
+    fn base(&self) -> &ImplicitSurfaceBase<T> {
+        match self {
+            ImplicitSurface::MLS(mls)  => mls.base(),
+            ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => surf_base,
+        }
+    }
+
+    /// Radius of influence ( kernel radius ) for this implicit surface.
+    pub fn radius(&self) -> f64 {
+        match self {
+            ImplicitSurface::MLS(mls) => mls.radius(),
+            ImplicitSurface::Hrbf(_) => std::f64::INFINITY,
+        }
+    }
+
+    /// Return the surface vertex positions used by this implicit surface.
+    pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
+        &self.base().surface_vertex_positions
+    }
+
+    /// Return the surface topology used by this implicit surface.
+    pub fn surface_topology(&self) -> &[[usize; 3]] {
+        &self.base().surface_topo
+    }
+
+    /// Return the number of samples used by this implicit surface.
+    pub fn samples(&self) -> &Samples<T> {
+        &self.base().samples
+    }
+
+    /// Return the number of samples used by this implicit surface.
+    pub fn num_samples(&self) -> usize {
+        self.base().samples.len()
+    }
+
+    /// Update the stored samples. This assumes that vertex positions have been updated.
+    fn update_samples(&mut self) {
+        let ImplicitSurfaceBase {
+            ref mut samples,
+            ref surface_topo,
+            ref surface_vertex_positions,
+            sample_type,
+            ..
+        } = self.base();
+
+        match sample_type {
+            SampleType::Vertex => {
+                let Samples {
+                    ref mut points,
+                    ref mut normals,
+                    // ref mut tangents
+                    ..
+                } = samples;
+
+                for (vertex_pos, sample_pos) in
+                    surface_vertex_positions.iter().zip(points.iter_mut())
+                {
+                    *sample_pos = *vertex_pos;
                 }
-                nml_deriv += nml_grad * tri_grad;
+
+                // Compute unnormalized area weighted vertex normals given a triangle topology.
+                geo::algo::compute_vertex_area_weighted_normals(points, surface_topo, normals);
             }
-            nml_deriv
-        })
+            SampleType::Face => {
+                samples.update_triangle_samples(surface_topo, &surface_vertex_positions);
+            }
+        }
     }
 
-    /// Compute the gradient vector product of the face normals with respect to
-    /// surface vertices.
-    ///
-    /// This function returns an iterator with the same size as `surface_vertices.len()`.
-    ///
-    /// Note that the product vector is given by a closure `multiplier` which must give a valid
-    /// vector value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_face_unit_normals_gradient_products<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
+    /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
+    /// permissive `update` function, which will update as many positions as possible and recompute
+    /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
+    /// positions were specified to cover all surface vertices. This function will return the
+    /// number of vertices that were indeed updated.
+    pub fn update<I>(&mut self, vertex_iter: I) -> usize
     where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+        I: Iterator<Item = [T; 3]>,
     {
-        samples.into_iter().flat_map(move |sample| {
-            let mult = multiplier(sample);
-            let grad = Self::face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
-            grad.map(move |g| g * mult)
+        // First we update the surface vertex positions.
+        let mut num_updated = 0;
+        for (p, new_p) in self.base().surface_vertex_positions.iter_mut().zip(vertex_iter) {
+            *p = new_p.into();
+            num_updated += 1;
+        }
+
+        // Then update the samples that determine the shape of the implicit surface.
+        self.update_samples();
+
+        match self {
+            ImplicitSurface::MLS(MLS::Local(local)) => {
+                // Funally update the rtree responsible for neighbour search.
+                local.spatial_tree = build_rtree_from_samples(&local.surf_base.samples);
+            }
+            _ => {}
+        }
+
+        num_updated
+    }
+
+    /*
+    /// This function produces an iterator with an item for each query point which itself is an
+    /// iterator over all neighbours (samples) of the corresponding query point.
+    pub fn nearest_neighbour_iter<'a>(&'a self, query_points: &'a [[T; 3]]) -> impl Iterator<Item = impl Iterator<Item = Sample<T>> + 'a> + 'a {
+        let ImplicitSurface {
+            ref kernel,
+            base_radius,
+            ref spatial_tree,
+            ref samples,
+            max_step,
+            ..
+        } = *self;
+
+        let radius = base_radius * radius_multiplier;
+        let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
+        let radius2 = radius_ext * radius_ext;
+        query_points.iter().map(move |&q| {
+            let q_pos = Vector3(q).cast::<f64>().unwrap().into();
+            self.spatial_tree.locate_within_distance(q_pos, radius2).cloned()
+        })
+
+        // Global kernel, all points are neighbours
+        (None, Some(query_points.iter().map(move |_| {
+            self.samples.iter()
+        })))
+    }
+    */
+
+    /// Compute neighbour cache if it has been invalidated. Return true if neighbour cache has
+    /// changed.
+    pub fn cache_neighbours(&self, query_points: &[[T; 3]]) -> bool {
+        match self {
+            ImplicitSurface::MLS(mls) => mls.cache_neighbours(query_points),
+            _ => {
+                true
+                // Nothing to be done here, each query point neighbours all samples.
+                //// Global kernel, all points are neighbours
+                //let neigh = |_| samples.iter();
+                //let mut cache = self.query_neighbourhood.borrow_mut();
+                //cache.compute_neighbourhoods(
+                //    query_points,
+                //    neigh,
+                //    |q| {
+                //        spatial_tree
+                //            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                //            .expect("Empty spatial tree")
+                //    },
+                //    surface_topo,
+                //    dual_topo,
+                //    sample_type,
+                //)
+            }
+        }
+    }
+
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn trivial_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        if let ImplicitSurface::MLS(mls) = self {
+            mls.trivial_neighbourhood_borrow()
+        } else {
+            // should generate all samples
+            unimplemented!();
+        }
+    }
+
+    /// This function returns previously cached closest samples if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn closest_samples_borrow(&self) -> Result<Ref<'_, [usize]>, super::Error> {
+        if let ImplicitSurface::MLS(mls) = self {
+            mls.closest_samples_borrow()
+        } else {
+            // should generate closest sample iter on the fly
+            unimplemented!();
+        }
+    }
+
+    /// This function returns previously cached neighbours if the neighbour cache is
+    /// valid, and an error otherwise.
+    fn extended_neighbourhood_borrow<'a>(&'a self) -> Result<Ref<'a, [Vec<usize>]>, super::Error> {
+        if let ImplicitSurface::MLS(mls) = self {
+            mls.extended_neighbourhood_borrow()
+        } else {
+            // should generate all neighbours
+            unimplemented!();
+        }
+    }
+
+    /// Set `query_neighbourhood` to None. This triggers recomputation of the neighbour cache next time
+    /// the potential or its derivatives are requested.
+    pub fn invalidate_query_neighbourhood(&self) {
+        if let ImplicitSurface::MLS(MLS::Local(local)) = self {
+            let mut cache = local.query_neighbourhood.borrow_mut();
+            cache.invalidate();
+        }
+    }
+
+    /// The number of query points in the cache (regardless if their neighbourhood is empty).
+    /// This function returns `None` if the cache is invalid.
+    pub fn num_cached_query_points(&self) -> Result<usize, super::Error> {
+        self.trivial_neighbourhood_borrow()
+            .map(|neighbourhoods| neighbourhoods.len())
+    }
+
+    /// The number of query points with non-empty neighbourhoods in the cache.
+    /// This function returns `None` if the cache is invalid.
+    pub fn num_cached_neighbourhoods(&self) -> Result<usize, super::Error> {
+        self.trivial_neighbourhood_borrow()
+            .map(|neighbourhoods| neighbourhoods.iter().filter(|x| !x.is_empty()).count())
+    }
+
+    /// Return a vector of indices for query points with non-empty neighbourhoods.
+    pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
+        let set = match self.base().sample_type {
+            SampleType::Vertex => self.extended_neighbourhood_borrow(),
+            SampleType::Face => self.trivial_neighbourhood_borrow(),
+        };
+
+        set.map(|neighbourhoods| {
+            neighbourhoods
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| !x.is_empty())
+                .map(|(i, _)| i)
+                .collect()
         })
     }
 
-    /// Compute the gradient of the face normal at the given sample with respect to
-    /// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
-    /// three matrices corresponding to each triangle vertex, which together construct the actual
-    /// `9x3` component-wise gradient.
-    pub(crate) fn face_unit_normal_gradient_iter(
-        sample: Sample<T>,
-        surface_vertices: &[Vector3<T>],
-        surface_topo: &[[usize; 3]],
-    ) -> impl Iterator<Item = Matrix3<T>> {
-        let nml_proj = Self::scaled_tangent_projection(sample);
-        let tri_indices = &surface_topo[sample.index];
-        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-        (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
+    /// Return a vector over query points, giving the sizes of each cached neighbourhood.
+    pub fn cached_neighbourhood_sizes(&self) -> Result<Vec<usize>, super::Error> {
+        let set = match self.base().sample_type {
+            SampleType::Vertex => self.extended_neighbourhood_borrow(),
+            SampleType::Face => self.trivial_neighbourhood_borrow(),
+        };
+
+        set.map(|neighbourhoods| neighbourhoods.iter().map(std::vec::Vec::len).collect())
     }
+
+    /// The `max_step` parameter sets the maximum position change allowed between calls to
+    /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
+    /// derivative will be denser than then needed, which typically results in slower performance.
+    /// If it is set too low, there will be errors in the derivative. It is the callers
+    /// responsibility to set this step accurately.
+    pub fn update_max_step(&mut self, max_step: T) {
+        if let ImplicitSurface::MLS(MLS::Local(local)) = self {
+            local.max_step = max_step;
+        }
+    }
+
+    pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
+        match self {
+            ImplicitSurface::MLS(MLS::Local(LocalMLS { kernel, .. })) => {
+                *kernel = kernel.with_radius_multiplier(new_radius_multiplier);
+            },
+            _ => {}
+        }
+    }
+
+    /// Project the given set of positions to be below the specified iso-value along the gradient.
+    /// If the query point is already below the given iso-value, then it is not modified.
+    /// The given `epsilon` determines how far below the iso-surface the point is allowed to be
+    /// projected, essentially it is the thickness below the iso-surface of value projections.
+    /// This function will return true if convergence is achieved and false if the projection needed
+    /// more iterations.
+    pub fn project_to_below(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<bool, super::Error> {
+        self.project(Side::Below, iso_value, epsilon, query_points)
+    }
+
+    /// Project the given set of positions to be above the specified iso-value along the gradient.
+    /// If the query point is already above the given iso-value, then it is not modified.
+    /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
+    /// projected, essentially it is the thickness above the iso-surface of value projections.
+    /// This function will return true if convergence is achieved and false if the projection needed
+    /// more iterations.
+    pub fn project_to_above(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<bool, super::Error> {
+        self.project(Side::Above, iso_value, epsilon, query_points)
+    }
+
+    /// Project the given set of positions to be above (below) the specified iso-value along the
+    /// gradient.  If the query point is already above (below) the given iso-value, then it is not
+    /// modified.  The given `epsilon` determines how far above (below) the iso-surface the point
+    /// is allowed to be projected, essentially it is the thickness above (below) the iso-surface
+    /// of value projections.  This function will return true if convergence is achieved and false
+    /// if the projection needed more iterations.
+    pub fn project(
+        &self,
+        side: Side,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> Result<bool, super::Error> {
+        let multiplier = match side {
+            Side::Above => T::one(),
+            Side::Below => -T::one(),
+        };
+        let iso_value = iso_value * multiplier;
+
+        let mut candidate_points = query_points.to_vec();
+        let mut potential = vec![T::zero(); query_points.len()];
+        let mut candidate_potential = vec![T::zero(); query_points.len()];
+        let mut steps = vec![[T::zero(); 3]; query_points.len()];
+        let mut nml_sizes = vec![T::zero(); query_points.len()];
+
+        let max_steps = 20;
+        let max_binary_search_iters = 10;
+
+        let mut convergence = true;
+
+        for i in 0..max_steps {
+            self.potential(query_points, &mut potential)?;
+            potential.iter_mut().for_each(|x| *x *= multiplier);
+
+            // The transpose of the potential gradient at each of the query points.
+            self.query_jacobian_full(query_points, &mut steps)?;
+
+            for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
+                *norm = Vector3(*step).norm();
+            }
+
+            // Count the number of points with values less than iso_value.
+            let count_violations = potential
+                .iter()
+                .zip(nml_sizes.iter())
+                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
+                .count();
+
+            if count_violations == 0 {
+                break;
+            }
+
+            // Compute initial step directions
+            for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
+                .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
+            {
+                let nml = Vector3(*step);
+                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
+                *step = (nml * (multiplier * offset)).into();
+            }
+
+            for j in 0..max_binary_search_iters {
+                // Try this step
+                for (p, q, &step, _, _) in zip!(
+                    candidate_points.iter_mut(),
+                    query_points.iter(),
+                    steps.iter(),
+                    nml_sizes.iter(),
+                    potential.iter()
+                )
+                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
+                {
+                    *p = (Vector3(*q) + Vector3(step)).into();
+                }
+
+                self.potential(&candidate_points, &mut candidate_potential)?;
+                candidate_potential
+                    .iter_mut()
+                    .for_each(|x| *x *= multiplier);
+
+                let mut count_overshoots = 0;
+                for (step, _, _, _) in zip!(
+                    steps.iter_mut(),
+                    nml_sizes.iter(),
+                    potential.iter(),
+                    candidate_potential.iter()
+                )
+                .filter(|(_, &norm, &old, &new)| {
+                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
+                }) {
+                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
+                    count_overshoots += 1;
+                }
+
+                if count_overshoots == 0 {
+                    break;
+                }
+
+                if j == max_binary_search_iters - 1 {
+                    convergence = false;
+                }
+            }
+
+            // Update query points
+            query_points
+                .iter_mut()
+                .zip(candidate_points.iter())
+                .for_each(|(q, p)| *q = *p);
+
+            // Since the query points have changed position, we invalidate the cache to force a
+            // recomputation of neighbourhoods.
+            self.invalidate_query_neighbourhood();
+
+            if i == max_steps - 1 {
+                convergence = false;
+            }
+        }
+
+        Ok(convergence)
+    }
+
+    /// Compute the implicit surface potential.
+    pub fn potential(
+        &self,
+        query_points: &[[T; 3]],
+        out_field: &mut [T],
+    ) -> Result<(), super::Error> {
+        debug_assert!(
+            query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
+            "Detected NaNs in query points. Please report this bug."
+        );
+
+        match self {
+            ImplicitSurface::MLS(mls) => {
+                apply_kernel_fn!(mls, |kernel| mls.compute_potential(query_points, kernel, out_field))
+            },
+            ImplicitSurface::Hrbf(HrbfSurface { surf_base } ) => {
+                Self::compute_hrbf(query_points, &surf_base.samples, out_field)
+            }
+        }
+    }
+    /*
+     * The following functions interpolate vector fields instead of potentials
+     */
+
+    /// Compute vector field on the surface.
+    pub fn vector_field(
+        &self,
+        query_points: &[[T; 3]],
+        out_vectors: &mut [[T; 3]],
+    ) -> Result<(), super::Error> {
+        match self {
+            ImplicitSurface::MLS(mls) => {
+                apply_kernel_fn!(mls, |kernel| mls.compute_vector_field(query_points, kernel, out_vectors))
+            },
+            ImplicitSurface::Hrbf(HrbfSurface { surf_base } ) => {
+                Err(super::Error::UnsupportedKernel)
+            }
+        }
+    }
+
+    /*
+     * The methods below are designed for debugging and visualization.
+     */
+
+    /// Compute the implicit surface potential on the given polygon mesh.
+    pub fn compute_potential_on_mesh<F, M>(
+        &self,
+        mesh: &mut M,
+        interrupt: F,
+    ) -> Result<(), super::Error>
+    where
+        F: Fn() -> bool + Sync + Send,
+        M: VertexMesh<T>,
+        T: na::RealField,
+    {
+        match self {
+            ImplicitSurface::MLS(mls) => {
+                apply_kernel_fn!(mls, |kernel| self.compute_on_mesh(mesh, kernel, interrupt))
+            },
+            ImplicitSurface::Hrbf(HrbfSurface { surf_base } ) => {
+                Self::compute_hrbf_on_mesh(mesh, &surf_base.samples, interrupt)
+            }
+        }
+    }
+
 
     /// Compute the gradient of the face normal at the given sample with respect to
     /// the given vertex.
@@ -1193,14 +1364,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     //    let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
     //    tri.area_normal_gradient(vtx_idx) * nml_proj
     //}
-
-    /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
-    /// by the local area (normal norm reciprocal).
-    pub(crate) fn scaled_tangent_projection(sample: Sample<T>) -> Matrix3<T> {
-        let nml_norm_inv = T::one() / sample.nml.norm();
-        let nml = sample.nml * nml_norm_inv;
-        Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
-    }
 
     ///// Compute the background potential field. This function returns a struct that provides some
     ///// useful quanitities for computing derivatives of the field.
@@ -1331,6 +1494,20 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
 
         Ok(())
+    }
+}
+
+impl<T: Real> LocalMLS<T> {
+    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
+        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
+        self.spatial_tree
+            .locate_within_distance(q_pos, radius * radius)
+            .count()
+    }
+
+    pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
+        let q_pos = Vector3(q).cast::<f64>().unwrap().into();
+        self.spatial_tree.nearest_neighbor_iter(&q_pos).next()
     }
 }
 

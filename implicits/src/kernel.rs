@@ -24,6 +24,71 @@ pub enum KernelType {
     Hrbf,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum LocalKernel {
+    Interpolating {
+        radius_multiplier: f64,
+    },
+    Approximate {
+        radius_multiplier: f64,
+        tolerance: f64,
+    },
+    Cubic {
+        radius_multiplier: f64,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum GlobalKernel {
+    InvDistance2 {
+        tolerance: f64,
+    },
+}
+
+impl LocalKernel {
+    pub fn radius_multiplier(self) -> f64 {
+        match self {
+            LocalKernel::Interpolating { radius_multiplier }
+            | LocalKernel::Approximate { radius_multiplier, .. }
+            | LocalKernel::Cubic { radius_multiplier } => radius_multiplier
+        }
+    }
+
+    pub fn with_radius_multiplier(self, radius_multiplier: f64) -> Self {
+        match self {
+            LocalKernel::Interpolating { .. } => LocalKernel::Interpolating { radius_multiplier },
+            LocalKernel::Approximate { tolerance, .. } => LocalKernel::Approximate { radius_multiplier, tolerance },
+            LocalKernel::Cubic { .. } => LocalKernel::Cubic { radius_multiplier }
+        }
+    }
+}
+
+/// Apply a function with an instantiated kernel. This function allows users to branch on the
+/// kernel type outside of inner loops, which can be costly.
+/// `base_radius` gives the absolute radius of the kernel which is then scaled by the
+/// corresponding `radius_multiplier` (if any) provided by the specific kernel type.
+macro_rules! apply_as_spherical {
+    ($kernel:expr, $base_radius:expr, $f:expr) => {
+        match $kernel {
+            LocalKernel::Interpolating { radius_multiplier } =>
+                $f($crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier)),
+            LocalKernel::Approximate { radius_multiplier, tolerance } =>
+                $f($crate::kernel::LocalApproximate::new(
+                    $base_radius * radius_multiplier,
+                    tolerance,
+                )),
+            LocalKernel::Cubic { radius_multiplier } =>
+                $f($crate::kernel::LocalCubic::new( $base_radius * radius_multiplier))
+        }
+    };
+    ($kernel:expr, $f:expr) => {
+        match $kernel {
+            GlobalKernel::InvDistance2 { tolerance } =>
+                $f($crate::kernel::GlobalInvDistance2::new(tolerance)),
+        }
+    }
+}
+
 /// Apply a function with an instantiated kernel. This function allows users to branch on the
 /// kernel type outside of inner loops, which can be costly.
 /// `base_radius` gives the absolute radius of the kernel which is then scaled by the

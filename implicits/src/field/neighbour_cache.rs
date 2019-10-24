@@ -40,7 +40,7 @@ where
 ///   2. an extended set of samples reachable via triangles adjacent to the trivial set, which we
 ///      dub the *extended set*.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Neighbourhood {
+pub struct Neighbourhood {
     /// The closest sample to each query point.
     closest_set: Vec<usize>,
     /// The trivial neighbourhood of a set of query points. These are simply the set of samples that

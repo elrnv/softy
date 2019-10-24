@@ -7,12 +7,32 @@ use crate::kernel::*;
 use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
-use geo::Real;
+pub use geo::Real;
 use num_traits::cast;
 use rayon::{iter::Either, prelude::*};
 use rstar::RTree;
 use serde::{Deserialize, Serialize};
 use utils::zip;
+
+macro_rules! apply_kernel_query_fn {
+    ($surf:expr, $f:expr) => {
+        match *$surf {
+            QueryTopo::Local {
+                surf:
+                    LocalMLS {
+                        kernel,
+                        base_radius,
+                        ..
+                    },
+                ..
+            } => apply_as_spherical!(kernel, base_radius, $f),
+            QueryTopo::Global {
+                surf: GlobalMLS { kernel, .. },
+                ..
+            } => apply_as_spherical!(kernel, $f),
+        }
+    };
+}
 
 macro_rules! apply_kernel_fn {
     ($surf:expr, $f:expr) => {
@@ -32,10 +52,12 @@ pub mod builder;
 pub mod hessian;
 pub mod jacobian;
 pub mod neighbour_cache;
+pub mod query;
 pub mod samples;
 pub mod spatial_tree;
 
 pub use self::builder::*;
+pub use self::query::*;
 pub use self::samples::*;
 pub use self::spatial_tree::*;
 
@@ -260,6 +282,17 @@ impl<T: Real + Send + Sync> MLS<T> {
     /// Return the number of samples used by this implicit surface.
     pub fn num_samples(&self) -> usize {
         self.base().samples.len()
+    }
+
+    /// Build a query topology type to be able to ask questions about the surface potential and
+    /// derivatives at a set of query points.
+    ///
+    /// This type contains the necessary neighbourhood information to make queries fast.
+    pub fn query_topo<Q>(self, query_points: Q) -> QueryTopo<T>
+    where
+        Q: AsRef<[[T; 3]]>,
+    {
+        QueryTopo::new(query_points.as_ref(), self)
     }
 
     /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
@@ -717,108 +750,6 @@ impl<T: Real + Send + Sync> MLS<T> {
     }
 
     /*
-     * Derivative and normal computation utils
-     */
-
-    /// Compute the gradient vector product of the face normals with respect to
-    /// surface vertices.
-    ///
-    /// This function returns an iterator with the same size as `surface_vertices.len()`.
-    ///
-    /// Note that the product vector is given by a closure `multiplier` which must give a valid
-    /// vector value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_face_unit_normals_gradient_products<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_vertices: &'a [Vector3<T>],
-        surface_topo: &'a [[usize; 3]],
-        mut multiplier: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        samples.into_iter().flat_map(move |sample| {
-            let mult = multiplier(sample);
-            let grad = Self::face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
-            grad.map(move |g| g * mult)
-        })
-    }
-
-    /// Compute the gradient of the face normal at the given sample with respect to
-    /// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
-    /// three matrices corresponding to each triangle vertex, which together construct the actual
-    /// `9x3` component-wise gradient.
-    pub(crate) fn face_unit_normal_gradient_iter(
-        sample: Sample<T>,
-        surface_vertices: &[Vector3<T>],
-        surface_topo: &[[usize; 3]],
-    ) -> impl Iterator<Item = Matrix3<T>> {
-        let nml_proj = Self::scaled_tangent_projection(sample);
-        let tri_indices = &surface_topo[sample.index];
-        let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-        (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
-    }
-
-    /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
-    /// by the local area (normal norm reciprocal).
-    pub(crate) fn scaled_tangent_projection(sample: Sample<T>) -> Matrix3<T> {
-        let nml_norm_inv = T::one() / sample.nml.norm();
-        let nml = sample.nml * nml_norm_inv;
-        Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
-    }
-
-    /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
-    /// vertices given in the sample view.
-    ///
-    /// This function returns an iterator with the same size as `samples.len()`.
-    ///
-    /// Note that the product vector is given by a closure `dx` which must give a valid vector
-    /// value for any vertex index, however not all indices will be used since only the
-    /// neighbourhood of vertex at `index` will have non-zero gradients.
-    pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, F>(
-        samples: SamplesView<'a, 'a, T>,
-        surface_topo: &'a [[usize; 3]],
-        dual_topo: &'a [Vec<usize>],
-        mut dx: F,
-    ) -> impl Iterator<Item = Vector3<T>> + 'a
-    where
-        F: FnMut(Sample<T>) -> Vector3<T> + 'a,
-    {
-        samples.into_iter().map(move |sample| {
-            let Sample { index, nml, .. } = sample;
-            let norm_inv = T::one() / nml.norm();
-            // Compute the normal component of the derivative
-            let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
-            let mut nml_deriv = Vector3::zeros();
-            // Look at the ring of triangles around the vertex with respect to which we are
-            // taking the derivative.
-            for &tri_idx in dual_topo[index].iter() {
-                let tri_indices = &surface_topo[tri_idx];
-                // Pull contributions from all neighbours on the surface, not just ones part of the
-                // neighbourhood,
-                let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
-                let nml_grad = tri.area_normal_gradient(
-                    tri_indices
-                        .iter()
-                        .position(|&j| j == index)
-                        .expect("Triangle mesh topology corruption."),
-                );
-                let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-                for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
-                    if sample.index != index {
-                        let normk_inv = T::one() / sample.nml.norm();
-                        let nmlk_proj = Matrix3::identity()
-                            - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
-                        tri_grad += nmlk_proj * (dx(sample) * normk_inv);
-                    }
-                }
-                nml_deriv += nml_grad * tri_grad;
-            }
-            nml_deriv
-        })
-    }
-
-    /*
      * Main potential computation
      */
 
@@ -863,7 +794,7 @@ impl<T: Real + Send + Sync> MLS<T> {
         zip!(query_points.iter(), neigh_points, out_field.iter_mut())
             //.filter(|(_, nbrs, _)| !nbrs.is_empty())
             .for_each(move |(q, neighbours, field)| {
-                Self::compute_potential_at(
+                compute_potential_at(
                     Vector3(*q),
                     SamplesView::new(neighbours, samples),
                     kernel,
@@ -873,113 +804,6 @@ impl<T: Real + Send + Sync> MLS<T> {
             });
 
         Ok(())
-    }
-
-    /// Compute the potential at a given query point. If the potential is invalid or nieghbourhood
-    /// is empty, `potential` is not modified, otherwise it's updated.
-    /// Note: passing the output parameter potential as a mut reference allows us to optionally mix
-    /// a pre-initialized custom global potential field with the local potential.
-    pub(crate) fn compute_potential_at<K>(
-        q: Vector3<T>,
-        samples: SamplesView<T>,
-        kernel: K,
-        bg_potential: BackgroundFieldParams,
-        potential: &mut T,
-    ) where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    {
-        if samples.is_empty() {
-            return;
-        }
-
-        let bg =
-            BackgroundField::local(q, samples, kernel, bg_potential, Some(*potential)).unwrap();
-
-        let weight_sum_inv = bg.weight_sum_inv();
-
-        // Generate a background potential field for every query point. This will be mixed
-        // in with the computed potentials for local methods.
-        *potential = bg.compute_unnormalized_weighted_scalar_field() * weight_sum_inv;
-
-        let local_field = Self::compute_local_potential_at(
-            q,
-            samples,
-            kernel,
-            weight_sum_inv,
-            bg.closest_sample_dist(),
-        );
-
-        *potential += local_field;
-    }
-
-    /// Compute the potential field (excluding background field) at a given query point.
-    pub(crate) fn compute_local_potential_at<K>(
-        q: Vector3<T>,
-        samples: SamplesView<T>,
-        kernel: K,
-        weight_sum_inv: T,
-        closest_d: T,
-    ) -> T
-    where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    {
-        samples
-            .iter()
-            .map(
-                |Sample {
-                     pos, nml, value, ..
-                 }| {
-                    let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-                    let p = value + nml.dot(q - pos) / nml.norm();
-                    w * p
-                },
-            )
-            .sum::<T>()
-            * weight_sum_inv
-    }
-
-    /// Compute the potential field (excluding background field) at a given query point.
-    pub(crate) fn alt_compute_local_potential_at<K>(
-        q: Vector3<T>,
-        samples: SamplesView<T>,
-        kernel: K,
-        weight_sum_inv: T,
-        closest_d: T,
-    ) -> T
-    where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-        T: na::RealField,
-    {
-        use na::{DMatrix, DVector};
-        let basis = DMatrix::from_iterator(
-            4,
-            samples.len(),
-            samples
-                .iter()
-                .flat_map(|s| vec![T::one(), s.pos[0], s.pos[1], s.pos[2]].into_iter()),
-        );
-
-        let diag_weights: Vec<T> = samples
-            .iter()
-            .map(|s| kernel.with_closest_dist(closest_d).eval(q, s.pos) * weight_sum_inv)
-            .collect();
-
-        let weights = DMatrix::from_diagonal(&DVector::from_vec(diag_weights));
-
-        let basis_view = &basis;
-        let h = basis_view * &weights * basis_view.transpose();
-
-        let sample_data: Vec<T> = samples
-            .iter()
-            .map(|s| s.value + s.nml.dot(q - s.pos) / s.nml.norm())
-            .collect();
-
-        let rhs = basis * weights * DVector::from_vec(sample_data);
-
-        h.svd(true, true)
-            .solve(&rhs, T::from(1e-9).unwrap())
-            .map(|c| c[0] + q[0] * c[1] + q[1] * c[2] + q[2] * c[3])
-            .unwrap_or(T::from(std::f64::NAN).unwrap())
     }
 
     /*
@@ -1013,7 +837,7 @@ impl<T: Real + Send + Sync> MLS<T> {
         )
         //.filter(|(_, nbrs, _)| !nbrs.is_empty())
         .for_each(move |(q, neighbours, vector)| {
-            Self::compute_local_vector_at(
+            compute_local_vector_at(
                 Vector3(*q),
                 SamplesView::new(neighbours, samples),
                 kernel,
@@ -1025,55 +849,13 @@ impl<T: Real + Send + Sync> MLS<T> {
         Ok(())
     }
 
-    pub(crate) fn compute_local_vector_at<K>(
-        q: Vector3<T>,
-        samples: SamplesView<T>,
-        kernel: K,
-        bg_potential: BackgroundFieldParams,
-        vector: &mut [T; 3],
-    ) where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    {
-        if samples.is_empty() {
-            return;
-        }
-
-        let bg = BackgroundField::local(q, samples, kernel, bg_potential, Some(Vector3(*vector)))
-            .unwrap();
-
-        // Generate a background potential field for every query point. This will be mixed
-        // in with the computed potentials for local methods.
-        let mut out_field = bg.compute_unnormalized_weighted_vector_field();
-
-        let closest_dist = bg.closest_sample_dist();
-
-        let weight_sum_inv = bg.weight_sum_inv();
-
-        let grad_phi = Self::query_jacobian_at(q, samples, None, kernel, bg_potential);
-
-        for Sample { pos, vel, nml, .. } in samples.iter() {
-            out_field += Self::sample_contact_jacobian_product_at(
-                q,
-                pos,
-                nml,
-                kernel,
-                grad_phi,
-                weight_sum_inv,
-                closest_dist,
-                vel,
-            );
-        }
-
-        *vector = out_field.into();
-    }
-
     /*
      * Compute MLS potential on mesh
      */
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
     fn compute_on_mesh<K, F, M>(
-        &mut self,
+        self,
         mesh: &mut M,
         kernel: K,
         interrupt: F,
@@ -1084,13 +866,13 @@ impl<T: Real + Send + Sync> MLS<T> {
         M: VertexMesh<T>,
         T: na::RealField,
     {
-        self.compute_neighbours(mesh.vertex_positions());
+        let query_surf = QueryTopo::new(mesh.vertex_positions(), self);
 
         let ImplicitSurfaceBase {
             ref samples,
             bg_field_params,
             ..
-        } = *self.base();
+        } = *query_surf.base();
 
         // Move the potential attrib out of the mesh. We will reinsert it after we are done.
         let potential_attrib = mesh
@@ -1125,8 +907,8 @@ impl<T: Real + Send + Sync> MLS<T> {
         let mut tangents = vec![[0.0f32; 3]; mesh.num_vertices()];
 
         let query_points = mesh.vertex_positions();
-        let neigh_points = self.trivial_neighbourhood_par_chunks(PARALLEL_CHUNK_SIZE)?;
-        let closest_points = self.closest_samples_par_chunks(PARALLEL_CHUNK_SIZE)?;
+        let neigh_points = query_surf.trivial_neighbourhood_par_chunks(PARALLEL_CHUNK_SIZE);
+        let closest_points = query_surf.closest_samples_par_chunks(PARALLEL_CHUNK_SIZE);
 
         // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
@@ -1256,7 +1038,7 @@ impl<T: Real + Send + Sync> MLS<T> {
                             let mut out_normal = Vector3::zeros();
                             let mut out_tangent = Vector3::zeros();
 
-                            let p = Self::compute_local_potential_at(
+                            let p = compute_local_potential_at(
                                 q,
                                 view,
                                 kernel,
@@ -1264,7 +1046,7 @@ impl<T: Real + Send + Sync> MLS<T> {
                                 closest_d,
                             );
 
-                            let alt_p = Self::alt_compute_local_potential_at(
+                            let alt_p = alt_compute_local_potential_at(
                                 q,
                                 view,
                                 kernel,
@@ -1283,7 +1065,7 @@ impl<T: Real + Send + Sync> MLS<T> {
                                     grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
 
                                 // Compute vector interpolation
-                                let grad_phi = Self::query_jacobian_at(
+                                let grad_phi = jacobian::query_jacobian_at(
                                     q,
                                     view,
                                     Some(*closest),
@@ -1686,7 +1468,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
 
     /// Compute the implicit surface potential on the given polygon mesh.
     pub fn compute_potential_on_mesh<F, M>(
-        &mut self,
+        self,
         mesh: &mut M,
         interrupt: F,
     ) -> Result<(), super::Error>
@@ -1697,7 +1479,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     {
         match self {
             ImplicitSurface::MLS(mls) => {
-                apply_kernel_fn!(mls, |kernel| mls.compute_on_mesh(mesh, kernel, interrupt))
+                apply_kernel_fn!(&mls, |kernel| mls.compute_on_mesh(mesh, kernel, interrupt))
             }
             ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => {
                 Self::compute_hrbf_on_mesh(mesh, &surf_base.samples, interrupt)
@@ -1856,6 +1638,268 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     }
 }
 
+/*
+ * Potential function compoenents
+ *
+ * The following routines compute parts of various potential functions defining implicit surfaces.
+ */
+
+/// Compute the potential at a given query point. If the potential is invalid or nieghbourhood
+/// is empty, `potential` is not modified, otherwise it's updated.
+/// Note: passing the output parameter potential as a mut reference allows us to optionally mix
+/// a pre-initialized custom global potential field with the local potential.
+pub(crate) fn compute_potential_at<T, K>(
+    q: Vector3<T>,
+    samples: SamplesView<T>,
+    kernel: K,
+    bg_potential: BackgroundFieldParams,
+    potential: &mut T,
+) where
+    T: Real + Send + Sync,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+{
+    if samples.is_empty() {
+        return;
+    }
+
+    let bg = BackgroundField::local(q, samples, kernel, bg_potential, Some(*potential)).unwrap();
+
+    let weight_sum_inv = bg.weight_sum_inv();
+
+    // Generate a background potential field for every query point. This will be mixed
+    // in with the computed potentials for local methods.
+    *potential = bg.compute_unnormalized_weighted_scalar_field() * weight_sum_inv;
+
+    let local_field =
+        compute_local_potential_at(q, samples, kernel, weight_sum_inv, bg.closest_sample_dist());
+
+    *potential += local_field;
+}
+
+/// Compute the potential field (excluding background field) at a given query point.
+pub(crate) fn compute_local_potential_at<T, K>(
+    q: Vector3<T>,
+    samples: SamplesView<T>,
+    kernel: K,
+    weight_sum_inv: T,
+    closest_d: T,
+) -> T
+where
+    T: Real + Send + Sync,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+{
+    samples
+        .iter()
+        .map(
+            |Sample {
+                 pos, nml, value, ..
+             }| {
+                let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                let p = value + nml.dot(q - pos) / nml.norm();
+                w * p
+            },
+        )
+        .sum::<T>()
+        * weight_sum_inv
+}
+
+/// Compute the potential field (excluding background field) at a given query point.
+pub(crate) fn alt_compute_local_potential_at<T, K>(
+    q: Vector3<T>,
+    samples: SamplesView<T>,
+    kernel: K,
+    weight_sum_inv: T,
+    closest_d: T,
+) -> T
+where
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+    T: na::RealField + Real + Send + Sync,
+{
+    use na::{DMatrix, DVector};
+    let basis = DMatrix::from_iterator(
+        4,
+        samples.len(),
+        samples
+            .iter()
+            .flat_map(|s| vec![T::one(), s.pos[0], s.pos[1], s.pos[2]].into_iter()),
+    );
+
+    let diag_weights: Vec<T> = samples
+        .iter()
+        .map(|s| kernel.with_closest_dist(closest_d).eval(q, s.pos) * weight_sum_inv)
+        .collect();
+
+    let weights = DMatrix::from_diagonal(&DVector::from_vec(diag_weights));
+
+    let basis_view = &basis;
+    let h = basis_view * &weights * basis_view.transpose();
+
+    let sample_data: Vec<T> = samples
+        .iter()
+        .map(|s| s.value + s.nml.dot(q - s.pos) / s.nml.norm())
+        .collect();
+
+    let rhs = basis * weights * DVector::from_vec(sample_data);
+
+    h.svd(true, true)
+        .solve(&rhs, T::from(1e-9).unwrap())
+        .map(|c| c[0] + q[0] * c[1] + q[1] * c[2] + q[2] * c[3])
+        .unwrap_or(T::from(std::f64::NAN).unwrap())
+}
+
+pub(crate) fn compute_local_vector_at<T, K>(
+    q: Vector3<T>,
+    samples: SamplesView<T>,
+    kernel: K,
+    bg_potential: BackgroundFieldParams,
+    vector: &mut [T; 3],
+) where
+    T: Real + Send + Sync,
+    K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+{
+    if samples.is_empty() {
+        return;
+    }
+
+    let bg =
+        BackgroundField::local(q, samples, kernel, bg_potential, Some(Vector3(*vector))).unwrap();
+
+    // Generate a background potential field for every query point. This will be mixed
+    // in with the computed potentials for local methods.
+    let mut out_field = bg.compute_unnormalized_weighted_vector_field();
+
+    let closest_dist = bg.closest_sample_dist();
+
+    let weight_sum_inv = bg.weight_sum_inv();
+
+    let grad_phi = jacobian::query_jacobian_at(q, samples, None, kernel, bg_potential);
+
+    for Sample { pos, vel, nml, .. } in samples.iter() {
+        out_field += jacobian::sample_contact_jacobian_product_at(
+            q,
+            pos,
+            nml,
+            kernel,
+            grad_phi,
+            weight_sum_inv,
+            closest_dist,
+            vel,
+        );
+    }
+
+    *vector = out_field.into();
+}
+
+/*
+ * Derivative and normal computation utils
+ */
+
+/// Compute the gradient vector product of the face normals with respect to
+/// surface vertices.
+///
+/// This function returns an iterator with the same size as `surface_vertices.len()`.
+///
+/// Note that the product vector is given by a closure `multiplier` which must give a valid
+/// vector value for any vertex index, however not all indices will be used since only the
+/// neighbourhood of vertex at `index` will have non-zero gradients.
+pub(crate) fn compute_face_unit_normals_gradient_products<'a, T, F>(
+    samples: SamplesView<'a, 'a, T>,
+    surface_vertices: &'a [Vector3<T>],
+    surface_topo: &'a [[usize; 3]],
+    mut multiplier: F,
+) -> impl Iterator<Item = Vector3<T>> + 'a
+where
+    T: Real + Send + Sync,
+    F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+{
+    samples.into_iter().flat_map(move |sample| {
+        let mult = multiplier(sample);
+        let grad = face_unit_normal_gradient_iter(sample, surface_vertices, surface_topo);
+        grad.map(move |g| g * mult)
+    })
+}
+
+/// Compute the gradient of the face normal at the given sample with respect to
+/// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
+/// three matrices corresponding to each triangle vertex, which together construct the actual
+/// `9x3` component-wise gradient.
+pub(crate) fn face_unit_normal_gradient_iter<T>(
+    sample: Sample<T>,
+    surface_vertices: &[Vector3<T>],
+    surface_topo: &[[usize; 3]],
+) -> impl Iterator<Item = Matrix3<T>>
+where
+    T: Real + Send + Sync,
+{
+    let nml_proj = scaled_tangent_projection(sample);
+    let tri_indices = &surface_topo[sample.index];
+    let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+    (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
+}
+
+/// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
+/// by the local area (normal norm reciprocal).
+pub(crate) fn scaled_tangent_projection<T>(sample: Sample<T>) -> Matrix3<T>
+where
+    T: Real + Send + Sync,
+{
+    let nml_norm_inv = T::one() / sample.nml.norm();
+    let nml = sample.nml * nml_norm_inv;
+    Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
+}
+
+/// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
+/// vertices given in the sample view.
+///
+/// This function returns an iterator with the same size as `samples.len()`.
+///
+/// Note that the product vector is given by a closure `dx` which must give a valid vector
+/// value for any vertex index, however not all indices will be used since only the
+/// neighbourhood of vertex at `index` will have non-zero gradients.
+pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T, F>(
+    samples: SamplesView<'a, 'a, T>,
+    surface_topo: &'a [[usize; 3]],
+    dual_topo: &'a [Vec<usize>],
+    mut dx: F,
+) -> impl Iterator<Item = Vector3<T>> + 'a
+where
+    T: Real + Send + Sync,
+    F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+{
+    samples.into_iter().map(move |sample| {
+        let Sample { index, nml, .. } = sample;
+        let norm_inv = T::one() / nml.norm();
+        // Compute the normal component of the derivative
+        let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
+        let mut nml_deriv = Vector3::zeros();
+        // Look at the ring of triangles around the vertex with respect to which we are
+        // taking the derivative.
+        for &tri_idx in dual_topo[index].iter() {
+            let tri_indices = &surface_topo[tri_idx];
+            // Pull contributions from all neighbours on the surface, not just ones part of the
+            // neighbourhood,
+            let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
+            let nml_grad = tri.area_normal_gradient(
+                tri_indices
+                    .iter()
+                    .position(|&j| j == index)
+                    .expect("Triangle mesh topology corruption."),
+            );
+            let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
+            for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
+                if sample.index != index {
+                    let normk_inv = T::one() / sample.nml.norm();
+                    let nmlk_proj = Matrix3::identity()
+                        - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
+                    tri_grad += nmlk_proj * (dx(sample) * normk_inv);
+                }
+            }
+            nml_deriv += nml_grad * tri_grad;
+        }
+        nml_deriv
+    })
+}
+
 /// Utility function to subdivide a range into a `Vec` of smaller ranges with a given size.
 fn split_range_into_chunks(
     rng: std::ops::Range<usize>,
@@ -1980,9 +2024,7 @@ mod tests {
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
     // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
     // surface.
-    fn make_octahedron_and_grid_local(
-        reverse: bool,
-    ) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    fn make_octahedron_and_grid_local(reverse: bool) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1994,7 +2036,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh(
+        let surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -2026,7 +2068,7 @@ mod tests {
     fn make_octahedron_and_grid(
         reverse: bool,
         radius_multiplier: f64,
-    ) -> Result<(ImplicitSurface, PolyMesh<f64>), crate::Error> {
+    ) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = utils::make_sample_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -2038,7 +2080,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh(
+        let surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -2063,7 +2105,7 @@ mod tests {
     }
 
     fn projection_tester(
-        surface: &ImplicitSurface,
+        query_surf: &QueryTopo,
         mut grid: PolyMesh<f64>,
         side: Side,
     ) -> Result<(), crate::Error> {
@@ -2074,16 +2116,16 @@ mod tests {
 
             // Compute potential before projection.
             let mut init_potential = vec![0.0; pos.len()];
-            surface.potential(pos, &mut init_potential)?;
+            query_surf.potential(pos, &mut init_potential);
 
             // Project grid outside the implicit surface.
-            assert!(surface.project(side, 0.0, epsilon, pos)?);
+            assert!(query_surf.project(side, 0.0, epsilon, pos));
             init_potential
         };
 
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
-        surface.potential(grid.vertex_positions(), &mut final_potential)?;
+        query_surf.potential(grid.vertex_positions(), &mut final_potential);
 
         //use geo::mesh::topology::VertexIndex;
         //grid.set_attrib_data::<_, VertexIndex>("init_potential", &init_potential);
@@ -2119,24 +2161,26 @@ mod tests {
     /// implicit surface.
     #[test]
     fn local_projection_test() -> Result<(), crate::Error> {
-        let (mut surface, grid) = make_octahedron_and_grid_local(false)?;
-        surface.compute_neighbours(grid.vertex_positions());
-        projection_tester(&surface, grid, Side::Above)?;
-        let (mut surface, grid) = make_octahedron_and_grid_local(true)?;
-        surface.compute_neighbours(grid.vertex_positions());
-        projection_tester(&surface, grid, Side::Below)
+        let (surface, grid) = make_octahedron_and_grid_local(false)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
+        projection_tester(&query_surf, grid, Side::Above)?;
+
+        let (surface, grid) = make_octahedron_and_grid_local(true)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
+        projection_tester(&query_surf, grid, Side::Below)
     }
 
     /// Test projection where some projected vertices may not have a local neighbourhood at all.
     /// This is a more complex test than the local_projection_test
     #[test]
     fn global_projection_test() -> Result<(), crate::Error> {
-        let (mut surface, grid) = make_octahedron_and_grid(false, 2.45)?;
-        surface.compute_neighbours(grid.vertex_positions());
-        projection_tester(&surface, grid, Side::Above)?;
-        let (mut surface, grid) = make_octahedron_and_grid(true, 2.45)?;
-        surface.compute_neighbours(grid.vertex_positions());
-        projection_tester(&surface, grid, Side::Below)
+        let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
+        projection_tester(&query_surf, grid, Side::Above)?;
+
+        let (surface, grid) = make_octahedron_and_grid(true, 2.45)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
+        projection_tester(&query_surf, grid, Side::Below)
     }
 
     /// Test with a radius multiplier less than 1.0. Although not strictly useful, this should not
@@ -2162,7 +2206,7 @@ mod tests {
         let torus = geo::io::load_polymesh("assets/projection_torus.vtk")?;
 
         // Construct the implicit surface.
-        let mut surface = surface_from_polymesh(
+        let surface = mls_from_polymesh(
             &torus,
             Params {
                 kernel: KernelType::Approximate {
@@ -2178,8 +2222,8 @@ mod tests {
             },
         )?;
 
-        surface.compute_neighbours(grid.vertex_positions());
-        projection_tester(&surface, grid, Side::Above)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
+        projection_tester(&query_surf, grid, Side::Above)?;
 
         Ok(())
     }
@@ -2231,7 +2275,7 @@ mod tests {
             serde_json::from_str(&contents).expect("Failed to deserialize grid points.")
         };
 
-        let mut surface: ImplicitSurface<f64> = {
+        let surface: MLS<f64> = {
             let mut file = std::fs::File::open("assets/torus_surf_no_tree.json")
                 .expect("Failed to open torus surface file");
             let mut contents = String::new();
@@ -2250,7 +2294,7 @@ mod tests {
                 ..
             } = serde_json::from_str(&contents).expect("Failed to deserialize torus surface.");
             let spatial_tree = build_rtree_from_samples(&samples);
-            ImplicitSurface::MLS(MLS::Local(LocalMLS {
+            MLS::Local(LocalMLS {
                 kernel: kernel.into(),
                 base_radius,
                 max_step,
@@ -2264,24 +2308,24 @@ mod tests {
                     sample_type,
                     spatial_tree,
                 },
-            }))
+            })
         };
 
-        surface.compute_neighbours(&query_points);
+        let query_surf = QueryTopo::new(&query_points, surface);
 
         let init_potential = {
             // Compute potential before projection.
             let mut init_potential = vec![0.0; query_points.len()];
-            surface.potential(&query_points, &mut init_potential)?;
+            query_surf.potential(&query_points, &mut init_potential);
             init_potential
         };
 
         // Project grid outside the implicit surface.
-        assert!(surface.project_to_above(iso_value, epsilon, &mut query_points)?);
+        assert!(query_surf.project_to_above(iso_value, epsilon, &mut query_points));
 
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
-        surface.potential(&query_points, &mut final_potential)?;
+        query_surf.potential(&query_points, &mut final_potential);
 
         for (i, (&old, &new)) in init_potential
             .iter()
@@ -2303,19 +2347,19 @@ mod tests {
     #[test]
     fn neighbourhoods() -> Result<(), crate::Error> {
         // Local test
-        let (mut surface, grid) = make_octahedron_and_grid_local(false)?;
-        surface.compute_neighbours(grid.vertex_positions());
+        let (surface, grid) = make_octahedron_and_grid_local(false)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         assert_eq!(
-            surface.num_neighbourhoods()?,
-            surface.nonempty_neighbourhood_indices()?.len()
+            query_surf.num_neighbourhoods(),
+            query_surf.nonempty_neighbourhood_indices().len()
         );
 
         // Non-local test
-        let (mut surface, grid) = make_octahedron_and_grid(false, 2.45)?;
-        surface.compute_neighbours(grid.vertex_positions());
+        let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
+        let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         assert_eq!(
-            surface.num_neighbourhoods()?,
-            surface.nonempty_neighbourhood_indices()?.len()
+            query_surf.num_neighbourhoods(),
+            query_surf.nonempty_neighbourhood_indices().len()
         );
         Ok(())
     }

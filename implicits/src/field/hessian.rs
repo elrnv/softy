@@ -629,7 +629,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         }
     }
 
-    pub(crate) fn surface_hessian_product_indices(
+    pub fn surface_hessian_product_indices(
         &self,
         rows: &mut [usize],
         cols: &mut [usize],

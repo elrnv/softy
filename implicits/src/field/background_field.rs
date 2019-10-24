@@ -759,7 +759,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
 
         // Construct the implicit surface.
-        let mut surface = mls_from_polymesh(
+        let surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -780,8 +780,8 @@ mod tests {
 
         // Compute potential.
         let mut potential = vec![-1.0; grid.vertex_positions().len()];
-        surface.compute_neighbours(grid.vertex_positions());
-        surface.potential(grid.vertex_positions(), &mut potential)?;
+        let query_surf = surface.query_topo(grid.vertex_positions());
+        query_surf.potential(grid.vertex_positions(), &mut potential);
 
         // Potential should be all -1 (unchanged) because the radius is too small.
         for &pot in potential.iter() {
@@ -800,7 +800,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
 
         // Construct the implicit surface.
-        let mut surface = mls_from_polymesh(
+        let surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -821,8 +821,8 @@ mod tests {
 
         // Compute potential.
         let mut potential = vec![-1.0; grid.vertex_positions().len()];
-        surface.compute_neighbours(grid.vertex_positions());
-        surface.potential(grid.vertex_positions(), &mut potential)?;
+        let query_surf = surface.query_topo(grid.vertex_positions());
+        query_surf.potential(grid.vertex_positions(), &mut potential);
 
         // Potential should be all -1 (unchanged) because the radius is too small.
         for &pot in potential.iter() {
@@ -853,7 +853,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let mut surface = mls_from_polymesh::<F>(
+        let surface = mls_from_polymesh::<F>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -868,11 +868,11 @@ mod tests {
             .map(|&q| q.map(|x| F::cst(x)).into_inner())
             .collect();
 
-        surface.compute_neighbours(&query_points);
-        let neighs: Vec<_> = surface.trivial_neighbourhood_seq()?.collect();
-        let mut samples = surface.samples().clone();
+        let query_topo = surface.query_topo(&query_points);
+        let neighs: Vec<_> = query_topo.trivial_neighbourhood_seq().collect();
+        let mut samples = query_topo.samples().clone();
 
-        let radius = surface.radius();
+        let radius = query_topo.radius();
 
         let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
 
@@ -949,8 +949,8 @@ mod tests {
             }
 
             if !success {
-                print_full_hessian(&hess, surface.num_samples() * 3, "BG Hess");
-                print_full_hessian(&ad_hess, surface.num_samples() * 3, "BG AD Hess");
+                print_full_hessian(&hess, query_topo.num_samples() * 3, "BG Hess");
+                print_full_hessian(&ad_hess, query_topo.num_samples() * 3, "BG AD Hess");
             }
             assert!(success);
         }
@@ -979,7 +979,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let mut surface = mls_from_polymesh::<F>(
+        let surface = mls_from_polymesh::<F>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -994,11 +994,11 @@ mod tests {
             .map(|&q| q.map(|x| F::cst(x)).into_inner())
             .collect();
 
-        surface.compute_neighbours(&query_points);
-        let neighs: Vec<_> = surface.trivial_neighbourhood_seq()?.collect();
-        let samples = surface.samples().clone();
+        let query_topo = surface.query_topo(&query_points);
+        let neighs: Vec<_> = query_topo.trivial_neighbourhood_seq().collect();
+        let samples = query_topo.samples().clone();
 
-        let radius = surface.radius();
+        let radius = query_topo.radius();
 
         let kernel = crate::kernel::LocalApproximate::new(radius, tolerance);
 

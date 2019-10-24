@@ -56,7 +56,7 @@ where
     F: Fn() -> bool + Sync + Send,
 {
     surface_from_polymesh(surface, params)
-        .and_then(|surf| surf.compute_potential_on_mesh(query_points, interrupt))
+        .and_then(|mut surf| surf.compute_potential_on_mesh(query_points, interrupt))
 }
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
@@ -71,7 +71,7 @@ pub fn surface_from_trimesh<T: Real + Send + Sync>(
         .background_field(params.background_field)
         .sample_type(params.sample_type)
         .trimesh(surface)
-        .build();
+        .build_generic();
 
     match surf {
         Some(s) => Ok(s),
@@ -87,6 +87,36 @@ pub fn surface_from_polymesh<T: Real + Send + Sync>(
 ) -> Result<ImplicitSurface<T>, Error> {
     let surf_trimesh = TriMesh::from(surface.clone());
     surface_from_trimesh::<T>(&surf_trimesh, params)
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `TriMesh`.
+pub fn mls_from_trimesh<T: Real + Send + Sync>(
+    surface: &TriMesh<f64>,
+    params: Params,
+) -> Result<MLS<T>, Error> {
+    let surf = ImplicitSurfaceBuilder::new()
+        .kernel(params.kernel)
+        .max_step(params.max_step)
+        .background_field(params.background_field)
+        .sample_type(params.sample_type)
+        .trimesh(surface)
+        .build_mls();
+
+    match surf {
+        Some(s) => Ok(s),
+        None => Err(Error::Failure),
+    }
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `PolyMesh`.
+pub fn mls_from_polymesh<T: Real + Send + Sync>(
+    surface: &PolyMesh<f64>,
+    params: Params,
+) -> Result<MLS<T>, Error> {
+    let surf_trimesh = TriMesh::from(surface.clone());
+    mls_from_trimesh::<T>(&surf_trimesh, params)
 }
 
 #[derive(Debug, Snafu)]
@@ -341,7 +371,11 @@ mod tests {
             .sample_type(SampleType::Vertex)
             .trimesh(&trimesh);
 
-        let surf = builder.build().expect("Failed to create implicit surface.");
+        let mut surf = builder
+            .build_mls()
+            .expect("Failed to create implicit surface.");
+
+        surf.compute_neighbours(grid.vertex_positions());
 
         let mut potential = vec![0.0f64; grid.num_vertices()];
         surf.potential(grid.vertex_positions(), &mut potential)?;
@@ -383,10 +417,10 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build::<F>()
+            .build_mls::<F>()
             .expect("Failed to create implicit surface.");
 
-        implicit_surface.cache_neighbours(&grid_pos);
+        implicit_surface.compute_neighbours(&grid_pos);
         let nnz = implicit_surface
             .num_surface_jacobian_entries()
             .expect("Invalid neighbour cache.");
@@ -458,7 +492,7 @@ mod tests {
 
         let trimesh = utils::make_sample_octahedron();
 
-        let implicit_surface = ImplicitSurfaceBuilder::new()
+        let mut implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
                 tolerance: 0.00001,
                 radius_multiplier: 2.45,
@@ -469,10 +503,10 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build::<F>()
+            .build_mls::<F>()
             .expect("Failed to create implicit surface.");
 
-        implicit_surface.cache_neighbours(&grid_pos);
+        implicit_surface.compute_neighbours(&grid_pos);
         let nnz = implicit_surface.num_query_jacobian_entries()?;
         let mut vals = vec![F::cst(0.0); nnz];
         implicit_surface.query_jacobian_values(&grid_pos, &mut vals)?;
@@ -557,7 +591,7 @@ mod tests {
 
         let trimesh = utils::make_sample_octahedron();
 
-        let implicit_surface = ImplicitSurfaceBuilder::new()
+        let mut implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
                 tolerance: 0.00001,
                 radius_multiplier: 2.45,
@@ -568,10 +602,10 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build::<F>()
+            .build_mls::<F>()
             .expect("Failed to create implicit surface.");
 
-        implicit_surface.cache_neighbours(&grid_pos);
+        implicit_surface.compute_neighbours(&grid_pos);
         let nnz = implicit_surface.num_query_hessian_product_entries()?;
         let mut vals = vec![F::cst(0.0); nnz];
         let multipliers = vec![F::cst(1.0); nnz]; // all at once

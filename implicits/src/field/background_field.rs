@@ -231,7 +231,7 @@ where
             (disp, disp.norm())
         };
 
-        // Compute the weight sum here. This will be available to the usesr of bg data.
+        // Compute the weight sum here. This will be available to the users of bg data.
         let mut weight_sum = T::zero();
         for Sample { pos, .. } in local_samples_view.iter() {
             let w = kernel.with_closest_dist(closest_sample_dist).eval(q, pos);
@@ -284,8 +284,8 @@ where
         }
     }
 
-    /// Unnormalized background wieght derivative with respect to the given sample point index.
-    /// If the given sample is not the closest sample, then the drivative is zero.
+    /// Unnormalized background weight derivative with respect to the given sample point index.
+    /// If the given sample is not the closest sample, then the derivative is zero.
     /// If the given index is `None`, then the derivative is with respect to the query point.
     #[inline]
     pub(crate) fn background_weight_gradient(&self, index: Option<usize>) -> Vector3<T> {
@@ -376,14 +376,14 @@ where
 /// Free function to compute the indices corresponding to the [`hessian_block`] function.
 pub(crate) fn hessian_block_indices<'a>(
     weighted: bool,
-    nbrs: &'a [usize],
+    nbrs: impl Iterator<Item = usize> + Clone + 'a,
 ) -> impl Iterator<Item = (usize, usize)> + 'a {
-    let diag_iter = nbrs.iter().map(move |&i| (i, i));
+    let diag_iter = nbrs.clone().map(move |i| (i, i));
 
     let off_diag_iter = if weighted {
         Some(
-            nbrs.iter()
-                .flat_map(move |&i| nbrs.iter().filter(move |&&j| i < j).map(move |&j| (j, i))),
+            nbrs.clone()
+                .flat_map(move |i| nbrs.clone().filter(move |&j| i < j).map(move |j| (j, i))),
         )
     } else {
         None
@@ -746,7 +746,7 @@ where
 mod tests {
     use super::*;
     use crate::hessian::print_full_hessian;
-    use crate::{make_grid, surface_from_polymesh, Error, KernelType, Params, SampleType};
+    use crate::{make_grid, mls_from_polymesh, Error, KernelType, Params, SampleType};
     use geo::mesh::VertexPositions;
 
     #[test]
@@ -759,7 +759,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh(
+        let mut surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -780,6 +780,7 @@ mod tests {
 
         // Compute potential.
         let mut potential = vec![-1.0; grid.vertex_positions().len()];
+        surface.compute_neighbours(grid.vertex_positions());
         surface.potential(grid.vertex_positions(), &mut potential)?;
 
         // Potential should be all -1 (unchanged) because the radius is too small.
@@ -799,7 +800,7 @@ mod tests {
         utils::translate(&mut sphere, [0.0, 0.0, 3.0]);
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh(
+        let mut surface = mls_from_polymesh(
             &sphere,
             Params {
                 kernel: KernelType::Approximate {
@@ -820,6 +821,7 @@ mod tests {
 
         // Compute potential.
         let mut potential = vec![-1.0; grid.vertex_positions().len()];
+        surface.compute_neighbours(grid.vertex_positions());
         surface.potential(grid.vertex_positions(), &mut potential)?;
 
         // Potential should be all -1 (unchanged) because the radius is too small.
@@ -851,7 +853,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh::<F>(
+        let mut surface = mls_from_polymesh::<F>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -866,8 +868,8 @@ mod tests {
             .map(|&q| q.map(|x| F::cst(x)).into_inner())
             .collect();
 
-        surface.cache_neighbours(&query_points);
-        let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
+        surface.compute_neighbours(&query_points);
+        let neighs: Vec<_> = surface.trivial_neighbourhood_seq()?.collect();
         let mut samples = surface.samples().clone();
 
         let radius = surface.radius();
@@ -891,12 +893,9 @@ mod tests {
                     None,
                 )
                 .unwrap();
-                let hess_iter =
-                    bg.hessian_blocks()
-                        .zip(crate::background_field::hessian_block_indices(
-                            bg.weighted,
-                            n,
-                        ));
+                let hess_iter = bg
+                    .hessian_blocks()
+                    .zip(hessian_block_indices(bg.weighted, n.iter().cloned()));
 
                 for (h, (j, i)) in hess_iter {
                     for r in 0..3 {
@@ -980,7 +979,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let surface = surface_from_polymesh::<F>(
+        let mut surface = mls_from_polymesh::<F>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -995,8 +994,8 @@ mod tests {
             .map(|&q| q.map(|x| F::cst(x)).into_inner())
             .collect();
 
-        surface.cache_neighbours(&query_points);
-        let neighs = surface.trivial_neighbourhood_borrow()?.to_vec();
+        surface.compute_neighbours(&query_points);
+        let neighs: Vec<_> = surface.trivial_neighbourhood_seq()?.collect();
         let samples = surface.samples().clone();
 
         let radius = surface.radius();

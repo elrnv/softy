@@ -1,7 +1,6 @@
 use super::*;
 use geo::math::Vector3;
 use geo::mesh::{topology::*, PointCloud, TriMesh, VertexMesh};
-use std::cell::RefCell;
 
 /// A mesh type to represent the samples for the implicit surface. This enum is used solely for
 /// building the implicit surface.
@@ -186,44 +185,41 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             .sqrt()
     }
 
-    /// Builds the implicit surface. This function returns `None` when theres is not enough data to
-    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
-    /// function will return `None`.
-    pub fn build<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>>
-    where
-        Sample<T>: rstar::RTreeObject,
-    {
-        let ImplicitSurfaceBuilder {
-            kernel,
-            bg_field,
-            mesh,
-            max_step,
-            base_radius,
-            sample_type,
-        } = self.clone();
-        // Cannot build an implicit surface when the radius is 0.0.
-        match kernel {
-            KernelType::Interpolating { radius_multiplier }
-            | KernelType::Approximate {
-                radius_multiplier, ..
-            }
-            | KernelType::Cubic { radius_multiplier } => {
-                if radius_multiplier == 0.0 {
-                    return None;
+    /// Base radius can be determined automatically from the mesh with topology data.
+    /// Point clouds do not, and hence require an explicit one to be specified.
+    /// This function computes the radius if needed, or otherwise reproduces the given one.
+    /// If no mesh is given, no radius is valid so we return `None`.
+    fn build_base_radius(&self) -> Option<f64> {
+        match &self.mesh {
+            SamplesMesh::PointCloud(_) => {
+                if self.base_radius.is_none() {
+                    None // Can't automatically determine the base radius.
+                } else {
+                    Some(self.base_radius.unwrap())
                 }
             }
-            _ => {} // Radius is not used in global support kernels
+            SamplesMesh::TriMesh(mesh) => Some(
+                self.base_radius
+                    .unwrap_or_else(|| Self::compute_base_radius(mesh)),
+            ),
+            SamplesMesh::None => None,
         }
+    }
 
-        let (base_radius, samples, vertices, triangles) = match mesh {
+    /// Builds the base for any implicit surface. This function returns `None` when there is not
+    /// enough data to make a valid implict surface. For example if base radius is 0.0 or points is
+    /// empty, this function will return `None`.
+    fn build_base<T: Real + Send + Sync>(&self) -> Option<ImplicitSurfaceBase<T>> {
+        let ImplicitSurfaceBuilder {
+            bg_field,
+            mesh,
+            sample_type,
+            ..
+        } = self.clone();
+
+        let (samples, vertices, triangles) = match mesh {
             SamplesMesh::PointCloud(ptcloud) => {
                 let vertices = Self::vertex_positions_from_mesh(&ptcloud);
-
-                let base_radius = if base_radius.is_none() {
-                    return None; // Can't automatically determine the base radius.
-                } else {
-                    base_radius.unwrap()
-                };
 
                 if sample_type == SampleType::Face {
                     return None; // Given an incompatible sample type.
@@ -247,11 +243,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     values: sample_values,
                 };
 
-                (base_radius, samples, vertices, Vec::new())
+                (samples, vertices, Vec::new())
             }
             SamplesMesh::TriMesh(mesh) => {
-                let base_radius = base_radius.unwrap_or_else(|| Self::compute_base_radius(mesh));
-
                 let vertices = Self::vertex_positions_from_mesh(mesh);
                 let triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
 
@@ -309,7 +303,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
                     }
                 };
 
-                (base_radius, samples, vertices, triangles)
+                (samples, vertices, triangles)
             }
 
             // Cannot build an implicit surface without sample points. This is an error.
@@ -321,39 +315,93 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
         let spatial_tree = build_rtree_from_samples(&samples);
 
-        let surf_base = ImplicitSurfaceBase {
+        Some(ImplicitSurfaceBase {
             bg_field_params: bg_field,
             surface_topo: triangles,
             surface_vertex_positions: vertices,
             samples,
             dual_topo,
             sample_type,
-        };
+            spatial_tree,
+        })
+    }
 
-        match kernel {
-            KernelType::Interpolating { .. }
-            | KernelType::Cubic { ..}
-            | KernelType::Approximate { .. } => {
-                Some(ImplicitSurface::MLS(MLS::Local(LocalMLS {
-                    kernel: kernel.into(),
-                    base_radius,
-                    spatial_tree,
-                    query_neighbourhood: RefCell::new(Neighbourhood::new()),
-                    max_step: T::from(max_step).unwrap(),
-                    surf_base
-                })))
+    /// Builds the implicit surface. This function returns `None` when there is not enough data to
+    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
+    /// function will return `None`.
+    pub fn build_generic<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>>
+    where
+        Sample<T>: rstar::RTreeObject,
+    {
+        if let KernelType::Hrbf = self.kernel {
+            let surf_base = self.build_base()?;
+            return Some(ImplicitSurface::Hrbf(HrbfSurface { surf_base }));
+        }
+
+        Some(ImplicitSurface::MLS(self.build_mls()?))
+    }
+
+    /// Builds the a local mls implicit surface. This function returns `None` when there is not enough data to
+    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
+    /// function will return `None`.
+    pub fn build_local_mls<T: Real + Send + Sync>(&self) -> Option<LocalMLS<T>>
+    where
+        Sample<T>: rstar::RTreeObject,
+    {
+        // Cannot build a local implicit surface when the radius is 0.0 or infinite.
+        match self.kernel {
+            KernelType::Interpolating { radius_multiplier }
+            | KernelType::Approximate {
+                radius_multiplier, ..
             }
-            KernelType::Global { .. } => {
-                Some(ImplicitSurface::MLS(MLS::Global(GlobalMLS {
-                    kernel: kernel.into(),
-                    surf_base
-                })))
+            | KernelType::Cubic { radius_multiplier } => {
+                if radius_multiplier == 0.0 {
+                    return None;
+                }
             }
-            KernelType::Hrbf => {
-                Some(ImplicitSurface::Hrbf(HrbfSurface {
-                    surf_base
-                }))
+            KernelType::Global { .. } | KernelType::Hrbf => {
+                return None;
             }
         }
+
+        let surf_base = self.build_base()?;
+        let base_radius = self.build_base_radius()?;
+
+        match self.kernel {
+            KernelType::Interpolating { .. }
+            | KernelType::Cubic { .. }
+            | KernelType::Approximate { .. } => Some(LocalMLS {
+                kernel: self.kernel.into(),
+                base_radius,
+                query_neighbourhood: Neighbourhood::new(),
+                max_step: T::from(self.max_step).unwrap(),
+                surf_base,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Builds an mls based implicit surface. This function returns `None` when there is not enough data to
+    /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
+    /// function will return `None`.
+    pub fn build_mls<T: Real + Send + Sync>(&self) -> Option<MLS<T>>
+    where
+        Sample<T>: rstar::RTreeObject,
+    {
+        if let KernelType::Hrbf = self.kernel {
+            return None;
+        }
+
+        if let KernelType::Global { .. } = self.kernel {
+            let surf_base = self.build_base()?;
+            return Some(MLS::Global(GlobalMLS {
+                kernel: self.kernel.into(),
+                closest_samples: Vec::new(),
+                sample_indices: (0..surf_base.samples.len()).collect(),
+                surf_base,
+            }));
+        }
+
+        Some(MLS::Local(self.build_local_mls()?))
     }
 }

@@ -4,31 +4,33 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Cache data structure that stores information about the neighbourhood of a query point.
-/// For radial neighbourhood sets, this determines the entire sparsity structure for each query
-/// point.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct NeighbourCache<T> {
-    /// For each query point, record the neighbour data in this vector.
-    pub points: Vec<T>,
+pub(crate) fn compute_closest_set<'a, T, C>(
+    query_points: &[[T; 3]],
+    closest: C,
+    set: &mut Vec<usize>,
+) -> bool
+where
+    T: Real + Send + Sync + 'a,
+    C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
+{
+    let mut changed = false;
 
-    /// Marks the cache valid or not. If this flag is false, the cache needs to be recomputed, but
-    /// we can reuse the already allocated memory.
-    pub valid: bool,
-}
+    // Allocate additional neighbourhoods to match the size of query_points.
+    changed |= query_points.len() != set.len();
+    set.resize(query_points.len(), 0);
 
-impl<T> NeighbourCache<T> {
-    fn new() -> Self {
-        NeighbourCache {
-            points: Vec::new(),
-            valid: false,
-        }
-    }
+    changed |= query_points
+        .par_iter()
+        .zip(set.par_iter_mut())
+        .map(|(q, sample_idx)| {
+            let closest_index = closest(*q).index;
+            let changed = *sample_idx != closest_index;
+            *sample_idx = closest_index;
+            changed
+        })
+        .reduce(|| false, |a, b| a || b);
 
-    /// Check if this cache is valid.
-    fn is_valid(&self) -> bool {
-        self.valid
-    }
+    changed
 }
 
 /// There are three types of neighbourhoods for each query point:
@@ -40,30 +42,26 @@ impl<T> NeighbourCache<T> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Neighbourhood {
     /// The closest sample to each query point.
-    closest_set: NeighbourCache<usize>,
+    closest_set: Vec<usize>,
     /// The trivial neighbourhood of a set of query points. These are simply the set of samples that
     /// are within a certain distance from each query point.
-    trivial_set: NeighbourCache<Vec<usize>>,
+    trivial_set: Vec<Vec<usize>>,
     /// The extended neighbourhood of a set of query points. This is a superset of the trivial
     /// neighbourhood that includes samples that are topologically adjacent to the trivial set.
-    extended_set: NeighbourCache<Vec<usize>>,
+    extended_set: Vec<Vec<usize>>,
 }
 
 impl Neighbourhood {
     pub(crate) fn new() -> Self {
         Neighbourhood {
-            closest_set: NeighbourCache::new(),
-            trivial_set: NeighbourCache::new(),
-            extended_set: NeighbourCache::new(),
+            closest_set: Vec::new(),
+            trivial_set: Vec::new(),
+            extended_set: Vec::new(),
         }
     }
 
     /// Compute closest point set if it is empty (e.g. hasn't been created yet). Return `true` if
     /// the closest set has changed and `false` otherwise.
-    ///
-    /// Note that this set must be invalidated explicitly, there is no real way to automatically
-    /// cache results because both: query points and sample points may change slightly, but we
-    /// expect the neighbourhood information to remain the same.
     pub(crate) fn compute_closest_set<'a, T, C>(
         &mut self,
         query_points: &[[T; 3]],
@@ -73,38 +71,12 @@ impl Neighbourhood {
         T: Real + Send + Sync + 'a,
         C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
     {
-        let set = &mut self.closest_set;
-        let mut changed = false;
-
-        if !set.is_valid() {
-            // Allocate additional neighbourhoods to match the size of query_points.
-            changed |= query_points.len() != set.points.len();
-            set.points.resize(query_points.len(), 0);
-
-            changed |= query_points
-                .par_iter()
-                .zip(set.points.par_iter_mut())
-                .map(|(q, sample_idx)| {
-                    let closest_index = closest(*q).index;
-                    let changed = *sample_idx != closest_index;
-                    *sample_idx = closest_index;
-                    changed
-                })
-                .reduce(|| false, |a, b| a || b);
-
-            set.valid = true;
-        }
-
-        changed
+        compute_closest_set(query_points, closest, &mut self.closest_set)
     }
 
     /// Getter for the closest set of samples.
-    pub(crate) fn closest_set(&self) -> Option<&[usize]> {
-        if self.closest_set.valid {
-            Some(&self.closest_set.points)
-        } else {
-            None
-        }
+    pub(crate) fn closest_set(&self) -> &[usize] {
+        &self.closest_set
     }
 
     /// Simple hasher for slices of unsigned integers. This is useful for doing approximate but
@@ -120,10 +92,6 @@ impl Neighbourhood {
 
     /// Compute neighbour cache if it is invalid (or hasn't been created yet). Return `true` if the
     /// trivial set of neighbours has changed and `false` otherwise.
-    ///
-    /// Note that the cache must be invalidated explicitly, there is no real way to automatically
-    /// cache results because both: query points and sample points may change slightly, but we
-    /// expect the neighbourhood information to remain the same.
     pub(crate) fn compute_trivial_set<'a, T, I, N>(
         &mut self,
         query_points: &[[T; 3]],
@@ -137,50 +105,38 @@ impl Neighbourhood {
         let cache = &mut self.trivial_set;
         let mut changed = false;
 
-        if !cache.is_valid() {
-            // Allocate additional neighbourhoods to match the size of query_points.
-            changed |= query_points.len() != cache.points.len();
-            cache.points.resize(query_points.len(), Vec::new());
+        // Allocate additional neighbourhoods to match the size of query_points.
+        changed |= query_points.len() != cache.len();
+        cache.resize(query_points.len(), Vec::new());
 
-            changed |= query_points
-                .par_iter()
-                .zip(cache.points.par_iter_mut())
-                .map(|(q, pts)| {
-                    let init_hash = Self::compute_hash(&pts);
-                    pts.clear();
-                    pts.extend(neigh(*q).map(|op| op.index));
+        changed |= query_points
+            .par_iter()
+            .zip(cache.par_iter_mut())
+            .map(|(q, pts)| {
+                let init_hash = Self::compute_hash(&pts);
+                pts.clear();
+                pts.extend(neigh(*q).map(|op| op.index));
 
-                    // This way of detecting changes has false positives, but for the purposes of
-                    // simulation, this should affect a negligible number of frames.
-                    // TODO: find percentage of false positives
-                    init_hash != Self::compute_hash(&pts)
-                })
-                .reduce(|| false, |a, b| a || b);
-
-            cache.valid = true;
-        }
+                // This way of detecting changes has false positives, but for the purposes of
+                // simulation, this should affect a negligible number of frames.
+                // TODO: find percentage of false positives
+                init_hash != Self::compute_hash(&pts)
+            })
+            .reduce(|| false, |a, b| a || b);
 
         changed
     }
 
-    pub(crate) fn trivial_set(&self) -> Option<&[Vec<usize>]> {
-        if self.trivial_set.valid {
-            Some(&self.trivial_set.points)
-        } else {
-            None
-        }
+    pub(crate) fn trivial_set(&self) -> &[Vec<usize>] {
+        &self.trivial_set
     }
 
-    /// Compute neighbour cache if it is invalid (or hasn't been created yet). Return `true` if the
+    /// Compute neighbour cache. Return `true` if the
     /// extended set of neighbours of the given query points has changed and `false` otherwise.
     /// Note that this function requires the trival
     /// set to already be computed. If trivial set has not been previously computed, use the
     /// `compute_neighbourhoods` function to compute both. This fuction will return `None` if the
     /// trivial set is invalid.
-    ///
-    /// Note that the cache must be invalidated explicitly, there is no real way to automatically
-    /// cache results because both: query points and sample points may change slightly, but we
-    /// expect the neighbourhood information to remain the same.
     pub(crate) fn compute_extended_set<T>(
         &mut self,
         query_points: &[[T; 3]],
@@ -197,39 +153,34 @@ impl Neighbourhood {
             ..
         } = self;
 
-        if !trivial_set.is_valid() {
+        if trivial_set.len() != query_points.len() {
             return None;
         }
 
         let mut changed = false;
 
-        if !extended_set.is_valid() {
-            // Allocate additional neighbourhoods to match the size of query_points.
-            changed |= query_points.len() != extended_set.points.len();
-            extended_set.points.resize(query_points.len(), Vec::new());
+        // Allocate additional neighbourhoods to match the size of query_points.
+        changed |= query_points.len() != extended_set.len();
+        extended_set.resize(query_points.len(), Vec::new());
 
-            changed |= trivial_set
-                .points
-                .par_iter()
-                .zip(extended_set.points.par_iter_mut())
-                .map(|(triv_pts, ext_pts)| {
-                    let init_hash = Self::compute_hash(&ext_pts);
-                    ext_pts.clear();
-                    let mut set: BTreeSet<_> = triv_pts.iter().collect();
-                    if sample_type == SampleType::Vertex && !dual_topo.is_empty() {
-                        set.extend(triv_pts.iter().flat_map(|&pt| {
-                            dual_topo[pt].iter().flat_map(|&tri| tri_topo[tri].iter())
-                        }));
-                    }
-                    ext_pts.extend(set.into_iter());
+        changed |= trivial_set
+            .par_iter()
+            .zip(extended_set.par_iter_mut())
+            .map(|(triv_pts, ext_pts)| {
+                let init_hash = Self::compute_hash(&ext_pts);
+                ext_pts.clear();
+                let mut set: BTreeSet<_> = triv_pts.iter().collect();
+                if sample_type == SampleType::Vertex && !dual_topo.is_empty() {
+                    set.extend(triv_pts.iter().flat_map(|&pt| {
+                        dual_topo[pt].iter().flat_map(|&tri| tri_topo[tri].iter())
+                    }));
+                }
+                ext_pts.extend(set.into_iter());
 
-                    // TODO: check for rate of false positives.
-                    init_hash != Self::compute_hash(&ext_pts)
-                })
-                .reduce(|| false, |a, b| a || b);
-
-            extended_set.valid = true;
-        }
+                // TODO: check for rate of false positives.
+                init_hash != Self::compute_hash(&ext_pts)
+            })
+            .reduce(|| false, |a, b| a || b);
 
         Some(changed)
     }
@@ -258,17 +209,7 @@ impl Neighbourhood {
                 .unwrap()
     }
 
-    pub(crate) fn extended_set(&self) -> Option<&[Vec<usize>]> {
-        if self.extended_set.valid {
-            Some(&self.extended_set.points)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn invalidate(&mut self) {
-        self.closest_set.valid = false;
-        self.trivial_set.valid = false;
-        self.extended_set.valid = false;
+    pub(crate) fn extended_set(&self) -> &[Vec<usize>] {
+        &self.extended_set
     }
 }

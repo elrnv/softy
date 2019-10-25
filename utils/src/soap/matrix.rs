@@ -826,7 +826,7 @@ impl SSBlockMatrix3 {
 
         col_data.sort_chunks_by_index();
 
-        Tensor::new(Sparse::from_dim(rows, num_rows, col_data))
+        Tensor::new(Sparse::from_dim(rows, num_rows, col_data)).compressed()
     }
 }
 
@@ -1213,7 +1213,8 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
             for (col_idx, block, _) in row.iter() {
-                *out_row.as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
+                *out_row.as_mut_tensor() +=
+                    Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
             }
         }
         Tensor::new(res)
@@ -1344,7 +1345,8 @@ where
         let mut res = Chunked3::from_array_vec(vec![[0.0; 3]; self.num_rows()]);
         for (row_idx, row, _) in self.data.iter() {
             for (col_idx, block, _) in row.iter() {
-                *res[row_idx].as_mut_tensor() += Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx]);
+                *res[row_idx].as_mut_tensor() +=
+                    Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx]);
             }
         }
 
@@ -1365,7 +1367,8 @@ where
         for (col_idx, col, _) in self.0.data.iter() {
             let rhs = Tensor::new(rhs_data[col_idx]);
             for (row_idx, block, _) in col.iter() {
-                *res[row_idx].as_mut_tensor() += Tensor::new((rhs.transpose() * Tensor::new(*block.into_arrays())).data[0]);
+                *res[row_idx].as_mut_tensor() +=
+                    Tensor::new((rhs.transpose() * Tensor::new(*block.into_arrays())).data[0]);
             }
         }
 
@@ -1754,7 +1757,6 @@ mod tests {
         let chunked_blocks = Chunked3::from_flat(Chunked3::from_array_vec(blocks));
         let indices = vec![(1, 0), (2, 0), (2, 0), (2, 1)];
         let mtx = SSBlockMatrix3::from_triplets(indices.iter().cloned(), 3, 2, chunked_blocks);
-        let mtx = mtx.compressed();
 
         let sym = mtx.view() * mtx.view().transpose();
 

@@ -23,6 +23,7 @@ sprs-ldl = "0.4.1"
 ndarray = "0.12.1"
 af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git", optional = true }
 snafu = "0.5"
+lazycell = "1.2"
 
 [dev-dependencies]
 criterion = { version = "0.2" }

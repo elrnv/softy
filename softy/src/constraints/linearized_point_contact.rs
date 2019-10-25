@@ -16,6 +16,7 @@ use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
 use utils::zip;
+use lazycell::LazyCell;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.

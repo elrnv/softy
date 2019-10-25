@@ -295,13 +295,15 @@ impl SolverBuilder {
     }
 
     /// Helper function to initialize volume constraints from a set of solids.
-    fn build_volume_constraints(solids: &[TetMeshSolid]) -> Vec<(usize, VolumeConstraint)> {
+    fn build_volume_constraints(
+        solids: &[TetMeshSolid],
+    ) -> Vec<(usize, RefCell<VolumeConstraint>)> {
         // Initialize volume constraint
         solids
             .iter()
             .enumerate()
             .filter(|&(_, solid)| solid.material.volume_preservation())
-            .map(|(idx, solid)| (idx, VolumeConstraint::new(&solid.tetmesh)))
+            .map(|(idx, solid)| (idx, RefCell::new(VolumeConstraint::new(&solid.tetmesh))))
             .collect()
     }
 

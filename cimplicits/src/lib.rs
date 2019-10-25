@@ -1,3 +1,5 @@
+#![type_length_limit="10000000"]
+
 use reinterpret::*;
 use std::os::raw::{c_double, c_int};
 
@@ -140,13 +142,17 @@ impl Into<implicits::Params> for EL_IsoParams {
     }
 }
 
-/// Opaque TriMesh type
+/// Opaque TriMesh type.
 #[allow(non_camel_case_types)]
 pub struct EL_IsoTriMesh;
 
-/// Opaque iso-surface type
+/// Opaque iso-surface type.
 #[allow(non_camel_case_types)]
 pub struct EL_IsoSurface;
+
+/// Opaque query topology for an iso-surface.
+#[allow(non_camel_case_types)]
+pub struct EL_IsoQueryTopo;
 
 /// Create a triangle mesh from the given arrays of data.
 #[no_mangle]
@@ -186,7 +192,7 @@ pub unsafe extern "C" fn el_iso_create_implicit_surface(
     trimesh: *const EL_IsoTriMesh,
     params: EL_IsoParams,
 ) -> *mut EL_IsoSurface {
-    match implicits::surface_from_trimesh::<f64>(
+    match implicits::mls_from_trimesh::<f64>(
         &*(trimesh as *const geometry::mesh::TriMesh<f64>),
         params.into(),
     ) {
@@ -199,14 +205,43 @@ pub unsafe extern "C" fn el_iso_create_implicit_surface(
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_free_implicit_surface(implicit_surface: *mut EL_IsoSurface) {
     if !implicit_surface.is_null() {
-        let _ = Box::from_raw(implicit_surface as *mut implicits::ImplicitSurface<f64>);
+        let _ = Box::from_raw(implicit_surface as *mut implicits::MLS<f64>);
     }
 }
+
+/// Create a topology data structure connecting the given query points with the implicit surface.
+/// If creation fails, a null pointer is returned.
+/// This function consumes the given `implicit_surface`, so it is an error to call
+/// `el_iso_free_implicit_surface` on it after calling this function.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_query_topology(
+    implicit_surface: *mut EL_IsoSurface,
+    num_query_points: c_int,
+    query_point_coords: *const f64,
+) -> *mut EL_IsoQueryTopo {
+    let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
+    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    if !implicit_surface.is_null() {
+        let surf = Box::from_raw(implicit_surface as *mut implicits::MLS<f64>);
+        Box::into_raw(Box::new((*surf).query_topo(query_points))) as *mut EL_IsoQueryTopo
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// Free memory allocated for the query topology.
+#[no_mangle]
+pub unsafe extern "C" fn el_iso_free_query_topology(query_topo: *mut EL_IsoQueryTopo) {
+    if !query_topo.is_null() {
+        let _ = Box::from_raw(query_topo as *mut implicits::QueryTopo<f64>);
+    }
+}
+
 
 /// Compute potential. Return 0 on success.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_compute_potential(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     out_potential: *mut f64,
@@ -215,12 +250,10 @@ pub unsafe extern "C" fn el_iso_compute_potential(
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
     let out_potential = std::slice::from_raw_parts_mut(out_potential, num_query_points as usize);
 
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
 
-    match surf.potential(query_points, out_potential) {
-        Ok(_) => 0,
-        Err(_) => 1,
-    }
+    surf.potential(query_points, out_potential);
+    0
 }
 
 /// Project the given positions to below the given iso value of the potential field represented by
@@ -231,7 +264,7 @@ pub unsafe extern "C" fn el_iso_compute_potential(
 /// `tolerance` of the given `iso_value` but strictly below the `iso_value`.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_project_to_below(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     iso_value: f64,
     tolerance: f64,
     num_query_points: c_int,
@@ -240,11 +273,12 @@ pub unsafe extern "C" fn el_iso_project_to_below(
     let coords = std::slice::from_raw_parts_mut(query_point_coords, num_query_points as usize * 3);
     let query_points: &mut [[f64; 3]] = reinterpret_mut_slice(coords);
 
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
 
-    match surf.project_to_below(iso_value, tolerance, query_points) {
-        Ok(_) => 0,
-        Err(_) => 1,
+    if surf.project_to_below(iso_value, tolerance, query_points) {
+        0
+    } else {
+        1
     }
 }
 
@@ -256,7 +290,7 @@ pub unsafe extern "C" fn el_iso_project_to_below(
 /// `tolerance` of the given `iso_value` but strictly above the `iso_value`.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_project_to_above(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     iso_value: f64,
     tolerance: f64,
     num_query_points: c_int,
@@ -265,11 +299,12 @@ pub unsafe extern "C" fn el_iso_project_to_above(
     let coords = std::slice::from_raw_parts_mut(query_point_coords, num_query_points as usize * 3);
     let query_points: &mut [[f64; 3]] = reinterpret_mut_slice(coords);
 
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
 
-    match surf.project_to_above(iso_value, tolerance, query_points) {
-        Ok(_) => 0,
-        Err(_) => 1,
+    if surf.project_to_above(iso_value, tolerance, query_points) {
+        0
+    } else {
+        1
     }
 }
 
@@ -277,9 +312,8 @@ pub unsafe extern "C" fn el_iso_project_to_above(
 // below.
 macro_rules! impl_num_jac_entries {
     ($iso:ident.$fn:ident ()) => {
-        (&*($iso as *const implicits::ImplicitSurface))
-            .$fn()
-            .unwrap_or(0) as c_int
+        (&*($iso as *const implicits::QueryTopo))
+            .$fn() as c_int
     };
 }
 
@@ -288,18 +322,13 @@ macro_rules! impl_jac_indices {
         let n = $num as usize;
         let rows = std::slice::from_raw_parts_mut($rows, n);
         let cols = std::slice::from_raw_parts_mut($cols, n);
-        let surf = &*($iso as *const implicits::ImplicitSurface);
+        let surf = &*($iso as *const implicits::QueryTopo);
 
-        match surf.$fn() {
-            Ok(iter) => {
-                for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(iter) {
-                    *out_row = r as c_int;
-                    *out_col = c as c_int;
-                }
-                0
-            }
-            Err(_) => 1,
+        for ((out_row, out_col), (r, c)) in rows.iter_mut().zip(cols.iter_mut()).zip(surf.$fn()) {
+            *out_row = r as c_int;
+            *out_col = c as c_int;
         }
+        0
     };
 }
 
@@ -308,12 +337,10 @@ macro_rules! impl_jac_values {
         let coords = std::slice::from_raw_parts($coords, $num_coords as usize);
         let query_points: &[[f64; 3]] = reinterpret_slice(coords);
         let vals = std::slice::from_raw_parts_mut($vals, $num_vals as usize);
-        let surf = &*($iso as *const implicits::ImplicitSurface);
+        let surf = &*($iso as *const implicits::QueryTopo);
 
-        match surf.$fn(query_points, vals) {
-            Ok(()) => 0,
-            Err(_) => 1,
-        }
+        surf.$fn(query_points, vals);
+        0
     };
 }
 
@@ -328,10 +355,10 @@ macro_rules! impl_jac_values {
 /// `el_iso_surface_jacobian_indices` and `el_iso_surface_jacobian_values` functions.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
 ) -> c_int {
     impl_num_jac_entries! {
-        implicit_surface.num_surface_jacobian_entries()
+        query_topo.num_surface_jacobian_entries()
     }
 }
 
@@ -339,13 +366,13 @@ pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
     impl_jac_indices! {
-        (rows, cols)[num_entries] <- implicit_surface.surface_jacobian_indices_iter()
+        (rows, cols)[num_entries] <- query_topo.surface_jacobian_indices_iter()
     }
 }
 
@@ -353,14 +380,14 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
 /// indices provided by `el_iso_surface_jacobian_indices`.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_surface_jacobian_values(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
     impl_jac_values! {
-        values[num_entries] <- implicit_surface.surface_jacobian_values(query_point_coords[num_query_points*3])
+        values[num_entries] <- query_topo.surface_jacobian_values(query_point_coords[num_query_points*3])
     }
 }
 
@@ -371,10 +398,10 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
 /// `el_iso_query_jacobian_indices` and `el_iso_query_jacobian_values` functions.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
 ) -> c_int {
     impl_num_jac_entries! {
-        implicit_surface.num_query_jacobian_entries()
+        query_topo.num_query_jacobian_entries()
     }
 }
 
@@ -382,27 +409,27 @@ pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_query_jacobian_indices(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
     impl_jac_indices! {
-        (rows, cols)[num_entries] <- implicit_surface.query_jacobian_indices_iter()
+        (rows, cols)[num_entries] <- query_topo.query_jacobian_indices_iter()
     }
 }
 
 /// Compute query Jacobian for the given implicit function.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_query_jacobian_values(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
     impl_jac_values! {
-        values[num_entries] <- implicit_surface.query_jacobian_values(query_point_coords[num_query_points*3])
+        values[num_entries] <- query_topo.query_jacobian_values(query_point_coords[num_query_points*3])
     }
 }
 
@@ -413,10 +440,10 @@ pub unsafe extern "C" fn el_iso_query_jacobian_values(
 /// `el_iso_contact_jacobian_indices` and `el_iso_contact_jacobian_values` functions.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
 ) -> c_int {
     impl_num_jac_entries! {
-        implicit_surface.num_contact_jacobian_entries()
+        query_topo.num_contact_jacobian_entries()
     }
 }
 
@@ -424,27 +451,27 @@ pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_contact_jacobian_indices(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
 ) -> c_int {
     impl_jac_indices! {
-        (rows, cols)[num_entries] <- implicit_surface.contact_jacobian_indices_iter()
+        (rows, cols)[num_entries] <- query_topo.contact_jacobian_indices_iter()
     }
 }
 
 /// Compute contact Jacobian for the given implicit function.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_contact_jacobian_values(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
     values: *mut f64,
 ) -> c_int {
     impl_jac_values! {
-        values[num_entries] <- implicit_surface.contact_jacobian_values(query_point_coords[num_query_points*3])
+        values[num_entries] <- query_topo.contact_jacobian_values(query_point_coords[num_query_points*3])
     }
 }
 
@@ -457,12 +484,11 @@ pub unsafe extern "C" fn el_iso_contact_jacobian_values(
 /// The Hessian product refers to the product of the full Hessian of the implicit
 /// function contracted against a vector multipliers in the number of query points. Thus this
 /// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
-/// This function will return 0 if no query points were previously cached.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
 ) -> c_int {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
     surf.num_surface_hessian_product_entries().unwrap_or(0) as c_int
 }
 
@@ -473,7 +499,7 @@ pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(
 /// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
@@ -481,7 +507,7 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
     let n = num_entries as usize;
     let rows = std::slice::from_raw_parts_mut(rows, n);
     let cols = std::slice::from_raw_parts_mut(cols, n);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
 
     match surf.surface_hessian_product_indices_iter() {
         Ok(iter) => {
@@ -511,7 +537,7 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
 ///            `el_iso_surface_hessian_product_indices`.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
-    implicit_surface: *const EL_IsoSurface,
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     multipliers: *const f64,
@@ -522,7 +548,7 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
     let multipliers = std::slice::from_raw_parts(multipliers, num_query_points as usize);
     let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let surf = &*(query_topo as *const implicits::QueryTopo);
 
     match surf.surface_hessian_product_values(query_points, multipliers, vals) {
         Ok(()) => 0,
@@ -530,62 +556,44 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
     }
 }
 
-/// Return the number of cached query points. 0 will be returned if the cache hasn't yet been
-/// updated or there are zero cached query points.
+/// Return the number of query points.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_cached_query_points(
-    implicit_surface: *const EL_IsoSurface,
-) -> c_int {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    surf.num_cached_query_points().unwrap_or(0) as c_int
+pub unsafe extern "C" fn el_iso_num_query_points(query_topo: *const EL_IsoQueryTopo) -> c_int {
+    let surf = &*(query_topo as *const implicits::QueryTopo);
+    surf.num_query_points() as c_int
 }
 
 /// Populate an array of indices enumerating all query points with non-empty neighbourhoods. The
-/// indices for query points with empty neighbourhoods are set to -1. If the query points haven't
-/// been cached yet, this function return false to indicate an error.
+/// indices for query points with empty neighbourhoods are set to -1.
 /// This function is convenient for mapping from query point indices to constraint indices.
-/// The `cached_neighbourhood_indices` array is expected be the same size as the number of cached
-/// query points.
+/// The `neighbourhood_indices` array is expected be the same size as the number of query points.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_cached_neighbourhood_indices(
-    implicit_surface: *const EL_IsoSurface,
+pub unsafe extern "C" fn el_iso_neighbourhood_indices(
+    query_topo: *const EL_IsoQueryTopo,
     num_query_points: c_int,
-    cached_neighbourhood_indices: *mut c_int,
-) -> bool {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    let cached_neighbourhood_indices =
-        std::slice::from_raw_parts_mut(cached_neighbourhood_indices, num_query_points as usize);
+    neighbourhood_indices: *mut c_int,
+) {
+    let surf = &*(query_topo as *const implicits::QueryTopo);
+    let neighbourhood_indices =
+        std::slice::from_raw_parts_mut(neighbourhood_indices, num_query_points as usize);
 
-    if let Ok(sizes) = surf.cached_neighbourhood_sizes() {
-        assert_eq!(num_query_points as usize, sizes.len());
+    let sizes = surf.neighbourhood_sizes();
+    assert_eq!(num_query_points as usize, sizes.len());
 
-        // Initialize indices to -1.
-        for idx in cached_neighbourhood_indices.iter_mut() {
-            *idx = -1;
-        }
-
-        // Index nonempty neighbourhoods
-        for (i, (idx, _)) in cached_neighbourhood_indices
-            .iter_mut()
-            .zip(sizes.iter())
-            .filter(|&(_, &s)| s != 0)
-            .enumerate()
-        {
-            *idx = i as c_int;
-        }
-
-        true
-    } else {
-        false
+    // Initialize indices to -1.
+    for idx in neighbourhood_indices.iter_mut() {
+        *idx = -1;
     }
-}
 
-/// Invalidate neighbour cache. This must be done explicitly after we have completed a simulation
-/// step. This implies that the implicit surface may change.
-#[no_mangle]
-pub unsafe extern "C" fn el_iso_invalidate_neighbour_cache(implicit_surface: *const EL_IsoSurface) {
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
-    surf.invalidate_query_neighbourhood();
+    // Index nonempty neighbourhoods
+    for (i, (idx, _)) in neighbourhood_indices
+        .iter_mut()
+        .zip(sizes.iter())
+        .filter(|&(_, &s)| s != 0)
+        .enumerate()
+    {
+        *idx = i as c_int;
+    }
 }
 
 /// Recompute the neighbour cache if invalidated. This is done automatically when computing
@@ -593,30 +601,30 @@ pub unsafe extern "C" fn el_iso_invalidate_neighbour_cache(implicit_surface: *co
 /// sparsity pattern because query points are not typically passed when requesting Jacobian
 /// indices.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_cache_neighbours(
-    implicit_surface: *const EL_IsoSurface,
+pub unsafe extern "C" fn el_iso_reset(
+    query_topo: *mut EL_IsoQueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
 ) {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
-    let surf = &*(implicit_surface as *const implicits::ImplicitSurface);
+    let topo = &mut *(query_topo as *mut implicits::QueryTopo);
 
-    surf.cache_neighbours(query_points);
+    topo.reset(query_points);
 }
 
 /// Update the implicit surface with new vertex positions for the underlying mesh.
 /// The `position_coords` array is expected to have size of 3 times `num_positions`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_update(
-    implicit_surface: *mut EL_IsoSurface,
+pub unsafe extern "C" fn el_iso_update_surface(
+    query_topo: *mut EL_IsoQueryTopo,
     num_positions: c_int,
     position_coords: *const f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
     let pos: &[[f64; 3]] = reinterpret_slice(coords);
-    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
-    surf.update(pos.iter().cloned()) as c_int
+    let topo = &mut *(query_topo as *mut implicits::QueryTopo);
+    topo.update_surface(pos.iter().cloned()) as c_int
 }
 
 /// Update the implicit surface with an updated maximum allowed additional step size on top of what
@@ -626,17 +634,17 @@ pub unsafe extern "C" fn el_iso_update(
 /// Jacobians.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_update_max_step(
-    implicit_surface: *mut EL_IsoSurface,
+    query_topo: *mut EL_IsoQueryTopo,
     max_step: f32,
 ) {
-    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
+    let surf = &mut *(query_topo as *mut implicits::QueryTopo);
     surf.update_max_step(f64::from(max_step));
 }
 
 /// Get the current MLS radius.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_get_radius(implicit_surface: *mut EL_IsoSurface) -> f32 {
-    let surf = &mut *(implicit_surface as *mut implicits::ImplicitSurface);
+pub unsafe extern "C" fn el_iso_get_radius(query_topo: *mut EL_IsoQueryTopo) -> f32 {
+    let surf = &mut *(query_topo as *mut implicits::QueryTopo);
     surf.radius() as f32
 }
 
@@ -671,11 +679,13 @@ mod tests {
 
         let mut p = vec![0.0];
 
-        let error = unsafe { el_iso_compute_potential(surf, 1, q.as_ptr(), p.as_mut_ptr()) };
+        let query_topo = unsafe { el_iso_query_topology(surf, 1, q.as_ptr()) };
+
+        let error = unsafe { el_iso_compute_potential(query_topo, 1, q.as_ptr(), p.as_mut_ptr()) };
 
         unsafe {
             el_iso_free_trimesh(trimesh);
-            el_iso_free_implicit_surface(surf);
+            el_iso_free_query_topology(query_topo);
         }
 
         assert_eq!(error, 0);

@@ -6,7 +6,7 @@ edition = "2018"
 license = "MPL-2.0"
 
 [dependencies]
-rayon = "1.0"
+rayon = "1.2"
 na = { package = "nalgebra", version = "0.18" }
 hrbf = "0.2"
 geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io", "serde_all"] }

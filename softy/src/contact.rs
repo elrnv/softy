@@ -1,12 +1,12 @@
 mod solver;
 
 use crate::friction::FrictionParams;
-use implicits::ImplicitSurface;
+use implicits::QueryTopo;
 use na::{Matrix3, Matrix3x2, RealField, Vector2, Vector3};
+use reinterpret::*;
 pub use solver::ContactSolver;
 use utils::soap::*;
 use utils::zip;
-use reinterpret::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -177,18 +177,21 @@ impl ContactBasis {
 
     /// Transform a given stacked vector of vectors in physical space
     /// to stacked 2D vectors in the tangent space of the contact point.
-    pub fn to_tangent_space<'a>(&'a self, physical: &'a [[f64; 3]]) -> impl Iterator<Item = [f64; 2]> + 'a {
-        physical
-            .iter()
-            .enumerate()
-            .map(move |(i, &v)| {
-                let new_v = self.to_contact_coordinates(v, i);
-                [new_v[1], new_v[2]]
-            })
+    pub fn to_tangent_space<'a>(
+        &'a self,
+        physical: &'a [[f64; 3]],
+    ) -> impl Iterator<Item = [f64; 2]> + 'a {
+        physical.iter().enumerate().map(move |(i, &v)| {
+            let new_v = self.to_contact_coordinates(v, i);
+            [new_v[1], new_v[2]]
+        })
     }
 
     /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
-    pub fn from_tangent_space<'a>(&'a self, contact: &'a [[f64; 2]]) -> impl Iterator<Item = [f64; 3]> + 'a {
+    pub fn from_tangent_space<'a>(
+        &'a self,
+        contact: &'a [[f64; 2]],
+    ) -> impl Iterator<Item = [f64; 3]> + 'a {
         contact
             .iter()
             .enumerate()
@@ -196,14 +199,20 @@ impl ContactBasis {
     }
 
     /// Transform a given vector of vectors in physical space to values in normal direction.
-    pub fn to_normal_space<'a>(&'a self, physical: &'a [[f64; 3]]) -> impl Iterator<Item = f64> + 'a {
+    pub fn to_normal_space<'a>(
+        &'a self,
+        physical: &'a [[f64; 3]],
+    ) -> impl Iterator<Item = f64> + 'a {
         physical
             .iter()
             .enumerate()
             .map(move |(i, &v)| self.to_contact_coordinates(v, i)[0])
     }
     /// Transform a given vector of normal coordinates in contact space to vectors in physical space.
-    pub fn from_normal_space<'a>(&'a self, contact: &'a [f64]) -> impl Iterator<Item = [f64; 3]> + 'a {
+    pub fn from_normal_space<'a>(
+        &'a self,
+        contact: &'a [f64],
+    ) -> impl Iterator<Item = [f64; 3]> + 'a {
         contact
             .iter()
             .enumerate()
@@ -298,11 +307,7 @@ impl ContactBasis {
             .map(|contact_idx| {
                 let mtx = self.contact_basis_matrix(contact_idx);
                 // Take the transpose of the basis [nml] (ignoring the tangential components).
-                [
-                    [mtx.column(0)[0]],
-                    [mtx.column(0)[1]],
-                    [mtx.column(0)[2]],
-                ]
+                [[mtx.column(0)[0]], [mtx.column(0)[1]], [mtx.column(0)[2]]]
             })
             .collect();
 
@@ -363,24 +368,18 @@ pub(crate) struct TripletContactJacobian<I> {
 }
 
 pub(crate) fn build_triplet_contact_jacobian<'a>(
-    surf: &ImplicitSurface,
+    surf: &QueryTopo,
     active_contact_points: SubsetView<'a, Chunked3<&'a [f64]>>,
     query_points: Chunked3<&'a [f64]>,
 ) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
-    let mut orig_cj_matrices = vec![
-        geo::math::Matrix3::zeros();
-        surf.num_contact_jacobian_matrices()
-            .expect("Failed to get contact Jacobian size.")
-    ];
+    let mut orig_cj_matrices =
+        vec![geo::math::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
     surf.contact_jacobian_matrices(
         query_points.into(),
         reinterpret_mut_slice(&mut orig_cj_matrices),
-    )
-    .expect("Failed to compute contact Jacobian.");
+    );
 
-    let orig_cj_indices_iter = surf
-        .contact_jacobian_matrix_indices_iter()
-        .expect("Failed to get contact Jacobian indices.");
+    let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
 
     let cj_matrices: Vec<_> = orig_cj_indices_iter
         .clone()
@@ -515,17 +514,20 @@ mod tests {
     // vectors.
     #[test]
     fn contact_physical_space_conversion_test() -> Result<(), crate::Error> {
-
         let run = |trimesh: TriMesh<f64>| -> Result<(), crate::Error> {
             let basis = contact_basis_from_trimesh(&trimesh);
 
             let vecs = utils::random_vectors(trimesh.num_vertices());
 
             // Test euclidean basis
-            let contact_vecs: Vec<_> = basis.to_tangent_space(reinterpret_slice(vecs.as_slice())).collect();
-            let projected_physical_vecs: Vec<_> = basis.from_tangent_space(contact_vecs.as_slice()).collect();
-            let projected_contact_vecs: Vec<_> =
-                basis.to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice())).collect();
+            let contact_vecs: Vec<_> = basis
+                .to_tangent_space(reinterpret_slice(vecs.as_slice()))
+                .collect();
+            let projected_physical_vecs: Vec<_> =
+                basis.from_tangent_space(contact_vecs.as_slice()).collect();
+            let projected_contact_vecs: Vec<_> = basis
+                .to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()))
+                .collect();
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 for i in 0..2 {

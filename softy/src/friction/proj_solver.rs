@@ -42,9 +42,13 @@ impl<'a> FrictionSolver<'a> {
     /// Solve one step.
     pub fn step(&mut self) -> Result<FrictionSolveResult, ()> {
         // Solve quadratic optimization problem
-        let mut friction_impulse = Chunked2::from_array_vec(vec![[0.0; 2]; self.predictor_impulse.len()]);
+        let mut friction_impulse =
+            Chunked2::from_array_vec(vec![[0.0; 2]; self.predictor_impulse.len()]);
         //let predictor_impulse = (self.mass_inv_mtx.view() * Tensor::new(self.predictor_impulse)).into_inner();
-        let predictor_impulse_t: Vec<_> = self.contact_basis.to_tangent_space(self.predictor_impulse.view().into()).collect();
+        let predictor_impulse_t: Vec<_> = self
+            .contact_basis
+            .to_tangent_space(self.predictor_impulse.view().into())
+            .collect();
         for (r, &pred_p, &prev_r, &cr) in zip!(
             friction_impulse.iter_mut(),
             predictor_impulse_t.iter(),
@@ -75,7 +79,6 @@ mod tests {
     use super::*;
     use crate::Error;
     use approx::*;
-    use utils::soap::*;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
@@ -129,7 +132,8 @@ mod tests {
             &contact_basis,
             mass_inv_mtx.view(),
             params,
-        ).unwrap();
+        )
+        .unwrap();
         let result = solver.step().unwrap();
 
         let impulse = Vector2::new(result.solution[0]);
@@ -190,7 +194,8 @@ mod tests {
             &contact_basis,
             mass_inv_mtx.view(),
             params,
-        ).unwrap();
+        )
+        .unwrap();
         let result = solver.step().unwrap();
 
         let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
@@ -202,7 +207,7 @@ mod tests {
         dbg!(&result.solution);
         dbg!(&final_momentum);
 
-         // Check that the tet continues with sligtly less momentum
+        // Check that the tet continues with sligtly less momentum
         for i in 0..2 {
             for j in 0..2 {
                 assert_relative_eq!(
@@ -212,9 +217,7 @@ mod tests {
                     epsilon = 1e-5
                 );
                 if j == 0 {
-                    assert!(
-                        final_momentum[i][j].abs() < p_imp_t[i][j].abs()
-                    );
+                    assert!(final_momentum[i][j].abs() < p_imp_t[i][j].abs());
                 }
             }
         }

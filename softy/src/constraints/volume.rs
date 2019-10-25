@@ -53,7 +53,7 @@ impl<'a> Constraint<'a, f64> for VolumeConstraint {
         (vec![6.0 * self.rest_volume], vec![6.0 * self.rest_volume])
     }
 
-    fn constraint(&self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
+    fn constraint(&mut self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         let pos1: &[[f64; 3]] = reinterpret_slice(x1);
         let mut total_volume = 0.0;
@@ -111,7 +111,7 @@ impl<'a> ConstraintJacobian<'a, f64> for VolumeConstraint {
         ))
     }
     fn constraint_jacobian_values(
-        &self,
+        &mut self,
         x0: &'a [f64],
         x1: &'a [f64],
         values: &mut [f64],
@@ -209,7 +209,7 @@ impl<'a> ConstraintHessian<'a, f64> for VolumeConstraint {
         )))
     }
     fn constraint_hessian_values(
-        &self,
+        &mut self,
         x0: &'a [f64],
         x1: &'a [f64],
         lambda: &'a [f64],

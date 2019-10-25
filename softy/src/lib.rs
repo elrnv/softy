@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "unstable", feature(test))]
+#![type_length_limit = "10000000"]
 
 //#[global_allocator]
 //static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;

@@ -19,7 +19,7 @@ pub trait Constraint<'a, T: Scalar> {
     ///   - `x` is the variable expected by the specific constraint for the previous configuration.
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
-    fn constraint(&self, x: Self::Input, dx: Self::Input, value: &mut [T]);
+    fn constraint(&mut self, x: Self::Input, dx: Self::Input, value: &mut [T]);
 }
 
 /// The constraint Jacobian. Required for optimizers that use first order derivative information.
@@ -41,7 +41,7 @@ pub trait ConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
     fn constraint_jacobian_values(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         values: &mut [T],
@@ -54,18 +54,18 @@ pub trait ConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
 
     /// Compute the change in the constraint function with respect to change in configuration.
     fn constraint_jacobian_offset(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         offset: MatrixElementIndex,
         triplets: &mut [MatrixElementTriplet<T>],
     ) -> Result<(), Error> {
         let n = self.constraint_jacobian_size();
+        let mut values = vec![T::zero(); n];
+        self.constraint_jacobian_values(x, dx, values.as_mut_slice())?;
         let indices_iter = self
             .constraint_jacobian_indices_iter()?
             .map(|idx| idx + offset);
-        let mut values = vec![T::zero(); n];
-        self.constraint_jacobian_values(x, dx, values.as_mut_slice())?;
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
@@ -78,7 +78,7 @@ pub trait ConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
     fn constraint_jacobian(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         triplets: &mut [MatrixElementTriplet<T>],
@@ -154,7 +154,7 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
     fn constraint_hessian_values(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         lambda: Self::InputDual,
@@ -182,7 +182,7 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
     fn constraint_hessian_offset(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         lambda: Self::InputDual,
@@ -191,11 +191,11 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
         triplets: &mut [MatrixElementTriplet<T>],
     ) -> Result<(), Error> {
         let n = self.constraint_hessian_size();
+        let mut values = vec![T::zero(); n];
+        self.constraint_hessian_values(x, dx, lambda, scale, values.as_mut_slice())?;
         let indices_iter = self
             .constraint_hessian_indices_iter()?
             .map(|idx| idx + offset);
-        let mut values = vec![T::zero(); n];
-        self.constraint_hessian_values(x, dx, lambda, scale, values.as_mut_slice())?;
         for (trip, (idx, val)) in triplets.iter_mut().zip(indices_iter.zip(values.iter())) {
             *trip = MatrixElementTriplet::new(idx.row, idx.col, *val);
         }
@@ -211,7 +211,7 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
     ///   - `dx` is the independent variable being optimized over, it is not necessarily the
     ///     differential of `x` but it often is.
     fn constraint_hessian(
-        &self,
+        &mut self,
         x: Self::Input,
         dx: Self::Input,
         lambda: Self::InputDual,

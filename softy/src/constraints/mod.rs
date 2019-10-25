@@ -1,5 +1,5 @@
-pub mod point_contact;
 pub mod linearized_point_contact;
+pub mod point_contact;
 pub mod volume;
 
 use crate::attrib_defines::*;
@@ -10,6 +10,7 @@ use crate::friction::FrictionalContact;
 use crate::Index;
 use crate::TriMesh;
 use geo::math::Vector3;
+use std::cell::RefCell;
 
 pub use self::linearized_point_contact::*;
 pub use self::volume::*;
@@ -23,16 +24,16 @@ pub fn build_contact_constraint(
     object: Var<&TriMesh>,
     collider: Var<&TriMesh>,
     params: FrictionalContactParams,
-) -> Result<Box<dyn ContactConstraint>, crate::Error> {
+) -> Result<Box<RefCell<dyn ContactConstraint>>, crate::Error> {
     Ok(match params.contact_type {
         ContactType::SPImplicit => unimplemented!(),
         ContactType::Implicit => unimplemented!(),
-        ContactType::Point => Box::new(LinearizedPointContactConstraint::new(
+        ContactType::Point => Box::new(RefCell::new(LinearizedPointContactConstraint::new(
             object,
             collider,
             params.kernel,
             params.friction_params,
-        )?),
+        )?)),
     })
 }
 
@@ -273,7 +274,7 @@ pub trait ContactConstraint:
     /// impulses are stored on the entire mesh.
     fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn add_contact_impulse(
-        &self,
+        &mut self,
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         impulse: [Chunked3<&mut [f64]>; 2],
@@ -282,24 +283,23 @@ pub trait ContactConstraint:
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self) -> Result<Chunked3<Vec<f64>>, crate::Error>;
+    fn contact_normals(&self) -> Chunked3<Vec<f64>>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
     fn update_radius_multiplier(&mut self, radius_multiplier: f64);
     /// A `Vec` of active constraint indices. This will return an error if there were no
     /// query points cached.
-    fn active_constraint_indices(&self) -> Result<Vec<usize>, crate::Error>;
-    /// Update the cache of query point neighbourhoods and return `true` if cache has changed.
+    fn active_constraint_indices(&self) -> Vec<usize>;
+    /// Update the query point neighbourhoods and return `true` if changed.
     /// Note that this function doesn't remap any data corresponding to the old neighbourhood
-    /// information. Instead, use `update_cache_with_mapping`, which also returns the mapping to
-    /// old data needed to perform the remapping of any user data.
-    fn update_cache(
+    /// information.
+    fn update_neighbours(
         &mut self,
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) -> bool;
-    fn cached_neighbourhood_indices(&self) -> Vec<Index>;
+    fn neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser
     /// than needed, which typically results in slower performance. If it is set too low, there

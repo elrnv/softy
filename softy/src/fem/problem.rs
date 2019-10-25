@@ -122,7 +122,7 @@ impl SourceIndex {
 pub struct FrictionalContactConstraint {
     pub object_index: SourceIndex,
     pub collider_index: SourceIndex,
-    pub constraint: Box<dyn ContactConstraint>,
+    pub constraint: Box<RefCell<dyn ContactConstraint>>,
 }
 
 /// A `Vertex` is a single element of the `VertexSet`.
@@ -876,7 +876,7 @@ pub(crate) struct NonLinearProblem {
     /// One way contact constraints between a pair of objects.
     pub frictional_contacts: Vec<FrictionalContactConstraint>,
     /// Constraint on the total volume.
-    pub volume_constraints: Vec<(usize, VolumeConstraint)>,
+    pub volume_constraints: Vec<(usize, RefCell<VolumeConstraint>)>,
     /// Gravitational potential energy.
     pub gravity: [f64; 3],
     /// The time step defines the amount of time elapsed between steps (calls to `advance`).
@@ -966,7 +966,7 @@ impl NonLinearProblem {
     pub fn min_contact_radius(&self) -> Option<f64> {
         self.frictional_contacts
             .iter()
-            .map(|fc| fc.constraint.contact_radius())
+            .map(|fc| fc.constraint.borrow().contact_radius())
             .min_by(|a, b| a.partial_cmp(b).expect("Detected NaN contact radius"))
     }
 
@@ -1001,11 +1001,11 @@ impl NonLinearProblem {
 
         let mut offset = active_set.len();
         for FrictionalContactConstraint { ref constraint, .. } in self.frictional_contacts.iter() {
-            let fc_active_constraints = constraint.active_constraint_indices().unwrap_or_default();
+            let fc_active_constraints = constraint.borrow().active_constraint_indices();
             for c in fc_active_constraints.into_iter() {
                 active_set.push(c + offset);
             }
-            offset += constraint.num_potential_contacts();
+            offset += constraint.borrow().num_potential_contacts();
             offsets.push(active_set.len());
         }
     }
@@ -1020,7 +1020,9 @@ impl NonLinearProblem {
     #[allow(dead_code)]
     pub fn clear_friction_impulses(&mut self) {
         for fc in self.frictional_contacts.iter_mut() {
-            fc.constraint.clear_frictional_contact_impulse();
+            fc.constraint
+                .borrow_mut()
+                .clear_frictional_contact_impulse();
         }
     }
 
@@ -1071,11 +1073,15 @@ impl NonLinearProblem {
             if let Some(x) = x.as_ref() {
                 let object_pos = object_data.cur_pos((*x).view(), *object_index);
                 let collider_pos = object_data.cur_pos((*x).view(), *collider_index);
-                changed |= constraint.update_cache(object_pos.view(), collider_pos.view());
+                changed |= constraint
+                    .borrow_mut()
+                    .update_neighbours(object_pos.view(), collider_pos.view());
             } else {
                 let object_pos = object_data.prev_pos(*object_index);
                 let collider_pos = object_data.prev_pos(*collider_index);
-                changed |= constraint.update_cache(object_pos.view(), collider_pos.view());
+                changed |= constraint
+                    .borrow_mut()
+                    .update_neighbours(object_pos.view(), collider_pos.view());
             }
         }
 
@@ -1112,7 +1118,9 @@ impl NonLinearProblem {
             let old_set = old_constraint_set.next().unwrap();
             let new_set = new_constraint_set.next().unwrap();
 
-            fc.constraint.remap_frictional_contact(old_set, new_set);
+            fc.constraint
+                .borrow_mut()
+                .remap_frictional_contact(old_set, new_set);
         }
     }
 
@@ -1179,10 +1187,12 @@ impl NonLinearProblem {
                 shells,
             );
 
-            fc.constraint.add_mass_weighted_frictional_contact_impulse([
-                obj_vel.view_mut(),
-                coll_vel.view_mut(),
-            ]);
+            fc.constraint
+                .borrow()
+                .add_mass_weighted_frictional_contact_impulse([
+                    obj_vel.view_mut(),
+                    coll_vel.view_mut(),
+                ]);
         }
     }
 
@@ -1207,12 +1217,14 @@ impl NonLinearProblem {
 
     pub fn update_max_step(&mut self, step: f64) {
         for fc in self.frictional_contacts.iter_mut() {
-            fc.constraint.update_max_step(step);
+            fc.constraint.borrow_mut().update_max_step(step);
         }
     }
     pub fn update_radius_multiplier(&mut self, rad_mult: f64) {
         for fc in self.frictional_contacts.iter_mut() {
-            fc.constraint.update_radius_multiplier(rad_mult);
+            fc.constraint
+                .borrow_mut()
+                .update_radius_multiplier(rad_mult);
         }
     }
 
@@ -1409,6 +1421,7 @@ impl NonLinearProblem {
                     let col_v = self.object_data.cur_vel(v, fc.collider_index);
                     obj -= fc
                         .constraint
+                        .borrow()
                         .frictional_dissipation([obj_v.view(), col_v.view()]);
                 }
             }
@@ -1463,7 +1476,7 @@ impl NonLinearProblem {
             let obj_vel = self.object_data.cur_vel(v, fc.object_index);
             let col_vel = self.object_data.cur_vel(v, fc.collider_index);
 
-            let n = fc.constraint.constraint_size();
+            let n = fc.constraint.borrow().constraint_size();
             let contact_impulse = Self::contact_impulse_magnitudes(
                 &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
                 time_step,
@@ -1471,13 +1484,16 @@ impl NonLinearProblem {
 
             dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
-            friction_steps[fc_idx] = fc.constraint.update_frictional_contact_impulse(
-                &contact_impulse,
-                [obj_prev_pos.view(), col_prev_pos.view()],
-                [obj_vel.view(), col_vel.view()],
-                potential_values,
-                friction_steps[fc_idx],
-            );
+            friction_steps[fc_idx] = fc
+                .constraint
+                .borrow_mut()
+                .update_frictional_contact_impulse(
+                    &contact_impulse,
+                    [obj_prev_pos.view(), col_prev_pos.view()],
+                    [obj_vel.view(), col_vel.view()],
+                    potential_values,
+                    friction_steps[fc_idx],
+                );
 
             is_finished &= friction_steps[fc_idx] == 0;
             constraint_offset += n;
@@ -1621,6 +1637,7 @@ impl NonLinearProblem {
             let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
             fc.constraint
+                .borrow()
                 .add_friction_impulse([obj_imp.view_mut().into(), coll_imp.view_mut().into()], 1.0);
 
             let mut imp =
@@ -1658,7 +1675,7 @@ impl NonLinearProblem {
 
         for fc in frictional_contacts.iter() {
             // Get contact force from the warm start.
-            let n = fc.constraint.constraint_size();
+            let n = fc.constraint.borrow().constraint_size();
             let contact_impulse = Self::contact_impulse_magnitudes(
                 &warm_start.constraint_multipliers[offset..offset + n],
                 *time_step,
@@ -1684,7 +1701,7 @@ impl NonLinearProblem {
             let obj_x0 = object_data.prev_pos(fc.object_index);
             let coll_x0 = object_data.prev_pos(fc.collider_index);
 
-            fc.constraint.add_contact_impulse(
+            fc.constraint.borrow_mut().add_contact_impulse(
                 [obj_x0.view(), coll_x0.view()],
                 &contact_impulse,
                 [obj_imp.view_mut(), coll_imp.view_mut()],
@@ -1948,6 +1965,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
     fn initial_point(&self, x: &mut [Number]) -> bool {
         x.copy_from_slice(self.warm_start.primal_variables.as_slice());
+
         true
     }
 
@@ -2043,6 +2061,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
                 if FORWARD_FRICTION {
                     fc.constraint
+                        .borrow()
                         .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
                 }
             }
@@ -2059,10 +2078,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn num_constraints(&self) -> usize {
         let mut num = 0;
         for (_, vc) in self.volume_constraints.iter() {
-            num += vc.constraint_size();
+            num += vc.borrow().constraint_size();
         }
         for fc in self.frictional_contacts.iter() {
-            num += fc.constraint.constraint_size();
+            num += fc.constraint.borrow().constraint_size();
             //println!("num constraints  = {:?}", num);
         }
         num
@@ -2071,10 +2090,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn num_constraint_jacobian_non_zeros(&self) -> usize {
         let mut num = 0;
         for (_, vc) in self.volume_constraints.iter() {
-            num += vc.constraint_jacobian_size();
+            num += vc.borrow().constraint_jacobian_size();
         }
         for fc in self.frictional_contacts.iter() {
-            num += fc.constraint.constraint_jacobian_size();
+            num += fc.constraint.borrow().constraint_jacobian_size();
         }
         num
     }
@@ -2102,8 +2121,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut count = 0; // Constraint counter
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let n = vc.constraint_size();
-            vc.constraint(
+            let n = vc.borrow().constraint_size();
+            vc.borrow_mut().constraint(
                 x0.at(0).at(*solid_idx).into_flat(),
                 x.at(0).at(*solid_idx).into_flat(),
                 &mut g[count..count + n],
@@ -2112,13 +2131,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let n = fc.constraint.constraint_size();
+            let n = fc.constraint.borrow().constraint_size();
             let obj_x0 = self.object_data.prev_pos(fc.object_index);
             let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x, fc.object_index);
             let coll_x = self.object_data.cur_pos(x, fc.collider_index);
 
-            fc.constraint.constraint(
+            fc.constraint.borrow_mut().constraint(
                 [obj_x0.view(), coll_x0.view()],
                 [obj_x.view(), coll_x.view()],
                 &mut g[count..count + n],
@@ -2134,16 +2153,16 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint_bounds(&self, g_l: &mut [Number], g_u: &mut [Number]) -> bool {
         let mut count = 0; // Constraint counter
         for (_, vc) in self.volume_constraints.iter() {
-            let mut bounds = vc.constraint_bounds();
-            let n = vc.constraint_size();
+            let mut bounds = vc.borrow().constraint_bounds();
+            let n = vc.borrow().constraint_size();
             g_l[count..count + n].swap_with_slice(&mut bounds.0);
             g_u[count..count + n].swap_with_slice(&mut bounds.1);
             count += n;
         }
 
         for fc in self.frictional_contacts.iter() {
-            let mut bounds = fc.constraint.constraint_bounds();
-            let n = fc.constraint.constraint_size();
+            let mut bounds = fc.constraint.borrow().constraint_bounds();
+            let n = fc.constraint.borrow().constraint_size();
             g_l[count..count + n].swap_with_slice(&mut bounds.0);
             g_u[count..count + n].swap_with_slice(&mut bounds.1);
             count += n;
@@ -2166,6 +2185,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut row_offset = 0;
         for (solid_idx, vc) in self.volume_constraints.iter() {
+            let vc = vc.borrow();
             let iter = vc.constraint_jacobian_indices_iter().unwrap();
             let col_offset = prev_v_solid.offset_value(*solid_idx) * 3;
             for MatrixElementIndex { row, col } in iter {
@@ -2178,11 +2198,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             //use ipopt::BasicProblem;
-            let nrows = fc.constraint.constraint_size();
+            let nrows = fc.constraint.borrow().constraint_size();
             //let ncols = self.num_variables();
             //let mut jac = vec![vec![0; nrows]; ncols]; // col major
 
-            let iter = fc.constraint.constraint_jacobian_indices_iter().unwrap();
+            let constraint = fc.constraint.borrow();
+            let iter = constraint.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
                 rows[count] = (row + row_offset) as ipopt::Index;
                 cols[count] =
@@ -2223,24 +2244,29 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let mut count = 0; // Constraint counter
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let n = vc.constraint_jacobian_size();
-            vc.constraint_jacobian_values(
-                x0.at(0).at(*solid_idx).into_flat(),
-                x.at(0).at(*solid_idx).into_flat(),
-                &mut vals[count..count + n],
-            )
-            .ok();
+            let n = vc.borrow().constraint_jacobian_size();
+            vc.borrow_mut()
+                .constraint_jacobian_values(
+                    x0.at(0).at(*solid_idx).into_flat(),
+                    x.at(0).at(*solid_idx).into_flat(),
+                    &mut vals[count..count + n],
+                )
+                .ok();
             count += n;
         }
 
+        dbg!(count);
+
         for fc in self.frictional_contacts.iter() {
-            let n = fc.constraint.constraint_jacobian_size();
+            let n = fc.constraint.borrow().constraint_jacobian_size();
+            dbg!(n);
             let obj_x0 = self.object_data.prev_pos(fc.object_index);
             let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x, fc.object_index);
             let coll_x = self.object_data.cur_pos(x, fc.collider_index);
 
             fc.constraint
+                .borrow_mut()
                 .constraint_jacobian_values(
                     [obj_x0.view(), coll_x0.view()],
                     [obj_x.view(), coll_x.view()],
@@ -2250,6 +2276,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("jac g vals = {:?}", &vals[count..count+n]);
             count += n;
         }
+        dbg!(count, vals.len());
         assert_eq!(count, vals.len());
         let dt = if self.time_step > 0.0 {
             self.time_step
@@ -2279,10 +2306,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //    num += shell.inertia().energy_hessian_size();
         //}
         for (_, vc) in self.volume_constraints.iter() {
-            num += vc.constraint_hessian_size();
+            num += vc.borrow().constraint_hessian_size();
         }
         for fc in self.frictional_contacts.iter() {
-            num += fc.constraint.constraint_hessian_size();
+            num += fc.constraint.borrow().constraint_hessian_size();
         }
         num
     }
@@ -2328,7 +2355,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let offset = prev_v_solid.offset_value(*solid_idx) * 3;
-            for MatrixElementIndex { row, col } in vc.constraint_hessian_indices_iter() {
+            for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
                 rows[count] = (row + offset) as ipopt::Index;
                 cols[count] = (col + offset) as ipopt::Index;
                 count += 1;
@@ -2336,7 +2363,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let iter = fc.constraint.constraint_hessian_indices_iter().unwrap();
+            let constraint = fc.constraint.borrow();
+            let iter = constraint.constraint_hessian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
                 rows[count] =
                     self.object_data
@@ -2424,16 +2452,17 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let x0 = x0.at(0).at(*solid_idx).into_flat();
             let x1 = x1.at(0).at(*solid_idx).into_flat();
-            let nc = vc.constraint_size();
-            let nh = vc.constraint_hessian_size();
-            vc.constraint_hessian_values(
-                x0,
-                x1,
-                &lambda[coff..coff + nc],
-                c_scale,
-                &mut vals[count..count + nh],
-            )
-            .unwrap();
+            let nc = vc.borrow().constraint_size();
+            let nh = vc.borrow().constraint_hessian_size();
+            vc.borrow_mut()
+                .constraint_hessian_values(
+                    x0,
+                    x1,
+                    &lambda[coff..coff + nc],
+                    c_scale,
+                    &mut vals[count..count + nh],
+                )
+                .unwrap();
 
             count += nh;
             coff += nc;
@@ -2444,9 +2473,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x1, fc.object_index);
             let coll_x = self.object_data.cur_pos(x1, fc.collider_index);
-            let nc = fc.constraint.constraint_size();
-            let nh = fc.constraint.constraint_hessian_size();
+            let nc = fc.constraint.borrow().constraint_size();
+            let nh = fc.constraint.borrow().constraint_hessian_size();
             fc.constraint
+                .borrow_mut()
                 .constraint_hessian_values(
                     [obj_x0.view(), coll_x0.view()],
                     [obj_x.view(), coll_x.view()],

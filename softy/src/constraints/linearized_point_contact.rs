@@ -50,8 +50,8 @@ pub struct LinearizedPointContactConstraint {
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
 
-    /// Constraint Jacobian.
-    constraint_jacobian: DSBlockMatrix1x3,
+    //// Constraint Jacobian.
+    //constraint_jacobian: DSBlockMatrix1x3,
 }
 
 impl LinearizedPointContactConstraint {
@@ -127,7 +127,7 @@ impl LinearizedPointContactConstraint {
                 object_is_fixed,
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
-                constraint_jacobian: DSBlockMatrix1x3::,
+                //constraint_jacobian: DSBlockMatrix1x3::,
             };
 
             Ok(constraint)

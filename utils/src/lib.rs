@@ -224,6 +224,48 @@ pub fn make_regular_icosahedron() -> TriMesh<f64> {
     TriMesh::new(vertices, indices)
 }
 
+pub fn make_regular_torus() -> PolyMesh<f64> {
+    make_torus(0.5, 0.25, 24, 12)
+}
+
+pub fn make_torus(
+    outer_radius: f32,
+    inner_radius: f32,
+    outer_divs: usize,
+    inner_divs: usize,
+) -> PolyMesh<f64> {
+    let mut vertices = Vec::with_capacity(outer_divs * inner_divs);
+    let mut indices = Vec::with_capacity(5 * outer_divs * inner_divs);
+
+    let outer_step = 2.0 * std::f64::consts::PI / outer_divs as f64;
+    let inner_step = 2.0 * std::f64::consts::PI / inner_divs as f64;
+
+    for i in 0..outer_divs {
+        let theta = outer_step * i as f64;
+        for j in 0..inner_divs {
+            let phi = inner_step * j as f64;
+            // Add vertex
+            let idx = vertices.len();
+            vertices.push([
+                theta.cos() * (outer_radius as f64 + phi.cos() * inner_radius as f64),
+                phi.sin() * inner_radius as f64,
+                theta.sin() * (outer_radius as f64 + phi.cos() * inner_radius as f64),
+            ]);
+
+            // Add polygon
+            indices.extend_from_slice(&[
+                4, // Number of vertices in the polygon
+                idx,
+                (((idx + 1) % inner_divs) + inner_divs * (idx / inner_divs)) % (inner_divs * outer_divs),
+                ((1 + idx) % inner_divs + (1 + idx / inner_divs) * inner_divs) % (inner_divs * outer_divs),
+                (idx % inner_divs + (1 + idx / inner_divs) * inner_divs) % (inner_divs * outer_divs),
+            ]);
+        }
+    }
+
+    PolyMesh::new(vertices, &indices)
+}
+
 // TODO: Complete sphere mesh
 ///// Create a sphere with a given level of subdivision, where `level=1` produces a regular
 ///// icosahedron.

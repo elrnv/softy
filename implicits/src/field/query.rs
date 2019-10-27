@@ -564,7 +564,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
      * Main potential computation
      */
 
-    /// Compute the ml potential.
+    /// Compute the mls potential.
     pub fn potential(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
         debug_assert!(
             query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
@@ -572,6 +572,20 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         );
 
         apply_kernel_query_fn!(self, |kernel| self.compute_potential(
+            query_points,
+            kernel,
+            out_field
+        ))
+    }
+
+    /// Compute the mls potential on query points with non-empty neighbourhoods.
+    pub fn local_potential(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
+        debug_assert!(
+            query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
+            "Detected NaNs in query points. Please report this bug."
+        );
+
+        apply_kernel_query_fn!(self, |kernel| self.compute_local_potential(
             query_points,
             kernel,
             out_field
@@ -596,6 +610,38 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         zip!(query_points.iter(), neigh_points, out_field.iter_mut())
             //.filter(|(_, nbrs, _)| !nbrs.is_empty())
             .for_each(move |(q, neighbours, field)| {
+                compute_potential_at(
+                    Vector3(*q),
+                    SamplesView::new(neighbours, samples),
+                    kernel,
+                    bg_field_params,
+                    field,
+                );
+            });
+    }
+
+    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface on
+    /// query points with non-empty neighbourhoods.
+    fn compute_local_potential<'a, K>(
+        &self,
+        query_points: &[[T; 3]],
+        kernel: K,
+        out_field: &'a mut [T],
+    ) where
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighbourhood_seq();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            bg_field_params,
+            ..
+        } = *self.base();
+
+        zip!(query_points.iter(), neigh_points)
+            .filter(|(_, nbrs)| !nbrs.is_empty())
+            .zip(out_field.iter_mut())
+            .for_each(move |((q, neighbours), field)| {
                 compute_potential_at(
                     Vector3(*q),
                     SamplesView::new(neighbours, samples),

@@ -1,5 +1,6 @@
 use super::*;
 use crate::Error;
+use arrayvec::ArrayVec;
 use rayon::iter::Either;
 
 impl<T: Real + Send + Sync> ImplicitSurface<T> {
@@ -1871,15 +1872,17 @@ pub(crate) fn consolidate_face_jacobian<T: Real>(
     neighbours: &[usize],
     faces: &[[usize; 3]],
     num_verts: usize,
-) -> Vec<Vector3<T>> {
+) -> Vec<[T; 3]> {
     let tet_indices_iter = neighbours
         .iter()
         .flat_map(|&neigh| faces[neigh].iter().cloned());
 
-    let mut vert_jac = vec![Vector3::zeros(); num_verts];
+    let mut vert_jac = vec![[T::zero(); 3]; num_verts];
 
     for (&jac, vtx_idx) in jac.iter().zip(tet_indices_iter) {
-        vert_jac[vtx_idx] += Vector3(jac);
+        vert_jac[vtx_idx][0] += jac[0];
+        vert_jac[vtx_idx][1] += jac[1];
+        vert_jac[vtx_idx][2] += jac[2];
     }
 
     vert_jac

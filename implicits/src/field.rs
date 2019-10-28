@@ -65,8 +65,6 @@ pub(crate) use self::background_field::*;
 pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::neighbour_cache::Neighbourhood;
 
-const PARALLEL_CHUNK_SIZE: usize = 5000;
-
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SampleType {
     Vertex,
@@ -907,8 +905,8 @@ impl<T: Real + Send + Sync> MLS<T> {
         let mut tangents = vec![[0.0f32; 3]; mesh.num_vertices()];
 
         let query_points = mesh.vertex_positions();
-        let neigh_points = query_surf.trivial_neighbourhood_par_chunks(PARALLEL_CHUNK_SIZE);
-        let closest_points = query_surf.closest_samples_par_chunks(PARALLEL_CHUNK_SIZE);
+        let neigh_points = query_surf.trivial_neighbourhood_par();
+        let closest_points = query_surf.closest_samples_par();
 
         // Initialize extra debug info.
         let mut num_neighs_attrib_data = vec![0i32; mesh.num_vertices()];
@@ -917,187 +915,129 @@ impl<T: Real + Send + Sync> MLS<T> {
         let mut weight_sum_attrib_data = vec![0f32; mesh.num_vertices()];
 
         let result = zip!(
-            query_points
-                .as_parallel_slice()
-                .par_chunks(PARALLEL_CHUNK_SIZE),
+            query_points.par_iter(),
             neigh_points,
             closest_points,
-            num_neighs_attrib_data
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            neighs_attrib_data
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            bg_weight_attrib_data
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            weight_sum_attrib_data
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            potential
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            alt_potential
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            normals
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE),
-            tangents
-                .as_parallel_slice_mut()
-                .par_chunks_mut(PARALLEL_CHUNK_SIZE)
+            num_neighs_attrib_data.par_iter_mut(),
+            neighs_attrib_data.par_iter_mut(),
+            bg_weight_attrib_data.par_iter_mut(),
+            weight_sum_attrib_data.par_iter_mut(),
+            potential.par_iter_mut(),
+            alt_potential.par_iter_mut(),
+            normals.par_iter_mut(),
+            tangents.par_iter_mut(),
         )
         .map(
             |(
-                q_chunk,
-                neigh,
+                q,
+                neighs,
                 closest,
-                num_neighs_chunk,
-                neighs_chunk,
-                bg_weight_chunk,
-                weight_sum_chunk,
-                potential_chunk,
-                alt_potential_chunk,
-                normals_chunk,
-                tangents_chunk,
+                num_neighs,
+                out_neighs,
+                bg_weight,
+                weight_sum,
+                potential,
+                alt_potential,
+                normal,
+                tangent,
             )| {
                 if interrupt() {
                     return Err(super::Error::Interrupted);
                 }
 
-                zip!(
-                    q_chunk.iter().map(|&v| Vector3(v)),
-                    neigh,
-                    closest.iter(),
-                    num_neighs_chunk.iter_mut(),
-                    neighs_chunk.iter_mut(),
-                    bg_weight_chunk.iter_mut(),
-                    weight_sum_chunk.iter_mut(),
-                    potential_chunk.iter_mut(),
-                    alt_potential_chunk.iter_mut(),
-                    normals_chunk.iter_mut(),
-                    tangents_chunk.iter_mut()
-                )
-                .for_each(
-                    |(
-                        q,
-                        neighs,
-                        closest,
-                        num_neighs,
-                        out_neighs,
-                        bg_weight,
-                        weight_sum,
-                        potential,
-                        alt_potential,
-                        normal,
-                        tangent,
-                    )| {
-                        let view = SamplesView::new(neighs, &samples);
+                let q = Vector3(*q);
 
-                        // Record number of neighbours in total.
-                        *num_neighs = view.len() as i32;
+                let view = SamplesView::new(neighs, &samples);
 
-                        // Record up to 11 neighbours
-                        for (k, neigh) in view.iter().take(11).enumerate() {
-                            out_neighs[k] = neigh.index as i32;
-                        }
+                // Record number of neighbours in total.
+                *num_neighs = view.len() as i32;
 
-                        let bg = BackgroundField::global(
+                // Record up to 11 neighbours
+                for (k, neigh) in view.iter().take(11).enumerate() {
+                    out_neighs[k] = neigh.index as i32;
+                }
+
+                let bg = BackgroundField::global(
+                    q,
+                    view,
+                    closest,
+                    kernel,
+                    bg_field_params,
+                    Some(T::from(*potential).unwrap()),
+                );
+
+                let closest_d = bg.closest_sample_dist();
+                *bg_weight = bg.background_weight().to_f32().unwrap();
+                *weight_sum = bg.weight_sum.to_f32().unwrap();
+                let weight_sum_inv = bg.weight_sum_inv();
+
+                *potential = (weight_sum_inv * bg.compute_unnormalized_weighted_scalar_field())
+                    .to_f32()
+                    .unwrap();
+
+                *alt_potential = (weight_sum_inv * bg.compute_unnormalized_weighted_scalar_field())
+                    .to_f32()
+                    .unwrap();
+
+                if !view.is_empty() {
+                    let mut grad_w_sum_normalized = Vector3::zeros();
+                    for grad in samples
+                        .iter()
+                        .map(|Sample { pos, .. }| kernel.with_closest_dist(closest_d).grad(q, pos))
+                    {
+                        grad_w_sum_normalized += grad;
+                    }
+                    grad_w_sum_normalized *= weight_sum_inv;
+
+                    let mut out_normal = Vector3::zeros();
+                    let mut out_tangent = Vector3::zeros();
+
+                    let p = compute_local_potential_at(q, view, kernel, weight_sum_inv, closest_d);
+
+                    let alt_p =
+                        alt_compute_local_potential_at(q, view, kernel, weight_sum_inv, closest_d);
+
+                    for Sample { pos, nml, vel, .. } in view.iter() {
+                        let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+                        let grad_w = kernel.with_closest_dist(closest_d).grad(q, pos);
+                        let w_normalized = w * weight_sum_inv;
+                        let grad_w_normalized =
+                            grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
+
+                        out_normal += grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
+
+                        // Compute vector interpolation
+                        let grad_phi = jacobian::query_jacobian_at(
                             q,
                             view,
-                            *closest,
+                            Some(closest),
                             kernel,
                             bg_field_params,
-                            Some(T::from(*potential).unwrap()),
                         );
 
-                        let closest_d = bg.closest_sample_dist();
-                        *bg_weight = bg.background_weight().to_f32().unwrap();
-                        *weight_sum = bg.weight_sum.to_f32().unwrap();
-                        let weight_sum_inv = bg.weight_sum_inv();
+                        let nml_dot_grad = nml.dot(grad_phi);
+                        // Handle degenerate case when nml and grad are exactly opposing. In
+                        // this case the solution is not unique, so we pick one.
+                        let rot = if nml_dot_grad != -T::one() {
+                            let u = nml.cross(grad_phi);
+                            let ux = u.skew();
+                            Matrix3::identity() + ux + (ux * ux) / (T::one() + nml_dot_grad)
+                        } else {
+                            // TODO: take a convenient unit vector u that is
+                            // orthogonal to nml and compute the rotation as
+                            //let ux = u.skew();
+                            //Matrix3::identity() + (ux*ux) * 2
+                            Matrix3::identity()
+                        };
 
-                        *potential = (weight_sum_inv
-                            * bg.compute_unnormalized_weighted_scalar_field())
-                        .to_f32()
-                        .unwrap();
+                        out_tangent += (rot * vel) * w_normalized;
+                    }
 
-                        *alt_potential = (weight_sum_inv
-                            * bg.compute_unnormalized_weighted_scalar_field())
-                        .to_f32()
-                        .unwrap();
-
-                        if !view.is_empty() {
-                            let mut grad_w_sum_normalized = Vector3::zeros();
-                            for grad in samples.iter().map(|Sample { pos, .. }| {
-                                kernel.with_closest_dist(closest_d).grad(q, pos)
-                            }) {
-                                grad_w_sum_normalized += grad;
-                            }
-                            grad_w_sum_normalized *= weight_sum_inv;
-
-                            let mut out_normal = Vector3::zeros();
-                            let mut out_tangent = Vector3::zeros();
-
-                            let p = compute_local_potential_at(
-                                q,
-                                view,
-                                kernel,
-                                weight_sum_inv,
-                                closest_d,
-                            );
-
-                            let alt_p = alt_compute_local_potential_at(
-                                q,
-                                view,
-                                kernel,
-                                weight_sum_inv,
-                                closest_d,
-                            );
-
-                            for Sample { pos, nml, vel, .. } in view.iter() {
-                                let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-                                let grad_w = kernel.with_closest_dist(closest_d).grad(q, pos);
-                                let w_normalized = w * weight_sum_inv;
-                                let grad_w_normalized =
-                                    grad_w * weight_sum_inv - grad_w_sum_normalized * w_normalized;
-
-                                out_normal +=
-                                    grad_w_normalized * (q - pos).dot(nml) + nml * w_normalized;
-
-                                // Compute vector interpolation
-                                let grad_phi = jacobian::query_jacobian_at(
-                                    q,
-                                    view,
-                                    Some(*closest),
-                                    kernel,
-                                    bg_field_params,
-                                );
-
-                                let nml_dot_grad = nml.dot(grad_phi);
-                                // Handle degenerate case when nml and grad are exactly opposing. In
-                                // this case the solution is not unique, so we pick one.
-                                let rot = if nml_dot_grad != -T::one() {
-                                    let u = nml.cross(grad_phi);
-                                    let ux = u.skew();
-                                    Matrix3::identity() + ux + (ux * ux) / (T::one() + nml_dot_grad)
-                                } else {
-                                    // TODO: take a convenient unit vector u that is
-                                    // orthogonal to nml and compute the rotation as
-                                    //let ux = u.skew();
-                                    //Matrix3::identity() + (ux*ux) * 2
-                                    Matrix3::identity()
-                                };
-
-                                out_tangent += (rot * vel) * w_normalized;
-                            }
-
-                            *potential += p.to_f32().unwrap();
-                            *alt_potential += alt_p.to_f32().unwrap();
-                            *normal = out_normal.map(|x| x.to_f32().unwrap()).into();
-                            *tangent = out_tangent.map(|x| x.to_f32().unwrap()).into();
-                        }
-                    },
-                );
+                    *potential += p.to_f32().unwrap();
+                    *alt_potential += alt_p.to_f32().unwrap();
+                    *normal = out_normal.map(|x| x.to_f32().unwrap()).into();
+                    *tangent = out_tangent.map(|x| x.to_f32().unwrap()).into();
+                }
                 Ok(())
             },
         )
@@ -1615,26 +1555,24 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
         hrbf.fit_offset(&pts, &hrbf_values, &nmls);
 
-        for (q_chunk, potential_chunk) in sample_pos
-            .chunks(PARALLEL_CHUNK_SIZE)
-            .zip(potential.chunks_mut(PARALLEL_CHUNK_SIZE))
-        {
-            if interrupt() {
-                return Err(super::Error::Interrupted);
-            }
+        let result = sample_pos
+            .par_iter()
+            .zip(potential.par_iter_mut())
+            .map(|(q, potential)| {
+                if interrupt() {
+                    return Err(super::Error::Interrupted);
+                }
 
-            q_chunk
-                .par_iter()
-                .zip(potential_chunk.par_iter_mut())
-                .for_each(|(q, potential)| {
-                    let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
-                    *potential = hrbf.eval(na::Point3::from(pos)) as f32;
-                });
-        }
+                let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
+                *potential = hrbf.eval(na::Point3::from(pos)) as f32;
+
+                Ok(())
+            })
+            .reduce(|| Ok(()), |acc, result| acc.and(result));
 
         mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
 
-        Ok(())
+        result
     }
 }
 

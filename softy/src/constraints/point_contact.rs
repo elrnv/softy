@@ -1063,14 +1063,6 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
             }
         }
 
-        let verts = x1[0];
-        let topo = surf.surface_topology();
-        let mesh = TriMesh::new(
-            verts.iter().cloned().collect::<Vec<[f64; 3]>>(),
-            reinterpret::reinterpret_vec(topo.to_vec()),
-        );
-        geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh), "./out/surf_mesh.vtk");
-
         surf.potential(contact_points.view().into(), &mut cbuf);
 
         //let bg_pts = self.background_points();

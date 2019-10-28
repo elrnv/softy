@@ -248,7 +248,7 @@ fn get_frictional_contacts<'a>(
                         EL_SoftyKernel::Global => softy::KernelType::Global { tolerance },
                     },
                     contact_type: match contact_type {
-                        EL_SoftyContactType::Implicit => softy::ContactType::Implicit,
+                        EL_SoftyContactType::LinearizedPoint => softy::ContactType::LinearizedPoint,
                         EL_SoftyContactType::Point => softy::ContactType::Point,
                     },
                     friction_params: Some(softy::FrictionParams {
@@ -258,7 +258,10 @@ fn get_frictional_contacts<'a>(
                         print_level: 5,
                     }),
                 },
-                (object_material_id as usize, collider_material_ids.as_slice()),
+                (
+                    object_material_id as usize,
+                    collider_material_ids.as_slice(),
+                ),
             )
         })
         .collect()
@@ -333,7 +336,8 @@ pub(crate) fn register_new_solver(
 
     for (frictional_contact, indices) in get_frictional_contacts(&params) {
         for &collider_index in indices.1.iter() {
-            solver_builder.add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));
+            solver_builder
+                .add_frictional_contact(frictional_contact, (indices.0, collider_index as usize));
         }
     }
 

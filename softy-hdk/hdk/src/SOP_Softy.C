@@ -235,6 +235,18 @@ static const char *theDsFile = R"THEDSFILE(
             }
 
             parm {
+                name "contacttype#"
+                cppname "ContactType"
+                label "Contact Type"
+                type ordinal
+                default { "0" }
+                menu {
+                    "linearized" "Linearized Point"
+                    "point" "Point"
+                }
+            }
+
+            parm {
                 name "radiusmult#"
                 cppname "RadiusMultiplier"
                 label "Radius Multiplier"
@@ -553,7 +565,15 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
                 break;
         }
 
-        fc_params.contact_type = EL_SoftyContactType::Point;
+        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype)) {
+            case SOP_SoftyEnums::ContactType::LINEARIZED:
+                fc_params.contact_type = EL_SoftyContactType::LinearizedPoint;
+                break;
+            case SOP_SoftyEnums::ContactType::POINT:
+                fc_params.contact_type = EL_SoftyContactType::Point;
+                break;
+        }
+
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         if (sop_fc.friction) {
@@ -635,7 +655,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     OwnedPtr<HR_PointCloud> polymesh_ptcloud = nullptr;
 
     if (solver_id >= 0) {
-        std::cerr << "Updating meshes of old solver" << std::endl;
+        std::cerr << "Updating meshes of pre-existing solver with id: " << solver_id << std::endl;
         // If it's an old one, update tits meshes.
         tetmesh_ptcloud = build_pointcloud(input0);
         const GU_Detail *input1 = cookparms.inputGeo(1);

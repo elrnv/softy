@@ -20,20 +20,20 @@
  *  - `lambda` --- the first Lame paramter, which is similar to the bulk modulus.
  *  - `mu` --- the second Lame parameter, which is also called shear modulus.
  *  - `density` --- the density of the material.
- * 
+ *
  * If both variable and global material properties are absent, an error is thrown.
- * 
+ *
  */
 
 // Future Plans:
 // ### Friction and Contact
-// 
+//
 // Variable friction parameters identified by "cof\_#" float attributes where the # indicates the material
 // id of the contacting material. These will be vertex attributes because they are more widely
 // supported than tet face attributes (since there are surface only paramters).
 // If such an attribute exists, then obviously a contact constraint is introduced between the current
 // material and the referenced material.
-// 
+//
 // If no friction attributes exist, then contact is frictionless.
 
 #[macro_use]
@@ -54,8 +54,8 @@ pub enum EL_SoftyObjectType {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyContactType {
+    LinearizedPoint,
     Point,
-    Implicit,
 }
 
 #[repr(C)]
@@ -329,7 +329,7 @@ pub unsafe extern "C" fn el_softy_step(
             if let Some(solver_polymesh) = polymesh_mb {
                 EL_SoftyStepResult {
                     tetmesh,
-                    polymesh: Box::into_raw(Box::new(solver_polymesh.into())),
+                    polymesh: Box::into_raw(Box::new(solver_polymesh.reversed().into())),
                     cook_result: cook_result.into(),
                 }
             } else {

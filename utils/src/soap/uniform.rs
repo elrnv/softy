@@ -162,6 +162,8 @@ impl<'a, T: Clone, N: Array<T> + Unsigned> Into<&'a mut [N::Array]>
 }
 
 /// Define aliases for common uniform chunked types.
+pub type Chunked5<S> = UniChunked<S, U5>;
+pub type Chunked4<S> = UniChunked<S, U4>;
 pub type Chunked3<S> = UniChunked<S, U3>;
 pub type Chunked2<S> = UniChunked<S, U2>;
 pub type Chunked1<S> = UniChunked<S, U1>;

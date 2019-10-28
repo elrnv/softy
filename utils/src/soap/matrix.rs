@@ -1030,6 +1030,49 @@ where
     }
 }
 
+impl DSBlockMatrix1x3 {
+    /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
+    /// restriction.
+    pub fn from_block_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, [[f64; 3]; 1])>,
+    {
+        let cap = iter.size_hint().0;
+        let mut cols = Vec::with_capacity(cap);
+        let mut blocks: Vec<[f64; 3]> = Vec::with_capacity(cap);
+        let mut offsets = Vec::with_capacity(num_rows);
+
+        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
+        for (row, col, block) in iter {
+            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
+
+            if row + 1 != prev_row {
+                prev_row = row + 1;
+                offsets.push(cols.len());
+            }
+
+            cols.push(col);
+            // Push each row at a time to produce a Vec<[f64; 3]>
+            blocks.push(block[0]);
+        }
+        offsets.push(cols.len());
+        offsets.shrink_to_fit();
+
+        let mut col_data = Chunked::from_offsets(
+            offsets,
+            Sparse::from_dim(
+                cols,
+                num_cols,
+                Chunked1::from_flat(Chunked3::from_array_vec(blocks)),
+            ),
+        );
+
+        col_data.sort_chunks_by_index();
+
+        Tensor::new(col_data).compressed()
+    }
+}
+
 impl<S, I> DSBlockMatrix1x3<S, I>
 where
     Self: for<'a> View<'a, Type = DSBlockMatrix1x3View<'a>>,
@@ -1286,6 +1329,26 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
             for (col_idx, block, _) in row.iter() {
                 *out_row.as_mut_tensor() +=
                     Tensor::new(*block.into_arrays()) * Tensor::new(rhs.data[col_idx]);
+            }
+        }
+        Tensor::new(res)
+    }
+}
+
+impl<'a, Rhs> Mul<Tensor<Rhs>> for DSBlockMatrix1x3View<'_>
+where
+    Rhs: Into<SubsetView<'a, Chunked3<&'a [f64]>>>,
+{
+    type Output = Tensor<Vec<f64>>;
+    fn mul(self, rhs: Tensor<Rhs>) -> Self::Output {
+        let rhs_data = rhs.data.into();
+        assert_eq!(rhs_data.len(), self.num_cols());
+
+        let mut res = vec![0.0; self.num_rows()];
+        for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
+            for (col_idx, block, _) in row.iter() {
+                *out_row +=
+                    (Tensor::new(*block.into_arrays()) * Tensor::new(rhs_data[col_idx])).data[0];
             }
         }
         Tensor::new(res)

@@ -323,7 +323,8 @@ pub(crate) fn register_new_solver(
     }
 
     // Add a shell if one was given.
-    if let Some(polymesh) = shell {
+    if let Some(mut polymesh) = shell {
+        fem::SolverBuilder::initialize_source_index_attribute(&mut *polymesh)?;
         for mesh in (*polymesh).reversed().split_into_connected_components() {
             let material_id = mesh
                 .attrib_as_slice::<i32, FaceIndex>("mtl_id")

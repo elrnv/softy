@@ -397,6 +397,23 @@ impl PointContactConstraint {
     }
 }
 
+fn neighbourhood_indices(surf: &QueryTopo) -> Vec<Index> {
+    let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
+
+    let neighbourhood_sizes = surf.neighbourhood_sizes();
+
+    for (i, (idx, _)) in neighbourhood_indices
+        .iter_mut()
+        .zip(neighbourhood_sizes.iter())
+        .filter(|&(_, &s)| s != 0)
+        .enumerate()
+    {
+        *idx = Index::new(i);
+    }
+
+    neighbourhood_indices
+}
+
 impl ContactConstraint for PointContactConstraint {
     // Get the total number of contacts that could potentially occur.
     fn num_potential_contacts(&self) -> usize {
@@ -1011,24 +1028,6 @@ impl ContactConstraint for PointContactConstraint {
         let contact_points = self.contact_points.borrow();
         self.implicit_surface.reset(contact_points.as_arrays())
     }
-
-    fn neighbourhood_indices(&self) -> Vec<Index> {
-        let surf = &self.implicit_surface;
-        let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
-
-        let neighbourhood_sizes = surf.neighbourhood_sizes();
-
-        for (i, (idx, _)) in neighbourhood_indices
-            .iter_mut()
-            .zip(neighbourhood_sizes.iter())
-            .filter(|&(_, &s)| s != 0)
-            .enumerate()
-        {
-            *idx = Index::new(i);
-        }
-
-        neighbourhood_indices
-    }
 }
 
 impl<'a> Constraint<'a, f64> for PointContactConstraint {
@@ -1046,8 +1045,8 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
     fn constraint(&mut self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         self.update_surface_with_mesh_pos(x1[0]);
-
         self.update_contact_points(x1[1]);
+
         let contact_points = self.contact_points.borrow_mut();
 
         let mut cbuf = self.constraint_buffer.borrow_mut();
@@ -1063,6 +1062,14 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
                 *val = -radius;
             }
         }
+
+        let verts = x1[0];
+        let topo = surf.surface_topology();
+        let mesh = TriMesh::new(
+            verts.iter().cloned().collect::<Vec<[f64; 3]>>(),
+            reinterpret::reinterpret_vec(topo.to_vec()),
+        );
+        geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh), "./out/surf_mesh.vtk");
 
         surf.potential(contact_points.view().into(), &mut cbuf);
 
@@ -1082,7 +1089,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
         for ((_, new_v), v) in neighbourhood_sizes
             .iter()
             .zip(cbuf.iter())
-            .filter(|&(&c, _)| c != 0)
+            .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
             .zip(value.iter_mut())
         {
             *v = *new_v;
@@ -1106,6 +1113,7 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
         };
         num_obj + num_coll
     }
+
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
@@ -1131,7 +1139,7 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
             )
         };
 
-        let neighbourhood_indices = self.neighbourhood_indices();
+        let neighbourhood_indices = neighbourhood_indices(&self.implicit_surface);
         Ok(Box::new(idx_iter.map(move |(row, col)| {
             assert!(neighbourhood_indices[row].is_valid());
             MatrixElementIndex {

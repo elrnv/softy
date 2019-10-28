@@ -11,12 +11,12 @@ use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
+use lazycell::LazyCell;
 #[cfg(feature = "af")]
 use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
 use utils::zip;
-use lazycell::LazyCell;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -47,11 +47,12 @@ pub struct LinearizedPointContactConstraint {
     /// to be deforming, and thus appropriate derivatives are computed.
     collider_is_fixed: bool,
 
-    /// Internal constraint function buffer used to store temporary constraint computations.
-    constraint_buffer: RefCell<Vec<f64>>,
+    /// Internal constraint function buffer.
+    constraint_value: Vec<f64>,
 
-    //// Constraint Jacobian.
-    //constraint_jacobian: DSBlockMatrix1x3,
+    /// Constraint Jacobian in two blocks: first for object Jacobian and second for collider
+    /// Jacobian. If one is fixed, it will be `None`.
+    constraint_jacobian: LazyCell<[Option<DSBlockMatrix1x3>; 2]>,
 }
 
 impl LinearizedPointContactConstraint {
@@ -112,7 +113,7 @@ impl LinearizedPointContactConstraint {
                 })
                 .ok();
 
-            let constraint = LinearizedPointContactConstraint {
+            let mut constraint = LinearizedPointContactConstraint {
                 implicit_surface: surface.query_topo(query_points),
                 contact_points: RefCell::new(Chunked3::from_array_vec(query_points.to_vec())),
                 frictional_contact: friction_params.and_then(|fparams| {
@@ -126,14 +127,72 @@ impl LinearizedPointContactConstraint {
                 collider_mass_inv,
                 object_is_fixed,
                 collider_is_fixed,
-                constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
-                //constraint_jacobian: DSBlockMatrix1x3::,
+                constraint_value: Vec::new(),
+                constraint_jacobian: LazyCell::new(),
             };
+
+            constraint.linearize_constraint(
+                Chunked3::from_array_slice(object.vertex_positions()).into(),
+                Chunked3::from_array_slice(query_points).into(),
+            );
 
             Ok(constraint)
         } else {
             Err(Error::InvalidImplicitSurface)
         }
+    }
+
+    fn build_constraint_jacobian(
+        &mut self,
+        pos: [SubsetView<Chunked3<&[f64]>>; 2],
+    ) -> [Option<DSBlockMatrix1x3>; 2] {
+        self.update_surface_with_mesh_pos(pos[0]);
+        self.update_contact_points(pos[1]);
+        let contact_points = self.contact_points.borrow();
+
+        let surf = &self.implicit_surface;
+        let neighbourhood_indices = neighbourhood_indices(&surf);
+        let row_correction = |((row, col), val)| {
+            let idx: Index = neighbourhood_indices[row];
+            assert!(idx.is_valid());
+            (idx.unwrap(), col, [val])
+        };
+
+        let num_rows = surf.num_neighbourhoods();
+
+        let obj_jac = if !self.object_is_fixed {
+            let num_cols = surf.surface_vertex_positions().len();
+            let iter = surf
+                .surface_jacobian_block_indices_iter()
+                .zip(
+                    self.implicit_surface
+                        .surface_jacobian_block_iter(contact_points.view().into()),
+                )
+                .map(row_correction);
+            Some(DSBlockMatrix1x3::from_block_triplets_iter(
+                iter, num_rows, num_cols,
+            ))
+        } else {
+            None
+        };
+
+        let coll_jac = if !self.collider_is_fixed {
+            let num_cols = contact_points.len();
+            let iter = surf
+                .query_jacobian_block_indices_iter()
+                .zip(
+                    self.implicit_surface
+                        .query_jacobian_block_iter(contact_points.view().into()),
+                )
+                .map(row_correction);
+            Some(DSBlockMatrix1x3::from_block_triplets_iter(
+                iter, num_rows, num_cols,
+            ))
+        } else {
+            None
+        };
+
+        [obj_jac, coll_jac]
     }
 
     /// Update implicit surface using the given position data from mesh vertices.
@@ -145,143 +204,6 @@ impl LinearizedPointContactConstraint {
     pub fn update_contact_points(&mut self, x: SubsetView<Chunked3<&[f64]>>) {
         let mut contact_points = self.contact_points.borrow_mut();
         x.clone_into_other(&mut *contact_points);
-    }
-
-    ///// Update implicit surface using the given position and displacement data.
-    //pub fn update_surface_with_displacement(&self, x: &[f64], dx: &[f64]) {
-    //    let all_displacements: &[Vector3<f64>] = reinterpret_slice(dx);
-    //    let all_positions: &[Vector3<f64>] = reinterpret_slice(x);
-    //    let points_iter = self
-    //        .sim_verts
-    //        .iter()
-    //        .map(|&i| (all_positions[i] + all_displacements[i]).into());
-
-    //    self.implicit_surface.borrow_mut().update(points_iter);
-    //}
-
-    /* Needed for the Linear constraint
-    /// Update implicit surface using the given position data.
-    pub fn update_surface(&self, x: &[f64]) {
-        let all_positions: &[[f64; 3]] = reinterpret_slice(x);
-        let points_iter = self.sim_verts.iter().map(|&i| all_positions[i]);
-
-        self.implicit_surface.borrow_mut().update(points_iter);
-    }
-    */
-
-    #[allow(dead_code)]
-    fn background_points(&self) -> Vec<bool> {
-        let neighbourhood_sizes = self.implicit_surface.neighbourhood_sizes();
-
-        let mut background_points = vec![true; neighbourhood_sizes.len()];
-
-        for (_, bg) in neighbourhood_sizes
-            .iter()
-            .zip(background_points.iter_mut())
-            .filter(|&(&c, _)| c != 0)
-        {
-            *bg = false;
-        }
-
-        background_points
-    }
-
-    /// This function fills the non-local values of the constraint function with a constant signed
-    /// value (equal to the contact radius in magnitude) to help the optimization determine
-    /// feasible regions. This is done using a flood fill algorithm as follows.
-    /// 1. Identify non-local query poitns with `neighbourhood_sizes`.
-    /// 2. Partition the primitives of the kinematic object (from which the points are from) into
-    ///    connected components of non-local points. This means that points with a valid local
-    ///    potential serve as boundaries.
-    /// 3. During the splitting above, record whether a component must be inside or outside
-    ///    depending on the sign of its boundary points (local points).
-    /// 4. It could happen that a connected component has no local points, in which case we do a
-    ///    ray cast in the x direction from any point and intersect it with our mesh to determine
-    ///    the winding number. (TODO)
-    /// 5. It could also happen that the local points don't separate the primitives into inside
-    ///    and outside partitions if the radius is not sufficiently large. This is a problem for
-    ///    the future (FIXME)
-    #[allow(dead_code)]
-    fn fill_background_potential(
-        mesh: &TriMesh,
-        background_points: &[bool],
-        abs_fill_val: f64,
-        values: &mut [f64],
-    ) {
-        debug_assert!(abs_fill_val >= 0.0);
-
-        let mut hedge_dest_indices = vec![Vec::new(); mesh.num_vertices()];
-        for f in mesh.face_iter() {
-            for vtx in 0..3 {
-                // Get an edge with vertices in sorted order.
-                let edge = [f[vtx], f[(vtx + 1) % 3]];
-
-                let neighbourhood = &mut hedge_dest_indices[edge[0]];
-
-                if let Err(idx) = neighbourhood.binary_search_by(|x: &usize| x.cmp(&edge[1])) {
-                    neighbourhood.insert(idx, edge[1]);
-                }
-            }
-        }
-        //println!("edges:");
-        //for (i, v) in hedge_dest_indices.iter().enumerate() {
-        //    for &vtx in v.iter() {
-        //        println!("({}, {})", i, vtx);
-        //    }
-        //}
-        //dbg!(background_points);
-
-        let mut vertex_is_inside = vec![false; mesh.num_vertices()];
-        for vidx in (0..mesh.num_vertices()).filter(|&i| !background_points[i]) {
-            vertex_is_inside[vidx] = values[vidx] < 0.0;
-        }
-
-        let mut seen_vertices = vec![false; mesh.num_vertices()];
-
-        let mut queue = std::collections::VecDeque::new();
-
-        for vidx in (0..mesh.num_vertices()).filter(|&i| !background_points[i]) {
-            if seen_vertices[vidx] {
-                continue;
-            }
-
-            let is_inside = vertex_is_inside[vidx];
-
-            queue.push_back(vidx);
-
-            while let Some(vidx) = queue.pop_front() {
-                if background_points[vidx] {
-                    if seen_vertices[vidx] {
-                        continue;
-                    } else {
-                        vertex_is_inside[vidx] = is_inside;
-                    }
-                }
-
-                seen_vertices[vidx] = true;
-
-                queue.extend(
-                    hedge_dest_indices[vidx]
-                        .iter()
-                        .filter(|&&i| background_points[i])
-                        .filter(|&&i| !seen_vertices[i]),
-                );
-            }
-        }
-
-        for ((&is_inside, &bg), val) in vertex_is_inside
-            .iter()
-            .zip(background_points.iter())
-            .zip(values.iter_mut())
-        {
-            if bg {
-                if is_inside {
-                    *val = -abs_fill_val;
-                } else {
-                    *val = abs_fill_val;
-                }
-            }
-        }
     }
 
     /// Prune contacts with zero contact_impulse and contacts without neighbouring samples.
@@ -400,6 +322,23 @@ impl LinearizedPointContactConstraint {
         // The solve turns our relative velocity into a relative impulse.
         Chunked3::from_flat(rhs)
     }
+}
+
+fn neighbourhood_indices(query_surf: &QueryTopo) -> Vec<Index> {
+    let mut neighbourhood_indices = vec![Index::INVALID; query_surf.num_query_points()];
+
+    let neighbourhood_sizes = query_surf.neighbourhood_sizes();
+
+    for (i, (idx, _)) in neighbourhood_indices
+        .iter_mut()
+        .zip(neighbourhood_sizes.iter())
+        .filter(|&(_, &s)| s != 0)
+        .enumerate()
+    {
+        *idx = Index::new(i);
+    }
+
+    neighbourhood_indices
 }
 
 impl ContactConstraint for LinearizedPointContactConstraint {
@@ -999,22 +938,21 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         topo_updated
     }
 
-    fn neighbourhood_indices(&self) -> Vec<Index> {
-        let surf = &self.implicit_surface;
-        let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
+    fn linearize_constraint(
+        &mut self,
+        object_pos: SubsetView<Chunked3<&[f64]>>,
+        collider_pos: SubsetView<Chunked3<&[f64]>>,
+    ) {
+        let jac = self.build_constraint_jacobian([object_pos, collider_pos]);
+        self.constraint_jacobian.replace(jac);
+        let contact_points = self.contact_points.borrow();
 
-        let neighbourhood_sizes = surf.neighbourhood_sizes();
-
-        for (i, (idx, _)) in neighbourhood_indices
-            .iter_mut()
-            .zip(neighbourhood_sizes.iter())
-            .filter(|&(_, &s)| s != 0)
-            .enumerate()
-        {
-            *idx = Index::new(i);
-        }
-
-        neighbourhood_indices
+        let num_non_zero_constraints = self.implicit_surface.num_neighbourhoods();
+        self.constraint_value.resize(num_non_zero_constraints, 0.0);
+        self.implicit_surface.local_potential(
+            contact_points.view().into(),
+            self.constraint_value.as_mut_slice(),
+        );
     }
 }
 
@@ -1033,135 +971,116 @@ impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
     fn constraint(&mut self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
         self.update_surface_with_mesh_pos(x1[0]);
-
         self.update_contact_points(x1[1]);
-        let contact_points = self.contact_points.borrow_mut();
 
-        let mut cbuf = self.constraint_buffer.borrow_mut();
-        let radius = self.contact_radius();
-
-        let surf = &self.implicit_surface;
-        for (val, q) in cbuf.iter_mut().zip(contact_points.iter()) {
-            // Clear potential value.
-            let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
-            if closest_sample.nml.dot(Vector3(*q) - closest_sample.pos) > 0.0 {
-                *val = radius;
-            } else {
-                *val = -radius;
-            }
+        let jac = self
+            .constraint_jacobian
+            .borrow()
+            .expect("Constraint Jacobian not initialized");
+        let mut constraint = self.constraint_value.as_tensor().clone();
+        if let Some(jac) = &jac[0] {
+            constraint += jac.view() * *x1[0].as_tensor();
         }
-
-        surf.potential(contact_points.view().into(), &mut cbuf);
-
-        //let bg_pts = self.background_points();
-        //let collider_mesh = self.collision_object.borrow();
-        //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
-
-        let neighbourhood_sizes = surf.neighbourhood_sizes();
-
-        //println!("cbuf = ");
-        //for c in cbuf.iter() {
-        //    print!("{:9.5} ", *c);
-        //}
-        //println!("");
-
-        // Because `value` tracks only the values for which the neighbourhood is not empty.
-        for ((_, new_v), v) in neighbourhood_sizes
-            .iter()
-            .zip(cbuf.iter())
-            .filter(|&(&c, _)| c != 0)
-            .zip(value.iter_mut())
-        {
-            *v = *new_v;
+        if let Some(jac) = &jac[1] {
+            constraint += jac.view() * *x1[1].as_tensor();
         }
-        //dbg!(&value);
+        for (res, out) in constraint.data.iter().zip(value.iter_mut()) {
+            *out = *res;
+        }
     }
 }
 
 impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
     fn constraint_jacobian_size(&self) -> usize {
-        let num_obj = if !self.object_is_fixed {
-            self.implicit_surface.num_surface_jacobian_entries()
-        } else {
-            0
-        };
+        let jac = self
+            .constraint_jacobian
+            .borrow()
+            .expect("Constraint Jacobian not initialized");
 
-        let num_coll = if !self.collider_is_fixed {
-            self.implicit_surface.num_query_jacobian_entries()
-        } else {
-            0
-        };
-        num_obj + num_coll
+        jac[0].as_ref().map_or(0, |jac| jac.num_non_zeros())
+            + jac[1].as_ref().map_or(0, |jac| jac.num_non_zeros())
     }
 
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
-        let neighbourhood_indices = self.neighbourhood_indices();
-        let surf = &self.implicit_surface;
-        let col_offset = surf.surface_vertex_positions().len() * 3;
-        let obj_indices_iter = if !self.object_is_fixed {
-            Some(surf.surface_jacobian_indices_iter())
-        } else {
-            None
-        };
-
-        let coll_indices_iter = if !self.collider_is_fixed {
-            Some(surf.query_jacobian_indices_iter())
-        } else {
-            None
+        let col_offset = self.implicit_surface.surface_vertex_positions().len() * 3;
+        let jac = self
+            .constraint_jacobian
+            .borrow()
+            .expect("Constraint Jacobian not initialized");
+        let jac_indices = move |jac: DSBlockMatrix1x3View<'a>| {
+            jac.data
+                .into_iter()
+                .enumerate()
+                .flat_map(move |(row_idx, row)| {
+                    row.into_iter().flat_map(move |(col_idx, _)| {
+                        (0..3).map(move |component_idx| MatrixElementIndex {
+                            row: row_idx,
+                            col: 3 * col_idx + component_idx,
+                        })
+                    })
+                })
         };
         Ok(Box::new(
-            obj_indices_iter
+            jac[0]
+                .as_ref()
+                .map(|jac| jac_indices(jac.view()))
                 .into_iter()
                 .flatten()
                 .chain(
-                    coll_indices_iter
+                    jac[1]
+                        .as_ref()
+                        .map(|jac| jac_indices(jac.view()))
                         .into_iter()
                         .flatten()
-                        .map(move |(row, col)| (row, col + col_offset)),
-                )
-                .map(move |(row, col)| {
-                    assert!(neighbourhood_indices[row].is_valid());
-                    MatrixElementIndex {
-                        row: neighbourhood_indices[row].unwrap(),
-                        col,
-                    }
-                }),
+                        .map(move |MatrixElementIndex { row, col }| MatrixElementIndex {
+                            row,
+                            col: col + col_offset,
+                        }),
+                ),
         ))
     }
 
     fn constraint_jacobian_values(
         &mut self,
         _x0: Self::Input,
-        x1: Self::Input,
+        _x1: Self::Input,
         values: &mut [f64],
     ) -> Result<(), Error> {
-        debug_assert_eq!(values.len(), self.constraint_jacobian_size());
+        let mut value_blocks = Chunked3::from_flat(values);
+        let jac = self
+            .constraint_jacobian
+            .borrow()
+            .expect("Constraint Jacobian not initialized");
 
-        self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
-
-        let contact_points = self.contact_points.borrow_mut();
-
-        let num_obj_jac_nnz;
-
-        if !self.object_is_fixed {
-            num_obj_jac_nnz = self.implicit_surface.num_surface_jacobian_entries();
-
-            self.implicit_surface.surface_jacobian_values(
-                contact_points.view().into(),
-                &mut values[..num_obj_jac_nnz],
-            );
-        } else {
-            num_obj_jac_nnz = 0;
-        }
-
-        if !self.collider_is_fixed {
-            self.implicit_surface.query_jacobian_values(
-                contact_points.view().into(),
-                &mut values[num_obj_jac_nnz..],
-            );
+        for (v, v_out) in jac[0]
+            .as_ref()
+            .map(|jac| {
+                jac.view()
+                    .data
+                    .into_iter()
+                    .flat_map(move |row| row.into_iter())
+                    .map(|(_, val)| val)
+            })
+            .into_iter()
+            .flatten()
+            .chain(
+                jac[1]
+                    .as_ref()
+                    .map(|jac| {
+                        jac.view()
+                            .data
+                            .into_iter()
+                            .flat_map(move |row| row.into_iter())
+                            .map(|(_, val)| val)
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .zip(value_blocks.iter_mut())
+        {
+            *v_out = v.into_arrays()[0];
         }
         Ok(())
     }
@@ -1170,140 +1089,23 @@ impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
 impl<'a> ConstraintHessian<'a, f64> for LinearizedPointContactConstraint {
     type InputDual = &'a [f64];
     fn constraint_hessian_size(&self) -> usize {
-        0 + if !self.object_is_fixed {
-            self.implicit_surface
-                .num_surface_hessian_product_entries()
-                .unwrap_or(0)
-        } else {
-            0
-        } + if !self.collider_is_fixed {
-            self.implicit_surface.num_query_hessian_product_entries()
-        } else {
-            0
-        }
+        0
     }
 
     fn constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {
-        let idx_iter = {
-            let surf = &self.implicit_surface;
-            let offset = surf.surface_vertex_positions().len() * 3;
-            let obj_indices_iter = if !self.object_is_fixed {
-                Some(surf.surface_hessian_product_indices_iter()?)
-            } else {
-                None
-            };
-            let coll_indices_iter = if !self.collider_is_fixed {
-                Some(surf.query_hessian_product_indices_iter())
-            } else {
-                None
-            };
-            obj_indices_iter.into_iter().flatten().chain(
-                coll_indices_iter
-                    .into_iter()
-                    .flatten()
-                    .map(move |(row, col)| (row + offset, col + offset)),
-            )
-        };
-        Ok(Box::new(
-            idx_iter.map(move |(row, col)| MatrixElementIndex { row, col }),
-        ))
+        Ok(Box::new(std::iter::empty()))
     }
 
     fn constraint_hessian_values(
         &mut self,
         _x0: Self::Input,
-        x1: Self::Input,
-        lambda: Self::InputDual,
-        scale: f64,
-        values: &mut [f64],
+        _x1: Self::Input,
+        _lambda: Self::InputDual,
+        _scale: f64,
+        _values: &mut [f64],
     ) -> Result<(), Error> {
-        self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
-        let surf = &self.implicit_surface;
-        let contact_points = self.contact_points.borrow();
-
-        let mut obj_hess_nnz = 0;
-
-        if !self.object_is_fixed {
-            obj_hess_nnz = self
-                .implicit_surface
-                .num_surface_hessian_product_entries()
-                .unwrap_or(0);
-
-            surf.surface_hessian_product_scaled_values(
-                contact_points.view().into(),
-                lambda,
-                scale,
-                &mut values[..obj_hess_nnz],
-            )?;
-        }
-
-        if !self.collider_is_fixed {
-            surf.query_hessian_product_scaled_values(
-                contact_points.view().into(),
-                lambda,
-                scale,
-                &mut values[obj_hess_nnz..],
-            );
-        }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use utils::*;
-
-    /// Test the `fill_background_potential` function on a small grid.
-    #[test]
-    fn background_fill_test() {
-        // Make a small grid.
-        let mut grid = TriMesh::from(make_grid(Grid {
-            rows: 4,
-            cols: 6,
-            orientation: AxisPlaneOrientation::ZX,
-        }));
-
-        let mut values = vec![0.0; grid.num_vertices()];
-        let mut bg_pts = vec![true; grid.num_vertices()];
-        let radius = 0.5;
-        for ((p, v), bg) in grid
-            .vertex_position_iter()
-            .zip(values.iter_mut())
-            .zip(bg_pts.iter_mut())
-        {
-            if p[0] == 0.0 {
-                *bg = false;
-            } else if p[0] < radius && p[0] > 0.0 {
-                *v = radius;
-                *bg = false;
-            } else if p[0] > -radius && p[0] < 0.0 {
-                *v = -radius;
-                *bg = false;
-            }
-        }
-
-        LinearizedPointContactConstraint::fill_background_potential(
-            &grid,
-            &bg_pts,
-            radius,
-            &mut values,
-        );
-
-        grid.set_attrib_data::<_, VertexIndex>("potential", &values)
-            .expect("Failed to set potential field on grid");
-
-        //geo::io::save_polymesh(&geo::mesh::PolyMesh::from(grid.clone()), &std::path::PathBuf::from("out/background_test.vtk")).unwrap();
-
-        for (&p, &v) in grid.vertex_position_iter().zip(values.iter()) {
-            if p[0] > 0.0 {
-                assert!(v > 0.0);
-            } else {
-                assert!(v <= 0.0);
-            }
-        }
     }
 }

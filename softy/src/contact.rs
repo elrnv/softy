@@ -10,8 +10,7 @@ use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
-    SPImplicit,
-    Implicit,
+    LinearizedPoint,
     Point,
 }
 

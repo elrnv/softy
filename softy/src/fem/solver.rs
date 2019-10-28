@@ -1535,8 +1535,13 @@ impl Solver {
         for _ in 0..self.sim_params.max_outer_iterations {
             // Remap contacts from the initial constraint reset above, or if the constraints were
             // updated after advection.
+            eprintln!("Remap contacts");
             self.remap_contacts();
+            eprintln!("Save current active constraint set");
             self.save_current_active_constraint_set();
+            eprintln!("Precompute linearized constraints");
+            self.problem_mut().precompute_linearized_constraints();
+            eprintln!("Inner Step");
             let step_result = self.inner_step();
 
             // The following block determines if after the inner step there were any changes
@@ -1563,11 +1568,14 @@ impl Solver {
                     //    )?;
                     //}
 
+                    eprintln!("Check Inner step");
                     let step_acceptable = self.check_inner_step();
 
                     // Restore the constraints to original configuration.
+                    eprintln!("Reset constraint set");
                     self.problem_mut().reset_constraint_set();
 
+                    eprintln!("Solve for friction");
                     if step_acceptable {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
                             debug_assert!(self

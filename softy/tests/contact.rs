@@ -46,8 +46,8 @@ fn compute_contact_constraint(
         .expect("Potential attribute doesn't exist");
 
     {
-        let surf = mls_from_trimesh(&surface_trimesh, params)
-            .expect("Failed to build implicit surface.");
+        let surf =
+            mls_from_trimesh(&surface_trimesh, params).expect("Failed to build implicit surface.");
 
         let query_surf = surf.query_topo(sample_mesh.vertex_positions());
 
@@ -195,7 +195,7 @@ fn ball_tri_push_tester(
 }
 
 #[test]
-fn ball_tri_push() -> Result<(), Error> {
+fn ball_tri_push_plain() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
     let fc_params = FrictionalContactParams {
@@ -281,7 +281,7 @@ fn ball_bounce_tester(
 }
 
 #[test]
-fn ball_bounce_on_points() -> Result<(), Error> {
+fn ball_bounce_on_points_plain() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
 
@@ -342,7 +342,7 @@ fn tet_bounce_on_implicit() -> Result<(), Error> {
 
 /// Ball bouncing on an implicit surface.
 #[test]
-fn ball_bounce_on_implicit() -> Result<(), Error> {
+fn ball_bounce_on_implicit_plain() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 

@@ -1228,6 +1228,27 @@ impl NonLinearProblem {
         }
     }
 
+    pub fn precompute_linearized_constraints(&mut self) {
+        let NonLinearProblem {
+            ref mut frictional_contacts,
+            ref object_data,
+            ..
+        } = *self;
+
+        for FrictionalContactConstraint {
+            object_index,
+            collider_index,
+            constraint,
+        } in frictional_contacts.iter_mut()
+        {
+            let object_pos = object_data.prev_pos(*object_index);
+            let collider_pos = object_data.prev_pos(*collider_index);
+            constraint
+                .borrow_mut()
+                .linearize_constraint(object_pos.view(), collider_pos.view());
+        }
+    }
+
     ///// Revert to the given old solution by the given displacement.
     //pub fn revert_to(
     //    &mut self,
@@ -2255,11 +2276,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             count += n;
         }
 
-        dbg!(count);
-
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.borrow().constraint_jacobian_size();
-            dbg!(n);
             let obj_x0 = self.object_data.prev_pos(fc.object_index);
             let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x, fc.object_index);
@@ -2276,7 +2294,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             //println!("jac g vals = {:?}", &vals[count..count+n]);
             count += n;
         }
-        dbg!(count, vals.len());
         assert_eq!(count, vals.len());
         let dt = if self.time_step > 0.0 {
             self.time_step

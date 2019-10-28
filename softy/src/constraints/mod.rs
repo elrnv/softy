@@ -7,12 +7,13 @@ use crate::constraint::*;
 use crate::contact::*;
 use crate::fem::problem::Var;
 use crate::friction::FrictionalContact;
-use crate::Index;
 use crate::TriMesh;
 use geo::math::Vector3;
 use std::cell::RefCell;
 
 pub use self::linearized_point_contact::*;
+pub use self::point_contact::*;
+pub use self::point_contact::*;
 pub use self::volume::*;
 use utils::aref::*;
 use utils::soap::*;
@@ -26,9 +27,15 @@ pub fn build_contact_constraint(
     params: FrictionalContactParams,
 ) -> Result<Box<RefCell<dyn ContactConstraint>>, crate::Error> {
     Ok(match params.contact_type {
-        ContactType::SPImplicit => unimplemented!(),
-        ContactType::Implicit => unimplemented!(),
-        ContactType::Point => Box::new(RefCell::new(LinearizedPointContactConstraint::new(
+        ContactType::LinearizedPoint => {
+            Box::new(RefCell::new(LinearizedPointContactConstraint::new(
+                object,
+                collider,
+                params.kernel,
+                params.friction_params,
+            )?))
+        }
+        ContactType::Point => Box::new(RefCell::new(PointContactConstraint::new(
             object,
             collider,
             params.kernel,
@@ -299,11 +306,17 @@ pub trait ContactConstraint:
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) -> bool;
-    fn neighbourhood_indices(&self) -> Vec<Index>;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser
     /// than needed, which typically results in slower performance. If it is set too low, there
     /// will be errors in the derivative. It is the callers responsibility to set this step
     /// accurately.
     fn update_max_step(&mut self, max_step: f64);
+    /// Precompute constraint functions based on the given position to be used in the optimization.
+    fn linearize_constraint(
+        &mut self,
+        _object_pos: SubsetView<Chunked3<&[f64]>>,
+        _collider_pos: SubsetView<Chunked3<&[f64]>>,
+    ) {
+    }
 }

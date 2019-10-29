@@ -102,7 +102,7 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
             dynamic_friction: 0.5,
             inner_iterations: 100,
             tolerance: 1e-6,
-            print_level: 5,
+            print_level: 0,
         }),
     };
 
@@ -136,7 +136,7 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
             dynamic_friction: 0.5,
             inner_iterations: 100,
             tolerance: 1e-6,
-            print_level: 5,
+            print_level: 0,
         }),
     };
 

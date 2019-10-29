@@ -843,17 +843,28 @@ impl ObjectData {
         }
 
         let prev_x = prev_x.view();
+        let prev_v = prev_v.view();
 
-        // Update mesh vertex positions
+        // Update mesh vertex positions and velocities
         for (i, solid) in solids.iter_mut().enumerate() {
             let verts = solid.tetmesh.vertex_positions_mut();
             verts.copy_from_slice(prev_x.at(0).at(i).into());
+            solid
+                .tetmesh
+                .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
+                .expect("Missing velocity attribute")
+                .copy_from_slice(prev_v.at(0).at(i).into());
         }
         for (i, shell) in shells.iter_mut().enumerate() {
             match shell.material.properties {
                 ShellProperties::Deformable { .. } => {
                     let verts = shell.trimesh.vertex_positions_mut();
                     verts.copy_from_slice(prev_x.at(1).at(i).into());
+                    shell
+                        .trimesh
+                        .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
+                        .expect("Missing velocity attribute")
+                        .copy_from_slice(prev_v.at(1).at(i).into());
                 }
                 ShellProperties::Rigid { .. } => {
                     unimplemented!();

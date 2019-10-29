@@ -807,13 +807,14 @@ impl ContactConstraint for PointContactConstraint {
             if frictional_contact.collider_impulse.is_empty() || self.collider_mass_inv.is_none() {
                 return;
             }
-            let indices = self.active_constraint_indices();
+            let indices = frictional_contact.collider_impulse.indices();
 
             let collider_mass_inv =
                 DiagonalBlockMatrix::from_subset(Subset::from_unique_ordered_indices(
                     indices.as_slice(),
                     self.collider_mass_inv.as_ref().unwrap().view(),
                 ));
+
             let add_vel = collider_mass_inv
                 * Tensor::new(frictional_contact.collider_impulse.source().view());
             let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(

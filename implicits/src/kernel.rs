@@ -3,10 +3,10 @@
 use super::Error;
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
-use serde::{Deserialize, Serialize};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KernelType {
     Interpolating {
         radius_multiplier: f64,
@@ -24,7 +24,8 @@ pub enum KernelType {
     Hrbf,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LocalKernel {
     Interpolating {
         radius_multiplier: f64,
@@ -38,7 +39,8 @@ pub enum LocalKernel {
     },
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GlobalKernel {
     InvDistance2 {
         tolerance: f64,

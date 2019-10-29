@@ -2,12 +2,12 @@ use geo::math::Vector3;
 use geo::ops::*;
 use geo::Real;
 use rayon::prelude::IndexedParallelIterator;
-use serde::{Deserialize, Serialize};
 
 pub use super::*;
 
 /// A set of data stored on each sample for the implicit surface.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sample<T: Real> {
     /// Index of the sample in the original vector or array.
     pub index: usize,
@@ -38,7 +38,8 @@ impl<T: Real> Sample<T> {
 
 /// Sample points that define the implicit surface including the point positions, normals and
 /// values.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Samples<T: Real> {
     /// Sample point positions defining the implicit surface.
     pub points: Vec<Vector3<T>>,

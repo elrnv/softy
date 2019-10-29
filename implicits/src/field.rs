@@ -9,9 +9,8 @@ use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 pub use geo::Real;
 use num_traits::cast;
-use rayon::{iter::Either, prelude::*};
+use rayon::prelude::*;
 use rstar::RTree;
-use serde::{Deserialize, Serialize};
 use utils::zip;
 
 macro_rules! apply_kernel_query_fn {
@@ -65,7 +64,8 @@ pub(crate) use self::background_field::*;
 pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
 pub(crate) use self::neighbour_cache::Neighbourhood;
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SampleType {
     Vertex,
     Face,
@@ -81,7 +81,8 @@ pub enum Side {
 }
 
 /// Implicit surface type.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct ImplicitSurfaceBase<T = f64>
 where
     T: Real,
@@ -113,7 +114,8 @@ where
     spatial_tree: RTree<Sample<T>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub enum MLS<T = f64>
 where
     T: Real,
@@ -122,7 +124,8 @@ where
     Global(GlobalMLS<T>),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalMLS<T = f64>
 where
     T: Real,
@@ -139,27 +142,21 @@ where
     /// 0.0.
     max_step: T,
 
-    /// Store the neighbouring sample points for each query point we see.
-    query_neighbourhood: Neighbourhood,
-
     surf_base: ImplicitSurfaceBase<T>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct GlobalMLS<T = f64>
 where
     T: Real,
 {
     kernel: GlobalKernel,
-    /// An array of sample indices `0..#samples`. This is here to make neighbour api compatible
-    /// with local MLS.
-    sample_indices: Vec<usize>,
-    /// Closest sample indices.
-    closest_samples: Vec<usize>,
     surf_base: ImplicitSurfaceBase<T>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HrbfSurface<T = f64>
 where
     T: Real,
@@ -167,7 +164,8 @@ where
     surf_base: ImplicitSurfaceBase<T>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub enum ImplicitSurface<T = f64>
 where
     T: Real,
@@ -305,59 +303,6 @@ impl<T: Real + Send + Sync> MLS<T> {
         self.base_mut().update(vertex_iter)
     }
 
-    /// The number of query points in the cache (regardless if their neighbourhood is empty).
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_query_points(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_seq().map(|neigh| neigh.len())
-    }
-
-    /// The number of query points with non-empty neighbourhoods.
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_neighbourhoods(&self) -> Result<usize, super::Error> {
-        self.trivial_neighbourhood_seq()
-            .map(|neigh| neigh.filter(|x| !x.is_empty()).count())
-    }
-
-    /// Return a vector of indices for query points with non-empty neighbourhoods.
-    pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
-        match self.base().sample_type {
-            SampleType::Vertex => self
-                .extended_neighbourhood_seq()
-                .map(Self::nonempty_neighbourhood_indices_impl),
-            SampleType::Face => self
-                .trivial_neighbourhood_seq()
-                .map(Self::nonempty_neighbourhood_indices_impl),
-        }
-    }
-
-    /// Return a vector over query points, giving the sizes of each neighbourhood.
-    pub fn neighbourhood_sizes(&self) -> Result<Vec<usize>, super::Error> {
-        match self.base().sample_type {
-            SampleType::Vertex => self
-                .extended_neighbourhood_seq()
-                .map(|neighbourhoods| neighbourhoods.map(|x| x.len()).collect()),
-            SampleType::Face => self
-                .trivial_neighbourhood_seq()
-                .map(|neighbourhoods| neighbourhoods.map(|x| x.len()).collect()),
-        }
-    }
-
-    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
-        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
-        self.base()
-            .spatial_tree
-            .locate_within_distance(q_pos, radius * radius)
-            .count()
-    }
-
-    pub fn nearest_neighbour_lookup(&self, q: [T; 3]) -> Option<&Sample<T>> {
-        let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-        self.base()
-            .spatial_tree
-            .nearest_neighbor_iter(&q_pos)
-            .next()
-    }
-
     /// The `max_step` parameter sets the maximum position change allowed between calls to
     /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
     /// derivative will be denser than then needed, which typically results in slower performance.
@@ -376,475 +321,6 @@ impl<T: Real + Send + Sync> MLS<T> {
             }
             _ => {}
         }
-    }
-
-    /// Project the given set of positions to be below the specified iso-value along the gradient.
-    /// If the query point is already below the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far below the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness below the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_below(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Below, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above the specified iso-value along the gradient.
-    /// If the query point is already above the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness above the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_above(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Above, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above (below) the specified iso-value along the
-    /// gradient.  If the query point is already above (below) the given iso-value, then it is not
-    /// modified.  The given `epsilon` determines how far above (below) the iso-surface the point
-    /// is allowed to be projected, essentially it is the thickness above (below) the iso-surface
-    /// of value projections.  This function will return true if convergence is achieved and false
-    /// if the projection needed more iterations.
-    pub fn project(
-        &self,
-        side: Side,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        let multiplier = match side {
-            Side::Above => T::one(),
-            Side::Below => -T::one(),
-        };
-        let iso_value = iso_value * multiplier;
-
-        let mut candidate_points = query_points.to_vec();
-        let mut potential = vec![T::zero(); query_points.len()];
-        let mut candidate_potential = vec![T::zero(); query_points.len()];
-        let mut steps = vec![[T::zero(); 3]; query_points.len()];
-        let mut nml_sizes = vec![T::zero(); query_points.len()];
-
-        let max_steps = 20;
-        let max_binary_search_iters = 10;
-
-        let mut convergence = true;
-
-        for i in 0..max_steps {
-            self.potential(query_points, &mut potential)?;
-            potential.iter_mut().for_each(|x| *x *= multiplier);
-
-            // The transpose of the potential gradient at each of the query points.
-            self.query_jacobian_full(query_points, &mut steps)?;
-
-            for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
-                *norm = Vector3(*step).norm();
-            }
-
-            // Count the number of points with values less than iso_value.
-            let count_violations = potential
-                .iter()
-                .zip(nml_sizes.iter())
-                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
-                .count();
-
-            if count_violations == 0 {
-                break;
-            }
-
-            // Compute initial step directions
-            for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
-                .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
-            {
-                let nml = Vector3(*step);
-                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
-                *step = (nml * (multiplier * offset)).into();
-            }
-
-            for j in 0..max_binary_search_iters {
-                // Try this step
-                for (p, q, &step, _, _) in zip!(
-                    candidate_points.iter_mut(),
-                    query_points.iter(),
-                    steps.iter(),
-                    nml_sizes.iter(),
-                    potential.iter()
-                )
-                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
-                {
-                    *p = (Vector3(*q) + Vector3(step)).into();
-                }
-
-                self.potential(&candidate_points, &mut candidate_potential)?;
-                candidate_potential
-                    .iter_mut()
-                    .for_each(|x| *x *= multiplier);
-
-                let mut count_overshoots = 0;
-                for (step, _, _, _) in zip!(
-                    steps.iter_mut(),
-                    nml_sizes.iter(),
-                    potential.iter(),
-                    candidate_potential.iter()
-                )
-                .filter(|(_, &norm, &old, &new)| {
-                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
-                }) {
-                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
-                    count_overshoots += 1;
-                }
-
-                if count_overshoots == 0 {
-                    break;
-                }
-
-                if j == max_binary_search_iters - 1 {
-                    convergence = false;
-                }
-            }
-
-            // Update query points
-            query_points
-                .iter_mut()
-                .zip(candidate_points.iter())
-                .for_each(|(q, p)| *q = *p);
-
-            if i == max_steps - 1 {
-                convergence = false;
-            }
-        }
-
-        Ok(convergence)
-    }
-
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_par<'a>(
-        &'a self,
-    ) -> Result<
-        impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a,
-        super::Error,
-    > {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .trivial_set()
-                    .par_iter()
-                    .map(|x| x.as_slice()),
-            ),
-            MLS::Global(global) => Either::Right(global.trivial_neighbourhood_par()),
-        })
-    }
-
-    /// This function returns precomputed closest samples.
-    pub fn closest_samples_par<'a>(
-        &'a self,
-    ) -> Result<impl ParallelIterator<Item = usize> + IndexedParallelIterator + 'a, super::Error>
-    {
-        Ok(match self {
-            MLS::Local(local) => {
-                Either::Left(local.query_neighbourhood.closest_set().par_iter().cloned())
-            }
-            MLS::Global(global) => Either::Right(global.closest_samples()?.par_iter().cloned()),
-        })
-    }
-
-    /// This function returns precomputed neighbours.
-    pub fn extended_neighbourhood_par<'a>(
-        &'a self,
-    ) -> Result<
-        impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a,
-        super::Error,
-    > {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .extended_set()
-                    .par_iter()
-                    .map(|x| x.as_slice()),
-            ),
-            MLS::Global(global) => Either::Right(global.extended_neighbourhood_par()),
-        })
-    }
-
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_par_chunks<'a>(
-        &'a self,
-        chunk_size: usize,
-    ) -> Result<
-        impl ParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>>
-            + IndexedParallelIterator
-            + 'a,
-        super::Error,
-    > {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .trivial_set()
-                    .as_parallel_slice()
-                    .par_chunks(chunk_size)
-                    .map(|chunk| {
-                        let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
-                            Box::new(chunk.iter().map(|nbrs| nbrs.as_slice()));
-                        out
-                    }),
-            ),
-            MLS::Global(global) => {
-                Either::Right(global.trivial_neighbourhood_par_chunks(chunk_size))
-            }
-        })
-    }
-
-    /// This function returns precomputed closest samples.
-    pub fn closest_samples_par_chunks<'a>(
-        &'a self,
-        chunk_size: usize,
-    ) -> Result<
-        impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a,
-        super::Error,
-    > {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .closest_set()
-                    .as_parallel_slice()
-                    .par_chunks(chunk_size),
-            ),
-            MLS::Global(global) => Either::Right(
-                global
-                    .closest_samples()?
-                    .as_parallel_slice()
-                    .par_chunks(chunk_size),
-            ),
-        })
-    }
-
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_seq<'a>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = &'a [usize]> + ExactSizeIterator + Clone + 'a, super::Error>
-    {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .trivial_set()
-                    .iter()
-                    .map(|x| x.as_slice()),
-            ),
-            MLS::Global(global) => Either::Right(global.trivial_neighbourhood_seq()),
-        })
-    }
-
-    /// This function returns precomputed closest samples.
-    pub fn closest_samples_seq<'a>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = usize> + 'a, super::Error> {
-        Ok(match self {
-            MLS::Local(local) => {
-                Either::Left(local.query_neighbourhood.closest_set().iter().cloned())
-            }
-            MLS::Global(global) => Either::Right(global.closest_samples()?.iter().cloned()),
-        })
-    }
-
-    /// This function returns precomputed neighbours.
-    pub fn extended_neighbourhood_seq<'a>(
-        &'a self,
-    ) -> Result<impl Iterator<Item = &'a [usize]> + 'a, super::Error> {
-        Ok(match self {
-            MLS::Local(local) => Either::Left(
-                local
-                    .query_neighbourhood
-                    .extended_set()
-                    .iter()
-                    .map(|x| x.as_slice()),
-            ),
-            MLS::Global(global) => Either::Right(global.extended_neighbourhood_seq()),
-        })
-    }
-    /// Compute neighbour storage. Return true if neighbours have changed.
-    pub fn compute_neighbours(&mut self, query_points: &[[T; 3]]) -> bool {
-        match *self {
-            MLS::Local(LocalMLS {
-                base_radius,
-                kernel,
-                max_step,
-                ref mut query_neighbourhood,
-                surf_base:
-                    ImplicitSurfaceBase {
-                        ref spatial_tree,
-                        ref surface_topo,
-                        ref dual_topo,
-                        sample_type,
-                        ..
-                    },
-                ..
-            }) => {
-                let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-                let radius2 = radius_ext * radius_ext;
-                let neigh = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-                    spatial_tree.locate_within_distance(q_pos, radius2).cloned()
-                };
-                query_neighbourhood.compute_neighbourhoods(
-                    query_points,
-                    neigh,
-                    |q| {
-                        spatial_tree
-                            .nearest_neighbor_iter(&Vector3(q).cast::<f64>().unwrap().into())
-                            .next()
-                            .expect("Empty spatial tree")
-                    },
-                    surface_topo,
-                    dual_topo,
-                    sample_type,
-                )
-            }
-            MLS::Global(GlobalMLS {
-                ref mut closest_samples,
-                surf_base:
-                    ImplicitSurfaceBase {
-                        ref spatial_tree, ..
-                    },
-                ..
-            }) => {
-                // Recompute closest samples using the spatial tree
-                neighbour_cache::compute_closest_set(
-                    query_points,
-                    |q| {
-                        spatial_tree
-                            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
-                            .expect("Empty spatial tree")
-                    },
-                    closest_samples,
-                );
-                true
-            }
-        }
-    }
-
-    /// Given a set of neighbourhoods, return the indices of the non-empty ones.
-    pub fn nonempty_neighbourhood_indices_impl<'a>(
-        neighbourhoods: impl Iterator<Item = &'a [usize]>,
-    ) -> Vec<usize> {
-        neighbourhoods
-            .enumerate()
-            .filter(|(_, x)| !x.is_empty())
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    /*
-     * Main potential computation
-     */
-
-    /// Compute the ml potential.
-    pub fn potential(
-        &self,
-        query_points: &[[T; 3]],
-        out_field: &mut [T],
-    ) -> Result<(), super::Error> {
-        debug_assert!(
-            query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
-            "Detected NaNs in query points. Please report this bug."
-        );
-
-        apply_kernel_fn!(self, |kernel| self.compute_potential(
-            query_points,
-            kernel,
-            out_field
-        ))
-    }
-
-    /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_potential<'a, K>(
-        &self,
-        query_points: &[[T; 3]],
-        kernel: K,
-        out_field: &'a mut [T],
-    ) -> Result<(), super::Error>
-    where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    {
-        let neigh_points = self.trivial_neighbourhood_seq()?;
-
-        assert_eq!(neigh_points.len(), out_field.len());
-
-        let ImplicitSurfaceBase {
-            ref samples,
-            bg_field_params,
-            ..
-        } = *self.base();
-
-        zip!(query_points.iter(), neigh_points, out_field.iter_mut())
-            //.filter(|(_, nbrs, _)| !nbrs.is_empty())
-            .for_each(move |(q, neighbours, field)| {
-                compute_potential_at(
-                    Vector3(*q),
-                    SamplesView::new(neighbours, samples),
-                    kernel,
-                    bg_field_params,
-                    field,
-                );
-            });
-
-        Ok(())
-    }
-
-    /*
-     * Vector field computation
-     */
-
-    /// Interpolate the given vector field at the given query points.
-    fn compute_vector_field<'a, K>(
-        &self,
-        query_points: &[[T; 3]],
-        kernel: K,
-        out_vectors: &'a mut [[T; 3]],
-    ) -> Result<(), super::Error>
-    where
-        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    {
-        let neigh_points = self.trivial_neighbourhood_par()?;
-
-        assert_eq!(neigh_points.len(), out_vectors.len());
-
-        let ImplicitSurfaceBase {
-            ref samples,
-            bg_field_params,
-            ..
-        } = *self.base();
-
-        zip!(
-            query_points.par_iter(),
-            neigh_points,
-            out_vectors.par_iter_mut()
-        )
-        //.filter(|(_, nbrs, _)| !nbrs.is_empty())
-        .for_each(move |(q, neighbours, vector)| {
-            compute_local_vector_at(
-                Vector3(*q),
-                SamplesView::new(neighbours, samples),
-                kernel,
-                bg_field_params,
-                vector,
-            );
-        });
-
-        Ok(())
     }
 
     /*
@@ -1113,98 +589,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         self.base_mut().update(vertex_iter)
     }
 
-    /*
-    /// This function produces an iterator with an item for each query point which itself is an
-    /// iterator over all neighbours (samples) of the corresponding query point.
-    pub fn nearest_neighbour_iter<'a>(&'a self, query_points: &'a [[T; 3]]) -> impl Iterator<Item = impl Iterator<Item = Sample<T>> + 'a> + 'a {
-        let ImplicitSurface {
-            ref kernel,
-            base_radius,
-            ref spatial_tree,
-            ref samples,
-            max_step,
-            ..
-        } = *self;
-
-        let radius = base_radius * radius_multiplier;
-        let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
-        let radius2 = radius_ext * radius_ext;
-        query_points.iter().map(move |&q| {
-            let q_pos = Vector3(q).cast::<f64>().unwrap().into();
-            self.spatial_tree.locate_within_distance(q_pos, radius2).cloned()
-        })
-
-        // Global kernel, all points are neighbours
-        (None, Some(query_points.iter().map(move |_| {
-            self.samples.iter()
-        })))
-    }
-    */
-
-    /// Compute neighbour storage. Return true if neighbours have been changed.
-    pub fn compute_neighbours(&mut self, query_points: &[[T; 3]]) -> bool {
-        match self {
-            ImplicitSurface::MLS(mls) => mls.compute_neighbours(query_points),
-            _ => {
-                true
-                // Nothing to be done here, each query point neighbours all samples.
-                //// Global kernel, all points are neighbours
-                //let neigh = |_| samples.iter();
-                //let mut cache = self.query_neighbourhood.borrow_mut();
-                //cache.compute_neighbourhoods(
-                //    query_points,
-                //    neigh,
-                //    |q| {
-                //        spatial_tree
-                //            .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
-                //            .expect("Empty spatial tree")
-                //    },
-                //    surface_topo,
-                //    dual_topo,
-                //    sample_type,
-                //)
-            }
-        }
-    }
-
-    /// The number of query points in the cache (regardless if their neighbourhood is empty).
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_query_points(&self) -> Result<usize, super::Error> {
-        if let ImplicitSurface::MLS(mls) = self {
-            mls.num_query_points()
-        } else {
-            Err(super::Error::UnsupportedKernel)
-        }
-    }
-
-    /// The number of query points with non-empty neighbourhoods in the cache.
-    /// This function returns `None` if the cache is invalid.
-    pub fn num_neighbourhoods(&self) -> Result<usize, super::Error> {
-        if let ImplicitSurface::MLS(mls) = self {
-            mls.num_neighbourhoods()
-        } else {
-            Err(super::Error::UnsupportedKernel)
-        }
-    }
-
-    /// Return a vector of indices for query points with non-empty neighbourhoods.
-    pub fn nonempty_neighbourhood_indices(&self) -> Result<Vec<usize>, super::Error> {
-        if let ImplicitSurface::MLS(mls) = self {
-            mls.nonempty_neighbourhood_indices()
-        } else {
-            Err(super::Error::UnsupportedKernel)
-        }
-    }
-
-    /// Return a vector over query points, giving the sizes of each neighbourhood.
-    pub fn neighbourhood_sizes(&self) -> Result<Vec<usize>, super::Error> {
-        if let ImplicitSurface::MLS(mls) = self {
-            mls.neighbourhood_sizes()
-        } else {
-            Err(super::Error::UnsupportedKernel)
-        }
-    }
-
     /// The `max_step` parameter sets the maximum position change allowed between calls to
     /// retrieve the derivative sparsity pattern (this function). If this is set too large, the
     /// derivative will be denser than then needed, which typically results in slower performance.
@@ -1219,186 +603,6 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
     pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
         if let ImplicitSurface::MLS(mls) = self {
             mls.update_radius_multiplier(new_radius_multiplier);
-        }
-    }
-
-    /// Project the given set of positions to be below the specified iso-value along the gradient.
-    /// If the query point is already below the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far below the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness below the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_below(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Below, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above the specified iso-value along the gradient.
-    /// If the query point is already above the given iso-value, then it is not modified.
-    /// The given `epsilon` determines how far above the iso-surface the point is allowed to be
-    /// projected, essentially it is the thickness above the iso-surface of value projections.
-    /// This function will return true if convergence is achieved and false if the projection needed
-    /// more iterations.
-    pub fn project_to_above(
-        &self,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        self.project(Side::Above, iso_value, epsilon, query_points)
-    }
-
-    /// Project the given set of positions to be above (below) the specified iso-value along the
-    /// gradient.  If the query point is already above (below) the given iso-value, then it is not
-    /// modified.  The given `epsilon` determines how far above (below) the iso-surface the point
-    /// is allowed to be projected, essentially it is the thickness above (below) the iso-surface
-    /// of value projections.  This function will return true if convergence is achieved and false
-    /// if the projection needed more iterations.
-    pub fn project(
-        &self,
-        side: Side,
-        iso_value: T,
-        epsilon: T,
-        query_points: &mut [[T; 3]],
-    ) -> Result<bool, super::Error> {
-        let multiplier = match side {
-            Side::Above => T::one(),
-            Side::Below => -T::one(),
-        };
-        let iso_value = iso_value * multiplier;
-
-        let mut candidate_points = query_points.to_vec();
-        let mut potential = vec![T::zero(); query_points.len()];
-        let mut candidate_potential = vec![T::zero(); query_points.len()];
-        let mut steps = vec![[T::zero(); 3]; query_points.len()];
-        let mut nml_sizes = vec![T::zero(); query_points.len()];
-
-        let max_steps = 20;
-        let max_binary_search_iters = 10;
-
-        let mut convergence = true;
-
-        for i in 0..max_steps {
-            self.potential(query_points, &mut potential)?;
-            potential.iter_mut().for_each(|x| *x *= multiplier);
-
-            // The transpose of the potential gradient at each of the query points.
-            self.query_jacobian_full(query_points, &mut steps)?;
-
-            for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
-                *norm = Vector3(*step).norm();
-            }
-
-            // Count the number of points with values less than iso_value.
-            let count_violations = potential
-                .iter()
-                .zip(nml_sizes.iter())
-                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
-                .count();
-
-            if count_violations == 0 {
-                break;
-            }
-
-            // Compute initial step directions
-            for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
-                .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
-            {
-                let nml = Vector3(*step);
-                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
-                *step = (nml * (multiplier * offset)).into();
-            }
-
-            for j in 0..max_binary_search_iters {
-                // Try this step
-                for (p, q, &step, _, _) in zip!(
-                    candidate_points.iter_mut(),
-                    query_points.iter(),
-                    steps.iter(),
-                    nml_sizes.iter(),
-                    potential.iter()
-                )
-                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
-                {
-                    *p = (Vector3(*q) + Vector3(step)).into();
-                }
-
-                self.potential(&candidate_points, &mut candidate_potential)?;
-                candidate_potential
-                    .iter_mut()
-                    .for_each(|x| *x *= multiplier);
-
-                let mut count_overshoots = 0;
-                for (step, _, _, _) in zip!(
-                    steps.iter_mut(),
-                    nml_sizes.iter(),
-                    potential.iter(),
-                    candidate_potential.iter()
-                )
-                .filter(|(_, &norm, &old, &new)| {
-                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
-                }) {
-                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
-                    count_overshoots += 1;
-                }
-
-                if count_overshoots == 0 {
-                    break;
-                }
-
-                if j == max_binary_search_iters - 1 {
-                    convergence = false;
-                }
-            }
-
-            // Update query points
-            query_points
-                .iter_mut()
-                .zip(candidate_points.iter())
-                .for_each(|(q, p)| *q = *p);
-
-            if i == max_steps - 1 {
-                convergence = false;
-            }
-        }
-
-        Ok(convergence)
-    }
-
-    /// Compute the implicit surface potential.
-    pub fn potential(
-        &self,
-        query_points: &[[T; 3]],
-        out_field: &mut [T],
-    ) -> Result<(), super::Error> {
-        match self {
-            ImplicitSurface::MLS(mls) => mls.potential(query_points, out_field),
-            ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => {
-                Self::compute_hrbf(query_points, &surf_base.samples, out_field)
-            }
-        }
-    }
-    /*
-     * The following functions interpolate vector fields instead of potentials
-     */
-
-    /// Compute vector field on the surface.
-    pub fn vector_field(
-        &self,
-        query_points: &[[T; 3]],
-        out_vectors: &mut [[T; 3]],
-    ) -> Result<(), super::Error> {
-        match self {
-            ImplicitSurface::MLS(mls) => apply_kernel_fn!(mls, |kernel| mls.compute_vector_field(
-                query_points,
-                kernel,
-                out_vectors
-            )),
-            ImplicitSurface::Hrbf(HrbfSurface { .. }) => Err(super::Error::UnsupportedKernel),
         }
     }
 
@@ -1427,37 +631,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         }
     }
 
-    /// Compute the gradient of the face normal at the given sample with respect to
-    /// the given vertex.
-    //pub(crate) fn face_unit_normal_gradient(
-    //    sample: Sample<T>,
-    //    vtx_idx: usize,
-    //    surface_vertices: &[Vector3<T>],
-    //    surface_topo: &[[usize; 3]],
-    //) -> Matrix3<T> {
-    //    let nml_proj = Self::scaled_tangent_projection(sample);
-    //    let tri_indices = &surface_topo[sample.index];
-    //    let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-    //    tri.area_normal_gradient(vtx_idx) * nml_proj
-    //}
-
-    ///// Compute the background potential field. This function returns a struct that provides some
-    ///// useful quanitities for computing derivatives of the field.
-    //pub(crate) fn compute_background_potential<'a, K: 'a>(
-    //    q: Vector3<T>,
-    //    samples: SamplesView<'a, 'a, T>,
-    //    closest: usize,
-    //    kernel: K,
-    //    bg_type: BackgroundFieldType,
-    //) -> BackgroundField<'a, T, T, K>
-    //where
-    //    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
-    //{
-    //    // Construct a background field for computing derivative contribution.
-    //    BackgroundField::new(q, samples, closest, kernel, BackgroundFieldValue::jac(bg_type))
-    //}
-
-    fn compute_hrbf(
+    pub fn compute_hrbf(
         query_points: &[[T; 3]],
         samples: &Samples<T>,
         out_potential: &mut [T],
@@ -1838,87 +1012,6 @@ where
     })
 }
 
-/// Utility function to subdivide a range into a `Vec` of smaller ranges with a given size.
-fn split_range_into_chunks(
-    rng: std::ops::Range<usize>,
-    chunk_size: usize,
-) -> Vec<std::ops::Range<usize>> {
-    let len = rng.end - rng.start;
-    let num_uniform_chunks = len / chunk_size;
-    let mut ranges = Vec::with_capacity(num_uniform_chunks + 1);
-    for i in 0..num_uniform_chunks {
-        let begin = i * chunk_size + rng.start;
-        let end = (i + 1) * chunk_size + rng.start;
-        ranges.push(begin..end);
-    }
-
-    // Add remainder chunk
-    if len > ranges.len() * chunk_size {
-        ranges.push(num_uniform_chunks * chunk_size + rng.start..rng.end);
-    }
-    ranges
-}
-
-impl<T: Real + Send + Sync> GlobalMLS<T> {
-    pub fn trivial_neighbourhood_seq<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = &'a [usize]> + ExactSizeIterator + Clone + 'a {
-        (0..self.closest_samples.len())
-            .into_iter()
-            .map(move |_| self.sample_indices.as_slice())
-    }
-
-    pub fn closest_samples(&self) -> Result<&[usize], super::Error> {
-        if !self.closest_samples.is_empty() {
-            Ok(self.closest_samples.as_slice())
-        } else {
-            Err(super::Error::MissingNeighbourData)
-        }
-    }
-
-    pub fn extended_neighbourhood_seq<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = &'a [usize]> + ExactSizeIterator + 'a {
-        self.trivial_neighbourhood_seq()
-    }
-    pub fn trivial_neighbourhood_par<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a {
-        (0..self.closest_samples.len())
-            .into_par_iter()
-            .map(move |_| self.sample_indices.as_slice())
-    }
-    pub fn extended_neighbourhood_par<'a>(
-        &'a self,
-    ) -> impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a {
-        self.trivial_neighbourhood_par()
-    }
-    pub fn trivial_neighbourhood_par_chunks<'a>(
-        &'a self,
-        chunk_size: usize,
-    ) -> impl ParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>>
-                 + IndexedParallelIterator
-                 + 'a {
-        let ranges = split_range_into_chunks(0..self.closest_samples.len(), chunk_size);
-        ranges.into_par_iter().map(move |rng| {
-            let out: Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a> =
-                Box::new(rng.map(move |_| self.sample_indices.as_slice()));
-            out
-        })
-    }
-    pub fn extended_neighbourhood_par_chunks<'a>(
-        &'a self,
-        chunk_size: usize,
-    ) -> impl ParallelIterator<Item = impl Iterator<Item = &'a [usize]> + ExactSizeIterator + 'a>
-                 + IndexedParallelIterator
-                 + 'a {
-        let ranges = split_range_into_chunks(0..self.closest_samples.len(), chunk_size);
-        ranges
-            .into_par_iter()
-            .map(move |rng| rng.map(move |_| self.sample_indices.as_slice()))
-    }
-}
-
 /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
 #[cfg(test)]
 pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
@@ -1941,22 +1034,6 @@ mod tests {
     use super::*;
     use crate::*;
     use geo::mesh::*;
-
-    #[test]
-    fn split_range_into_chunks() {
-        let r = 0..4;
-        assert_eq!(super::split_range_into_chunks(r, 2), vec![0..2, 2..4]);
-        let r = 0..17;
-        assert_eq!(
-            super::split_range_into_chunks(r, 5),
-            vec![0..5, 5..10, 10..15, 15..17]
-        );
-        let r = 0..17;
-        assert_eq!(
-            super::split_range_into_chunks(r, 3),
-            vec![0..3, 3..6, 6..9, 9..12, 12..15, 15..17]
-        );
-    }
 
     // Helper function for testing. This is an implicit surface and grid mesh pair where each
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
@@ -2166,6 +1243,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "serde")]
     mod test_structs {
         use serde::{Deserialize, Serialize};
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2199,6 +1277,7 @@ mod tests {
 
     /// Test a specific case where the projection direction can be zero, which could result in
     /// NaNs. This case must not crash.
+    #[cfg(feature = "serde")]
     #[test]
     fn zero_step_projection_test() -> Result<(), crate::Error> {
         use std::io::Read;
@@ -2236,7 +1315,6 @@ mod tests {
                 kernel: kernel.into(),
                 base_radius,
                 max_step,
-                query_neighbourhood: Neighbourhood::new(),
                 surf_base: ImplicitSurfaceBase {
                     bg_field_params,
                     surface_topo,

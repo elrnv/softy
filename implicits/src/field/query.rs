@@ -1,12 +1,12 @@
 use super::*;
 use rayon::iter::Either;
-use serde::{Deserialize, Serialize};
 
 /// A data structure to store precomputed query information about an implicit surface. For example
 /// precomputed sample neighbours to each query point are stored here for local potential fields.
 /// Note that this data structure doesn't store the actual query positions, just the topologies,
 /// since different query positions can be used with the same topology.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum QueryTopo<T = f64>
 where
     T: Real,
@@ -255,7 +255,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     /// This function returns precomputed neighbours.
     pub fn trivial_neighbourhood_par<'a>(
         &'a self,
-    ) -> impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a {
+    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
                 Either::Left(neighbourhood.trivial_set().par_iter().map(|x| x.as_slice()))
@@ -275,7 +275,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     /// This function returns precomputed closest samples.
     pub fn closest_samples_par<'a>(
         &'a self,
-    ) -> impl ParallelIterator<Item = usize> + IndexedParallelIterator + 'a {
+    ) -> impl IndexedParallelIterator<Item = usize> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
                 Either::Left(neighbourhood.closest_set().par_iter().cloned())
@@ -289,7 +289,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     /// This function returns precomputed neighbours.
     pub fn extended_neighbourhood_par<'a>(
         &'a self,
-    ) -> impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a {
+    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => Either::Left(
                 neighbourhood
@@ -305,9 +305,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     pub fn trivial_neighbourhood_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
-    ) -> impl ParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>>
-                 + IndexedParallelIterator
-                 + 'a {
+    ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => Either::Left(
                 neighbourhood
@@ -339,7 +337,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     pub fn closest_samples_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
-    ) -> impl ParallelIterator<Item = &'a [usize]> + IndexedParallelIterator + 'a {
+    ) -> impl IndexedParallelIterator<Item = &'a [usize]>  + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => Either::Left(
                 neighbourhood
@@ -356,16 +354,16 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     /// This function returns precomputed neighbours.
     pub fn trivial_neighbourhood_seq<'a>(
         &'a self,
-    ) -> impl Iterator<Item = &'a [usize]> + ExactSizeIterator + Clone + 'a {
+    ) -> Box<dyn ExactSizeIterator<Item = &'a [usize]> + 'a> {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
-                Either::Left(neighbourhood.trivial_set().iter().map(|x| x.as_slice()))
+                Box::new(neighbourhood.trivial_set().iter().map(|x| x.as_slice()))
             }
             QueryTopo::Global {
                 closest_samples,
                 sample_indices,
                 ..
-            } => Either::Right(
+            } => Box::new(
                 (0..closest_samples.len())
                     .into_iter()
                     .map(move |_| sample_indices.as_slice()),
@@ -374,24 +372,24 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     }
 
     /// This function returns precomputed closest samples.
-    pub fn closest_samples_seq<'a>(&'a self) -> impl Iterator<Item = usize> + 'a {
+    pub fn closest_samples_seq<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
-                Either::Left(neighbourhood.closest_set().iter().cloned())
+                Box::new(neighbourhood.closest_set().iter().cloned())
             }
             QueryTopo::Global {
                 closest_samples, ..
-            } => Either::Right(closest_samples.iter().cloned()),
+            } => Box::new(closest_samples.iter().cloned()),
         }
     }
 
     /// This function returns precomputed neighbours.
-    pub fn extended_neighbourhood_seq<'a>(&'a self) -> impl Iterator<Item = &'a [usize]> + 'a {
+    pub fn extended_neighbourhood_seq<'a>(&'a self) -> Box<dyn Iterator<Item = &'a [usize]> + 'a> {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
-                Either::Left(neighbourhood.extended_set().iter().map(|x| x.as_slice()))
+                Box::new(neighbourhood.extended_set().iter().map(|x| x.as_slice()))
             }
-            QueryTopo::Global { .. } => Either::Right(self.trivial_neighbourhood_seq()),
+            QueryTopo::Global { .. } => Box::new(self.trivial_neighbourhood_seq()),
         }
     }
 
@@ -721,4 +719,23 @@ fn split_range_into_chunks(
         ranges.push(num_uniform_chunks * chunk_size + rng.start..rng.end);
     }
     ranges
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn split_range_into_chunks() {
+        let r = 0..4;
+        assert_eq!(super::split_range_into_chunks(r, 2), vec![0..2, 2..4]);
+        let r = 0..17;
+        assert_eq!(
+            super::split_range_into_chunks(r, 5),
+            vec![0..5, 5..10, 10..15, 15..17]
+        );
+        let r = 0..17;
+        assert_eq!(
+            super::split_range_into_chunks(r, 3),
+            vec![0..3, 3..6, 6..9, 9..12, 12..15, 15..17]
+        );
+    }
 }

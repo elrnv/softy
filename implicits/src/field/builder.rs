@@ -373,7 +373,6 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             | KernelType::Approximate { .. } => Some(LocalMLS {
                 kernel: self.kernel.into(),
                 base_radius,
-                query_neighbourhood: Neighbourhood::new(),
                 max_step: T::from(self.max_step).unwrap(),
                 surf_base,
             }),
@@ -396,8 +395,6 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             let surf_base = self.build_base()?;
             return Some(MLS::Global(GlobalMLS {
                 kernel: self.kernel.into(),
-                closest_samples: Vec::new(),
-                sample_indices: (0..surf_base.samples.len()).collect(),
                 surf_base,
             }));
         }

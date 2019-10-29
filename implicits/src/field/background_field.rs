@@ -2,10 +2,10 @@ use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::{RadialKernel, SphericalKernel};
 use geo::math::{Matrix3, Vector3};
 use geo::Real;
-use serde::{Deserialize, Serialize};
 
 /// Different types of background fields supported.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BackgroundFieldType {
     /// Use a zero background field.
     Zero,
@@ -16,7 +16,8 @@ pub enum BackgroundFieldType {
 }
 
 /// Parameters used to pick which type of background field should be used.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BackgroundFieldParams {
     pub field_type: BackgroundFieldType,
     pub weighted: bool,
@@ -50,7 +51,8 @@ impl<V: num_traits::Zero> BackgroundFieldValue<V> {
 /// indicates that the closest point is within some radius (e.g. kernel radius) of the query point.
 /// A `Global` index is outside this radius, which indicates that the query point is outside the
 /// local radius of the samples, and the field is purely a background field.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ClosestIndex {
     Local(usize),
     Global(usize),

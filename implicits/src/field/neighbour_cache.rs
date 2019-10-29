@@ -1,7 +1,6 @@
 use super::{samples::Sample, SampleType};
 use geo::Real;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub(crate) fn compute_closest_set<'a, T, C>(
@@ -39,7 +38,8 @@ where
 ///      set* and
 ///   2. an extended set of samples reachable via triangles adjacent to the trivial set, which we
 ///      dub the *extended set*.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Neighbourhood {
     /// The closest sample to each query point.
     closest_set: Vec<usize>,

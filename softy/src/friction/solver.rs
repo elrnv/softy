@@ -178,7 +178,8 @@ impl<'a> FrictionProblem<'a> {
             if radius > 0.0 {
                 let constraint_radius = 1.0;
                 if p_norm > constraint_radius {
-                    *r = (Tensor::new([pred[1], pred[2]]) * (constraint_radius / p_norm)).into_inner();
+                    *r = (Tensor::new([pred[1], pred[2]]) * (constraint_radius / p_norm))
+                        .into_inner();
                 } else {
                     *r = (Tensor::new([pred[1], pred[2]])).into_inner();
                 }
@@ -224,7 +225,9 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
         // Convert to physical space.
-        let mut diff: Chunked3<Vec<f64>> = contact_basis.from_tangent_space(diff_t.view().into()).collect();
+        let mut diff: Chunked3<Vec<f64>> = contact_basis
+            .from_tangent_space(diff_t.view().into())
+            .collect();
 
         *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
 
@@ -261,15 +264,18 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         let diff_t: Chunked2<Vec<_>> = (r_t.expr() - prev_r_t.expr()).eval();
 
         // Convert to physical space.
-        let mut diff: Chunked3<Vec<f64>> = contact_basis.from_tangent_space(diff_t.view().into()).collect();
+        let mut diff: Chunked3<Vec<f64>> = contact_basis
+            .from_tangent_space(diff_t.view().into())
+            .collect();
 
         *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
-
 
         let grad = mass_inv_mtx.view() * *diff.view().as_tensor();
         //let grad = diff.view();
 
-        let grad_t: Vec<_> = contact_basis.to_tangent_space(grad.view().into_inner().into()).collect();
+        let grad_t: Vec<_> = contact_basis
+            .to_tangent_space(grad.view().into_inner().into())
+            .collect();
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
@@ -374,7 +380,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
             let mut idx = 0;
             for (row_idx, row) in self.0.hessian.data.iter().enumerate() {
                 for col_idx in row.index_iter() {
-                    if row_idx < col_idx  {
+                    if row_idx < col_idx {
                         continue;
                     }
                     rows[idx] = (2 * row_idx) as Index;
@@ -420,7 +426,9 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
                     continue;
                 }
 
-                let hess_block = (*block.into_arrays().as_tensor() * obj_factor * self.0.objective_scale).into_inner();
+                let hess_block =
+                    (*block.into_arrays().as_tensor() * obj_factor * self.0.objective_scale)
+                        .into_inner();
 
                 vals[idx] = hess_block[0][0];
                 idx += 1;
@@ -487,7 +495,7 @@ mod tests {
             dynamic_friction: mu,
             inner_iterations: 100,
             tolerance: 1e-15,
-            print_level: 5,
+            print_level: 0,
         };
 
         let prev_friction_impulse_t = vec![[0.0, 0.0]];

@@ -113,7 +113,7 @@ mod tests {
             dynamic_friction: mu,
             inner_iterations: 30,
             tolerance: 1e-10,
-            print_level: 5,
+            print_level: 0,
         };
 
         let prev_friction_impulse_t = vec![[0.0, 0.0]];

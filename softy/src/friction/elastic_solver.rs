@@ -224,7 +224,7 @@ mod tests {
             dynamic_friction: mu,
             inner_iterations: 30,
             tolerance: 1e-10,
-            print_level: 5,
+            print_level: 0,
         };
 
         let velocity = vec![[1.0, 0.0, 0.0]]; // one point sliding right.

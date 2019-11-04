@@ -5,7 +5,6 @@ Cargo.lock
 /backup
 /scene
 /render
-/texture
 /hip/backup
 **/*.exr
 .vscode

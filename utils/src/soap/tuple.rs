@@ -43,20 +43,6 @@ impl<U, V, S: StorageInto<U>, T: StorageInto<V>> StorageInto<(U, V)> for (S, T) 
     }
 }
 
-//impl<U, S: StorageInto<U>, T> StorageInto<U> for (S, T) {
-//    type Output = S::Output;
-//    fn storage_into(self) -> Self::Output {
-//        self.0.storage_into()
-//    }
-//}
-//
-//impl<U, T: StorageInto<U>, S> StorageInto<U> for (S, T) {
-//    type Output = T::Output;
-//    fn storage_into(self) -> Self::Output {
-//        self.1.storage_into()
-//    }
-//}
-
 impl<S, T, U> CloneWithStorage<U> for (S, T) {
     type CloneType = U;
     fn clone_with_storage(&self, storage: U) -> Self::CloneType {
@@ -252,4 +238,8 @@ where
             .into_static_chunk_iter()
             .zip(self.1.into_static_chunk_iter())
     }
+}
+
+impl<N, S: UniChunkable<N>, T: UniChunkable<N>> UniChunkable<N> for (S, T) {
+    type Chunk = (S::Chunk, T::Chunk);
 }

@@ -30,8 +30,12 @@ pub struct FrictionParams {
 pub struct FrictionalContact {
     pub params: FrictionParams,
     pub contact_basis: ContactBasis,
-    pub object_impulse: Chunked3<Vec<f64>>,
-    pub collider_impulse: Sparse<Chunked3<Vec<f64>>, std::ops::RangeTo<usize>>,
+    /// The impulse required to correct the velocities from the elasticity solve on the object
+    /// along with the true applied friction impulse.
+    pub object_impulse: Chunked3<(Vec<f64>, Vec<f64>)>,
+    /// The impulse required to correct the velocities from the elasticity solve on the collider
+    /// along with the true applied friction impulse.
+    pub collider_impulse: Sparse<Chunked3<(Vec<f64>, Vec<f64>)>, std::ops::RangeTo<usize>>,
 }
 
 impl FrictionalContact {

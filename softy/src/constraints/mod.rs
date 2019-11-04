@@ -60,32 +60,40 @@ pub fn remap_values<T: Copy>(
     old_indices: impl Iterator<Item = usize> + Clone,
     new_indices: impl Iterator<Item = usize> + Clone,
 ) -> Vec<T> {
+    remap_values_iter(values, default, old_indices, new_indices).collect()
+}
+
+/// Same as above but this returns an iterator.
+pub fn remap_values_iter<T: Copy>(
+    values: impl Iterator<Item = T>,
+    default: T,
+    old_indices: impl Iterator<Item = usize> + Clone,
+    new_indices: impl Iterator<Item = usize> + Clone,
+) -> impl Iterator<Item = T> {
     // Check that both input slices are sorted.
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut old_indices.clone()));
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
     let mut old_iter = values.zip(old_indices).peekable();
 
-    new_indices
-        .map(move |new_idx| {
-            while let Some(&(_, old_idx)) = old_iter.peek() {
-                if old_idx < new_idx {
-                    // Trash old value, no corresponding new value here.
-                    old_iter.next();
-                    continue;
-                }
-
-                if old_idx == new_idx {
-                    // A match! Consume old value.
-                    return old_iter.next().unwrap().0;
-                }
-
-                // Otherwise, we don't consume old and increment new_iter only.
-
-                break;
+    new_indices.map(move |new_idx| {
+        while let Some(&(_, old_idx)) = old_iter.peek() {
+            if old_idx < new_idx {
+                // Trash old value, no corresponding new value here.
+                old_iter.next();
+                continue;
             }
-            default
-        })
-        .collect()
+
+            if old_idx == new_idx {
+                // A match! Consume old value.
+                return old_iter.next().unwrap().0;
+            }
+
+            // Otherwise, we don't consume old and increment new_iter only.
+
+            break;
+        }
+        default
+    })
 }
 
 #[test]
@@ -211,7 +219,7 @@ pub trait ContactConstraint:
             }
 
             assert_eq!(indices.len(), frictional_contact.object_impulse.len());
-            for (contact_idx, (&i, &r)) in indices
+            for (contact_idx, (&i, (_, &r))) in indices
                 .iter()
                 .zip(frictional_contact.object_impulse.iter())
                 .enumerate()
@@ -250,7 +258,7 @@ pub trait ContactConstraint:
 
             assert_eq!(indices.len(), frictional_contact.object_impulse.len());
 
-            for (contact_idx, (&i, &r)) in indices
+            for (contact_idx, (&i, (_, &r))) in indices
                 .iter()
                 .zip(frictional_contact.object_impulse.iter())
                 .enumerate()

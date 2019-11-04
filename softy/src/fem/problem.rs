@@ -12,7 +12,7 @@ use ipopt::{self, Number};
 use std::cell::RefCell;
 use utils::{soap::*, zip};
 
-const FORWARD_FRICTION: bool = false;
+const FORWARD_FRICTION: bool = true;
 
 #[derive(Clone)]
 pub struct Solution {
@@ -194,6 +194,11 @@ pub struct ObjectData {
     pub cur_x: RefCell<VertexData<Vec<f64>>>,
     /// Workspace vector to rescale variable values before performing computations on them.
     pub cur_v: RefCell<VertexData<Vec<f64>>>,
+
+    /// Saved initial conditions from previous step in case we need to revert.
+    pub prev_prev_x: Vec<f64>,
+    /// Saved initial conditions from previous step in case we need to revert.
+    pub prev_prev_v: Vec<f64>,
 
     /// Workspace positions for all meshes for which the generalized coordinates
     /// don't coincide with vertex positions. These are used to pass concrete
@@ -811,6 +816,8 @@ impl ObjectData {
             prev_v,
             cur_v,
             cur_x,
+            prev_prev_x,
+            prev_prev_v,
             solids,
             shells,
             ..
@@ -824,47 +831,94 @@ impl ObjectData {
             let prev_v_flat_view = prev_v.view_mut().into_flat();
 
             // Update prev pos
-            prev_x_flat_view
-                .iter_mut()
-                .zip(cur_x.view().into_flat().iter())
-                .for_each(|(prev, &cur)| *prev = cur);
+            zip!(
+                prev_prev_x.iter_mut(),
+                prev_x_flat_view.iter_mut(),
+                cur_x.view().into_flat().iter()
+            )
+            .for_each(|(prev_prev, prev, &cur)| {
+                *prev_prev = *prev;
+                *prev = cur;
+            });
 
             // Update prev vel
             if and_velocity {
-                prev_v_flat_view
-                    .iter_mut()
-                    .zip(cur_v.view().into_flat().iter())
-                    .for_each(|(prev, &cur)| *prev = cur);
+                zip!(
+                    prev_prev_v.iter_mut(),
+                    prev_v_flat_view.iter_mut(),
+                    cur_v.view().into_flat().iter()
+                )
+                .for_each(|(prev_prev, prev, &cur)| {
+                    *prev_prev = *prev;
+                    *prev = cur
+                });
             } else {
                 // Clear velocities. This ensures that any non-zero initial velocities are cleared
                 // for subsequent steps.
-                prev_v_flat_view.iter_mut().for_each(|v| *v = 0.0);
+                prev_prev_v
+                    .iter_mut()
+                    .zip(prev_v_flat_view.iter_mut())
+                    .for_each(|(prev, v)| {
+                        *prev = *v;
+                        *v = 0.0
+                    });
             }
         }
 
-        let prev_x = prev_x.view();
-        let prev_v = prev_v.view();
+        Self::update_meshes_with(solids, shells, prev_x.view(), prev_v.view());
+    }
 
+    pub fn revert_prev_step(&mut self) {
+        let ObjectData {
+            prev_x,
+            prev_v,
+            prev_prev_x,
+            prev_prev_v,
+            ..
+        } = self;
+
+        {
+            let prev_x_flat_view = prev_x.view_mut().into_flat();
+            let prev_v_flat_view = prev_v.view_mut().into_flat();
+
+            prev_prev_x
+                .iter()
+                .zip(prev_x_flat_view.iter_mut())
+                .for_each(|(prev, cur)| *cur = *prev);
+
+            prev_prev_v
+                .iter()
+                .zip(prev_v_flat_view.iter_mut())
+                .for_each(|(prev, cur)| *cur = *prev);
+        }
+    }
+
+    pub fn update_meshes_with(
+        solids: &mut [TetMeshSolid],
+        shells: &mut [TriMeshShell],
+        x: VertexView<&[f64]>,
+        v: VertexView<&[f64]>,
+    ) {
         // Update mesh vertex positions and velocities
         for (i, solid) in solids.iter_mut().enumerate() {
             let verts = solid.tetmesh.vertex_positions_mut();
-            verts.copy_from_slice(prev_x.at(0).at(i).into());
+            verts.copy_from_slice(x.at(0).at(i).into());
             solid
                 .tetmesh
                 .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
                 .expect("Missing velocity attribute")
-                .copy_from_slice(prev_v.at(0).at(i).into());
+                .copy_from_slice(v.at(0).at(i).into());
         }
         for (i, shell) in shells.iter_mut().enumerate() {
             match shell.material.properties {
                 ShellProperties::Deformable { .. } => {
                     let verts = shell.trimesh.vertex_positions_mut();
-                    verts.copy_from_slice(prev_x.at(1).at(i).into());
+                    verts.copy_from_slice(x.at(1).at(i).into());
                     shell
                         .trimesh
                         .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
                         .expect("Missing velocity attribute")
-                        .copy_from_slice(prev_v.at(1).at(i).into());
+                        .copy_from_slice(v.at(1).at(i).into());
                 }
                 ShellProperties::Rigid { .. } => {
                     unimplemented!();
@@ -979,6 +1033,21 @@ impl NonLinearProblem {
             .iter()
             .map(|fc| fc.constraint.borrow().contact_radius())
             .min_by(|a, b| a.partial_cmp(b).expect("Detected NaN contact radius"))
+    }
+
+    /// Save an intermediate state of the solve. This is used for debugging.
+    #[allow(dead_code)]
+    pub fn save_intermediate(&mut self, uv: &[f64], step: usize) {
+        let v = self.update_current_velocity(uv);
+        let x = self.compute_step(v.view());
+        let mut solids = self.object_data.solids.clone();
+        let mut shells = self.object_data.shells.clone();
+        ObjectData::update_meshes_with(&mut solids, &mut shells, x.view(), v.view());
+        geo::io::save_tetmesh(
+            &solids[0].tetmesh,
+            &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
+        )
+        .unwrap();
     }
 
     /// Update the solid meshes with the given points.
@@ -1208,7 +1277,7 @@ impl NonLinearProblem {
     }
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
-    /// If `and_velocity` is `false`, then only positions are advance, and velocities are reset.
+    /// If `and_velocity` is `false`, then only positions are advanced, and velocities are reset.
     /// This emulates a critically damped, or quasi-static simulation.
     pub fn advance(&mut self, uv: &[f64], and_velocity: bool, and_warm_start: bool) {
         self.update_current_velocity(uv);
@@ -1223,6 +1292,28 @@ impl NonLinearProblem {
 
         if !and_warm_start {
             self.reset_warm_start();
+        }
+    }
+
+    /// Advance object data one step back.
+    pub fn revert_prev_step(&mut self) {
+        self.object_data.revert_prev_step();
+        self.reset_warm_start();
+        // Clear any frictional impulsesl
+        for fc in self.frictional_contacts.iter() {
+            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
+                friction_data
+                    .collider_impulse
+                    .source_iter_mut()
+                    .for_each(|(x, y)| {
+                        *x = [0.0; 3];
+                        *y = [0.0; 3]
+                    });
+                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
+                    *x = [0.0; 3];
+                    *y = [0.0; 3]
+                });
+            }
         }
     }
 
@@ -1992,25 +2083,31 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     });
             }
         }
+        let x_l = x_l.into_flat();
+        let x_u = x_u.into_flat();
+        debug_assert!(x_l.iter().all(|&x| x.is_finite()) && x_u.iter().all(|&x| x.is_finite()));
         true
     }
 
     fn initial_point(&self, x: &mut [Number]) -> bool {
         x.copy_from_slice(self.warm_start.primal_variables.as_slice());
 
+        debug_assert!(x.iter().all(|&x| x.is_finite()));
         true
     }
 
     fn initial_bounds_multipliers(&self, z_l: &mut [Number], z_u: &mut [Number]) -> bool {
         z_l.copy_from_slice(self.warm_start.lower_bound_multipliers.as_slice());
         z_u.copy_from_slice(self.warm_start.upper_bound_multipliers.as_slice());
+        debug_assert!(z_l.iter().all(|&z| z.is_finite()) && z_u.iter().all(|&z| z.is_finite()));
         true
     }
 
     fn objective(&self, uv: &[Number], obj: &mut Number) -> bool {
         let v = self.update_current_velocity(uv);
         *obj = self.objective_value(v.view());
-        true
+        debug_assert!(obj.is_finite());
+        obj.is_finite()
     }
 
     fn objective_grad(&self, uv: &[Number], grad_f: &mut [Number]) -> bool {
@@ -2099,9 +2196,12 @@ impl ipopt::BasicProblem for NonLinearProblem {
             }
         }
 
-        let scale = self.scale();
-        grad.into_flat().iter_mut().for_each(|g| *g *= scale);
+        let grad_f = grad.into_flat();
 
+        let scale = self.scale();
+        grad_f.iter_mut().for_each(|g| *g *= scale);
+
+        debug_assert!(grad_f.iter().all(|&g| g.is_finite()));
         true
     }
 }
@@ -2139,6 +2239,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
             lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
         }
+
+        debug_assert!(lambda.iter().all(|l| l.is_finite()));
         true
     }
 
@@ -2179,6 +2281,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         assert_eq!(count, g.len());
 
+        debug_assert!(g.iter().all(|g| g.is_finite()));
         true
     }
 
@@ -2202,6 +2305,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         assert_eq!(count, g_l.len());
         assert_eq!(count, g_u.len());
+        debug_assert!(g_l.iter().all(|x| x.is_finite()) && g_u.iter().all(|x| x.is_finite()));
         true
     }
 
@@ -2317,6 +2421,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
         //self.print_jacobian_svd(vals);
 
+        debug_assert!(vals.iter().all(|x| x.is_finite()));
         true
     }
 
@@ -2522,6 +2627,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         assert_eq!(coff, lambda.len());
         //self.print_hessian_svd(vals);
 
+        debug_assert!(vals.iter().all(|x| x.is_finite()));
         true
     }
 }

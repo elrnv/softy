@@ -395,6 +395,8 @@ impl SolverBuilder {
             prev_v: prev_v.clone(),
             cur_x: RefCell::new(prev_x.clone()),
             cur_v: RefCell::new(prev_v.clone()),
+            prev_prev_x: prev_x.into_flat(),
+            prev_prev_v: prev_v.into_flat(),
 
             pos: pos.clone(),
             vel: vel.clone(),
@@ -574,6 +576,7 @@ impl SolverBuilder {
     /// Build the simulation solver.
     pub fn build(&self) -> Result<Solver, Error> {
         let mut problem = self.build_problem()?;
+        let max_time_step = problem.time_step;
 
         let max_size =
             Self::compute_max_size(&problem.object_data.solids, &problem.object_data.shells);
@@ -651,6 +654,8 @@ impl SolverBuilder {
             sim_params: params,
             max_step: 0.0,
             old_active_constraint_set: Chunked::<Vec<usize>>::new(),
+            max_time_step,
+            time_step_remaining: max_time_step,
         })
     }
 
@@ -1050,6 +1055,10 @@ pub struct Solver {
     /// The set is chunked by constraints. Each constraint chunk represents the
     /// active set for that constraint.
     old_active_constraint_set: Chunked<Vec<usize>>,
+    /// Maximum time step.
+    max_time_step: f64,
+    /// The remainder of the time step left to simulate before we are done with this time step.
+    time_step_remaining: f64,
 }
 
 impl Solver {
@@ -1324,16 +1333,10 @@ impl Solver {
         }
     }
 
-    ///// Revert previously committed solution. We just subtract step here.
-    //fn revert_solution(
-    //    problem: &mut NonLinearProblem,
-    //    solution: Solution,
-    //    old_prev_pos: Vec<Vector3<f64>>,
-    //    old_prev_vel: Vec<Vector3<f64>>,
-    //) {
-    //    problem.revert_to(solution, old_prev_pos, old_prev_vel);
-    //    //problem.reset_warm_start();
-    //}
+    /// Revert previously committed solution. We just advance in the opposite direction.
+    fn revert_solution(&mut self) {
+        self.problem_mut().revert_prev_step();
+    }
 
     //fn output_meshes(&self, iter: u32) {
     //    let mesh = self.borrow_mesh();
@@ -1528,20 +1531,24 @@ impl Solver {
         self.save_current_active_constraint_set();
         self.problem_mut().reset_constraint_set();
 
-        // The number of friction solves to do.
+        eprintln!(
+            "[softy] Start step with time step remaining: {}",
+            self.time_step_remaining
+        );
+        let mut recovery = false; // we are in recovery mode.
+                                  // The number of friction solves to do.
         let mut friction_steps =
             vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
         let total_friction_steps = friction_steps.iter().sum::<u32>();
         for _ in 0..self.sim_params.max_outer_iterations {
+            if self.problem().time_step > self.time_step_remaining {
+                self.problem_mut().time_step = self.time_step_remaining;
+            }
             // Remap contacts from the initial constraint reset above, or if the constraints were
             // updated after advection.
-            eprintln!("Remap contacts");
             self.remap_contacts();
-            eprintln!("Save current active constraint set");
             self.save_current_active_constraint_set();
-            eprintln!("Precompute linearized constraints");
             self.problem_mut().precompute_linearized_constraints();
-            eprintln!("Inner Step");
             let step_result = self.inner_step();
 
             // The following block determines if after the inner step there were any changes
@@ -1551,31 +1558,17 @@ impl Solver {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
                     //{
-                    //    // Output intermediate mesh
-                    //    let SolverData {
+                    //    let SolverDataMut {
                     //        problem, solution, ..
-                    //    } = self.solver.solver_data();
-                    //    let pos = problem.compute_step_from_unscaled_velocities(solution.primal_variables);
-                    //    let mut tetmesh = self.borrow_mut_mesh();
-                    //    let v = problem.scale_variables(solution.primal_variables);
-                    //    tetmesh.set_attrib_data::<VelType, VertexIndex>("inter_vel", reinterpret_slice(&v))?;
-                    //    for (&new_p, prev_p) in pos.iter().zip(tetmesh.vertex_positions_mut()) {
-                    //        *prev_p = new_p.into();
-                    //    }
-                    //    geo::io::save_tetmesh(
-                    //        &tetmesh,
-                    //        &std::path::PathBuf::from(format!("./out/mesh_before_{}.vtk", self.step_count)),
-                    //    )?;
+                    //    } = self.solver.solver_data_mut();
+                    //    problem.save_intermediate(solution.primal_variables, self.step_count);
                     //}
 
-                    eprintln!("Check Inner step");
                     let step_acceptable = self.check_inner_step();
 
                     // Restore the constraints to original configuration.
-                    eprintln!("Reset constraint set");
                     self.problem_mut().reset_constraint_set();
 
-                    eprintln!("Solve for friction");
                     if step_acceptable {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
                             debug_assert!(self
@@ -1590,7 +1583,18 @@ impl Solver {
                             }
                         }
                         self.commit_solution(true);
-                        break;
+                        self.time_step_remaining -= self.problem().time_step;
+                        println!("[softy] Time step remaining: {}", self.time_step_remaining);
+                        if !recovery && self.problem().time_step < self.max_time_step {
+                            // Gradually restore time_step if its lower than max_step
+                            self.problem_mut().time_step *= 2.0;
+                        }
+                        recovery = false; // We have recovered.
+                        if approx::relative_eq!(self.time_step_remaining, 0.0) {
+                            // Reset time step progress
+                            self.time_step_remaining = self.max_time_step;
+                            break;
+                        }
                     }
                 }
                 Err(Error::InnerSolveError {
@@ -1598,9 +1602,30 @@ impl Solver {
                     iterations,
                     objective_value,
                 }) => {
-                    result = result.combine_inner_step_data(iterations, objective_value);
-                    self.commit_solution(true);
-                    return Err(Error::SolveError { status, result });
+                    // Something went wrong, revert one step, reduce the time step and try again.
+                    if self.problem().time_step < 1e-7
+                        || status == ipopt::SolveStatus::UserRequestedStop
+                    {
+                        // Time step getting too small, return with an error
+                        result = result.combine_inner_step_data(iterations, objective_value);
+                        self.commit_solution(true);
+                        return Err(Error::SolveError { status, result });
+                    }
+                    if !recovery {
+                        eprintln!("[softy] Recovering: Revert previous step");
+                        self.revert_solution();
+                        self.problem_mut().reset_constraint_set();
+                        // reset friction iterations.
+                        friction_steps
+                            .iter_mut()
+                            .for_each(|n| *n = self.sim_params.friction_iterations);
+                        // Since we reverted a step we should add that time step to the time
+                        // remaining.
+                        self.time_step_remaining += self.problem().time_step;
+                    }
+                    recovery = true;
+                    self.problem_mut().time_step *= 0.5;
+                    eprintln!("[softy] Reduce time step to {}", self.problem().time_step);
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.

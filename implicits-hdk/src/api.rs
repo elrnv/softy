@@ -72,22 +72,23 @@ fn project_vertices(
     samplemesh: &mut geo::mesh::PolyMesh<f64>,
     surface: &mut geo::mesh::PolyMesh<f64>,
     params: Params,
-) -> Result<(), implicits::Error> {
+) -> Result<bool, implicits::Error> {
     use geo::mesh::VertexPositions;
 
     surface.reverse(); // reverse polygons for compatibility with hdk
-    let surf = implicits::surface_from_polymesh(surface, params.into())?;
+    let surf = implicits::mls_from_polymesh(surface, params.into())?;
+    let query_surf = surf.query_topo(samplemesh.vertex_positions());
 
     let pos = samplemesh.vertex_positions_mut();
-    if params.project_below {
-        surf.project_to_below(f64::from(params.iso_value), 1e-4, pos)?;
+    let converged = if params.project_below {
+        query_surf.project_to_below(f64::from(params.iso_value), 1e-4, pos)
     } else {
-        surf.project_to_above(f64::from(params.iso_value), 1e-4, pos)?;
-    }
+        query_surf.project_to_above(f64::from(params.iso_value), 1e-4, pos)
+    };
 
     surface.reverse(); // reverse back
 
-    Ok(())
+    Ok(converged)
 }
 
 /// Main entry point to Rust code.
@@ -113,7 +114,7 @@ where
                         check_interrupt,
                     );
                     surface.reverse(); // reverse back
-                    convert_to_cookresult(res)
+                    convert_to_cookresult(res.map(|_| true))
                 }
                 _ => {
                     // Project vertices
@@ -129,27 +130,28 @@ where
     }
 }
 
-fn convert_to_cookresult(res: Result<(), implicits::Error>) -> CookResult {
+fn convert_to_cookresult(res: Result<bool, implicits::Error>) -> CookResult {
     match res {
-        Ok(()) => CookResult::Success("".to_string()),
+        Ok(true) => CookResult::Success("".to_string()),
+        Ok(false) => CookResult::Warning("Projection failed to converge".to_string()),
         Err(implicits::Error::Interrupted) => {
-            CookResult::Error("Execution was interrupted.".to_string())
+            CookResult::Error("Execution was interrupted".to_string())
         }
         Err(implicits::Error::MissingNormals) => {
-            CookResult::Error("Vertex normals are missing or have the wrong type.".to_string())
+            CookResult::Error("Vertex normals are missing or have the wrong type".to_string())
         }
         Err(implicits::Error::MissingNeighbourData) => {
-            CookResult::Error("Missing neighbour data for derivative computations.".to_string())
+            CookResult::Error("Missing neighbour data for derivative computations".to_string())
         }
-        Err(implicits::Error::Failure) => CookResult::Error("Internal Error.".to_string()),
+        Err(implicits::Error::Failure) => CookResult::Error("Internal Error".to_string()),
         Err(implicits::Error::UnsupportedKernel) => {
-            CookResult::Error("Given kernel is not supported yet.".to_string())
+            CookResult::Error("Given kernel is not supported yet".to_string())
         }
         Err(implicits::Error::InvalidBackgroundConstruction) => {
-            CookResult::Error("Invalid Background field.".to_string())
+            CookResult::Error("Invalid Background field".to_string())
         }
         Err(implicits::Error::UnsupportedSampleType) => CookResult::Error(
-            "Given sample type is not supported by the chosen configuration.".to_string(),
+            "Given sample type is not supported by the chosen configuration".to_string(),
         ),
         Err(implicits::Error::IO { source }) => {
             CookResult::Error(format!("IO Error: {:?}", source))

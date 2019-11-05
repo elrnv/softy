@@ -1,9 +1,9 @@
 use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams};
 use geo::mesh::topology::*;
-use geo::mesh::{attrib::*, PointCloud, PolyMesh, TetMesh};
+use geo::mesh::{attrib::*};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy::{self, fem};
+use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -51,8 +51,8 @@ impl From<softy::Error> for Error {
 
 pub(crate) fn get_solver(
     solver_id: Option<u32>,
-    tetmesh: Option<Box<TetMesh<f64>>>,
-    polymesh: Option<Box<PolyMesh<f64>>>,
+    tetmesh: Option<Box<TetMesh>>,
+    polymesh: Option<Box<PolyMesh>>,
     params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     // Verify that the given id points to a valid solver.
@@ -302,8 +302,8 @@ fn mode_test() {
 //#[allow(clippy::needless_pass_by_value)]
 #[inline]
 pub(crate) fn register_new_solver(
-    mut tetmesh: TetMesh<f64>,
-    shell: Option<Box<PolyMesh<f64>>>,
+    mut tetmesh: TetMesh,
+    shell: Option<Box<PolyMesh>>,
     params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     use geo::algo::SplitIntoConnectedComponents;
@@ -313,13 +313,13 @@ pub(crate) fn register_new_solver(
 
     fem::SolverBuilder::initialize_source_index_attribute(&mut tetmesh)?;
 
-    for mesh in tetmesh.split_into_connected_components() {
+    for mesh in TetMeshExt::from(tetmesh).split_into_connected_components() {
         let material_id = mesh
             .attrib_as_slice::<i32, CellIndex>("mtl_id")
             .map(|slice| mode(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
             .unwrap_or(0);
         let solid_material = get_solid_material(params, material_id)?;
-        solver_builder.add_solid(mesh, solid_material);
+        solver_builder.add_solid(TetMesh::from(mesh), solid_material);
     }
 
     // Add a shell if one was given.
@@ -377,10 +377,10 @@ pub(crate) fn register_new_solver(
 #[inline]
 pub(crate) fn step<F>(
     solver: &mut dyn Solver,
-    tetmesh_points: Option<Box<PointCloud<f64>>>,
-    polymesh_points: Option<Box<PointCloud<f64>>>,
+    tetmesh_points: Option<Box<PointCloud>>,
+    polymesh_points: Option<Box<PointCloud>>,
     check_interrupt: F,
-) -> (Option<TetMesh<f64>>, Option<PolyMesh<f64>>, CookResult)
+) -> (Option<TetMesh>, Option<PolyMesh>, CookResult)
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {
@@ -455,11 +455,11 @@ pub(crate) fn clear_solver_registry() {
 #[inline]
 pub(crate) fn cook<F>(
     solver_id: Option<u32>,
-    tetmesh: Option<Box<TetMesh<f64>>>,
-    polymesh: Option<Box<PolyMesh<f64>>>,
+    tetmesh: Option<Box<TetMesh>>,
+    polymesh: Option<Box<PolyMesh>>,
     params: EL_SoftySimParams,
     check_interrupt: F,
-) -> (Option<(u32, TetMesh<f64>)>, CookResult)
+) -> (Option<(u32, TetMesh)>, CookResult)
 where
     F: Fn() -> bool + Sync + Send + 'static,
 {

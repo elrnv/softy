@@ -1,4 +1,4 @@
-#![type_length_limit="10000000"]
+#![type_length_limit = "10000000"]
 
 use reinterpret::*;
 use std::os::raw::{c_double, c_int};
@@ -237,7 +237,6 @@ pub unsafe extern "C" fn el_iso_free_query_topology(query_topo: *mut EL_IsoQuery
     }
 }
 
-
 /// Compute potential. Return 0 on success.
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_compute_potential(
@@ -312,8 +311,7 @@ pub unsafe extern "C" fn el_iso_project_to_above(
 // below.
 macro_rules! impl_num_jac_entries {
     ($iso:ident.$fn:ident ()) => {
-        (&*($iso as *const implicits::QueryTopo))
-            .$fn() as c_int
+        (&*($iso as *const implicits::QueryTopo)).$fn() as c_int
     };
 }
 
@@ -633,10 +631,7 @@ pub unsafe extern "C" fn el_iso_update_surface(
 /// expects the surface mesh and query points to move, while still maintaining validity of all
 /// Jacobians.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_update_max_step(
-    query_topo: *mut EL_IsoQueryTopo,
-    max_step: f32,
-) {
+pub unsafe extern "C" fn el_iso_update_max_step(query_topo: *mut EL_IsoQueryTopo, max_step: f32) {
     let surf = &mut *(query_topo as *mut implicits::QueryTopo);
     surf.update_max_step(f64::from(max_step));
 }

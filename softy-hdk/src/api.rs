@@ -1,6 +1,6 @@
 use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams};
+use geo::mesh::attrib::*;
 use geo::mesh::topology::*;
-use geo::mesh::{attrib::*};
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
 use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt};

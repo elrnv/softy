@@ -42,25 +42,28 @@ pub enum LocalKernel {
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GlobalKernel {
-    InvDistance2 {
-        tolerance: f64,
-    },
+    InvDistance2 { tolerance: f64 },
 }
 
 impl LocalKernel {
     pub fn radius_multiplier(self) -> f64 {
         match self {
             LocalKernel::Interpolating { radius_multiplier }
-            | LocalKernel::Approximate { radius_multiplier, .. }
-            | LocalKernel::Cubic { radius_multiplier } => radius_multiplier
+            | LocalKernel::Approximate {
+                radius_multiplier, ..
+            }
+            | LocalKernel::Cubic { radius_multiplier } => radius_multiplier,
         }
     }
 
     pub fn with_radius_multiplier(self, radius_multiplier: f64) -> Self {
         match self {
             LocalKernel::Interpolating { .. } => LocalKernel::Interpolating { radius_multiplier },
-            LocalKernel::Approximate { tolerance, .. } => LocalKernel::Approximate { radius_multiplier, tolerance },
-            LocalKernel::Cubic { .. } => LocalKernel::Cubic { radius_multiplier }
+            LocalKernel::Approximate { tolerance, .. } => LocalKernel::Approximate {
+                radius_multiplier,
+                tolerance,
+            },
+            LocalKernel::Cubic { .. } => LocalKernel::Cubic { radius_multiplier },
         }
     }
 }
@@ -72,23 +75,28 @@ impl LocalKernel {
 macro_rules! apply_as_spherical {
     ($kernel:expr, $base_radius:expr, $f:expr) => {
         match $kernel {
-            LocalKernel::Interpolating { radius_multiplier } =>
-                $f($crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier)),
-            LocalKernel::Approximate { radius_multiplier, tolerance } =>
-                $f($crate::kernel::LocalApproximate::new(
-                    $base_radius * radius_multiplier,
-                    tolerance,
-                )),
-            LocalKernel::Cubic { radius_multiplier } =>
-                $f($crate::kernel::LocalCubic::new( $base_radius * radius_multiplier))
+            LocalKernel::Interpolating { radius_multiplier } => $f(
+                $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
+            ),
+            LocalKernel::Approximate {
+                radius_multiplier,
+                tolerance,
+            } => $f($crate::kernel::LocalApproximate::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            )),
+            LocalKernel::Cubic { radius_multiplier } => $f($crate::kernel::LocalCubic::new(
+                $base_radius * radius_multiplier,
+            )),
         }
     };
     ($kernel:expr, $f:expr) => {
         match $kernel {
-            GlobalKernel::InvDistance2 { tolerance } =>
-                $f($crate::kernel::GlobalInvDistance2::new(tolerance)),
+            GlobalKernel::InvDistance2 { tolerance } => {
+                $f($crate::kernel::GlobalInvDistance2::new(tolerance))
+            }
         }
-    }
+    };
 }
 
 impl From<KernelType> for LocalKernel {
@@ -97,15 +105,15 @@ impl From<KernelType> for LocalKernel {
             KernelType::Interpolating { radius_multiplier } => {
                 LocalKernel::Interpolating { radius_multiplier }
             }
-            KernelType::Cubic { radius_multiplier } => {
-                LocalKernel::Cubic { radius_multiplier }
-            }
+            KernelType::Cubic { radius_multiplier } => LocalKernel::Cubic { radius_multiplier },
             KernelType::Approximate {
-                radius_multiplier, tolerance,
-            } => {
-                LocalKernel::Approximate { radius_multiplier, tolerance }
-            }
-            _ => panic!("Incorrect kernel type conversion")
+                radius_multiplier,
+                tolerance,
+            } => LocalKernel::Approximate {
+                radius_multiplier,
+                tolerance,
+            },
+            _ => panic!("Incorrect kernel type conversion"),
         }
     }
 }
@@ -113,10 +121,8 @@ impl From<KernelType> for LocalKernel {
 impl From<KernelType> for GlobalKernel {
     fn from(kernel: KernelType) -> Self {
         match kernel {
-            KernelType::Global { tolerance } => {
-                GlobalKernel::InvDistance2 { tolerance }
-            }
-            _ => panic!("Incorrect kernel type conversion")
+            KernelType::Global { tolerance } => GlobalKernel::InvDistance2 { tolerance },
+            _ => panic!("Incorrect kernel type conversion"),
         }
     }
 }

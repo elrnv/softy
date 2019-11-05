@@ -273,9 +273,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     }
 
     /// This function returns precomputed closest samples.
-    pub fn closest_samples_par<'a>(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = usize> + 'a {
+    pub fn closest_samples_par<'a>(&'a self) -> impl IndexedParallelIterator<Item = usize> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => {
                 Either::Left(neighbourhood.closest_set().par_iter().cloned())
@@ -305,7 +303,8 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     pub fn trivial_neighbourhood_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a {
+    ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a
+    {
         match self {
             QueryTopo::Local { neighbourhood, .. } => Either::Left(
                 neighbourhood
@@ -337,7 +336,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     pub fn closest_samples_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
-    ) -> impl IndexedParallelIterator<Item = &'a [usize]>  + 'a {
+    ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
             QueryTopo::Local { neighbourhood, .. } => Either::Left(
                 neighbourhood

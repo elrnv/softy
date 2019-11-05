@@ -50,9 +50,8 @@ impl TetMeshSolid {
     }
 
     pub(crate) fn surface(&self) -> &TetMeshSurface {
-        self.surface.borrow_with(|| {
-            TetMeshSurface::from(&self.tetmesh)
-        })
+        self.surface
+            .borrow_with(|| TetMeshSurface::from(&self.tetmesh))
     }
 }
 

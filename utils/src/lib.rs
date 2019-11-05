@@ -256,9 +256,12 @@ pub fn make_torus(
             indices.extend_from_slice(&[
                 4, // Number of vertices in the polygon
                 idx,
-                (((idx + 1) % inner_divs) + inner_divs * (idx / inner_divs)) % (inner_divs * outer_divs),
-                ((1 + idx) % inner_divs + (1 + idx / inner_divs) * inner_divs) % (inner_divs * outer_divs),
-                (idx % inner_divs + (1 + idx / inner_divs) * inner_divs) % (inner_divs * outer_divs),
+                (((idx + 1) % inner_divs) + inner_divs * (idx / inner_divs))
+                    % (inner_divs * outer_divs),
+                ((1 + idx) % inner_divs + (1 + idx / inner_divs) * inner_divs)
+                    % (inner_divs * outer_divs),
+                (idx % inner_divs + (1 + idx / inner_divs) * inner_divs)
+                    % (inner_divs * outer_divs),
             ]);
         }
     }

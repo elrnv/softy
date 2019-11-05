@@ -75,9 +75,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             .map(move |(i, _)| (i, i))
     }
 
-    pub fn query_jacobian_indices_iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+    pub fn query_jacobian_indices_iter<'a>(&'a self) -> impl Iterator<Item = (usize, usize)> + 'a {
         self.query_jacobian_block_indices_iter()
             .flat_map(move |(row, col)| (0..3).map(move |j| (row, 3 * col + j)))
     }

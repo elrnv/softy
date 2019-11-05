@@ -1,6 +1,6 @@
 use super::FrictionParams;
-use ipopt::{self, Index, Ipopt, Number};
 use crate::contact::*;
+use ipopt::{self, Index, Ipopt, Number};
 use utils::soap::*;
 
 use crate::Error;
@@ -26,7 +26,9 @@ impl<'a> ContactSolver<'a> {
 
         let predictor_impulse = Chunked3::from_array_slice(predictor_impulse);
         let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
-        let predictor_impulse_n: Vec<f64> = contact_basis.to_normal_space(pred.view().into_inner().into()).collect();
+        let predictor_impulse_n: Vec<f64> = contact_basis
+            .to_normal_space(pred.view().into_inner().into())
+            .collect();
 
         let problem = ContactProblem {
             predictor_impulse_n,
@@ -159,11 +161,7 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
         true
     }
 
-    fn hessian_values(
-        &self,
-        _r: &[Number],
-        vals: &mut [Number],
-    ) -> bool {
+    fn hessian_values(&self, _r: &[Number], vals: &mut [Number]) -> bool {
         let mut idx = 0;
         for (row_idx, row) in self.hessian.data.iter().enumerate() {
             for (col_idx, &entry) in row.indexed_source_iter() {

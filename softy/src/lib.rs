@@ -30,6 +30,9 @@ pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
 
+pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
+pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
+
 pub use self::contact::*;
 pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};

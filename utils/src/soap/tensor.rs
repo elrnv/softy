@@ -28,21 +28,25 @@ pub trait AsMutTensor {
 }
 
 impl<T: ?Sized> AsTensor for T {
+    #[inline]
     fn as_tensor(&self) -> &Tensor<T> {
         Tensor::as_ref(self)
     }
 }
 impl<T: ?Sized> AsMutTensor for T {
+    #[inline]
     fn as_mut_tensor(&mut self) -> &mut Tensor<T> {
         Tensor::as_mut(self)
     }
 }
 
 impl<T> Tensor<T> {
+    #[inline]
     pub const fn new(data: T) -> Tensor<T> {
         Tensor { data }
     }
 
+    #[inline]
     pub fn into_inner(self) -> T {
         self.data
     }

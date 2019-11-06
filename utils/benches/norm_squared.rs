@@ -1,42 +1,42 @@
 mod preamble;
-
 use preamble::*;
-use criterion::{criterion_group, criterion_main, Criterion, Fun};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 
-fn norm_squared_benchmark(c: &mut Criterion) {
-    let mat4_norm_squared = Fun::new("Matrix4 norm squared", move |b, _| {
-        let a = matrix4();
-        b.iter(|| a.frob_norm_squared())
-    });
-    let mat4_map_norm_squared = Fun::new("Matrix4 map norm squared", move |b, _| {
-        let a = matrix4();
-        b.iter(|| a.clone().map_inner(|x| x * x).sum_inner())
-    });
-    let mat4_optimal_norm_squared = Fun::new("Matrix4 optimal norm squared", move |b, _| {
-        let a = matrix4();
-        b.iter(|| {
-                a[0][0] * a[0][0]
-                    + a[0][1] * a[0][1]
-                    + a[0][2] * a[0][2]
-                    + a[0][3] * a[0][3]
-                    + a[1][0] * a[1][0]
-                    + a[1][1] * a[1][1]
-                    + a[1][2] * a[1][2]
-                    + a[1][3] * a[1][3]
-                    + a[2][0] * a[2][0]
-                    + a[2][1] * a[2][1]
-                    + a[2][2] * a[2][2]
-                    + a[2][3] * a[2][3]
-                    + a[3][0] * a[3][0]
-                    + a[3][1] * a[3][1]
-                    + a[3][2] * a[3][2]
-                    + a[3][3] * a[3][3]
+fn frob_norm_squared_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Frob Norm Squared");
+
+    let m = matrix4();
+    group.bench_with_input(BenchmarkId::new("frob_norm_squared", 4), &m,
+        |b, &m| b.iter(|| m.frob_norm_squared()));
+    
+    let m = matrix4();
+    group.bench_with_input(BenchmarkId::new("map_inner", 4), &m,
+        |b, &m| b.iter(|| m.map_inner(|x| x * x).sum_inner()));
+
+    let m = matrix4().data;
+    group.bench_with_input(BenchmarkId::new("benchmark", 4), &m,
+        |b, &m| b.iter(|| unsafe {
+              m.get_unchecked(0).get_unchecked(0) * m.get_unchecked(0).get_unchecked(0)
+            + m.get_unchecked(0).get_unchecked(1) * m.get_unchecked(0).get_unchecked(1)
+            + m.get_unchecked(0).get_unchecked(2) * m.get_unchecked(0).get_unchecked(2)
+            + m.get_unchecked(0).get_unchecked(3) * m.get_unchecked(0).get_unchecked(3)
+            + m.get_unchecked(1).get_unchecked(0) * m.get_unchecked(1).get_unchecked(0)
+            + m.get_unchecked(1).get_unchecked(1) * m.get_unchecked(1).get_unchecked(1)
+            + m.get_unchecked(1).get_unchecked(2) * m.get_unchecked(1).get_unchecked(2)
+            + m.get_unchecked(1).get_unchecked(3) * m.get_unchecked(1).get_unchecked(3)
+            + m.get_unchecked(2).get_unchecked(0) * m.get_unchecked(2).get_unchecked(0)
+            + m.get_unchecked(2).get_unchecked(1) * m.get_unchecked(2).get_unchecked(1)
+            + m.get_unchecked(2).get_unchecked(2) * m.get_unchecked(2).get_unchecked(2)
+            + m.get_unchecked(2).get_unchecked(3) * m.get_unchecked(2).get_unchecked(3)
+            + m.get_unchecked(3).get_unchecked(0) * m.get_unchecked(3).get_unchecked(0)
+            + m.get_unchecked(3).get_unchecked(1) * m.get_unchecked(3).get_unchecked(1)
+            + m.get_unchecked(3).get_unchecked(2) * m.get_unchecked(3).get_unchecked(2)
+            + m.get_unchecked(3).get_unchecked(3) * m.get_unchecked(3).get_unchecked(3)
         })
-    });
+    );
         
-    let fns = vec![mat4_norm_squared, mat4_map_norm_squared, mat4_optimal_norm_squared];
-    c.bench_functions("Norm Squared", fns, ());
+    group.finish();
 }
 
-criterion_group!(benches, norm_squared_benchmark);
+criterion_group!(benches, frob_norm_squared_benchmark);
 criterion_main!(benches);

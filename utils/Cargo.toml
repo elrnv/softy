@@ -35,6 +35,9 @@ harness = false
 name = "norm_squared"
 harness = false
 [[bench]]
+name = "trace"
+harness = false
+[[bench]]
 name = "determinant"
 harness = false
 [[bench]]

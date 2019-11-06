@@ -1542,7 +1542,7 @@ where
             for (col_idx, mut block) in row.iter_mut() {
                 let mass_vec = *rhs.0.at(*col_idx);
                 for (block_row, &mass) in block.iter_mut().zip(mass_vec.iter()) {
-                    *block_row = (geo::math::Vector3(*block_row) * mass).into();
+                    *block_row = (Vector3::new(*block_row) * mass).into();
                 }
             }
         }

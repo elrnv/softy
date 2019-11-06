@@ -258,6 +258,18 @@ macro_rules! impl_array_vectors {
                 *self == Self::zero()
             }
         }
+
+        impl<T> Into<[T; $n]> for Tensor<[T; $n]> {
+            fn into(self) -> [T; $n] {
+                self.into_inner()
+            }
+        }
+        impl<T> Into<[T; $n]> for Tensor<[[T; $n]; 1]> {
+            fn into(self) -> [T; $n] {
+                let [x] = self.into_inner();
+                x
+            }
+        }
     };
 }
 

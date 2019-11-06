@@ -128,12 +128,18 @@ impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
     }
 }
 
+
+/// Plain old data trait. Types that implement this trait contain no references and can be copied
+/// with `memcpy`.
+pub trait Pod: 'static + Copy + Sized + Send + Sync {}
+impl<T> Pod for T where T: 'static + Copy + Sized + Send + Sync {}
+
 /*
  * Scalar trait
  */
 
 pub trait Scalar:
-    Copy + Clone + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum + Dummy
+    Pod + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum + Dummy
 {
 }
 

@@ -18,6 +18,34 @@ rayon = "1.2"
 
 [dev-dependencies]
 approx = "0.3"
+cgmath = "0.17"
+criterion = "0.3"
 
 [features]
+unstable = ["criterion/real_blackbox"]
 default = ["sprs"]
+
+[[bench]]
+name = "sum"
+harness = false
+#[[bench]]
+#name = "vectorize"
+#harness = false
+[[bench]]
+name = "norm_squared"
+harness = false
+[[bench]]
+name = "determinant"
+harness = false
+[[bench]]
+name = "inverse"
+harness = false
+[[bench]]
+name = "transpose"
+harness = false
+[[bench]]
+name = "mtx_vec_mul"
+harness = false
+[[bench]]
+name = "mtx_mtx_mul"
+harness = false

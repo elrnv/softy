@@ -1,3 +1,4 @@
+//!
 //! This module implements arithmetic on vectors and matrices of statically sized Rust arrays.
 //! The types defined in this module make arithmetic between vectors and matrices less verbose as
 //! it would otherwise be if using raw Tensors.
@@ -32,6 +33,12 @@ macro_rules! impl_array_vectors {
                 Self::dot(self, rhs)
             }
         }
+        impl<T: Scalar> DotOp<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
+            type Output = T;
+            fn dot(self, rhs: &Tensor<[T; $n]>) -> Self::Output {
+                Self::dot(self, *rhs)
+            }
+        }
 
         impl<T: Scalar> Tensor<[T; $n]> {
             pub fn zeros() -> Tensor<[T; $n]> {
@@ -53,7 +60,7 @@ macro_rules! impl_array_vectors {
 
         impl<T: Copy> Tensor<[T; $n]> {
             #[unroll_for_loops]
-            pub fn map<U, F>(&self, mut f: F) -> Tensor<[U; $n]>
+            pub fn map<U: Pod, F>(&self, mut f: F) -> Tensor<[U; $n]>
             where
                 F: FnMut(T) -> U,
             {
@@ -62,8 +69,10 @@ macro_rules! impl_array_vectors {
                 for i in 0..$n {
                     out[i] = MaybeUninit::new(f(self.data[i]));
                 }
-                // Sanity check required because we can't use transmute on generic types.
-                assert_eq!(
+                // The Pod trait bound ensures safety here in release builds.
+                // Sanity check here just in debug builds only, since this code is very likely in a
+                // critical section.
+                debug_assert_eq!(
                     std::mem::size_of::<[MaybeUninit<U>; $n]>(),
                     std::mem::size_of::<[U; $n]>()
                 );
@@ -277,6 +286,11 @@ impl_array_vectors!(Vector1, RowVector1; 1);
 impl_array_vectors!(Vector2, RowVector2; 2);
 impl_array_vectors!(Vector3, RowVector3; 3);
 impl_array_vectors!(Vector4, RowVector4; 4);
+impl_array_vectors!(Vector5, RowVector5; 5);
+impl_array_vectors!(Vector6, RowVector6; 6);
+impl_array_vectors!(Vector7, RowVector7; 7);
+impl_array_vectors!(Vector8, RowVector8; 8);
+impl_array_vectors!(Vector9, RowVector9; 9);
 
 impl<T: Scalar> Tensor<[T; 3]> {
     pub fn cross(self, other: Tensor<[T; 3]>) -> Tensor<[T; 3]> {
@@ -297,19 +311,27 @@ macro_rules! impl_array_matrices {
         impl<T: Scalar> Matrix for Tensor<[[T; $c]; $r]> {
             type Transpose = Tensor<[[T; $r]; $c]>;
             #[unroll_for_loops]
-            fn transpose(self) -> Self::Transpose {
-                let mut m = [[T::zero(); $r]; $c];
+            fn transpose(mut self) -> Self::Transpose {
+                let mut m: [[MaybeUninit<T>; $r]; $c] =
+                    unsafe { MaybeUninit::uninit().assume_init() };
 
-                for row in 0..$r {
-                    for col in 0..$c {
-                        m[col][row] = self.data[row][col];
+                for col in 0..$c {
+                    for row in 0..$r {
+                        m[col][row] = MaybeUninit::new(self.data[row][col]);
                     }
                 }
-                Tensor::new(m)
+                // Sanity check required because we can't use transmute on generic types.
+                debug_assert_eq!(
+                    std::mem::size_of::<[[MaybeUninit<T>; $r]; $c]>(),
+                    std::mem::size_of::<[[T; $r]; $c]>()
+                );
+                Tensor::new(unsafe { std::mem::transmute_copy::<_, [[T; $r]; $c]>(&m) })
             }
+            #[inline]
             fn num_rows(&self) -> usize {
                 $r
             }
+            #[inline]
             fn num_cols(&self) -> usize {
                 $c
             }
@@ -371,6 +393,7 @@ macro_rules! impl_array_matrices {
             }
 
             /// Compute the sum of all entries in this matrix.
+            #[inline]
             pub fn sum_inner(&self) -> T {
                 self.fold_inner(T::zero(), |acc, x| acc + x)
             }
@@ -382,12 +405,14 @@ macro_rules! impl_array_matrices {
                 }
                 tr
             }
+            #[inline]
             pub fn frob_norm_squared(&self) -> T {
                 (*self).map_inner(|x| x * x).sum_inner()
             }
         }
 
         impl<T: Float + Scalar> Tensor<[[T; $c]; $r]> {
+            #[inline]
             pub fn frob_norm(&self) -> T {
                 self.frob_norm_squared().sqrt()
             }
@@ -454,6 +479,25 @@ macro_rules! impl_array_matrices {
                 Tensor::new(self.map(|row| row.as_tensor().dot(rhs)).data)
             }
         }
+
+        //impl<T: Scalar> Mul<&Tensor<[T; $c]>> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Tensor<[T; $r]>;
+        //    fn mul(self, rhs: &Tensor<[T; $c]>) -> Self::Output {
+        //        Tensor::new(self.map(|row| row.as_tensor().dot(*rhs)).data)
+        //    }
+        //}
+        //impl<T: Scalar> Mul<&Tensor<[T; $c]>> for &Tensor<[[T; $c]; $r]> {
+        //    type Output = Tensor<[T; $r]>;
+        //    fn mul(self, rhs: &Tensor<[T; $c]>) -> Self::Output {
+        //        Tensor::new(self.map(|row| row.as_tensor().dot(*rhs)).data)
+        //    }
+        //}
+        //impl<T: Scalar> Mul<Tensor<[T; $c]>> for &Tensor<[[T; $c]; $r]> {
+        //    type Output = Tensor<[T; $r]>;
+        //    fn mul(self, rhs: Tensor<[T; $c]>) -> Self::Output {
+        //        Tensor::new(self.map(|row| row.as_tensor().dot(rhs)).data)
+        //    }
+        //}
 
         // Right scalar multiply by a raw scalar.
         impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]> {
@@ -547,6 +591,18 @@ macro_rules! impl_array_matrices {
                 *self == Self::zero()
             }
         }
+
+        impl<T: Scalar> Index<usize> for Tensor<[[T; $c]; $r]> {
+            type Output = [T; $c];
+            fn index(&self, index: usize) -> &Self::Output {
+                &self.data[index]
+            }
+        }
+        impl<T: Scalar> IndexMut<usize> for Tensor<[[T; $c]; $r]> {
+            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+                &mut self.data[index]
+            }
+        }
     };
 }
 
@@ -576,6 +632,21 @@ macro_rules! impl_matrix_matrix_mul {
         impl<T: Scalar> Mul<Tensor<[[T; $n]; $p]>> for Tensor<[[T; $p]; $m]> {
             type Output = Tensor<[[T; $n]; $m]>;
             fn mul(self, rhs: Tensor<[[T; $n]; $p]>) -> Self::Output {
+                Tensor::new(
+                    self.map(|row| {
+                        rhs.zip_with(Tensor::new(row), |rhs_row, entry| {
+                            Tensor::new(rhs_row) * Tensor::new(entry)
+                        })
+                        .sum()
+                    })
+                    .map(|row_tensor| row_tensor.into_inner())
+                    .data,
+                )
+            }
+        }
+        impl<T: Scalar> Mul<&Tensor<[[T; $n]; $p]>> for &Tensor<[[T; $p]; $m]> {
+            type Output = Tensor<[[T; $n]; $m]>;
+            fn mul(self, rhs: &Tensor<[[T; $n]; $p]>) -> Self::Output {
                 Tensor::new(
                     self.map(|row| {
                         rhs.zip_with(Tensor::new(row), |rhs_row, entry| {
@@ -769,6 +840,7 @@ impl<T: Scalar + std::ops::Neg<Output = T>> Vector3<T> {
 
 /// Determinant of a 1x1 Matrix.
 impl<T: Scalar> Tensor<[[T; 1]; 1]> {
+    #[inline]
     pub fn determinant(&self) -> T {
         self.data[0][0]
     }
@@ -785,18 +857,18 @@ macro_rules! impl_determinant {
             #[unroll_for_loops]
             pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
                 // Ensure that T has the same size as MaybeUninit.
-                assert_eq!(
+                debug_assert_eq!(
                     std::mem::size_of::<[[MaybeUninit<T>; $n - 1]; $n - 1]>(),
                     std::mem::size_of::<[[T; $n - 1]; $n - 1]>()
                 );
                 let mut m: [[MaybeUninit<T>; $n - 1]; $n - 1] =
                     unsafe { MaybeUninit::uninit().assume_init() };
-                for i in 0..$n - 1 {
+                for i in 1..$n {
                     // Transmute to a MaybeUninit slice.
                     let slice = unsafe {
-                        std::mem::transmute(&self.data[if i < col { i } else { i + 1 }][1..$n])
+                        std::mem::transmute(&self.data[if i < col + 1 { i - 1 } else { i }][1..$n])
                     };
-                    m[i].copy_from_slice(slice);
+                    m[i - 1].copy_from_slice(slice);
                 }
                 // Transmute back to initialized type.
                 Tensor::new(unsafe { std::mem::transmute_copy(&m) })
@@ -832,6 +904,7 @@ impl_determinant!(4);
 
 impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     /// Compute the inverse of a 1x1 matrix.
+    #[inline]
     pub fn inverse(&self) -> Option<Self> {
         let denom = self.data[0][0];
         if denom != T::zero() {
@@ -841,6 +914,7 @@ impl<T: Scalar> Tensor<[[T; 1]; 1]> {
         }
     }
     /// Invert the 1x1 matrix in place. Return true if inversion was successful.
+    #[inline]
     pub fn invert(&mut self) -> bool {
         let denom = self.data[0][0];
         if denom != T::zero() {
@@ -854,6 +928,7 @@ impl<T: Scalar> Tensor<[[T; 1]; 1]> {
 
 impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     /// Compute the inverse of a 2x2 matrix.
+    #[inline]
     pub fn inverse(&self) -> Option<Tensor<[[T; 2]; 2]>> {
         let det = self.determinant();
         if det != T::zero() {
@@ -866,6 +941,7 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
         }
     }
     /// Compute the transpose of a 3x3 matrix inverse.
+    #[inline]
     pub fn inverse_transpose(&self) -> Option<Self> {
         let det = self.determinant();
         if det != T::zero() {
@@ -877,18 +953,20 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
             None
         }
     }
-}
-impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     /// Invert the 2x2 matrix in place. Return true if inversion was successful.
+    ///
+    /// Warning: Microbenchmarks show this function to be slower than inverse.
+    #[inline]
     pub fn invert(&mut self) -> bool {
         let det = self.determinant();
         if det != T::zero() {
-            {
-                let (a, b) = self.data.split_at_mut(1);
-                std::mem::swap(&mut a[0][0], &mut b[0][1]);
+            unsafe {
+                let m00 = self.data.get_unchecked_mut(0).get_unchecked_mut(0) as *mut T;
+                let m11 = self.data.get_unchecked_mut(1).get_unchecked_mut(1) as *mut T;
+                std::ptr::swap(m00, m11);
+                *self.data.get_unchecked_mut(0).get_unchecked_mut(1) *= -T::one();
+                *self.data.get_unchecked_mut(1).get_unchecked_mut(0) *= -T::one();
             }
-            self.data[0][1] = -self.data[0][1];
-            self.data[1][0] = -self.data[1][0];
             *self /= det;
             true
         } else {
@@ -898,10 +976,12 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
 }
 impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
     /// Compute the inverse of a 3x3 matrix.
+    #[inline]
     pub fn inverse(&self) -> Option<Tensor<[[T; 3]; 3]>> {
         self.inverse_transpose().map(|x| x.transpose())
     }
     /// Compute the transpose of a 3x3 matrix inverse.
+    #[inline]
     pub fn inverse_transpose(&self) -> Option<Self> {
         let det = self.determinant();
         if det != T::zero() {
@@ -914,9 +994,10 @@ impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
             None
         }
     }
-}
-impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
     /// Invert the 3x3 matrix in place. Return true if inversion was successful.
+    ///
+    /// Warning: Microbenchmarks show this function to be slower than inverse.
+    #[inline]
     pub fn invert(&mut self) -> bool {
         match self.inverse() {
             Some(inv) => {

@@ -1,8 +1,7 @@
 #![allow(clippy::just_underscores_and_digits)]
 
 use super::Error;
-use geo::math::{Matrix3, Vector3};
-use geo::Real;
+use utils::soap::{Matrix3, Vector3};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -384,7 +383,7 @@ pub trait RadialKernel<T: Real>: Kernel<T> {
             let proj_diff = diff * diff.transpose() * norm_inv2;
             (identity - proj_diff) * (self.df(norm) * norm_inv) + proj_diff * self.ddf(norm)
         } else {
-            Matrix3::zeros()
+            Matrix3::zero()
         }
     }
 

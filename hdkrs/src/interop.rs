@@ -100,9 +100,9 @@ macro_rules! impl_mesh_wrapper_convert {
     };
 }
 
-impl_mesh_wrapper_convert!(HR_TetMesh, geo::mesh::TetMesh<f64>);
-impl_mesh_wrapper_convert!(HR_PolyMesh, geo::mesh::PolyMesh<f64>);
-impl_mesh_wrapper_convert!(HR_PointCloud, geo::mesh::PointCloud<f64>);
+impl_mesh_wrapper_convert!(HR_TetMesh, gut::mesh::TetMesh<f64>);
+impl_mesh_wrapper_convert!(HR_PolyMesh, gut::mesh::PolyMesh<f64>);
+impl_mesh_wrapper_convert!(HR_PointCloud, gut::mesh::PointCloud<f64>);
 
 /// A convenience utility to convert a mutable pointer to an optional mutable reference.
 pub unsafe fn as_mut<'a, U: 'a, T: 'a>(ptr: *mut T) -> Option<&'a mut U>

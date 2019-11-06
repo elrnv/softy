@@ -9,7 +9,7 @@ name = "softyhdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git" }
+geo = { package = "gut", version = "0.2" }
 softy = { path = "../softy" }
 libc = "*"
 hdkrs = { path = "../hdkrs" }

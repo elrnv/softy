@@ -1400,6 +1400,7 @@ pub enum LpNorm {
     Inf,
 }
 
+// TODO: Split this trait into one that works for integers.
 pub trait Norm<T> {
     fn lp_norm(&self, norm: LpNorm) -> T
     where

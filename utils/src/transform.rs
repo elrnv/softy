@@ -1,17 +1,14 @@
 use geo::{
-    math::{Matrix3, Vector3},
     mesh::VertexPositions,
-    Real,
 };
 
 /// Rotate a mesh around a given vector using the right hand rule by `theta` radians.
 /// This function modifies the vertex positions of the given vertex mesh.
 pub fn rotate<T, V3, M>(mesh: &mut M, u: V3, theta: T)
 where
-    T: Real,
-    V3: Copy + Into<Vector3<T>>,
+    V3: Copy + Into<[T; 3]>,
     M: VertexPositions<Element = V3>,
-    Vector3<T>: Into<V3>,
+    [T; 3]: Into<V3>,
 {
     // Normalize axis rotation vector
     let mut u = u.into();

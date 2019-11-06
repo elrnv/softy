@@ -9,7 +9,6 @@ name = "vtkiohdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geometry = { git = "https://gitlab.com/elrnv/geometry.git" }
 hdkrs = { path = "../hdkrs" }
 
 [build-dependencies]

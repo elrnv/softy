@@ -9,9 +9,9 @@ edition = "2018"
 #crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geometry = { git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
+gut = { version = "0.2", features = ["io"] }
 libc = "*"
-reinterpret = "0.1"
+reinterpret = "0.2"
 
 [build-dependencies]
 cbindgen = "0.6"

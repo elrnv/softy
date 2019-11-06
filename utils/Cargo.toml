@@ -6,7 +6,7 @@ edition = "2018"
 license = "MPL-2.0"
 
 [dependencies]
-geo = { package = "geometry", git = "https://gitlab.com/elrnv/geometry.git", features = ["io"] }
+geo = { package = "gut", version = "0.2", features = ["io"] }
 rand = "0.5"
 typenum = "1.10"
 reinterpret = "0.2"

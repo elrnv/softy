@@ -2,12 +2,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use geo::io::{
+use gut::io::{
     convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
-use geo::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
-use geo::{self, NumCells, NumFaces};
+use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
+use gut::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use reinterpret::reinterpret_slice;
 use std::any::TypeId;
@@ -660,7 +660,7 @@ pub unsafe extern "C" fn hr_make_pointcloud(
     );
     let verts = ptr_to_vec_of_triples((ncoords / 3) as usize, coords);
     let ptcloud = Box::new(HR_PointCloud {
-        mesh: geo::mesh::PointCloud::new(verts),
+        mesh: gut::mesh::PointCloud::new(verts),
     });
     Box::into_raw(ptcloud)
 }
@@ -677,7 +677,7 @@ macro_rules! make_mesh_impl {
         let verts = ptr_to_vec_of_triples(($ncoords / 3) as usize, $coords);
 
         let mesh = Box::new($hr_mesh {
-            mesh: geo::mesh::$mesh_ty::new(verts, indices),
+            mesh: gut::mesh::$mesh_ty::new(verts, indices),
         });
 
         Box::into_raw(mesh)

@@ -9,7 +9,7 @@ edition = "2018"
 #crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-gut = { version = "0.2", features = ["io"] }
+gut = { version = "0.3", features = ["io"] }
 libc = "*"
 reinterpret = "0.2"
 

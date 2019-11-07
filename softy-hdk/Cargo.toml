@@ -9,11 +9,13 @@ name = "softyhdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-geo = { package = "gut", version = "0.2" }
+geo = { package = "gut", version = "0.3" }
 softy = { path = "../softy" }
 libc = "*"
 hdkrs = { path = "../hdkrs" }
 lazy_static = "1.1"
+log = "0.4"
+env_logger = "0.7"
 
 [build-dependencies]
 cbindgen = "0.6"

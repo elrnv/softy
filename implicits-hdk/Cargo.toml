@@ -9,7 +9,7 @@ name = "implicitshdk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-geo = { package = "gut", version = "0.2" }
+geo = { package = "gut", version = "0.3" }
 implicits = { path = "../implicits" }
 hdkrs = { path = "../hdkrs" }
 

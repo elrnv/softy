@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 na = { package = "nalgebra", version = "0.18" }
 ipopt = "0.5"
-geo = { package = "gut", version = "0.2", features = ["io"] }
+geo = { package = "gut", version = "0.3", features = ["io"] }
 rayon = "1.2"
 reinterpret = "0.1"
 implicits = { path = "../implicits" }
@@ -24,6 +24,7 @@ ndarray = "0.12.1"
 af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git", optional = true }
 snafu = "0.5"
 lazycell = "1.2"
+log = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.2" }

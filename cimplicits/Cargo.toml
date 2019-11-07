@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 implicits = { path = "../implicits" }
 reinterpret = "0.2"
-gut = { version = "0.2", features = ["io"] }
+gut = { version = "0.3", features = ["io"] }
 
 [build-dependencies]
 cbindgen = "0.6"

@@ -41,6 +41,7 @@ newSopOperator(OP_OperatorTable *table)
                 2,                              // Max # of sources
                 nullptr,                        // Local variables
                 OP_FLAG_GENERATOR));            // Flag it as generator
+    el_softy_init_env_logger();
 }
 
 static const char *theDsFile = R"THEDSFILE(
@@ -627,7 +628,6 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         // If there is no previously allocated solver we can use, we need to extract the geometry
         // from the detail. Otherwise, the geometry stored in the solver itself will be used.
 
-        std::cerr << "No Previously Allocated Solver, getting full geometry." << std::endl;
         tetmesh = build_tetmesh(input0);
 
         const GU_Detail *input1 = cookparms.inputGeo(1);
@@ -655,8 +655,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     OwnedPtr<HR_PointCloud> polymesh_ptcloud = nullptr;
 
     if (solver_id >= 0) {
-        std::cerr << "Updating meshes of pre-existing solver with id: " << solver_id << std::endl;
-        // If it's an old one, update tits meshes.
+        // If it's an old one, update its meshes.
         tetmesh_ptcloud = build_pointcloud(input0);
         const GU_Detail *input1 = cookparms.inputGeo(1);
         if (input1) {
@@ -664,7 +663,6 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         }
     }
 
-    std::cerr << "Stepping for solver " << solver_res.id << std::endl;
     EL_SoftyStepResult res = el_softy_step(
             solver_res.solver,
             tetmesh_ptcloud.release(),

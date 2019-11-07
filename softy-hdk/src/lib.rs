@@ -196,6 +196,12 @@ pub struct EL_SoftyRegistryResult {
     cook_result: cffi::HR_CookResult,
 }
 
+/// This function initializes env_logger. It will panic if called more than once.
+#[no_mangle]
+pub unsafe extern "C" fn el_softy_init_env_logger() {
+    env_logger::Builder::from_env("SOFTY_LOG").init();
+}
+
 /// Register a new solver in the registry. (C side)
 /// This function consumes `tetmesh` and `polymesh`.
 #[no_mangle]

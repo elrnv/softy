@@ -8,8 +8,9 @@ use crate::contact::*;
 use crate::fem::problem::Var;
 use crate::friction::FrictionalContact;
 use crate::TriMesh;
-use geo::math::Vector3;
+use num_traits::Zero;
 use std::cell::RefCell;
+use utils::soap::Vector3;
 
 pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;
@@ -228,17 +229,17 @@ pub trait ContactConstraint:
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(
+                    Vector3::new(
                         frictional_contact
                             .contact_basis
                             .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
-                    Vector3::zeros()
+                    Vector3::zero()
                 };
 
-                grad[0][i] = (Vector3(grad[0][i]) + r_t * multiplier).into();
+                grad[0][i] = (Vector3::new(grad[0][i]) + r_t * multiplier).into();
             }
         }
     }
@@ -267,17 +268,17 @@ pub trait ContactConstraint:
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(
+                    Vector3::new(
                         frictional_contact
                             .contact_basis
                             .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
-                    Vector3::zeros()
+                    Vector3::zero()
                 };
 
-                dissipation += Vector3(vel[0][i]).dot(r_t);
+                dissipation += Vector3::new(vel[0][i]).dot(r_t);
             }
         }
         dissipation

@@ -2,9 +2,9 @@ use crate::constraint::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::TetMesh;
-use geo::math::{Matrix3, Vector3};
 use geo::ops::Volume;
 use reinterpret::*;
+use utils::soap::{Matrix3, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {
@@ -58,7 +58,7 @@ impl<'a> Constraint<'a, f64> for VolumeConstraint {
         let pos1: &[[f64; 3]] = reinterpret_slice(x1);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
-            let p = Matrix3(tri_at(pos1, tri));
+            let p = Matrix3::new(tri_at(pos1, tri));
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
@@ -90,7 +90,7 @@ impl VolumeConstraint {
         let pos1: &[[f64; 3]] = reinterpret_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = Matrix3(tri_at(pos1, tri));
+            let p = Matrix3::new(tri_at(pos1, tri));
             let c = [p[1].cross(p[2]), p[2].cross(p[0]), p[0].cross(p[1])];
 
             (0..3).flat_map(move |vi| (0..3).map(move |j| c[vi][j]))
@@ -136,7 +136,7 @@ impl<'a> ConstraintJacobian<'a, f64> for VolumeConstraint {
 /// ```
 #[inline]
 fn skew(x: Vector3<f64>) -> Matrix3<f64> {
-    Matrix3([[0.0, x[2], -x[1]], [-x[2], 0.0, x[0]], [x[1], -x[0], 0.0]])
+    Matrix3::new([[0.0, x[2], -x[1]], [-x[2], 0.0, x[0]], [x[1], -x[0], 0.0]])
 }
 
 impl VolumeConstraint {
@@ -183,7 +183,7 @@ impl VolumeConstraint {
         let pos1: &[[f64; 3]] = reinterpret_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
-            let p = Matrix3(tri_at(pos1, tri));
+            let p = Matrix3::new(tri_at(pos1, tri));
             let local_hess = [skew(p[0]), skew(p[1]), skew(p[2])];
             Self::constraint_hessian_iter(tri).map(move |(_, (r, c), vi, off)| {
                 let vjn = (vi + off + off) % 3;

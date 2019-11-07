@@ -2,11 +2,10 @@ use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::solid::*;
-use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
-use geo::Real;
 use num_traits::FromPrimitive;
+use utils::soap::{Real, Vector3};
 //use rayon::prelude::*;
 use reinterpret::*;
 use utils::zip;
@@ -45,7 +44,11 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
             let tet_dv = tet_v1 - tet_v0;
 
             T::from(0.5).unwrap() * {
-                let dvTdv: T = tet_dv.into_array().iter().map(|&dv| dv.dot(dv)).sum();
+                let dvTdv: T = tet_dv
+                    .into_array()
+                    .iter()
+                    .map(|&dv| Vector3::new(dv).norm_squared())
+                    .sum();
                 // momentum
                 T::from(0.25 * vol * density).unwrap() * dvTdv
             }
@@ -82,7 +85,8 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
             let tet_dv = (tet_v1 - tet_v0).into_array();
 
             for i in 0..4 {
-                gradient[cell[i]] += tet_dv[i] * (T::from(0.25 * vol * density).unwrap());
+                gradient[cell[i]] +=
+                    Vector3::new(tet_dv[i]) * (T::from(0.25 * vol * density).unwrap());
             }
         }
     }

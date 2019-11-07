@@ -361,7 +361,7 @@ impl ContactBasis {
 /// convert to other sparse representations.
 pub(crate) struct TripletContactJacobian<I> {
     pub iter: I,
-    pub blocks: Vec<geo::math::Matrix3<f64>>,
+    pub blocks: Vec<utils::soap::Matrix3<f64>>,
     pub num_rows: usize,
     pub num_cols: usize,
 }
@@ -372,7 +372,7 @@ pub(crate) fn build_triplet_contact_jacobian<'a>(
     query_points: Chunked3<&'a [f64]>,
 ) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
     let mut orig_cj_matrices =
-        vec![geo::math::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
+        vec![utils::soap::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
     surf.contact_jacobian_matrices(
         query_points.into(),
         reinterpret_mut_slice(&mut orig_cj_matrices),
@@ -441,7 +441,7 @@ where
         let (rows, cols) = self
             .iter
             .flat_map(move |(row_mtx, col_mtx)| {
-                (0..3).flat_map(move |j| (0..3).map(move |i| (3 * row_mtx + i, 3 * col_mtx + j)))
+                (0..3).flat_map(move |i| (0..3).map(move |j| (3 * row_mtx + i, 3 * col_mtx + j)))
             })
             .unzip();
 
@@ -490,10 +490,12 @@ pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usiz
 mod tests {
     use super::*;
     use approx::*;
+    use geo::mesh::builder::*;
     use geo::mesh::{topology::*, TriMesh, VertexPositions};
 
     fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>) -> ContactBasis {
-        let mut normals = vec![geo::math::Vector3::zeros(); trimesh.num_vertices()];
+        use utils::soap::*;
+        let mut normals = vec![[0.0; 3]; trimesh.num_vertices()];
         geo::algo::compute_vertex_area_weighted_normals(
             trimesh.vertex_positions(),
             reinterpret_slice(trimesh.indices.as_slice()),
@@ -501,7 +503,8 @@ mod tests {
         );
 
         for n in normals.iter_mut() {
-            *n /= n.norm();
+            let norm = (*n).as_tensor().norm();
+            *n.as_mut_tensor() /= norm;
         }
 
         let mut basis = ContactBasis::new();
@@ -570,9 +573,9 @@ mod tests {
             Ok(())
         };
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
         run(trimesh)?;
-        let trimesh = utils::make_regular_icosahedron();
+        let trimesh = PlatonicSolidBuilder::build_icosahedron();
         run(trimesh)
     }
 
@@ -580,7 +583,7 @@ mod tests {
     // an iterator function like `from_tangent_space`.
     #[test]
     fn contact_basis_matrix_test() {
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
         let basis = contact_basis_from_trimesh(&trimesh);
 
         let vecs = Chunked3::from_array_vec(utils::random_vectors(trimesh.num_vertices()));

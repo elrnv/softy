@@ -2,7 +2,8 @@ mod test_utils;
 
 use softy::*;
 pub use test_utils::*;
-use utils::*;
+use geo::mesh::builder::*;
+use geo::ops::transform::*;
 
 fn friction_tester(
     material: SolidMaterial,
@@ -71,15 +72,15 @@ fn sliding_tet_on_points() -> Result<(), Error> {
         }),
     };
 
-    let tetmesh = make_regular_tet();
-    let mut surface = make_grid(Grid {
+    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let mut surface = GridBuilder {
         rows: 10,
         cols: 10,
         orientation: AxisPlaneOrientation::ZX,
-    });
-    scale(&mut surface, [2.0, 1.0, 2.0]);
-    rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
-    translate(&mut surface, [0.0, -0.7, 0.0].into());
+    }.build();
+    surface.scale([2.0, 1.0, 2.0]);
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
 
     //geo::io::save_polymesh(&surface, "./out/ramp.vtk");
 
@@ -106,14 +107,14 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
         }),
     };
 
-    let tetmesh = make_regular_tet();
-    let mut surface = make_grid(Grid {
+    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let mut surface = GridBuilder {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    });
-    rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
-    translate(&mut surface, [0.0, -0.7, 0.0].into());
+    }.build();
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
 
     //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
 
@@ -140,20 +141,18 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
         }),
     };
 
-    let tetmesh = make_box([2, 2, 2]);
-    let mut surface = make_grid(Grid {
+    let tetmesh = SolidBoxBuilder { res: [2, 2, 2] }.build();
+    let mut surface = GridBuilder {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    });
+    }.build();
 
-    let degrees = 5.0;
-    rotate(
-        &mut surface,
+    surface.rotate(
         [1.0, 0.0, 0.0],
-        degrees * std::f64::consts::PI / 180.0,
+        5.0 * std::f64::consts::PI / 180.0
     );
-    translate(&mut surface, [0.0, -1.3, 0.0].into());
+    surface.translate([0.0, -1.3, 0.0]);
 
     //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
 
@@ -180,14 +179,14 @@ fn self_contact() -> Result<(), Error> {
         }),
     };
 
-    let tetmesh = make_regular_tet();
-    let mut surface = make_grid(Grid {
+    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
+    let mut surface = GridBuilder {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    });
-    rotate(&mut surface, [1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
-    translate(&mut surface, [0.0, -0.7, 0.0].into());
+    }.build();
+    surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
+    surface.translate([0.0, -0.7, 0.0]);
 
     let params = SimParams {
         max_iterations: 200,

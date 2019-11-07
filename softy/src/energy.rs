@@ -6,10 +6,9 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use geo::math::Matrix3;
 use geo::prim::Tetrahedron;
-use geo::Real;
 use num_traits::FromPrimitive;
+use utils::soap::{Matrix3, Real};
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
@@ -23,10 +22,10 @@ pub trait TetEnergy<T: Real> {
     /// `lambda` and `mu`: Lamé parameters
     #[allow(non_snake_case)]
     fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self;
-    /// Elasticity Hessian*displacement product per element. Represented by a 3x3 matrix where
-    /// column `i` produces the hessian product contribution for the vertex `i` within the current
-    /// element.
-    fn elastic_energy_hessian_product(&self, dx: &Tetrahedron<T>) -> Matrix3<T>;
+    /// Elasticity Hessian*displacement product tranpose per element. Represented by a 3x3 matrix
+    /// where row `i` produces the hessian product contribution for the vertex `i` within the
+    /// current element.
+    fn elastic_energy_hessian_product_transpose(&self, dx: &Tetrahedron<T>) -> Matrix3<T>;
 }
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the

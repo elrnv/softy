@@ -2,6 +2,7 @@ mod test_utils;
 
 use approx::*;
 use geo::mesh::VertexPositions;
+use geo::ops::transform::*;
 use softy::*;
 pub use test_utils::*;
 
@@ -10,7 +11,7 @@ fn two_tet_solver() -> Solver {
     let tet1 = make_one_deformed_tet_mesh();
     let mut tet2 = make_one_deformed_tet_mesh();
 
-    utils::translate(&mut tet2, [0.0, 0.5, 0.0]);
+    tet2.translate( [0.0, 0.5, 0.0]);
 
     SolverBuilder::new(STATIC_PARAMS)
         .add_solid(tet1, SOLID_MATERIAL)
@@ -49,7 +50,7 @@ fn volume_constraint() -> Result<(), Error> {
     let tet1 = make_one_deformed_tet_mesh();
     let mut tet2 = make_one_deformed_tet_mesh();
 
-    utils::translate(&mut tet2, [0.0, 0.5, 0.0]);
+    tet2.translate([0.0, 0.5, 0.0]);
 
     let material = SOLID_MATERIAL.with_volume_preservation(true);
 

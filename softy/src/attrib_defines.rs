@@ -1,4 +1,4 @@
-use geo::math::Matrix3;
+use utils::soap::Matrix3;
 
 pub const SOURCE_INDEX_ATTRIB: &str = "src_idx";
 pub const FIXED_ATTRIB: &str = "fixed";

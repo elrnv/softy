@@ -2,8 +2,9 @@ mod test_utils;
 
 use softy::*;
 use std::path::PathBuf;
+use geo::mesh::builder::*;
+use geo::ops::transform::*;
 pub use test_utils::*;
-use utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
     SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(10e6, 1e6))
@@ -23,19 +24,19 @@ fn stacking_boxes() -> Result<(), Error> {
         ..DYNAMIC_PARAMS
     };
 
-    let mut grid = make_grid(Grid {
+    let mut grid = GridBuilder {
         rows: 8,
         cols: 8,
         orientation: AxisPlaneOrientation::ZX,
-    });
+    }.build();
 
-    scale(&mut grid, [3.0, 1.0, 3.0].into());
-    translate(&mut grid, [0.0, -1.4, 0.0].into());
+    grid.scale([3.0, 1.0, 3.0]);
+    grid.translate([0.0, -1.4, 0.0]);
 
-    let box_bottom = make_box([2, 2, 2]);
+    let box_bottom = SolidBoxBuilder { res: [2, 2, 2] }.build();
     //let mut box_top = make_box([2, 2, 2]);
-    let mut box_top = make_regular_tet();
-    translate(&mut box_top, [0.0, 2.2, 0.0].into());
+    let mut box_top = PlatonicSolidBuilder::build_tetrahedron();
+    box_top.translate([0.0, 2.2, 0.0]);
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,

@@ -459,7 +459,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
 mod tests {
     use super::*;
     use approx::*;
-    use geo::math::Vector2;
+    use utils::soap::Vector2;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]
@@ -518,10 +518,10 @@ mod tests {
         let result = solver.step()?;
         let FrictionSolveResult { solution, .. } = result;
 
-        let impulse = Vector2(solution[0]);
+        let impulse = Vector2::new(solution[0]);
         let new_vel = impulse / mass;
         let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
-        let prev_vel = -Vector2(p_imp_t[0]) / mass;
+        let prev_vel = -Vector2::new(p_imp_t[0]) / mass;
         // Add the previous velocity to the new impulse.
         let final_velocity = prev_vel + new_vel;
 
@@ -585,7 +585,7 @@ mod tests {
 
         let p_imp_t: Vec<_> = contact_basis.to_tangent_space(&predictor_impulse).collect();
         let final_velocity: Vec<_> = zip!(p_imp_t.iter(), solution.iter(), masses.iter())
-            .map(|(&pr, &r, &m)| (-Vector2(pr) + Vector2(r)) / m)
+            .map(|(&pr, &r, &m)| (-Vector2::new(pr) + Vector2::new(r)) / m)
             .collect();
 
         dbg!(&solution);

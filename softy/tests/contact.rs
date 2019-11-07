@@ -3,11 +3,12 @@ mod test_utils;
 use approx::*;
 use geo::mesh::attrib::Attrib;
 use geo::mesh::topology::*;
+use geo::mesh::builder::*;
+use geo::ops::transform::*;
 use geo::mesh::VertexPositions;
 use softy::*;
 use std::path::PathBuf;
 pub use test_utils::*;
-use utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
     SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
@@ -77,7 +78,7 @@ fn tet_push() -> Result<(), Error> {
 
     let tri = vec![3, 0, 2, 1];
 
-    let mut tetmesh = make_regular_tet();
+    let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
 
     // Set fixed vertices
     tetmesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
@@ -249,14 +250,14 @@ fn ball_bounce_tester(
         ..DYNAMIC_PARAMS
     };
 
-    let mut grid = make_grid(Grid {
+    let mut grid = GridBuilder {
         rows: 4,
         cols: 4,
         orientation: AxisPlaneOrientation::ZX,
-    });
+    }.build();
 
-    scale(&mut grid, [3.0, 1.0, 3.0].into());
-    translate(&mut grid, [0.0, -3.0, 0.0].into());
+    grid.scale([3.0, 1.0, 3.0]);
+    grid.translate([0.0, -3.0, 0.0]);
 
     let mut solver = SolverBuilder::new(params.clone())
         .add_solid(tetmesh, material.with_id(0))
@@ -335,7 +336,7 @@ fn tet_bounce_on_implicit() -> Result<(), Error> {
         friction_params: None,
     };
 
-    let tetmesh = make_regular_tet();
+    let tetmesh = PlatonicSolidBuilder::build_tetrahedron();
 
     ball_bounce_tester(material, sc_params, tetmesh, 1, 0)
 }
@@ -384,9 +385,9 @@ fn ball_bounce_on_implicit_volume_constraint() -> Result<(), Error> {
 /// Two tets in contact with each-other. This test verifies that the contact is resolved.
 #[test]
 fn two_tets_in_contact() -> Result<(), Error> {
-    let mut tet_bottom = make_regular_tet();
-    let mut tet_top = make_regular_tet();
-    utils::translate(&mut tet_top, [0.0, 0.9, 0.0]); // translate up by 0.3
+    let mut tet_bottom = PlatonicSolidBuilder::build_tetrahedron();
+    let mut tet_top = PlatonicSolidBuilder::build_tetrahedron();
+    tet_top.translate([0.0, 0.9, 0.0]); // translate up by 0.3
 
     // Fix bottom tet at the base.
     tet_bottom.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;

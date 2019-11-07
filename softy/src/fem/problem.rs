@@ -6,11 +6,12 @@ use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
 use crate::PointCloud;
-use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
 use std::cell::RefCell;
+use utils::soap::Vector3;
 use utils::{soap::*, zip};
+use log::{debug};
 
 const FORWARD_FRICTION: bool = true;
 
@@ -1605,7 +1606,7 @@ impl NonLinearProblem {
                 time_step,
             );
 
-            dbg!(crate::inf_norm(contact_impulse.iter().cloned()));
+            debug!("Maximum contact impulse: {}", crate::inf_norm(contact_impulse.iter().cloned()));
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
             friction_steps[fc_idx] = fc
                 .constraint
@@ -1660,9 +1661,9 @@ impl NonLinearProblem {
                     solid.tetmesh.tet_iter()
                 ))
             .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
-                *strain =
-                    NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
-                        .elastic_energy()
+                let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
+                *strain = NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
+                    .elastic_energy()
             });
 
         solid
@@ -1708,13 +1709,14 @@ impl NonLinearProblem {
             solid.tetmesh.tet_iter()
         )
             .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
-                NeoHookeanTetEnergy::new(tet.shape_matrix(), ref_shape_mtx_inv, vol, lambda, mu)
+                let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
+                NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
                     .elastic_energy_gradient()
             });
 
         for (grad, cell) in grad_iter.zip(solid.tetmesh.cells().iter()) {
             for j in 0..4 {
-                let f = Vector3(forces[cell[j]]);
+                let f = Vector3::new(forces[cell[j]]);
                 forces[cell[j]] = (f - grad[j]).into();
             }
         }
@@ -1951,7 +1953,7 @@ impl NonLinearProblem {
         let s: &[Number] = svd.singular_values.data.as_slice();
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        dbg!(cond);
+        debug!("Condition number of jacobian is: {}", cond);
     }
 
     /*
@@ -2009,7 +2011,7 @@ impl NonLinearProblem {
         let s: &[Number] = svd.singular_values.data.as_slice();
         let cond_hess = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        dbg!(cond_hess);
+        debug!("Condition number of hessian is {}", cond_hess);
     }
 
     /*
@@ -2106,7 +2108,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
     fn objective(&self, uv: &[Number], obj: &mut Number) -> bool {
         let v = self.update_current_velocity(uv);
         *obj = self.objective_value(v.view());
-        debug_assert!(obj.is_finite());
+        //debug_assert!(obj.is_finite());
         obj.is_finite()
     }
 

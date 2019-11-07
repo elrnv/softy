@@ -2,12 +2,11 @@ use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::*;
-use geo::math::Vector3;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
-use geo::Real;
 use reinterpret::*;
+use utils::soap::{Real, Vector3};
 use utils::zip;
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
@@ -57,7 +56,7 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
         .map(|(&vol, density, tet)| {
             // We really want mass here. Since mass is conserved we can rely on reference
             // volume and density.
-            g.dot(tet.centroid()) * T::from(-vol * density).unwrap()
+            g.dot(Vector3::new(tet.centroid())) * T::from(-vol * density).unwrap()
         })
         .sum()
     }
@@ -145,7 +144,7 @@ impl<T: Real> Energy<T> for TriMeshGravity<'_> {
         .map(|(&area, density, tri)| {
             // We really want mass here. Since mass is conserved we can rely on reference
             // volume and density.
-            g.dot(tri.centroid()) * T::from(-area * density).unwrap()
+            g.dot(Vector3::new(tri.centroid())) * T::from(-area * density).unwrap()
         })
         .sum()
     }

@@ -7,15 +7,17 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
-use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
+use num_traits::Zero;
 #[cfg(feature = "af")]
 use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
+use utils::soap::{Matrix3, Vector2, Vector3};
 use utils::zip;
+use log::{debug, error};
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -578,7 +580,7 @@ impl ContactConstraint for PointContactConstraint {
                     jac.view(),
                 ) {
                     Ok(mut solver) => {
-                        eprintln!("[softy] Solving Friction");
+                        debug!("Solving Friction");
                         if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
                             for ((aqi, &r), r_out) in
                                 r_t.iter().enumerate().zip(friction_impulse.iter_mut())
@@ -593,12 +595,12 @@ impl ContactConstraint for PointContactConstraint {
                             }
                             true
                         } else {
-                            eprintln!("[softy] Failed friction solve");
+                            error!("Failed friction solve");
                             false
                         }
                     }
                     Err(err) => {
-                        dbg!(err);
+                        error!("Failed to create friction solver: {}", err);
                         false
                     }
                 }
@@ -652,17 +654,17 @@ impl ContactConstraint for PointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            eprintln!("[softy] Solving Friction");
+                            debug!("Solving Friction");
 
                             if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
                                 friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
                             } else {
-                                eprintln!("[softy] Failed friction solve");
+                                error!("Failed friction solve");
                                 break false;
                             }
                         }
                         Err(err) => {
-                            eprintln!("[softy] Failed to create friction solver: {:?}", err);
+                            error!("Failed to create friction solver: {}", err);
                             break false;
                         }
                     }
@@ -681,7 +683,7 @@ impl ContactConstraint for PointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            eprintln!("[softy] Solving Contact");
+                            debug!("Solving Contact");
 
                             if let Ok(r_n) = solver.step() {
                                 contact_impulse_n.copy_from_slice(&r_n);
@@ -689,12 +691,12 @@ impl ContactConstraint for PointContactConstraint {
                                 contact_impulse
                                     .extend(contact_basis.from_normal_space(&contact_impulse_n));
                             } else {
-                                eprintln!("[softy] Failed contact solve");
+                                error!("Failed contact solve");
                                 break false;
                             }
                         }
                         Err(err) => {
-                            eprintln!("[softy] Failed to create contact solver: {:?}", err);
+                            error!("Failed to create contact solver: {}", err);
                             break false;
                         }
                     }
@@ -716,7 +718,7 @@ impl ContactConstraint for PointContactConstraint {
                             .expr()
                             .dot((effective_mass_inv.view() * f_prev.view()).expr());
 
-                    dbg!(rel_err);
+                    debug!("Friction relative error: {}", rel_err);
                     if rel_err < 1e-3 {
                         friction_steps = 0;
                         break true;
@@ -744,12 +746,12 @@ impl ContactConstraint for PointContactConstraint {
                 )
                 .enumerate()
                 {
-                    let pred_r_t = Vector2(pred_r_t);
+                    let pred_r_t = Vector2::new(pred_r_t);
                     let pred_r_norm = pred_r_t.norm();
                     let r_t = if pred_r_norm > 0.0 {
                         pred_r_t * (params.dynamic_friction * cr.abs() / pred_r_norm)
                     } else {
-                        Vector2::zeros()
+                        Vector2::zero()
                     };
                     *r_out = contact_basis
                         .from_contact_coordinates([0.0, r_t[0], r_t[1]], aqi)
@@ -853,7 +855,7 @@ impl ContactConstraint for PointContactConstraint {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if !frictional_contact.object_impulse.is_empty() && !grad[0].is_empty() {
                 for (i, (_, &r)) in frictional_contact.object_impulse.iter().enumerate() {
-                    grad[0][i] = (Vector3(grad[0][i]) + Vector3(r) * multiplier).into();
+                    grad[0][i] = (Vector3::new(grad[0][i]) + Vector3::new(r) * multiplier).into();
                 }
             }
 
@@ -871,17 +873,17 @@ impl ContactConstraint for PointContactConstraint {
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(
+                    Vector3::new(
                         frictional_contact
                             .contact_basis
                             .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
-                    Vector3::zeros()
+                    Vector3::zero()
                 };
 
-                grad[1][i] = (Vector3(grad[1][i]) + r_t * multiplier).into();
+                grad[1][i] = (Vector3::new(grad[1][i]) + r_t * multiplier).into();
             }
         }
     }
@@ -910,17 +912,17 @@ impl ContactConstraint for PointContactConstraint {
                         let f = frictional_contact
                             .contact_basis
                             .to_contact_coordinates(r, contact_idx);
-                        Vector3(
+                        Vector3::new(
                             frictional_contact
                                 .contact_basis
                                 .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                                 .into(),
                         )
                     } else {
-                        Vector3::zeros()
+                        Vector3::zero()
                     };
 
-                    dissipation += Vector3(v[1][i]).dot(r_t);
+                    dissipation += Vector3::new(v[1][i]).dot(r_t);
                 }
             }
         }
@@ -977,7 +979,7 @@ impl ContactConstraint for PointContactConstraint {
             normals.iter(),
             contact_impulse.iter()
         ) {
-            impulse[1][surf_idx] = (Vector3(nml) * cr).into();
+            impulse[1][surf_idx] = (Vector3::new(nml) * cr).into();
         }
 
         let query_points = self.contact_points.borrow();
@@ -991,8 +993,9 @@ impl ContactConstraint for PointContactConstraint {
         let cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
 
         for ((row, col), jac) in cj_indices_iter.zip(cj_matrices.into_iter()) {
-            let imp = Vector3(impulse[0][col]);
-            impulse[0][col] = (imp + Matrix3(jac).transpose() * Vector3(impulse[1][row])).into()
+            let imp = Vector3::new(impulse[0][col]);
+            impulse[0][col] =
+                (imp + Matrix3::new(jac).transpose() * Vector3::new(impulse[1][row])).into()
         }
     }
 
@@ -1009,7 +1012,7 @@ impl ContactConstraint for PointContactConstraint {
         // Contact normals point away from the surface being collided against.
         // In this case the gradient is opposite of this direction.
         for n in normals.iter_mut() {
-            let nml = Vector3(*n);
+            let nml = Vector3::new(*n);
             let len = nml.norm();
             if len > 0.0 {
                 *n = (nml / -len).into();
@@ -1077,7 +1080,11 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
         for (val, q) in cbuf.iter_mut().zip(contact_points.iter()) {
             // Clear potential value.
             let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
-            if closest_sample.nml.dot(Vector3(*q) - closest_sample.pos) > 0.0 {
+            if closest_sample
+                .nml
+                .dot(Vector3::new(*q) - closest_sample.pos)
+                > 0.0
+            {
                 *val = radius;
             } else {
                 *val = -radius;
@@ -1288,17 +1295,20 @@ impl<'a> ConstraintHessian<'a, f64> for PointContactConstraint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use utils::*;
+    use geo::mesh::builder::*;
 
     /// Test the `fill_background_potential` function on a small grid.
     #[test]
     fn background_fill_test() {
         // Make a small grid.
-        let mut grid = TriMesh::from(make_grid(Grid {
-            rows: 4,
-            cols: 6,
-            orientation: AxisPlaneOrientation::ZX,
-        }));
+        let mut grid = TriMesh::from(
+            GridBuilder {
+                rows: 4,
+                cols: 6,
+                orientation: AxisPlaneOrientation::ZX,
+            }
+            .build(),
+        );
 
         let mut values = vec![0.0; grid.num_vertices()];
         let mut bg_pts = vec![true; grid.num_vertices()];

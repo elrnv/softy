@@ -6,15 +6,14 @@ use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::TetMesh;
-use geo::math::{Matrix3, Vector3};
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::Tetrahedron;
-use geo::Real;
 use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
+use utils::soap::{Matrix3, Real, Vector3};
 
 /// Per-tetrahedron Invertible Neo-Hookean energy model. This struct stores conveniently
 /// precomputed values for tet energy computation. It encapsulates tet specific energy computation.

@@ -3,7 +3,6 @@ use crate::constraints::*;
 use crate::contact::*;
 use crate::fem::problem::{FrictionalContactConstraint, Var};
 use crate::objects::*;
-use geo::math::{Matrix3, Vector3};
 use geo::mesh::{
     attrib::{self, VertexAttrib},
     topology::*,
@@ -12,8 +11,11 @@ use geo::mesh::{
 use geo::ops::{Area, ShapeMatrix, Volume};
 use geo::prim::{Tetrahedron, Triangle};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
+use num_traits::Zero;
 use std::cell::RefCell;
+use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
+use log::{info, warn, debug};
 
 use crate::inf_norm;
 
@@ -309,14 +311,14 @@ impl SolverBuilder {
 
     /// Assuming `mesh` has prepopulated vertex masses, this function computes its center of mass.
     fn compute_centre_of_mass(mesh: &TriMesh) -> [f64; 3] {
-        let mut com = Vector3::zeros();
+        let mut com = Vector3::zero();
         let mut total_mass = 0.0;
 
         for (&v, &m) in mesh.vertex_position_iter().zip(
             mesh.attrib_iter::<MassType, VertexIndex>(MASS_ATTRIB)
                 .unwrap(),
         ) {
-            com += Vector3(v) * m;
+            com += Vector3::new(v) * m;
             total_mass += m;
         }
         (com / total_mass).into()
@@ -603,6 +605,7 @@ impl SolverBuilder {
         params.tolerance = tol as f32;
         params.outer_tolerance *= max_modulus * max_area as f32;
 
+        info!("Ipopt tolerance: {:.2e}", tol);
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
@@ -690,7 +693,7 @@ impl SolverBuilder {
             .map(|cell| {
                 let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
-                ref_shape_matrix.inverse().unwrap()
+                Matrix3::new(ref_shape_matrix).inverse_transpose().unwrap()
             })
             .collect()
     }
@@ -1454,8 +1457,8 @@ impl Solver {
 
             let initial_error = self.initial_residual_error();
             let relative_tolerance = f64::from(self.sim_params.tolerance) / initial_error;
-            dbg!(constraint_violation);
-            dbg!(relative_tolerance);
+            debug!("Checking constraint violation: {}", constraint_violation);
+            debug!("Relative threshold for constraint violation: {}", relative_tolerance);
             // NOTE: Ipopt can't detect constraint values below 1e-7 in absolute value. It seems to
             // be a hardcoded threshold.
             if constraint_violation > 1e-7_f64.max(relative_tolerance) {
@@ -1463,7 +1466,7 @@ impl Solver {
                 if self.max_step < step {
                     // Increase the max_step to be slightly bigger than the current step to avoid
                     // floating point issues.
-                    println!("[softy] Increasing max step to {:e}", 1.1 * step);
+                    debug!("Increasing max step to {:e}", 1.1 * step);
                     self.update_max_step(1.1 * step);
 
                     // We don't commit the solution here because it may be far from the
@@ -1471,7 +1474,7 @@ impl Solver {
                     // neighbourhood information.
                     false
                 } else {
-                    println!("[softy] Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
+                    debug!("Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
                     // The step is smaller than max_step and the constraint is still violated.
                     // Nothing else we can do, just accept the solution and move on.
                     true
@@ -1480,7 +1483,7 @@ impl Solver {
                 // The solution is good, reset the max_step, and continue.
                 // TODO: There is room for optimization here. It may be better to reduce the max
                 // step but not to zero to prevent extra steps in the future.
-                println!("[softy] Solution accepted");
+                debug!("Solution accepted");
                 true
             }
         } else {
@@ -1531,8 +1534,8 @@ impl Solver {
         self.save_current_active_constraint_set();
         self.problem_mut().reset_constraint_set();
 
-        eprintln!(
-            "[softy] Start step with time step remaining: {}",
+        info!(
+            "Start step with time step remaining: {}",
             self.time_step_remaining
         );
         let mut recovery = false; // we are in recovery mode.
@@ -1584,7 +1587,7 @@ impl Solver {
                         }
                         self.commit_solution(true);
                         self.time_step_remaining -= self.problem().time_step;
-                        println!("[softy] Time step remaining: {}", self.time_step_remaining);
+                        info!("Time step remaining: {}", self.time_step_remaining);
                         if !recovery && self.problem().time_step < self.max_time_step {
                             // Gradually restore time_step if its lower than max_step
                             self.problem_mut().time_step *= 2.0;
@@ -1612,7 +1615,7 @@ impl Solver {
                         return Err(Error::SolveError { status, result });
                     }
                     if !recovery {
-                        eprintln!("[softy] Recovering: Revert previous step");
+                        info!("Recovering: Revert previous step");
                         self.revert_solution();
                         self.problem_mut().reset_constraint_set();
                         // reset friction iterations.
@@ -1625,7 +1628,7 @@ impl Solver {
                     }
                     recovery = true;
                     self.problem_mut().time_step *= 0.5;
-                    eprintln!("[softy] Reduce time step to {}", self.problem().time_step);
+                    info!("Reduce time step to {}", self.problem().time_step);
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
@@ -1639,8 +1642,8 @@ impl Solver {
         self.remap_contacts();
 
         if result.iterations > self.sim_params.max_outer_iterations {
-            eprintln!(
-                "WARNING: Reached max outer iterations: {:?}",
+            warn!(
+                "Reached max outer iterations: {:?}",
                 result.iterations
             );
         }
@@ -1650,7 +1653,7 @@ impl Solver {
         self.inner_iterations += result.inner_iterations as usize;
         self.step_count += 1;
 
-        dbg!(self.inner_iterations);
+        debug!("Inner iterations: {}", self.inner_iterations);
 
         // On success, update the mesh with useful metrics.
         self.problem_mut().update_mesh_data();

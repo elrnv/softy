@@ -7,7 +7,6 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
-use geo::math::{Matrix3, Vector2, Vector3};
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
 use implicits::*;
@@ -16,6 +15,7 @@ use lazycell::LazyCell;
 use reinterpret::*;
 use std::cell::RefCell;
 use utils::soap::*;
+use utils::soap::{Matrix3, Vector2, Vector3};
 use utils::zip;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
@@ -666,12 +666,12 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 )
                 .enumerate()
                 {
-                    let pred_r_t = Vector2(pred_r_t);
+                    let pred_r_t = Vector2::new(pred_r_t);
                     let pred_r_norm = pred_r_t.norm();
                     let r_t = if pred_r_norm > 0.0 {
                         pred_r_t * (params.dynamic_friction * cr.abs() / pred_r_norm)
                     } else {
-                        Vector2::zeros()
+                        Vector2::zero()
                     };
                     *r_out = contact_basis
                         .from_contact_coordinates([0.0, r_t[0], r_t[1]], aqi)
@@ -775,7 +775,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if !frictional_contact.object_impulse.is_empty() && !grad[0].is_empty() {
                 for (i, (_, &r)) in frictional_contact.object_impulse.iter().enumerate() {
-                    grad[0][i] = (Vector3(grad[0][i]) + Vector3(r) * multiplier).into();
+                    grad[0][i] = (Vector3::new(grad[0][i]) + Vector3::new(r) * multiplier).into();
                 }
             }
 
@@ -793,17 +793,17 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3(
+                    Vector3::new(
                         frictional_contact
                             .contact_basis
                             .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
-                    Vector3::zeros()
+                    Vector3::zero()
                 };
 
-                grad[1][i] = (Vector3(grad[1][i]) + r_t * multiplier).into();
+                grad[1][i] = (Vector3::new(grad[1][i]) + r_t * multiplier).into();
             }
         }
     }
@@ -832,17 +832,17 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                         let f = frictional_contact
                             .contact_basis
                             .to_contact_coordinates(r, contact_idx);
-                        Vector3(
+                        Vector3::new(
                             frictional_contact
                                 .contact_basis
                                 .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
                                 .into(),
                         )
                     } else {
-                        Vector3::zeros()
+                        Vector3::zero()
                     };
 
-                    dissipation += Vector3(v[1][i]).dot(r_t);
+                    dissipation += Vector3::new(v[1][i]).dot(r_t);
                 }
             }
         }
@@ -876,7 +876,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
             normals.iter(),
             contact_impulse.iter()
         ) {
-            impulse[1][surf_idx] = (Vector3(nml) * cr).into();
+            impulse[1][surf_idx] = (Vector3::new(nml) * cr).into();
         }
 
         let query_points = self.contact_points.borrow();
@@ -890,8 +890,9 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         let cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
 
         for ((row, col), jac) in cj_indices_iter.zip(cj_matrices.into_iter()) {
-            let imp = Vector3(impulse[0][col]);
-            impulse[0][col] = (imp + Matrix3(jac).transpose() * Vector3(impulse[1][row])).into()
+            let imp = Vector3::new(impulse[0][col]);
+            impulse[0][col] =
+                (imp + Matrix3::new(jac).transpose() * Vector3::new(impulse[1][row])).into()
         }
     }
 
@@ -908,7 +909,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         // Contact normals point away from the surface being collided against.
         // In this case the gradient is opposite of this direction.
         for n in normals.iter_mut() {
-            let nml = Vector3(*n);
+            let nml = Vector3::new(*n);
             let len = nml.norm();
             if len > 0.0 {
                 *n = (nml / -len).into();

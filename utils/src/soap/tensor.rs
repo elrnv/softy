@@ -2,7 +2,7 @@ mod lazy;
 
 use super::*;
 pub use lazy::*;
-use num_traits::Float;
+use num_traits::{Float, Zero};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
@@ -49,6 +49,24 @@ impl<T> Tensor<T> {
     #[inline]
     pub fn into_inner(self) -> T {
         self.data
+    }
+}
+
+impl<T> AsRef<T> for Tensor<T> {
+    fn as_ref(&self) -> &T {
+        &self.data
+    }
+}
+
+impl<T> AsMut<T> for Tensor<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.data
+    }
+}
+
+impl<T> From<T> for Tensor<T> {
+    fn from(t: T) -> Tensor<T> {
+        Tensor { data: t }
     }
 }
 
@@ -132,7 +150,6 @@ impl<'a, T: ViewMut<'a>> ViewMut<'a> for Tensor<T> {
     }
 }
 
-
 /// Plain old data trait. Types that implement this trait contain no references and can be copied
 /// with `memcpy`.
 pub trait Pod: 'static + Copy + Sized + Send + Sync {}
@@ -143,7 +160,13 @@ impl<T> Pod for T where T: 'static + Copy + Sized + Send + Sync {}
  */
 
 pub trait Scalar:
-    Pod + std::fmt::Debug + PartialOrd + num_traits::NumAssign + std::iter::Sum + Dummy
+    Pod
+    + std::fmt::Debug
+    + PartialOrd
+    + num_traits::NumCast
+    + num_traits::NumAssign
+    + std::iter::Sum
+    + Dummy
 {
 }
 
@@ -181,6 +204,41 @@ macro_rules! impl_scalar {
 }
 
 impl_scalar!(f64, f32, usize, u64, u32, u16, u8, i64, i32, i16, i8);
+
+#[cfg(feature = "autodiff")]
+mod autodiff_impls {
+    use super::*;
+    use autodiff::F;
+    impl Scalar for F {}
+    impl Dummy for F {
+        unsafe fn dummy() -> Self {
+            Self::default()
+        }
+    }
+
+    impl IntoExpr for F {
+        type Expr = Tensor<F>;
+        fn into_expr(self) -> Self::Expr {
+            Tensor::new(self)
+        }
+    }
+
+    impl IntoExpr for &F {
+        type Expr = Tensor<F>;
+        fn into_expr(self) -> Self::Expr {
+            Tensor::new(*self)
+        }
+    }
+    impl DotOp for F {
+        type Output = Self;
+        fn dot(self, rhs: Self) -> Self::Output {
+            self * rhs
+        }
+    }
+}
+
+pub trait Real: Scalar + Float {}
+impl<T> Real for T where T: Scalar + Float {}
 
 /*
  * Implement 0-tensor algebra.
@@ -229,19 +287,21 @@ impl<T: Neg<Output = T> + Scalar> Neg for Tensor<T> {
     }
 }
 
-impl<T: std::iter::Sum> std::iter::Sum<T> for Tensor<T> {
-    fn sum<I: Iterator<Item = T>>(iter: I) -> Tensor<T> {
-        Tensor {
-            data: std::iter::Sum::sum(iter),
-        }
+impl<T: Scalar> Zero for Tensor<T> {
+    fn zero() -> Self {
+        Tensor { data: Zero::zero() }
+    }
+    fn is_zero(&self) -> bool {
+        self.data == Zero::zero()
     }
 }
 
-impl<T: std::iter::Sum> std::iter::Sum<Tensor<T>> for Tensor<T> {
+impl<T> std::iter::Sum<Tensor<T>> for Tensor<T>
+where
+    Tensor<T>: Add + num_traits::Zero,
+{
     fn sum<I: Iterator<Item = Tensor<T>>>(iter: I) -> Tensor<T> {
-        Tensor {
-            data: std::iter::Sum::sum(iter.map(|x| x.into_inner())),
-        }
+        iter.fold(num_traits::Zero::zero(), |acc, x| acc + x)
     }
 }
 

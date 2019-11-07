@@ -303,6 +303,16 @@ macro_rules! impl_array_vectors {
                 x
             }
         }
+        impl<T: Copy + num_traits::ToPrimitive> Tensor<[T; $n]> {
+            /// Casts the components of the vector into another type.
+            ///
+            /// # Panics
+            /// This function panics if the cast fails.
+            #[inline]
+            pub fn cast<U: Pod + num_traits::NumCast>(&self) -> Tensor<[U; $n]> {
+                self.map(|x| U::from(x).unwrap())
+            }
+        }
     };
 }
 
@@ -363,6 +373,34 @@ macro_rules! impl_array_matrices {
             }
         }
 
+        impl<T: Copy> Tensor<[[T; $c]; $r]> {
+            /// Similar to `map` but applies the given function to each inner element.
+            #[inline]
+            //#[unroll_for_loops]
+            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r]>
+            where
+                U: Pod,
+                F: FnMut(T) -> U,
+            {
+                // We use MaybeUninit here mostly to avoid a Zero trait bound.
+                let mut out: [[MaybeUninit<U>; $c]; $r] =
+                    unsafe { MaybeUninit::uninit().assume_init() };
+                for row in 0..$r {
+                    for col in 0..$c {
+                        out[row][col] = MaybeUninit::new(f(self.data[row][col]));
+                    }
+                }
+                // The Pod trait bound ensures safety here in release builds.
+                // Sanity check here just in debug builds only, since this code is very likely in a
+                // critical section.
+                debug_assert_eq!(
+                    std::mem::size_of::<[[MaybeUninit<U>; $c]; $r]>(),
+                    std::mem::size_of::<[[U; $c]; $r]>()
+                );
+                Tensor::new(unsafe { std::mem::transmute_copy::<_, [[U; $c]; $r]>(&out) })
+            }
+        }
+
         impl<T: Scalar> Tensor<[[T; $c]; $r]> {
             /// Zip the rows of this matrix and another tensor with the given combinator.
             #[inline]
@@ -380,23 +418,13 @@ macro_rules! impl_array_matrices {
                 Tensor::new(out)
             }
 
-            /// Similar to `map` but applies the given function to each inner element.
-            #[inline]
-            #[unroll_for_loops]
-            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r]>
-            where
-                U: Scalar,
-                F: FnMut(T) -> U,
-            {
-                let mut out = Tensor::<[[U; $c]; $r]>::zeros();
-                for row in 0..$r {
-                    out.data[row] = Tensor::new(self.data[row]).map(|x| f(x)).into_inner();
-                }
-                out
-            }
             #[inline]
             pub fn identity() -> Tensor<[[T; $c]; $r]> {
                 Self::from_diag_iter(std::iter::repeat(T::one()))
+            }
+            #[inline]
+            pub fn diag(diag: &[T]) -> Tensor<[[T; $c]; $r]> {
+                Self::from_diag_iter(diag.into_iter().cloned())
             }
             pub fn from_diag_iter<Iter: IntoIterator<Item = T>>(
                 diag: Iter,
@@ -637,6 +665,16 @@ macro_rules! impl_array_matrices {
             #[inline]
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
                 &mut self.data[index]
+            }
+        }
+        impl<T: Copy + num_traits::ToPrimitive> Tensor<[[T; $c]; $r]> {
+            /// Casts the components of the matrix into another type.
+            ///
+            /// # Panics
+            /// This function panics if the cast fails.
+            #[inline]
+            pub fn cast_inner<U: Pod + num_traits::NumCast>(&self) -> Tensor<[[U; $c]; $r]> {
+                self.map_inner(|x| U::from(x).unwrap())
             }
         }
     };

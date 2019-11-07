@@ -716,6 +716,7 @@ where
     SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
     SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
     A: DotOp<B, Output = Tensor<S>>,
+    Tensor<S>: num_traits::Zero,
 {
     type Output = S;
     fn dot(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {

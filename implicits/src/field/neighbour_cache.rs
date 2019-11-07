@@ -1,7 +1,7 @@
 use super::{samples::Sample, SampleType};
-use geo::Real;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
+use utils::soap::Real;
 
 pub(crate) fn compute_closest_set<'a, T, C>(
     query_points: &[[T; 3]],
@@ -9,7 +9,7 @@ pub(crate) fn compute_closest_set<'a, T, C>(
     set: &mut Vec<usize>,
 ) -> bool
 where
-    T: Real + Send + Sync + 'a,
+    T: Real + 'a,
     C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
 {
     let mut changed = false;
@@ -68,7 +68,7 @@ impl Neighbourhood {
         closest: C,
     ) -> bool
     where
-        T: Real + Send + Sync + 'a,
+        T: Real + 'a,
         C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,
     {
         compute_closest_set(query_points, closest, &mut self.closest_set)
@@ -98,7 +98,7 @@ impl Neighbourhood {
         neigh: N,
     ) -> bool
     where
-        T: Real + Send + Sync,
+        T: Real,
         I: Iterator<Item = Sample<T>> + 'a,
         N: Fn([T; 3]) -> I + Sync + Send,
     {
@@ -145,7 +145,7 @@ impl Neighbourhood {
         sample_type: SampleType,
     ) -> Option<bool>
     where
-        T: Real + Send + Sync,
+        T: Real,
     {
         let Neighbourhood {
             trivial_set,
@@ -197,7 +197,7 @@ impl Neighbourhood {
         sample_type: SampleType,
     ) -> bool
     where
-        T: Real + Send + Sync + 'a,
+        T: Real,
         I: Iterator<Item = Sample<T>> + 'a,
         N: Fn([T; 3]) -> I + Sync + Send,
         C: Fn([T; 3]) -> &'a Sample<T> + Send + Sync,

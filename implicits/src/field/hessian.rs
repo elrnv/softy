@@ -2,11 +2,11 @@ use super::*;
 use crate::Error;
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
-pub(crate) fn sym_outer<T: Real>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
+pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
     a * b.transpose() + b * a.transpose()
 }
 
-impl<T: Real> ImplicitSurface<T> {
+impl<T: Scalar> ImplicitSurface<T> {
     /// Get the number of Hessian non-zeros for the face unit normal Hessian.
     /// This is essentially the number of items returned by
     /// `compute_face_unit_normals_hessian_products`.
@@ -100,7 +100,7 @@ fn face_hessian_indices_iter<'a>(
     nml_hess_indices.chain(main_hess_indices)
 }
 
-impl<T: Real + Send + Sync> QueryTopo<T> {
+impl<T: Real> QueryTopo<T> {
     /*
      * Query Hessian
      */
@@ -157,6 +157,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         scale: T,
         values: &mut [T],
     ) where
+        T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighbourhood_seq();
@@ -173,7 +174,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             .zip(multipliers.iter())
             .map(move |((q, nbr_points), &mult)| {
                 let view = SamplesView::new(nbr_points, samples);
-                query_hessian_at(Vector3(*q), view, kernel, bg_field_params) * mult
+                query_hessian_at(Vector3::new(*q), view, kernel, bg_field_params) * mult
             });
 
         let value_mtxs: &mut [[T; 6]] = reinterpret::reinterpret_mut_slice(values);
@@ -291,6 +292,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         values: &mut [T],
     ) -> Result<(), Error>
     where
+        T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
         let neigh_points = self.trivial_neighbourhood_seq();
@@ -313,7 +315,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                     .flat_map(move |((q, nbr_points), lambda)| {
                         let view = SamplesView::new(nbr_points, samples);
                         face_hessian_at(
-                            Vector3(*q),
+                            Vector3::new(*q),
                             view,
                             kernel,
                             surface_topo,
@@ -329,7 +331,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                         (0..3).flat_map(move |r| {
                             (0..3)
                                 .filter(move |c| 3 * row + r >= 3 * col + c)
-                                .map(move |c| mtx[c][r])
+                                .map(move |c| mtx[r][c])
                         })
                     }))
                     .for_each(|(val, new_val)| {
@@ -358,7 +360,7 @@ pub(crate) fn query_hessian_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> Matrix3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg: BackgroundField<T, T, K> =
@@ -407,7 +409,7 @@ pub(crate) fn normalized_neighbour_weight_hessian<'a, T, K, V>(
     bg: BackgroundField<'a, T, V, K>,
 ) -> Matrix3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
     V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
 {
@@ -440,7 +442,7 @@ pub(crate) fn face_hessian_at<'a, T, K: 'a>(
     multiplier: T,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
@@ -483,7 +485,7 @@ pub(crate) fn sample_hessian_at<'a, T, K: 'a>(
     bg: BackgroundField<'a, T, T, K>,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let csd = bg.closest_sample_dist();
@@ -595,7 +597,7 @@ fn normal_hessian_at<'a, T, K: 'a>(
     bg: BackgroundField<'a, T, T, K>,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let csd = bg.closest_sample_dist();
@@ -706,7 +708,7 @@ pub(crate) fn face_unit_normals_symmetric_jacobian<'a, T, F>(
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     F: FnMut(Sample<T>) -> T + 'a,
 {
     let third = T::one() / T::from(3.0).unwrap();
@@ -723,8 +725,10 @@ where
                     let vtx_col = tri_indices[l];
                     // TODO: The following matrix probably has a simpler form (possible
                     // diagonal?) Rewrite in terms of this form.
-                    let mtx = tri.area_normal_gradient(k) * nml_proj
-                        - nml_proj * tri.area_normal_gradient(l);
+                    // Note: area_normal_gradient is in column-major form, we convert to row-major
+                    // here. Since it is skew symmetric, we simply take the negative.
+                    let mtx = nml_proj * Matrix3::new(tri.area_normal_gradient(l))
+                        - Matrix3::new(tri.area_normal_gradient(k)) * nml_proj;
                     (vtx_row, vtx_col, mtx * (lambda * third))
                 })
         })
@@ -739,7 +743,7 @@ pub(crate) fn compute_face_unit_normals_hessian_products<'a, T, F>(
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     F: FnMut(Sample<T>) -> Vector3<T> + 'a,
 {
     // For each triangle contribution (one element in a sum)
@@ -750,10 +754,11 @@ where
         let nml_proj = scaled_tangent_projection(sample);
         let mult = multiplier(sample);
         let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+        // Converting to row-major here causes sign change.
         let grad = [
-            tri.area_normal_gradient(0),
-            tri.area_normal_gradient(1),
-            tri.area_normal_gradient(2),
+            Matrix3::new(tri.area_normal_gradient(0)),
+            Matrix3::new(tri.area_normal_gradient(1)),
+            Matrix3::new(tri.area_normal_gradient(2)),
         ];
 
         // row >= col
@@ -768,8 +773,13 @@ where
                     let nml_mult_prod = nml_proj * nml.dot(mult)
                         + proj_mult * nml.transpose()
                         + nml * proj_mult.transpose();
-                    let m = Triangle::area_normal_hessian_product(j, i, proj_mult)
-                        + (grad[j] * nml_mult_prod * grad[i]) * norm_inv;
+                    // converting to row-major causes sign change
+                    let m = (grad[j] * nml_mult_prod * grad[i]) * norm_inv
+                        - Matrix3::new(Triangle::area_normal_hessian_product(
+                            j,
+                            i,
+                            proj_mult.into(),
+                        ));
                     (vtx_row, vtx_col, m)
                 })
         })
@@ -800,6 +810,7 @@ mod tests {
     use super::*;
     use crate::kernel;
     use autodiff::F;
+    use geo::mesh::builder::*;
     use geo::mesh::{TriMesh, VertexPositions};
     use jacobian::{
         consolidate_face_jacobian, make_perturb_fn, make_test_triangle, make_three_test_triangles,
@@ -826,12 +837,12 @@ mod tests {
 
         let mut ad_tri_verts: Vec<_> = surf_mesh
             .vertex_position_iter()
-            .map(|&x| Vector3(x).map(|x| F::cst(x)).into_inner())
+            .map(|&x| Vector3::new(x).map(|x| F::cst(x)).into_inner())
             .collect();
         let num_verts = ad_tri_verts.len();
         let ad_query_points: Vec<_> = query_points
             .iter()
-            .map(|&a| Vector3(a).map(|x| F::cst(x)).into_inner())
+            .map(|&a| Vector3::new(a).map(|x| F::cst(x)).into_inner())
             .collect();
         let num_query_points = query_points.len();
 
@@ -940,10 +951,10 @@ mod tests {
     #[test]
     fn one_tet_hessian_test() -> Result<(), Error> {
         let qs: Vec<_> = (0..4)
-            .map(|i| Vector3([0.0, -0.5 + 0.25 * i as f64, 0.0]).into_inner())
+            .map(|i| Vector3::new([0.0, -0.5 + 0.25 * i as f64, 0.0]).into_inner())
             .collect();
 
-        let trimesh = TriMesh::from(utils::make_regular_tet());
+        let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
 
         for i in 1..10 {
             let radius_multiplier = 1.0 + 0.5 * (i as f64);
@@ -999,9 +1010,9 @@ mod tests {
         bg_field_params: BackgroundFieldParams,
         perturb: &mut P,
     ) {
-        let tet = TriMesh::from(utils::make_regular_tet());
+        let tet = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
         let qs: Vec<_> = (0..4)
-            .map(|i| Vector3([0.0, -0.5 + 0.25 * i as f64, 0.0]))
+            .map(|i| Vector3::new([0.0, -0.5 + 0.25 * i as f64, 0.0]))
             .collect();
 
         for q in qs.into_iter() {
@@ -1021,9 +1032,9 @@ mod tests {
         let tri_indices: Vec<usize> = reinterpret::reinterpret_vec(tri_indices);
         let tri = TriMesh::new(tri_verts, tri_indices);
         let qs = vec![
-            Vector3([0.0, 0.2, 0.0]),
-            Vector3([0.0, 0.0001, 0.0]),
-            Vector3([0.0, -0.4, 0.0]),
+            Vector3::new([0.0, 0.2, 0.0]),
+            Vector3::new([0.0, 0.0001, 0.0]),
+            Vector3::new([0.0, -0.4, 0.0]),
         ];
 
         for q in qs.into_iter() {
@@ -1045,9 +1056,9 @@ mod tests {
         let tri_indices = vec![0usize, 1, 2];
         let tri = TriMesh::new(tri_verts, tri_indices);
         let qs = vec![
-            Vector3([0.0, 0.2, 0.0]),
-            Vector3([0.0, 0.0001, 0.0]),
-            Vector3([0.0, -0.4, 0.0]),
+            Vector3::new([0.0, 0.2, 0.0]),
+            Vector3::new([0.0, 0.0001, 0.0]),
+            Vector3::new([0.0, -0.4, 0.0]),
         ];
 
         for q in qs.into_iter() {
@@ -1070,7 +1081,7 @@ mod tests {
         let q = q.map(|x| F::cst(x)); // convert to autodiff
         let mut tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3(x).map(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).map(|x| F::cst(x)))
             .collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
         let num_verts = tri_verts.len();
@@ -1110,7 +1121,7 @@ mod tests {
         for &(r, c, h) in hess.iter() {
             for j in 0..3 {
                 for i in 0..3 {
-                    hess_full[3 * c + j][3 * r + i] += h[j][i].value();
+                    hess_full[3 * c + j][3 * r + i] += h[i][j].value();
                 }
             }
         }
@@ -1167,13 +1178,13 @@ mod tests {
                 }
 
                 // Consolidate the hessian to this particular vertex and component.
-                let mut hess_vtx = vec![Vector3::zeros(); num_verts];
+                let mut hess_vtx = vec![Vector3::zero(); num_verts];
                 for &(r, c, h) in hess.iter() {
                     assert!(r >= c, "Hessian is not block lower triangular.");
                     if r == vtx {
-                        hess_vtx[c] += h.transpose()[i];
+                        hess_vtx[c] += Vector3::new(h[i]);
                     } else if c == vtx {
-                        hess_vtx[r] += h[i];
+                        hess_vtx[r] += Vector3::new(h.transpose()[i]);
                     }
                 }
 
@@ -1216,7 +1227,7 @@ mod tests {
 
     #[test]
     fn two_triangle_face_hessian_test() {
-        let mut no_perturb = || Vector3::zeros();
+        let mut no_perturb = || Vector3::zero();
         let mut perturb = make_perturb_fn();
         for i in 1..25 {
             let radius = 0.2 * (i as f64);
@@ -1243,7 +1254,7 @@ mod tests {
 
     #[test]
     fn one_triangle_face_hessian_test() {
-        let mut no_perturb = || Vector3::zeros();
+        let mut no_perturb = || Vector3::zero();
         let mut perturb = make_perturb_fn();
         for i in 1..25 {
             let radius = 0.2 * (i as f64);
@@ -1271,7 +1282,7 @@ mod tests {
 
     #[test]
     fn one_tet_face_hessian_test() {
-        let mut no_perturb = || Vector3::zeros();
+        let mut no_perturb = || Vector3::zero();
         let mut perturb = make_perturb_fn();
         for i in 1..10 {
             let radius = 0.5 * (i as f64);
@@ -1308,7 +1319,7 @@ mod tests {
         let q = q.map(|x| F::cst(x)); // convert to autodiff
         let tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3(x).map(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).map(|x| F::cst(x)))
             .collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
 
@@ -1357,7 +1368,7 @@ mod tests {
 
                 // Compute the Jacobian. After calling this function, calling
                 // `.deriv()` on the output will give us the second derivative.
-                let mut jac = vec![Vector3::zeros(); num_samples];
+                let mut jac = vec![Vector3::zero(); num_samples];
                 for (jac_val, &idx) in
                     jacobian::sample_jacobian_at(q, view, kernel, bg.clone()).zip(neighbours.iter())
                 {
@@ -1384,7 +1395,7 @@ mod tests {
                 //);
 
                 // Consolidate the hessian to this particular sample and component.
-                let mut hess_sample = vec![Vector3::<F>::zeros(); num_samples];
+                let mut hess_sample = vec![Vector3::<F>::zero(); num_samples];
                 for &(r, c, h) in hess.iter() {
                     // TODO: make hessian only lower triangular and check it here
                     //assert!(r >= c, "Hessian is not block lower triangular.");
@@ -1402,12 +1413,12 @@ mod tests {
                     }
 
                     if r == sample_idx {
-                        hess_sample[c] += h.transpose()[i];
+                        hess_sample[c] += Vector3::new(h[i]);
                     }
 
                     // Add upper triangular part to hess_sample.
                     if r > c && c == sample_idx {
-                        hess_sample[r] += h[i];
+                        hess_sample[r] += Vector3::new(h.transpose()[i]);
                     }
                 }
 
@@ -1451,13 +1462,13 @@ mod tests {
     #[test]
     fn sample_hessian_test() {
         use reinterpret::reinterpret_vec;
-        let mut no_perturb = || Vector3::zeros();
+        let mut no_perturb = || Vector3::zero();
         let mut perturb = make_perturb_fn();
 
         let qs = vec![
-            Vector3([0.0, 0.2, 0.0]),
-            Vector3([0.0, 0.0001, 0.0]),
-            Vector3([0.0, -0.4, 0.0]),
+            Vector3::new([0.0, 0.2, 0.0]),
+            Vector3::new([0.0, 0.0001, 0.0]),
+            Vector3::new([0.0, -0.4, 0.0]),
         ];
 
         let run_tester = |tri, field_type, weighted| {
@@ -1503,14 +1514,14 @@ mod tests {
         build_mesh_and_run_test(make_three_test_triangles(0.0, &mut perturb));
 
         // Regular tetrahedron test
-        run_tester_on_mesh(TriMesh::from(utils::make_regular_tet()));
+        run_tester_on_mesh(TriMesh::from(PlatonicSolidBuilder::build_tetrahedron()));
     }
 
     /// Test the second order derivatives of our normal computation method for face normals.
     #[test]
     fn face_normal_hessian_test() {
         // Simple test with two triangles
-        let (tri_verts, tri_faces) = make_two_test_triangles(0.0, &mut || Vector3::zeros());
+        let (tri_verts, tri_faces) = make_two_test_triangles(0.0, &mut || Vector3::zero());
         face_normal_hessian_tester(&tri_verts, &tri_faces);
 
         // More complex test with a whole tet
@@ -1527,10 +1538,10 @@ mod tests {
         let multipliers = utils::random_vectors(faces.len());
         let ad_multipliers: Vec<_> = multipliers
             .iter()
-            .map(|&v| Vector3(v).map(|x| F::cst(x)))
+            .map(|&v| Vector3::new(v).map(|x| F::cst(x)))
             .collect();
 
-        let multiplier = move |Sample { index, .. }| Vector3(multipliers[index]);
+        let multiplier = move |Sample { index, .. }| Vector3::new(multipliers[index]);
 
         let ad_multiplier = move |Sample { index, .. }| ad_multipliers[index];
 
@@ -1545,7 +1556,7 @@ mod tests {
             // map to tet vertices instead of surface vertices
             for j in 0..3 {
                 for i in 0..3 {
-                    hess[3 * c + j][3 * r + i] += m[j][i];
+                    hess[3 * c + j][3 * r + i] += m[i][j];
                     if i >= j {
                         // Only record lower triangular non-zeros
                         num_hess_entries += 1;
@@ -1553,6 +1564,8 @@ mod tests {
                 }
             }
         }
+
+        let mut ad_hess = [[0.0; 12]; 12]; // ad Dense matrix
 
         assert_eq!(
             ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(neighbours.len()),
@@ -1567,6 +1580,7 @@ mod tests {
             .map(|v| v.map(|x| F::cst(x)))
             .collect();
 
+        let mut success = true;
         for r in 0..4 {
             for i in 0..3 {
                 ad_verts[r][i] = F::var(ad_verts[r][i]);
@@ -1587,18 +1601,48 @@ mod tests {
                     for j in 0..3 {
                         // Only check lower triangular part.
                         if 3 * c + j <= 3 * r + i {
-                            assert_relative_eq!(
+                            if !relative_eq!(
                                 hess[3 * c + j][3 * r + i],
                                 grad[c][j].deriv(),
                                 max_relative = 1e-5,
                                 epsilon = 1e-10
-                            );
+                            ) {
+                                println!(
+                                    "col = {}; j = {}; {:11.7} vs {:11.7}",
+                                    c,
+                                    j,
+                                    hess[3 * c + j][3 * r + i],
+                                    grad[c][j].deriv(),
+                                );
+                                success = false;
+                            }
                         }
+                        ad_hess[3 * c + j][3 * r + i] += grad[c][j].deriv();
                     }
                 }
 
                 ad_verts[r][i] = F::cst(ad_verts[r][i]);
             }
         }
+        if !success {
+            fn print_full_hessian_arr(hess: [[f64; 12]; 12], name: &str) {
+                println!("{} = ", name);
+                for r in 0..12 {
+                    for c in 0..12 {
+                        if relative_eq!(hess[c][r], 0.0, max_relative = 1e-6, epsilon = 1e-12) {
+                            print!("     .    ",);
+                        } else {
+                            print!("{:9.5} ", hess[c][r]);
+                        }
+                    }
+                    println!();
+                }
+                println!();
+            }
+
+            print_full_hessian_arr(hess, "Full Hessian");
+            print_full_hessian_arr(ad_hess, "Full AutoDiff Hessian");
+        }
+        assert!(success, "Hessian does not match its AutoDiff counterpart");
     }
 }

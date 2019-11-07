@@ -9,12 +9,12 @@ license = "MPL-2.0"
 rayon = "1.2"
 na = { package = "nalgebra", version = "0.18" }
 hrbf = "0.2"
-geo = { package = "gut", version = "0.2", features = ["io", "serde_all"] }
+geo = { package = "gut", path = "../../gut", features = ["io", "serde_all"] }
 rstar = { version = "0.5" }
 autodiff = "0.1"
 reinterpret = "0.1"
 num-traits = "0.2"
-utils = { path = "../utils" }
+utils = { path = "../utils", features = ["autodiff"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 snafu = "0.5"
 arrayvec = "0.5"

@@ -9,7 +9,7 @@ use rayon::iter::Either;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum QueryTopo<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     Local {
         /// Local mls implicit surface.
@@ -28,7 +28,7 @@ where
     },
 }
 
-impl<T: Real + Send + Sync> QueryTopo<T> {
+impl<T: Real> QueryTopo<T> {
     /*
      * Constructors
      */
@@ -73,15 +73,15 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                     },
             } => {
                 let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
-                let radius_ext = radius + cast::<_, f64>(max_step).unwrap();
+                let radius_ext = radius + num_traits::cast::<_, f64>(max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neighbourhood_query = |q| {
-                    let q_pos = Vector3(q).cast::<f64>().unwrap().into();
+                    let q_pos = Vector3::new(q).cast::<f64>().into();
                     spatial_tree.locate_within_distance(q_pos, radius2).cloned()
                 };
                 let closest_sample_query = |q| {
                     spatial_tree
-                        .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                        .nearest_neighbor(&Vector3::new(q).cast::<f64>().into())
                         .expect("Empty spatial tree")
                 };
                 neighbourhood.compute_neighbourhoods(
@@ -108,7 +108,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                 query_points,
                 |q| {
                     spatial_tree
-                        .nearest_neighbor(&Vector3(q).cast::<f64>().unwrap().into())
+                        .nearest_neighbor(&Vector3::new(q).cast::<f64>().into())
                         .expect("Empty spatial tree")
                 },
                 closest_samples,
@@ -408,7 +408,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
      */
 
     pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
-        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
+        let q_pos = Vector3::new(q.into()).cast::<f64>().into();
         self.base()
             .spatial_tree
             .locate_within_distance(q_pos, radius * radius)
@@ -416,7 +416,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     }
 
     pub fn nearest_neighbour_lookup<Q: Into<[T; 3]>>(&self, q: Q) -> Option<&Sample<T>> {
-        let q_pos = Vector3(q.into()).cast::<f64>().unwrap().into();
+        let q_pos = Vector3::new(q.into()).cast::<f64>().into();
         self.base().spatial_tree.nearest_neighbor(&q_pos)
     }
 
@@ -478,7 +478,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             self.query_jacobian_full(query_points, &mut steps);
 
             for (norm, step) in nml_sizes.iter_mut().zip(steps.iter()) {
-                *norm = Vector3(*step).norm();
+                *norm = Vector3::new(*step).norm();
             }
 
             // Count the number of points with values less than iso_value.
@@ -496,7 +496,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             for (step, &norm, &value) in zip!(steps.iter_mut(), nml_sizes.iter(), potential.iter())
                 .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
             {
-                let nml = Vector3(*step);
+                let nml = Vector3::new(*step);
                 let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
                 *step = (nml * (multiplier * offset)).into();
             }
@@ -512,7 +512,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                 )
                 .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
                 {
-                    *p = (Vector3(*q) + Vector3(step)).into();
+                    *p = (Vector3::new(*q) + Vector3::new(step)).into();
                 }
 
                 self.potential(&candidate_points, &mut candidate_potential);
@@ -530,7 +530,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                 .filter(|(_, &norm, &old, &new)| {
                     old < iso_value && new > iso_value + epsilon && norm != T::zero()
                 }) {
-                    *step = (Vector3(*step) * T::from(0.5).unwrap()).into();
+                    *step = (Vector3::new(*step) * T::from(0.5).unwrap()).into();
                     count_overshoots += 1;
                 }
 
@@ -592,6 +592,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
     fn compute_potential<'a, K>(&self, query_points: &[[T; 3]], kernel: K, out_field: &'a mut [T])
     where
+        T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
         let neigh_points = self.trivial_neighbourhood_seq();
@@ -608,7 +609,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             //.filter(|(_, nbrs, _)| !nbrs.is_empty())
             .for_each(move |(q, neighbours, field)| {
                 compute_potential_at(
-                    Vector3(*q),
+                    Vector3::new(*q),
                     SamplesView::new(neighbours, samples),
                     kernel,
                     bg_field_params,
@@ -625,6 +626,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         kernel: K,
         out_field: &'a mut [T],
     ) where
+        T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
         let neigh_points = self.trivial_neighbourhood_seq();
@@ -640,7 +642,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             .zip(out_field.iter_mut())
             .for_each(move |((q, neighbours), field)| {
                 compute_potential_at(
-                    Vector3(*q),
+                    Vector3::new(*q),
                     SamplesView::new(neighbours, samples),
                     kernel,
                     bg_field_params,
@@ -669,6 +671,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         kernel: K,
         out_vectors: &'a mut [[T; 3]],
     ) where
+        T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
         let neigh_points = self.trivial_neighbourhood_par();
@@ -689,7 +692,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
         //.filter(|(_, nbrs, _)| !nbrs.is_empty())
         .for_each(move |(q, neighbours, vector)| {
             compute_local_vector_at(
-                Vector3(*q),
+                Vector3::new(*q),
                 SamplesView::new(neighbours, samples),
                 kernel,
                 bg_field_params,

@@ -4,13 +4,12 @@
 //!
 
 use crate::kernel::*;
-use geo::math::{Matrix3, Vector3};
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
-pub use geo::Real;
-use num_traits::cast;
+use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
+use utils::soap::{Matrix, Matrix3, Real, Scalar, Vector3};
 use utils::zip;
 
 macro_rules! apply_kernel_query_fn {
@@ -85,7 +84,7 @@ pub enum Side {
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct ImplicitSurfaceBase<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     /// Enum for choosing how to compute a background potential field that may be mixed in with
     /// the local potentials.
@@ -118,7 +117,7 @@ where
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub enum MLS<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     Local(LocalMLS<T>),
     Global(GlobalMLS<T>),
@@ -128,7 +127,7 @@ where
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalMLS<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     kernel: LocalKernel,
 
@@ -149,7 +148,7 @@ where
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub struct GlobalMLS<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     kernel: GlobalKernel,
     surf_base: ImplicitSurfaceBase<T>,
@@ -159,7 +158,7 @@ where
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HrbfSurface<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     surf_base: ImplicitSurfaceBase<T>,
 }
@@ -168,13 +167,13 @@ where
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
 pub enum ImplicitSurface<T = f64>
 where
-    T: Real,
+    T: Scalar,
 {
     Hrbf(HrbfSurface<T>),
     MLS(MLS<T>),
 }
 
-impl<T: Real + Send + Sync> ImplicitSurfaceBase<T> {
+impl<T: Real> ImplicitSurfaceBase<T> {
     /// Update the stored samples. This assumes that vertex positions have been updated.
     fn update_samples(&mut self) {
         let ImplicitSurfaceBase {
@@ -235,7 +234,7 @@ impl<T: Real + Send + Sync> ImplicitSurfaceBase<T> {
     }
 }
 
-impl<T: Real + Send + Sync> MLS<T> {
+impl<T: Real> MLS<T> {
     fn base(&self) -> &ImplicitSurfaceBase<T> {
         match self {
             MLS::Local(LocalMLS { surf_base, .. }) | MLS::Global(GlobalMLS { surf_base, .. }) => {
@@ -421,7 +420,7 @@ impl<T: Real + Send + Sync> MLS<T> {
                     return Err(super::Error::Interrupted);
                 }
 
-                let q = Vector3(*q);
+                let q = Vector3::new(*q);
 
                 let view = SamplesView::new(neighs, &samples);
 
@@ -456,7 +455,7 @@ impl<T: Real + Send + Sync> MLS<T> {
                     .unwrap();
 
                 if !view.is_empty() {
-                    let mut grad_w_sum_normalized = Vector3::zeros();
+                    let mut grad_w_sum_normalized = Vector3::zero();
                     for grad in samples
                         .iter()
                         .map(|Sample { pos, .. }| kernel.with_closest_dist(closest_d).grad(q, pos))
@@ -465,8 +464,8 @@ impl<T: Real + Send + Sync> MLS<T> {
                     }
                     grad_w_sum_normalized *= weight_sum_inv;
 
-                    let mut out_normal = Vector3::zeros();
-                    let mut out_tangent = Vector3::zeros();
+                    let mut out_normal = Vector3::zero();
+                    let mut out_tangent = Vector3::zero();
 
                     let p = compute_local_potential_at(q, view, kernel, weight_sum_inv, closest_d);
 
@@ -534,7 +533,7 @@ impl<T: Real + Send + Sync> MLS<T> {
     }
 }
 
-impl<T: Real + Send + Sync> ImplicitSurface<T> {
+impl<T: Real> ImplicitSurface<T> {
     fn base(&self) -> &ImplicitSurfaceBase<T> {
         match self {
             ImplicitSurface::MLS(mls) => mls.base(),
@@ -651,14 +650,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let pts: Vec<na::Point3<f64>> = points
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.cast::<f64>().unwrap().into();
+                let pos: [f64; 3] = p.cast::<f64>().into();
                 na::Point3::from(pos)
             })
             .collect();
         let nmls: Vec<na::Vector3<f64>> = normals
             .iter()
             .map(|&n| {
-                let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
+                let nml: [f64; 3] = Vector3::new(n).cast::<f64>().into();
                 na::Vector3::from(nml).normalize()
             })
             .collect();
@@ -673,7 +672,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
             .par_iter()
             .zip(out_potential.par_iter_mut())
             .for_each(|(q, potential)| {
-                let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
+                let pos: [f64; 3] = Vector3::new(*q).cast::<f64>().into();
                 *potential = T::from(hrbf.eval(na::Point3::from(pos))).unwrap();
             });
 
@@ -686,6 +685,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         interrupt: F,
     ) -> Result<(), super::Error>
     where
+        T: geo::Real,
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
     {
@@ -713,14 +713,14 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
         let pts: Vec<na::Point3<f64>> = points
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.cast::<f64>().unwrap().into();
+                let pos: [f64; 3] = p.cast::<f64>().into();
                 na::Point3::from(pos)
             })
             .collect();
         let nmls: Vec<na::Vector3<f64>> = normals
             .iter()
             .map(|&n| {
-                let nml: [f64; 3] = n.cast::<f64>().unwrap().into();
+                let nml: [f64; 3] = Vector3::new(n).cast::<f64>().into();
                 na::Vector3::from(nml).normalize()
             })
             .collect();
@@ -737,7 +737,7 @@ impl<T: Real + Send + Sync> ImplicitSurface<T> {
                     return Err(super::Error::Interrupted);
                 }
 
-                let pos: [f64; 3] = Vector3(*q).cast::<f64>().unwrap().into();
+                let pos: [f64; 3] = Vector3::new(*q).cast::<f64>().into();
                 *potential = hrbf.eval(na::Point3::from(pos)) as f32;
 
                 Ok(())
@@ -767,7 +767,7 @@ pub(crate) fn compute_potential_at<T, K>(
     bg_potential: BackgroundFieldParams,
     potential: &mut T,
 ) where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
 {
     if samples.is_empty() {
@@ -797,7 +797,7 @@ pub(crate) fn compute_local_potential_at<T, K>(
     closest_d: T,
 ) -> T
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
 {
     samples
@@ -825,7 +825,7 @@ pub(crate) fn alt_compute_local_potential_at<T, K>(
 ) -> T
 where
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
-    T: na::RealField + Real + Send + Sync,
+    T: na::RealField + Real,
 {
     use na::{DMatrix, DVector};
     let basis = DMatrix::from_iterator(
@@ -866,15 +866,21 @@ pub(crate) fn compute_local_vector_at<T, K>(
     bg_potential: BackgroundFieldParams,
     vector: &mut [T; 3],
 ) where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
 {
     if samples.is_empty() {
         return;
     }
 
-    let bg =
-        BackgroundField::local(q, samples, kernel, bg_potential, Some(Vector3(*vector))).unwrap();
+    let bg = BackgroundField::local(
+        q,
+        samples,
+        kernel,
+        bg_potential,
+        Some(Vector3::new(*vector)),
+    )
+    .unwrap();
 
     // Generate a background potential field for every query point. This will be mixed
     // in with the computed potentials for local methods.
@@ -921,7 +927,7 @@ pub(crate) fn compute_face_unit_normals_gradient_products<'a, T, F>(
     mut multiplier: F,
 ) -> impl Iterator<Item = Vector3<T>> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     F: FnMut(Sample<T>) -> Vector3<T> + 'a,
 {
     samples.into_iter().flat_map(move |sample| {
@@ -941,23 +947,25 @@ pub(crate) fn face_unit_normal_gradient_iter<T>(
     surface_topo: &[[usize; 3]],
 ) -> impl Iterator<Item = Matrix3<T>>
 where
-    T: Real + Send + Sync,
+    T: Real,
 {
     let nml_proj = scaled_tangent_projection(sample);
     let tri_indices = &surface_topo[sample.index];
     let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
-    (0..3).map(move |i| tri.area_normal_gradient(i) * nml_proj)
+    // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
+    (0..3).map(move |i| -Matrix3::new(tri.area_normal_gradient(i)) * nml_proj)
 }
 
 /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
 /// by the local area (normal norm reciprocal).
 pub(crate) fn scaled_tangent_projection<T>(sample: Sample<T>) -> Matrix3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
 {
     let nml_norm_inv = T::one() / sample.nml.norm();
     let nml = sample.nml * nml_norm_inv;
-    Matrix3::diag([nml_norm_inv; 3]) - (nml * nml_norm_inv) * nml.transpose()
+    Matrix3::from_diag_iter(std::iter::repeat(nml_norm_inv))
+        - (nml * nml_norm_inv) * nml.transpose()
 }
 
 /// Compute the gradient vector product of the `compute_vertex_unit_normals` function with respect to
@@ -975,7 +983,7 @@ pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T, F>(
     mut dx: F,
 ) -> impl Iterator<Item = Vector3<T>> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     F: FnMut(Sample<T>) -> Vector3<T> + 'a,
 {
     samples.into_iter().map(move |sample| {
@@ -983,7 +991,7 @@ where
         let norm_inv = T::one() / nml.norm();
         // Compute the normal component of the derivative
         let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
-        let mut nml_deriv = Vector3::zeros();
+        let mut nml_deriv = Vector3::zero();
         // Look at the ring of triangles around the vertex with respect to which we are
         // taking the derivative.
         for &tri_idx in dual_topo[index].iter() {
@@ -991,11 +999,15 @@ where
             // Pull contributions from all neighbours on the surface, not just ones part of the
             // neighbourhood,
             let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
-            let nml_grad = tri.area_normal_gradient(
-                tri_indices
-                    .iter()
-                    .position(|&j| j == index)
-                    .expect("Triangle mesh topology corruption."),
+            // Note that area_normal_gradient returns column-major matrix, but we use row-major,
+            // since area_normal_gradient is skew symmetric, we interpret this as a negation.
+            let nml_grad = Matrix3::new(
+                tri.area_normal_gradient(
+                    tri_indices
+                        .iter()
+                        .position(|&j| j == index)
+                        .expect("Triangle mesh topology corruption."),
+                ),
             );
             let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
             for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
@@ -1006,7 +1018,7 @@ where
                     tri_grad += nmlk_proj * (dx(sample) * normk_inv);
                 }
             }
-            nml_deriv += nml_grad * tri_grad;
+            nml_deriv -= nml_grad * tri_grad;
         }
         nml_deriv
     })
@@ -1015,15 +1027,17 @@ where
 /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
 #[cfg(test)]
 pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
-    use geo::mesh::TriMesh;
-    use utils::*;
-    let tet = make_regular_tet();
+    use geo::mesh::{builder, TriMesh};
+    let tet = builder::PlatonicSolidBuilder::build_tetrahedron();
     let TriMesh {
         vertex_positions,
         indices,
         ..
     } = TriMesh::from(tet);
-    let tet_verts = vertex_positions.into_iter().map(|x| Vector3(x)).collect();
+    let tet_verts = vertex_positions
+        .into_iter()
+        .map(|x| Vector3::from(x))
+        .collect();
     let tet_faces = reinterpret::reinterpret_vec(indices.into_vec());
 
     (tet_verts, tet_faces)
@@ -1033,7 +1047,8 @@ pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
 mod tests {
     use super::*;
     use crate::*;
-    use geo::mesh::*;
+    use geo::mesh::{builder::PlatonicSolidBuilder, *};
+    use geo::ops::transform::*;
 
     // Helper function for testing. This is an implicit surface and grid mesh pair where each
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
@@ -1041,14 +1056,14 @@ mod tests {
     // surface.
     fn make_octahedron_and_grid_local(reverse: bool) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = utils::make_sample_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
         if reverse {
             sphere.reverse();
         }
 
         // Translate the mesh slightly in z.
-        utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
+        sphere.translate([0.0, 0.0, 0.2]);
 
         // Construct the implicit surface.
         let surface = mls_from_polymesh(
@@ -1085,14 +1100,14 @@ mod tests {
         radius_multiplier: f64,
     ) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
         // Create a surface sample mesh.
-        let octahedron_trimesh = utils::make_sample_octahedron();
+        let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
         if reverse {
             sphere.reverse();
         }
 
         // Translate the mesh slightly in z.
-        utils::translate(&mut sphere, [0.0, 0.0, 0.2]);
+        sphere.translate([0.0, 0.0, 0.2]);
 
         // Construct the implicit surface.
         let surface = mls_from_polymesh(
@@ -1114,7 +1129,7 @@ mod tests {
         // Make a mesh to be projected.
         let mut grid = make_grid(22, 22);
 
-        utils::uniform_scale(&mut grid, 2.0);
+        grid.uniform_scale(2.0);
 
         Ok((surface, grid))
     }
@@ -1204,19 +1219,21 @@ mod tests {
     fn narrow_projection_test() -> Result<(), crate::Error> {
         // Make a mesh to be projected.
         use geo::mesh::attrib::*;
+        use geo::mesh::builder::*;
         use geo::mesh::topology::*;
 
-        let mut grid = utils::make_grid(utils::Grid {
+        let mut grid = GridBuilder {
             rows: 18,
             cols: 19,
-            orientation: utils::AxisPlaneOrientation::ZX,
-        });
+            orientation: AxisPlaneOrientation::ZX,
+        }
+        .build();
         grid.add_attrib::<_, VertexIndex>("potential", 0.0f32)
             .unwrap();
 
         grid.reverse();
 
-        utils::translate(&mut grid, [0.0, 0.12639757990837097, 0.0]);
+        grid.translate([0.0, 0.12639757990837097, 0.0]);
 
         let torus = geo::io::load_polymesh("assets/projection_torus.vtk")?;
 

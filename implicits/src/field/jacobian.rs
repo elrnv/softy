@@ -1,8 +1,9 @@
 use super::*;
 use arrayvec::ArrayVec;
+use num_traits::Zero;
 use rayon::iter::Either;
 
-impl<T: Real + Send + Sync> QueryTopo<T> {
+impl<T: Real> QueryTopo<T> {
     /*
      * Query Jacobian
      */
@@ -103,7 +104,14 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             .filter(move |(_, nbrs, _)| full || nbrs.len() != 0)
             .map(move |(q, nbr_points, closest)| {
                 let view = SamplesView::new(nbr_points, samples);
-                query_jacobian_at(Vector3(*q), view, Some(closest), kernel, bg_field_params).into()
+                query_jacobian_at(
+                    Vector3::new(*q),
+                    view,
+                    Some(closest),
+                    kernel,
+                    bg_field_params,
+                )
+                .into()
             })
     }
 
@@ -339,7 +347,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
                             vertex_jacobian_at(
-                                Vector3(*q),
+                                Vector3::new(*q),
                                 view,
                                 kernel,
                                 surface_topo,
@@ -357,7 +365,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
                             face_jacobian_at(
-                                Vector3(*q),
+                                Vector3::new(*q),
                                 view,
                                 kernel,
                                 surface_topo,
@@ -481,7 +489,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
             .filter(|(_, nbrs)| nbrs.len() != 0)
             .flat_map(move |(q, nbr_points)| {
                 let view = SamplesView::new(nbr_points, samples);
-                contact_jacobian_at(Vector3(*q), view, kernel, bg_field_params).0
+                contact_jacobian_at(Vector3::new(*q), view, kernel, bg_field_params).0
             });
 
         match sample_type {
@@ -529,7 +537,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                     .map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         vertex_contact_jacobian_product_at(
-                            Vector3(*q),
+                            Vector3::new(*q),
                             view,
                             multiplier,
                             kernel,
@@ -550,7 +558,7 @@ impl<T: Real + Send + Sync> QueryTopo<T> {
                     .map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         face_contact_jacobian_product_at(
-                            Vector3(*q),
+                            Vector3::new(*q),
                             view,
                             multiplier,
                             kernel,
@@ -589,7 +597,7 @@ pub(crate) fn query_jacobian_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::new(q, view, closest, kernel, bg_field_params, None).unwrap();
@@ -635,7 +643,7 @@ pub(crate) fn normalized_neighbour_weight_gradient<'a, T, K, V>(
     bg: BackgroundField<'a, T, V, K>,
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send + 'a,
     V: Copy + Clone + std::fmt::Debug + PartialEq + num_traits::Zero,
 {
@@ -669,7 +677,7 @@ pub(crate) fn vertex_jacobian_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> impl Iterator<Item = [T; 3]> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
@@ -704,7 +712,7 @@ pub(crate) fn face_jacobian_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> impl Iterator<Item = [T; 3]> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
@@ -743,7 +751,7 @@ pub(crate) fn sample_jacobian_at<'a, T, K: 'a>(
     bg: BackgroundField<'a, T, T, K>,
 ) -> impl Iterator<Item = Vector3<T>> + 'a
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     // Background potential Jacobian.
@@ -804,7 +812,7 @@ pub(crate) fn sample_contact_jacobian_at<'a, T, K: 'a>(
     closest_d: T,
 ) -> Matrix3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy,
 {
     let w_normalized = kernel.with_closest_dist(closest_d).eval(q, sample_pos) * weight_sum_inv;
@@ -844,7 +852,7 @@ pub(crate) fn sample_contact_jacobian_product_at<'a, T, K: 'a>(
     multiplier: Vector3<T>,
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy,
 {
     let jac = sample_contact_jacobian_at(
@@ -875,7 +883,7 @@ pub(crate) fn contact_jacobian_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> (impl Iterator<Item = Matrix3<T>> + 'a, Vector3<T>)
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
@@ -914,7 +922,7 @@ pub(crate) fn vertex_contact_jacobian_product_at<'a, T, K: 'a>(
     bg_field_params: BackgroundFieldParams,
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
@@ -963,7 +971,7 @@ pub(crate) fn face_contact_jacobian_product_at<'a, T, K: 'a>(
     triangles: &'a [[usize; 3]],
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
 {
     let bg = BackgroundField::local(q, samples, kernel, bg_field_params, None).unwrap();
@@ -981,8 +989,8 @@ where
             move |Sample {
                       index, pos, nml, ..
                   }| {
-                let mult = (0..3).fold(Vector3::zeros(), |acc, i| {
-                    acc + vertex_multipliers[triangles[index][i]].into()
+                let mult: Vector3<T> = (0..3).fold(Vector3::zero(), |acc, i| {
+                    acc + Vector3::new(vertex_multipliers[triangles[index][i]])
                 }) / T::from(3.0).unwrap();
                 sample_contact_jacobian_product_at(
                     q,
@@ -1019,7 +1027,7 @@ pub(crate) fn sample_query_jacobian_at<'a, T, K: 'a>(
     closest_d: T,
 ) -> Vector3<T>
 where
-    T: Real + Send + Sync,
+    T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy,
 {
     let w = kernel.with_closest_dist(closest_d).eval(q, sample_pos);
@@ -1030,7 +1038,7 @@ where
 
 /// Compute the face normal derivative with respect to tet vertices.
 #[cfg(test)]
-pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
+pub(crate) fn compute_face_unit_normal_derivative<T: Real>(
     tet_verts: &[Vector3<T>],
     tet_faces: &[[usize; 3]],
     view: SamplesView<'_, '_, T>,
@@ -1042,7 +1050,7 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real + Send + Sync>(
 
     // Convert to grad wrt tet vertex indices instead of surface triangle vertex indices.
     let tet_indices: &[usize] = reinterpret::reinterpret_slice(&tet_faces);
-    let mut vert_grad = vec![Vector3::zeros(); tet_verts.len()];
+    let mut vert_grad = vec![Vector3::zero(); tet_verts.len()];
     for (g, &vtx_idx) in grad_iter.zip(tet_indices) {
         vert_grad[vtx_idx] += g;
     }
@@ -1057,9 +1065,9 @@ pub(crate) fn make_test_triangle(
     perturb: &mut impl FnMut() -> Vector3<f64>,
 ) -> Vec<Vector3<f64>> {
     vec![
-        Vector3([0.5, h, 0.0]) + perturb(),
-        Vector3([-0.25, h, 0.433013]) + perturb(),
-        Vector3([-0.25, h, -0.433013]) + perturb(),
+        Vector3::new([0.5, h, 0.0]) + perturb(),
+        Vector3::new([-0.25, h, 0.433013]) + perturb(),
+        Vector3::new([-0.25, h, -0.433013]) + perturb(),
     ]
 }
 
@@ -1071,10 +1079,10 @@ pub(crate) fn make_two_test_triangles(
 ) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
     (
         vec![
-            Vector3([0.0, h, 0.0]) + perturb(),
-            Vector3([0.0, h, 1.0]) + perturb(),
-            Vector3([1.0, h, 0.0]) + perturb(),
-            Vector3([1.0, h, 1.0]) + perturb(),
+            Vector3::new([0.0, h, 0.0]) + perturb(),
+            Vector3::new([0.0, h, 1.0]) + perturb(),
+            Vector3::new([1.0, h, 0.0]) + perturb(),
+            Vector3::new([1.0, h, 1.0]) + perturb(),
         ],
         vec![[0, 1, 2], [1, 3, 2]],
     )
@@ -1088,11 +1096,11 @@ pub(crate) fn make_three_test_triangles(
 ) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
     (
         vec![
-            Vector3([0.0, h, 0.0]) + perturb(),
-            Vector3([0.0, h, 1.0]) + perturb(),
-            Vector3([1.0, h, 0.0]) + perturb(),
-            Vector3([1.0, h + 0.5, 1.0]) + perturb(),
-            Vector3([2.0, h, 0.0]) + perturb(),
+            Vector3::new([0.0, h, 0.0]) + perturb(),
+            Vector3::new([0.0, h, 1.0]) + perturb(),
+            Vector3::new([1.0, h, 0.0]) + perturb(),
+            Vector3::new([1.0, h + 0.5, 1.0]) + perturb(),
+            Vector3::new([2.0, h, 0.0]) + perturb(),
         ],
         vec![[0, 1, 2], [1, 3, 2], [2, 3, 4]],
     )
@@ -1103,7 +1111,7 @@ pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
     use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     let range = Uniform::new(-0.1, 0.1);
-    move || Vector3([rng.sample(range), rng.sample(range), rng.sample(range)])
+    move || Vector3::new([rng.sample(range), rng.sample(range), rng.sample(range)])
 }
 
 /// Reduce the given Jacobian from face vertices to vertices.
@@ -1138,8 +1146,8 @@ pub(crate) fn new_test_samples<T, V3>(
     verts: &[V3],
 ) -> Samples<T>
 where
-    T: Real + Send + Sync,
-    V3: Into<Vector3<T>> + Clone,
+    T: Real,
+    V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
 {
     match sample_type {
         SampleType::Face => {
@@ -1153,7 +1161,7 @@ where
 
 ///// Linear search for the closest sample to the given query point `q`.
 //#[cfg(test)]
-//pub(crate) fn find_closest_sample_index<T: Real + Send + Sync>(q: Vector3<T>, samples: &Samples<T>) -> usize {
+//pub(crate) fn find_closest_sample_index<T: Scalar>(q: Vector3<T>, samples: &Samples<T>) -> usize {
 //    samples.iter()
 //        .min_by(|s,t| (q - s.pos).norm().partial_cmp(&(q - t.pos).norm()).unwrap())
 //        .expect("Failed to find closest sample.").index
@@ -1165,15 +1173,16 @@ mod tests {
     use crate::kernel;
     use crate::Error;
     use autodiff::F;
+    use geo::mesh::builder::*;
 
     /// Tester for the Jacobian at a single position with respect to a surface defined by a single point.
     fn one_point_potential_derivative_tester(radius: f64, bg_field_params: BackgroundFieldParams) {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
-            points: vec![Vector3([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
-            normals: vec![Vector3([0.3, 1.0, 0.1]).map(|x| F::cst(x))],
-            velocities: vec![Vector3([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
+            points: vec![Vector3::new([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
+            normals: vec![Vector3::new([0.3, 1.0, 0.1]).map(|x| F::cst(x)).into()],
+            velocities: vec![Vector3::new([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
             values: vec![F::cst(0.0)],
         };
 
@@ -1184,7 +1193,7 @@ mod tests {
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
         // Initialize the query point.
-        let q = Vector3([0.5, 0.3, 0.0]).map(|x| F::cst(x));
+        let q = Vector3::new([0.5, 0.3, 0.0]).map(|x| F::cst(x));
 
         // There is no surface for the set of samples. As a result, the normal derivative should be
         // skipped in this test.
@@ -1381,7 +1390,7 @@ mod tests {
 
         // Set a random product vector.
         let dxs = utils::random_vectors(tet_verts.len());
-        let dx = move |Sample { index, .. }| Vector3(dxs[index]);
+        let dx = move |Sample { index, .. }| Vector3::new(dxs[index]);
 
         // Compute the normal gradient product.
         let view = SamplesView::new(indices.as_ref(), &samples);
@@ -1413,12 +1422,14 @@ mod tests {
 
                 // Normalize normals
                 for nml in ad_samples.normals.iter_mut() {
-                    *nml = *nml / nml.norm();
+                    let nml_v = Vector3::new(*nml);
+                    *nml = (nml_v / nml_v.norm()).into();
                 }
 
                 let mut exp = F::cst(0.0);
                 for sample in view.clone().iter() {
-                    exp += ad_samples.normals[sample.index].dot(dx(sample).map(|x| F::cst(x)));
+                    exp += Vector3::new(ad_samples.normals[sample.index])
+                        .dot(dx(sample).map(|x| F::cst(x)));
                 }
 
                 assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
@@ -1442,11 +1453,11 @@ mod tests {
     #[test]
     fn dynamic_background_potential_derivative_test() {
         // Prepare data
-        let q = Vector3([0.1, 0.3, 0.2]);
+        let q = Vector3::new([0.1, 0.3, 0.2]);
         let points = vec![
-            Vector3([0.3, 0.2, 0.1]),
-            Vector3([0.4, 0.2, 0.1]),
-            Vector3([0.2, 0.1, 0.3]),
+            Vector3::new([0.3, 0.2, 0.1]),
+            Vector3::new([0.4, 0.2, 0.1]),
+            Vector3::new([0.2, 0.1, 0.3]),
         ];
 
         let samples = Samples::new_point_samples(points.clone());
@@ -1535,7 +1546,7 @@ mod tests {
             ..Default::default()
         };
 
-        let tet = geo::mesh::TriMesh::from(utils::make_regular_tet());
+        let tet = geo::mesh::TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
         let surf =
             crate::mls_from_trimesh(&tet, params).expect("Failed to create a surface for a tet.");
 
@@ -1768,7 +1779,7 @@ mod tests {
         use crate::*;
         use geo::NumVertices;
 
-        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zero());
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
         let area = 0.32475975;
         let centroid = [0.0; 3];
@@ -1796,11 +1807,11 @@ mod tests {
         query_surf.contact_jacobian_matrices(&query_points, &mut jac);
         let num_jac_entries = query_surf.num_contact_jacobian_matrices();
         assert_eq!(num_jac_entries, 3);
-        let weighted_normal = Vector3([0.0, area, 0.0]);
+        let weighted_normal = Vector3::new([0.0, area, 0.0]);
 
-        let mut result = Vector3::zeros();
+        let mut result = Vector3::zero();
         for &jac_mtx in jac.iter() {
-            result += Matrix3(jac_mtx) * weighted_normal;
+            result += Matrix3::new(jac_mtx) * weighted_normal;
         }
 
         let expected = weighted_normal;
@@ -1819,7 +1830,7 @@ mod tests {
         use crate::*;
         use geo::NumVertices;
 
-        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zeros());
+        let tri_vert_pos = make_test_triangle(0.0, &mut || Vector3::zero());
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
         let centroid = [0.0; 3];
         let query_points = vec![centroid];
@@ -1839,7 +1850,7 @@ mod tests {
         };
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
-        let test_vector = Vector3([1.5, 0.3, 0.5]);
+        let test_vector = Vector3::new([1.5, 0.3, 0.5]);
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into(); 3])?;
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
 
@@ -1852,9 +1863,9 @@ mod tests {
         let num_jac_entries = query_surf.num_contact_jacobian_matrices();
         assert_eq!(num_jac_entries, 3);
 
-        let mut result = Vector3::zeros();
+        let mut result = Vector3::zero();
         for &jac_mtx in jac.iter() {
-            result += Matrix3(jac_mtx) * test_vector;
+            result += Matrix3::new(jac_mtx) * test_vector;
         }
 
         // Verify that the contact jacobian produces the same result as when computing the
@@ -1888,19 +1899,18 @@ mod tests {
     ) -> Result<(), Error> {
         use crate::*;
         use geo::NumVertices;
-        use utils::*;
 
         let tri_vert_pos = make_test_triangle(1.18032, perturb);
 
         let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_vert_pos);
 
-        let mut tet = make_regular_tet();
+        let mut tet = PlatonicSolidBuilder::build_tetrahedron();
 
         let multiplier_vecs = utils::random_vectors(tet.num_vertices());
         let multipliers_f32: Vec<_> = multiplier_vecs
             .iter()
             .cloned()
-            .map(|v| Vector3(v).map(|x| x as f32).into())
+            .map(|v| Vector3::new(v).map(|x| x as f32).into())
             .collect();
         tet.set_attrib_data::<[f32; 3], VertexIndex>("V", &multipliers_f32)
             .unwrap();
@@ -1921,7 +1931,7 @@ mod tests {
             .attrib_as_slice::<[f32; 3], VertexIndex>("V")
             .unwrap()
             .iter()
-            .map(|&x| Vector3(x).map(|x| f64::from(x)).into_inner())
+            .map(|&x| Vector3::new(x).map(|x| f64::from(x)).into_inner())
             .collect();
         let surf = mls_from_trimesh(&trimesh, surf_params).unwrap();
         let query_surf = surf.query_topo(&tri_verts);

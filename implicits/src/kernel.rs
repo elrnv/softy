@@ -1,7 +1,9 @@
 #![allow(clippy::just_underscores_and_digits)]
 
 use super::Error;
-use utils::soap::{Matrix3, Vector3};
+use num_traits::{Float, Zero};
+use std::ops::Neg;
+use utils::soap::{Matrix, Matrix3, Scalar, Vector3};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -145,7 +147,7 @@ impl KernelType {
 }
 
 /// This kernel trait defines a 1D basis kernel interface.
-pub trait Kernel<T: Real> {
+pub trait Kernel<T> {
     /// Main kernel function evaluated at `x`.
     fn f(&self, x: T) -> T;
     /// First derivative of the kernel evaluated at `x`.
@@ -166,7 +168,7 @@ impl GlobalInvDistance2 {
     }
 }
 
-impl<T: Real> Kernel<T> for GlobalInvDistance2 {
+impl<T: Scalar> Kernel<T> for GlobalInvDistance2 {
     fn f(&self, x: T) -> T {
         let eps = T::from(self.epsilon).unwrap();
         let w = T::one() / (x * x + eps * eps);
@@ -195,7 +197,7 @@ impl LocalCubic {
     }
 }
 
-impl<T: Real> Kernel<T> for LocalCubic {
+impl<T: Scalar> Kernel<T> for LocalCubic {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
         if x > r {
@@ -251,7 +253,7 @@ impl LocalInterpolating {
     }
 }
 
-impl<T: Real> Kernel<T> for LocalInterpolating {
+impl<T: Scalar> Kernel<T> for LocalInterpolating {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
         let xc = T::from(self.closest_d).unwrap();
@@ -289,7 +291,7 @@ impl LocalApproximate {
     }
 }
 
-impl<T: Real> Kernel<T> for LocalApproximate {
+impl<T: Scalar + Neg<Output = T>> Kernel<T> for LocalApproximate {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
 
@@ -352,7 +354,7 @@ impl<T: Real> Kernel<T> for LocalApproximate {
 }
 
 /// This kernel trait defines a radial basis kernel interface.
-pub trait RadialKernel<T: Real>: Kernel<T> {
+pub trait RadialKernel<T: Scalar + Float>: Kernel<T> {
     /// Main kernel function evaluated at `x` with center at `p`.
     #[inline]
     fn eval(&self, x: Vector3<T>, p: Vector3<T>) -> T {
@@ -367,7 +369,7 @@ pub trait RadialKernel<T: Real>: Kernel<T> {
         if norm > T::zero() {
             diff * (self.df(norm) / norm)
         } else {
-            Vector3::zeros()
+            Vector3::zero()
         }
     }
     /// Second derivative wrt `x` of the kernel evaluated at `x` with center at `p`.
@@ -399,7 +401,7 @@ pub trait RadialKernel<T: Real>: Kernel<T> {
 /// number for something like the Gaussian kernel, which will just mean that the background
 /// potential will be mixed in full past the the radius, which can represent a standard
 /// deviation.
-pub trait SphericalKernel<T: Real>: RadialKernel<T> {
+pub trait SphericalKernel<T: Scalar + Float>: RadialKernel<T> {
     /// Produce the radius of influence of this kernel.
     fn radius(&self) -> T;
 }
@@ -408,21 +410,21 @@ pub trait SphericalKernel<T: Real>: RadialKernel<T> {
 // Implement Radial kernel for all kernels defined above
 //
 
-impl<T: Real> RadialKernel<T> for GlobalInvDistance2 {
+impl<T: Scalar + Float> RadialKernel<T> for GlobalInvDistance2 {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
     }
 }
 
-impl<T: Real> RadialKernel<T> for LocalCubic {
+impl<T: Scalar + Float> RadialKernel<T> for LocalCubic {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
     }
 }
 
-impl<T: Real> RadialKernel<T> for LocalInterpolating {
+impl<T: Scalar + Float> RadialKernel<T> for LocalInterpolating {
     #[inline]
     fn with_closest_dist(mut self, dist: T) -> Self {
         self.closest_d = dist.to_f64().unwrap();
@@ -430,7 +432,7 @@ impl<T: Real> RadialKernel<T> for LocalInterpolating {
     }
 }
 
-impl<T: Real> RadialKernel<T> for LocalApproximate {
+impl<T: Scalar + Float> RadialKernel<T> for LocalApproximate {
     #[inline]
     fn with_closest_dist(self, _: T) -> Self {
         self
@@ -441,28 +443,28 @@ impl<T: Real> RadialKernel<T> for LocalApproximate {
 // Implement Spherical kernel for all kernels defined above
 //
 
-impl<T: Real> SphericalKernel<T> for LocalCubic {
+impl<T: Scalar + Float> SphericalKernel<T> for LocalCubic {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
     }
 }
 
-impl<T: Real> SphericalKernel<T> for LocalInterpolating {
+impl<T: Scalar + Float> SphericalKernel<T> for LocalInterpolating {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
     }
 }
 
-impl<T: Real> SphericalKernel<T> for LocalApproximate {
+impl<T: Scalar + Float> SphericalKernel<T> for LocalApproximate {
     #[inline]
     fn radius(&self) -> T {
         T::from(self.radius).unwrap()
     }
 }
 
-impl<T: Real> SphericalKernel<T> for GlobalInvDistance2 {
+impl<T: Scalar + Float> SphericalKernel<T> for GlobalInvDistance2 {
     #[inline]
     fn radius(&self) -> T {
         T::infinity()
@@ -494,11 +496,11 @@ mod tests {
             for i in start..55 {
                 // Autodiff test
                 let x = F::cst(0.1 * i as f64);
-                let mut q = Vector3([x, x, x]);
+                let mut q = Vector3::new([x, x, x]);
                 q[j] = F::var(x);
-                let f = kern.eval(q, Vector3::zeros());
-                let df = kern.grad(q, Vector3::zeros());
-                let ddf = kern.hess(q, Vector3::zeros());
+                let f = kern.eval(q, Vector3::zero());
+                let df = kern.grad(q, Vector3::zero());
+                let ddf = kern.hess(q, Vector3::zero());
                 assert_relative_eq!(df[j].value(), f.deriv(), max_relative = 1e-8);
                 for k in 0..3 {
                     assert_relative_eq!(ddf[k][j].value(), df[k].deriv(), max_relative = 1e-8);

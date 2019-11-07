@@ -1,6 +1,7 @@
 use super::*;
-use geo::math::Vector3;
 use geo::mesh::{topology::*, PointCloud, TriMesh, VertexMesh};
+use num_traits::Zero;
+use utils::soap::{Scalar, Vector3};
 
 /// A mesh type to represent the samples for the implicit surface. This enum is used solely for
 /// building the implicit surface.
@@ -104,17 +105,13 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     }
 
     /// A helper function to extract a `Vec` of vertex positions from a `VertexMesh`.
-    fn vertex_positions_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
+    fn vertex_positions_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
         mesh.vertex_position_iter()
-            .map(|&x| {
-                Vector3(x)
-                    .cast::<T>()
-                    .expect("Failed to convert positions float type")
-            })
+            .map(|&x| Vector3::new(x).cast::<T>())
             .collect()
     }
     /// A helper function to extract an offset vector from the mesh.
-    fn vertex_offsets_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<T> {
+    fn vertex_offsets_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<T> {
         mesh.attrib_iter::<f32, VertexIndex>("offset")
             .map(|iter| iter.map(|&x| T::from(x).unwrap()).collect())
             .unwrap_or_else(|_| vec![T::zero(); mesh.num_vertices()])
@@ -122,18 +119,21 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
     /// A helper function to extract a normals vector from the mesh.
     /// The resulting vector is empty if no normals are found.
-    fn vertex_normals_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
+    fn vertex_normals_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<[T; 3]> {
         mesh.attrib_iter::<[f32; 3], VertexIndex>("N")
-            .map(|iter| iter.map(|nml| Vector3(*nml).cast::<T>().unwrap()).collect())
+            .map(|iter| {
+                iter.map(|nml| Vector3::new(*nml).cast::<T>().into())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     /// A helper function to extract a satcked velocity vector from the mesh.
     /// The resulting vector is empty if no velocities are found.
-    fn vertex_velocities_from_mesh<T: Real, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
+    fn vertex_velocities_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
         mesh.attrib_iter::<[f32; 3], VertexIndex>("V")
-            .map(|iter| iter.map(|vel| Vector3(*vel).cast::<T>().unwrap()).collect())
-            .unwrap_or_else(|_| vec![Vector3::zeros(); mesh.num_vertices()])
+            .map(|iter| iter.map(|vel| Vector3::new(*vel).cast::<T>()).collect())
+            .unwrap_or_else(|_| vec![Vector3::zero(); mesh.num_vertices()])
     }
 
     /// A helper function to compute the dual topology of a triangle mesh. The dual topology
@@ -166,11 +166,11 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             .face_iter()
             .map(|f| {
                 let tri = Triangle::from_indexed_slice(f, pos);
-                let c = tri.centroid();
-                let verts = [tri.0, tri.1, tri.2];
+                let c = Vector3::new(tri.centroid());
+                let verts: [[f64; 3]; 3] = [tri.0.into(), tri.1.into(), tri.2.into()];
                 verts
                     .iter()
-                    .map(|&x| (x - c).norm_squared())
+                    .map(|&x| (Vector3::new(x) - c).norm_squared())
                     .max_by(|a, b| {
                         a.partial_cmp(b)
                             .expect("Detected NaN. Please report this bug.")
@@ -209,7 +209,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Builds the base for any implicit surface. This function returns `None` when there is not
     /// enough data to make a valid implict surface. For example if base radius is 0.0 or points is
     /// empty, this function will return `None`.
-    fn build_base<T: Real + Send + Sync>(&self) -> Option<ImplicitSurfaceBase<T>> {
+    fn build_base<T: Real>(&self) -> Option<ImplicitSurfaceBase<T>> {
         let ImplicitSurfaceBuilder {
             bg_field,
             mesh,
@@ -289,7 +289,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
                         let vertex_velocities = Self::vertex_velocities_from_mesh(mesh);
 
-                        let mut face_velocities = vec![Vector3::zeros(); triangles.len()];
+                        let mut face_velocities = vec![Vector3::zero(); triangles.len()];
 
                         for (&tri, fvel) in triangles.iter().zip(face_velocities.iter_mut()) {
                             for i in 0..3 {
@@ -329,7 +329,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Builds the implicit surface. This function returns `None` when there is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
-    pub fn build_generic<T: Real + Send + Sync>(&self) -> Option<ImplicitSurface<T>>
+    pub fn build_generic<T: Real>(&self) -> Option<ImplicitSurface<T>>
     where
         Sample<T>: rstar::RTreeObject,
     {
@@ -344,7 +344,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Builds the a local mls implicit surface. This function returns `None` when there is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
-    pub fn build_local_mls<T: Real + Send + Sync>(&self) -> Option<LocalMLS<T>>
+    pub fn build_local_mls<T: Real>(&self) -> Option<LocalMLS<T>>
     where
         Sample<T>: rstar::RTreeObject,
     {
@@ -383,7 +383,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     /// Builds an mls based implicit surface. This function returns `None` when there is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
-    pub fn build_mls<T: Real + Send + Sync>(&self) -> Option<MLS<T>>
+    pub fn build_mls<T: Real>(&self) -> Option<MLS<T>>
     where
         Sample<T>: rstar::RTreeObject,
     {

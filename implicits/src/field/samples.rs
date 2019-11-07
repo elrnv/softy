@@ -1,14 +1,15 @@
-use geo::math::Vector3;
 use geo::ops::*;
-use geo::Real;
+use num_traits::Zero;
 use rayon::prelude::IndexedParallelIterator;
+use std::ops::Neg;
+use utils::soap::{Scalar, Vector3};
 
 pub use super::*;
 
 /// A set of data stored on each sample for the implicit surface.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Sample<T: Real> {
+pub struct Sample<T: Scalar> {
     /// Index of the sample in the original vector or array.
     pub index: usize,
     /// Position of the sample in 3D space.
@@ -22,10 +23,10 @@ pub struct Sample<T: Real> {
 }
 
 /// Convert a sample of one type into a sample of another real type.
-impl<T: Real> Sample<T> {
+impl<T: Scalar> Sample<T> {
     /// Cast a sample into another real type. This function will unwrap internally, so it will
     /// panic if the conversion is invalid.
-    pub fn cast<S: Real>(self) -> Sample<S> {
+    pub fn cast<S: Scalar>(self) -> Sample<S> {
         Sample {
             index: self.index,
             pos: self.pos.map(|x| S::from(x).unwrap()),
@@ -40,11 +41,11 @@ impl<T: Real> Sample<T> {
 /// values.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Samples<T: Real> {
+pub struct Samples<T> {
     /// Sample point positions defining the implicit surface.
     pub points: Vec<Vector3<T>>,
     /// Normals that define the field gradient at every sample point.
-    pub normals: Vec<Vector3<T>>,
+    pub normals: Vec<[T; 3]>,
     /// Velocities on the iso-surface at every sample point.
     pub velocities: Vec<Vector3<T>>,
     /// Field values at the interpolating points. These are the values to
@@ -53,21 +54,21 @@ pub struct Samples<T: Real> {
     pub values: Vec<T>,
 }
 
-impl<T: Real + Send + Sync> Samples<T> {
+impl<T: Scalar + Neg<Output = T>> Samples<T> {
     /// Construct samples centered at vertices. The normals are optionally given, or otherwise
     /// computed using an area weighted method.
     pub fn new_vertex_samples<V3>(
         triangles: &[[usize; 3]],
         vertices: &[V3],
-        new_normals: Option<&[V3]>,
+        new_normals: Option<&[[T; 3]]>,
         values: Vec<T>,
     ) -> Self
     where
-        V3: Into<Vector3<T>> + Clone,
+        V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
-        let points = vec![Vector3::zeros(); vertices.len()];
-        let velocities = vec![Vector3::zeros(); vertices.len()];
-        let normals = vec![Vector3::zeros(); vertices.len()];
+        let points = vec![Vector3::zero(); vertices.len()];
+        let velocities = vec![Vector3::zero(); vertices.len()];
+        let normals = vec![[T::zero(); 3]; vertices.len()];
 
         let mut samples = Samples {
             points,
@@ -86,9 +87,9 @@ impl<T: Real + Send + Sync> Samples<T> {
         &mut self,
         triangles: &[[usize; 3]],
         new_vertices: &[V3],
-        new_normals: Option<&[V3]>,
+        new_normals: Option<&[[T; 3]]>,
     ) where
-        V3: Into<Vector3<T>> + Clone,
+        V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
         let Samples {
             ref mut points,
@@ -104,7 +105,7 @@ impl<T: Real + Send + Sync> Samples<T> {
         if let Some(nmls) = new_normals {
             assert_eq!(nmls.len(), new_vertices.len());
             for (nml, new_nml) in normals.iter_mut().zip(nmls.iter()) {
-                *nml = new_nml.clone().into();
+                *nml = new_nml.clone();
             }
         } else {
             geo::algo::compute_vertex_area_weighted_normals(new_vertices, triangles, normals);
@@ -120,8 +121,8 @@ impl<T: Real> Samples<T> {
         let n = points.len();
         Samples {
             points,
-            normals: vec![Vector3::zeros(); n],
-            velocities: vec![Vector3::zeros(); n],
+            normals: vec![[T::zero(); 3]; n],
+            velocities: vec![Vector3::zero(); n],
             values: vec![T::zero(); n],
         }
     }
@@ -132,11 +133,11 @@ impl<T: Real> Samples<T> {
         values: Vec<T>,
     ) -> Self
     where
-        V3: Into<Vector3<T>> + Clone,
+        V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
-        let points = vec![Vector3::zeros(); triangles.len()];
-        let normals = vec![Vector3::zeros(); triangles.len()];
-        let velocities = vec![Vector3::zeros(); triangles.len()];
+        let points = vec![Vector3::zero(); triangles.len()];
+        let normals = vec![[T::zero(); 3]; triangles.len()];
+        let velocities = vec![Vector3::zero(); triangles.len()];
 
         let mut samples = Samples {
             points,
@@ -152,7 +153,7 @@ impl<T: Real> Samples<T> {
     /// Update samples centered at the centroids of the given triangles.
     pub fn update_triangle_samples<V3>(&mut self, triangles: &[[usize; 3]], vertices: &[V3])
     where
-        V3: Into<Vector3<T>> + Clone,
+        V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
         let Samples {
             ref mut points,
@@ -163,7 +164,7 @@ impl<T: Real> Samples<T> {
 
         let new_iter = triangles.iter().map(|tri_indices| {
             let tri = Triangle::from_indexed_slice(tri_indices, &vertices);
-            let v = tri[1] - tri[0]; // tangent direction
+            let v = Vector3::new(tri[1].into()) - Vector3::new(tri[0].into()); // tangent direction
             (tri.centroid(), tri.area_normal(), v / v.norm())
         });
 
@@ -173,7 +174,7 @@ impl<T: Real> Samples<T> {
             .zip(velocities.iter_mut()))
         .zip(new_iter)
         {
-            *pos = new_pos;
+            *pos = From::<[T; 3]>::from(new_pos);
             *nml = new_nml;
             *vel = new_vel;
         }
@@ -206,7 +207,7 @@ impl<T: Real> Samples<T> {
             .map(move |(i, (((&pos, &nml), &vel), &value))| Sample {
                 index: i,
                 pos,
-                nml,
+                nml: nml.into(),
                 vel,
                 value,
             })
@@ -231,14 +232,14 @@ impl<T: Real> Samples<T> {
             .map(move |(i, (((pos, nml), vel), value))| Sample {
                 index: i,
                 pos,
-                nml,
+                nml: nml.into(),
                 vel,
                 value,
             })
     }
 }
 
-impl<T: Real + Send + Sync> Samples<T> {
+impl<T: Scalar + Send + Sync> Samples<T> {
     #[inline]
     pub fn par_iter<'a>(&'a self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone + 'a {
         let Samples {
@@ -256,7 +257,7 @@ impl<T: Real + Send + Sync> Samples<T> {
             .map(move |(i, (((&pos, &nml), &vel), &value))| Sample {
                 index: i,
                 pos,
-                nml,
+                nml: nml.into(),
                 vel,
                 value,
             })
@@ -280,7 +281,7 @@ impl<T: Real + Send + Sync> Samples<T> {
             .map(move |(i, (((pos, nml), vel), value))| Sample {
                 index: i,
                 pos,
-                nml,
+                nml: nml.into(),
                 vel,
                 value,
             })
@@ -290,13 +291,13 @@ impl<T: Real + Send + Sync> Samples<T> {
 /// A view into to the positions, normals and offsets of the sample points. This view need not be
 /// contiguous as it often isnt.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SamplesView<'i, 'd: 'i, T: Real> {
+pub struct SamplesView<'i, 'd: 'i, T> {
     /// Indices into the sample points.
     indices: &'i [usize],
     /// Sample point positions defining the implicit surface.
     points: &'d [Vector3<T>],
     /// Normals that define the potential field gradient at every sample point.
-    normals: &'d [Vector3<T>],
+    normals: &'d [[T; 3]],
     /// Vectors that identify a tangent to the iso-surface at every sample point.
     velocities: &'d [Vector3<T>],
     /// Field values at the interpolating points. These are the values to match by interpolating
@@ -305,7 +306,7 @@ pub struct SamplesView<'i, 'd: 'i, T: Real> {
     values: &'d [T],
 }
 
-impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
+impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
     /// Create a view of samples with a given indices slice into the provided samples.
     #[inline]
     pub fn new(indices: &'i [usize], samples: &'d Samples<T>) -> Self {
@@ -349,7 +350,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
         Sample {
             index: idx,
             pos: points[idx],
-            nml: normals[idx],
+            nml: normals[idx].into(),
             vel: velocities[idx],
             value: values[idx],
         }
@@ -378,7 +379,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 
     #[inline]
-    pub fn all_normals(&'d self) -> &'d [Vector3<T>] {
+    pub fn all_normals(&'d self) -> &'d [[T; 3]] {
         self.normals
     }
 
@@ -389,7 +390,7 @@ impl<'i, 'd: 'i, T: Real> SamplesView<'i, 'd, T> {
     }
 }
 
-impl<'i, 'd: 'i, T: Real + Send + Sync> SamplesView<'i, 'd, T> {
+impl<'i, 'd: 'i, T: Scalar + Send + Sync> SamplesView<'i, 'd, T> {
     #[inline]
     pub fn par_iter(&'i self) -> impl IndexedParallelIterator<Item = Sample<T>> + 'i {
         self.indices.par_iter().map(move |&i| self.at_index(i))

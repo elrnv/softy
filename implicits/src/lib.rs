@@ -14,8 +14,8 @@ pub mod field;
 
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
-use geo::Real;
 use snafu::Snafu;
+use utils::soap::Real;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -61,7 +61,7 @@ where
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
-pub fn surface_from_trimesh<T: Real + Send + Sync>(
+pub fn surface_from_trimesh<T: Real>(
     surface: &TriMesh<f64>,
     params: Params,
 ) -> Result<ImplicitSurface<T>, Error> {
@@ -81,7 +81,7 @@ pub fn surface_from_trimesh<T: Real + Send + Sync>(
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `PolyMesh`.
-pub fn surface_from_polymesh<T: Real + Send + Sync>(
+pub fn surface_from_polymesh<T: Real>(
     surface: &PolyMesh<f64>,
     params: Params,
 ) -> Result<ImplicitSurface<T>, Error> {
@@ -91,10 +91,7 @@ pub fn surface_from_polymesh<T: Real + Send + Sync>(
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
-pub fn mls_from_trimesh<T: Real + Send + Sync>(
-    surface: &TriMesh<f64>,
-    params: Params,
-) -> Result<MLS<T>, Error> {
+pub fn mls_from_trimesh<T: Real>(surface: &TriMesh<f64>, params: Params) -> Result<MLS<T>, Error> {
     let surf = ImplicitSurfaceBuilder::new()
         .kernel(params.kernel)
         .max_step(params.max_step)
@@ -111,7 +108,7 @@ pub fn mls_from_trimesh<T: Real + Send + Sync>(
 
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `PolyMesh`.
-pub fn mls_from_polymesh<T: Real + Send + Sync>(
+pub fn mls_from_polymesh<T: Real>(
     surface: &PolyMesh<f64>,
     params: Params,
 ) -> Result<MLS<T>, Error> {
@@ -160,14 +157,15 @@ impl From<geo::io::Error> for Error {
 #[cfg(test)]
 pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
     use geo::mesh::attrib::*;
+    use geo::mesh::builder::*;
     use geo::mesh::topology::*;
-    use utils::*;
 
-    let mut mesh = make_grid(Grid {
+    let mut mesh = GridBuilder {
         rows,
         cols,
         orientation: AxisPlaneOrientation::XY,
-    });
+    }
+    .build();
     mesh.add_attrib::<_, VertexIndex>("potential", 0.0f32)
         .unwrap();
     mesh
@@ -177,6 +175,7 @@ pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
 mod tests {
     use super::*;
     use geo::io::load_polymesh;
+    use geo::mesh::builder::*;
     use geo::mesh::topology::*;
     use geo::mesh::*;
     use std::path::PathBuf;
@@ -186,7 +185,7 @@ mod tests {
     fn vertex_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -227,7 +226,7 @@ mod tests {
     fn face_samples_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -314,7 +313,7 @@ mod tests {
     fn hrbf_vertex_test() -> Result<(), Error> {
         let mut grid = make_grid(22, 22);
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let mut sphere = PolyMesh::from(trimesh);
 
@@ -356,7 +355,7 @@ mod tests {
 
         let grid = make_grid(22, 22);
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let mut builder = ImplicitSurfaceBuilder::new();
         builder
@@ -396,15 +395,15 @@ mod tests {
     #[test]
     fn surface_jacobian_test() {
         use autodiff::F;
-        use geo::math::Vector3;
+        use utils::soap::Vector3;
 
         let grid = make_grid(22, 22);
         let grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
             .collect();
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
@@ -474,15 +473,15 @@ mod tests {
     #[test]
     fn complex_query_jacobian_test() {
         use autodiff::F;
-        use geo::math::Vector3;
+        use utils::soap::Vector3;
 
         let grid = make_grid(23, 23);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
             .collect();
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {
@@ -568,15 +567,15 @@ mod tests {
     #[test]
     fn complex_query_hessian_test() {
         use autodiff::F;
-        use geo::math::Vector3;
+        use utils::soap::Vector3;
 
         let grid = make_grid(11, 11);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
             .collect();
 
-        let trimesh = utils::make_sample_octahedron();
+        let trimesh = PlatonicSolidBuilder::build_octahedron();
 
         let implicit_surface = ImplicitSurfaceBuilder::new()
             .kernel(KernelType::Approximate {

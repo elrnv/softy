@@ -171,6 +171,22 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
+        impl<'a, T: 'a> AtomIterator<'a> for [T; $n] {
+            type Item = &'a T;
+            type Iter = std::slice::Iter<'a, T>;
+            fn atom_iter(&'a self) -> Self::Iter {
+                self.iter()
+            }
+        }
+
+        impl<'a, T: 'a> AtomMutIterator<'a> for [T; $n] {
+            type Item = &'a mut T;
+            type Iter = std::slice::IterMut<'a, T>;
+            fn atom_mut_iter(&'a mut self) -> Self::Iter {
+                self.iter_mut()
+            }
+        }
+
         // TODO: Figure out how to compile the below code.
         //        impl<T, N> ReinterpretAsGrouped<N> for [T; $n]
         //        where

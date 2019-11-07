@@ -70,6 +70,14 @@ impl<T> From<T> for Tensor<T> {
     }
 }
 
+impl<T: Default> Default for Tensor<T> {
+    fn default() -> Self {
+        Tensor {
+            data: Default::default(),
+        }
+    }
+}
+
 impl<S> Tensor<S> {
     /// Negate all elements in this tensor. This works on any tensor whose
     /// underlying elements are copyable negateable types.
@@ -165,6 +173,7 @@ pub trait Scalar:
     + PartialOrd
     + num_traits::NumCast
     + num_traits::NumAssign
+    + num_traits::FromPrimitive
     + std::iter::Sum
     + Dummy
 {

@@ -655,16 +655,16 @@ macro_rules! impl_array_matrices {
         }
 
         impl<T: Scalar> Index<usize> for Tensor<[[T; $c]; $r]> {
-            type Output = [T; $c];
+            type Output = Tensor<[T; $c]>;
             #[inline]
             fn index(&self, index: usize) -> &Self::Output {
-                &self.data[index]
+                self.data[index].as_tensor()
             }
         }
         impl<T: Scalar> IndexMut<usize> for Tensor<[[T; $c]; $r]> {
             #[inline]
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.data[index]
+                self.data[index].as_mut_tensor()
             }
         }
         impl<T: Copy + num_traits::ToPrimitive> Tensor<[[T; $c]; $r]> {

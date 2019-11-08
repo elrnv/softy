@@ -11,7 +11,7 @@ use ipopt::{self, Number};
 use std::cell::RefCell;
 use utils::soap::Vector3;
 use utils::{soap::*, zip};
-use log::{debug};
+use log::{trace, debug};
 
 const FORWARD_FRICTION: bool = true;
 
@@ -2109,6 +2109,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let v = self.update_current_velocity(uv);
         *obj = self.objective_value(v.view());
         //debug_assert!(obj.is_finite());
+        trace!("{}", *obj);
         obj.is_finite()
     }
 

@@ -65,3 +65,7 @@ pub fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
         }
     }
 }
+
+pub fn init_logger() {
+    let _ = env_logger::Builder::from_env("SOFTY_LOG").is_test(true).try_init();
+}

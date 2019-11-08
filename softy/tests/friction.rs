@@ -12,6 +12,7 @@ fn friction_tester(
     surface: PolyMesh,
     implicit_tetmesh: bool,
 ) -> Result<(), Error> {
+    init_logger();
     let friction_iterations = if fc_params.friction_params.is_some() {
         1
     } else {
@@ -39,11 +40,11 @@ fn friction_tester(
 
     for i in 0..50 {
         let res = solver.step()?;
-        println!("res = {:?}", res);
-        geo::io::save_tetmesh(
-            &solver.solid(0).tetmesh,
-            &format!("./out/solid_mesh_{}.vtk", i),
-        )?;
+        debug!("res = {:?}", res);
+        //geo::io::save_tetmesh(
+        //    &solver.solid(0).tetmesh,
+        //    &format!("./out/solid_mesh_{}.vtk", i),
+        //)?;
         assert!(
             res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."

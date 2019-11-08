@@ -30,6 +30,7 @@ log = "0.4"
 criterion = { version = "0.2" }
 autodiff = "0.1"
 rand = "0.5"
+env_logger = "0.7"
 
 [features]
 unstable = ["criterion/real_blackbox"]

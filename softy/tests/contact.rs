@@ -68,6 +68,7 @@ fn compute_contact_constraint(
 
 #[test]
 fn tet_push() -> Result<(), Error> {
+    init_logger();
     // A triangle is being pushed on top of a tet.
     let height = 1.18032;
     let mut tri_verts = vec![
@@ -170,6 +171,7 @@ fn ball_tri_push_tester(
     material: SolidMaterial,
     fc_params: FrictionalContactParams,
 ) -> Result<(), Error> {
+    init_logger();
     let tetmesh = geo::io::load_tetmesh(&PathBuf::from("assets/ball_fixed.vtk")).unwrap();
 
     let params = SimParams {
@@ -235,6 +237,7 @@ fn ball_bounce_tester(
     implicit_index: usize,
     points_index: usize,
 ) -> Result<(), Error> {
+    init_logger();
     let friction_iterations = if fc_params.friction_params.is_some() {
         1
     } else {
@@ -385,6 +388,7 @@ fn ball_bounce_on_implicit_volume_constraint() -> Result<(), Error> {
 /// Two tets in contact with each-other. This test verifies that the contact is resolved.
 #[test]
 fn two_tets_in_contact() -> Result<(), Error> {
+    init_logger();
     let mut tet_bottom = PlatonicSolidBuilder::build_tetrahedron();
     let mut tet_top = PlatonicSolidBuilder::build_tetrahedron();
     tet_top.translate([0.0, 0.9, 0.0]); // translate up by 0.3

@@ -8,10 +8,10 @@ use crate::objects::*;
 use crate::PointCloud;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
+use log::{debug, trace};
 use std::cell::RefCell;
 use utils::soap::Vector3;
 use utils::{soap::*, zip};
-use log::{trace, debug};
 
 const FORWARD_FRICTION: bool = true;
 
@@ -679,10 +679,12 @@ impl ObjectData {
     }
 
     /// Update the solid meshes with the given global array of vertex positions
-    /// and velocities for all solids.
-    pub fn update_solid_vertices(&mut self, new_pos: Chunked3<&[f64]>) -> Result<(), crate::Error> {
+    /// for all solids. Note that we set velocities only, since the positions will be updated
+    /// automatically from the ipopt solution.
+    pub fn update_solid_vertices(&mut self, new_pos: Chunked3<&[f64]>, time_step: f64) -> Result<(), crate::Error> {
         // All solids have prev_x coincident with pos so we use prev_x directly here.
         let mut prev_x = self.prev_x.view_mut().isolate(0);
+        let mut prev_v = self.prev_v.view_mut().isolate(0);
 
         // All solids are simulated, so the input point set must have the same
         // size as our internal vertex set. If these are mismatched, then there
@@ -693,8 +695,12 @@ impl ObjectData {
             return Err(crate::Error::SizeMismatch);
         }
 
+        let dt_inv = if time_step > 0.0 { 1.0 / time_step } else { 1.0 };
+
         // Get the tetmesh and prev_pos so we can update the fixed vertices.
-        for (solid, mut prev_pos) in self.solids.iter().zip(prev_x.iter_mut()) {
+        for (solid, mut prev_pos, mut prev_vel) in
+            zip!(self.solids.iter(), prev_x.iter_mut(), prev_v.iter_mut())
+        {
             // Get the vertex index of the original vertex (point in given point cloud).
             // This is done because meshes can be reordered when building the
             // solver. This attribute maintains the link between the caller and
@@ -711,14 +717,16 @@ impl ObjectData {
                 .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
             prev_pos
                 .iter_mut()
+                .zip(prev_vel.iter_mut())
                 .zip(new_pos_iter)
                 .zip(fixed_iter)
-                .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                .for_each(|(pos, new_pos)| {
+                .filter_map(|(data, &fixed)| if fixed != 0i8 { Some(data) } else { None })
+                .for_each(|((pos, vel), new_pos)| {
                     // Update the vertices we find in the given `new_pos` collection, not all may
                     // still be there.
                     if let Some(&new_pos) = new_pos {
-                        *pos = new_pos;
+                        *vel.as_mut_tensor() = (*new_pos.as_tensor() - *(*pos).as_tensor()) * dt_inv;
+                        //*pos = new_pos; // automatically updated via solve.
                     }
                 });
 
@@ -738,7 +746,10 @@ impl ObjectData {
         let ObjectData { prev_x, pos, .. } = self;
 
         let mut prev_x = prev_x.view_mut().isolate(1);
+        //let mut prev_v = prev_x.view_mut().isolate(1);
         let mut pos = pos.view_mut().isolate(1);
+
+        //let dt_inv = if self.time_step > 0.0 { 1.0 / self.time_step } else { 1.0 };
 
         // Get the trimesh and prev_x/pos so we can update the fixed vertices.
         for (shell, (mut prev_x, mut pos)) in self
@@ -810,7 +821,7 @@ impl ObjectData {
         Ok(())
     }
 
-    // Advance prev_* variables to cur_* variables and update the referenced meshes.
+    /// Advance prev_* variables to cur_* variables and update the referenced meshes.
     pub fn advance(&mut self, and_velocity: bool) {
         let ObjectData {
             prev_x,
@@ -948,9 +959,6 @@ pub(crate) struct NonLinearProblem {
     /// The time step defines the amount of time elapsed between steps (calls to `advance`).
     /// If the time step is zero, objects don't exhibit inertia.
     pub time_step: f64,
-    /// Displacement bounds. This controls how big of a step we can take per vertex position
-    /// component. In other words the bounds on the inf norm for each vertex displacement.
-    pub displacement_bound: Option<f64>,
     /// Interrupt callback that interrupts the solver (making it return prematurely) if the closure
     /// returns `false`.
     pub interrupt_checker: Box<dyn FnMut() -> bool>,
@@ -1054,7 +1062,7 @@ impl NonLinearProblem {
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
         let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
-        self.object_data.update_solid_vertices(new_pos.view())
+        self.object_data.update_solid_vertices(new_pos.view(), self.time_step)
     }
 
     /// Update the shell meshes with the given points.
@@ -1606,7 +1614,10 @@ impl NonLinearProblem {
                 time_step,
             );
 
-            debug!("Maximum contact impulse: {}", crate::inf_norm(contact_impulse.iter().cloned()));
+            debug!(
+                "Maximum contact impulse: {}",
+                crate::inf_norm(contact_impulse.iter().cloned())
+            );
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
             friction_steps[fc_idx] = fc
                 .constraint
@@ -2025,44 +2036,45 @@ impl ipopt::BasicProblem for NonLinearProblem {
         self.object_data.prev_v.view().into_flat().len()
     }
 
-    fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
+    fn bounds(&self, uv_l: &mut [Number], uv_u: &mut [Number]) -> bool {
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
-        let dt = if self.time_step > 0.0 {
-            self.time_step
-        } else {
-            1.0
-        };
+        let bound = 2e19;
+        
+        // Fixed vertices have a predetermined velocity which is specified in the prev_v variable.
+        // Unscale velocities so we can set the unscaled bounds properly.
+        let uv_flat_view = self.object_data.prev_v.view().into_flat();
+        let unscaled_vel = self.object_data.update_current_velocity(uv_flat_view, 1.0 / self.scale());
+        let solid_prev_uv = unscaled_vel.view().isolate(0);
 
-        let bound = self.displacement_bound.unwrap_or(2e19) / (self.scale() * dt);
-
-        x_l.iter_mut().for_each(|x| *x = -bound);
-        x_u.iter_mut().for_each(|x| *x = bound);
+        uv_l.iter_mut().for_each(|x| *x = -bound);
+        uv_u.iter_mut().for_each(|x| *x = bound);
 
         let x0 = self.object_data.prev_x.view();
-        let mut x_l = Chunked::from_offsets(
+        let mut uv_l = Chunked::from_offsets(
             *x0.offsets(),
-            Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(x_l)),
+            Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(uv_l)),
         );
-        let mut x_u = Chunked::from_offsets(
+        let mut uv_u = Chunked::from_offsets(
             *x0.offsets(),
-            Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(x_u)),
+            Chunked::from_offsets(*x0.data().offsets(), Chunked3::from_flat(uv_u)),
         );
 
-        for (i, solid) in self.object_data.solids.iter().enumerate() {
+        for (i, (solid, uv)) in self.object_data.solids.iter().zip(solid_prev_uv.iter()).enumerate() {
             if let Ok(fixed_verts) = solid
                 .tetmesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
-                let mut x_l = x_l.view_mut().isolate(0).isolate(i);
-                let mut x_u = x_u.view_mut().isolate(0).isolate(i);
+                let mut uv_l = uv_l.view_mut().isolate(0).isolate(i);
+                let mut uv_u = uv_u.view_mut().isolate(0).isolate(i);
                 // Find and set fixed vertices.
-                x_l.iter_mut()
-                    .zip(x_u.iter_mut())
+                uv_l.iter_mut()
+                    .zip(uv_u.iter_mut())
+                    .zip(uv.iter())
                     .zip(fixed_verts.iter())
                     .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|((l, u), _)| {
-                        *l = [0.0; 3];
-                        *u = [0.0; 3];
+                    .for_each(|(((l, u), uv), _)| {
+                        *l = *uv;
+                        *u = *uv;
                     });
             }
         }
@@ -2072,11 +2084,11 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 .trimesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
             {
-                let mut x_l = x_l.view_mut().isolate(1).isolate(i);
-                let mut x_u = x_u.view_mut().isolate(1).isolate(i);
+                let mut uv_l = uv_l.view_mut().isolate(1).isolate(i);
+                let mut uv_u = uv_u.view_mut().isolate(1).isolate(i);
                 // Find and set fixed vertices.
-                x_l.iter_mut()
-                    .zip(x_u.iter_mut())
+                uv_l.iter_mut()
+                    .zip(uv_u.iter_mut())
                     .zip(fixed_verts.iter())
                     .filter(|&(_, &fixed)| fixed != 0)
                     .for_each(|((l, u), _)| {
@@ -2085,9 +2097,9 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     });
             }
         }
-        let x_l = x_l.into_flat();
-        let x_u = x_u.into_flat();
-        debug_assert!(x_l.iter().all(|&x| x.is_finite()) && x_u.iter().all(|&x| x.is_finite()));
+        let uv_l = uv_l.into_flat();
+        let uv_u = uv_u.into_flat();
+        debug_assert!(uv_l.iter().all(|&x| x.is_finite()) && uv_u.iter().all(|&x| x.is_finite()));
         true
     }
 
@@ -2109,7 +2121,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         let v = self.update_current_velocity(uv);
         *obj = self.objective_value(v.view());
         //debug_assert!(obj.is_finite());
-        trace!("{}", *obj);
+        trace!("Objective value = {}", *obj);
         obj.is_finite()
     }
 

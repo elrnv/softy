@@ -15,7 +15,7 @@ use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
-use log::{info, warn, debug};
+use log::*;
 
 use crate::inf_norm;
 
@@ -553,7 +553,6 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
-        let displacement_bound = None;
         //let displacement_bound = smooth_contact_params.map(|scp| {
         //    // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
         //    // bound).
@@ -566,7 +565,6 @@ impl SolverBuilder {
             volume_constraints,
             time_step,
             gravity,
-            displacement_bound,
             interrupt_checker: Box::new(|| false),
             iterations: 0,
             warm_start: Solution::default(),

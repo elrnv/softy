@@ -7,9 +7,12 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
+use geo::bbox::BBox;
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
+use geo::ops::*;
 use implicits::*;
+use log::{debug, error};
 use num_traits::Zero;
 #[cfg(feature = "af")]
 use reinterpret::*;
@@ -17,7 +20,6 @@ use std::cell::RefCell;
 use utils::soap::*;
 use utils::soap::{Matrix3, Vector2, Vector3};
 use utils::zip;
-use log::{debug, error};
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
@@ -46,6 +48,11 @@ pub struct PointContactConstraint {
     /// A flag indicating if the collider is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
     collider_is_fixed: bool,
+
+    /// The maximum distance between two points of the given geometry.
+    ///
+    /// This value is used to produce relative thresholds.
+    problem_diameter: f64,
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
@@ -88,6 +95,10 @@ impl PointContactConstraint {
 
             let collider_mass_inv = Self::mass_inv_attribute(&collider)?;
 
+            let mut bbox = BBox::empty();
+            bbox.absorb(object.bounding_box());
+            bbox.absorb(collider.bounding_box());
+
             let constraint = PointContactConstraint {
                 implicit_surface: surface.query_topo(query_points),
                 contact_points: RefCell::new(Chunked3::from_array_vec(query_points.to_vec())),
@@ -103,6 +114,7 @@ impl PointContactConstraint {
                 object_is_fixed,
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
+                problem_diameter: bbox.diameter(),
             };
 
             Ok(constraint)
@@ -276,17 +288,25 @@ impl PointContactConstraint {
 
     /// Prune contacts with zero contact_impulse and contacts without neighbouring samples.
     /// This function outputs the indices of contacts as well as a pruned vector of impulses.
-    fn in_contact_indices(&self, contact_impulse: &[f64]) -> (Vec<usize>, Vec<usize>, Vec<f64>) {
+    fn in_contact_indices(
+        &self,
+        contact_impulse: &[f64],
+        potential: &[f64],
+    ) -> (Vec<usize>, Vec<usize>, Vec<f64>) {
         let surf = &self.implicit_surface;
         let query_points = self.contact_points.borrow();
         let radius = surf.radius() * 0.999;
         let query_indices = self.active_constraint_indices();
         assert_eq!(query_indices.len(), contact_impulse.len());
+        assert_eq!(potential.len(), contact_impulse.len());
+        let dist_scale = 1.0 / self.problem_diameter;
         let (active_constraint_subset, contact_impulse): (Vec<_>, Vec<_>) = contact_impulse
             .iter()
+            .zip(potential.iter())
             .enumerate()
-            .filter_map(|(i, &cf)| {
+            .filter_map(|(i, (&cf, dist))| {
                 if cf != 0.0
+                    && dist * dist_scale < 1e-4
                     && surf.num_neighbours_within_distance(query_points[query_indices[i]], radius)
                         > 0
                 {
@@ -470,7 +490,7 @@ impl ContactConstraint for PointContactConstraint {
         orig_contact_impulse_n: &[f64],
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         v: [SubsetView<Chunked3<&[f64]>>; 2],
-        _potential_values: &[f64],
+        potential_values: &[f64],
         mut friction_steps: u32,
     ) -> u32 {
         if self.frictional_contact.is_none() || friction_steps == 0 {
@@ -485,7 +505,7 @@ impl ContactConstraint for PointContactConstraint {
         // influence to be part of the optimization. Active *contacts* are a subset of those that
         // are considered in contact.
         let (active_constraint_subset, active_contact_indices, orig_contact_impulse_n) =
-            self.in_contact_indices(orig_contact_impulse_n);
+            self.in_contact_indices(orig_contact_impulse_n, potential_values);
         let normals = self.contact_normals();
         let normals_subset = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
         let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
@@ -965,21 +985,18 @@ impl ContactConstraint for PointContactConstraint {
         self.update_surface_with_mesh_pos(x[0]);
         self.update_contact_points(x[1]);
 
-        let (active_constraint_subset, active_contact_indices, contact_impulse) =
-            self.in_contact_indices(contact_impulse);
-
+        let active_constraint_indices = self.active_constraint_indices();
         let normals = self.contact_normals();
-        let normals = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
 
         assert_eq!(contact_impulse.len(), normals.len());
-        assert_eq!(active_contact_indices.len(), normals.len());
+        assert_eq!(active_constraint_indices.len(), normals.len());
 
-        for (surf_idx, &nml, &cr) in zip!(
-            active_contact_indices.into_iter(),
+        for (aci, &nml, &cr) in zip!(
+            active_constraint_indices.into_iter(),
             normals.iter(),
             contact_impulse.iter()
         ) {
-            impulse[1][surf_idx] = (Vector3::new(nml) * cr).into();
+            impulse[1][aci] = (Vector3::new(nml) * cr).into();
         }
 
         let query_points = self.contact_points.borrow();

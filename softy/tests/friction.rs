@@ -4,6 +4,7 @@ use softy::*;
 pub use test_utils::*;
 use geo::mesh::builder::*;
 use geo::ops::transform::*;
+use log::debug;
 
 fn friction_tester(
     material: SolidMaterial,
@@ -56,6 +57,7 @@ fn friction_tester(
 
 /// A regular tetrahedron sliding on a flat surface.
 #[test]
+#[ignore]
 fn sliding_tet_on_points() -> Result<(), Error> {
     let material =
         SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));

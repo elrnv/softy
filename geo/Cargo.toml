@@ -1,0 +1,8 @@
+[package]
+name = "geo"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gut = { version = "0.3", features = ["io", "serde_all"] }

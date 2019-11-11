@@ -9,7 +9,7 @@ license = "MPL-2.0"
 rayon = "1.2"
 na = { package = "nalgebra", version = "0.18" }
 hrbf = "0.2"
-geo = { package = "gut", version = "0.3", features = ["io", "serde_all"] }
+geo = { path = "../geo" }
 rstar = { version = "0.5" }
 autodiff = "0.1"
 reinterpret = "0.1"

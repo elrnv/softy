@@ -9,7 +9,7 @@ name = "softyhdk"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-geo = { package = "gut", version = "0.3" }
+geo = { path = "../geo" }
 softy = { path = "../softy" }
 libc = "*"
 hdkrs = { path = "../hdkrs" }

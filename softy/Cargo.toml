@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 na = { package = "nalgebra", version = "0.18" }
 ipopt = "0.5"
-geo = { package = "gut", version = "0.3", features = ["io"] }
+geo = { path = "../geo" }
 rayon = "1.2"
 reinterpret = "0.1"
 implicits = { path = "../implicits" }

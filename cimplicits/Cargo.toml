@@ -9,9 +9,9 @@ name = "cimplicits"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+geo = { path = "../geo" }
 implicits = { path = "../implicits" }
 reinterpret = "0.2"
-gut = { version = "0.3", features = ["io"] }
 
 [build-dependencies]
 cbindgen = "0.6"

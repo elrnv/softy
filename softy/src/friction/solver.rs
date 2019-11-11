@@ -539,7 +539,7 @@ mod tests {
             dynamic_friction: 0.001,
             inner_iterations: 40,
             tolerance: 1e-7,
-            print_level: 5,
+            print_level: 0,
         };
 
         let masses = vec![0.0003720701030949866, 0.0003720701030949866];

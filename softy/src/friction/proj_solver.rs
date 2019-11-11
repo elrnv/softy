@@ -154,7 +154,7 @@ mod tests {
             dynamic_friction: 0.001,
             inner_iterations: 40,
             tolerance: 1e-10,
-            print_level: 5,
+            print_level: 0,
         };
 
         let contact_impulse = vec![-0.0000000018048827573828247, -0.00003259055555607145];

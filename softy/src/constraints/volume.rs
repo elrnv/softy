@@ -48,9 +48,7 @@ impl<'a> Constraint<'a, f64> for VolumeConstraint {
     }
 
     fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-        // We don't actually need the true volume, the triple scalar product does the trick. Here
-        // we scale back by 6 to equate to the real volume.
-        (vec![6.0 * self.rest_volume], vec![6.0 * self.rest_volume])
+        (vec![0.0], vec![0.0])
     }
 
     fn constraint(&mut self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
@@ -62,7 +60,7 @@ impl<'a> Constraint<'a, f64> for VolumeConstraint {
             let signed_volume = p[0].dot(p[1].cross(p[2]));
             total_volume += signed_volume;
         }
-        value[0] = total_volume;
+        value[0] = total_volume - 6.0 * self.rest_volume;
     }
 }
 

@@ -11,11 +11,11 @@ use geo::mesh::{
 use geo::ops::{Area, ShapeMatrix, Volume};
 use geo::prim::{Tetrahedron, Triangle};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
+use log::*;
 use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
-use log::*;
 
 use crate::inf_norm;
 
@@ -438,15 +438,125 @@ impl SolverBuilder {
         Ok(out)
     }
 
-    /// Helper to compute max element size. This is used for normalizing tolerances.
+    /// Helper function to compute the total mass in the problem.
+    fn compute_total_mass(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        let mut mass = 0.0_f64;
+
+        mass += solids
+            .iter()
+            .map(|TetMeshSolid { ref tetmesh, .. }| {
+                tetmesh
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .and_then(|ref_vol_iter| {
+                        tetmesh
+                            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                            .map(|density_iter| {
+                                ref_vol_iter
+                                    .zip(density_iter)
+                                    .map(|(vol, &density)| vol * f64::from(density))
+                                    .sum()
+                            })
+                    })
+                    .unwrap_or(0.0)
+            })
+            .sum::<f64>();
+
+        mass += shells
+            .iter()
+            .map(
+                |TriMeshShell {
+                     ref trimesh,
+                     ref material,
+                     ..
+                 }| {
+                    match material.properties {
+                        ShellProperties::Rigid { .. } => {
+                            let centroid = trimesh.vertex_position_iter().fold(
+                                (Vector3::zero(), 0),
+                                |(centroid, count), &v| {
+                                    let count_f = count as f64;
+                                    (
+                                        (centroid * count_f as f64 + Vector3::new(v))
+                                            / (count_f + 1.0),
+                                        count + 1,
+                                    )
+                                },
+                            );
+                            let total_volume = trimesh
+                                .tri_iter()
+                                .map(|tri| {
+                                    let tet = Tetrahedron::new([
+                                        centroid.0.into(),
+                                        tri.0.into(),
+                                        tri.1.into(),
+                                        tri.2.into(),
+                                    ]);
+                                    tet.signed_volume()
+                                })
+                                .sum::<f64>();
+
+                            total_volume
+                                * material
+                                    .scaled_density()
+                                    .expect("Missing rigid body density")
+                                    as f64
+                        }
+                        ShellProperties::Deformable { .. } => trimesh
+                            .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                            .expect("Missing reference area attribute")
+                            .zip(
+                                trimesh
+                                    .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
+                                    .expect("Missing density attribute on trimesh"),
+                            )
+                            .map(|(area, &density)| area * f64::from(density))
+                            .sum::<f64>(),
+                        _ => 0.0,
+                    }
+                },
+            )
+            .sum::<f64>();
+
+        mass
+    }
+
+    /// Helper to compute max object size (diameter) over all deformable or rigid objects.
+    /// This is used for normalizing the problem.
     fn compute_max_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        use geo::ops::*;
+        let mut bbox = geo::bbox::BBox::<f64>::empty();
+
+        for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
+            bbox.absorb(tetmesh.bounding_box());
+        }
+
+        for TriMeshShell {
+            ref trimesh,
+            ref material,
+            ..
+        } in shells.iter()
+        {
+            match material.properties {
+                ShellProperties::Rigid { .. } | ShellProperties::Deformable { .. } => {
+                    bbox.absorb(trimesh.bounding_box());
+                }
+                _ => {}
+            }
+        }
+
+        bbox.diameter()
+    }
+
+    /// Helper to compute max element size. This is used for normalizing tolerances.
+    #[cfg(ignore)]
+    fn compute_element_max_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
         let mut max_size = 0.0_f64;
 
         for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
             max_size = max_size.max(
                 tetmesh
-                    .tet_iter()
-                    .map(Volume::volume)
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .expect("Reference volume missing")
                     .max_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
                     .expect("Given TetMesh is empty")
                     .cbrt(),
@@ -456,10 +566,13 @@ impl SolverBuilder {
         for TriMeshShell { ref trimesh, .. } in shells.iter() {
             max_size = max_size.max(
                 trimesh
-                    .tri_iter()
-                    .map(Area::area)
-                    .max_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
-                    .expect("Given TriMesh is empty")
+                    .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                    .ok()
+                    .and_then(|area_iter| {
+                        area_iter
+                            .max_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
+                    })
+                    .unwrap_or(&0.0)
                     .sqrt(),
             );
         }
@@ -469,6 +582,7 @@ impl SolverBuilder {
 
     /// Helper function to compute the maximum elastic modulus of all given meshes.
     /// This aids in figuring out the correct scaling for the convergence tolerances.
+    #[cfg(ignore)]
     fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
         let mut max_modulus = 0.0_f32;
 
@@ -553,11 +667,9 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
-        //let displacement_bound = smooth_contact_params.map(|scp| {
-        //    // Convert from a 2 norm bound (max_step) to an inf norm bound (displacement component
-        //    // bound).
-        //    scp.max_step / 3.0f64.sqrt()
-        //});
+        let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
+
+        let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
         Ok(NonLinearProblem {
             object_data,
@@ -570,38 +682,43 @@ impl SolverBuilder {
             warm_start: Solution::default(),
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
+            max_size,
+            total_mass,
         })
     }
 
     /// Build the simulation solver.
     pub fn build(&self) -> Result<Solver, Error> {
         let mut problem = self.build_problem()?;
-        let max_time_step = problem.time_step;
-
-        let max_size =
-            Self::compute_max_size(&problem.object_data.solids, &problem.object_data.shells);
+        let time_step = problem.time_step;
 
         // Note that we don't need the solution field to get the number of variables and
         // constraints. This means we can use these functions to initialize solution.
         problem.reset_warm_start();
 
-        let max_modulus =
-            Self::compute_max_modulus(&problem.object_data.solids, &problem.object_data.shells)?;
+        //let max_element_size = Self::compute_element_max_size(
+        //    &problem.object_data.solids,
+        //    &problem.object_data.shells,
+        //);
+
+        //let max_modulus =
+        //    Self::compute_max_modulus(&problem.object_data.solids, &problem.object_data.shells)?;
 
         // Construct the Ipopt solver.
         let mut ipopt = Ipopt::new(problem)?;
 
         // Setup ipopt paramters using the input simulation params.
-        let mut params = self.sim_params.clone();
+        let params = self.sim_params.clone();
 
         // Determine the true force tolerance. To start we base this tolerance
         // on the elastic response which depends on mu and lambda as well as per
         // tet volume: Larger stiffnesses and volumes cause proportionally
         // larger gradients. Thus our tolerance should reflect these properties.
-        let max_area = max_size * max_size;
-        let tol = f64::from(params.tolerance * max_modulus) * max_area;
-        params.tolerance = tol as f32;
-        params.outer_tolerance *= max_modulus * max_area as f32;
+        //let max_area = max_element_size * max_element_size;
+        //let tol = f64::from(params.tolerance * max_modulus) * max_area;
+        //params.tolerance = tol as f32;
+        //params.outer_tolerance *= max_modulus * max_area as f32;
+        let tol = params.tolerance as f64;
 
         info!("Ipopt tolerance: {:.2e}", tol);
         ipopt.set_option("tol", tol);
@@ -626,7 +743,7 @@ impl SolverBuilder {
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
             ipopt.set_option("derivative_test_tol", 1e-4);
-            ipopt.set_option("point_perturbation_radius", 0.01);
+            ipopt.set_option("point_perturbation_radius", 0.1);
             if params.derivative_test == 1 {
                 ipopt.set_option("derivative_test", "first-order");
             } else if params.derivative_test == 2 {
@@ -655,8 +772,9 @@ impl SolverBuilder {
             sim_params: params,
             max_step: 0.0,
             old_active_constraint_set: Chunked::<Vec<usize>>::new(),
-            max_time_step,
-            time_step_remaining: max_time_step,
+            max_time_step: time_step,
+            time_step_remaining: time_step,
+            minimum_time_step: time_step,
         })
     }
 
@@ -1060,6 +1178,8 @@ pub struct Solver {
     max_time_step: f64,
     /// The remainder of the time step left to simulate before we are done with this time step.
     time_step_remaining: f64,
+    /// Record the current minimum time step used. This is useful for tweaking timesteps.
+    minimum_time_step: f64,
 }
 
 impl Solver {
@@ -1456,7 +1576,10 @@ impl Solver {
             let initial_error = self.initial_residual_error();
             let relative_tolerance = f64::from(self.sim_params.tolerance) / initial_error;
             debug!("Checking constraint violation: {}", constraint_violation);
-            debug!("Relative threshold for constraint violation: {}", relative_tolerance);
+            debug!(
+                "Relative threshold for constraint violation: {}",
+                relative_tolerance
+            );
             // NOTE: Ipopt can't detect constraint values below 1e-7 in absolute value. It seems to
             // be a hardcoded threshold.
             if constraint_violation > 1e-7_f64.max(relative_tolerance) {
@@ -1545,6 +1668,8 @@ impl Solver {
             if self.problem().time_step > self.time_step_remaining {
                 self.problem_mut().time_step = self.time_step_remaining;
             }
+            self.minimum_time_step = self.minimum_time_step.min(self.problem().time_step);
+
             // Remap contacts from the initial constraint reset above, or if the constraints were
             // updated after advection.
             self.remap_contacts();
@@ -1640,10 +1765,7 @@ impl Solver {
         self.remap_contacts();
 
         if result.iterations > self.sim_params.max_outer_iterations {
-            warn!(
-                "Reached max outer iterations: {:?}",
-                result.iterations
-            );
+            warn!("Reached max outer iterations: {:?}", result.iterations);
         }
 
         //self.output_meshes(self.step_count as u32);
@@ -1652,6 +1774,7 @@ impl Solver {
         self.step_count += 1;
 
         debug!("Inner iterations: {}", self.inner_iterations);
+        info!("Minimum time step so far: {}", self.minimum_time_step);
 
         // On success, update the mesh with useful metrics.
         self.problem_mut().update_mesh_data();

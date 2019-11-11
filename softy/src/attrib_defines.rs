@@ -14,6 +14,7 @@ pub(crate) const REFERENCE_AREA_ATTRIB: &str = "ref_area";
 pub(crate) const REFERENCE_SHAPE_MATRIX_INV_ATTRIB: &str = "ref_shape_mtx_inv";
 pub(crate) const STRAIN_ENERGY_ATTRIB: &str = "strain_energy";
 pub(crate) const ELASTIC_FORCE_ATTRIB: &str = "elastic_force";
+pub(crate) const POTENTIAL_ATTRIB: &str = "potential";
 pub const FRICTION_ATTRIB: &str = "friction";
 pub const CONTACT_ATTRIB: &str = "contact";
 
@@ -31,5 +32,6 @@ pub(crate) type RefAreaType = f64;
 pub(crate) type RefShapeMtxInvType = Matrix3<f64>;
 pub(crate) type StrainEnergyType = f64;
 pub(crate) type ElasticForceType = [f64; 3];
+pub(crate) type PotentialType = f64;
 pub type FrictionImpulseType = [f64; 3];
 pub type ContactImpulseType = [f64; 3];

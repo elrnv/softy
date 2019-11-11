@@ -2,10 +2,10 @@ mod test_utils;
 
 use approx::*;
 use geo::mesh::attrib::Attrib;
-use geo::mesh::topology::*;
 use geo::mesh::builder::*;
-use geo::ops::transform::*;
+use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
+use geo::ops::transform::*;
 use softy::*;
 use std::path::PathBuf;
 pub use test_utils::*;
@@ -257,7 +257,8 @@ fn ball_bounce_tester(
         rows: 4,
         cols: 4,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
 
     grid.scale([3.0, 1.0, 3.0]);
     grid.translate([0.0, -3.0, 0.0]);

@@ -14,7 +14,7 @@ pub const STATIC_PARAMS: SimParams = SimParams {
     print_level: 0,
     derivative_test: 0,
     mu_strategy: MuStrategy::Adaptive,
-    max_gradient_scaling: 1e-5,
+    max_gradient_scaling: 0.0001,
     log_file: None,
 };
 
@@ -67,5 +67,7 @@ pub fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
 }
 
 pub fn init_logger() {
-    let _ = env_logger::Builder::from_env("SOFTY_LOG").is_test(true).try_init();
+    let _ = env_logger::Builder::from_env("SOFTY_LOG")
+        .is_test(true)
+        .try_init();
 }

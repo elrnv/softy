@@ -18,6 +18,7 @@ pub fn medium_solid_material() -> SolidMaterial {
 /// (dynamics enabled), which is more sensitive to perturbations.
 #[test]
 fn equilibrium() {
+    init_logger();
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
@@ -44,7 +45,8 @@ fn equilibrium() {
 }
 
 #[test]
-fn stretch() -> Result<(), Error> {
+fn stretch_plain() -> Result<(), Error> {
+    init_logger();
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
     let mut solver = SolverBuilder::new(SimParams {
         print_level: 0,
@@ -62,6 +64,7 @@ fn stretch() -> Result<(), Error> {
 
 #[test]
 fn stretch_volume_constraint() -> Result<(), Error> {
+    init_logger();
     let incompressible_material = medium_solid_material().with_volume_preservation(true);
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
     let mut solver = SolverBuilder::new(SimParams {
@@ -80,7 +83,8 @@ fn stretch_volume_constraint() -> Result<(), Error> {
 }
 
 #[test]
-fn twist() -> Result<(), Error> {
+fn twist_plain() -> Result<(), Error> {
+    init_logger();
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0));
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
@@ -96,6 +100,7 @@ fn twist() -> Result<(), Error> {
 
 #[test]
 fn twist_dynamic_volume_constraint() -> Result<(), Error> {
+    init_logger();
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
@@ -103,6 +108,8 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
     // We use a large time step to get the simulation to settle to the static sim with less
     // iterations.
     let params = SimParams {
+        print_level: 0,
+        derivative_test: 0,
         time_step: Some(2.0),
         ..DYNAMIC_PARAMS
     };
@@ -130,6 +137,7 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
 
 #[test]
 fn twist_volume_constraint() -> Result<(), Error> {
+    init_logger();
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
@@ -149,11 +157,14 @@ fn twist_volume_constraint() -> Result<(), Error> {
 /// iterations, and converges after the first solve.
 #[test]
 fn twist_volume_constraint_consistent_outer_iterations() -> Result<(), Error> {
+    init_logger();
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
 
     let params = SimParams {
+        print_level: 0,
+        derivative_test: 0,
         outer_tolerance: 1e-5, // This is a fairly strict tolerance.
         ..STRETCH_PARAMS
     };

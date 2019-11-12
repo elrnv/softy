@@ -62,25 +62,25 @@ fn stacking_boxes() -> Result<(), Error> {
         //.add_frictional_contact(fc_params, (2, 1))
         .build()?;
 
-    geo::io::save_polymesh(
-        &PolyMesh::from(solver.shell(0).trimesh.clone()),
-        "./out/grid.vtk",
-    )
-    .unwrap();
+    //geo::io::save_polymesh(
+    //    &PolyMesh::from(solver.shell(0).trimesh.clone()),
+    //    "./out/grid.vtk",
+    //)
+    //.unwrap();
 
     for i in 0..50 {
         let res = solver.step()?;
         println!("res = {:?}; rame = {:?}", res, i);
-        geo::io::save_tetmesh(
-            &solver.solid(0).tetmesh,
-            &PathBuf::from(format!("./out/box_bottom_{}.vtk", i)),
-        )
-        .unwrap();
-        geo::io::save_tetmesh(
-            &solver.solid(1).tetmesh,
-            &PathBuf::from(format!("./out/box_top_{}.vtk", i)),
-        )
-        .unwrap();
+        //geo::io::save_tetmesh(
+        //    &solver.solid(0).tetmesh,
+        //    &PathBuf::from(format!("./out/box_bottom_{}.vtk", i)),
+        //)
+        //.unwrap();
+        //geo::io::save_tetmesh(
+        //    &solver.solid(1).tetmesh,
+        //    &PathBuf::from(format!("./out/box_top_{}.vtk", i)),
+        //)
+        //.unwrap();
         assert!(
             res.iterations <= params.max_outer_iterations,
             "Exceeded max outer iterations."

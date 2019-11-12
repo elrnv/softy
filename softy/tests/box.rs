@@ -135,7 +135,7 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    geo::io::save_tetmesh(solution, &PathBuf::from("out/box_twisted_const_volume.vtk"))?;
+    //geo::io::save_tetmesh(solution, &PathBuf::from("out/box_twisted_const_volume.vtk"))?;
     compare_meshes(&solution, &expected, 1e-2);
     Ok(())
 }

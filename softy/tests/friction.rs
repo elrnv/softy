@@ -1,10 +1,10 @@
 mod test_utils;
 
-use softy::*;
-pub use test_utils::*;
 use geo::mesh::builder::*;
 use geo::ops::transform::*;
 use log::debug;
+use softy::*;
+pub use test_utils::*;
 
 fn friction_tester(
     material: SolidMaterial,
@@ -39,7 +39,7 @@ fn friction_tester(
         .add_frictional_contact(fc_params, coupling)
         .build()?;
 
-    for i in 0..50 {
+    for _ in 0..50 {
         let res = solver.step()?;
         debug!("res = {:?}", res);
         //geo::io::save_tetmesh(
@@ -80,7 +80,8 @@ fn sliding_tet_on_points() -> Result<(), Error> {
         rows: 10,
         cols: 10,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
     surface.scale([2.0, 1.0, 2.0]);
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     surface.translate([0.0, -0.7, 0.0]);
@@ -115,7 +116,8 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     surface.translate([0.0, -0.7, 0.0]);
 
@@ -149,12 +151,10 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
 
-    surface.rotate(
-        [1.0, 0.0, 0.0],
-        5.0 * std::f64::consts::PI / 180.0
-    );
+    surface.rotate([1.0, 0.0, 0.0], 5.0 * std::f64::consts::PI / 180.0);
     surface.translate([0.0, -1.3, 0.0]);
 
     //geo::io::save_polymesh(&surface, "./out/polymesh.vtk")?;
@@ -187,7 +187,8 @@ fn self_contact() -> Result<(), Error> {
         rows: 1,
         cols: 1,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
     surface.rotate([1.0, 0.0, 0.0], std::f64::consts::PI / 16.0);
     surface.translate([0.0, -0.7, 0.0]);
 

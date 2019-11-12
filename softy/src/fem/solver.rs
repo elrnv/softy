@@ -743,7 +743,7 @@ impl SolverBuilder {
         //ipopt.set_option("hessian_approximation", "limited-memory");
         if params.derivative_test > 0 {
             ipopt.set_option("derivative_test_tol", 1e-4);
-            ipopt.set_option("point_perturbation_radius", 0.1);
+            ipopt.set_option("point_perturbation_radius", 0.01);
             if params.derivative_test == 1 {
                 ipopt.set_option("derivative_test", "first-order");
             } else if params.derivative_test == 2 {

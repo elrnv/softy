@@ -6,7 +6,7 @@ pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
     clear_velocity: false,
-    tolerance: 1e-10,
+    tolerance: 2e-10,
     max_iterations: 300,
     max_outer_iterations: 1,
     friction_iterations: 0,
@@ -14,7 +14,7 @@ pub const STATIC_PARAMS: SimParams = SimParams {
     print_level: 0,
     derivative_test: 0,
     mu_strategy: MuStrategy::Adaptive,
-    max_gradient_scaling: 0.0001,
+    max_gradient_scaling: 5e-6,
     log_file: None,
 };
 

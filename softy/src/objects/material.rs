@@ -279,17 +279,17 @@ impl DeformableProperties {
             density = density.map(|d| d * scale);
             damping *= scale;
         } else if let Some(ref mut density) = density {
-            scale = if *density > 0.0 {
+            scale = utils::approx_power_of_two32(if *density > 0.0 {
                 1.0 / *density
             } else if damping > 0.0 {
                 1.0 / damping
             } else {
                 1.0
-            };
+            });
             *density *= scale;
             damping *= scale;
         } else {
-            scale = if damping > 0.0 { 1.0 / damping } else { 1.0 };
+            scale = utils::approx_power_of_two32(if damping > 0.0 { 1.0 / damping } else { 1.0 });
             damping *= scale;
         }
 
@@ -347,13 +347,13 @@ impl ElasticityParameters {
 
     /// Rescale parameters uniformly to be closer to 1.0.
     pub fn normalize(&mut self) -> f32 {
-        let scale = if self.mu > 0.0 {
+        let scale = utils::approx_power_of_two32(if self.mu > 0.0 {
             1.0 / self.mu
         } else if self.lambda > 0.0 {
             1.0 / self.lambda
         } else {
             1.0
-        };
+        });
         *self = self.scaled(scale);
         scale
     }

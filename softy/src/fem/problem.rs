@@ -1006,11 +1006,11 @@ pub(crate) struct NonLinearProblem {
 impl NonLinearProblem {
     pub fn variable_scale(&self) -> f64 {
         // This scaling makes variables unitless.
-        utils::approx_power_of_two64(0.05 * self.max_size / self.time_step())
+        utils::approx_power_of_two64(0.1 * self.max_size / self.time_step())
     }
 
     fn impulse_inv_scale(&self) -> f64 {
-        utils::approx_power_of_two64(self.time_step() / (self.max_size * self.total_mass))
+        utils::approx_power_of_two64(0.5 * self.time_step() / (self.max_size * self.total_mass))
     }
 
     fn volume_constraint_scale(&self) -> f64 {
@@ -2228,6 +2228,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
     }
 
     fn objective_grad(&self, uv: &[Number], grad_f: &mut [Number]) -> bool {
+        trace!(
+            "Unscaled variable norm: {}",
+            crate::inf_norm(uv.iter().cloned())
+        );
         grad_f.iter_mut().for_each(|x| *x = 0.0); // clear gradient vector
 
         let v = self.update_current_velocity(uv);
@@ -2317,6 +2321,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         let scale = self.variable_scale() * self.impulse_inv_scale();
         grad_f.iter_mut().for_each(|g| *g *= scale);
+        trace!(
+            "Objective gradient norm: {}",
+            crate::inf_norm(grad_f.iter().cloned())
+        );
 
         debug_assert!(grad_f.iter().all(|&g| g.is_finite()));
         true

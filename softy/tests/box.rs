@@ -58,7 +58,7 @@ fn stretch_plain() -> Result<(), Error> {
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-5);
+    compare_meshes(&solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -78,7 +78,7 @@ fn stretch_volume_constraint() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-6);
+    compare_meshes(&solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -88,13 +88,17 @@ fn twist_plain() -> Result<(), Error> {
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0));
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
-    let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+    let params = SimParams {
+        print_level: 0,
+        ..STRETCH_PARAMS
+    };
+    let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
         .build()?;
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-6);
+    compare_meshes(&solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -131,7 +135,8 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-4);
+    geo::io::save_tetmesh(solution, &PathBuf::from("out/box_twisted_const_volume.vtk"))?;
+    compare_meshes(&solution, &expected, 1e-2);
     Ok(())
 }
 
@@ -142,7 +147,11 @@ fn twist_volume_constraint() -> Result<(), Error> {
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
-    let mut solver = SolverBuilder::new(STRETCH_PARAMS)
+    let params = SimParams {
+        print_level: 0,
+        ..STRETCH_PARAMS
+    };
+    let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
         .build()?;
     solver.step()?;

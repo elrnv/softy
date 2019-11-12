@@ -15,6 +15,7 @@ pub mod complex_tests {
 
     #[test]
     fn torus_medium_test() -> Result<(), Error> {
+        init_logger();
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(SimParams {
             print_level: 0,
@@ -29,6 +30,7 @@ pub mod complex_tests {
 
     #[test]
     fn torus_long_test() -> Result<(), Error> {
+        init_logger();
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
         let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
             .add_solid(mesh, stiff_material())

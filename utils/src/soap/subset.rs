@@ -55,12 +55,12 @@ pub struct Subset<S, I = Vec<usize>> {
     /// An optional set of indices. When this is `None`, the subset is
     /// considered to be entire. Empty subsets are represented by a zero length
     /// array of indices: either `Some(&[])` or `Some(Vec::new())`.
-    indices: Option<I>,
+    pub(crate) indices: Option<I>,
     /// Because `Subset`s modify the underlying data, it is not useful to query what the data is at
     /// any given time. For a more transparent data structure that preserves the original data set,
     /// use `Select`. To expose any characteristics of the contained `data` type, use a trait. See
     /// `ChunkSize` for an example.
-    data: S,
+    pub(crate) data: S,
 }
 
 /// A borrowed subset.

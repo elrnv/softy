@@ -31,10 +31,10 @@ macro_rules! impl_array_vectors {
         }
 
         impl<T: Scalar> DotOp for Tensor<[T; $n]> {
-            type Output = T;
+            type Output = Tensor<T>;
             #[inline]
-            fn dot(self, rhs: Self) -> Self::Output {
-                Self::dot(self, rhs)
+            fn dot_op(self, rhs: Self) -> Tensor<T> {
+                Tensor::new(Self::dot(self, rhs))
             }
         }
 
@@ -376,7 +376,7 @@ macro_rules! impl_array_matrices {
         impl<T: Copy> Tensor<[[T; $c]; $r]> {
             /// Similar to `map` but applies the given function to each inner element.
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r]>
             where
                 U: Pod,
@@ -917,6 +917,7 @@ macro_rules! impl_determinant {
             /// original matrix but without the first row and a given column. Although this is
             /// a very specific function, it is useful for efficient co-factor expansions.
             #[inline]
+            #[allow(unused_mut)]
             #[unroll_for_loops]
             pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
                 // Ensure that T has the same size as MaybeUninit.
@@ -939,6 +940,7 @@ macro_rules! impl_determinant {
 
             /// Compute the determinant of the matrix recursively.
             #[inline]
+            #[allow(unused_mut)]
             #[unroll_for_loops]
             pub fn determinant(&self) -> T {
                 let mut det = self.data[0][0] * self.without_row_and_first_col(0).determinant();

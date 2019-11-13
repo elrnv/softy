@@ -1000,17 +1000,17 @@ pub(crate) struct NonLinearProblem {
 
     /// The maximum size (diameter) of a simulated object (deformable or rigid).
     pub max_size: f64,
-    pub total_mass: f64,
+    pub max_modulus: f64,
 }
 
 impl NonLinearProblem {
     pub fn variable_scale(&self) -> f64 {
         // This scaling makes variables unitless.
-        utils::approx_power_of_two64(0.1 * self.max_size / self.time_step())
+        utils::approx_power_of_two64(self.max_size / self.time_step())
     }
 
     fn impulse_inv_scale(&self) -> f64 {
-        utils::approx_power_of_two64(0.5 * self.time_step() / (self.max_size * self.total_mass))
+        utils::approx_power_of_two64(1.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus))
     }
 
     fn volume_constraint_scale(&self) -> f64 {

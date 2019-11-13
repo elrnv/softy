@@ -439,6 +439,7 @@ impl SolverBuilder {
     }
 
     /// Helper function to compute the total mass in the problem.
+    #[cfg(ignore)]
     fn compute_total_mass(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
         let mut mass = 0.0_f64;
 
@@ -582,7 +583,6 @@ impl SolverBuilder {
 
     /// Helper function to compute the maximum elastic modulus of all given meshes.
     /// This aids in figuring out the correct scaling for the convergence tolerances.
-    #[cfg(ignore)]
     fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
         let mut max_modulus = 0.0_f32;
 
@@ -667,7 +667,8 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
-        let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
+        //let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
+        let max_modulus= Self::compute_max_modulus(&object_data.solids, &object_data.shells);
 
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
@@ -683,7 +684,7 @@ impl SolverBuilder {
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
             max_size,
-            total_mass,
+            max_modulus,
         })
     }
 

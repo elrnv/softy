@@ -156,6 +156,15 @@ impl LinearizedPointContactConstraint {
         self.update_surface_with_mesh_pos(pos[0]);
         self.update_contact_points(pos[1]);
         let contact_points = self.contact_points.borrow();
+        //{
+        //    let mut indices = vec![1; contact_points.len() * 2];
+        //    for i in 0..contact_points.len() {
+        //        indices[2 * i + 1] = i;
+        //    }
+
+        //    let polymesh = geo::mesh::PolyMesh::new(contact_points.clone().into(), &indices);
+        //    geo::io::save_polymesh(&polymesh, "./out/before_jac_points.vtk");
+        //}
 
         let surf = &self.implicit_surface;
         let neighbourhood_indices = neighbourhood_indices(&surf);
@@ -339,6 +348,7 @@ impl LinearizedPointContactConstraint {
     }
 }
 
+/// Enumerate non-empty neighbourhoods in place.
 fn neighbourhood_indices(surf: &QueryTopo) -> Vec<Index> {
     let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
 
@@ -657,7 +667,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     //println!("cur friction impulse: {:?}", f_cur.norm());
 
                     let f_delta = f_prev - f_cur;
-                    let rel_err_numerator = f_delta
+                    let rel_err_numerator: f64 = f_delta
                         .expr()
                         .dot((effective_mass_inv.view() * f_delta.view()).expr());
                     let rel_err = rel_err_numerator
@@ -1008,28 +1018,32 @@ impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
 
     fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
         let m = self.constraint_size();
-        (vec![0.0; m], vec![2e10; m])
+        (vec![0.0; m], vec![2e19; m])
     }
 
-    fn constraint(&mut self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
+    fn constraint(&mut self, x0: Self::Input, x1: Self::Input, value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        self.update_surface_with_mesh_pos(x1[0]);
-        self.update_contact_points(x1[1]);
 
         let jac = self
             .constraint_jacobian
             .borrow()
             .expect("Constraint Jacobian not initialized");
-        let mut constraint = self.constraint_value.as_tensor().clone();
+
+        value.iter_mut().for_each(|x| *x = 0.0);
+
+        let out = value.as_mut_tensor();
+
+        let dx0: Chunked3<Vec<f64>> = (x1[0].expr() - x0[0].expr()).eval();
+        let dx1: Chunked3<Vec<f64>> = (x1[1].expr() - x0[1].expr()).eval();
+
         if let Some(jac) = &jac[0] {
-            constraint += jac.view() * *x1[0].as_tensor();
+            *out += jac.view() * *dx0.view().as_tensor();
         }
         if let Some(jac) = &jac[1] {
-            constraint += jac.view() * *x1[1].as_tensor();
+            *out += jac.view() * *dx1.view().as_tensor();
         }
-        for (res, out) in constraint.data.iter().zip(value.iter_mut()) {
-            *out = *res;
-        }
+
+        *out += self.constraint_value.view().as_tensor();
     }
 }
 

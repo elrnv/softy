@@ -179,7 +179,6 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// The number of query points with non-empty neighbourhoods.
-    /// This function returns `None` if the cache is invalid.
     pub fn num_neighbourhoods(&self) -> usize {
         self.trivial_neighbourhood_seq()
             .filter(|x| !x.is_empty())

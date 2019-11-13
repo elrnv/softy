@@ -1080,7 +1080,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
 
     fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
         let m = self.constraint_size();
-        (vec![0.0; m], vec![2e10; m])
+        (vec![0.0; m], vec![2e19; m])
     }
 
     fn constraint(&mut self, _x0: Self::Input, x1: Self::Input, value: &mut [f64]) {

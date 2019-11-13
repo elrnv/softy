@@ -1,7 +1,7 @@
 mod test_utils;
 
 use softy::*;
-use std::path::PathBuf;
+//use std::path::PathBuf;
 use geo::mesh::builder::*;
 use geo::ops::transform::*;
 pub use test_utils::*;

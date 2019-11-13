@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 Cargo.lock
-/target
+**/out
+**/render
 /backup
 .vscode

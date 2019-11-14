@@ -5,7 +5,6 @@
 //static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 mod attrib_defines;
-mod bench;
 mod constraint;
 mod constraints;
 mod contact;

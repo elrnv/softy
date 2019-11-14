@@ -3,6 +3,48 @@ use crate::TetMesh;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
+use crate::fem::*;
+use crate::objects::*;
+
+pub const STATIC_PARAMS: SimParams = SimParams {
+    gravity: [0.0f32, -9.81, 0.0],
+    time_step: None,
+    clear_velocity: false,
+    tolerance: 2e-10,
+    max_iterations: 300,
+    max_outer_iterations: 1,
+    friction_iterations: 0,
+    outer_tolerance: 0.001,
+    print_level: 0,
+    derivative_test: 0,
+    mu_strategy: MuStrategy::Adaptive,
+    max_gradient_scaling: 5e-6,
+    log_file: None,
+};
+
+//pub(crate) const QUASI_STATIC_PARAMS: SimParams = SimParams {
+//    gravity: [0.0f32, 0.0, 0.0],
+//    time_step: Some(0.01),
+//    clear_velocity: true,
+//    ..STATIC_PARAMS
+//};
+
+pub const DYNAMIC_PARAMS: SimParams = SimParams {
+    gravity: [0.0f32, 0.0, 0.0],
+    time_step: Some(0.01),
+    ..STATIC_PARAMS
+};
+
+// Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus
+// (mu) and density in the same range of magnitude. Higher stiffnesses compared to denisty will
+// produce highly oscillatory configurations and keep the solver from converging fast.
+// As an example if we increase the moduli below by 1000, the solver can't converge, even in
+// 300 steps.
+pub fn default_solid() -> SolidMaterial {
+    SolidMaterial::new(0)
+        .with_elasticity(ElasticityParameters { lambda: 93333.33, mu: 10e3 })
+        .with_density(1000.0)
+}
 
 pub fn make_one_tet_mesh() -> TetMesh {
     let verts = vec![

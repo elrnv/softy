@@ -14,8 +14,8 @@ fn two_tet_solver() -> Solver {
     tet2.translate( [0.0, 0.5, 0.0]);
 
     SolverBuilder::new(STATIC_PARAMS)
-        .add_solid(tet1, SOLID_MATERIAL)
-        .add_solid(tet2, SOLID_MATERIAL)
+        .add_solid(tet1, default_solid())
+        .add_solid(tet2, default_solid())
         .build()
         .expect("Failed to build a solver for a two tet test.")
 }
@@ -52,7 +52,7 @@ fn volume_constraint() -> Result<(), Error> {
 
     tet2.translate([0.0, 0.5, 0.0]);
 
-    let material = SOLID_MATERIAL.with_volume_preservation(true);
+    let material = default_solid().with_volume_preservation(true);
 
     let mut solver = SolverBuilder::new(STATIC_PARAMS)
         .add_solid(tet1, material)

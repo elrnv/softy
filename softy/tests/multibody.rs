@@ -7,7 +7,7 @@ use geo::ops::transform::*;
 pub use test_utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(10e6, 1e6))
+    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(10e6, 1e6))
 }
 
 #[test]

@@ -27,7 +27,7 @@ lazycell = "1.2"
 log = "0.4"
 
 [dev-dependencies]
-criterion = { version = "0.2" }
+criterion = "0.3"
 autodiff = "0.1"
 rand = "0.5"
 env_logger = "0.7"
@@ -36,5 +36,5 @@ env_logger = "0.7"
 unstable = ["criterion/real_blackbox"]
 
 [[bench]]
-name = "step_performance"
+name = "box_stretch"
 harness = false

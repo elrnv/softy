@@ -668,7 +668,7 @@ impl SolverBuilder {
         );
 
         //let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
-        let max_modulus= Self::compute_max_modulus(&object_data.solids, &object_data.shells);
+        let max_modulus = Self::compute_max_modulus(&object_data.solids, &object_data.shells)? as f64;
 
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
@@ -1443,15 +1443,14 @@ impl Solver {
                 problem, solution, ..
             } = self.solver.solver_data_mut();
             if let Some(radius) = problem.min_contact_radius() {
-                    let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
-                        * if dt > 0.0 { dt } else { 1.0 };
-                    let new_max_step = (step - radius).max(self.max_step * 0.5);
-                    self.max_step = new_max_step;
-                    problem.update_max_step(new_max_step);
-                    problem.reset_constraint_set();
-                }
+                let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
+                    * if dt > 0.0 { dt } else { 1.0 };
+                let new_max_step = (step - radius).max(self.max_step * 0.5);
+                self.max_step = new_max_step;
+                problem.update_max_step(new_max_step);
+                problem.reset_constraint_set();
             }
-    }
+        }
     }
 
     /// Revert previously committed solution. We just advance in the opposite direction.

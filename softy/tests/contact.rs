@@ -11,7 +11,7 @@ use std::path::PathBuf;
 pub use test_utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
 }
 
 fn compute_contact_constraint(
@@ -200,7 +200,7 @@ fn ball_tri_push_tester(
 #[test]
 fn ball_tri_push_plain() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
@@ -215,7 +215,7 @@ fn ball_tri_push_plain() -> Result<(), Error> {
 
 #[test]
 fn ball_tri_push_volume_constraint() -> Result<(), Error> {
-    let material = SOLID_MATERIAL
+    let material = default_solid()
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
     let fc_params = FrictionalContactParams {
@@ -288,7 +288,7 @@ fn ball_bounce_tester(
 #[test]
 fn ball_bounce_on_points_plain() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4));
 
     let sc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -306,7 +306,7 @@ fn ball_bounce_on_points_plain() -> Result<(), Error> {
 
 #[test]
 fn ball_bounce_on_points_volume_constraint() -> Result<(), Error> {
-    let material = SOLID_MATERIAL
+    let material = default_solid()
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
 
@@ -329,7 +329,7 @@ fn ball_bounce_on_points_volume_constraint() -> Result<(), Error> {
 #[test]
 fn tet_bounce_on_implicit() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
     let sc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -349,7 +349,7 @@ fn tet_bounce_on_implicit() -> Result<(), Error> {
 #[test]
 fn ball_bounce_on_implicit_plain() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(10e5, 0.4));
 
     let sc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -368,7 +368,7 @@ fn ball_bounce_on_implicit_plain() -> Result<(), Error> {
 /// Ball with constant volume bouncing on an implicit surface.
 #[test]
 fn ball_bounce_on_implicit_volume_constraint() -> Result<(), Error> {
-    let material = SOLID_MATERIAL
+    let material = default_solid()
         .with_elasticity(ElasticityParameters::from_young_poisson(10e6, 0.4))
         .with_volume_preservation(true);
 

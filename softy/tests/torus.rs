@@ -10,7 +10,7 @@ pub mod complex_tests {
     use std::path::PathBuf;
 
     fn stiff_material() -> SolidMaterial {
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
+        default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
     }
 
     #[test]

@@ -14,7 +14,7 @@ fn one_tet_solver() -> Solver {
         derivative_test: 0,
         ..STATIC_PARAMS
     })
-    .add_solid(mesh, SOLID_MATERIAL)
+    .add_solid(mesh, default_solid())
     .build()
     .expect("Failed to build a solver for a one tet test.")
 }
@@ -31,7 +31,7 @@ fn equilibrium() {
     let mesh = make_one_tet_mesh();
 
     let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh.clone(), SOLID_MATERIAL)
+        .add_solid(mesh.clone(), default_solid())
         .build()
         .unwrap();
     assert!(solver.step().is_ok());
@@ -71,7 +71,7 @@ fn consistent_outer_iterations() -> Result<(), Error> {
     let mesh = make_one_deformed_tet_mesh();
 
     let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh.clone(), SOLID_MATERIAL)
+        .add_solid(mesh.clone(), default_solid())
         .build()?;
     solver.step()?;
 
@@ -87,7 +87,7 @@ fn consistent_outer_iterations() -> Result<(), Error> {
 fn volume_constraint() -> Result<(), Error> {
     let mesh = make_one_deformed_tet_mesh();
 
-    let material = SOLID_MATERIAL.with_volume_preservation(true);
+    let material = default_solid().with_volume_preservation(true);
 
     let mut solver = SolverBuilder::new(STATIC_PARAMS)
         .add_solid(mesh, material)

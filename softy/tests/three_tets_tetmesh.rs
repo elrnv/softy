@@ -9,7 +9,7 @@ pub use test_utils::*;
 fn static_sim() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
     let mut solver = SolverBuilder::new(STATIC_PARAMS)
-        .add_solid(mesh, SOLID_MATERIAL)
+        .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;
     let solution = &solver.solid(0).tetmesh;
@@ -23,7 +23,7 @@ fn static_sim() -> Result<(), Error> {
 fn dynamic_sim() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
     let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-        .add_solid(mesh, SOLID_MATERIAL)
+        .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;
     let solution = &solver.solid(0).tetmesh;
@@ -36,7 +36,7 @@ fn dynamic_sim() -> Result<(), Error> {
 #[test]
 fn static_volume_constraint() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
-    let material = SOLID_MATERIAL.with_volume_preservation(true);
+    let material = default_solid().with_volume_preservation(true);
     let mut solver = SolverBuilder::new(STATIC_PARAMS)
         .add_solid(mesh, material)
         .build()?;
@@ -52,7 +52,7 @@ fn static_volume_constraint() -> Result<(), Error> {
 #[test]
 fn dynamic_volume_constraint() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
-    let material = SOLID_MATERIAL.with_volume_preservation(true);
+    let material = default_solid().with_volume_preservation(true);
     let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
         .add_solid(mesh, material)
         .build()?;
@@ -78,7 +78,7 @@ fn animation() -> Result<(), Error> {
     let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
     let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
-        .add_solid(mesh, SOLID_MATERIAL)
+        .add_solid(mesh, default_solid())
         .build()?;
 
     for frame in 1u32..100 {
@@ -103,7 +103,7 @@ fn animation_volume_constraint() -> Result<(), Error> {
     ];
     let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-    let incompressible_material = SOLID_MATERIAL.with_volume_preservation(true);
+    let incompressible_material = default_solid().with_volume_preservation(true);
 
     let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
         .add_solid(mesh, incompressible_material)

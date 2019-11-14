@@ -6,7 +6,7 @@ use softy::*;
 pub use test_utils::*;
 
 fn material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
+    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(1750e6, 10e6))
 }
 
 #[test]

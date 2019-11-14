@@ -10,7 +10,7 @@ const STRETCH_PARAMS: SimParams = SimParams {
 };
 
 pub fn medium_solid_material() -> SolidMaterial {
-    SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
 }
 
 /// Test that the solver produces no change for an equilibrium configuration for a

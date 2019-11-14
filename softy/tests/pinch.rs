@@ -20,7 +20,7 @@ fn pinch_tester(fc_params: FrictionalContactParams) -> Result<(), Error> {
         ..DYNAMIC_PARAMS
     };
 
-    let material = SOLID_MATERIAL
+    let material = default_solid()
         .with_id(0)
         .with_elasticity(ElasticityParameters::from_young_poisson(1e6, 0.45));
 

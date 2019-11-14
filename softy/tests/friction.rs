@@ -60,7 +60,7 @@ fn friction_tester(
 #[ignore]
 fn sliding_tet_on_points() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
         kernel: KernelType::Approximate {
@@ -95,7 +95,7 @@ fn sliding_tet_on_points() -> Result<(), Error> {
 #[test]
 fn sliding_tet_on_implicit() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -130,7 +130,7 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
 #[test]
 fn sliding_box_on_implicit() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e6, 0.45));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(1e6, 0.45));
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,
@@ -166,7 +166,7 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
 #[test]
 fn self_contact() -> Result<(), Error> {
     let material =
-        SOLID_MATERIAL.with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
+        default_solid().with_elasticity(ElasticityParameters::from_young_poisson(1e5, 0.4));
 
     let fc_params = FrictionalContactParams {
         contact_type: ContactType::Point,

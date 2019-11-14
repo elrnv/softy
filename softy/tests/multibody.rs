@@ -28,7 +28,8 @@ fn stacking_boxes() -> Result<(), Error> {
         rows: 8,
         cols: 8,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
 
     grid.scale([3.0, 1.0, 3.0]);
     grid.translate([0.0, -1.4, 0.0]);

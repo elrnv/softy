@@ -11,7 +11,7 @@ fn two_tet_solver() -> Solver {
     let tet1 = make_one_deformed_tet_mesh();
     let mut tet2 = make_one_deformed_tet_mesh();
 
-    tet2.translate( [0.0, 0.5, 0.0]);
+    tet2.translate([0.0, 0.5, 0.0]);
 
     SolverBuilder::new(STATIC_PARAMS)
         .add_solid(tet1, default_solid())

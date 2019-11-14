@@ -668,7 +668,8 @@ impl SolverBuilder {
         );
 
         //let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
-        let max_modulus = Self::compute_max_modulus(&object_data.solids, &object_data.shells)? as f64;
+        let max_modulus =
+            Self::compute_max_modulus(&object_data.solids, &object_data.shells)? as f64;
 
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
@@ -1645,9 +1646,10 @@ impl Solver {
     }
 
     fn all_contacts_linear(&self) -> bool {
-        self.problem().frictional_contacts.iter().all(|contact_constraint| {
-            contact_constraint.constraint.borrow().is_linear()
-        })
+        self.problem()
+            .frictional_contacts
+            .iter()
+            .all(|contact_constraint| contact_constraint.constraint.borrow().is_linear())
     }
 
     /// Run the optimization solver on one time step.
@@ -1770,7 +1772,7 @@ impl Solver {
             }
         }
 
-        if !all_contacts_linear { 
+        if !all_contacts_linear {
             // Remap contacts since after committing the solution, the constraint set may have changed.
             self.remap_contacts();
         }

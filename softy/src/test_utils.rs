@@ -1,10 +1,10 @@
 use crate::attrib_defines::*;
+use crate::fem::*;
+use crate::objects::*;
 use crate::TetMesh;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
-use crate::fem::*;
-use crate::objects::*;
 
 pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
@@ -42,7 +42,10 @@ pub const DYNAMIC_PARAMS: SimParams = SimParams {
 // 300 steps.
 pub fn default_solid() -> SolidMaterial {
     SolidMaterial::new(0)
-        .with_elasticity(ElasticityParameters { lambda: 93333.33, mu: 10e3 })
+        .with_elasticity(ElasticityParameters {
+            lambda: 93333.33,
+            mu: 10e3,
+        })
         .with_density(1000.0)
 }
 

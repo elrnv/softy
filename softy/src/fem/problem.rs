@@ -1010,7 +1010,9 @@ impl NonLinearProblem {
     }
 
     fn impulse_inv_scale(&self) -> f64 {
-        utils::approx_power_of_two64(1.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus))
+        utils::approx_power_of_two64(
+            1.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus),
+        )
     }
 
     fn volume_constraint_scale(&self) -> f64 {

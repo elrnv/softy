@@ -8,7 +8,7 @@ use crate::objects::*;
 use crate::PointCloud;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use ipopt::{self, Number};
-use log::{debug, trace};
+use log::{debug, error, trace};
 use std::cell::RefCell;
 use utils::soap::Vector3;
 use utils::{soap::*, zip};
@@ -1233,13 +1233,11 @@ impl NonLinearProblem {
 
     /// Build a new set of multipliers from the old set and replace warm start multipliers with the
     /// new set.
-    pub fn remap_constraints(&mut self, old_constraint_set: ChunkedView<&[usize]>) {
+    pub fn remap_warm_start(&mut self, old_constraint_set: ChunkedView<&[usize]>) {
         use crate::constraints::remap_values;
         let active_constraint_set = self.active_constraint_set();
         let new_values = active_constraint_set.data();
         let old_values = old_constraint_set.data();
-        let mut new_constraint_set = active_constraint_set.view().into_iter();
-        let mut old_constraint_set = old_constraint_set.iter();
 
         // Remap multipliers
         let new_multipliers = remap_values(
@@ -1249,22 +1247,6 @@ impl NonLinearProblem {
             new_values.iter().cloned(),
         );
         std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
-
-        // Remap friction forces (if any)
-        for _ in self.volume_constraints.iter() {
-            // Consume the volume constraints if any.
-            old_constraint_set.next();
-            new_constraint_set.next();
-        }
-
-        for fc in self.frictional_contacts.iter_mut() {
-            let old_set = old_constraint_set.next().unwrap();
-            let new_set = new_constraint_set.next().unwrap();
-
-            fc.constraint
-                .borrow_mut()
-                .remap_frictional_contact(old_set, new_set);
-        }
     }
 
     ///// Update all stateful constraints with the most recent data. This also involves remapping any
@@ -1393,26 +1375,26 @@ impl NonLinearProblem {
         }
     }
 
-    pub fn precompute_linearized_constraints(&mut self) {
-        let NonLinearProblem {
-            ref mut frictional_contacts,
-            ref object_data,
-            ..
-        } = *self;
+    //pub fn precompute_linearized_constraints(&mut self) {
+    //    let NonLinearProblem {
+    //        ref mut frictional_contacts,
+    //        ref object_data,
+    //        ..
+    //    } = *self;
 
-        for FrictionalContactConstraint {
-            object_index,
-            collider_index,
-            constraint,
-        } in frictional_contacts.iter_mut()
-        {
-            let object_pos = object_data.prev_pos(*object_index);
-            let collider_pos = object_data.prev_pos(*collider_index);
-            constraint
-                .borrow_mut()
-                .linearize_constraint(object_pos.view(), collider_pos.view());
-        }
-    }
+    //    for FrictionalContactConstraint {
+    //        object_index,
+    //        collider_index,
+    //        constraint,
+    //    } in frictional_contacts.iter_mut()
+    //    {
+    //        let object_pos = object_data.prev_pos(*object_index);
+    //        let collider_pos = object_data.prev_pos(*collider_index);
+    //        constraint
+    //            .borrow_mut()
+    //            .linearize_constraint(object_pos.view(), collider_pos.view());
+    //    }
+    //}
 
     ///// Revert to the given old solution by the given displacement.
     //pub fn revert_to(
@@ -2363,7 +2345,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // constraint.
         if !lambda.is_empty() {
             // The constrained points may change between updating the warm start and using it here.
-            assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
+            if lambda.len() != self.warm_start.constraint_multipliers.len() {
+                // This is sometimes not caught for some reason, so we ouput an explicit error.
+                error!(
+                    "Number of multipliers ({}) does not match warm start ({})",
+                    lambda.len(),
+                    self.warm_start.constraint_multipliers.len()
+                );
+                assert_eq!(lambda.len(), self.warm_start.constraint_multipliers.len());
+            }
             lambda.copy_from_slice(self.warm_start.constraint_multipliers.as_slice());
         }
 

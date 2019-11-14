@@ -887,17 +887,15 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         dissipation
     }
 
-    fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
-
     /// For visualization purposes.
     fn add_contact_impulse(
         &mut self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        _x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
-        self.update_surface_with_mesh_pos(x[0]);
-        self.update_contact_points(x[1]);
+        //self.update_surface_with_mesh_pos(x[0]);
+        //self.update_contact_points(x[1]);
 
         let active_constraint_indices = self.active_constraint_indices();
         let normals = self.contact_normals();

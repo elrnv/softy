@@ -950,40 +950,15 @@ impl ContactConstraint for PointContactConstraint {
         dissipation
     }
 
-    fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {
-        // Remap friction forces the same way we remap constraint multipliers for the contact
-        // solve.
-        //if let Some(ref mut frictional_contact) = self.frictional_contact {
-        // Remap collider contacts (since the set of contact points may have
-        // changed).
-        //let new_friction_impulses = crate::constraints::remap_values(
-        //    frictional_contact.collider_impulse.iter().cloned(),
-        //    [0.0; 3],
-        //    old_set.iter().cloned(),
-        //    new_set.iter().cloned(),
-        //);
-
-        //std::mem::replace(
-        //    &mut frictional_contact.collider_impulse,
-        //    Chunked3::from_array_vec(new_friction_impulses),
-        //);
-
-        // Object impulses don't need to be remapped because we store them
-        // on all the surface vertices regardless of the contact set.
-
-        //frictional_contact.contact_basis.remap(old_set, new_set);
-        //}
-    }
-
     /// For visualization purposes.
     fn add_contact_impulse(
         &mut self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
+        _x: [SubsetView<Chunked3<&[f64]>>; 2],
         contact_impulse: &[f64],
         mut impulse: [Chunked3<&mut [f64]>; 2],
     ) {
-        self.update_surface_with_mesh_pos(x[0]);
-        self.update_contact_points(x[1]);
+        //self.update_surface_with_mesh_pos(x[0]);
+        //self.update_contact_points(x[1]);
 
         let active_constraint_indices = self.active_constraint_indices();
         let normals = self.contact_normals();

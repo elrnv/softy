@@ -1447,9 +1447,12 @@ impl Solver {
                 let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
                     * if dt > 0.0 { dt } else { 1.0 };
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
-                self.max_step = new_max_step;
-                problem.update_max_step(new_max_step);
-                problem.reset_constraint_set();
+                if self.max_step != new_max_step {
+                    info!("Relaxing max step from {} to {}", self.max_step, new_max_step);
+                    self.max_step = new_max_step;
+                    problem.update_max_step(new_max_step);
+                    problem.reset_constraint_set();
+                }
             }
         }
     }
@@ -1632,7 +1635,7 @@ impl Solver {
         problem.update_friction_impulse(solution, constraint_values, friction_steps)
     }
 
-    fn remap_contacts(&mut self) {
+    fn remap_warm_start(&mut self) {
         let Solver {
             solver,
             old_active_constraint_set,
@@ -1642,7 +1645,7 @@ impl Solver {
         solver
             .solver_data_mut()
             .problem
-            .remap_constraints(old_active_constraint_set.view());
+            .remap_warm_start(old_active_constraint_set.view());
     }
 
     fn all_contacts_linear(&self) -> bool {
@@ -1664,11 +1667,9 @@ impl Solver {
 
         let all_contacts_linear = self.all_contacts_linear();
 
-        if !all_contacts_linear {
-            // Recompute constraints since the active set may have changed if a collision mesh has moved.
-            self.save_current_active_constraint_set();
-            self.problem_mut().reset_constraint_set();
-        }
+        // Recompute constraints since the active set may have changed if a collision mesh has moved.
+        self.save_current_active_constraint_set();
+        self.problem_mut().reset_constraint_set();
 
         info!(
             "Start step with time step remaining: {}",
@@ -1687,13 +1688,11 @@ impl Solver {
             }
             self.minimum_time_step = self.minimum_time_step.min(self.problem().time_step);
 
-            // Remap contacts from the initial constraint reset above, or if the constraints were
+            // Remap warm start from the initial constraint reset above, or if the constraints were
             // updated after advection.
-            if !all_contacts_linear {
-                self.remap_contacts();
-                self.save_current_active_constraint_set();
-            }
-            self.problem_mut().precompute_linearized_constraints();
+            self.remap_warm_start();
+            self.save_current_active_constraint_set();
+
             let step_result = self.inner_step();
 
             // The following block determines if after the inner step there were any changes
@@ -1776,8 +1775,10 @@ impl Solver {
         }
 
         if !all_contacts_linear {
-            // Remap contacts since after committing the solution, the constraint set may have changed.
-            self.remap_contacts();
+            // Remap warm start since after committing the solution, the constraint set may have
+            // changed if we relaxed max_step.
+            // We use warm start data to update the mesh
+            self.remap_warm_start();
         }
 
         if result.iterations > self.sim_params.max_outer_iterations {

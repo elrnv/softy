@@ -284,11 +284,6 @@ pub trait ContactConstraint:
         dissipation
     }
 
-    /// Remap existing friction impulses to an updated neighbourhood set. This function will be
-    /// called when neighbourhood information changes to ensure correct correspondence of friction
-    /// impulses to vertices. It may be not necessary to implement this function if friction
-    /// impulses are stored on the entire mesh.
-    fn remap_frictional_contact(&mut self, _old_set: &[usize], _new_set: &[usize]) {}
     fn add_contact_impulse(
         &mut self,
         x: [SubsetView<Chunked3<&[f64]>>; 2],

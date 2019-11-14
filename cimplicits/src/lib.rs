@@ -174,7 +174,7 @@ pub unsafe extern "C" fn el_iso_create_trimesh(
         .map(|&x| x as usize)
         .collect();
 
-    let mesh = Box::new(geometry::mesh::TriMesh::new(positions, indices));
+    let mesh = Box::new(geo::mesh::TriMesh::new(positions, indices));
     Box::into_raw(mesh) as *mut EL_IsoTriMesh
 }
 
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn el_iso_create_trimesh(
 #[no_mangle]
 pub unsafe extern "C" fn el_iso_free_trimesh(trimesh: *mut EL_IsoTriMesh) {
     if !trimesh.is_null() {
-        let _ = Box::from_raw(trimesh as *mut geometry::mesh::TriMesh<f64>);
+        let _ = Box::from_raw(trimesh as *mut geo::mesh::TriMesh<f64>);
     }
 }
 
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn el_iso_create_implicit_surface(
     params: EL_IsoParams,
 ) -> *mut EL_IsoSurface {
     match implicits::mls_from_trimesh::<f64>(
-        &*(trimesh as *const geometry::mesh::TriMesh<f64>),
+        &*(trimesh as *const geo::mesh::TriMesh<f64>),
         params.into(),
     ) {
         Ok(surf) => Box::into_raw(Box::new(surf)) as *mut EL_IsoSurface,

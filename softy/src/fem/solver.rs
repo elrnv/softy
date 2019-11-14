@@ -1986,7 +1986,7 @@ mod tests {
         let shell = |id| SourceIndex::Shell(id);
 
         // No shells
-        let solids: Vec<_> = [1, 0, 0, 2].into_iter().map(new_solid).collect();
+        let solids: Vec<_> = [1, 0, 0, 2].iter().map(new_solid).collect();
         let srcs = SolverBuilder::build_material_sources(&solids, &[]);
         assert_eq!(
             srcs,
@@ -1997,7 +1997,7 @@ mod tests {
         );
 
         // No solids
-        let shells: Vec<_> = [3, 4, 3, 1].into_iter().map(new_shell).collect();
+        let shells: Vec<_> = [3, 4, 3, 1].iter().map(new_shell).collect();
         let srcs = SolverBuilder::build_material_sources(&[], &shells);
         assert_eq!(
             srcs,
@@ -2009,10 +2009,10 @@ mod tests {
 
         // Complex test
         let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1]
-            .into_iter()
+            .iter()
             .map(new_solid)
             .collect();
-        let shells: Vec<_> = [3, 4, 0, 1, 0, 6, 10].into_iter().map(new_shell).collect();
+        let shells: Vec<_> = [3, 4, 0, 1, 0, 6, 10].iter().map(new_shell).collect();
         let srcs = SolverBuilder::build_material_sources(&solids, &shells);
         assert_eq!(
             srcs,

@@ -11,7 +11,7 @@ pub fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
         .zip(expected.vertex_positions().iter())
     {
         for j in 0..3 {
-            assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 1e-7);
+            assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 5e-6);
         }
     }
 }

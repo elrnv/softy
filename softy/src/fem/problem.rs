@@ -1006,12 +1006,12 @@ pub(crate) struct NonLinearProblem {
 impl NonLinearProblem {
     pub fn variable_scale(&self) -> f64 {
         // This scaling makes variables unitless.
-        utils::approx_power_of_two64(self.max_size / self.time_step())
+        utils::approx_power_of_two64(0.1 * self.max_size / self.time_step())
     }
 
     fn impulse_inv_scale(&self) -> f64 {
         utils::approx_power_of_two64(
-            1.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus),
+            100.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus),
         )
     }
 
@@ -1151,6 +1151,13 @@ impl NonLinearProblem {
             offset += constraint.borrow().num_potential_contacts();
             offsets.push(active_set.len());
         }
+    }
+
+    /// Check if all contact constraints are linear.
+    pub fn all_contacts_linear(&self) -> bool {
+        self.frictional_contacts
+            .iter()
+            .all(|contact_constraint| contact_constraint.constraint.borrow().is_linear())
     }
 
     /// Get the set of currently active constraints.

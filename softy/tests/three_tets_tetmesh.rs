@@ -45,7 +45,7 @@ fn static_volume_constraint() -> Result<(), Error> {
     let exptected = geo::io::load_tetmesh(&PathBuf::from(
         "assets/three_tets_static_volume_constraint_expected.vtk",
     ))?;
-    compare_meshes(&solution, &exptected, 1e-4);
+    compare_meshes(&solution, &exptected, 1e-3);
     Ok(())
 }
 

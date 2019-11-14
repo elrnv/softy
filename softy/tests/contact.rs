@@ -77,7 +77,7 @@ fn make_grids(i: usize) -> (PolyMesh, PolyMesh) {
 }
 
 #[test]
-fn box_squish() -> Result<(), Error> {
+fn box_squish_full() -> Result<(), Error> {
     let contact_box = make_box(4).scaled([1.0, 0.8, 1.0]);
 
     let (top_grid, bottom_grid) = make_grids(10);
@@ -97,11 +97,6 @@ fn box_squish() -> Result<(), Error> {
         friction_params: None,
     };
 
-    let fc_lin_point = FrictionalContactParams {
-        contact_type: ContactType::LinearizedPoint,
-        ..fc_point
-    };
-
     let mut solver = SolverBuilder::new(params.clone())
         .add_solid(contact_box.clone(), medium_solid_material())
         .add_fixed(top_grid.clone(), 1)
@@ -116,16 +111,41 @@ fn box_squish() -> Result<(), Error> {
     let solution = &solver.solid(0).tetmesh;
     compare_meshes(solution, &expected, 1e-4);
 
+    Ok(())
+}
+
+#[test]
+fn box_squish_linearized() -> Result<(), Error> {
+    let contact_box = make_box(4).scaled([1.0, 0.8, 1.0]);
+
+    let (top_grid, bottom_grid) = make_grids(10);
+
+    let params = SimParams {
+        print_level: 2,
+        time_step: Some(0.02),
+        ..DYNAMIC_PARAMS
+    };
+
+    let fc_params = FrictionalContactParams {
+        contact_type: ContactType::LinearizedPoint,
+        kernel: KernelType::Approximate {
+            radius_multiplier: 1.1,
+            tolerance: 0.001,
+        },
+        friction_params: None,
+    };
+
     let mut solver = SolverBuilder::new(params)
         .add_solid(contact_box.clone(), medium_solid_material())
         .add_fixed(top_grid, 1)
         .add_fixed(bottom_grid, 1)
-        .add_frictional_contact(fc_lin_point, (1, 0))
+        .add_frictional_contact(fc_params, (1, 0))
         .build()?;
 
     for _ in 0..10 {
         solver.step()?;
     }
+    let expected = geo::io::load_tetmesh("assets/box_squished.vtk")?;
     let solution = &solver.solid(0).tetmesh;
     compare_meshes(solution, &expected, 1e-4);
     Ok(())

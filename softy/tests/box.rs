@@ -58,7 +58,7 @@ fn stretch_plain() -> Result<(), Error> {
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-3);
+    compare_meshes(&solution, &expected, 1e-2);
     Ok(())
 }
 

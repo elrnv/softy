@@ -706,6 +706,8 @@ impl SolverBuilder {
         //let max_modulus =
         //    Self::compute_max_modulus(&problem.object_data.solids, &problem.object_data.shells)?;
 
+        let all_contacts_linear = problem.all_contacts_linear();
+
         // Construct the Ipopt solver.
         let mut ipopt = Ipopt::new(problem)?;
 
@@ -736,7 +738,9 @@ impl SolverBuilder {
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
         ipopt.set_option("warm_start_init_point", "yes");
-        //ipopt.set_option("jac_d_constant", "yes");
+        if all_contacts_linear {
+            ipopt.set_option("jac_d_constant", "yes");
+        }
         ipopt.set_option(
             "nlp_scaling_max_gradient",
             f64::from(params.max_gradient_scaling),
@@ -1649,10 +1653,7 @@ impl Solver {
     }
 
     fn all_contacts_linear(&self) -> bool {
-        self.problem()
-            .frictional_contacts
-            .iter()
-            .all(|contact_constraint| contact_constraint.constraint.borrow().is_linear())
+        self.problem().all_contacts_linear()
     }
 
     /// Run the optimization solver on one time step.

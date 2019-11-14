@@ -1425,7 +1425,7 @@ impl Solver {
     //}
 
     /// Update the `mesh` and `prev_pos` with the current solution.
-    fn commit_solution(&mut self, and_warm_start: bool) {
+    fn commit_solution(&mut self, and_warm_start: bool, relax_max_step: bool) {
         {
             let and_velocity = !self.sim_params.clear_velocity;
             let SolverDataMut {
@@ -1436,23 +1436,22 @@ impl Solver {
             problem.advance(solution.primal_variables, and_velocity, and_warm_start);
         }
 
-        // Comitting solution. Reduce max_step for next iteration.
-        let dt = self.time_step();
-        let SolverDataMut {
-            problem, solution, ..
-        } = self.solver.solver_data_mut();
-        if let Some(radius) = problem.min_contact_radius() {
-            if and_warm_start {
-                let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
-                    * if dt > 0.0 { dt } else { 1.0 };
-                // If warm start is selected, then this solution was good, which means we're not
-                // comitting it just for debugging purposes.
-                let new_max_step = (step - radius).max(self.max_step * 0.5);
-                self.max_step = new_max_step;
-                problem.update_max_step(new_max_step);
-                problem.reset_constraint_set();
+        // Reduce max_step for next iteration if the solution was a good one.
+        if relax_max_step {
+            let dt = self.time_step();
+            let SolverDataMut {
+                problem, solution, ..
+            } = self.solver.solver_data_mut();
+            if let Some(radius) = problem.min_contact_radius() {
+                    let step = inf_norm(problem.scaled_variables_iter(solution.primal_variables))
+                        * if dt > 0.0 { dt } else { 1.0 };
+                    let new_max_step = (step - radius).max(self.max_step * 0.5);
+                    self.max_step = new_max_step;
+                    problem.update_max_step(new_max_step);
+                    problem.reset_constraint_set();
+                }
             }
-        }
+    }
     }
 
     /// Revert previously committed solution. We just advance in the opposite direction.
@@ -1642,8 +1641,142 @@ impl Solver {
             .remap_constraints(old_active_constraint_set.view());
     }
 
-    /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        // Check if we have any non-linear contact constraints. Otherwise the problem becomes much
+        // simpler and we can get away with skipping many steps.
+        let all_linear = self.problem().frictional_contacts.iter().all(|contact_constraint| {
+            contact_constraint.constraint.borrow().is_linear()
+        });
+
+        if all_linear {
+            self.step_with_linear_contact()
+        } else {
+            self.step_with_nonlinear_contact()
+        }
+    }
+
+    /// Run the optimization solver on one time step.
+    pub fn step_with_linear_contact(&mut self) -> Result<SolveResult, Error> {
+        // Initialize the result of this function.
+        let mut result = SolveResult {
+            max_inner_iterations: 0,
+            inner_iterations: 0,
+            iterations: 0,
+            objective_value: 0.0,
+        };
+
+        // Recompute constraints since the active set may have changed if a collision mesh has moved.
+
+        info!(
+            "Start step with time step remaining: {}",
+            self.time_step_remaining
+        );
+        let mut recovery = false; // We are in recovery mode.
+        // The number of friction solves to do.
+        let mut friction_steps =
+            vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
+        let total_friction_steps = friction_steps.iter().sum::<u32>();
+
+        for _ in 0..self.sim_params.max_outer_iterations {
+            if self.problem().time_step > self.time_step_remaining {
+                self.problem_mut().time_step = self.time_step_remaining;
+            }
+            self.minimum_time_step = self.minimum_time_step.min(self.problem().time_step);
+
+            self.problem_mut().precompute_linearized_constraints();
+            let step_result = self.inner_step();
+
+            match step_result {
+                Ok(step_result) => {
+                    result = result.combine_inner_result(&step_result);
+
+                    if !friction_steps.is_empty() && total_friction_steps > 0 {
+                        debug_assert!(self
+                            .problem()
+                            .is_same_as_constraint_set(self.old_active_constraint_set.view()));
+                        let is_finished = self.compute_friction_impulse(
+                            &step_result.constraint_values,
+                            &mut friction_steps,
+                        );
+                        if !is_finished {
+                            continue;
+                        }
+                    }
+                    self.commit_solution(true, true);
+                    self.time_step_remaining -= self.problem().time_step;
+                    info!("Time step remaining: {}", self.time_step_remaining);
+                    if !recovery && self.problem().time_step < self.max_time_step {
+                        // Gradually restore time_step if its lower than max_step
+                        self.problem_mut().time_step *= 2.0;
+                    }
+                    recovery = false; // We have recovered.
+                    if approx::relative_eq!(self.time_step_remaining, 0.0) {
+                        // Reset time step progress
+                        self.time_step_remaining = self.max_time_step;
+                        break;
+                    }
+                }
+                Err(Error::InnerSolveError {
+                        status,
+                        iterations,
+                        objective_value,
+                    }) => {
+                    // Something went wrong, revert one step, reduce the time step and try again.
+                    if self.problem().time_step < 1e-7
+                        || status == ipopt::SolveStatus::UserRequestedStop
+                    {
+                        // Time step getting too small, return with an error
+                        result = result.combine_inner_step_data(iterations, objective_value);
+                        self.commit_solution(true, true);
+                        return Err(Error::SolveError { status, result });
+                    }
+                    if !recovery {
+                        info!("Recovering: Revert previous step");
+                        self.revert_solution();
+                        self.problem_mut().reset_constraint_set();
+                        // reset friction iterations.
+                        friction_steps
+                            .iter_mut()
+                            .for_each(|n| *n = self.sim_params.friction_iterations);
+                        // Since we reverted a step we should add that time step to the time
+                        // remaining.
+                        self.time_step_remaining += self.problem().time_step;
+                    }
+                    recovery = true;
+                    self.problem_mut().time_step *= 0.5;
+                    info!("Reduce time step to {}", self.problem().time_step);
+                }
+                Err(e) => {
+                    // Unknown error: Clear warm start and return.
+                    self.commit_solution(false, false);
+                    return Err(e);
+                }
+            }
+        }
+
+        // Remap contacts since after committing the solution, the constraint set may have changed.
+        self.remap_contacts();
+
+        if result.iterations > self.sim_params.max_outer_iterations {
+            warn!("Reached max outer iterations: {:?}", result.iterations);
+        }
+
+        //self.output_meshes(self.step_count as u32);
+
+        self.inner_iterations += result.inner_iterations as usize;
+        self.step_count += 1;
+
+        debug!("Inner iterations: {}", self.inner_iterations);
+        info!("Minimum time step so far: {}", self.minimum_time_step);
+
+        // On success, update the mesh with useful metrics.
+        self.problem_mut().update_mesh_data();
+
+        Ok(result)
+    }
+
+    /// Run the optimization solver on one time step.
+    pub fn step_with_nonlinear_contact(&mut self) -> Result<SolveResult, Error> {
         // Initialize the result of this function.
         let mut result = SolveResult {
             max_inner_iterations: 0,
@@ -1661,7 +1794,7 @@ impl Solver {
             self.time_step_remaining
         );
         let mut recovery = false; // we are in recovery mode.
-                                  // The number of friction solves to do.
+                                        // The number of friction solves to do.
         let mut friction_steps =
             vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
         let total_friction_steps = friction_steps.iter().sum::<u32>();
@@ -1709,7 +1842,7 @@ impl Solver {
                                 continue;
                             }
                         }
-                        self.commit_solution(true);
+                        self.commit_solution(true, true);
                         self.time_step_remaining -= self.problem().time_step;
                         info!("Time step remaining: {}", self.time_step_remaining);
                         if !recovery && self.problem().time_step < self.max_time_step {
@@ -1735,7 +1868,7 @@ impl Solver {
                     {
                         // Time step getting too small, return with an error
                         result = result.combine_inner_step_data(iterations, objective_value);
-                        self.commit_solution(true);
+                        self.commit_solution(true, true);
                         return Err(Error::SolveError { status, result });
                     }
                     if !recovery {
@@ -1756,7 +1889,7 @@ impl Solver {
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
-                    self.commit_solution(false);
+                    self.commit_solution(false, false);
                     return Err(e);
                 }
             }

@@ -326,6 +326,8 @@ pub trait ContactConstraint:
         &mut self,
         _object_pos: SubsetView<Chunked3<&[f64]>>,
         _collider_pos: SubsetView<Chunked3<&[f64]>>,
-    ) {
+    ) { }
+    fn is_linear(&self) -> bool {
+        false
     }
 }

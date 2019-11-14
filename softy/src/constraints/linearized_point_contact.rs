@@ -1007,6 +1007,9 @@ impl ContactConstraint for LinearizedPointContactConstraint {
             self.constraint_value.as_mut_slice(),
         );
     }
+    fn is_linear(&self) -> bool {
+        true
+    }
 }
 
 impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {

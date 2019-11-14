@@ -99,7 +99,7 @@ pub struct EL_SoftyFrictionalContactParams {
 }
 
 /// A Helper trait to access C arrays.
-pub(crate) trait AsSlice {
+pub(crate) unsafe trait AsSlice {
     type T;
     fn ptr(&self) -> *const Self::T;
     fn size(&self) -> usize;
@@ -129,7 +129,7 @@ pub struct EL_SoftyFrictionalContacts {
     pub size: usize,
 }
 
-impl AsSlice for EL_SoftyColliderMaterialIds {
+unsafe impl AsSlice for EL_SoftyColliderMaterialIds {
     type T = u32;
     fn ptr(&self) -> *const Self::T {
         self.ptr
@@ -139,7 +139,7 @@ impl AsSlice for EL_SoftyColliderMaterialIds {
     }
 }
 
-impl AsSlice for EL_SoftyMaterials {
+unsafe impl AsSlice for EL_SoftyMaterials {
     type T = EL_SoftyMaterialProperties;
     fn ptr(&self) -> *const Self::T {
         self.ptr
@@ -149,7 +149,7 @@ impl AsSlice for EL_SoftyMaterials {
     }
 }
 
-impl AsSlice for EL_SoftyFrictionalContacts {
+unsafe impl AsSlice for EL_SoftyFrictionalContacts {
     type T = EL_SoftyFrictionalContactParams;
     fn ptr(&self) -> *const Self::T {
         self.ptr
@@ -323,40 +323,43 @@ pub unsafe extern "C" fn el_softy_step(
     interrupt_checker: *mut cffi::c_void,
     check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
 ) -> EL_SoftyStepResult {
-    if let Some(solver) = validate_solver_ptr(solver) {
-        let (tetmesh_mb, polymesh_mb, cook_result) = api::step(
-            &mut *solver.lock().unwrap(),
-            interop::into_box(tetmesh_points),
-            interop::into_box(polymesh_points),
-            interop::interrupt_callback(interrupt_checker, check_interrupt),
-        );
-        if let Some(solver_tetmesh) = tetmesh_mb {
-            let tetmesh = Box::into_raw(Box::new(solver_tetmesh.into()));
-            if let Some(solver_polymesh) = polymesh_mb {
-                EL_SoftyStepResult {
-                    tetmesh,
-                    polymesh: Box::into_raw(Box::new(solver_polymesh.reversed().into())),
-                    cook_result: cook_result.into(),
-                }
-            } else {
-                EL_SoftyStepResult {
-                    tetmesh: tetmesh.into(),
-                    polymesh: ::std::ptr::null_mut(),
-                    cook_result: cook_result.into(),
-                }
+    let (tetmesh_mb, polymesh_mb, cook_result) = if let Some(solver) = validate_solver_ptr(solver) {
+        match solver.try_lock() {
+            Ok(mut solver) => {
+                 api::step(
+                    &mut *solver,
+                    interop::into_box(tetmesh_points),
+                    interop::into_box(polymesh_points),
+                    interop::interrupt_callback(interrupt_checker, check_interrupt),
+                )
+            }
+            Err(err) =>
+                (None, None, hdkrs::interop::CookResult::Error(format!("Global solver lock: {}", err))),
+        }
+    } else {
+        (None, None, hdkrs::interop::CookResult::Error("Invalid solver".to_string()))
+    };
+
+    if let Some(solver_tetmesh) = tetmesh_mb {
+        let tetmesh = Box::into_raw(Box::new(solver_tetmesh.into()));
+        if let Some(solver_polymesh) = polymesh_mb {
+            EL_SoftyStepResult {
+                tetmesh,
+                polymesh: Box::into_raw(Box::new(solver_polymesh.reversed().into())),
+                cook_result: cook_result.into(),
             }
         } else {
             EL_SoftyStepResult {
-                tetmesh: ::std::ptr::null_mut(),
-                polymesh: ::std::ptr::null_mut(),
+                tetmesh: tetmesh.into(),
+                polymesh: std::ptr::null_mut(),
                 cook_result: cook_result.into(),
             }
         }
     } else {
         EL_SoftyStepResult {
-            tetmesh: ::std::ptr::null_mut(),
-            polymesh: ::std::ptr::null_mut(),
-            cook_result: hdkrs::interop::CookResult::Error("Invalid solver".to_string()).into(),
+            tetmesh: std::ptr::null_mut(),
+            polymesh: std::ptr::null_mut(),
+            cook_result: cook_result.into(),
         }
     }
 }

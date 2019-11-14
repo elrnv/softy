@@ -1,10 +1,12 @@
 use crate::attrib_defines::*;
 use crate::fem::*;
 use crate::objects::*;
-use crate::TetMesh;
+use crate::{TetMesh, PolyMesh};
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
+use geo::mesh::builder::*;
+use geo::ops::*;
 
 pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
@@ -102,4 +104,48 @@ pub fn make_three_tet_mesh() -> TetMesh {
         [1.0, 0.0, 2.0],
     ];
     make_three_tet_mesh_with_verts(verts)
+}
+
+/// Create a box of unit size centered at the origin with `i` cells in each dimension.
+pub fn make_box(i: usize) -> TetMesh {
+    let mut box_mesh = SolidBoxBuilder { res: [i, i, i] }.build();
+    box_mesh.uniform_scale(0.5);
+    let ref_verts = box_mesh.vertex_positions().to_vec();
+    box_mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+        .expect("Failed to add reference positions to box tetmesh");
+    box_mesh
+}
+
+/// Create a stretched box centered at the origin with `i` cells in each dimension.
+/// The box is 3x1x1 with the vertices at the min and max x coordinates displaced to -1.5 and 1.5
+/// respectively. The displace vertices are marked as fixed.
+pub fn make_stretched_box(i: usize) -> TetMesh {
+    let mut box_mesh = make_box(i);
+    let mut fixed = vec![0i8; box_mesh.vertex_positions().len()];
+
+    // Stretch along the x axis
+    for (v, f) in box_mesh.vertex_position_iter_mut().zip(fixed.iter_mut()) {
+        if v[0] == 0.5 {
+            *f = 1;
+            v[0] = 1.5;
+        }
+        if v[0] == -0.5 {
+            *f = 1;
+            v[0] = -1.5;
+        }
+    }
+
+    box_mesh
+        .add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)
+        .unwrap();
+
+    box_mesh
+}
+
+pub fn make_grid(i: usize) -> PolyMesh {
+    GridBuilder {
+        rows: i,
+        cols: i,
+        orientation: AxisPlaneOrientation::ZX,
+    }.build()
 }

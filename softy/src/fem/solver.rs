@@ -1662,16 +1662,19 @@ impl Solver {
             objective_value: 0.0,
         };
 
-        // Recompute constraints since the active set may have changed if a collision mesh has moved.
-        self.save_current_active_constraint_set();
-        self.problem_mut().reset_constraint_set();
+        let all_contacts_linear = self.all_contacts_linear();
+
+        if !all_contacts_linear {
+            // Recompute constraints since the active set may have changed if a collision mesh has moved.
+            self.save_current_active_constraint_set();
+            self.problem_mut().reset_constraint_set();
+        }
 
         info!(
             "Start step with time step remaining: {}",
             self.time_step_remaining
         );
 
-        let all_contacts_linear = self.all_contacts_linear();
         let mut recovery = false; // we are in recovery mode.
 
         // The number of friction solves to do.
@@ -1708,7 +1711,7 @@ impl Solver {
 
                     if all_contacts_linear || self.check_inner_step() {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
-                            debug_assert!(self
+                            debug_assert!(all_contacts_linear || self
                                 .problem()
                                 .is_same_as_constraint_set(self.old_active_constraint_set.view()));
                             let is_finished = self.compute_friction_impulse(

@@ -36,5 +36,5 @@ env_logger = "0.7"
 unstable = ["criterion/real_blackbox"]
 
 [[bench]]
-name = "box_stretch"
+name = "box"
 harness = false

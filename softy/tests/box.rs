@@ -47,7 +47,7 @@ fn equilibrium() {
 #[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
-    let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
+    let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(SimParams {
         print_level: 0,
         derivative_test: 0,
@@ -66,7 +66,7 @@ fn stretch_plain() -> Result<(), Error> {
 fn stretch_volume_constraint() -> Result<(), Error> {
     init_logger();
     let incompressible_material = medium_solid_material().with_volume_preservation(true);
-    let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretch.vtk"))?;
+    let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(SimParams {
         print_level: 0,
         derivative_test: 0,

@@ -1182,9 +1182,9 @@ mod tests {
                 for &(r, c, h) in hess.iter() {
                     assert!(r >= c, "Hessian is not block lower triangular.");
                     if r == vtx {
-                        hess_vtx[c] += Vector3::new(h[i]);
+                        hess_vtx[c] += h[i];
                     } else if c == vtx {
-                        hess_vtx[r] += Vector3::new(h.transpose()[i]);
+                        hess_vtx[r] += h.transpose()[i];
                     }
                 }
 
@@ -1413,12 +1413,12 @@ mod tests {
                     }
 
                     if r == sample_idx {
-                        hess_sample[c] += Vector3::new(h[i]);
+                        hess_sample[c] += h[i];
                     }
 
                     // Add upper triangular part to hess_sample.
                     if r > c && c == sample_idx {
-                        hess_sample[r] += Vector3::new(h.transpose()[i]);
+                        hess_sample[r] += h.transpose()[i];
                     }
                 }
 

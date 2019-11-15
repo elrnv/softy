@@ -145,6 +145,94 @@ where
     }
 }
 
+impl DSMatrix {
+    /// Construct a sparse matrix from a given iterator of triplets.
+    pub fn from_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, f64)>,
+    {
+        Self::from_triplets_iter_uncompressed(iter, num_rows, num_cols).compressed()
+    }
+
+    /// Construct a possibly uncompressed sparse matrix from a given iterator of triplets.
+    /// This is useful if the caller needs to prune the matrix anyways, which will compress it in
+    /// the process, thus saving an extra pass through the values.
+    pub fn from_triplets_iter_uncompressed<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, f64)>,
+    {
+        let mut triplets: Vec<_> = iter.collect();
+        triplets.sort_by_key(|&(row, _, _)| row);
+        Self::from_sorted_triplets_iter_uncompressed(triplets.into_iter(), num_rows, num_cols)
+    }
+
+    /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
+    /// restriction.
+    pub fn from_sorted_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, f64)>,
+    {
+        Self::from_sorted_triplets_iter_uncompressed(iter, num_rows, num_cols).compressed()
+    }
+
+    /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
+    /// restriction.
+    pub fn from_sorted_triplets_iter_uncompressed<I>(
+        iter: I,
+        num_rows: usize,
+        num_cols: usize,
+    ) -> Self
+    where
+        I: Iterator<Item = (usize, usize, f64)>,
+    {
+        let cap = iter.size_hint().0;
+        let mut cols = Vec::with_capacity(cap);
+        let mut vals: Vec<f64> = Vec::with_capacity(cap);
+        let mut offsets = Vec::with_capacity(num_rows);
+
+        let mut prev_row = 0; // offset by +1 so we don't have to convert between isize.
+        for (row, col, val) in iter {
+            assert!(row + 1 >= prev_row); // We assume that rows are monotonically increasing.
+
+            if row + 1 != prev_row {
+                prev_row = row + 1;
+                offsets.push(cols.len());
+            }
+
+            cols.push(col);
+            vals.push(val);
+        }
+        offsets.push(cols.len());
+        offsets.shrink_to_fit();
+
+        let mut col_data = Chunked::from_offsets(offsets, Sparse::from_dim(cols, num_cols, vals));
+
+        col_data.sort_chunks_by_index();
+
+        Tensor::new(col_data)
+    }
+}
+
+impl<S, I> DSMatrix<S, I>
+where
+    Self: for<'a> View<'a, Type = DSMatrixView<'a>>,
+{
+    /// Compress the matrix representation by consolidating duplicate entries.
+    pub fn compressed(&self) -> DSMatrix {
+        Tensor::new(self.view().data.compressed(|a, &b| *a += b))
+    }
+}
+
+impl<S, I> DSMatrix<S, I>
+where
+    Self: for<'a> View<'a, Type = DSMatrixView<'a>>,
+{
+    /// Remove all elements that do not satisfy the given predicate and compress the resulting matrix.
+    pub fn pruned(&self, keep: impl Fn(usize, usize, &f64) -> bool) -> DSMatrix {
+        Tensor::new(self.view().data.pruned(|a, &b| *a += b, keep))
+    }
+}
+
 /*
  * A diagonal matrix has the same structure as a vector, so it needs a newtype to distinguish it
  * from such.
@@ -1033,7 +1121,11 @@ where
 impl DSBlockMatrix1x3 {
     /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
     /// restriction.
-    pub fn from_block_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    pub fn from_block_triplets_iter_uncompressed<I>(
+        iter: I,
+        num_rows: usize,
+        num_cols: usize,
+    ) -> Self
     where
         I: Iterator<Item = (usize, usize, [[f64; 3]; 1])>,
     {
@@ -1069,7 +1161,16 @@ impl DSBlockMatrix1x3 {
 
         col_data.sort_chunks_by_index();
 
-        Tensor::new(col_data).compressed()
+        Tensor::new(col_data)
+    }
+
+    /// Assume that rows are monotonically increasing in the iterator. Columns don't have an order
+    /// restriction.
+    pub fn from_block_triplets_iter<I>(iter: I, num_rows: usize, num_cols: usize) -> Self
+    where
+        I: Iterator<Item = (usize, usize, [[f64; 3]; 1])>,
+    {
+        Self::from_block_triplets_iter_uncompressed(iter, num_rows, num_cols).compressed()
     }
 }
 
@@ -1306,16 +1407,29 @@ impl<'a> DSBlockMatrix3View<'a> {
 impl<'a> Mul<Tensor<&'a [f64]>> for DSMatrixView<'_> {
     type Output = Tensor<Vec<f64>>;
     fn mul(self, rhs: Tensor<&'a [f64]>) -> Self::Output {
-        assert_eq!(rhs.len(), self.num_cols());
+        let mut res = Tensor::new(vec![0.0; self.num_rows()]);
+        self.mul_into(
+            rhs.data.as_tensor(),
+            res.data.as_mut_slice().as_mut_tensor(),
+        );
+        res
+    }
+}
 
-        let mut res = vec![0.0; self.num_rows()];
-        for (row, out_row) in self.data.iter().zip(res.iter_mut()) {
+impl<S, I> DSMatrix<S, I>
+where
+    Self: for<'a> View<'a, Type = DSMatrixView<'a>>,
+{
+    fn mul_into(&self, rhs: &Tensor<[f64]>, out: &mut Tensor<[f64]>) {
+        let view = self.view();
+        assert_eq!(rhs.len(), view.num_cols());
+        assert_eq!(out.len(), view.num_rows());
+
+        for (row, out_row) in view.data.iter().zip(out.data.iter_mut()) {
             for (col_idx, entry, _) in row.iter() {
                 *out_row += *entry * rhs.data[col_idx];
             }
         }
-
-        Tensor::new(res)
     }
 }
 
@@ -1332,6 +1446,19 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
             }
         }
         Tensor::new(res)
+    }
+}
+
+impl<'a> Mul<DSBlockMatrix1x3View<'_>> for DSMatrixView<'_> {
+    type Output = DSBlockMatrix1x3;
+    fn mul(self, rhs: DSBlockMatrix1x3View<'_>) -> Self::Output {
+        let blocks = Chunked1::from_flat(Chunked3::from_flat(Vec::new()));
+        let mut data = Sparse::from_dim(Vec::new(), rhs.num_cols(), blocks);
+
+        for row in self.data.iter() {
+            //data.eval_extend(row.expr().dot_op(rhs.data.expr()));
+        }
+        Tensor::new(Chunked::from_offsets(vec![0], data))
     }
 }
 

@@ -78,7 +78,7 @@ impl<T: Default> Default for Tensor<T> {
     }
 }
 
-impl<S> Tensor<S> {
+impl<S: ?Sized> Tensor<S> {
     /// Negate all elements in this tensor. This works on any tensor whose
     /// underlying elements are copyable negateable types.
     ///
@@ -117,7 +117,7 @@ impl<T: ?Sized> Tensor<T> {
  * Tensor as a Set
  */
 
-impl<T: Set> Set for Tensor<T> {
+impl<T: Set + ?Sized> Set for Tensor<T> {
     type Elem = T::Elem;
     type Atom = T::Atom;
     fn len(&self) -> usize {
@@ -125,14 +125,14 @@ impl<T: Set> Set for Tensor<T> {
     }
 }
 
-impl<T: Storage> Storage for Tensor<T> {
+impl<T: Storage + ?Sized> Storage for Tensor<T> {
     type Storage = T::Storage;
     fn storage(&self) -> &T::Storage {
         self.data.storage()
     }
 }
 
-impl<T: StorageMut> StorageMut for Tensor<T> {
+impl<T: StorageMut + ?Sized> StorageMut for Tensor<T> {
     fn storage_mut(&mut self) -> &mut T::Storage {
         self.data.storage_mut()
     }
@@ -142,7 +142,7 @@ impl<T: StorageMut> StorageMut for Tensor<T> {
  * View Impls
  */
 
-impl<T: Viewed> Viewed for Tensor<T> {}
+impl<T: Viewed + ?Sized> Viewed for Tensor<T> {}
 
 impl<'a, T: View<'a>> View<'a> for Tensor<T> {
     type Type = Tensor<T::Type>;
@@ -202,6 +202,7 @@ macro_rules! impl_scalar {
                     Tensor::new(*self)
                 }
             }
+
             impl DotOp for $type {
                 type Output = Tensor<Self>;
                 fn dot_op(self, rhs: Self) -> Self::Output {

@@ -191,6 +191,19 @@ impl<T> DynamicCollection for [T] {}
 impl<'a, T> DynamicCollection for &'a [T] {}
 impl<'a, T> DynamicCollection for &'a mut [T] {}
 
+/// Many implementations do something special for sparse sets. All other sets are marked as dense
+/// to avoid collisions.
+pub trait Dense {}
+impl<S, I> Dense for Select<S, I> {}
+impl<S, I> Dense for Subset<S, I> {}
+impl<S, N> Dense for UniChunked<S, N> {}
+impl<S, O> Dense for Chunked<S, O> {}
+impl<T> Dense for std::ops::Range<T> {}
+impl<T> Dense for Vec<T> {}
+impl<T> Dense for [T] {}
+impl<'a, T> Dense for &'a [T] {}
+impl<'a, T> Dense for &'a mut [T] {}
+
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
 //pub trait Chunkable<'a>:
 //    Set + Get<'a, 'a, std::ops::Range<usize>> + RemovePrefix + View<'a> + PartialEq

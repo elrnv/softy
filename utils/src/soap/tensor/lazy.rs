@@ -1,4 +1,5 @@
 use super::*;
+use std::iter::Sum;
 use std::ops::Add as AddOp;
 use std::ops::Mul as MulOp;
 use std::ops::Sub as SubOp;
@@ -28,6 +29,12 @@ pub struct Dot<L, R> {
     right: R,
 }
 
+impl<L, R> Dot<L, R> {
+    fn new(left: L, right: R) -> Self {
+        Dot { left, right }
+    }
+}
+
 /// A lazy Scalar multiplication expression to be evaluated at a later time.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ScalarMul<T, S> {
@@ -47,37 +54,12 @@ pub trait DotOp<R = Self> {
     fn dot_op(self, rhs: R) -> Self::Output;
 }
 
-///// This is similar to the `DotOp` trait, but it provides users with an opportunity to evaluate the
-///// dot expression to arbitrary output types without the need to call eval at the end.
-//pub trait DotEval<Output, R = Self> {
-//    fn dot(self, rhs: R) -> Output;
-//}
-
-impl<T: Scalar> DotOp for Tensor<T> {
-    type Output = Tensor<T>;
-    fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
+impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
+    type Output = Tensor<<L as MulOp<R>>::Output>;
+    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
         Tensor::new(self.data * rhs.data)
     }
 }
-
-//impl<T, L, R> DotEval<T, R> for L
-//where
-//    Self: DotOp<R>,
-//    T: Scalar + Evaluate<<L as DotOp<R>>::Output>,
-//{
-//    fn dot(self, rhs: R) -> T {
-//        Evaluate::eval(self.dot_op(rhs))
-//    }
-//}
-//
-//impl<T: Scalar, L, R> DotEval<Tensor<T>, R> for L
-//where
-//    Self: DotOp<R, Output = Tensor<T>>,
-//{
-//    fn dot(self, rhs: R) -> Tensor<T> {
-//        self.dot_op(rhs)
-//    }
-//}
 
 // Convert common containers into nested iterators for lazy processing.
 
@@ -820,14 +802,11 @@ where
 impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr, Out> DotOp<R> for L
 where
     L::Item: DotOp<R::Item, Output = Out>,
-    Out: std::iter::Sum,
+    Out: Sum,
 {
     type Output = Out;
     fn dot_op(self, rhs: R) -> Self::Output {
-        std::iter::Sum::sum(Dot {
-            left: self,
-            right: rhs,
-        })
+        Sum::sum(Dot::new(self, rhs))
     }
 }
 
@@ -840,10 +819,55 @@ where
 {
     type Output = Out;
     fn dot_op(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
-        std::iter::Sum::sum(Dot {
-            left: self,
-            right: rhs,
-        })
+        Sum::sum(Dot::new(self, rhs))
+    }
+}
+
+impl<'l, L, R, A, B, T, Out> DotOp<R> for SparseIterExpr<'l, L, T>
+where
+    SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
+    R: Iterator<Item = B> + DenseExpr + Clone,
+    A: DotOp<B, Output = Out>,
+    B: std::fmt::Debug,
+    A: std::fmt::Debug,
+    Out: Default + AddOp<Output = Out>,
+{
+    type Output = Out;
+    fn dot_op(self, rhs: R) -> Self::Output {
+        self.scan(
+            (0, rhs.clone()),
+            |(prev_idx, cur), IndexedExpr { index, expr }| {
+                if index <= *prev_idx {
+                    // Reset the rhs iterator
+                    *cur = rhs.clone();
+                    *prev_idx = 0;
+                }
+                dbg!(&expr);
+                let rhs_val = cur
+                    .nth(index - *prev_idx)
+                    .expect("Sparse . Dense dot product index out of bounds");
+                dbg!(&rhs_val);
+                let dot = expr.dot_op(rhs_val);
+                *prev_idx = index + 1;
+                Some(dot)
+            },
+        )
+        .fold(Default::default(), |acc, x| acc + x)
+    }
+}
+
+impl<'r, L, R, A, B, T, Out> DotOp<SparseIterExpr<'r, R, T>> for L
+where
+    L: Iterator<Item = A> + DenseExpr + Clone,
+    SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
+    B: DotOp<A, Output = Out>,
+    B: std::fmt::Debug,
+    A: std::fmt::Debug,
+    Out: Default + AddOp<Output = Out>,
+{
+    type Output = Out;
+    fn dot_op(self, mut rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
+        rhs.dot_op(self)
     }
 }
 
@@ -922,6 +946,40 @@ where
 {
     fn total_size_hint(&self) -> usize {
         self.tensor.total_size_hint()
+    }
+}
+
+/*
+ * Evaluate impls
+ */
+
+impl<T: Scalar> Evaluate<Tensor<T>> for T {
+    fn eval(expr: Tensor<T>) -> Self {
+        expr.into_inner()
+    }
+}
+
+impl<I, T> Evaluate<I> for Vec<T>
+where
+    Self: EvalExtend<I>,
+{
+    fn eval(iter: I) -> Self {
+        let mut v = Vec::new();
+        v.eval_extend(iter);
+        v
+    }
+}
+
+impl<I, S, N> Evaluate<I> for UniChunked<S, U<N>>
+where
+    Self: EvalExtend<I>,
+    S: Default + Set,
+    N: Unsigned + Default,
+{
+    fn eval(iter: I) -> Self {
+        let mut s = Self::default();
+        s.eval_extend(iter);
+        s
     }
 }
 
@@ -1009,14 +1067,12 @@ where
     S: Set + Default + EvalExtend<E>,
 {
     fn eval(iter: I) -> Self {
-        let mut indices = J::default();
-        let mut source = S::default();
-        let target = iter.target().clone();
-        for IndexedExpr { index, expr } in iter {
-            indices.push(index);
-            source.eval_extend(expr);
-        }
-        Sparse::new(Select::new(indices, target), source)
+        let mut out = Sparse::new(
+            Select::new(J::default(), iter.target().clone()),
+            S::default(),
+        );
+        out.eval_extend(iter);
+        out
     }
 }
 
@@ -1063,6 +1119,10 @@ macro_rules! impl_array_tensor_traits {
 
 impl_array_tensor_traits!(1, 2, 3, 4);
 
+/*
+ * Eval Extend impls
+ */
+
 impl<T> EvalExtend<Tensor<T>> for Vec<T> {
     fn eval_extend(&mut self, value: Tensor<T>) {
         self.push(value.into_inner());
@@ -1078,56 +1138,93 @@ where
     }
 }
 
-impl<I, T> Evaluate<I> for Vec<T>
-where
-    Self: EvalExtend<I>,
-{
-    fn eval(iter: I) -> Self {
-        let mut v = Vec::new();
-        v.eval_extend(iter);
-        v
-    }
-}
-
 impl<I, S, N> EvalExtend<I> for UniChunked<S, N>
 where
     I: Iterator,
-    S: EvalExtend<I::Item>,
+    S: Set + EvalExtend<I::Item>,
+    N: Dimension,
 {
     fn eval_extend(&mut self, iter: I) {
         for elem in iter {
+            let orig_len = self.data.len();
             self.data.eval_extend(elem);
+            debug_assert_eq!(self.data.len() - orig_len, self.chunk_size())
         }
     }
 }
 
-impl<I, S, N> Evaluate<I> for UniChunked<S, U<N>>
+impl<I: Expression, S, T, J, E> EvalExtend<I> for Chunked<Sparse<S, T, J>>
 where
-    Self: EvalExtend<I>,
-    S: Default + Set,
-    N: Unsigned + Default,
+    J: Push<usize> + Reserve,
+    I::Item: Iterator<Item = IndexedExpr<E>> + Target<Target = T>,
+    T: Set + PartialEq + std::fmt::Debug,
+    S: Set + Reserve + EvalExtend<E>,
 {
-    fn eval(iter: I) -> Self {
-        let mut s = Self::default();
-        s.eval_extend(iter);
-        s
+    fn eval_extend(&mut self, iter: I) {
+        let Chunked {
+            chunks: offsets,
+            data:
+                Sparse {
+                    selection: Select { indices, target },
+                    source,
+                },
+        } = self;
+
+        // Chunked
+        let n = iter.size_hint().0;
+        offsets.reserve(n);
+
+        // Sparse
+        indices.reserve(n);
+        source.reserve_with_storage(n, iter.total_size_hint());
+
+        for row in iter {
+            debug_assert_eq!(row.target(), target);
+            for IndexedExpr { index, expr } in row {
+                indices.push(index);
+                source.eval_extend(expr);
+            }
+            offsets.push(source.len());
+        }
     }
 }
 
-impl<T: Scalar> Evaluate<Tensor<T>> for T {
-    fn eval(expr: Tensor<T>) -> Self {
-        expr.into_inner()
+impl<I: Iterator, S> EvalExtend<I> for Chunked<S>
+where
+    S: Set + Dense + EvalExtend<I::Item>,
+{
+    fn eval_extend(&mut self, iter: I) {
+        let Chunked {
+            chunks: offsets,
+            data,
+        } = self;
+        offsets.reserve(iter.size_hint().0);
+        for elem in iter {
+            data.eval_extend(elem);
+            offsets.push(data.len());
+        }
     }
 }
 
-//impl<T, L: Iterator, R: Iterator, A> std::iter::Sum<A> for Tensor<T>
-//where
-//    Tensor<T>: Evaluate<Dot<L, R>> + std::iter::Sum,
-//{
-//    fn sum<I: Iterator<Item = A>>(iter: I) -> Tensor<T> {
-//        iter.map(|x| Evaluate::eval(x)).sum()
-//    }
-//}
+impl<I, S, T, J, E> EvalExtend<I> for Sparse<S, T, J>
+where
+    I: Iterator<Item = IndexedExpr<E>> + Target<Target = T>,
+    T: PartialEq + std::fmt::Debug,
+    J: Push<usize>,
+    S: EvalExtend<E>,
+{
+    fn eval_extend(&mut self, iter: I) {
+        let Sparse {
+            selection: Select { indices, target },
+            source,
+        } = self;
+        debug_assert_eq!(iter.target(), target);
+        for IndexedExpr { index, expr } in iter {
+            indices.push(index);
+            source.eval_extend(expr);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1322,6 +1419,23 @@ mod tests {
         let a = Subset::from_unique_ordered_indices(vec![0, 3], vec![1u32, 2, 3, 4]);
         let b = vec![8u32, 7];
         assert_eq!(vec![9u32, 11], (a.expr() + b.expr()).eval::<Vec<u32>>());
+        assert_eq!(vec![9u32, 11], (b.expr() + a.expr()).eval::<Vec<u32>>());
+    }
+
+    #[test]
+    fn sparse_dense_dot() {
+        let a = vec![0, 1, 4, 8, 7, 3];
+        let b = Sparse::from_dim(vec![3, 4, 3], a.len(), vec![7, 8, 9]);
+        // 7*8 + 8*7 + 9*8
+        assert_eq!(184, a.expr().dot(b.expr()));
+        assert_eq!(184, b.expr().dot(a.expr()));
+
+        // Longer sequence
+        let a = vec![0, 1, 4, 8, 7, 3];
+        let b = Sparse::from_dim(vec![3, 4, 1, 2, 5], a.len(), vec![1, 2, 3, 4, 5]);
+        // 8*1 + 7*2 + 1*3 + 4*4 + 3*5
+        assert_eq!(56, a.expr().dot(b.expr()));
+        assert_eq!(56, b.expr().dot(a.expr()));
     }
 
     //#[test]

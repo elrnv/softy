@@ -58,7 +58,7 @@ impl Index {
     /// Manipulate the inner representation of the index. This method avoids the additional check
     /// used in `map`. Use this to opt out of automatic index checking.
     #[inline]
-    pub fn map_inner<F: FnOnce(usize) -> usize>(self, f: F) -> Index {
+    pub fn map_unchecked<F: FnOnce(usize) -> usize>(self, f: F) -> Index {
         Index(f(self.0))
     }
 
@@ -148,6 +148,14 @@ impl Into<Option<usize>> for Index {
         } else {
             None
         }
+    }
+}
+
+impl IntoIterator for Index {
+    type Item = usize;
+    type IntoIter = std::option::IntoIter<usize>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_option().into_iter()
     }
 }
 

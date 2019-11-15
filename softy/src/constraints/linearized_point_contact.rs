@@ -62,6 +62,12 @@ pub struct LinearizedPointContactConstraint {
     /// Constraint Jacobian in two blocks: first for object Jacobian and second for collider
     /// Jacobian. If one is fixed, it will be `None`.
     constraint_jacobian: LazyCell<[Option<DSBlockMatrix1x3>; 2]>,
+
+    /// Vertex to vertex topology of the collider mesh.
+    collider_vertex_topo: Chunked<Vec<usize>>,
+
+    /// Contact Laplacian.
+    contact_laplacian: LazyCell<DSMatrix>,
 }
 
 impl LinearizedPointContactConstraint {
@@ -121,6 +127,8 @@ impl LinearizedPointContactConstraint {
                 problem_diameter: bbox.diameter(),
                 constraint_value: Vec::new(),
                 constraint_jacobian: LazyCell::new(),
+                collider_vertex_topo: Self::build_vertex_topo(collider),
+                contact_laplacian: LazyCell::new(),
             };
 
             constraint.linearize_constraint(
@@ -185,9 +193,10 @@ impl LinearizedPointContactConstraint {
                         .surface_jacobian_block_iter(contact_points.view().into()),
                 )
                 .map(row_correction);
-            Some(DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(
-                iter, num_rows, num_cols,
-            ).pruned(|_, _, block| block.into_inner() != [[0.0; 3]]))
+            Some(
+                DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(iter, num_rows, num_cols)
+                    .pruned(|_, _, block| block.into_inner() != [[0.0; 3]]),
+            )
         } else {
             None
         };
@@ -201,14 +210,66 @@ impl LinearizedPointContactConstraint {
                         .query_jacobian_block_iter(contact_points.view().into()),
                 )
                 .map(row_correction);
-            Some(DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(
-                iter, num_rows, num_cols,
-            ).pruned(|_, _, block| block.into_inner() != [[0.0; 3]]))
+            Some(
+                DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(iter, num_rows, num_cols)
+                    .pruned(|_, _, block| block.into_inner() != [[0.0; 3]]),
+            )
         } else {
             None
         };
 
         [obj_jac, coll_jac]
+    }
+
+    /// Compute vertex to vertex topology of the entire collider mesh. This makes it easy to query
+    /// neighbours when we are computing laplacians.
+    fn build_vertex_topo(mesh: &TriMesh) -> Chunked<Vec<usize>> {
+        let mut topo = vec![Vec::with_capacity(5); mesh.num_vertices()];
+
+        // Accumulate all the neighbours
+        mesh.face_iter().for_each(|&[v0, v1, v2]| {
+            topo[v0].push(v1);
+            topo[v0].push(v2);
+            topo[v1].push(v0);
+            topo[v1].push(v2);
+            topo[v2].push(v0);
+            topo[v2].push(v1);
+        });
+
+        // Sort and dedup neighbourhoods
+        for nbrhood in topo.iter_mut() {
+            nbrhood.sort();
+            nbrhood.dedup();
+        }
+
+        // Flatten data layout to make access faster.
+        Chunked::from_nested_vec(topo)
+    }
+
+    /// Build a matrix that smoothes values at contact points with their neighbours by the given
+    /// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
+    fn build_contact_laplacian(&self, weight: f64) -> DSMatrix {
+        let surf = &self.implicit_surface;
+        let neighbourhood_indices = neighbourhood_indices(&surf);
+        let size = surf.num_neighbourhoods();
+
+        let triplets = self
+            .collider_vertex_topo
+            .iter()
+            .zip(neighbourhood_indices.iter())
+            .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
+            .flat_map(|(nbrhood, valid_idx)| {
+                std::iter::repeat(valid_idx).zip(nbrhood.iter()).filter_map(
+                    |(valid_idx, nbr_idx)| {
+                        neighbourhood_indices[*nbr_idx]
+                            .into_option()
+                            .map(|valid_nbr| (valid_idx, valid_nbr, weight))
+                    },
+                )
+            });
+
+        // Don't need to sort or compress.
+        DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
     }
 
     /// Update implicit surface using the given position data from mesh vertices.
@@ -994,16 +1055,19 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) {
-        let jac = self.build_constraint_jacobian([object_pos, collider_pos]);
+        let lap = self.build_contact_laplacian(0.5);
+
+        let [obj_jac, coll_jac] = self.build_constraint_jacobian([object_pos, collider_pos]);
+        let jac = [lap.view() * obj_jac.view(), lap.view() * coll_jac.view()];
+
         self.constraint_jacobian.replace(jac);
         let contact_points = self.contact_points.borrow();
 
         let num_non_zero_constraints = self.implicit_surface.num_neighbourhoods();
-        self.constraint_value.resize(num_non_zero_constraints, 0.0);
-        self.implicit_surface.local_potential(
-            contact_points.view().into(),
-            self.constraint_value.as_mut_slice(),
-        );
+        let mut c0 = vec![0.0; num_non_zero_constraints];
+        self.implicit_surface
+            .local_potential(contact_points.view().into(), c0.as_mut_slice());
+        self.constraint_value = lap.view() * Tensor::new(c0.view());
     }
     fn is_linear(&self) -> bool {
         true
@@ -1030,21 +1094,17 @@ impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
             .borrow()
             .expect("Constraint Jacobian not initialized");
 
-        value.iter_mut().for_each(|x| *x = 0.0);
-
-        let out = value.as_mut_tensor();
+        let mut out = self.constraint_value.clone();
 
         let dx0: Chunked3<Vec<f64>> = (x1[0].expr() - x0[0].expr()).eval();
         let dx1: Chunked3<Vec<f64>> = (x1[1].expr() - x0[1].expr()).eval();
 
         if let Some(jac) = &jac[0] {
-            *out += jac.view() * *dx0.view().as_tensor();
+            *out.as_mut_tensor() += jac.view() * *dx0.view().as_tensor();
         }
         if let Some(jac) = &jac[1] {
-            *out += jac.view() * *dx1.view().as_tensor();
+            *out.as_mut_tensor() += jac.view() * *dx1.view().as_tensor();
         }
-
-        *out += self.constraint_value.view().as_tensor();
     }
 }
 

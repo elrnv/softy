@@ -54,13 +54,6 @@ pub trait DotOp<R = Self> {
     fn dot_op(self, rhs: R) -> Self::Output;
 }
 
-impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
-    type Output = Tensor<<L as MulOp<R>>::Output>;
-    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
-        Tensor::new(self.data * rhs.data)
-    }
-}
-
 // Convert common containers into nested iterators for lazy processing.
 
 /// A wrapper around a cloned iterator over a slice.
@@ -799,6 +792,45 @@ where
     }
 }
 
+/*
+ * DotOp Base impls
+ */
+
+impl<L: MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
+    type Output = Tensor<<L as MulOp<R>>::Output>;
+    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
+        Tensor::new(self.data * rhs.data)
+    }
+}
+
+impl<L, R: Iterator + DenseExpr> DotOp<R> for Tensor<L> {
+    type Output = ScalarMul<R, L>;
+    fn dot_op(self, rhs: R) -> Self::Output {
+        ScalarMul::new(rhs, self.data)
+    }
+}
+
+impl<R, L: Iterator + DenseExpr> DotOp<Tensor<R>> for L {
+    type Output = ScalarMul<L, R>;
+    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
+        ScalarMul::new(self, rhs.data)
+    }
+}
+
+impl<'r, L, R, T> DotOp<SparseIterExpr<'r, R, T>> for Tensor<L> {
+    type Output = ScalarMul<SparseIterExpr<'r, R, T>, L>;
+    fn dot_op(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
+        ScalarMul::new(rhs, self.data)
+    }
+}
+
+impl<'l, R, L, T> DotOp<Tensor<R>> for SparseIterExpr<'l, L, T> {
+    type Output = ScalarMul<SparseIterExpr<'l, L, T>, R>;
+    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
+        ScalarMul::new(self, rhs.data)
+    }
+}
+
 impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr, Out> DotOp<R> for L
 where
     L::Item: DotOp<R::Item, Output = Out>,
@@ -842,11 +874,9 @@ where
                     *cur = rhs.clone();
                     *prev_idx = 0;
                 }
-                dbg!(&expr);
                 let rhs_val = cur
                     .nth(index - *prev_idx)
                     .expect("Sparse . Dense dot product index out of bounds");
-                dbg!(&rhs_val);
                 let dot = expr.dot_op(rhs_val);
                 *prev_idx = index + 1;
                 Some(dot)
@@ -1436,6 +1466,13 @@ mod tests {
         // 8*1 + 7*2 + 1*3 + 4*4 + 3*5
         assert_eq!(56, a.expr().dot(b.expr()));
         assert_eq!(56, b.expr().dot(a.expr()));
+    }
+
+    #[test]
+    fn matrix_mul() {
+        let a = Chunked3::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let b = vec![2, 1, 4];
+        assert_eq!(vec![34, 41, 48], a.expr().dot(b.expr()));
     }
 
     //#[test]

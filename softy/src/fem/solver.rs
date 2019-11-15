@@ -148,7 +148,7 @@ impl SolverBuilder {
     ) -> &mut Self {
         // We can already weed out frictional contacts for pure static sims
         // since we already have the `SimParams`.
-        if !params.friction_params.is_some() || self.sim_params.time_step.is_some() {
+        if params.friction_params.is_none() || self.sim_params.time_step.is_some() {
             self.frictional_contacts.push((params, mat_ids));
         }
         self

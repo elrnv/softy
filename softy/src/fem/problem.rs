@@ -2412,6 +2412,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         assert_eq!(count, g.len());
+        trace!(
+            "Constraint norm: {}",
+            crate::inf_norm(g.iter().cloned())
+        );
 
         debug_assert!(g.iter().all(|g| g.is_finite()));
         true
@@ -2565,6 +2569,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
         //self.print_jacobian_svd(vals);
+        trace!(
+            "Constraint Jacobian norm: {}",
+            crate::inf_norm(vals.iter().cloned())
+        );
 
         debug_assert!(vals.iter().all(|x| x.is_finite()));
         true

@@ -185,9 +185,9 @@ impl LinearizedPointContactConstraint {
                         .surface_jacobian_block_iter(contact_points.view().into()),
                 )
                 .map(row_correction);
-            Some(DSBlockMatrix1x3::from_block_triplets_iter(
+            Some(DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(
                 iter, num_rows, num_cols,
-            ))
+            ).pruned(|_, _, block| block.into_inner() != [[0.0; 3]]))
         } else {
             None
         };
@@ -201,9 +201,9 @@ impl LinearizedPointContactConstraint {
                         .query_jacobian_block_iter(contact_points.view().into()),
                 )
                 .map(row_correction);
-            Some(DSBlockMatrix1x3::from_block_triplets_iter(
+            Some(DSBlockMatrix1x3::from_block_triplets_iter_uncompressed(
                 iter, num_rows, num_cols,
-            ))
+            ).pruned(|_, _, block| block.into_inner() != [[0.0; 3]]))
         } else {
             None
         };

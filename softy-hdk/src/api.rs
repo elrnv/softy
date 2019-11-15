@@ -251,12 +251,16 @@ fn get_frictional_contacts<'a>(
                         EL_SoftyContactType::LinearizedPoint => softy::ContactType::LinearizedPoint,
                         EL_SoftyContactType::Point => softy::ContactType::Point,
                     },
-                    friction_params: Some(softy::FrictionParams {
-                        dynamic_friction: f64::from(dynamic_cof),
-                        inner_iterations: friction_inner_iterations as usize,
-                        tolerance: f64::from(friction_tolerance),
-                        print_level: 5,
-                    }),
+                    friction_params: if dynamic_cof == 0.0 || friction_inner_iterations == 0 {
+                        None
+                    } else {
+                        Some(softy::FrictionParams {
+                            dynamic_friction: f64::from(dynamic_cof),
+                            inner_iterations: friction_inner_iterations as usize,
+                            tolerance: f64::from(friction_tolerance),
+                            print_level: 5,
+                        })
+                    },
                 },
                 (
                     object_material_id as usize,

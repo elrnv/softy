@@ -276,6 +276,7 @@ static const char *theDsFile = R"THEDSFILE(
                 name "frictionparams#"
                 label "Friction Parameters"
                 grouptag { "group_type" "simple" }
+                hidewhen "{ friction# == 0 }"
 
                 parm {
                     name "dynamiccof#"

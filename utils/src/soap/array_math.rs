@@ -30,6 +30,22 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[T; $n]> {
+            type Output = Tensor<[T; $n]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
+                self * rhs
+            }
+        }
+
+        impl<T: Scalar> DotOp<Tensor<[T; $n]>> for Tensor<T> {
+            type Output = Tensor<[T; $n]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<[T; $n]>) -> Self::Output {
+                rhs * self
+            }
+        }
+
         impl<T: Scalar> DotOp for Tensor<[T; $n]> {
             type Output = Tensor<T>;
             #[inline]
@@ -677,10 +693,45 @@ macro_rules! impl_array_matrices {
                 self.map_inner(|x| U::from(x).unwrap())
             }
         }
+
+        impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<[[T; $c]; $r]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
+                self * rhs
+            }
+        }
+
+        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<T> {
+            type Output = Tensor<[[T; $c]; $r]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+                rhs * self
+            }
+        }
+
+        // Dot operator as compared to multiplication is always commutative. This means that no
+        // matter the order, it will always chose to contract along the outer dimension.
+        impl<T: Scalar> DotOp<Tensor<[T; $r]>> for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<[T; $c]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<[T; $r]>) -> Self::Output {
+                let Tensor { data: [vec] } = rhs.transpose() * self;
+                Tensor::new(vec)
+            }
+        }
+
+        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<[T; $r]> {
+            type Output = Tensor<[T; $c]>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+                let Tensor { data: [vec] } = self.transpose() * rhs;
+                Tensor::new(vec)
+            }
+        }
     };
 }
 
-//pub type Matrix1<T> = Tensor<[[T; 1]; 1]>;
 impl_array_matrices!(Matrix1; 1, 1);
 impl_array_matrices!(Matrix2; 2, 2);
 impl_array_matrices!(Matrix3; 3, 3);

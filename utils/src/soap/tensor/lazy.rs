@@ -1,5 +1,4 @@
 use super::*;
-use std::iter::Sum;
 use std::ops::Add as AddOp;
 use std::ops::Mul as MulOp;
 use std::ops::Sub as SubOp;
@@ -555,16 +554,15 @@ impl_bin_op!(impl<A, B> SubOp for Add<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for Dot<A, B> { Sub::sub });
 impl_bin_op!(impl<A, B> SubOp for ScalarMul<A, B> { Sub::sub });
 
-// Decided to make all DotOp impls evaluate eagerly.
-//impl_bin_op!(impl<T> DotOp for VecIterExpr<T> { Dot::dot });
-//impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot });
-//impl_bin_op!(impl<S, N> DotOp for UniChunkedIterExpr<S, N> { Dot::dot });
-//impl_bin_op!(impl<'a, S> DotOp for ChunkedIterExpr<'a, S> { Dot::dot });
-//impl_bin_op!(impl<'a, S, T> DotOp for SparseIterExpr<'a, S, T> { Dot::dot });
-//impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot });
-//impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot });
-//impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot });
-//impl_bin_op!(impl<A, B> DotOp for ScalarMul<A, B> { Dot::dot });
+//impl_bin_op!(impl<T> DotOp for VecIterExpr<T> { Dot::dot_op });
+//impl_bin_op!(impl<'a, T> DotOp for SliceIterExpr<'a, T> { Dot::dot_op });
+//impl_bin_op!(impl<S, N> DotOp for UniChunkedIterExpr<S, N> { Dot::dot_op });
+//impl_bin_op!(impl<'a, S> DotOp for ChunkedIterExpr<'a, S> { Dot::dot_op });
+//impl_bin_op!(impl<'a, S, T> DotOp for SparseIterExpr<'a, S, T> { Dot::dot_op });
+//impl_bin_op!(impl<A, B> DotOp for Sub<A, B> { Dot::dot_op });
+//impl_bin_op!(impl<A, B> DotOp for Add<A, B> { Dot::dot_op });
+//impl_bin_op!(impl<A, B> DotOp for Dot<A, B> { Dot::dot_op });
+//impl_bin_op!(impl<A, B> DotOp for ScalarMul<A, B> { Dot::dot_op });
 
 macro_rules! impl_scalar_mul {
     (impl<$($type_vars:tt),*> for $type:ty) => {
@@ -796,7 +794,7 @@ where
  * DotOp Base impls
  */
 
-impl<L: MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
+impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
     type Output = Tensor<<L as MulOp<R>>::Output>;
     fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
         Tensor::new(self.data * rhs.data)
@@ -831,27 +829,21 @@ impl<'l, R, L, T> DotOp<Tensor<R>> for SparseIterExpr<'l, L, T> {
     }
 }
 
-impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr, Out> DotOp<R> for L
-where
-    L::Item: DotOp<R::Item, Output = Out>,
-    Out: Sum,
-{
-    type Output = Out;
+impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr> DotOp<R> for L {
+    type Output = Dot<L, R>;
     fn dot_op(self, rhs: R) -> Self::Output {
-        Sum::sum(Dot::new(self, rhs))
+        Dot::new(self, rhs)
     }
 }
 
-impl<'l, 'r, L, R, A, B, T, Out> DotOp<SparseIterExpr<'r, R, T>> for SparseIterExpr<'l, L, T>
+impl<'l, 'r, L, R, A, B, T> DotOp<SparseIterExpr<'r, R, T>> for SparseIterExpr<'l, L, T>
 where
     SparseIterExpr<'l, L, T>: Iterator<Item = IndexedExpr<A>>,
     SparseIterExpr<'r, R, T>: Iterator<Item = IndexedExpr<B>>,
-    A: DotOp<B, Output = Out>,
-    Out: std::iter::Sum,
 {
-    type Output = Out;
+    type Output = Dot<SparseIterExpr<'l, L, T>, SparseIterExpr<'r, R, T>>;
     fn dot_op(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
-        Sum::sum(Dot::new(self, rhs))
+        Dot::new(self, rhs)
     }
 }
 
@@ -896,7 +888,7 @@ where
     Out: Default + AddOp<Output = Out>,
 {
     type Output = Out;
-    fn dot_op(self, mut rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
+    fn dot_op(self, rhs: SparseIterExpr<'r, R, T>) -> Self::Output {
         rhs.dot_op(self)
     }
 }
@@ -1471,6 +1463,10 @@ mod tests {
     #[test]
     fn matrix_mul() {
         let a = Chunked3::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let b = vec![2, 1, 4];
+        assert_eq!(vec![34, 41, 48], a.expr().dot(b.expr()));
+
+        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         let b = vec![2, 1, 4];
         assert_eq!(vec![34, 41, 48], a.expr().dot(b.expr()));
     }

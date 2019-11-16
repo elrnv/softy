@@ -1,0 +1,23 @@
+stages:
+  - build
+
+rust-latest:
+  stage: build
+  image: rust:latest
+  before_script:
+      - apt-get update --yes
+      - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
+  script:
+    - cargo build --verbose
+    - cargo test --verbose
+
+rust-nightly:
+  stage: build
+  image: rustlang/rust:nightly
+  before_script:
+      - apt-get update --yes
+      - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
+  script:
+    - cargo build --verbose
+    - cargo test --verbose
+  allow_failure: true

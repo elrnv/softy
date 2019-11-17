@@ -219,6 +219,17 @@ where
     }
 }
 
+impl<'a, T: Send + Sync> IntoParChunkIterator for &'a [T] {
+    type Item = &'a [T];
+    type IterType = rayon::slice::Chunks<'a, T>;
+
+    fn into_par_chunk_iter(self, chunk_size: usize) -> Self::IterType {
+        use rayon::slice::ParallelSlice;
+        assert_eq!(self.len() % chunk_size, 0);
+        self.par_chunks(chunk_size)
+    }
+}
+
 impl<'a, T> SplitFirst for &'a [T] {
     type First = &'a T;
 

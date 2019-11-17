@@ -868,6 +868,14 @@ where
     }
 }
 
+/// Parallel version of `IntoChunkIterator`.
+pub trait IntoParChunkIterator {
+    type Item: Send;
+    type IterType: rayon::iter::IndexedParallelIterator<Item = Self::Item>;
+
+    fn into_par_chunk_iter(self, chunk_size: usize) -> Self::IterType;
+}
+
 /// A trait intended to be implemented on collection types to define the type of
 /// a statically sized chunk in this collection.
 /// This trait is required for composing with `UniChunked`.

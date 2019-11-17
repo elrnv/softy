@@ -30,6 +30,41 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> CwiseMulOp<Tensor<T>> for Tensor<[T; $n]> {
+            type Output = Tensor<[T; $n]>;
+            #[inline]
+            fn cwise_mul(self, rhs: Tensor<T>) -> Self::Output {
+                self * rhs
+            }
+        }
+
+        impl<T: Scalar> CwiseMulOp<Tensor<[T; $n]>> for Tensor<T> {
+            type Output = Tensor<[T; $n]>;
+            #[inline]
+            fn cwise_mul(self, rhs: Tensor<[T; $n]>) -> Self::Output {
+                rhs * self
+            }
+        }
+
+        impl<T: Scalar> CwiseMulOp for Tensor<[T; $n]> {
+            type Output = Tensor<[T; $n]>;
+            #[inline]
+            #[unroll_for_loops]
+            fn cwise_mul(mut self, rhs: Self) -> Self::Output {
+                for i in 0..$n {
+                    self[i] *= rhs[i];
+                }
+                self
+            }
+        }
+
+        impl<T: Scalar> SumOp for Tensor<[T; $n]> {
+            type Output = Tensor<T>;
+            fn sum_op(self) -> Self::Output {
+                Tensor::new(self.sum())
+            }
+        }
+
         impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[T; $n]> {
             type Output = Tensor<[T; $n]>;
             #[inline]
@@ -727,6 +762,13 @@ macro_rules! impl_array_matrices {
             fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
                 let Tensor { data: [vec] } = self.transpose() * rhs;
                 Tensor::new(vec)
+            }
+        }
+
+        impl<T: Scalar> SumOp for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<T>;
+            fn sum_op(self) -> Self::Output {
+                Tensor::new(self.sum_inner())
             }
         }
     };

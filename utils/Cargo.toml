@@ -53,3 +53,6 @@ harness = false
 [[bench]]
 name = "mtx_mtx_mul"
 harness = false
+[[bench]]
+name = "matrix_vector_mul_order"
+harness = false

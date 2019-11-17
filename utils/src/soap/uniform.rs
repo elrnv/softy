@@ -633,6 +633,16 @@ where
     }
 }
 
+impl<S: IntoParChunkIterator> rayon::iter::IntoParallelIterator for ChunkedN<S> {
+    type Item = <S as IntoParChunkIterator>::Item;
+    type Iter = <S as IntoParChunkIterator>::IterType;
+
+    /// Convert a `ChunkedN` collection into a parallel iterator over grouped elements.
+    fn into_par_iter(self) -> Self::Iter {
+        self.data.into_par_chunk_iter(self.chunk_size)
+    }
+}
+
 impl<S, N> std::iter::Extend<<Self as Set>::Elem> for UniChunked<S, U<N>>
 where
     N: Unsigned,

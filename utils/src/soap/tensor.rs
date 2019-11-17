@@ -52,6 +52,13 @@ impl<T> Tensor<T> {
     }
 }
 
+impl<T> IntoExpr for Tensor<T> {
+    type Expr = Self;
+    fn into_expr(self) -> Self::Expr {
+        self
+    }
+}
+
 impl<T> AsRef<T> for Tensor<T> {
     fn as_ref(&self) -> &T {
         &self.data
@@ -189,6 +196,13 @@ macro_rules! impl_scalar {
                 }
             }
 
+            impl<'a> Expr<'a> for $type {
+                type Output = Tensor<$type>;
+                fn expr(&'a self) -> Self::Output {
+                    Tensor::new(*self)
+                }
+            }
+
             impl IntoExpr for $type {
                 type Expr = Tensor<$type>;
                 fn into_expr(self) -> Self::Expr {
@@ -206,6 +220,12 @@ macro_rules! impl_scalar {
             impl DotOp for $type {
                 type Output = Tensor<Self>;
                 fn dot_op(self, rhs: Self) -> Self::Output {
+                    Tensor::new(self * rhs)
+                }
+            }
+            impl CwiseMulOp for $type {
+                type Output = Tensor<Self>;
+                fn cwise_mul(self, rhs: Self) -> Self::Output {
                     Tensor::new(self * rhs)
                 }
             }
@@ -257,6 +277,14 @@ impl<T> Real for T where T: Scalar + Float {}
 impl<T: Scalar> Mul for Tensor<T> {
     type Output = Self;
     fn mul(mut self, rhs: Self) -> Self {
+        self *= rhs;
+        self
+    }
+}
+
+impl<T: Scalar> CwiseMulOp for Tensor<T> {
+    type Output = Self;
+    fn cwise_mul(mut self, rhs: Self) -> Self {
         self *= rhs;
         self
     }

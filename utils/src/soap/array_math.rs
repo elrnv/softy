@@ -30,6 +30,28 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> CwiseMulAssignOp<Tensor<[T; $n]>> for Tensor<[T]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn cwise_mul_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                debug_assert_eq!(self.len(), rhs.len());
+                for i in 0..$n {
+                    unsafe { *self.data.get_unchecked_mut(i) *= *rhs.data.get_unchecked(i) };
+                }
+            }
+        }
+
+        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<[T]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                debug_assert_eq!(self.len(), rhs.len());
+                for i in 0..$n {
+                    unsafe { *self.data.get_unchecked_mut(i) += *rhs.data.get_unchecked(i) };
+                }
+            }
+        }
+        
         impl<T: Scalar> CwiseMulOp<Tensor<T>> for Tensor<[T; $n]> {
             type Output = Tensor<[T; $n]>;
             #[inline]
@@ -58,8 +80,16 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> RecursiveSumOp for Tensor<[T; $n]> {
+            type Output = Tensor<T>;
+            #[inline]
+            fn recursive_sum(self) -> Self::Output {
+                Tensor::new(self.sum())
+            }
+        }
         impl<T: Scalar> SumOp for Tensor<[T; $n]> {
             type Output = Tensor<T>;
+            #[inline]
             fn sum_op(self) -> Self::Output {
                 Tensor::new(self.sum())
             }
@@ -765,10 +795,24 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T: Scalar> SumOp for Tensor<[[T; $c]; $r]> {
+        impl<T: Scalar> RecursiveSumOp for Tensor<[[T; $c]; $r]> {
             type Output = Tensor<T>;
-            fn sum_op(self) -> Self::Output {
+            #[inline]
+            fn recursive_sum(self) -> Self::Output {
                 Tensor::new(self.sum_inner())
+            }
+        }
+        impl<T: Scalar> SumOp for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<[T; $c]>;
+            #[inline]
+            #[allow(unused_mut)]
+            #[unroll_for_loops]
+            fn sum_op(self) -> Self::Output {
+                let mut sum = self[0];
+                for i in 1..$r {
+                    sum += self[i];
+                }
+                sum
             }
         }
     };

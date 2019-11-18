@@ -23,6 +23,10 @@ pub fn outer_write_local(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     out
 }
 
+pub fn lazy_expr(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
+    (m.expr() * v.expr()).eval()
+}
+
 pub fn outer_read_local(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; v.len()];
     for (col, rhs) in m.iter().zip(v.iter()) {
@@ -90,6 +94,7 @@ fn matrix_vector_mul_order_benchmark(c: &mut Criterion) {
             }
         }
 
+        assert_eq!(outer_read_local(m.view(), v.view()), lazy_expr(m.view(), v.view()));
         assert_eq!(outer_read_local(m.view(), v.view()), outer_write_local(m.view(), v.view()));
         assert_eq!(inner(m.view(), v.view()), outer_write_local(m.view(), v.view()));
         assert_eq!(inner_par(m.view(), v.view()), outer_write_local(m.view(), v.view()));
@@ -101,32 +106,37 @@ fn matrix_vector_mul_order_benchmark(c: &mut Criterion) {
             }
         }
 
-        if n < 5000 {
-            group.bench_with_input(BenchmarkId::new("Outer Write Local", n), &(&m, &v),
-                |b, (m, v)| {
-                    b.iter_batched(|| (m.view(), v.view()), |(m,v)| outer_write_local(m, v), BatchSize::LargeInput)
-                });
-        }
+        //if n < 5000 {
+        //    group.bench_with_input(BenchmarkId::new("Outer Write Local", n), &(&m, &v),
+        //        |b, (m, v)| {
+        //            b.iter_batched(|| (m.view(), v.view()), |(m,v)| outer_write_local(m, v), BatchSize::LargeInput)
+        //        });
+        //}
+
+        group.bench_with_input(BenchmarkId::new("Lazy Expr", n), &(&m, &v),
+            |b, (m, v)| {
+                b.iter_batched(|| (m.view(), v.view()), |(m,v)| lazy_expr(m, v), BatchSize::LargeInput)
+            });
 
         group.bench_with_input(BenchmarkId::new("Outer Read Local", n), &(&m, &v),
             |b, (m, v)| {
                 b.iter_batched(|| (m.view(), v.view()), |(m,v)| outer_read_local(m, v), BatchSize::LargeInput)
             });
 
-        group.bench_with_input(BenchmarkId::new("Inner", n), &(&m, &v),
-            |b, (m, v)| {
-                b.iter_batched(|| (m.view(), v.view()), |(m,v)| inner(m, v), BatchSize::LargeInput)
-            });
+        //group.bench_with_input(BenchmarkId::new("Inner", n), &(&m, &v),
+        //    |b, (m, v)| {
+        //        b.iter_batched(|| (m.view(), v.view()), |(m,v)| inner(m, v), BatchSize::LargeInput)
+        //    });
 
-        group.bench_with_input(BenchmarkId::new("Outer Read Local Parallel", n), &(&m, &v),
-            |b, (m, v)| {
-                b.iter_batched(|| (m.view(), v.view()), |(m,v)| outer_read_local_par(m, v), BatchSize::LargeInput)
-            });
+        //group.bench_with_input(BenchmarkId::new("Outer Read Local Parallel", n), &(&m, &v),
+        //    |b, (m, v)| {
+        //        b.iter_batched(|| (m.view(), v.view()), |(m,v)| outer_read_local_par(m, v), BatchSize::LargeInput)
+        //    });
 
-        group.bench_with_input(BenchmarkId::new("Inner Parallel", n), &(&m, &v),
-            |b, (m, v)| {
-                b.iter_batched(|| (m.view(), v.view()), |(m,v)| inner_par(m, v), BatchSize::LargeInput)
-            });
+        //group.bench_with_input(BenchmarkId::new("Inner Parallel", n), &(&m, &v),
+        //    |b, (m, v)| {
+        //        b.iter_batched(|| (m.view(), v.view()), |(m,v)| inner_par(m, v), BatchSize::LargeInput)
+        //    });
     }
         
     group.finish();

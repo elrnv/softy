@@ -179,12 +179,14 @@ pub trait Dimension: Copy {
 }
 
 impl<N: Unsigned + Copy> Dimension for U<N> {
+    #[inline]
     fn value(self) -> usize {
         N::to_usize()
     }
 }
 
 impl Dimension for usize {
+    #[inline]
     fn value(self) -> usize {
         self
     }
@@ -192,12 +194,14 @@ impl Dimension for usize {
 
 impl<S, N: Dimension> ChunkSize for UniChunked<S, N> {
     /// Get the size of each chunk in this collection.
+    #[inline]
     fn chunk_size(&self) -> usize {
         self.chunk_size.value()
     }
 }
 
 impl<S: ChunkSize, N: Dimension> UniChunked<S, N> {
+    #[inline]
     pub fn inner_chunk_size(&self) -> usize {
         self.data.chunk_size()
     }
@@ -214,6 +218,7 @@ impl<S, N> UniChunked<S, N> {
     /// let s = Chunked3::from_flat(v.clone());
     /// assert_eq!(&v, s.data());
     /// ```
+    #[inline]
     pub fn data(&self) -> &S {
         &self.data
     }
@@ -229,6 +234,7 @@ impl<S, N> UniChunked<S, N> {
     /// s.data_mut()[2] = 100;
     /// assert_eq!(&v, s.data());
     /// ```
+    #[inline]
     pub fn data_mut(&mut self) -> &mut S {
         &mut self.data
     }

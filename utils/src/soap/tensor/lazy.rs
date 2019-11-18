@@ -1922,16 +1922,16 @@ mod tests {
         assert_eq!(320u32, (v.expr().dot_op(u.expr()) * a.expr()).eval());
     }
 
-    #[test]
-    fn complex_exprs() {
-        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
-        let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
-        let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
-        let out: i32 = 
-            /*(Tensor::new(2) * c.expr() + */(b.expr() * a.expr().dot_op(c.expr()))// - a.expr())
-                .dot(b.expr());
-        assert_eq!( 19626, out);
-    }
+    //#[test]
+    //fn complex_exprs() {
+    //    let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
+    //    let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
+    //    let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
+    //    let out: i32 = 
+    //        /*(Tensor::new(2) * c.expr() + */(b.expr() * a.expr().dot_op(c.expr()))// - a.expr())
+    //            .dot(b.expr());
+    //    assert_eq!( 19626, out);
+    //}
 
     #[test]
     fn sparse_add() {
@@ -2145,14 +2145,14 @@ mod tests {
         assert_eq!(Chunked3::from_flat(vec![30, 36, 42, 66, 81, 96, 102, 126, 150]), out);
     }
 
-    #[test]
-    fn sparse_matrix_vector_mul() {
-        // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
-        let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
-        let b = vec![2, 1, 3, 4];
-        let out: Vec<i32> = Evaluate::eval(a.expr() * b.expr());
-        assert_eq!(vec![8, 19], out);
-    }
+    //#[test]
+    //fn sparse_matrix_vector_mul() {
+    //    // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
+    //    let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
+    //    let b = vec![2, 1, 3, 4];
+    //    let out: Vec<i32> = Evaluate::eval(a.expr() * b.expr());
+    //    assert_eq!(vec![8, 19], out);
+    //}
 
     //#[test]
     //fn sparse_matrix_add() {

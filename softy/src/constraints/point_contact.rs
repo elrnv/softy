@@ -928,21 +928,21 @@ impl ContactConstraint for PointContactConstraint {
             {
                 if let Some(i) = i.into() {
                     // Project out normal component.
-                    let r_t = if !frictional_contact.contact_basis.is_empty() {
-                        let f = frictional_contact
-                            .contact_basis
-                            .to_contact_coordinates(r, contact_idx);
-                        Vector3::new(
-                            frictional_contact
-                                .contact_basis
-                                .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                                .into(),
-                        )
-                    } else {
-                        Vector3::zero()
-                    };
+                    //let r_t = if !frictional_contact.contact_basis.is_empty() {
+                    //    let f = frictional_contact
+                    //        .contact_basis
+                    //        .to_contact_coordinates(r, contact_idx);
+                    //    Vector3::new(
+                    //        frictional_contact
+                    //            .contact_basis
+                    //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                    //            .into(),
+                    //    )
+                    //} else {
+                    //    Vector3::zero()
+                    //};
 
-                    dissipation += Vector3::new(v[1][i]).dot(r_t);
+                    dissipation += Vector3::new(v[1][i]).dot(Tensor::new(r));
                 }
             }
         }

@@ -391,24 +391,21 @@ impl PointContactConstraint {
         let collider_velocity = Subset::from_unique_ordered_indices(active_contact_indices, v[1]);
 
         let mut object_velocity = jac.view() * Tensor::new(v[0]);
-        let mut relative_velocity = object_velocity.view_mut();
-        relative_velocity -= Tensor::new(collider_velocity.view());
+        //let mut relative_velocity = object_velocity.view_mut();
+        *&mut object_velocity.expr_mut()-= collider_velocity.expr();
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         //        let ldlt_solver =
         //            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
         //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
-        // Prepare velocity vector for llt solve by stripping velocity grouping info.
-        let mut rhs = relative_velocity.storage().to_vec();
-
-        if !rhs.is_empty() {
-            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
+        if !object_velocity.is_empty() {
+            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), object_velocity.storage_mut())
                 .unwrap();
         }
 
         // The solve turns our relative velocity into a relative impulse.
-        Chunked3::from_flat(rhs)
+        object_velocity.data
     }
 }
 
@@ -730,13 +727,13 @@ impl ContactConstraint for PointContactConstraint {
                     //println!("cur friction impulse: {:?}", f_cur.norm());
 
                     let f_delta = f_prev - f_cur;
-                    let rel_err_numerator = f_delta
+                    let rel_err_numerator: f64 = f_delta
                         .expr()
                         .dot((effective_mass_inv.view() * f_delta.view()).expr());
                     let rel_err = rel_err_numerator
                         / f_prev
                             .expr()
-                            .dot((effective_mass_inv.view() * f_prev.view()).expr());
+                            .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
 
                     debug!("Friction relative error: {}", rel_err);
                     if rel_err < 1e-3 {
@@ -826,7 +823,7 @@ impl ContactConstraint for PointContactConstraint {
 
     fn add_mass_weighted_frictional_contact_impulse(
         &self,
-        [object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        [mut object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if !frictional_contact.object_impulse.is_empty() {
@@ -835,8 +832,7 @@ impl ContactConstraint for PointContactConstraint {
                     let corrector =
                         Chunked3::from_flat(frictional_contact.object_impulse.view().into_flat().0);
                     let add_vel = mass_mtx.view() * Tensor::new(corrector);
-                    let mut out_vel = Tensor::new(object_vel);
-                    out_vel += add_vel.view();
+                    *&mut object_vel.expr_mut() += add_vel.expr();
                 }
             }
 
@@ -859,11 +855,11 @@ impl ContactConstraint for PointContactConstraint {
                     .0,
             );
             let add_vel = collider_mass_inv * Tensor::new(corrector);
-            let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(
+            let mut out_vel = Subset::from_unique_ordered_indices(
                 indices.as_slice(),
                 collider_vel,
-            ));
-            out_vel += add_vel.view();
+            );
+            *&mut out_vel.expr_mut() += add_vel.expr();
         }
     }
 
@@ -921,7 +917,7 @@ impl ContactConstraint for PointContactConstraint {
                 return dissipation;
             }
 
-            for (contact_idx, (i, (_, &r))) in frictional_contact
+            for (_contact_idx, (i, (_, &r))) in frictional_contact
                 .collider_impulse
                 .indexed_source_iter()
                 .enumerate()

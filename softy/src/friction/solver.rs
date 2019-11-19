@@ -229,12 +229,12 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
             .from_tangent_space(diff_t.view().into())
             .collect();
 
-        *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
+        *&mut diff.expr_mut() -= predictor_impulse.expr();
 
         let rhs = mass_inv_mtx.view() * *diff.view().as_tensor();
         //let rhs = diff.view();
 
-        *obj = 0.5 * diff.expr().dot(rhs.expr()) * self.0.objective_scale;
+        *obj = 0.5 * diff.expr().dot::<f64, _>(rhs.expr()) * self.0.objective_scale;
 
         true
     }
@@ -268,7 +268,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
             .from_tangent_space(diff_t.view().into())
             .collect();
 
-        *diff.as_mut_tensor() -= *predictor_impulse.view().as_tensor();
+        *&mut diff.expr_mut() -= predictor_impulse.expr();
 
         let grad = mass_inv_mtx.view() * *diff.view().as_tensor();
         //let grad = diff.view();

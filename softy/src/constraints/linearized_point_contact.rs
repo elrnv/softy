@@ -385,27 +385,24 @@ impl LinearizedPointContactConstraint {
         jac: ContactJacobianView,
         effective_mass_inv: EffectiveMassInvView,
     ) -> Chunked3<Vec<f64>> {
+
         let collider_velocity = Subset::from_unique_ordered_indices(active_contact_indices, v[1]);
 
         let mut object_velocity = jac.view() * Tensor::new(v[0]);
-        let mut relative_velocity = object_velocity.view_mut();
-        relative_velocity -= Tensor::new(collider_velocity.view());
+        *&mut object_velocity.expr_mut() -= collider_velocity.expr();
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         //        let ldlt_solver =
         //            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
         //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
-        // Prepare velocity vector for llt solve by stripping velocity grouping info.
-        let mut rhs = relative_velocity.storage().to_vec();
-
-        if !rhs.is_empty() {
-            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), &mut rhs)
+        if !object_velocity.is_empty() {
+            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), object_velocity.storage_mut())
                 .unwrap();
         }
 
         // The solve turns our relative velocity into a relative impulse.
-        Chunked3::from_flat(rhs)
+        object_velocity.data
     }
 }
 
@@ -734,7 +731,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     let rel_err = rel_err_numerator
                         / f_prev
                             .expr()
-                            .dot((effective_mass_inv.view() * f_prev.view()).expr());
+                            .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
 
                     debug!("Friction relative error: {}", rel_err);
                     if rel_err < 1e-3 {
@@ -824,7 +821,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
 
     fn add_mass_weighted_frictional_contact_impulse(
         &self,
-        [object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        [mut object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
             if !frictional_contact.object_impulse.is_empty() {
@@ -833,8 +830,8 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     let corrector =
                         Chunked3::from_flat(frictional_contact.object_impulse.view().into_flat().0);
                     let add_vel = mass_mtx.view() * Tensor::new(corrector);
-                    let mut out_vel = Tensor::new(object_vel);
-                    out_vel += add_vel.view();
+                    //let mut out_vel = Tensor::new(object_vel);
+                    *&mut object_vel.expr_mut() += add_vel.expr();
                 }
             }
 
@@ -857,11 +854,11 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     .0,
             );
             let add_vel = collider_mass_inv * Tensor::new(corrector);
-            let mut out_vel = Tensor::new(Subset::from_unique_ordered_indices(
+            let mut out_vel = Subset::from_unique_ordered_indices(
                 indices.as_slice(),
                 collider_vel,
-            ));
-            out_vel += add_vel.view();
+            );
+            *&mut out_vel.expr_mut() += add_vel.expr();
         }
     }
 
@@ -881,25 +878,25 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 return;
             }
 
-            for (contact_idx, (i, (_, &r))) in frictional_contact
+            for (_contact_idx, (i, (_, &r))) in frictional_contact
                 .collider_impulse
                 .indexed_source_iter()
                 .enumerate()
             {
                 // Project out the normal component
-                let r_t = if !frictional_contact.contact_basis.is_empty() {
-                    let f = frictional_contact
-                        .contact_basis
-                        .to_contact_coordinates(r, contact_idx);
-                    Vector3::new(
-                        frictional_contact
-                            .contact_basis
-                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                            .into(),
-                    )
-                } else {
-                    Vector3::zero()
-                };
+                //let r_t = if !frictional_contact.contact_basis.is_empty() {
+                //    let f = frictional_contact
+                //        .contact_basis
+                //        .to_contact_coordinates(r, contact_idx);
+                //    Vector3::new(
+                //        frictional_contact
+                //            .contact_basis
+                //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                //            .into(),
+                //    )
+                //} else {
+                //    Vector3::zero()
+                //};
 
                 grad[1][i] = (Vector3::new(grad[1][i]) + r_t * multiplier).into();
             }
@@ -1058,7 +1055,8 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         let lap = self.build_contact_laplacian(0.5);
 
         let [obj_jac, coll_jac] = self.build_constraint_jacobian([object_pos, collider_pos]);
-        let jac = [lap.view() * obj_jac.view(), lap.view() * coll_jac.view()];
+        //let jac = [obj_jac.map(|j| lap.view() * j.view()), coll_jac.map(|j| lap.view() * j.view())];
+        let jac = [obj_jac, coll_jac];
 
         self.constraint_jacobian.replace(jac);
         let contact_points = self.contact_points.borrow();
@@ -1067,7 +1065,8 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         let mut c0 = vec![0.0; num_non_zero_constraints];
         self.implicit_surface
             .local_potential(contact_points.view().into(), c0.as_mut_slice());
-        self.constraint_value = lap.view() * Tensor::new(c0.view());
+        //self.constraint_value = lap.view() * Tensor::new(c0.view());
+        self.constraint_value = c0;
     }
     fn is_linear(&self) -> bool {
         true

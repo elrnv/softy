@@ -878,25 +878,25 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 return;
             }
 
-            for (_contact_idx, (i, (_, &r))) in frictional_contact
+            for (contact_idx, (i, (_, &r))) in frictional_contact
                 .collider_impulse
                 .indexed_source_iter()
                 .enumerate()
             {
                 // Project out the normal component
-                //let r_t = if !frictional_contact.contact_basis.is_empty() {
-                //    let f = frictional_contact
-                //        .contact_basis
-                //        .to_contact_coordinates(r, contact_idx);
-                //    Vector3::new(
-                //        frictional_contact
-                //            .contact_basis
-                //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                //            .into(),
-                //    )
-                //} else {
-                //    Vector3::zero()
-                //};
+                let r_t = if !frictional_contact.contact_basis.is_empty() {
+                    let f = frictional_contact
+                        .contact_basis
+                        .to_contact_coordinates(r, contact_idx);
+                    Vector3::new(
+                        frictional_contact
+                            .contact_basis
+                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                            .into(),
+                    )
+                } else {
+                    Vector3::zero()
+                };
 
                 grad[1][i] = (Vector3::new(grad[1][i]) + r_t * multiplier).into();
             }
@@ -916,28 +916,28 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 return dissipation;
             }
 
-            for (contact_idx, (i, (_, &r))) in frictional_contact
+            for (_contact_idx, (i, (_, &r))) in frictional_contact
                 .collider_impulse
                 .indexed_source_iter()
                 .enumerate()
             {
                 if let Some(i) = i.into() {
                     // Project out normal component.
-                    let r_t = if !frictional_contact.contact_basis.is_empty() {
-                        let f = frictional_contact
-                            .contact_basis
-                            .to_contact_coordinates(r, contact_idx);
-                        Vector3::new(
-                            frictional_contact
-                                .contact_basis
-                                .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                                .into(),
-                        )
-                    } else {
-                        Vector3::zero()
-                    };
+                    //let r_t = if !frictional_contact.contact_basis.is_empty() {
+                    //    let f = frictional_contact
+                    //        .contact_basis
+                    //        .to_contact_coordinates(r, contact_idx);
+                    //    Vector3::new(
+                    //        frictional_contact
+                    //            .contact_basis
+                    //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                    //            .into(),
+                    //    )
+                    //} else {
+                    //    Vector3::zero()
+                    //};
 
-                    dissipation += Vector3::new(v[1][i]).dot(r_t);
+                    dissipation += Vector3::new(v[1][i]).dot(Tensor::new(r));
                 }
             }
         }
@@ -1093,16 +1093,16 @@ impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
             .borrow()
             .expect("Constraint Jacobian not initialized");
 
-        let mut out = self.constraint_value.clone();
+        value.copy_from_slice(self.constraint_value.as_slice());
 
         let dx0: Chunked3<Vec<f64>> = (x1[0].expr() - x0[0].expr()).eval();
         let dx1: Chunked3<Vec<f64>> = (x1[1].expr() - x0[1].expr()).eval();
 
         if let Some(jac) = &jac[0] {
-            *out.as_mut_tensor() += jac.view() * *dx0.view().as_tensor();
+            *&mut value.expr_mut() += (jac.view() * *dx0.view().as_tensor()).expr();
         }
         if let Some(jac) = &jac[1] {
-            *out.as_mut_tensor() += jac.view() * *dx1.view().as_tensor();
+            *&mut value.expr_mut() += (jac.view() * *dx1.view().as_tensor()).expr();
         }
     }
 }

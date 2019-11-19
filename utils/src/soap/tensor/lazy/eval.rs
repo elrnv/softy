@@ -444,6 +444,23 @@ where
     }
 }
 
+impl<I, S, N> AddAssign<I> for Tensor<UniChunked<S, N>>
+where
+    I: Iterator,
+    UniChunked<S, N>: Set,
+    Tensor<S>: AddAssign<I::Item>,
+    N: Dimension,
+{
+    #[inline]
+    fn add_assign(&mut self, iter: I) {
+        for elem in iter {
+            let orig_len = self.data.len();
+            self.data.data.as_mut_tensor().add_assign(elem);
+            assert_eq!(self.data.len() - orig_len, self.data.chunk_size())
+        }
+    }
+}
+
 impl<E, T, A> AddAssign<Reduce<E, Addition>> for Tensor<T>
 where
     E: Iterator<Item = A>,
@@ -471,21 +488,22 @@ where
     }
 }
 
-//impl<I, S, N> SubAssign<I> for UniChunked<S, N>
-//where
-//    I: Iterator,
-//    S: Set + EvalExtend<I::Item>,
-//    N: Dimension,
-//{
-//    #[inline]
-//    fn sub_assign(&mut self, iter: I) {
-//        for elem in iter {
-//            let orig_len = self.data.len();
-//            self.data.eval_extend(elem);
-//            assert_eq!(self.data.len() - orig_len, self.chunk_size())
-//        }
-//    }
-//}
+impl<I, S, N> SubAssign<I> for Tensor<UniChunked<S, N>>
+where
+    I: Iterator,
+    UniChunked<S, N>: Set,
+    Tensor<S>: SubAssign<I::Item>,
+    N: Dimension,
+{
+    #[inline]
+    fn sub_assign(&mut self, iter: I) {
+        for elem in iter {
+            let orig_len = self.data.len();
+            self.data.data.as_mut_tensor().sub_assign(elem);
+            assert_eq!(self.data.len() - orig_len, self.data.chunk_size())
+        }
+    }
+}
 
 impl<E, T, A> SubAssign<Reduce<E, Subtraction>> for Tensor<T>
 where

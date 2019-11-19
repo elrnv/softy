@@ -1657,6 +1657,28 @@ mod tests {
     }
 
     #[test]
+    fn unichunked_add_assign() {
+        let mut a = Chunked2::from_flat(vec![1, 2, 3, 4]);
+        let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
+        a.as_mut_tensor() += b.expr();
+        assert_eq!(
+            Chunked2::from_flat(vec![6, 8, 10, 12]),
+            a
+        );
+    }
+
+    #[test]
+    fn chunkedn_add_assign() {
+        let mut a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
+        let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
+        a.as_mut_tensor() += b.expr();
+        assert_eq!(
+            ChunkedN::from_flat_with_stride(vec![6, 8, 10, 12], 2),
+            a
+        );
+    }
+
+    #[test]
     fn chunkedn_unichunked_add() {
         let a =
             ChunkedN::from_flat_with_stride(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]), 2);

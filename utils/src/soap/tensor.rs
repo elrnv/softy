@@ -222,13 +222,19 @@ macro_rules! impl_scalar {
                 }
             }
 
-            impl DotOp for $type {
-                type Output = Tensor<Self>;
+            impl Expression for $type {}
+
+            impl ExprSize for $type {
                 #[inline]
-                fn dot_op(self, rhs: Self) -> Self::Output {
-                    Tensor::new(self * rhs)
+                fn expr_size(&self) -> usize {
+                    1
+                }
+                #[inline]
+                fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+                    Some(1)
                 }
             }
+
             impl CwiseMulOp for $type {
                 type Output = Tensor<Self>;
                 #[inline]
@@ -236,15 +242,16 @@ macro_rules! impl_scalar {
                     Tensor::new(self * rhs)
                 }
             }
-            impl Expression for Tensor<$type> { }
-            impl TotalSizeHint for Tensor<$type> {
-                fn total_size_hint(&self) -> Option<usize> {
-                    Some(1)
-                }
-            }
             impl AddAssign<Tensor<$type>> for Tensor<[$type]> {
+                #[inline]
                 fn add_assign(&mut self, rhs: Tensor<$type>) {
                     self.data[0] += rhs.data
+                }
+            }
+            impl SubAssign<Tensor<$type>> for Tensor<[$type]> {
+                #[inline]
+                fn sub_assign(&mut self, rhs: Tensor<$type>) {
+                    self.data[0] -= rhs.data
                 }
             }
 
@@ -1650,31 +1657,31 @@ mod tests {
     //    );
     //}
 
-   // #[test]
-   // fn tensor_subset_sub_assign() {
-   //     let a = Subset::from_unique_ordered_indices(
-   //         vec![1, 3],
-   //         Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]),
-   //     );
-   //     let mut b = Chunked2::from_flat(vec![9, 10, 13, 14]);
-   //     let mut b_tensor = Tensor::new(b.view_mut());
-   //     let a_tensor = Tensor::new(a.view());
-   //     SubAssign::sub_assign(&mut b_tensor, a_tensor);
-   //     assert_eq!(b.view().at(0), &[6, 6]);
-   //     assert_eq!(b.view().at(1), &[6, 6]);
-   // }
+    // #[test]
+    // fn tensor_subset_sub_assign() {
+    //     let a = Subset::from_unique_ordered_indices(
+    //         vec![1, 3],
+    //         Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+    //     );
+    //     let mut b = Chunked2::from_flat(vec![9, 10, 13, 14]);
+    //     let mut b_tensor = Tensor::new(b.view_mut());
+    //     let a_tensor = Tensor::new(a.view());
+    //     SubAssign::sub_assign(&mut b_tensor, a_tensor);
+    //     assert_eq!(b.view().at(0), &[6, 6]);
+    //     assert_eq!(b.view().at(1), &[6, 6]);
+    // }
 
-   // #[test]
-   // fn tensor_subset_add_assign() {
-   //     let a = Subset::from_unique_ordered_indices(
-   //         vec![1, 3],
-   //         Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]),
-   //     );
-   //     let mut b = Chunked2::from_flat(vec![9, 10, 13, 14]);
-   //     *b.as_mut_tensor() += Tensor::new(a.view());
-   //     assert_eq!(b.view().at(0), &[12, 14]);
-   //     assert_eq!(b.view().at(1), &[20, 22]);
-   // }
+    // #[test]
+    // fn tensor_subset_add_assign() {
+    //     let a = Subset::from_unique_ordered_indices(
+    //         vec![1, 3],
+    //         Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+    //     );
+    //     let mut b = Chunked2::from_flat(vec![9, 10, 13, 14]);
+    //     *b.as_mut_tensor() += Tensor::new(a.view());
+    //     assert_eq!(b.view().at(0), &[12, 14]);
+    //     assert_eq!(b.view().at(1), &[20, 22]);
+    // }
 
     #[test]
     fn small_tensor_add() {

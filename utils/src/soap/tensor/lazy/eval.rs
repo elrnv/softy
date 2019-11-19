@@ -1,4 +1,4 @@
-use super::{Tensor, Scalar};
+use super::{Scalar, Tensor};
 use crate::soap::*;
 use unroll::unroll_for_loops;
 
@@ -17,8 +17,8 @@ pub trait EvalExtend<I> {
  * Evaluate impls
  */
 
-
 impl<T> Evaluate<SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>> for T {
+    #[inline]
     fn eval(value: SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>) -> T {
         let t: Tensor<T> = value.into();
         t.into_inner()
@@ -26,6 +26,7 @@ impl<T> Evaluate<SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>> for T {
 }
 
 impl<T> Evaluate<Tensor<T>> for T {
+    #[inline]
     fn eval(expr: Tensor<T>) -> Self {
         expr.into_inner()
     }
@@ -37,6 +38,7 @@ where
     F: BinOp<T, T, Output = T>,
     T: Evaluate<A> + Default,
 {
+    #[inline]
     fn eval(Reduce { expr, op }: Reduce<E, F>) -> Self {
         expr.fold(T::default(), |acc, x| op.apply(acc, Evaluate::eval(x)))
     }
@@ -49,7 +51,9 @@ where
     F: BinOp<Tensor<T>, Tensor<T>, Output = Tensor<T>>,
 {
     fn eval(Reduce { expr, op }: Reduce<E, F>) -> Self {
-        expr.fold(Default::default(), |acc, x| op.apply(acc, Evaluate::eval(x)))
+        expr.fold(Default::default(), |acc, x| {
+            op.apply(acc, Evaluate::eval(x))
+        })
     }
 }
 
@@ -60,7 +64,7 @@ where
     Vec<T>: EvalExtend<E::Item>,
 {
     fn eval(mut reduce: Reduce<E, F>) -> Self {
-        let mut v = Vec::with_capacity(reduce.total_size_hint().unwrap_or(0));
+        let mut v = Vec::with_capacity(reduce.reserve_hint());
         if let Some(row) = reduce.expr.next() {
             let start = v.len();
             v.eval_extend(row);
@@ -78,8 +82,9 @@ where
     I: Iterator + Expression,
     Self: EvalExtend<I>,
 {
+    #[inline]
     fn eval(iter: I) -> Self {
-        let mut v = Vec::with_capacity(iter.total_size_hint().unwrap_or(iter.size_hint().0));
+        let mut v = Vec::with_capacity(iter.reserve_hint());
         v.eval_extend(iter);
         v
     }
@@ -91,6 +96,7 @@ where
     S: Default + Set,
     N: Unsigned + Default,
 {
+    #[inline]
     fn eval(iter: I) -> Self {
         let mut s = Self::default();
         s.eval_extend(iter);
@@ -136,7 +142,7 @@ where
         indices.reserve(n);
         let mut target = None;
         let mut source = S::default();
-        source.reserve_with_storage(n, iter.total_size_hint().unwrap_or(n));
+        source.reserve_with_storage(n, iter.reserve_hint());
 
         for row in iter {
             if target.is_none() {
@@ -206,7 +212,7 @@ macro_rules! impl_array_tensor_eval_traits {
                 }
             }
         }
-        impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [T; $n] 
+        impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [T; $n]
         where
             E: Iterator<Item = Tensor<[T; $n]>>,
             F: BinOp<Tensor<Self>, Tensor<Self>, Output = Tensor<Self>>,
@@ -232,6 +238,7 @@ where
     F: BinOpAssign<Tensor<[T]>, E::Item>,
     Vec<T>: EvalExtend<E::Item>,
 {
+    #[inline]
     fn eval_extend(&mut self, mut reduce: Reduce<E, F>) {
         if let Some(row) = reduce.expr.next() {
             let start = self.len();
@@ -244,7 +251,17 @@ where
     }
 }
 
+impl<T, A> EvalExtend<IndexedExpr<A>> for Vec<T>
+where Self: EvalExtend<A>,
+{
+    #[inline]
+    fn eval_extend(&mut self, expr: IndexedExpr<A>) {
+        self.eval_extend(expr.expr);
+    }
+}
+
 impl<T> EvalExtend<Tensor<T>> for Vec<T> {
+    #[inline]
     fn eval_extend(&mut self, value: Tensor<T>) {
         self.push(value.into_inner());
     }
@@ -255,6 +272,7 @@ where
     I: Iterator + Expression,
     Vec<T>: EvalExtend<I::Item>,
 {
+    #[inline]
     fn eval_extend(&mut self, iter: I) {
         for i in iter {
             self.eval_extend(i);
@@ -268,6 +286,7 @@ where
     S: Set + EvalExtend<I::Item>,
     N: Dimension,
 {
+    #[inline]
     fn eval_extend(&mut self, iter: I) {
         for elem in iter {
             let orig_len = self.data.len();
@@ -284,6 +303,7 @@ where
     T: Set + PartialEq + std::fmt::Debug,
     S: Set + Reserve + EvalExtend<E>,
 {
+    #[inline]
     fn eval_extend(&mut self, iter: I) {
         let Chunked {
             chunks: offsets,
@@ -300,7 +320,7 @@ where
 
         // Sparse
         indices.reserve(n);
-        source.reserve_with_storage(n, iter.total_size_hint().unwrap_or(n));
+        source.reserve_with_storage(n, iter.reserve_hint());
 
         for row in iter {
             debug_assert_eq!(row.target(), target);
@@ -317,6 +337,7 @@ impl<I: Iterator, S> EvalExtend<I> for Chunked<S>
 where
     S: Set + Dense + EvalExtend<I::Item>,
 {
+    #[inline]
     fn eval_extend(&mut self, iter: I) {
         let Chunked {
             chunks: offsets,
@@ -334,18 +355,26 @@ where
 /// pushes indices to a given array.
 pub struct SparseValIter<'a, I, J> {
     iter: I,
-    indices: &'a mut J
+    indices: &'a mut J,
 }
 
-impl<'a, I: Expression + TotalSizeHint, J> Expression for SparseValIter<'a, I, J> {}
-impl<'a, I: TotalSizeHint, J> TotalSizeHint for SparseValIter<'a, I, J> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.iter.total_size_hint()
+impl<'a, I: Expression, J> Expression for SparseValIter<'a, I, J> {}
+impl<'a, I: ExprSize, J> ExprSize for SparseValIter<'a, I, J> {
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.iter.expr_size()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.iter.total_size_hint(cwise_reduce)
     }
 }
 
-impl<'a, J: Push<usize>, E, I: Iterator<Item = IndexedExpr<E>>> Iterator for SparseValIter<'a, I, J> {
+impl<'a, J: Push<usize>, E, I: Iterator<Item = IndexedExpr<E>>> Iterator
+    for SparseValIter<'a, I, J>
+{
     type Item = E;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let SparseValIter { iter, indices } = self;
         iter.next().map(|IndexedExpr { index, expr }| {
@@ -362,13 +391,17 @@ where
     J: Push<usize>,
     S: for<'a> EvalExtend<SparseValIter<'a, I, J>>,
 {
+    #[inline]
     fn eval_extend(&mut self, iter: I) {
         let Sparse {
             selection: Select { indices, target },
             source,
         } = self;
         debug_assert_eq!(iter.target(), target);
-        source.eval_extend(SparseValIter { iter, indices: indices });
+        source.eval_extend(SparseValIter {
+            iter,
+            indices: indices,
+        });
     }
 }
 
@@ -382,6 +415,7 @@ where
     I: EvalExtend<B>,
     I: EvalExtend<C>,
 {
+    #[inline]
     fn eval_extend(&mut self, value: SparseAddResult<A, B, C>) {
         match value {
             SparseAddResult::Left(val) => self.eval_extend(val),
@@ -391,16 +425,77 @@ where
     }
 }
 
+use std::ops::{AddAssign, SubAssign};
+
 /*
  * Implement `AddAssign` for tensor slices on iterators to teach how iterators can be reduced.
  */
-impl<T, I, A> std::ops::AddAssign<I> for Tensor<[T]>
-where I: Iterator<Item = A>,
-      Tensor<T>: std::ops::AddAssign<A>,
+
+impl<T, I, A> AddAssign<I> for Tensor<[T]>
+where
+    I: Iterator<Item = A>,
+    Tensor<T>: AddAssign<A>,
 {
+    #[inline]
     fn add_assign(&mut self, rhs: I) {
         for (rhs, out) in rhs.zip(self.data.iter_mut()) {
             *out.as_mut_tensor() += rhs;
+        }
+    }
+}
+
+impl<E, T, A> AddAssign<Reduce<E, Addition>> for Tensor<T>
+where
+    E: Iterator<Item = A>,
+    Tensor<T>: AddAssign<A>,
+{
+    #[inline]
+    fn add_assign(&mut self, rhs: Reduce<E, Addition>) {
+        for rhs in rhs.expr {
+            self.add_assign(rhs);
+        }
+    }
+}
+
+
+impl<T, I, A> SubAssign<I> for Tensor<[T]>
+where
+    I: Iterator<Item = A>,
+    Tensor<T>: SubAssign<A>,
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: I) {
+        for (rhs, out) in rhs.zip(self.data.iter_mut()) {
+            *out.as_mut_tensor() -= rhs;
+        }
+    }
+}
+
+//impl<I, S, N> SubAssign<I> for UniChunked<S, N>
+//where
+//    I: Iterator,
+//    S: Set + EvalExtend<I::Item>,
+//    N: Dimension,
+//{
+//    #[inline]
+//    fn sub_assign(&mut self, iter: I) {
+//        for elem in iter {
+//            let orig_len = self.data.len();
+//            self.data.eval_extend(elem);
+//            assert_eq!(self.data.len() - orig_len, self.chunk_size())
+//        }
+//    }
+//}
+
+impl<E, T, A> SubAssign<Reduce<E, Subtraction>> for Tensor<T>
+where
+    E: Iterator<Item = A>,
+    Tensor<T>: SubAssign<A>,
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: Reduce<E, Subtraction>) {
+        for rhs in rhs.expr {
+            self.sub_assign(rhs);
         }
     }
 }

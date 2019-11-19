@@ -8,6 +8,7 @@
 
 use super::*;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SparseExpr<E> where E: Iterator {
     pub(crate) expr: E,
     /// Remember a peeked value, even if it was None.
@@ -22,9 +23,14 @@ impl<I: Iterator> SparseExpr<I> {
 
 
 impl<E: Expression + Iterator> Expression for SparseExpr<E> {}
-impl<E: TotalSizeHint + Iterator> TotalSizeHint for SparseExpr<E> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.expr.total_size_hint()
+impl<E: ExprSize + Iterator> ExprSize for SparseExpr<E> {
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.expr.expr_size()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.expr.total_size_hint(cwise_reduce)
     }
 }
 

@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Enumerate<I> {
     iter: I,
     count: usize,
@@ -11,14 +12,21 @@ impl<I> Enumerate<I> {
 }
 
 impl<E: Expression> Expression for Enumerate<E> {}
-impl<E: TotalSizeHint> TotalSizeHint for Enumerate<E> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.iter.total_size_hint()
+impl<E: ExprSize> ExprSize for Enumerate<E> {
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.iter.expr_size()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.iter.total_size_hint(cwise_reduce)
     }
 }
 
-
-impl<I> Iterator for Enumerate<I> where I: Iterator {
+impl<I> Iterator for Enumerate<I>
+where
+    I: Iterator,
+{
     type Item = (usize, <I as Iterator>::Item);
 
     /// # Overflow Behavior
@@ -58,10 +66,10 @@ impl<I> Iterator for Enumerate<I> where I: Iterator {
         self.iter.count()
     }
 
-
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
-        where Fold: FnMut(Acc, Self::Item) -> Acc,
+    where
+        Fold: FnMut(Acc, Self::Item) -> Acc,
     {
         #[inline]
         fn enumerate<T, Acc>(
@@ -80,8 +88,9 @@ impl<I> Iterator for Enumerate<I> where I: Iterator {
     }
 }
 
-impl<I> DoubleEndedIterator for Enumerate<I> where
-    I: ExactSizeIterator + DoubleEndedIterator
+impl<I> DoubleEndedIterator for Enumerate<I>
+where
+    I: ExactSizeIterator + DoubleEndedIterator,
 {
     #[inline]
     fn next_back(&mut self) -> Option<(usize, <I as Iterator>::Item)> {
@@ -103,7 +112,8 @@ impl<I> DoubleEndedIterator for Enumerate<I> where
 
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, fold: Fold) -> Acc
-        where Fold: FnMut(Acc, Self::Item) -> Acc,
+    where
+        Fold: FnMut(Acc, Self::Item) -> Acc,
     {
         // Can safely add and subtract the count, as `ExactSizeIterator` promises
         // that the number of elements fits into a `usize`.
@@ -122,7 +132,10 @@ impl<I> DoubleEndedIterator for Enumerate<I> where
     }
 }
 
-impl<I> ExactSizeIterator for Enumerate<I> where I: ExactSizeIterator {
+impl<I> ExactSizeIterator for Enumerate<I>
+where
+    I: ExactSizeIterator,
+{
     fn len(&self) -> usize {
         self.iter.len()
     }

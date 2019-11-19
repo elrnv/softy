@@ -3,18 +3,22 @@
  */
 use super::*;
 use std::ops::Add as AddOp;
-use std::ops::Mul as MulOp;
-use std::ops::Sub as SubOp;
-use std::ops::Neg as NegOp;
 use std::ops::AddAssign as AddAssignOp;
+use std::ops::Mul as MulOp;
+use std::ops::Neg as NegOp;
+use std::ops::Sub as SubOp;
 use std::ops::SubAssign as SubAssignOp;
 
+mod enumerate;
 mod eval;
 mod sparse_expr;
-mod enumerate;
-pub use eval::{Evaluate, EvalExtend};
-pub use sparse_expr::SparseExpr;
+mod cwise_bin_expr;
+mod target;
 pub use enumerate::Enumerate;
+pub use eval::{EvalExtend, Evaluate};
+pub use sparse_expr::SparseExpr;
+pub use cwise_bin_expr::*;
+pub use target::Target;
 
 /// Recursive Sum operator.
 ///
@@ -64,12 +68,17 @@ pub trait CwiseMulAssignOp<R = Self> {
  */
 
 // Unary operations
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Summation;
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Negation;
 
 // Binary operations
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Addition;
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Subtraction;
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Multiplication;
 
 macro_rules! impl_default {
@@ -86,6 +95,10 @@ impl_default!(Subtraction);
 impl_default!(Multiplication);
 impl_default!(Summation);
 impl_default!(Negation);
+
+/// A marker trait to describe unary operations that reduce the underlying expression to a singleton.
+pub trait Reduction {}
+impl Reduction for Summation {}
 
 /// A marker trait to describe additive binary operations.
 ///
@@ -241,35 +254,6 @@ where
     }
 }
 
-/// A lazy component-wise binary expression to be evaluated at a later time.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct CwiseBinExpr<L, R, F> {
-    left: L,
-    right: R,
-    op: F,
-}
-
-impl<L, R, F: Default> CwiseBinExpr<L, R, F> {
-    pub fn new(left: L, right: R) -> Self {
-        Self::with_op(left, right, Default::default())
-    }
-}
-
-impl<L, R, F> CwiseBinExpr<L, R, F> {
-    pub fn with_op(left: L, right: R, op: F) -> Self {
-        CwiseBinExpr { left, right, op }
-    }
-}
-
-/// A lazy `Add` expression to be evaluated at a later time.
-type Add<L, R> = CwiseBinExpr<L, R, Addition>;
-
-/// A lazy `Sub` expression to be evaluated at a later time.
-type Sub<L, R> = CwiseBinExpr<L, R, Subtraction>;
-
-/// A lazy component-wise multiply expression to be evaluated at a later time.
-type CwiseMul<L, R> = CwiseBinExpr<L, R, Multiplication>;
-
 /// A lazy component-wise unary expression to be evaluated at a later time. This is basically
 /// equivalent to `std::iter::Map`.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -279,12 +263,14 @@ pub struct CwiseUnExpr<E, F> {
 }
 
 impl<E, F: Default> CwiseUnExpr<E, F> {
+    #[inline]
     pub fn new(expr: E) -> Self {
         Self::with_op(expr, Default::default())
     }
 }
 
 impl<E, F> CwiseUnExpr<E, F> {
+    #[inline]
     pub fn with_op(expr: E, op: F) -> Self {
         CwiseUnExpr { expr, op }
     }
@@ -293,16 +279,17 @@ impl<E, F> CwiseUnExpr<E, F> {
 /// A lazy component-wise summation.
 type CwiseSum<E> = CwiseUnExpr<E, Summation>;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Repeat<E> {
     expr: E,
 }
 
 impl<E> Repeat<E> {
+    #[inline]
     pub fn new(expr: E) -> Self {
         Repeat { expr }
     }
 }
-
 
 /// A lazy reduce expression to be evaluated at a later time.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -312,16 +299,17 @@ pub struct Reduce<E, F> {
 }
 
 impl<E, F: Default> Reduce<E, F> {
+    #[inline]
     pub fn new(expr: E) -> Self {
         Self::with_op(expr, Default::default())
     }
 }
 impl<E, F> Reduce<E, F> {
+    #[inline]
     pub fn with_op(expr: E, op: F) -> Self {
         Reduce { expr, op }
     }
 }
-
 
 /// A lazy sum expression.
 type Sum<E> = Reduce<E, Addition>;
@@ -362,50 +350,6 @@ pub struct SubsetIterExpr<'a, S> {
     data: S,
 }
 
-/// A trait to retrieve the target type of a sparse expression.
-pub trait Target {
-    type Target;
-    fn target(&self) -> &Self::Target;
-}
-
-impl<'a, S, T> Target for SparseIterExpr<'a, S, T> {
-    type Target = T;
-
-    fn target(&self) -> &Self::Target {
-        &self.target
-    }
-}
-
-impl<E: Target + Iterator> Target for SparseExpr<E> {
-    type Target = E::Target;
-
-    fn target(&self) -> &Self::Target {
-        &self.expr.target()
-    }
-}
-
-impl<L, R, T, F> Target for CwiseBinExpr<L, R, F>
-where 
-    L: Target<Target = T>,
-    R: Target<Target = T>,
-    T: PartialEq + std::fmt::Debug
-{
-    type Target = T;
-
-    fn target(&self) -> &Self::Target {
-        debug_assert_eq!(self.left.target(), self.right.target());
-        &self.left.target()
-    }
-}
-
-impl<E: Target, F> Target for CwiseUnExpr<E, F> {
-    type Target = E::Target;
-
-    fn target(&self) -> &Self::Target {
-        self.expr.target()
-    }
-}
-
 
 // Trait that indicates that an iterator produces elements from a dense or
 // contiguous collection as opposed to a sparse one.
@@ -425,7 +369,7 @@ impl<'a, E: DenseExpr> DenseExpr for Repeat<E> {}
 impl<'a, T> DenseExpr for Repeat<Tensor<T>> {}
 
 /// A trait describing types that can be evaluated.
-pub trait Expression: TotalSizeHint {
+pub trait Expression: ExprSize {
     fn eval<T>(self) -> T
     where
         Self: Sized,
@@ -464,54 +408,121 @@ pub trait Expression: TotalSizeHint {
 ///
 /// A value of `None` indicates that the iterator can be infinite.
 /// It used for allocating space so the estimates are expected to be conservative.
-pub trait TotalSizeHint {
-    fn total_size_hint(&self) -> Option<usize>;
+pub trait ExprSize {
+    /// Get the size hint for number of elements returned by this expression. This is useful
+    /// during evaluation to allocate sufficient memory.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic on an expression that evaluates infinitely.
+    fn reserve_hint(&self) -> usize {
+        self.total_size_hint(0).unwrap()
+    }
+    /// The size of this expression. In other words, the number of times this expression
+    /// will iterate (similar to `size_hint`).
+    /// Infinite expressions will return max int.
+    fn expr_size(&self) -> usize;
+
+    /// Similar to reserve hint but this function will compute the total size hint for this
+    /// expression given all the component wise reductions in the `cwise_reduce` bitmask.
+    ///
+    /// This function will return `None` on unbounded expressions.
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize>;
 }
 
-impl<T: Set> Expression for Tensor<T> {}
-impl<T: Set> TotalSizeHint for Tensor<T> {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.data.len())
+/// A helper trait that implements `ExprSize` for most base expressions.
+pub trait BaseExprTotalSizeHint {
+    fn base_total_size_hint(&self, cwise_reduce: u32) -> Option<usize>;
+}
+impl<T> BaseExprTotalSizeHint for T
+where
+    T: Clone + Iterator,
+    T::Item: ExprSize,
+{
+    fn base_total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        // TODO: Is it worth determining the exact size here?
+        if cwise_reduce & 1 == 1 {
+            self.clone().fold(Some(0), |acc, item| {
+                acc.and_then(|acc| {
+                    item.total_size_hint(cwise_reduce >> 1)
+                        .map(|tot| acc + tot / item.expr_size())
+                })
+            })
+        } else {
+            self.clone().fold(Some(0), |acc, item| {
+                acc.and_then(|acc| item.total_size_hint(cwise_reduce >> 1).map(|tot| acc + tot))
+            })
+        }
     }
 }
 
-impl<E: Iterator + Expression + TotalSizeHint, F> Expression for Reduce<E, F> {}
-impl<E: Iterator + Expression + TotalSizeHint, F> TotalSizeHint for Reduce<E, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.expr.total_size_hint().expect("Can't reduce an infinite iterator") / self.expr.size_hint().0)
+impl<T: Expression> Expression for Tensor<T> {}
+impl<T: ExprSize> ExprSize for Tensor<T> {
+    fn expr_size(&self) -> usize {
+        self.data.expr_size()
+    }
+    fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+        // Can't be reduced since Tensors are not iterators. Reduction should be done explicitly
+        // By an eager operator on tensors.
+        Some(self.data.expr_size())
+    }
+}
+
+impl<E: Iterator + Expression, F> Expression for Reduce<E, F> {}
+impl<E: Iterator + Expression, F> ExprSize for Reduce<E, F> {
+    fn expr_size(&self) -> usize {
+        1
+    }
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        Some(
+            self.expr
+                .total_size_hint(cwise_reduce)
+                .expect("Can't reduce an infinite iterator")
+                / self.expr.size_hint().0,
+        )
     }
 }
 
 impl<'a, T: Clone + IntoExpr> Iterator for SliceIterExpr<'a, T> {
     type Item = T::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|x| x.clone().into_expr())
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.0.size_hint()
     }
 }
 impl<'a, T> Expression for SliceIterExpr<'a, T> {}
 impl<'a, T: Clone + IntoExpr> ExactSizeIterator for SliceIterExpr<'a, T> {}
-impl<'a, T> TotalSizeHint for SliceIterExpr<'a, T> {
-    fn total_size_hint(&self) -> Option<usize> {
+impl<'a, T> ExprSize for SliceIterExpr<'a, T> {
+    fn expr_size(&self) -> usize {
+        self.0.size_hint().1.unwrap_or(self.0.size_hint().0)
+    }
+    fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
         Some(self.0.size_hint().1.unwrap_or(self.0.size_hint().0))
     }
 }
 
 impl<'a, T: IntoExpr> Iterator for VecIterExpr<T> {
     type Item = T::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|x| x.into_expr())
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.0.size_hint()
     }
 }
 impl<T: IntoExpr> Expression for VecIterExpr<T> {}
 impl<T: IntoExpr> ExactSizeIterator for VecIterExpr<T> {}
-impl<T> TotalSizeHint for VecIterExpr<T> {
-    fn total_size_hint(&self) -> Option<usize> {
+impl<T> ExprSize for VecIterExpr<T> {
+    fn expr_size(&self) -> usize {
+        self.0.size_hint().1.unwrap_or(self.0.size_hint().0)
+    }
+    fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
         Some(self.0.size_hint().1.unwrap_or(self.0.size_hint().0))
     }
 }
@@ -523,6 +534,7 @@ where
     N: Unsigned,
 {
     type Item = <S::Prefix as IntoExpr>::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.data.is_empty() {
             return None;
@@ -534,16 +546,23 @@ where
             prefix.into_expr()
         })
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = self.data.len() / N::to_usize();
         (n, Some(n))
     }
 }
 
-impl<S: Set, N> Expression for UniChunkedIterExpr<S, N> { }
-impl<S: Set, N> TotalSizeHint for UniChunkedIterExpr<S, N> {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.data.len())
+impl<S: Set, N> Expression for UniChunkedIterExpr<S, N> where Self: BaseExprTotalSizeHint {}
+impl<S: Set, N> ExprSize for UniChunkedIterExpr<S, N>
+where
+    Self: BaseExprTotalSizeHint,
+{
+    fn expr_size(&self) -> usize {
+        self.data.len()
+    }
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.base_total_size_hint(cwise_reduce)
     }
 }
 
@@ -554,6 +573,7 @@ where
     S: Set + SplitAt + Dummy + IntoExpr,
 {
     type Item = S::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.data.is_empty() {
             return None;
@@ -565,6 +585,7 @@ where
         Some(l.into_expr())
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = self.data.len() / self.chunk_size;
         (n, Some(n))
@@ -576,6 +597,7 @@ where
     S: Set + SplitAt + Dummy + IntoExpr,
 {
     type Item = S::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let data_slice = std::mem::replace(&mut self.data, unsafe { Dummy::dummy() });
         self.offsets.pop_offset().map(move |n| {
@@ -584,16 +606,27 @@ where
             l.into_expr()
         })
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = self.offsets.len() - 1;
         (n, Some(n))
     }
 }
 
-impl<'a, S: Set> Expression for ChunkedIterExpr<'a, S> {}
-impl<'a, S: Set> TotalSizeHint for ChunkedIterExpr<'a, S> {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.data.len())
+impl<'a, S: Set> Expression for ChunkedIterExpr<'a, S>
+where Self: BaseExprTotalSizeHint,
+{}
+impl<'a, S: Set> ExprSize for ChunkedIterExpr<'a, S>
+where
+    Self: BaseExprTotalSizeHint,
+{
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.data.len()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.base_total_size_hint(cwise_reduce)
     }
 }
 impl<'a, S> ExactSizeIterator for ChunkedIterExpr<'a, S> where Self: Iterator {}
@@ -604,6 +637,7 @@ where
     S::First: IntoExpr,
 {
     type Item = IndexedExpr<<S::First as IntoExpr>::Expr>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let source_slice = std::mem::replace(&mut self.source, unsafe { Dummy::dummy() });
         source_slice.split_first().map(|(first, rest)| {
@@ -614,17 +648,29 @@ where
             (*first_idx, first.into_expr()).into()
         })
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = self.indices.len();
         (n, Some(n))
     }
 }
 
-impl<'a, S, T> Expression for SparseIterExpr<'a, S, T> where Self: Iterator {}
-impl<'a, S, T> ExactSizeIterator for SparseIterExpr<'a, S, T> where Self: Iterator {}
-impl<'a, S, T> TotalSizeHint for SparseIterExpr<'a, S, T> where Self: Iterator {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.size_hint().1.unwrap_or(self.size_hint().0))
+impl<'a, S: Set, T> Expression for SparseIterExpr<'a, S, T> where Self: BaseExprTotalSizeHint {}
+impl<'a, S: Set, T> ExactSizeIterator for SparseIterExpr<'a, S, T> where
+    Self: Iterator + BaseExprTotalSizeHint
+{
+}
+impl<'a, S: Set, T> ExprSize for SparseIterExpr<'a, S, T>
+where
+    Self: BaseExprTotalSizeHint,
+{
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.source.len()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.base_total_size_hint(cwise_reduce)
     }
 }
 
@@ -634,6 +680,7 @@ where
     S::First: IntoExpr,
 {
     type Item = <S::First as IntoExpr>::Expr;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         use std::borrow::Borrow;
         let SubsetIterExpr { indices, data } = self;
@@ -664,6 +711,7 @@ where
             }),
         }
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = match self.indices {
             Some(indices) => indices.len(),
@@ -673,11 +721,17 @@ where
     }
 }
 
-impl<'a, S> Expression for SubsetIterExpr<'a, S> where Self: Iterator {}
-impl<'a, S> ExactSizeIterator for SubsetIterExpr<'a, S> where Self: Iterator {}
-impl<'a, S> TotalSizeHint for SubsetIterExpr<'a, S> where Self: Iterator {
-    fn total_size_hint(&self) -> Option<usize> {
-        Some(self.size_hint().1.unwrap_or(self.size_hint().0))
+impl<'a, S: Set> Expression for SubsetIterExpr<'a, S> where Self: BaseExprTotalSizeHint {}
+impl<'a, S: Set> ExactSizeIterator for SubsetIterExpr<'a, S> where Self: Iterator + BaseExprTotalSizeHint {}
+impl<'a, S: Set> ExprSize for SubsetIterExpr<'a, S>
+where
+    Self: BaseExprTotalSizeHint,
+{
+    fn expr_size(&self) -> usize {
+        self.data.len()
+    }
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.base_total_size_hint(cwise_reduce)
     }
 }
 
@@ -702,7 +756,10 @@ impl<E: SumOp> SumOp for IndexedExpr<E> {
     type Output = IndexedExpr<E::Output>;
     fn sum_op(self) -> Self::Output {
         let IndexedExpr { index, expr } = self;
-        IndexedExpr { index, expr: expr.sum_op() }
+        IndexedExpr {
+            index,
+            expr: expr.sum_op(),
+        }
     }
 }
 
@@ -717,7 +774,49 @@ impl<R, L: CwiseMulOp<R>> CwiseMulOp<R> for IndexedExpr<L> {
     type Output = IndexedExpr<L::Output>;
     #[inline]
     fn cwise_mul(self, rhs: R) -> Self::Output {
-        IndexedExpr { index: self.index, expr: self.expr.cwise_mul(rhs) }
+        IndexedExpr {
+            index: self.index,
+            expr: self.expr.cwise_mul(rhs),
+        }
+    }
+}
+
+impl<R, L, Out> CwiseMulOp<IndexedExpr<Tensor<R>>> for Tensor<L>
+where Tensor<L>: CwiseMulOp<Tensor<R>, Output = Out>
+{
+    type Output = IndexedExpr<Out>;
+    #[inline]
+    fn cwise_mul(self, rhs: IndexedExpr<Tensor<R>>) -> Self::Output {
+        IndexedExpr {
+            index: rhs.index,
+            expr: self.cwise_mul(rhs.expr),
+        }
+    }
+}
+
+impl<R, L> AddAssignOp<IndexedExpr<Tensor<R>>> for Tensor<[L]>
+where Tensor<[L]>: AddAssignOp<Tensor<R>>
+{
+    #[inline]
+    fn add_assign(&mut self, rhs: IndexedExpr<Tensor<R>>) {
+        self.add_assign(rhs.expr)
+    }
+}
+
+impl<R, L> AddAssignOp<IndexedExpr<Tensor<R>>> for Tensor<L>
+where Tensor<L>: AddAssignOp<Tensor<R>>
+{
+    #[inline]
+    fn add_assign(&mut self, rhs: IndexedExpr<Tensor<R>>) {
+        self.add_assign(rhs.expr)
+    }
+}
+
+
+impl<R, L: AddAssignOp<R>> AddAssignOp<R> for IndexedExpr<L> {
+    #[inline]
+    fn add_assign(&mut self, rhs: R) {
+        self.expr.add_assign(rhs);
     }
 }
 
@@ -725,18 +824,70 @@ impl<R, L: AddOp<R>> AddOp<R> for IndexedExpr<L> {
     type Output = IndexedExpr<L::Output>;
     #[inline]
     fn add(self, rhs: R) -> Self::Output {
-        IndexedExpr { index: self.index, expr: self.expr.add(rhs) }
+        IndexedExpr {
+            index: self.index,
+            expr: self.expr.add(rhs),
+        }
+    }
+}
+
+impl<R, L> SubAssignOp<IndexedExpr<Tensor<R>>> for Tensor<[L]>
+where Tensor<[L]>: SubAssignOp<Tensor<R>>
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: IndexedExpr<Tensor<R>>) {
+        self.sub_assign(rhs.expr)
+    }
+}
+
+impl<R, L> SubAssignOp<IndexedExpr<Tensor<R>>> for Tensor<L>
+where Tensor<L>: SubAssignOp<Tensor<R>>
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: IndexedExpr<Tensor<R>>) {
+        self.sub_assign(rhs.expr)
     }
 }
 
 
+impl<R, L: SubAssignOp<R>> SubAssignOp<R> for IndexedExpr<L> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: R) {
+        self.expr.sub_assign(rhs);
+    }
+}
+
+impl<R, L: SubOp<R>> SubOp<R> for IndexedExpr<L> {
+    type Output = IndexedExpr<L::Output>;
+    #[inline]
+    fn sub(self, rhs: R) -> Self::Output {
+        IndexedExpr {
+            index: self.index,
+            expr: self.expr.sub(rhs),
+        }
+    }
+}
+
+impl<E: Expression> Expression for IndexedExpr<E> { }
+impl<E: ExprSize> ExprSize for IndexedExpr<E> {
+    #[inline]
+    fn expr_size(&self) -> usize {
+        self.expr.expr_size()
+    }
+    #[inline]
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.expr.total_size_hint(cwise_reduce)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SparseAddResult<L, R, E> {
     Left(L),
     Right(R),
     Expr(E),
 }
-impl<T> From<SparseAddResult<Tensor<T>,Tensor<T>,Tensor<T>>> for Tensor<T> {
-    fn from(res: SparseAddResult<Tensor<T>,Tensor<T>,Tensor<T>>) -> Tensor<T> {
+impl<T> From<SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>> for Tensor<T> {
+    fn from(res: SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>) -> Tensor<T> {
         match res {
             SparseAddResult::Left(val) => val,
             SparseAddResult::Right(val) => val,
@@ -745,7 +896,9 @@ impl<T> From<SparseAddResult<Tensor<T>,Tensor<T>,Tensor<T>>> for Tensor<T> {
     }
 }
 
-impl<R, A: CwiseMulOp<R>, B: CwiseMulOp<R>, C: CwiseMulOp<R>> CwiseMulOp<R> for SparseAddResult<A,B,C> {
+impl<R, A: CwiseMulOp<R>, B: CwiseMulOp<R>, C: CwiseMulOp<R>> CwiseMulOp<R>
+    for SparseAddResult<A, B, C>
+{
     type Output = SparseAddResult<A::Output, B::Output, C::Output>;
     fn cwise_mul(self, rhs: R) -> Self::Output {
         match self {
@@ -756,7 +909,7 @@ impl<R, A: CwiseMulOp<R>, B: CwiseMulOp<R>, C: CwiseMulOp<R>> CwiseMulOp<R> for 
     }
 }
 
-impl<R, A: AddOp<R>, B: AddOp<R>, C: AddOp<R>> AddOp<R> for SparseAddResult<A,B,C> {
+impl<R, A: AddOp<R>, B: AddOp<R>, C: AddOp<R>> AddOp<R> for SparseAddResult<A, B, C> {
     type Output = SparseAddResult<A::Output, B::Output, C::Output>;
     fn add(self, rhs: R) -> Self::Output {
         match self {
@@ -795,7 +948,8 @@ impl<'a, S> IntoExpr for ChunkedView<'a, S> {
 }
 
 impl<'a, S, T> IntoExpr for SparseView<'a, S, T>
-    where SparseIterExpr<'a, S, T>: Iterator,
+where
+    SparseIterExpr<'a, S, T>: Iterator,
 {
     type Expr = SparseExpr<SparseIterExpr<'a, S, T>>;
     #[inline]
@@ -931,6 +1085,16 @@ impl<'a, T: Expr<'a> + ?Sized> Expr<'a> for Tensor<T> {
 
 macro_rules! impl_bin_op {
     (common impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_type:ident::$op_fn:ident }) => {
+        impl<$($type_vars),*, R> $op_trait<IndexedExpr<R>> for $type {
+            type Output = IndexedExpr<$op_type<Self, R>>;
+            #[inline]
+            fn $op_fn(self, rhs: IndexedExpr<R>) -> Self::Output {
+                IndexedExpr {
+                    index: rhs.index,
+                    expr: $op_type::new(self, rhs.expr),
+                }
+            }
+        }
         impl<$($type_vars),*, R> $op_trait<Tensor<R>> for $type {
             type Output = $op_type<Self, Tensor<R>>;
             #[inline]
@@ -948,6 +1112,7 @@ macro_rules! impl_bin_op {
     };
     (impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_type:ident::$op_fn:ident }) => {
         impl_bin_op!(common impl<$($type_vars),*> $op_trait for $type { $op_type::$op_fn });
+
         impl<$($type_vars),*, R> $op_trait<SparseExpr<R>> for $type
             where R: Iterator,
                   $op_type<Self, SparseExpr<R>>: Iterator
@@ -1020,64 +1185,67 @@ macro_rules! impl_bin_op {
     }
 }
 
-impl_bin_op!(mul impl<T> CwiseMulOp for VecIterExpr<T> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<'a, T> CwiseMulOp for SliceIterExpr<'a, T> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<S, N> CwiseMulOp for UniChunkedIterExpr<S, N> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<'a, S> CwiseMulOp for ChunkedIterExpr<'a, S> { CwiseMul::cwise_mul });
-impl_bin_op!(mul sparse impl<E> CwiseMulOp for SparseExpr<E> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<'a, S> CwiseMulOp for SubsetIterExpr<'a, S> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<E, F> CwiseMulOp for CwiseUnExpr<E, F> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<A, B, F> CwiseMulOp for CwiseBinExpr<A, B, F> { CwiseMul::cwise_mul });
-impl_bin_op!(mul impl<A, B> CwiseMulOp for Reduce<A, B> { CwiseMul::cwise_mul });
+impl_bin_op!(mul impl<T> CwiseMulOp for VecIterExpr<T> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<'a, T> CwiseMulOp for SliceIterExpr<'a, T> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<S, N> CwiseMulOp for UniChunkedIterExpr<S, N> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<'a, S> CwiseMulOp for ChunkedIterExpr<'a, S> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul sparse impl<E> CwiseMulOp for SparseExpr<E> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<'a, S> CwiseMulOp for SubsetIterExpr<'a, S> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<E, F> CwiseMulOp for CwiseUnExpr<E, F> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<A, B, F> CwiseMulOp for CwiseBinExpr<A, B, F> { CwiseMulExpr::cwise_mul });
+impl_bin_op!(mul impl<A, B> CwiseMulOp for Reduce<A, B> { CwiseMulExpr::cwise_mul });
 
-impl_bin_op!(impl<T> AddOp for VecIterExpr<T> { Add::add });
-impl_bin_op!(impl<'a, T> AddOp for SliceIterExpr<'a, T> { Add::add });
-impl_bin_op!(impl<S, N> AddOp for UniChunkedIterExpr<S, N> { Add::add });
-impl_bin_op!(impl<'a, S> AddOp for ChunkedIterExpr<'a, S> { Add::add });
-impl_bin_op!(sparse impl<E> AddOp for SparseExpr<E> { Add::add });
-impl_bin_op!(impl<'a, S> AddOp for SubsetIterExpr<'a, S> { Add::add });
-impl_bin_op!(impl<E, F> AddOp for CwiseUnExpr<E, F> { Add::add });
-impl_bin_op!(impl<A, B, F> AddOp for CwiseBinExpr<A, B, F> { Add::add });
-impl_bin_op!(impl<A, B> AddOp for Reduce<A, B> { Add::add });
+impl_bin_op!(impl<T> AddOp for VecIterExpr<T> { AddExpr::add });
+impl_bin_op!(impl<'a, T> AddOp for SliceIterExpr<'a, T> { AddExpr::add });
+impl_bin_op!(impl<S, N> AddOp for UniChunkedIterExpr<S, N> { AddExpr::add });
+impl_bin_op!(impl<'a, S> AddOp for ChunkedIterExpr<'a, S> { AddExpr::add });
+impl_bin_op!(sparse impl<E> AddOp for SparseExpr<E> { AddExpr::add });
+impl_bin_op!(impl<'a, S> AddOp for SubsetIterExpr<'a, S> { AddExpr::add });
+impl_bin_op!(impl<E, F> AddOp for CwiseUnExpr<E, F> { AddExpr::add });
+impl_bin_op!(impl<A, B, F> AddOp for CwiseBinExpr<A, B, F> { AddExpr::add });
+impl_bin_op!(impl<A, B> AddOp for Reduce<A, B> { AddExpr::add });
 
-impl_bin_op!(impl<T> SubOp for VecIterExpr<T> { Sub::sub });
-impl_bin_op!(impl<'a, T> SubOp for SliceIterExpr<'a, T> { Sub::sub });
-impl_bin_op!(impl<S, N> SubOp for UniChunkedIterExpr<S, N> { Sub::sub });
-impl_bin_op!(impl<'a, S> SubOp for ChunkedIterExpr<'a, S> { Sub::sub });
-impl_bin_op!(sparse impl<E> SubOp for SparseExpr<E> { Sub::sub });
-impl_bin_op!(impl<'a, S> SubOp for SubsetIterExpr<'a, S> { Sub::sub });
-impl_bin_op!(impl<E, F> SubOp for CwiseUnExpr<E, F> { Sub::sub });
-impl_bin_op!(impl<A, B, F> SubOp for CwiseBinExpr<A, B, F> { Sub::sub });
-impl_bin_op!(impl<A, B> SubOp for Reduce<A, B> { Sub::sub });
+impl_bin_op!(impl<T> SubOp for VecIterExpr<T> { SubExpr::sub });
+impl_bin_op!(impl<'a, T> SubOp for SliceIterExpr<'a, T> { SubExpr::sub });
+impl_bin_op!(impl<S, N> SubOp for UniChunkedIterExpr<S, N> { SubExpr::sub });
+impl_bin_op!(impl<'a, S> SubOp for ChunkedIterExpr<'a, S> { SubExpr::sub });
+impl_bin_op!(sparse impl<E> SubOp for SparseExpr<E> { SubExpr::sub });
+impl_bin_op!(impl<'a, S> SubOp for SubsetIterExpr<'a, S> { SubExpr::sub });
+impl_bin_op!(impl<E, F> SubOp for CwiseUnExpr<E, F> { SubExpr::sub });
+impl_bin_op!(impl<A, B, F> SubOp for CwiseBinExpr<A, B, F> { SubExpr::sub });
+impl_bin_op!(impl<A, B> SubOp for Reduce<A, B> { SubExpr::sub });
 
 macro_rules! impl_scalar_mul {
     (impl<$($type_vars:tt),*> for $type:ty) => {
-        impl<$($type_vars),*> MulOp<T> for $type where T: Scalar {
-            type Output = CwiseMul<Self, Tensor<T>>;
+        impl_scalar_mul!(impl<$($type_vars),*> for $type where);
+    };
+    (impl<$($type_vars:tt),*> for $type:ty where $($type_constraints:tt)*) => {
+        impl<$($type_vars),*> MulOp<T> for $type where T: Scalar, $($type_constraints)* {
+            type Output = CwiseMulExpr<Self, Tensor<T>>;
             #[inline]
             fn mul(self, rhs: T) -> Self::Output {
-                CwiseMul::new(self, Tensor::new(rhs))
+                CwiseMulExpr::new(self, Tensor::new(rhs))
             }
         }
-        impl<$($type_vars),*> MulOp<Tensor<T>> for $type where T: Scalar {
-            type Output = CwiseMul<Self, Tensor<T>>;
+        impl<$($type_vars),*> MulOp<Tensor<T>> for $type where T: Scalar, $($type_constraints)* {
+            type Output = CwiseMulExpr<Self, Tensor<T>>;
             #[inline]
             fn mul(self, rhs: Tensor<T>) -> Self::Output {
-                CwiseMul::new(self, rhs)
+                CwiseMulExpr::new(self, rhs)
             }
         }
-        impl<$($type_vars),*> MulOp<$type> for Tensor<T> where T: Scalar {
-            type Output = CwiseMul<$type, Tensor<T>>;
+        impl<$($type_vars),*> MulOp<$type> for Tensor<T> where T: Scalar, $($type_constraints)* {
+            type Output = CwiseMulExpr<Tensor<T>, $type>;
             #[inline]
             fn mul(self, rhs: $type) -> Self::Output {
-                CwiseMul::new(rhs, self)
+                CwiseMulExpr::new(self, rhs)
             }
         }
-        impl<$($type_vars),*> CwiseMulOp<$type> for Tensor<T> where T: Scalar {
-            type Output = CwiseMul<$type, Tensor<T>>;
+        impl<$($type_vars),*> CwiseMulOp<$type> for Tensor<T> where T: Scalar, $($type_constraints)* {
+            type Output = CwiseMulExpr<Tensor<T>, $type>;
             #[inline]
             fn cwise_mul(self, rhs: $type) -> Self::Output {
-                CwiseMul::new(rhs, self)
+                CwiseMulExpr::new(self, rhs)
             }
         }
     }
@@ -1090,51 +1258,7 @@ impl_scalar_mul!(impl<'a, S, T> for ChunkedIterExpr<'a, S>);
 impl_scalar_mul!(impl<'a, S, T> for SubsetIterExpr<'a, S>);
 impl_scalar_mul!(impl<E, T, F> for CwiseUnExpr<E, F>);
 impl_scalar_mul!(impl<A, B, T, F> for CwiseBinExpr<A, B, F>);
-
-impl<E, T> MulOp<T> for SparseExpr<E>
-where E: Iterator,
-      CwiseMul<Self, Tensor<T>>: Iterator,
-      T: Scalar
-{
-    type Output = SparseExpr<CwiseMul<Self, Tensor<T>>>;
-    #[inline]
-    fn mul(self, rhs: T) -> Self::Output {
-        SparseExpr::new(CwiseMul::new(self, Tensor::new(rhs)))
-    }
-}
-impl<E, T> MulOp<Tensor<T>> for SparseExpr<E>
-where E: Iterator,
-      CwiseMul<Self, Tensor<T>>: Iterator,
-      T: Scalar,
-{
-    type Output = SparseExpr<CwiseMul<Self, Tensor<T>>>;
-    #[inline]
-    fn mul(self, rhs: Tensor<T>) -> Self::Output {
-        SparseExpr::new(CwiseMul::new(self, rhs))
-    }
-}
-impl<E, T> MulOp<SparseExpr<E>> for Tensor<T>
-where E: Iterator,
-      CwiseMul<SparseExpr<E>, Tensor<T>>: Iterator,
-      T: Scalar
-{
-    type Output = SparseExpr<CwiseMul<SparseExpr<E>, Tensor<T>>>;
-    #[inline]
-    fn mul(self, rhs: SparseExpr<E>) -> Self::Output {
-        SparseExpr::new(CwiseMul::new(rhs, self))
-    }
-}
-impl<E, T> CwiseMulOp<SparseExpr<E>> for Tensor<T>
-where E: Iterator,
-      CwiseMul<SparseExpr<E>, Tensor<T>>: Iterator,
-      T: Scalar
-{
-    type Output = SparseExpr<CwiseMul<SparseExpr<E>, Tensor<T>>>;
-    #[inline]
-    fn cwise_mul(self, rhs: SparseExpr<E>) -> Self::Output {
-        SparseExpr::new(CwiseMul::new(rhs, self))
-    }
-}
+impl_scalar_mul!(impl<E, T> for SparseExpr<E> where E: Iterator);
 
 // Tensor multiplication
 // Note that CwiseSum doesn't care if its expression is dense or sparse, so there is not special
@@ -1142,10 +1266,10 @@ where E: Iterator,
 macro_rules! impl_mul_op {
     (impl<$($type_vars:tt),*> $l:ty {$r:ty} ) => {
         impl<$($type_vars),*> MulOp<$r> for $l {
-            type Output = CwiseSum<CwiseMul<$l, Repeat<$r>>>;
+            type Output = CwiseSum<CwiseMulExpr<$l, Repeat<$r>>>;
             #[inline]
             fn mul(self, rhs: $r) -> Self::Output {
-                CwiseSum::new(CwiseMul::new(self, Repeat::new(rhs)))
+                CwiseSum::new(CwiseMulExpr::new(self, Repeat::new(rhs)))
             }
         }
     };
@@ -1153,10 +1277,10 @@ macro_rules! impl_mul_op {
         impl<$($type_vars),*> MulOp<$r> for $l
             where R: Iterator,
         {
-            type Output = CwiseSum<CwiseMul<$l, Repeat<$r>>>;
+            type Output = CwiseSum<CwiseMulExpr<$l, Repeat<$r>>>;
             #[inline]
             fn mul(self, rhs: $r) -> Self::Output {
-                CwiseSum::new(CwiseMul::new(self, Repeat::new(rhs)))
+                CwiseSum::new(CwiseMulExpr::new(self, Repeat::new(rhs)))
             }
         }
     }
@@ -1240,17 +1364,31 @@ impl_mul_op!(impl<A, B, F, C, D, G>  CwiseBinExpr<C, D, G> {CwiseBinExpr<A, B, F
 
 impl<E: Clone> Iterator for Repeat<E> {
     type Item = E;
-    fn next(&mut self) -> Option<Self::Item> { Some(self.expr.clone()) }
-    fn size_hint(&self) -> (usize, Option<usize>) { (std::usize::MAX, None) }
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.expr.clone())
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (std::usize::MAX, None)
+    }
 }
 impl<E: Clone> DoubleEndedIterator for Repeat<E> {
-    fn next_back(&mut self) -> Option<E> { Some(self.expr.clone()) }
+    #[inline]
+    fn next_back(&mut self) -> Option<E> {
+        Some(self.expr.clone())
+    }
 }
 impl<E: Clone> std::iter::FusedIterator for Repeat<E> {}
 
 impl<E: Expression> Expression for Repeat<E> {}
-impl<E: Expression> TotalSizeHint for Repeat<E> {
-    fn total_size_hint(&self) -> Option<usize> { None }
+impl<E: Expression> ExprSize for Repeat<E> {
+    fn expr_size(&self) -> usize {
+        std::usize::MAX
+    }
+    fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+        None
+    }
 }
 
 /*
@@ -1262,425 +1400,36 @@ where
     F: UnOp<E::Item, Output = Out>,
 {
     type Item = Out;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.expr
-            .next()
-            .map(|expr| self.op.apply(expr))
+        self.expr.next().map(|expr| self.op.apply(expr))
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.expr.size_hint()
     }
 }
 
-impl<E: Iterator + Expression, F> Expression for CwiseUnExpr<E, F> {}
-impl<E: Iterator + Expression, F> TotalSizeHint for CwiseUnExpr<E, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.expr.total_size_hint()
+impl<E: Iterator + Expression, F: Reduction> Expression for CwiseUnExpr<E, F> {}
+impl<E: Iterator + Expression, F: Reduction> ExprSize for CwiseUnExpr<E, F> {
+    fn expr_size(&self) -> usize {
+        self.expr.expr_size()
+    }
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.expr.total_size_hint((cwise_reduce << 1) | 1)
+    }
+}
+impl<E: Iterator + Expression> Expression for CwiseUnExpr<E, Negation> {}
+impl<E: Iterator + Expression> ExprSize for CwiseUnExpr<E, Negation> {
+    fn expr_size(&self) -> usize {
+        self.expr.expr_size()
+    }
+    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+        self.expr.total_size_hint(cwise_reduce)
     }
 }
 
-impl<E: ExactSizeIterator, F> ExactSizeIterator
-    for CwiseUnExpr<E, F>
-where
-    Self: Iterator,
-{
-}
-
-/*
- * CwiseBinExpr impls
- */
-
-/*
- * Dense * Tensor
- */
-
-impl<L: Iterator + DenseExpr, R, F, Out> Iterator for CwiseBinExpr<L, Tensor<R>, F>
-where
-    R: Copy,
-    F: BinOp<L::Item, Tensor<R>, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.left.next().map(|l| self.op.apply(l, self.right))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.left.size_hint()
-    }
-}
-
-impl<L: DenseExpr + Iterator + Expression, R, F> Expression for CwiseBinExpr<L, Tensor<R>, F> { }
-impl<L: DenseExpr + Iterator + Expression, R, F> TotalSizeHint for CwiseBinExpr<L, Tensor<R>, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.left.total_size_hint()
-    }
-}
-
-impl<L: DenseExpr + ExactSizeIterator, R, F> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>, F> where
-    Self: Iterator
-{
-}
-
-/*
- * Tensor * Dense
- */
-
-impl<L, R: Iterator + DenseExpr, F, Out> Iterator for CwiseBinExpr<Tensor<L>, R, F>
-where
-    L: Copy,
-    F: BinOp<Tensor<L>, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.right.next().map(|r| self.op.apply(self.left, r))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.right.size_hint()
-    }
-}
-
-impl<L, R: DenseExpr + Iterator + Expression, F> Expression for CwiseBinExpr<Tensor<L>, R, F> {}
-impl<L, R: DenseExpr + Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<Tensor<L>, R, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.right.total_size_hint()
-    }
-}
-
-impl<L, R: DenseExpr + ExactSizeIterator, F> ExactSizeIterator for CwiseBinExpr<Tensor<L>, R, F> where
-    Self: Iterator
-{
-}
-
-/*
- * Dense * Dense
- */
-
-impl<L: Iterator + DenseExpr, R: Iterator + DenseExpr, F, Out> Iterator for CwiseBinExpr<L, R, F>
-where
-    F: BinOp<L::Item, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.left
-            .next()
-            .and_then(|l| self.right.next().map(|r| self.op.apply(l, r)))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let left = self.left.size_hint();
-        let right = self.right.size_hint();
-        (left.0.min(right.0), left.1.and_then(|l| right.1.map(|r| l.max(r))))
-    }
-}
-
-impl<L: DenseExpr + Iterator + Expression, R: DenseExpr + Iterator + Expression, F> Expression for CwiseBinExpr<L, R, F> {}
-impl<L: DenseExpr + Iterator + Expression, R: DenseExpr + Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<L, R, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        if let Some(left) = self.left.total_size_hint() {
-            if let Some(right) = self.right.total_size_hint() {
-                Some(left.min(right))
-            } else {
-                Some(left)
-            }
-        } else {
-            self.right.total_size_hint()
-        }
-    }
-}
-
-impl<L: DenseExpr + ExactSizeIterator, R: DenseExpr + ExactSizeIterator, F> ExactSizeIterator
-    for CwiseBinExpr<L, R, F>
-where
-    Self: Iterator,
-{
-}
-
-/*
- * Dense * Sparse Additive
- */
-
-impl<L, R, F, Out> Iterator for CwiseBinExpr<L, SparseExpr<R>, F>
-where
-    L: Iterator + DenseExpr,
-    R: Iterator,
-    F: Additive + BinOp<L::Item, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        // Need to iterate over everything
-        self.left
-            .next()
-            .and_then(|l| self.right.next().map(|r| {
-                self.op.apply(l, r)
-            }))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.left.size_hint()
-    }
-}
-
-impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> Expression for CwiseBinExpr<L, SparseExpr<R>, F> {}
-impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<L, SparseExpr<R>, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.left.total_size_hint()
-    }
-}
-
-impl<L: DenseExpr + ExactSizeIterator, R: ExactSizeIterator, F> ExactSizeIterator
-    for CwiseBinExpr<L, SparseExpr<R>, F>
-where
-    Self: Iterator,
-{
-}
-
-
-/*
- * Sparse * Dense Additive
- */
-
-impl<L, R, F, Out> Iterator for CwiseBinExpr<SparseExpr<L>, R, F>
-where
-    L: Iterator,
-    R: Iterator + DenseExpr,
-    F: Additive + BinOp<L::Item, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        // Need to iterate over everything
-        self.left
-            .next()
-            .and_then(|l| self.right.next().map(|r| {
-                self.op.apply(l, r)
-            }))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.right.size_hint()
-    }
-}
-
-impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> Expression for CwiseBinExpr<SparseExpr<L>, R, F> {}
-impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<SparseExpr<L>, R, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.right.total_size_hint()
-    }
-}
-
-impl<L: ExactSizeIterator, R: DenseExpr + ExactSizeIterator, F> ExactSizeIterator
-    for CwiseBinExpr<SparseExpr<L>, R, F>
-where
-    Self: Iterator,
-{
-}
-
-
-/*
- * Dense * Sparse Multiplicative
- */
-
-impl<L, R, A, F, Out> Iterator for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F>
-where
-    L: Iterator + DenseExpr,
-    R: Iterator<Item = IndexedExpr<A>>,
-    F: BinOp<L::Item, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.right.next().and_then(|right| {
-            while let Some((count, left)) = self.left.next() {
-                if count == right.index {
-                    return Some(self.op.apply(left, right));
-                }
-            }
-            None
-        })
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.right.size_hint()
-    }
-}
-
-impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> Expression for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F> {}
-impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.right.total_size_hint()
-    }
-}
-
- /*
- * Sparse * Dense Multipliative
- */
-
-impl<L, R, A, F, Out> Iterator for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F>
-where
-    L: Iterator<Item = IndexedExpr<A>>,
-    R: Iterator + DenseExpr,
-    F: BinOp<L::Item, R::Item, Output = Out>,
-{
-    type Item = Out;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.left.next().and_then(|left| {
-            while let Some((count, right)) = self.right.next() {
-                if count == left.index {
-                    return Some(self.op.apply(left, right));
-                }
-            }
-            None // Really this means that left and right have different sizes
-        })
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.left.size_hint()
-    }
-}
-impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> Expression for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F> {}
-impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> TotalSizeHint for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F> {
-    fn total_size_hint(&self) -> Option<usize> {
-        self.left.total_size_hint()
-    }
-}
-
-/*
- * Sparse * Sparse Additive
- */
-
-impl<L, R, A, B, F, Out> Iterator
-    for CwiseBinExpr<SparseExpr<L>, SparseExpr<R>, F>
-where
-    L: Iterator<Item = IndexedExpr<A>>,
-    R: Iterator<Item = IndexedExpr<B>>,
-    F: Additive + BinOp<A, B, Output = Out>,
-{
-    type Item = IndexedExpr<SparseAddResult<A, B, Out>>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let left_index = self.left.peek().map(|item| item.index).unwrap_or(std::usize::MAX);
-        let right_index = self.right.peek().map(|item| item.index).unwrap_or(std::usize::MAX);
-        if left_index < right_index {
-            self.left
-                .next()
-                .map(|IndexedExpr { index, expr }| IndexedExpr {
-                    index,
-                    expr: SparseAddResult::Left(expr),
-                })
-        } else if left_index > right_index {
-            self.right
-                .next()
-                .map(|IndexedExpr { index, expr }| IndexedExpr {
-                    index,
-                    expr: SparseAddResult::Right(expr),
-                })
-        } else {
-            if left_index == std::usize::MAX {
-                return None;
-            }
-            Some(IndexedExpr {
-                index: left_index,
-                expr: SparseAddResult::Expr(self.op.apply(
-                    self.left.next().unwrap().expr,
-                    self.right.next().unwrap().expr,
-                )),
-            })
-        }
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let left = self.left.size_hint();
-        let right = self.right.size_hint();
-        (
-            left.0.min(right.0),
-            left.1.and_then(|l| right.1.map(|r| l.max(r))),
-        )
-    }
-}
-impl<L: Iterator, R: Iterator, F> Expression
-    for CwiseBinExpr<SparseExpr<L>, SparseExpr<R>, F>
-where
-    F: Additive,
-    SparseExpr<L>: Iterator + Expression,
-    SparseExpr<R>: Iterator + Expression,
-{}
-impl<L: Iterator, R: Iterator, F> TotalSizeHint
-    for CwiseBinExpr<SparseExpr<L>, SparseExpr<R>, F>
-where
-    F: Additive,
-    SparseExpr<L>: Iterator + Expression,
-    SparseExpr<R>: Iterator + Expression,
-{
-    fn total_size_hint(&self) -> Option<usize> {
-        if let Some(left) = self.left.total_size_hint() {
-            if let Some(right) = self.right.total_size_hint() {
-                Some(left + right)
-            } else {
-                Some(left)
-            }
-        } else {
-            self.right.total_size_hint()
-        }
-    }
-}
-
-
-impl<L, R, A, B> Iterator
-    for CwiseMul<SparseExpr<L>, SparseExpr<R>>
-where
-    L: Iterator<Item = IndexedExpr<A>>,
-    R: Iterator<Item = IndexedExpr<B>>,
-    A: CwiseMulOp<B>,
-{
-    type Item = IndexedExpr<<A as CwiseMulOp<B>>::Output>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.left.peek().is_none() || self.right.peek().is_none() {
-            return None;
-        }
-        loop {
-            let left = self.left.peek().unwrap();
-            let right = self.right.peek().unwrap();
-            if left.index < right.index {
-                let next_left = self.left.next();
-                if next_left.is_none() {
-                    return None;
-                }
-            } else if left.index > right.index {
-                let next_right = self.right.next();
-                if next_right.is_none() {
-                    return None;
-                }
-            } else {
-                return Some(IndexedExpr { index: left.index, expr: self.op.apply(
-                    self.left.next().unwrap().expr,
-                    self.right.next().unwrap().expr,
-                )});
-            }
-        }
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let left = self.left.size_hint();
-        let right = self.right.size_hint();
-        (
-            left.0.min(right.0),
-            // Yes min because excess elements must vanish when multiplied by zero.
-            left.1.and_then(|l| right.1.map(|r| l.min(r))),
-        )
-    }
-}
-
-impl<L: Iterator, R: Iterator> Expression for CwiseMul<SparseExpr<L>, SparseExpr<R>>
-where
-    SparseExpr<L>: Iterator + Expression,
-    SparseExpr<R>: Iterator + Expression,
-{}
-impl<L: Iterator, R: Iterator> TotalSizeHint for CwiseMul<SparseExpr<L>, SparseExpr<R>>
-where
-    SparseExpr<L>: Iterator + Expression,
-    SparseExpr<R>: Iterator + Expression,
-{
-    fn total_size_hint(&self) -> Option<usize> {
-        if let Some(left) = self.left.total_size_hint() {
-            if let Some(right) = self.right.total_size_hint() {
-                Some(left.min(right))
-            } else {
-                Some(left)
-            }
-        } else {
-            self.right.total_size_hint()
-        }
-    }
-}
+impl<E: ExactSizeIterator, F> ExactSizeIterator for CwiseUnExpr<E, F> where Self: Iterator {}
 
 // Teach `Vec` types to extend themselves with small tensors.
 macro_rules! impl_array_tensor_traits {
@@ -1714,6 +1463,15 @@ macro_rules! impl_array_tensor_traits {
                     data: self.data.view(),
                     chunk_size: self.chunk_size,
                 }
+            }
+        }
+        impl<T: Scalar> Expression for [T; $n] {}
+        impl<T: Scalar> ExprSize for [T; $n] {
+            fn expr_size(&self) -> usize {
+                $n
+            }
+            fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+                Some($n)
             }
         }
         impl_array_tensor_traits!($($ns)*);
@@ -1770,77 +1528,94 @@ impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
     }
 }
 
-impl<L, R, C> DotOp<R> for L
+impl<L, R, C, D> DotOp<Tensor<R>> for L
 where
-    L: Iterator + DenseExpr,
-    R: Iterator + DenseExpr,
+    L: Iterator,
+    L: CwiseMulOp<Tensor<R>, Output = C>,
+    C: RecursiveSumOp<Output = Tensor<D>>,
+{
+    type Output = Tensor<D>;
+    fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
+        self.cwise_mul(rhs).recursive_sum()
+    }
+}
+
+impl<L, R, C, D> DotOp<R> for Tensor<L>
+where
+    R: Iterator,
+    Tensor<L>: CwiseMulOp<R, Output = C>,
+    // Specifying output to be tensor here helps the compiler with type inference.
+    C: RecursiveSumOp<Output = Tensor<D>>,
+{
+    type Output = Tensor<D>;
+    fn dot_op(self, rhs: R) -> Self::Output {
+        self.cwise_mul(rhs).recursive_sum()
+    }
+}
+
+impl<L, R, C, D> DotOp<R> for L
+where
+    L: Iterator,
+    R: Iterator,
     L: CwiseMulOp<R, Output = C>,
-    C: RecursiveSumOp,
+    // Specifying output to be tensor here helps the compiler with type inference.
+    C: RecursiveSumOp<Output = Tensor<D>>,
 {
-    type Output = C::Output;
+    type Output = Tensor<D>;
     fn dot_op(self, rhs: R) -> Self::Output {
         self.cwise_mul(rhs).recursive_sum()
     }
 }
 
-impl<L: Iterator, R: Iterator, C> DotOp<SparseExpr<R>> for SparseExpr<L>
-where
-    SparseExpr<L>: Iterator,
-    SparseExpr<R>: Iterator,
-    SparseExpr<L>: CwiseMulOp<SparseExpr<R>, Output = C>,
-    C: RecursiveSumOp,
-{
-    type Output = C::Output;
-    fn dot_op(self, rhs: SparseExpr<R>) -> Self::Output {
-        self.cwise_mul(rhs).recursive_sum()
-    }
-}
+// The following implementation of Sparse.dot(Dense) handles repeating indices in the Sparse
+// type. Keeping it around for future reference. This can be still accomplished with the current
+// infrastructure using CwiseMulExpr, but it would require a Cylce expr of some sort.
+//impl<L: Iterator, R, A, B, Out> DotOp<R> for SparseExpr<L>
+//where
+//    SparseExpr<L>: Iterator<Item = IndexedExpr<A>>,
+//    R: Iterator<Item = B> + DenseExpr + Clone,
+//    A: DotOp<B, Output = Out>,
+//    B: std::fmt::Debug,
+//    A: std::fmt::Debug,
+//    Out: Default + AddOp<Output = Out>,
+//{
+//    type Output = Out;
+//    fn dot_op(self, rhs: R) -> Self::Output {
+//        self.scan(
+//            (0, rhs.clone()),
+//            |(prev_idx, cur), IndexedExpr { index, expr }| {
+//                if index <= *prev_idx {
+//                    // Reset the rhs iterator
+//                    *cur = rhs.clone();
+//                    *prev_idx = 0;
+//                }
+//                let rhs_val = cur
+//                    .nth(index - *prev_idx)
+//                    .expect("Sparse . Dense dot product index out of bounds");
+//                let dot = expr.dot_op(rhs_val);
+//                *prev_idx = index + 1;
+//                Some(dot)
+//            },
+//        )
+//        .fold(Default::default(), |acc, x| acc + x)
+//    }
+//}
 
-impl<L: Iterator, R, A, B, Out> DotOp<R> for SparseExpr<L>
-where
-    SparseExpr<L>: Iterator<Item = IndexedExpr<A>>,
-    R: Iterator<Item = B> + DenseExpr + Clone,
-    A: DotOp<B, Output = Out>,
-    B: std::fmt::Debug,
-    A: std::fmt::Debug,
-    Out: Default + AddOp<Output = Out>,
-{
-    type Output = Out;
-    fn dot_op(self, rhs: R) -> Self::Output {
-        self.scan(
-            (0, rhs.clone()),
-            |(prev_idx, cur), IndexedExpr { index, expr }| {
-                if index <= *prev_idx {
-                    // Reset the rhs iterator
-                    *cur = rhs.clone();
-                    *prev_idx = 0;
-                }
-                let rhs_val = cur
-                    .nth(index - *prev_idx)
-                    .expect("Sparse . Dense dot product index out of bounds");
-                let dot = expr.dot_op(rhs_val);
-                *prev_idx = index + 1;
-                Some(dot)
-            },
-        )
-        .fold(Default::default(), |acc, x| acc + x)
-    }
-}
-
-impl<L, R: Iterator, A, B, Out> DotOp<SparseExpr<R>> for L
-where
-    L: Iterator<Item = A> + DenseExpr + Clone,
-    SparseExpr<R>: Iterator<Item = IndexedExpr<B>>,
-    B: DotOp<A, Output = Out>,
-    B: std::fmt::Debug,
-    A: std::fmt::Debug,
-    Out: Default + AddOp<Output = Out>,
-{
-    type Output = Out;
-    fn dot_op(self, rhs: SparseExpr<R>) -> Self::Output {
-        rhs.dot_op(self)
-    }
-}
+//impl<L, R: Iterator, A, B, Out> DotOp<SparseExpr<R>> for L
+//where
+//    L: Iterator<Item = A> + DenseExpr + Clone,
+//    SparseExpr<R>: Iterator<Item = IndexedExpr<B>>,
+//    B: DotOp<A, Output = Out>,
+//    B: std::fmt::Debug,
+//    A: std::fmt::Debug,
+//    Out: Default + AddOp<Output = Out>,
+//{
+//    type Output = Out;
+//    #[inline]
+//    fn dot_op(self, rhs: SparseExpr<R>) -> Self::Output {
+//        rhs.dot_op(self)
+//    }
+//}
 
 #[cfg(test)]
 mod tests {
@@ -1918,20 +1693,20 @@ mod tests {
         let a = 32u32;
         let v = vec![1u32, 2, 3];
         let u = vec![3u32, 2, 1];
-        assert_eq!(320u32, v.expr().dot::<u32,_>(u.expr()) * a);
+        assert_eq!(320u32, v.expr().dot::<u32, _>(u.expr()) * a);
         assert_eq!(320u32, (v.expr().dot_op(u.expr()) * a.expr()).eval());
     }
 
-    //#[test]
-    //fn complex_exprs() {
-    //    let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
-    //    let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
-    //    let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
-    //    let out: i32 = 
-    //        /*(Tensor::new(2) * c.expr() + */(b.expr() * a.expr().dot_op(c.expr()))// - a.expr())
-    //            .dot(b.expr());
-    //    assert_eq!( 19626, out);
-    //}
+    #[test]
+    fn complex_exprs() {
+        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
+        let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
+        let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
+        let out: i32 =
+            (Tensor::new(2) * c.expr() + (b.expr() * a.expr().dot_op(c.expr())) - a.expr())
+                .dot(b.expr());
+        assert_eq!( 19626, out);
+    }
 
     #[test]
     fn sparse_add() {
@@ -1978,12 +1753,16 @@ mod tests {
             vec![0, 2, 1],
             Sparse::from_dim(vec![3, 4, 3], 6, vec![4, 5, 6]),
         );
+
+        let mut c = Chunked::from_offsets(vec![0], Sparse::from_dim(vec![], 6, vec![]));
+        c.eval_extend(b.expr());
+
         assert_eq!(
             Chunked::from_sizes(
                 vec![1, 2, 2],
                 Sparse::from_dim(vec![0, 3, 4, 3, 5], 6, vec![1, 4, 5, 8, 3])
             ),
-            (a.expr() + b.expr()).eval()
+            Evaluate::eval(a.expr() + b.expr())
         );
     }
 
@@ -2068,17 +1847,17 @@ mod tests {
     #[test]
     fn sparse_dense_dot() {
         let a = vec![0, 1, 4, 8, 7, 3];
-        let b = Sparse::from_dim(vec![3, 4, 3], a.len(), vec![7, 8, 9]);
-        // 7*8 + 8*7 + 9*8
-        assert_eq!(184, a.expr().dot(b.expr()));
-        assert_eq!(184, b.expr().dot(a.expr()));
+        let b = Sparse::from_dim(vec![3, 4, 5], a.len(), vec![7, 8, 9]);
+        // 7*8 + 8*7 + 9*3
+        assert_eq!(139, a.expr().dot(b.expr()));
+        assert_eq!(139, b.expr().dot(a.expr()));
 
         // Longer sequence
-        let a = vec![0, 1, 4, 8, 7, 3];
-        let b = Sparse::from_dim(vec![3, 4, 1, 2, 5], a.len(), vec![1, 2, 3, 4, 5]);
-        // 8*1 + 7*2 + 1*3 + 4*4 + 3*5
-        assert_eq!(56, a.expr().dot(b.expr()));
-        assert_eq!(56, b.expr().dot(a.expr()));
+        //let a = vec![0, 1, 4, 8, 7, 3];
+        //let b = Sparse::from_dim(vec![3, 4, 1, 2, 5], a.len(), vec![1, 2, 3, 4, 5]);
+        //// 8*1 + 7*2 + 1*3 + 4*4 + 3*5
+        //assert_eq!(56, a.expr().dot(b.expr()));
+        //assert_eq!(56, b.expr().dot(a.expr()));
     }
 
     #[test]
@@ -2086,7 +1865,10 @@ mod tests {
         let a = Chunked3::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let b = vec![2, 1, 4];
         assert_eq!(7, b.expr().reduce(Addition));
-        assert_eq!([34i32, 41, 48], a.expr().cwise_mul(b.expr()).reduce::<[i32; 3], _>(Addition));
+        assert_eq!(
+            [34i32, 41, 48],
+            a.expr().cwise_mul(b.expr()).reduce::<[i32; 3], _>(Addition)
+        );
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         let out: Vec<i32> = Evaluate::eval(Reduce::with_op(a.expr().cwise_mul(b.expr()), Addition));
         assert_eq!(vec![34i32, 41, 48], out);
@@ -2094,27 +1876,32 @@ mod tests {
 
     #[test]
     fn contraction() {
-        let a = vec![1,2,3];
-        let b = vec![4,5,6];
-        let out: Vec<i32> = Evaluate::eval(CwiseSum::new(CwiseMul::new(a.expr(), b.expr())));
-        assert_eq!(vec![4,10,18], out);
+        let a = vec![1, 2, 3];
+        let b = vec![4, 5, 6];
+        let out: Vec<i32> = Evaluate::eval(CwiseSum::new(CwiseMulExpr::new(a.expr(), b.expr())));
+        assert_eq!(vec![4, 10, 18], out);
 
-        let a = Chunked2::from_flat(vec![1,2,3,4]);
-        let b = Chunked2::from_flat(vec![4,5,6,7]);
-        assert_eq!(vec![14, 46], CwiseSum::new(CwiseMul::new(a.expr(), b.expr())).eval::<Vec<i32>>());
+        let a = Chunked2::from_flat(vec![1, 2, 3, 4]);
+        let b = Chunked2::from_flat(vec![4, 5, 6, 7]);
+        assert_eq!(
+            vec![14, 46],
+            CwiseSum::new(CwiseMulExpr::new(a.expr(), b.expr())).eval::<Vec<i32>>()
+        );
 
-        let a = Sparse::from_dim(vec![0,2], 4, vec![1,2]);
+        let a = Sparse::from_dim(vec![0, 2], 4, vec![1, 2]);
         let out: Sparse<Vec<i32>, _, _> = Evaluate::eval(CwiseSum::new(a.expr()));
-        assert_eq!(Sparse::from_dim(vec![0,2], 4, vec![1, 2]), out);
+        assert_eq!(Sparse::from_dim(vec![0, 2], 4, vec![1, 2]), out);
 
-        let a = Sparse::from_dim(vec![0,2], 4, vec![2,3]);
-        let b = Sparse::from_dim(vec![1,2], 4, vec![5,6]);
-        let out: Sparse<Vec<i32>, _, _> = Evaluate::eval(CwiseSum::new(CwiseMul::new(a.expr(), b.expr())));
+        let a = Sparse::from_dim(vec![0, 2], 4, vec![2, 3]);
+        let b = Sparse::from_dim(vec![1, 2], 4, vec![5, 6]);
+        let out: Sparse<Vec<i32>, _, _> =
+            Evaluate::eval(CwiseSum::new(CwiseMulExpr::new(a.expr(), b.expr())));
         assert_eq!(Sparse::from_dim(vec![2], 4, vec![18]), out);
 
-        let a = Sparse::from_dim(vec![0,2], 4, Chunked2::from_flat(vec![1,2,3,4]));
-        let b = Sparse::from_dim(vec![1,2], 4, Chunked2::from_flat(vec![4,5,6,7]));
-        let out: Sparse<Vec<i32>, _, _> = Evaluate::eval(CwiseSum::new(CwiseMul::new(a.expr(), b.expr())));
+        let a = Sparse::from_dim(vec![0, 2], 4, Chunked2::from_flat(vec![1, 2, 3, 4]));
+        let b = Sparse::from_dim(vec![1, 2], 4, Chunked2::from_flat(vec![4, 5, 6, 7]));
+        let out: Sparse<Vec<i32>, _, _> =
+            Evaluate::eval(CwiseSum::new(CwiseMulExpr::new(a.expr(), b.expr())));
         assert_eq!(Sparse::from_dim(vec![2], 4, vec![46]), out);
     }
 
@@ -2137,22 +1924,53 @@ mod tests {
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         let b = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         let out: ChunkedN<Vec<_>> = Evaluate::eval(a.expr() * b.expr());
-        assert_eq!(ChunkedN::from_flat_with_stride(vec![30, 36, 42, 66, 81, 96, 102, 126, 150], 3), out);
+        assert_eq!(
+            ChunkedN::from_flat_with_stride(vec![30, 36, 42, 66, 81, 96, 102, 126, 150], 3),
+            out
+        );
 
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         let b = Chunked3::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
         let out: Chunked3<Vec<_>> = Evaluate::eval(a.expr() * b.expr());
-        assert_eq!(Chunked3::from_flat(vec![30, 36, 42, 66, 81, 96, 102, 126, 150]), out);
+        assert_eq!(
+            Chunked3::from_flat(vec![30, 36, 42, 66, 81, 96, 102, 126, 150]),
+            out
+        );
     }
 
-    //#[test]
-    //fn sparse_matrix_vector_mul() {
-    //    // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
-    //    let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
-    //    let b = vec![2, 1, 3, 4];
-    //    let out: Vec<i32> = Evaluate::eval(a.expr() * b.expr());
-    //    assert_eq!(vec![8, 19], out);
-    //}
+    #[test]
+    fn sparse_matrix_vector_mul() {
+        // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
+        let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
+        let b = vec![2, 1, 3, 4];
+        let out: Vec<i32> = (a.expr() * b.expr()).eval();
+        assert_eq!(vec![8, 19], out);
+    }
+
+    #[test]
+    fn sparse_matrix_matrix_mul() {
+        // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
+        // [1 . 2 . ]
+        // [. 3 . 4 ]
+        let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
+        // Sparse matrix with 1 entry in each row, there are 4 rows and 2 columns.
+        // [1 .]
+        // [. 2]
+        // [. 3]
+        // [4 .]
+        let b = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 1, 1, 0], 2, vec![1,2,3,4]), 1);
+        let ab_exp = ChunkedN::from_flat_with_stride(vec![1, 6, 16, 6], 2);
+        let mut ab = a.expr() * b.expr();
+        //dbg!(&ab);
+        //let mut next = ab.next().unwrap();
+        ////dbg!(&next);
+        //let mut v = Vec::new();
+        //v.view_mut().as_mut_tensor().add_assign(next);
+        ////let mut next_next = next.expr.next().unwrap();
+        //dbg!(&v);
+        //assert!(false);
+        //assert_eq!(ab_exp, (a.expr() * b.expr()).eval());
+    }
 
     //#[test]
     //fn sparse_matrix_add() {

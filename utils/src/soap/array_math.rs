@@ -51,7 +51,18 @@ macro_rules! impl_array_vectors {
                 }
             }
         }
-        
+
+        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for Tensor<[T]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                debug_assert_eq!(self.len(), rhs.len());
+                for i in 0..$n {
+                    unsafe { *self.data.get_unchecked_mut(i) += *rhs.data.get_unchecked(i) };
+                }
+            }
+        }
+
         impl<T: Scalar> CwiseMulOp<Tensor<T>> for Tensor<[T; $n]> {
             type Output = Tensor<[T; $n]>;
             #[inline]
@@ -198,7 +209,17 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                for i in 0..$n {
+                    self.data[i] += rhs.data[i];
+                }
+            }
+        }
         impl<T: Scalar> AddAssign for Tensor<[T; $n]> {
+            #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Self) {
                 for i in 0..$n {
@@ -207,6 +228,7 @@ macro_rules! impl_array_vectors {
             }
         }
         impl<T: Scalar> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
+            #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: &Tensor<[T; $n]>) {
                 for i in 0..$n {
@@ -221,6 +243,16 @@ macro_rules! impl_array_vectors {
             fn sub(mut self, rhs: Self) -> Self::Output {
                 self -= rhs;
                 self
+            }
+        }
+
+        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                for i in 0..$n {
+                    self.data[i] -= rhs.data[i];
+                }
             }
         }
 
@@ -572,6 +604,15 @@ macro_rules! impl_array_matrices {
             }
         }
 
+        impl<T: Scalar> AddAssign<Tensor<[[T; $c]; $r]>> for &mut Tensor<[[T; $c]; $r]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+                for i in 0..$r {
+                    *self.data[i].as_mut_tensor() += *rhs.data[i].as_tensor();
+                }
+            }
+        }
         impl<T: Scalar> AddAssign for Tensor<[[T; $c]; $r]> {
             #[inline]
             #[unroll_for_loops]
@@ -600,6 +641,15 @@ macro_rules! impl_array_matrices {
             }
         }
 
+        impl<T: Scalar> SubAssign<Tensor<[[T; $c]; $r]>> for &mut Tensor<[[T; $c]; $r]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+                for i in 0..$r {
+                    *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
+                }
+            }
+        }
         impl<T: Scalar> SubAssign for Tensor<[[T; $c]; $r]> {
             #[inline]
             #[unroll_for_loops]

@@ -14,11 +14,13 @@ mod eval;
 mod sparse_expr;
 mod cwise_bin_expr;
 mod target;
+mod expr_mut;
 pub use enumerate::Enumerate;
 pub use eval::{EvalExtend, Evaluate};
 pub use sparse_expr::SparseExpr;
 pub use cwise_bin_expr::*;
 pub use target::Target;
+pub use expr_mut::*;
 
 /// Recursive Sum operator.
 ///
@@ -979,6 +981,14 @@ impl<'a, T: Clone> IntoExpr for &'a [T] {
     }
 }
 
+impl<'a, T> IntoExpr for &'a mut [T] {
+    type Expr = SliceIterExprMut<'a, T>;
+    #[inline]
+    fn into_expr(self) -> Self::Expr {
+        self.expr_mut()
+    }
+}
+
 impl<T: Clone> IntoExpr for Vec<T> {
     type Expr = VecIterExpr<T>;
     #[inline]
@@ -1450,6 +1460,12 @@ macro_rules! impl_array_tensor_traits {
                 Tensor::new(*self)
             }
         }
+        impl<'a, T: Scalar> IntoExpr for &'a mut [T; $n] {
+            type Expr = &'a mut Tensor<[T; $n]>;
+            fn into_expr(self) -> Self::Expr {
+                self.as_mut_tensor()
+            }
+        }
         impl<'a, T: Scalar> Expr<'a> for [T; $n] {
             type Output = Tensor<[T; $n]>;
             fn expr(&'a self) -> Self::Output {
@@ -1461,6 +1477,15 @@ macro_rules! impl_array_tensor_traits {
             fn into_expr(self) -> Self::Expr {
                 UniChunkedIterExpr {
                     data: self.data.view(),
+                    chunk_size: self.chunk_size,
+                }
+            }
+        }
+        impl<'a, T, N> IntoExpr for UniChunked<&'a mut [T; $n], N> {
+            type Expr = UniChunkedIterExpr<&'a mut [T], N>;
+            fn into_expr(self) -> Self::Expr {
+                UniChunkedIterExpr {
+                    data: self.data.view_mut(),
                     chunk_size: self.chunk_size,
                 }
             }
@@ -1660,7 +1685,7 @@ mod tests {
     fn unichunked_add_assign() {
         let mut a = Chunked2::from_flat(vec![1, 2, 3, 4]);
         let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
-        a.as_mut_tensor() += b.expr();
+        AddAssign::add_assign(&mut a.expr_mut(), b.expr());
         assert_eq!(
             Chunked2::from_flat(vec![6, 8, 10, 12]),
             a
@@ -1671,7 +1696,7 @@ mod tests {
     fn chunkedn_add_assign() {
         let mut a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
         let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
-        a.as_mut_tensor() += b.expr();
+        a.expr_mut().add_assign(b.expr());
         assert_eq!(
             ChunkedN::from_flat_with_stride(vec![6, 8, 10, 12], 2),
             a

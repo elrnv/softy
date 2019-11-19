@@ -205,6 +205,13 @@ macro_rules! impl_scalar {
                     Tensor::new(*self)
                 }
             }
+            impl<'a> ExprMut<'a> for $type {
+                type Output = &'a mut Tensor<$type>;
+                #[inline]
+                fn expr_mut(&'a mut self) -> Self::Output {
+                    self.as_mut_tensor()
+                }
+            }
 
             impl IntoExpr for $type {
                 type Expr = Tensor<$type>;
@@ -219,6 +226,14 @@ macro_rules! impl_scalar {
                 #[inline]
                 fn into_expr(self) -> Self::Expr {
                     Tensor::new(*self)
+                }
+            }
+
+            impl<'a> IntoExpr for &'a mut $type {
+                type Expr = &'a mut Tensor<$type>;
+                #[inline]
+                fn into_expr(self) -> Self::Expr {
+                    self.as_mut_tensor()
                 }
             }
 
@@ -283,6 +298,12 @@ mod autodiff_impls {
         type Expr = Tensor<F>;
         fn into_expr(self) -> Self::Expr {
             Tensor::new(*self)
+        }
+    }
+    impl<'a> IntoExpr for &'a mut F {
+        type Expr = &'a mut Tensor<F>;
+        fn into_expr(self) -> Self::Expr {
+            self.as_mut_tensor()
         }
     }
     impl DotOp for F {

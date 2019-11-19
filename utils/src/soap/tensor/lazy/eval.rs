@@ -444,24 +444,7 @@ where
     }
 }
 
-impl<I, S, N> AddAssign<I> for Tensor<UniChunked<S, N>>
-where
-    I: Iterator,
-    UniChunked<S, N>: Set,
-    Tensor<S>: AddAssign<I::Item>,
-    N: Dimension,
-{
-    #[inline]
-    fn add_assign(&mut self, iter: I) {
-        for elem in iter {
-            let orig_len = self.data.len();
-            self.data.data.as_mut_tensor().add_assign(elem);
-            assert_eq!(self.data.len() - orig_len, self.data.chunk_size())
-        }
-    }
-}
-
-impl<E, T, A> AddAssign<Reduce<E, Addition>> for Tensor<T>
+impl<E, T: Scalar, A> AddAssign<Reduce<E, Addition>> for Tensor<T>
 where
     E: Iterator<Item = A>,
     Tensor<T>: AddAssign<A>,
@@ -474,6 +457,45 @@ where
     }
 }
 
+impl<'a, T, I, Out: 'a> AddAssign<I> for SliceIterExprMut<'a, T>
+where
+    Self: Iterator<Item = &'a mut Out>,
+    I: Iterator,
+    Out: AddAssign<I::Item>,
+{
+    #[inline]
+    fn add_assign(&mut self, rhs: I) {
+        for (rhs, out) in rhs.zip(self) {
+            out.add_assign(rhs);
+        }
+    }
+}
+
+macro_rules! impl_bin_op_assign {
+    (impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_fn:ident }) => {
+        impl<$($type_vars),*, R, ItemIn, ItemOut> $op_trait<R> for $type
+        where
+            $type: Iterator<Item = ItemOut>,
+            R: Iterator<Item = ItemIn>,
+            ItemOut: $op_trait<ItemIn>,
+        {
+            #[inline]
+            fn $op_fn(&mut self, rhs: R) {
+                for (rhs, mut out) in rhs.zip(self) {
+                    out.$op_fn(rhs);
+                }
+            }
+        }
+    }
+}
+
+impl_bin_op_assign!(impl<S, N> AddAssign for UniChunkedIterExpr<S, N> { add_assign });
+impl_bin_op_assign!(impl<'a, S> AddAssign for ChunkedIterExpr<'a, S> { add_assign });
+impl_bin_op_assign!(impl<'a, S> AddAssign for SubsetIterExpr<'a, S> { add_assign });
+
+impl_bin_op_assign!(impl<S, N> SubAssign for UniChunkedIterExpr<S, N> { sub_assign });
+impl_bin_op_assign!(impl<'a, S> SubAssign for ChunkedIterExpr<'a, S> { sub_assign });
+impl_bin_op_assign!(impl<'a, S> SubAssign for SubsetIterExpr<'a, S> { sub_assign });
 
 impl<T, I, A> SubAssign<I> for Tensor<[T]>
 where
@@ -484,23 +506,6 @@ where
     fn sub_assign(&mut self, rhs: I) {
         for (rhs, out) in rhs.zip(self.data.iter_mut()) {
             *out.as_mut_tensor() -= rhs;
-        }
-    }
-}
-
-impl<I, S, N> SubAssign<I> for Tensor<UniChunked<S, N>>
-where
-    I: Iterator,
-    UniChunked<S, N>: Set,
-    Tensor<S>: SubAssign<I::Item>,
-    N: Dimension,
-{
-    #[inline]
-    fn sub_assign(&mut self, iter: I) {
-        for elem in iter {
-            let orig_len = self.data.len();
-            self.data.data.as_mut_tensor().sub_assign(elem);
-            assert_eq!(self.data.len() - orig_len, self.data.chunk_size())
         }
     }
 }
@@ -518,3 +523,16 @@ where
     }
 }
 
+impl<'a, T, I, Out: 'a> SubAssign<I> for SliceIterExprMut<'a, T>
+where
+    Self: Iterator<Item = &'a mut Out>,
+    I: Iterator,
+    Out: SubAssign<I::Item>,
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: I) {
+        for (rhs, out) in rhs.zip(self) {
+            out.sub_assign(rhs);
+        }
+    }
+}

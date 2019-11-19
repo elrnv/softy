@@ -1704,6 +1704,17 @@ mod tests {
     }
 
     #[test]
+    fn subset_unichunked_add_assign() {
+        let mut a = Subset::from_unique_ordered_indices(vec![1,2], Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6]));
+        let b = Subset::from_unique_ordered_indices(vec![0,2], Chunked2::from_flat(vec![7, 8, 9, 10, 11, 12]));
+        AddAssign::add_assign(&mut a.expr_mut(), b.expr());
+        assert_eq!(
+            Subset::from_unique_ordered_indices(vec![1,2], Chunked2::from_flat(vec![1, 2, 10, 12, 16, 18])),
+            a
+        );
+    }
+
+    #[test]
     fn chunkedn_unichunked_add() {
         let a =
             ChunkedN::from_flat_with_stride(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]), 2);

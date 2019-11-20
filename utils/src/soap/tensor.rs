@@ -1506,23 +1506,23 @@ macro_rules! impl_chunked_tensor_arithmetic {
          * Scalar multiplication
          */
 
-        impl<S, O, T> Mul<T> for Tensor<$chunked<S, O>>
-        where
-            T: Scalar,
-            $chunked<S, O>: Set,
-            S: IntoOwnedData,
-            Tensor<S>: Mul<T, Output = Tensor<S::OwnedData>>,
-        {
-            type Output = Tensor<$chunked<S::OwnedData, O>>;
+        //impl<S, O, T> Mul<T> for Tensor<$chunked<S, O>>
+        //where
+        //    T: Scalar,
+        //    $chunked<S, O>: Set,
+        //    S: IntoOwnedData,
+        //    Tensor<S>: Mul<T, Output = Tensor<S::OwnedData>>,
+        //{
+        //    type Output = Tensor<$chunked<S::OwnedData, O>>;
 
-            fn mul(self, other: T) -> Self::Output {
-                let $chunked { $chunks, data } = self.data;
-                Tensor::new($chunked {
-                    $chunks,
-                    data: (Tensor::new(data) * other).data,
-                })
-            }
-        }
+        //    fn mul(self, other: T) -> Self::Output {
+        //        let $chunked { $chunks, data } = self.data;
+        //        Tensor::new($chunked {
+        //            $chunks,
+        //            data: (Tensor::new(data) * other).data,
+        //        })
+        //    }
+        //}
         /*
          * Scalar division
          */

@@ -5,6 +5,7 @@ use super::*;
 use std::ops::Add as AddOp;
 use std::ops::AddAssign as AddAssignOp;
 use std::ops::Mul as MulOp;
+use std::ops::MulAssign as MulAssignOp;
 use std::ops::Neg as NegOp;
 use std::ops::Sub as SubOp;
 use std::ops::SubAssign as SubAssignOp;
@@ -81,6 +82,8 @@ pub struct Addition;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Subtraction;
 #[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CwiseMultiplication;
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Multiplication;
 
 macro_rules! impl_default {
@@ -94,9 +97,14 @@ macro_rules! impl_default {
 }
 impl_default!(Addition);
 impl_default!(Subtraction);
+impl_default!(CwiseMultiplication);
 impl_default!(Multiplication);
 impl_default!(Summation);
 impl_default!(Negation);
+
+///// A marker trait to identify eager expressions like small tensors.
+//pub trait Eager {}
+//impl<T> Eager for Tensor<T> {}
 
 /// A marker trait to describe unary operations that reduce the underlying expression to a singleton.
 pub trait Reduction {}
@@ -115,6 +123,7 @@ impl Additive for Subtraction {}
 /// More precisely, given an element `a` and an identity element `id`, implementing this trait
 /// indicates that `apply(a, id) = id`.
 pub trait Multiplicative {}
+impl Multiplicative for CwiseMultiplication {}
 impl Multiplicative for Multiplication {}
 
 pub trait UnOp<T> {
@@ -238,7 +247,7 @@ where
     }
 }
 
-impl<L, R, O> BinOp<L, R> for Multiplication
+impl<L, R, O> BinOp<L, R> for CwiseMultiplication
 where
     L: CwiseMulOp<R, Output = O>,
 {
@@ -247,12 +256,30 @@ where
         lhs.cwise_mul(rhs)
     }
 }
-impl<L: ?Sized, R> BinOpAssign<L, R> for Multiplication
+impl<L: ?Sized, R> BinOpAssign<L, R> for CwiseMultiplication
 where
     L: CwiseMulAssignOp<R>,
 {
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         lhs.cwise_mul_assign(rhs);
+    }
+}
+
+impl<L, R, O> BinOp<L, R> for Multiplication
+where
+    L: MulOp<R, Output = O>,
+{
+    type Output = O;
+    fn apply(&self, lhs: L, rhs: R) -> Self::Output {
+        lhs.mul(rhs)
+    }
+}
+impl<L: ?Sized, R> BinOpAssign<L, R> for Multiplication
+where
+    L: MulAssignOp<R>,
+{
+    fn apply_assign(&self, lhs: &mut L, rhs: R) {
+        lhs.mul_assign(rhs);
     }
 }
 
@@ -1105,13 +1132,6 @@ macro_rules! impl_bin_op {
                 }
             }
         }
-        impl<$($type_vars),*, R> $op_trait<Tensor<R>> for $type {
-            type Output = $op_type<Self, Tensor<R>>;
-            #[inline]
-            fn $op_fn(self, rhs: Tensor<R>) -> Self::Output {
-                $op_type::new(self, rhs)
-            }
-        }
         impl<$($type_vars),*, R: DenseExpr> $op_trait<R> for $type {
             type Output = $op_type<Self, R>;
             #[inline]
@@ -1122,6 +1142,13 @@ macro_rules! impl_bin_op {
     };
     (impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_type:ident::$op_fn:ident }) => {
         impl_bin_op!(common impl<$($type_vars),*> $op_trait for $type { $op_type::$op_fn });
+        impl<$($type_vars),*, R> $op_trait<Tensor<R>> for $type {
+            type Output = $op_type<Self, Tensor<R>>;
+            #[inline]
+            fn $op_fn(self, rhs: Tensor<R>) -> Self::Output {
+                $op_type::new(self, rhs)
+            }
+        }
 
         impl<$($type_vars),*, R> $op_trait<SparseExpr<R>> for $type
             where R: Iterator,
@@ -1137,6 +1164,14 @@ macro_rules! impl_bin_op {
     // For multiplication we must enumerate when multiplying against sparse expressions
     (mul impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_type:ident::$op_fn:ident }) => {
         impl_bin_op!(common impl<$($type_vars),*> $op_trait for $type { $op_type::$op_fn });
+
+        impl<$($type_vars),*, R> $op_trait<Tensor<R>> for $type {
+            type Output = CwiseBinExpr<Self, Tensor<R>, Multiplication>;
+            #[inline]
+            fn $op_fn(self, rhs: Tensor<R>) -> Self::Output {
+                CwiseBinExpr::new(self, rhs)
+            }
+        }
 
         impl<$($type_vars),*, R> $op_trait<SparseExpr<R>> for $type
             where R: Iterator,
@@ -1164,12 +1199,12 @@ macro_rules! impl_bin_op {
     (mul sparse impl<$($type_vars:tt),*> $op_trait:ident for $type:ty { $op_type:ident::$op_fn:ident }) => {
         impl<$($type_vars),*, R> $op_trait<Tensor<R>> for $type
             where E: Iterator,
-                  $op_type<Self, Tensor<R>>: Iterator,
+                  CwiseBinExpr<Self, Tensor<R>, Multiplication>: Iterator,
         {
-            type Output = SparseExpr<$op_type<Self, Tensor<R>>>;
+            type Output = SparseExpr<CwiseBinExpr<Self, Tensor<R>, Multiplication>>;
             #[inline]
             fn $op_fn(self, rhs: Tensor<R>) -> Self::Output {
-                SparseExpr::new($op_type::new(self, rhs))
+                SparseExpr::new(CwiseBinExpr::new(self, rhs))
             }
         }
         impl<$($type_vars),*, R: DenseExpr> $op_trait<R> for $type
@@ -1231,31 +1266,31 @@ macro_rules! impl_scalar_mul {
     };
     (impl<$($type_vars:tt),*> for $type:ty where $($type_constraints:tt)*) => {
         impl<$($type_vars),*> MulOp<T> for $type where T: Scalar, $($type_constraints)* {
-            type Output = CwiseMulExpr<Self, Tensor<T>>;
+            type Output = CwiseBinExpr<Self, Tensor<T>, Multiplication>;
             #[inline]
             fn mul(self, rhs: T) -> Self::Output {
-                CwiseMulExpr::new(self, Tensor::new(rhs))
+                CwiseBinExpr::new(self, Tensor::new(rhs))
             }
         }
         impl<$($type_vars),*> MulOp<Tensor<T>> for $type where T: Scalar, $($type_constraints)* {
-            type Output = CwiseMulExpr<Self, Tensor<T>>;
+            type Output = CwiseBinExpr<Self, Tensor<T>, Multiplication>;
             #[inline]
             fn mul(self, rhs: Tensor<T>) -> Self::Output {
-                CwiseMulExpr::new(self, rhs)
+                CwiseBinExpr::new(self, rhs)
             }
         }
         impl<$($type_vars),*> MulOp<$type> for Tensor<T> where T: Scalar, $($type_constraints)* {
-            type Output = CwiseMulExpr<Tensor<T>, $type>;
+            type Output = CwiseBinExpr<Tensor<T>, $type, Multiplication>;
             #[inline]
             fn mul(self, rhs: $type) -> Self::Output {
-                CwiseMulExpr::new(self, rhs)
+                CwiseBinExpr::new(self, rhs)
             }
         }
-        impl<$($type_vars),*> CwiseMulOp<$type> for Tensor<T> where T: Scalar, $($type_constraints)* {
-            type Output = CwiseMulExpr<Tensor<T>, $type>;
+        impl<$($type_vars),*> CwiseMulOp<$type> for Tensor<T> where $($type_constraints)* {
+            type Output = CwiseBinExpr<Tensor<T>, $type, Multiplication>;
             #[inline]
             fn cwise_mul(self, rhs: $type) -> Self::Output {
-                CwiseMulExpr::new(self, rhs)
+                CwiseBinExpr::new(self, rhs)
             }
         }
     }
@@ -1442,10 +1477,10 @@ impl<E: Iterator + Expression> ExprSize for CwiseUnExpr<E, Negation> {
 impl<E: ExactSizeIterator, F> ExactSizeIterator for CwiseUnExpr<E, F> where Self: Iterator {}
 
 // Teach `Vec` types to extend themselves with small tensors.
-macro_rules! impl_array_tensor_traits {
+macro_rules! impl_array_vector_traits {
     () => {};
     ($n:expr) => { // Allow optional trailing comma
-        impl_array_tensor_traits!($n,);
+        impl_array_vector_traits!($n,);
     };
     ($n:expr, $($ns:tt)*) => {
         impl<T: Scalar> IntoExpr for [T; $n] {
@@ -1472,8 +1507,8 @@ macro_rules! impl_array_tensor_traits {
                 Tensor::new(*self)
             }
         }
-        impl<'a, T, N> IntoExpr for UniChunked<&'a [T; $n], N> {
-            type Expr = UniChunkedIterExpr<&'a [T], N>;
+        impl<'a, T> IntoExpr for ChunkedN<&'a [T; $n]> {
+            type Expr = ChunkedNIterExpr<&'a [T]>;
             fn into_expr(self) -> Self::Expr {
                 UniChunkedIterExpr {
                     data: self.data.view(),
@@ -1481,13 +1516,29 @@ macro_rules! impl_array_tensor_traits {
                 }
             }
         }
-        impl<'a, T, N> IntoExpr for UniChunked<&'a mut [T; $n], N> {
-            type Expr = UniChunkedIterExpr<&'a mut [T], N>;
+        impl<'a, T> IntoExpr for ChunkedN<&'a mut [T; $n]> {
+            type Expr = ChunkedNIterExpr<&'a mut [T]>;
             fn into_expr(self) -> Self::Expr {
                 UniChunkedIterExpr {
                     data: self.data.view_mut(),
                     chunk_size: self.chunk_size,
                 }
+            }
+        }
+        impl<'a, T, N: Unsigned, A: Copy + 'a> IntoExpr for UniChunked<&'a [T; $n], U<N>>
+            where Self: AsMatrix<Matrix = &'a Tensor<A>>,
+        {
+            type Expr = Tensor<A>;
+            fn into_expr(self) -> Self::Expr {
+                *self.as_matrix()
+            }
+        }
+        impl<'a, T, N: Unsigned, A: 'a> IntoExpr for UniChunked<&'a mut [T; $n], U<N>>
+            where Self: AsMatrix<Matrix = &'a mut Tensor<A>>,
+        {
+            type Expr = &'a mut Tensor<A>;
+            fn into_expr(self) -> Self::Expr {
+                self.as_matrix()
             }
         }
         impl<T: Scalar> Expression for [T; $n] {}
@@ -1499,11 +1550,77 @@ macro_rules! impl_array_tensor_traits {
                 Some($n)
             }
         }
-        impl_array_tensor_traits!($($ns)*);
+        impl_array_vector_traits!($($ns)*);
     };
 }
 
-impl_array_tensor_traits!(1, 2, 3, 4);
+impl_array_vector_traits!(1, 2, 3, 4);
+
+macro_rules! impl_array_matrix_traits {
+    () => {};
+    (($r:expr, $c:expr, $cty:ident)) => { // Allow optional trailing comma
+        impl_array_matrix_traits!(($r, $c, $cty),);
+    };
+    (($r:expr, $c:expr, $cty:ident), $($ns:tt)*) => {
+        impl<T: Scalar> IntoExpr for [[T; $c]; $r] {
+            type Expr = Tensor<[[T; $c]; $r]>;
+            fn into_expr(self) -> Self::Expr {
+                Tensor::new(self)
+            }
+        }
+        impl<T: Scalar> IntoExpr for &[[T; $c]; $r] {
+            type Expr = Tensor<[[T; $c]; $r]>;
+            fn into_expr(self) -> Self::Expr {
+                Tensor::new(*self)
+            }
+        }
+        impl<'a, T: Scalar> IntoExpr for &'a mut [[T; $c]; $r] {
+            type Expr = &'a mut Tensor<[[T; $c]; $r]>;
+            fn into_expr(self) -> Self::Expr {
+                self.as_mut_tensor()
+            }
+        }
+        impl<'a, T: Scalar> Expr<'a> for [[T; $c]; $r] {
+            type Output = Tensor<[[T; $c]; $r]>;
+            fn expr(&'a self) -> Self::Output {
+                Tensor::new(*self)
+            }
+        }
+        
+        //impl<T: Scalar> MulOp<UniChunkedIterExpr<I, $cty>> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Tensor<[T; $n]>;
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn cwise_mul(mut self, rhs: Self) -> Self::Output {
+        //        for i in 0..$r {
+        //            for i in 0..$c {
+        //                self[i] *= rhs[i];
+        //            }
+        //        }
+        //        self
+        //    }
+        //}
+
+        impl<T: Scalar> Expression for [[T; $c]; $r] {}
+        impl<T: Scalar> ExprSize for [[T; $c]; $r] {
+            fn expr_size(&self) -> usize {
+                $r * $c
+            }
+            fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+                Some($r * $c)
+            }
+        }
+        impl_array_matrix_traits!($($ns)*);
+    };
+}
+
+impl_array_matrix_traits!(
+    (1, 1, U1), (1, 2, U2), (1, 3, U3), (1, 4, U4),
+    (2, 1, U1), (2, 2, U2), (2, 3, U3), (2, 4, U4),
+    (3, 1, U1), (3, 2, U2), (3, 3, U3), (3, 4, U4),
+    (4, 1, U1), (4, 2, U2), (4, 3, U3), (4, 4, U4),
+);
+
 
 /*
  * SumOp/RecursiveSumOp impls
@@ -1870,6 +1987,7 @@ mod tests {
 
     #[test]
     fn nested_unichunked_add() {
+        // 2x2 Block vector
         let a = Chunked2::from_flat(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8]));
         let b = Chunked2::from_flat(Chunked2::from_flat(vec![8, 7, 6, 5, 4, 3, 2, 1]));
         assert_eq!(
@@ -1979,9 +2097,15 @@ mod tests {
 
     #[test]
     fn matrix_matrix_mul() {
+        let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
+        let out: ChunkedN<Vec<_>> = Evaluate::eval(a.expr() * a.expr());
+        assert_eq!(
+            ChunkedN::from_flat_with_stride(vec![7, 10, 15, 22], 2),
+            out
+        );
+
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
-        let b = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
-        let out: ChunkedN<Vec<_>> = Evaluate::eval(a.expr() * b.expr());
+        let out: ChunkedN<Vec<_>> = Evaluate::eval(a.expr() * a.expr());
         assert_eq!(
             ChunkedN::from_flat_with_stride(vec![30, 36, 42, 66, 81, 96, 102, 126, 150], 3),
             out
@@ -1992,6 +2116,20 @@ mod tests {
         let out: Chunked3<Vec<_>> = Evaluate::eval(a.expr() * b.expr());
         assert_eq!(
             Chunked3::from_flat(vec![30, 36, 42, 66, 81, 96, 102, 126, 150]),
+            out
+        );
+    }
+
+    #[test]
+    fn tensor_tensor_mul() {
+        //let flat_a = ChunkedN::from_flat_with_stride(vec![1,2,5,6, 3,4,7,8, 9,10,13,14, 11,12,15,16], 4);
+        // 2x2 Block matrix of 2x2 blocks
+        let a = ChunkedN::from_flat_with_stride(
+            Chunked2::from_flat(Chunked2::from_flat(vec![1,2, 3,4, 5,6, 7,8, 9,10, 11,12, 13,14, 15,16])), 2);
+
+        let out: ChunkedN<_> = Evaluate::eval(a.expr() * a.expr());
+        assert_eq!(
+            ChunkedN::from_flat_with_stride(Chunked2::from_flat(Chunked2::from_flat(vec![118, 132, 166, 188, 174, 188, 254, 276, 310,356, 358, 412, 494, 540, 574, 628])), 2),
             out
         );
     }

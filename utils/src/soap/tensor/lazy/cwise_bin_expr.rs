@@ -29,7 +29,7 @@ pub type AddExpr<L, R> = CwiseBinExpr<L, R, Addition>;
 pub type SubExpr<L, R> = CwiseBinExpr<L, R, Subtraction>;
 
 /// A lazy component-wise multiply expression to be evaluated at a later time.
-pub type CwiseMulExpr<L, R> = CwiseBinExpr<L, R, Multiplication>;
+pub type CwiseMulExpr<L, R> = CwiseBinExpr<L, R, CwiseMultiplication>;
 
 /*
  * CwiseBinExpr impls
@@ -39,15 +39,15 @@ pub type CwiseMulExpr<L, R> = CwiseBinExpr<L, R, Multiplication>;
  * Iterator * Tensor
  */
 
-impl<L: Iterator, R, F, Out> Iterator for CwiseBinExpr<L, Tensor<R>, F>
+impl<L: Iterator, R, Out> Iterator for CwiseBinExpr<L, Tensor<R>, Multiplication>
 where
     R: Copy,
-    F: BinOp<L::Item, Tensor<R>, Output = Out>,
+    L::Item: MulOp<Tensor<R>, Output = Out>
 {
     type Item = Out;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.left.next().map(|l| self.op.apply(l, self.right))
+        self.left.next().map(|l| l.mul(self.right))
     }
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -55,8 +55,8 @@ where
     }
 }
 
-impl<L: Expression, R, F> Expression for CwiseBinExpr<L, Tensor<R>, F> {}
-impl<L: Expression, R, F> ExprSize for CwiseBinExpr<L, Tensor<R>, F> {
+impl<L: Expression, R> Expression for CwiseBinExpr<L, Tensor<R>, Multiplication> {}
+impl<L: Expression, R> ExprSize for CwiseBinExpr<L, Tensor<R>, Multiplication> {
     fn expr_size(&self) -> usize {
         self.left.expr_size()
     }
@@ -65,7 +65,7 @@ impl<L: Expression, R, F> ExprSize for CwiseBinExpr<L, Tensor<R>, F> {
     }
 }
 
-impl<L: ExactSizeIterator, R, F> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>, F> where
+impl<L: ExactSizeIterator, R> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>, Multiplication> where
     Self: Iterator
 {
 }
@@ -74,15 +74,15 @@ impl<L: ExactSizeIterator, R, F> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>
  * Tensor * Iterator
  */
 
-impl<L, R: Iterator, F, Out> Iterator for CwiseBinExpr<Tensor<L>, R, F>
+impl<L, R: Iterator, Out> Iterator for CwiseBinExpr<Tensor<L>, R, Multiplication>
 where
     L: Copy,
-    F: BinOp<Tensor<L>, R::Item, Output = Out>,
+    Tensor<L>: MulOp<R::Item, Output = Out>
 {
     type Item = Out;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.right.next().map(|r| self.op.apply(self.left, r))
+        self.right.next().map(|r| self.left.mul(r))
     }
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -90,8 +90,8 @@ where
     }
 }
 
-impl<L, R: Iterator + Expression, F> Expression for CwiseBinExpr<Tensor<L>, R, F> {}
-impl<L, R: Iterator + Expression, F> ExprSize for CwiseBinExpr<Tensor<L>, R, F> {
+impl<L, R: Iterator + Expression> Expression for CwiseBinExpr<Tensor<L>, R, Multiplication> {}
+impl<L, R: Iterator + Expression> ExprSize for CwiseBinExpr<Tensor<L>, R, Multiplication> {
     fn expr_size(&self) -> usize {
         self.right.expr_size()
     }
@@ -100,7 +100,7 @@ impl<L, R: Iterator + Expression, F> ExprSize for CwiseBinExpr<Tensor<L>, R, F> 
     }
 }
 
-impl<L, R: ExactSizeIterator, F> ExactSizeIterator for CwiseBinExpr<Tensor<L>, R, F> where
+impl<L, R: ExactSizeIterator> ExactSizeIterator for CwiseBinExpr<Tensor<L>, R, Multiplication> where
     Self: Iterator
 {
 }

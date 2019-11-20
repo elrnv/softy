@@ -61,7 +61,7 @@ impl<E, T, F> Evaluate<Reduce<E, F>> for Vec<T>
 where
     E: Iterator + Expression,
     F: BinOpAssign<Tensor<[T]>, E::Item>,
-    Vec<T>: EvalExtend<E::Item>,
+    Self: EvalExtend<E::Item>,
 {
     fn eval(mut reduce: Reduce<E, F>) -> Self {
         let mut v = Vec::with_capacity(reduce.reserve_hint());
@@ -198,17 +198,17 @@ where
     }
 }
 
-macro_rules! impl_array_tensor_eval_traits {
+macro_rules! impl_array_vector_eval_traits {
     () => {};
     ($n:expr) => { // Allow optional trailing comma
-        impl_array_tensor_eval_traits!($n,);
+        impl_array_vector_eval_traits!($n,);
     };
     ($n:expr, $($ns:tt)*) => {
-        impl<T: Scalar> EvalExtend<Tensor<[T; $n]>> for Vec<T> {
+        impl<T: Copy> EvalExtend<Tensor<[T; $n]>> for Vec<T> {
             #[unroll_for_loops]
             fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
                 for i in 0..$n {
-                    self.push(tensor[i]);
+                    self.push(unsafe { *tensor.data.get_unchecked(i) });
                 }
             }
         }
@@ -222,11 +222,64 @@ macro_rules! impl_array_tensor_eval_traits {
             }
         }
 
-        impl_array_tensor_eval_traits!($($ns)*);
+        impl_array_vector_eval_traits!($($ns)*);
     };
 }
 
-impl_array_tensor_eval_traits!(1, 2, 3, 4);
+impl_array_vector_eval_traits!(1, 2, 3, 4);
+
+macro_rules! impl_array_matrix_eval_traits {
+    () => {};
+    (($r:expr, $c:expr, $cty:ident)) => { // Allow optional trailing comma
+        impl_array_matrix_eval_traits!(($r, $c, $cty),);
+    };
+    (($r:expr, $c:expr, $cty:ident), $($ns:tt)*) => {
+        impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [[T; $c]; $r]
+        where
+            E: Iterator<Item = Tensor<[[T; $c]; $r]>>,
+            F: BinOp<Tensor<Self>, Tensor<Self>, Output = Tensor<Self>>,
+        {
+            fn eval(Reduce { expr, op }: Reduce<E, F>) -> Self {
+                expr.fold(Tensor::new([[T::zero(); $c]; $r]), |acc, x| op.apply(acc, x)).into_inner()
+            }
+        }
+        impl<T: Copy> EvalExtend<Tensor<[[T; $c]; $r]>> for Vec<T> {
+            #[inline]
+            #[unroll_for_loops]
+            fn eval_extend(&mut self, value: Tensor<[[T; $c]; $r]>) {
+                for r in 0..$r {
+                    for c in 0..$c {
+                        self.push(unsafe {
+                            *value.data.get_unchecked(r).get_unchecked(c)
+                        });
+                    }
+                }
+            }
+        }
+
+        impl<T: Scalar, S> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<S, $cty>
+        where
+            S: Set + EvalExtend<Tensor<[T; $c]>>,
+        {
+            #[inline]
+            #[unroll_for_loops]
+            fn eval_extend(&mut self, tensor: Tensor<[[T; $c]; $r]>) {
+                for i in 0..$r {
+                    self.data.eval_extend(*unsafe { tensor.data.get_unchecked(i) }.as_tensor());
+                }
+            }
+        }
+
+        impl_array_matrix_eval_traits!($($ns)*);
+    };
+}
+
+impl_array_matrix_eval_traits!(
+    (1, 1, U1), (1, 2, U2), (1, 3, U3), (1, 4, U4),
+    (2, 1, U1), (2, 2, U2), (2, 3, U3), (2, 4, U4),
+    (3, 1, U1), (3, 2, U2), (3, 3, U3), (3, 4, U4),
+    (4, 1, U1), (4, 2, U2), (4, 3, U3), (4, 4, U4),
+);
 
 /*
  * Eval Extend impls
@@ -234,17 +287,24 @@ impl_array_tensor_eval_traits!(1, 2, 3, 4);
 
 impl<T, E, F> EvalExtend<Reduce<E, F>> for Vec<T>
 where
-    E: Iterator + Expression,
+    E: Iterator,
+    E::Item: std::fmt::Debug,
     F: BinOpAssign<Tensor<[T]>, E::Item>,
-    Vec<T>: EvalExtend<E::Item>,
+    Self: std::fmt::Debug + EvalExtend<E::Item>,
+    Tensor<[T]>: std::fmt::Debug,
 {
     #[inline]
     fn eval_extend(&mut self, mut reduce: Reduce<E, F>) {
         if let Some(row) = reduce.expr.next() {
             let start = self.len();
+            dbg!(&row);
             self.eval_extend(row);
+            dbg!(&self);
+            dbg!(&start);
             let out = self[start..].as_mut_tensor();
+            dbg!(&out);
             for row in reduce.expr {
+                dbg!(&row);
                 reduce.op.apply_assign(out, row);
             }
         }
@@ -269,7 +329,7 @@ impl<T> EvalExtend<Tensor<T>> for Vec<T> {
 
 impl<I, T> EvalExtend<I> for Vec<T>
 where
-    I: Iterator + Expression,
+    I: Iterator,
     Vec<T>: EvalExtend<I::Item>,
 {
     #[inline]
@@ -291,8 +351,22 @@ where
         for elem in iter {
             let orig_len = self.data.len();
             self.data.eval_extend(elem);
-            assert_eq!(self.data.len() - orig_len, self.chunk_size())
+            debug_assert_eq!((self.data.len() - orig_len) % self.chunk_size(), 0);
         }
+    }
+}
+
+impl<S, E, N, F> EvalExtend<Reduce<E, F>> for UniChunked<S, N>
+where
+    E: Iterator,
+    S: Set + EvalExtend<Reduce<E, F>>,
+    N: Dimension,
+{
+    #[inline]
+    fn eval_extend(&mut self, reduce: Reduce<E, F>) {
+        let orig_len = self.data.len();
+        self.data.eval_extend(reduce);
+        debug_assert_eq!((self.data.len() - orig_len) % self.chunk_size(), 0);
     }
 }
 
@@ -433,14 +507,34 @@ use std::ops::{AddAssign, SubAssign};
 
 impl<T, I, A> AddAssign<I> for Tensor<[T]>
 where
+    A: ExprSize + std::fmt::Debug,
+    [T]: std::fmt::Debug,
     I: Iterator<Item = A>,
-    Tensor<T>: AddAssign<A>,
+    Tensor<[T]>: AddAssign<A>,
 {
     #[inline]
     fn add_assign(&mut self, rhs: I) {
-        for (rhs, out) in rhs.zip(self.data.iter_mut()) {
-            *out.as_mut_tensor() += rhs;
+        let mut out = &mut self.data;
+        for rhs in rhs {
+            dbg!(&rhs);
+            let size = rhs.expr_size();
+            dbg!(size);
+            dbg!(&out);
+            out.as_mut_tensor().add_assign(rhs);
+            dbg!(&out);
+            out = &mut out[size..];
         }
+    }
+}
+
+impl<T, I> AddAssign<I> for Tensor<Vec<T>>
+where
+    I: Iterator,
+    Tensor<[T]>: AddAssign<I>,
+{
+    #[inline]
+    fn add_assign(&mut self, rhs: I) {
+        self.data.as_mut_slice().as_mut_tensor().add_assign(rhs);
     }
 }
 
@@ -499,14 +593,29 @@ impl_bin_op_assign!(impl<'a, S> SubAssign for SubsetIterExpr<'a, S> { sub_assign
 
 impl<T, I, A> SubAssign<I> for Tensor<[T]>
 where
+    A: ExprSize,
     I: Iterator<Item = A>,
-    Tensor<T>: SubAssign<A>,
+    Tensor<[T]>: SubAssign<A>,
 {
     #[inline]
     fn sub_assign(&mut self, rhs: I) {
-        for (rhs, out) in rhs.zip(self.data.iter_mut()) {
-            *out.as_mut_tensor() -= rhs;
+        let mut out = &mut self.data;
+        for rhs in rhs {
+            let size = rhs.expr_size();
+            out.as_mut_tensor().sub_assign(rhs);
+            out = &mut out[size..];
         }
+    }
+}
+
+impl<T, I> SubAssign<I> for Tensor<Vec<T>>
+where
+    I: Iterator,
+    Tensor<[T]>: SubAssign<I>,
+{
+    #[inline]
+    fn sub_assign(&mut self, rhs: I) {
+        self.data.as_mut_slice().as_mut_tensor().sub_assign(rhs);
     }
 }
 

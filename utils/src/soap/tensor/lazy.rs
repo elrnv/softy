@@ -810,6 +810,7 @@ impl<R, L: CwiseMulOp<R>> CwiseMulOp<R> for IndexedExpr<L> {
     }
 }
 
+// Needed for dot products.
 impl<R, L, Out> CwiseMulOp<IndexedExpr<Tensor<R>>> for Tensor<L>
 where Tensor<L>: CwiseMulOp<Tensor<R>, Output = Out>
 {
@@ -2157,14 +2158,14 @@ mod tests {
         let b = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 1, 1, 0], 2, vec![1,2,3,4]), 1);
         let ab_exp = ChunkedN::from_flat_with_stride(vec![1, 6, 16, 6], 2);
         let mut ab = a.expr() * b.expr();
-        //dbg!(&ab);
-        //let mut next = ab.next().unwrap();
-        ////dbg!(&next);
-        //let mut v = Vec::new();
-        //v.view_mut().as_mut_tensor().add_assign(next);
+        dbg!(&ab);
+        let mut next = ab.next().unwrap();
+        //dbg!(&next);
+        let mut v: Vec<i32> = Vec::new();
+        v.eval_extend(next);
         ////let mut next_next = next.expr.next().unwrap();
-        //dbg!(&v);
-        //assert!(false);
+        dbg!(&v);
+        assert!(false);
         //assert_eq!(ab_exp, (a.expr() * b.expr()).eval());
     }
 

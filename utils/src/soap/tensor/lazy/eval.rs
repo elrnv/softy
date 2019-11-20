@@ -288,23 +288,16 @@ impl_array_matrix_eval_traits!(
 impl<T, E, F> EvalExtend<Reduce<E, F>> for Vec<T>
 where
     E: Iterator,
-    E::Item: std::fmt::Debug,
     F: BinOpAssign<Tensor<[T]>, E::Item>,
-    Self: std::fmt::Debug + EvalExtend<E::Item>,
-    Tensor<[T]>: std::fmt::Debug,
+    Self: EvalExtend<E::Item>,
 {
     #[inline]
     fn eval_extend(&mut self, mut reduce: Reduce<E, F>) {
         if let Some(row) = reduce.expr.next() {
             let start = self.len();
-            dbg!(&row);
             self.eval_extend(row);
-            dbg!(&self);
-            dbg!(&start);
             let out = self[start..].as_mut_tensor();
-            dbg!(&out);
             for row in reduce.expr {
-                dbg!(&row);
                 reduce.op.apply_assign(out, row);
             }
         }
@@ -507,8 +500,7 @@ use std::ops::{AddAssign, SubAssign};
 
 impl<T, I, A> AddAssign<I> for Tensor<[T]>
 where
-    A: ExprSize + std::fmt::Debug,
-    [T]: std::fmt::Debug,
+    A: ExprSize,
     I: Iterator<Item = A>,
     Tensor<[T]>: AddAssign<A>,
 {
@@ -516,12 +508,8 @@ where
     fn add_assign(&mut self, rhs: I) {
         let mut out = &mut self.data;
         for rhs in rhs {
-            dbg!(&rhs);
             let size = rhs.expr_size();
-            dbg!(size);
-            dbg!(&out);
             out.as_mut_tensor().add_assign(rhs);
-            dbg!(&out);
             out = &mut out[size..];
         }
     }

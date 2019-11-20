@@ -30,6 +30,11 @@ macro_rules! impl_array_for_typenum {
                 $n
             }
         }
+        impl<T> AsSlice<T> for [T; $n] {
+            fn as_slice(&self) -> &[T] {
+                &self[..]
+            }
+        }
         impl<'a, T: 'a> View<'a> for [T; $n] {
             type Type = &'a [T];
             fn view(&'a self) -> Self::Type {

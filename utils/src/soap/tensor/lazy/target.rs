@@ -1,13 +1,17 @@
 use super::{SparseIterExpr, SparseExpr, CwiseUnExpr};
 use super::cwise_bin_expr::CwiseBinExpr;
+use crate::soap::Set;
 
 /// A trait to retrieve the target type of a sparse expression.
 pub trait Target {
-    type Target;
+    type Target: Set;
     fn target(&self) -> &Self::Target;
+    fn target_size(&self) -> usize {
+        self.target().len()
+    }
 }
 
-impl<'a, S, T> Target for SparseIterExpr<'a, S, T> {
+impl<'a, S, T: Set> Target for SparseIterExpr<'a, S, T> {
     type Target = T;
 
     fn target(&self) -> &Self::Target {
@@ -23,7 +27,7 @@ impl<E: Target + Iterator> Target for SparseExpr<E> {
     }
 }
 
-impl<L, R, T, F> Target for CwiseBinExpr<L, R, F>
+impl<L, R, T: Set, F> Target for CwiseBinExpr<L, R, F>
 where
     L: Target<Target = T>,
     R: Target<Target = T>,

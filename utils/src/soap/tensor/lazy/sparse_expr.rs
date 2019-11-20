@@ -1,9 +1,6 @@
 /**
  * `SparseExpr` wraps any sparse expr, this is partially used as a speialization workaround and
  * partially to simplify the iteration algorithms for binary operators.
- *
- * `SparseExpr` is essentially a copy of `Peekable` and is used to abstract over expressions that
- * yield sparse entries.
  */
 
 use super::*;

@@ -143,6 +143,10 @@ impl<S: Set + ?Sized> Set for std::cell::RefMut<'_, S> {
  * Array manipulation
  */
 
+pub trait AsSlice<T> {
+    fn as_slice(&self) -> &[T];
+}
+
 pub trait Array<T> {
     type Array: Set<Elem = T>;
     fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T>;

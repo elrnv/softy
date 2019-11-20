@@ -16,12 +16,31 @@ mod sparse_expr;
 mod cwise_bin_expr;
 mod target;
 mod expr_mut;
+mod iterator;
 pub use enumerate::Enumerate;
 pub use eval::{EvalExtend, Evaluate};
 pub use sparse_expr::SparseExpr;
 pub use cwise_bin_expr::*;
 pub use target::Target;
 pub use expr_mut::*;
+pub use iterator::*;
+
+/// Marker trait for indicating that an expression is unoptimized. This is a workaround for
+/// specialization.
+pub trait Unoptimized {}
+impl<L, R> Unoptimized for CwiseBinExpr<L, R, Subtraction> {}
+impl<L, R> Unoptimized for CwiseBinExpr<L, R, Addition> {}
+impl<E, F> Unoptimized for CwiseUnExpr<E, F> {}
+impl<E: Iterator> Unoptimized for SparseExpr<E> {}
+impl<E> Unoptimized for Enumerate<E> {}
+impl<E> Unoptimized for Repeat<E> {}
+impl<'a, E> Unoptimized for SliceIterExpr<'a, E> {}
+impl<'a, E> Unoptimized for SliceIterExprMut<'a, E> {}
+impl<T> Unoptimized for VecIterExpr<T> {}
+impl<S, N> Unoptimized for UniChunkedIterExpr<S, N> {}
+impl<'a, E> Unoptimized for ChunkedIterExpr<'a, E> {}
+impl<'a, E, T> Unoptimized for SparseIterExpr<'a, E, T> {}
+impl<'a, S> Unoptimized for SubsetIterExpr<'a, S> {}
 
 /// Recursive Sum operator.
 ///
@@ -772,6 +791,15 @@ pub struct IndexedExpr<E> {
     expr: E,
 }
 
+impl<E> IndexedExpr<E> {
+    pub fn map_expr<G>(self, f: impl FnOnce(E) -> G) -> IndexedExpr<G> {
+        IndexedExpr {
+            index: self.index,
+            expr: f(self.expr),
+        }
+    }
+}
+
 impl<E> From<(usize, E)> for IndexedExpr<E> {
     fn from(pair: (usize, E)) -> Self {
         IndexedExpr {
@@ -810,7 +838,17 @@ impl<R, L: CwiseMulOp<R>> CwiseMulOp<R> for IndexedExpr<L> {
     }
 }
 
-// Needed for dot products.
+impl<R, L: MulOp<R>> MulOp<R> for IndexedExpr<L> {
+    type Output = IndexedExpr<L::Output>;
+    #[inline]
+    fn mul(self, rhs: R) -> Self::Output {
+        IndexedExpr {
+            index: self.index,
+            expr: self.expr.mul(rhs),
+        }
+    }
+}
+
 impl<R, L, Out> CwiseMulOp<IndexedExpr<Tensor<R>>> for Tensor<L>
 where Tensor<L>: CwiseMulOp<Tensor<R>, Output = Out>
 {
@@ -820,6 +858,19 @@ where Tensor<L>: CwiseMulOp<Tensor<R>, Output = Out>
         IndexedExpr {
             index: rhs.index,
             expr: self.cwise_mul(rhs.expr),
+        }
+    }
+}
+
+impl<R, L, Out> MulOp<IndexedExpr<Tensor<R>>> for Tensor<L>
+where Tensor<L>: MulOp<Tensor<R>, Output = Out>
+{
+    type Output = IndexedExpr<Out>;
+    #[inline]
+    fn mul(self, rhs: IndexedExpr<Tensor<R>>) -> Self::Output {
+        IndexedExpr {
+            index: rhs.index,
+            expr: self.mul(rhs.expr),
         }
     }
 }
@@ -1304,7 +1355,46 @@ impl_scalar_mul!(impl<'a, S, T> for ChunkedIterExpr<'a, S>);
 impl_scalar_mul!(impl<'a, S, T> for SubsetIterExpr<'a, S>);
 impl_scalar_mul!(impl<E, T, F> for CwiseUnExpr<E, F>);
 impl_scalar_mul!(impl<A, B, T, F> for CwiseBinExpr<A, B, F>);
-impl_scalar_mul!(impl<E, T> for SparseExpr<E> where E: Iterator);
+
+//impl<T, E> MulOp<T> for SparseExpr<E> where T: Scalar, E: Iterator {
+//    type Output = SparseExpr<CwiseBinExpr<Self, Tensor<T>, Multiplication>>;
+//    #[inline]
+//    fn mul(self, rhs: T) -> Self::Output {
+//        SparseExpr::new(CwiseBinExpr::new(self, Tensor::new(rhs)))
+//    }
+//}
+//
+//impl<T, E> MulOp<Tensor<T>> for SparseExpr<E> where T: Scalar, E: Iterator {
+//    type Output = SparseExpr<CwiseBinExpr<Self, Tensor<T>, Multiplication>>;
+//    #[inline]
+//    fn mul(self, rhs: Tensor<T>) -> Self::Output {
+//        SparseExpr::new(CwiseBinExpr::new(self, rhs))
+//    }
+//}
+//
+//impl<T, E, A> MulOp<SparseExpr<E>> for Tensor<T>
+//where T: Scalar,
+//      E: Iterator<Item = IndexedExpr<A>>,
+//      Tensor<T>: MulOp<A>,
+//      CwiseBinExpr<Tensor<T>, SparseExpr<E>, Multiplication>: Iterator,
+//{
+//    type Output = SparseExpr<CwiseBinExpr<Tensor<T>, SparseExpr<E>, Multiplication>>;
+//    #[inline]
+//    fn mul(self, rhs: SparseExpr<E>) -> Self::Output {
+//        SparseExpr::new(CwiseBinExpr::new(self, rhs))
+//    }
+//}
+//
+impl<T, E> CwiseMulOp<SparseExpr<E>> for Tensor<T>
+where E: Iterator,
+      CwiseBinExpr<Tensor<T>, SparseExpr<E>, Multiplication>: Iterator,
+{
+    type Output = SparseExpr<CwiseBinExpr<Tensor<T>, SparseExpr<E>, Multiplication>>;
+    #[inline]
+    fn cwise_mul(self, rhs: SparseExpr<E>) -> Self::Output {
+        SparseExpr::new(CwiseBinExpr::new(self, rhs))
+    }
+}
 
 // Tensor multiplication
 // Note that CwiseSum doesn't care if its expression is dense or sparse, so there is not special
@@ -2144,30 +2234,36 @@ mod tests {
         assert_eq!(vec![8, 19], out);
     }
 
-    #[test]
-    fn sparse_matrix_matrix_mul() {
-        // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
-        // [1 . 2 . ]
-        // [. 3 . 4 ]
-        let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
-        // Sparse matrix with 1 entry in each row, there are 4 rows and 2 columns.
-        // [1 .]
-        // [. 2]
-        // [. 3]
-        // [4 .]
-        let b = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 1, 1, 0], 2, vec![1,2,3,4]), 1);
-        let ab_exp = ChunkedN::from_flat_with_stride(vec![1, 6, 16, 6], 2);
-        let mut ab = a.expr() * b.expr();
-        dbg!(&ab);
-        let mut next = ab.next().unwrap();
-        //dbg!(&next);
-        let mut v: Vec<i32> = Vec::new();
-        v.eval_extend(next);
-        ////let mut next_next = next.expr.next().unwrap();
-        dbg!(&v);
-        assert!(false);
-        //assert_eq!(ab_exp, (a.expr() * b.expr()).eval());
-    }
+    //TODO: There are some difficulties implementing this completely.
+    //      As it stands, It seems that extending the standard Iterator to a SparseIterator Trait
+    //      for all Sparse expressions should resolve some of the issues, and may even replace the
+    //      SparseExpr type.
+    //#[test]
+    //fn sparse_matrix_matrix_mul() {
+    //    // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
+    //    // [1 . 2 . ]
+    //    // [. 3 . 4 ]
+    //    let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
+    //    // Sparse matrix with 1 entry in each row, there are 4 rows and 2 columns.
+    //    // [1 .]
+    //    // [. 2]
+    //    // [. 3]
+    //    // [4 .]
+    //    let b = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 1, 1, 0], 2, vec![1,2,3,4]), 1);
+    //    let ab_exp = ChunkedN::from_flat_with_stride(vec![1, 6, 16, 6], 2);
+    //    let mut ab = a.expr() * b.expr();
+    //    dbg!(&ab);
+    //    let mut next = ab.next().unwrap();
+    //    let mut v: Vec<i32> = Vec::new();
+    //    v.eval_extend(next);
+    //    //let mut next_next = next.expr.next().unwrap();
+    //    //dbg!(&next_next);
+    //    //let mut v: Vec<i32> = vec![0; 4];
+    //    //v.as_mut_slice().as_mut_tensor().add_assign(next_next.expr);
+    //    dbg!(&v);
+    //    assert!(false);
+    //    //assert_eq!(ab_exp, (a.expr() * b.expr()).eval());
+    //}
 
     //#[test]
     //fn sparse_matrix_add() {

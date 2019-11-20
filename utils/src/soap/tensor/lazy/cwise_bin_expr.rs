@@ -36,10 +36,10 @@ pub type CwiseMulExpr<L, R> = CwiseBinExpr<L, R, CwiseMultiplication>;
  */
 
 /*
- * Iterator * Tensor
+ * Dense * Tensor
  */
 
-impl<L: Iterator, R, Out> Iterator for CwiseBinExpr<L, Tensor<R>, Multiplication>
+impl<L: Iterator+ DenseExpr, R, Out> Iterator for CwiseBinExpr<L, Tensor<R>, Multiplication>
 where
     R: Copy,
     L::Item: MulOp<Tensor<R>, Output = Out>
@@ -71,10 +71,10 @@ impl<L: ExactSizeIterator, R> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>, M
 }
 
 /*
- * Tensor * Iterator
+ * Tensor * DenseExpr
  */
 
-impl<L, R: Iterator, Out> Iterator for CwiseBinExpr<Tensor<L>, R, Multiplication>
+impl<L, R: Iterator + DenseExpr, Out> Iterator for CwiseBinExpr<Tensor<L>, R, Multiplication>
 where
     L: Copy,
     Tensor<L>: MulOp<R::Item, Output = Out>
@@ -169,9 +169,80 @@ where
  **************/
 
 /*
+ * Sparse * Tensor
+ */
+
+impl<L: Iterator<Item = IndexedExpr<A>>, A, R, Out> Iterator for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication>
+where
+    R: Copy,
+    A: MulOp<Tensor<R>, Output = Out>
+{
+    type Item = IndexedExpr<Out>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.left.next().map(|l| l.map_expr(|l| l.mul(self.right)))
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.left.size_hint()
+    }
+}
+
+//impl<L: Expression, R> Expression for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication> {}
+//impl<L: Expression, R> ExprSize for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication> {
+//    fn expr_size(&self) -> usize {
+//        self.left.expr_size()
+//    }
+//    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+//        self.left.total_size_hint(cwise_reduce)
+//    }
+//}
+//
+//impl<L: ExactSizeIterator, R> ExactSizeIterator for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication> where
+//    Self: Iterator
+//{
+//}
+
+/*
+ * Tensor * Sparse
+ */
+
+impl<L, R: Iterator<Item = IndexedExpr<A>>, A, Out> Iterator for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication>
+where
+    L: Copy,
+    Tensor<L>: MulOp<A, Output = Out>
+{
+    type Item = IndexedExpr<Out>;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.right.next().map(|r| r.map_expr(|r| self.left.mul(r)))
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.right.size_hint()
+    }
+}
+
+//impl<L, R: Iterator + Expression> Expression for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication> {}
+//impl<L, R: Iterator + Expression> ExprSize for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication> {
+//    fn expr_size(&self) -> usize {
+//        self.right.expr_size()
+//    }
+//    fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+//        self.right.total_size_hint(cwise_reduce)
+//    }
+//}
+//
+//impl<L, R: ExactSizeIterator> ExactSizeIterator for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication> where
+//    Self: Iterator
+//{
+//}
+
+/*
  * Dense * Sparse Additive
  */
 
+/* TODO: Fix this
 impl<L, R, F, Out> Iterator for CwiseBinExpr<L, SparseExpr<R>, F>
 where
     L: Iterator + DenseExpr,
@@ -263,6 +334,7 @@ where
     Self: Iterator,
 {
 }
+*/
 
 /*
  * Dense * Sparse Multiplicative
@@ -272,15 +344,15 @@ impl<L, R, A, F, Out> Iterator for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F>
 where
     L: Iterator + DenseExpr,
     R: Iterator<Item = IndexedExpr<A>>,
-    F: BinOp<L::Item, R::Item, Output = Out>,
+    F: BinOp<L::Item, A, Output = Out>,
 {
-    type Item = Out;
+    type Item = IndexedExpr<Out>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.right.next().and_then(|right| {
             while let Some((count, left)) = self.left.next() {
                 if count == right.index {
-                    return Some(self.op.apply(left, right));
+                    return Some(right.map_expr(|r| self.op.apply(left, r)));
                 }
             }
             None
@@ -317,15 +389,15 @@ impl<L, R, A, F, Out> Iterator for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F>
 where
     L: Iterator<Item = IndexedExpr<A>>,
     R: Iterator + DenseExpr,
-    F: BinOp<L::Item, R::Item, Output = Out>,
+    F: BinOp<A, R::Item, Output = Out>,
 {
-    type Item = Out;
+    type Item = IndexedExpr<Out>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.left.next().and_then(|left| {
             while let Some((count, right)) = self.right.next() {
                 if count == left.index {
-                    return Some(self.op.apply(left, right));
+                    return Some(left.map_expr(|l| self.op.apply(l, right)));
                 }
             }
             None // Really this means that left and right have different sizes
@@ -448,13 +520,13 @@ where
  * Sparse * Sparse Multiply
  */
 
-impl<L, R, A, B> Iterator for CwiseMulExpr<SparseExpr<L>, SparseExpr<R>>
+impl<L, R, A, B, Out> Iterator for CwiseMulExpr<SparseExpr<L>, SparseExpr<R>>
 where
     L: Iterator<Item = IndexedExpr<A>>,
     R: Iterator<Item = IndexedExpr<B>>,
-    A: CwiseMulOp<B>,
+    A: CwiseMulOp<B, Output = Out>,
 {
-    type Item = IndexedExpr<<A as CwiseMulOp<B>>::Output>;
+    type Item = IndexedExpr<Out>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.left.peek().is_none() || self.right.peek().is_none() {

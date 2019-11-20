@@ -470,6 +470,12 @@ macro_rules! impl_array_matrices {
         // Row-major square matrix.
         pub type $mtxn<T> = Tensor<[[T; $c]; $r]>;
 
+        impl<T> AsSlice<T> for [[T; $c]; $r] {
+            fn as_slice(&self) -> &[T] {
+                unsafe { reinterpret::reinterpret_slice(&self[..]) } 
+            }
+        }
+
         // Transposes of small matrices are implemented eagerly.
         impl<T: Scalar> Matrix for Tensor<[[T; $c]; $r]> {
             type Transpose = Tensor<[[T; $r]; $c]>;

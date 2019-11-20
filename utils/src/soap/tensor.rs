@@ -250,6 +250,14 @@ macro_rules! impl_scalar {
                 }
             }
 
+            impl AsSlice<$type> for $type {
+                fn as_slice(&self) -> &[$type] {
+                    unsafe {
+                        std::slice::from_raw_parts(self as *const _, 1)
+                    }
+                }
+            }
+
             impl CwiseMulOp for $type {
                 type Output = Tensor<Self>;
                 #[inline]

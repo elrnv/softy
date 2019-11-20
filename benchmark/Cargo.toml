@@ -5,6 +5,8 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "benchmark"
 
 [dependencies]
 utils = { path = "../utils" }

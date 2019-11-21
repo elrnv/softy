@@ -17,7 +17,9 @@ fn main() {
     //}
     let mut size = 0;
     for _ in 0..1000 {
-        size += lazy_expr(m.view(), v.view()).len();
+        size += inner(m.view(), v.view()).len();
+        //size += inner_simd_unchecked(m.view(), v.view()).len();
+        //size += lazy_expr(m.view(), v.view()).len();
         //size += outer_read_local(m.view(), v.view()).len();
         eprint!(".");
     }

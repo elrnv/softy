@@ -16,6 +16,7 @@ unroll = "0.1"
 num-traits = "0.2"
 rayon = "1.2"
 autodiff = { version = "0.1", optional = true }
+packed_simd = { version = "0.3", optional = true }
 
 [dev-dependencies]
 approx = "0.3"
@@ -23,7 +24,7 @@ cgmath = "0.17"
 criterion = "0.3"
 
 [features]
-unstable = ["criterion/real_blackbox"]
+unstable = ["criterion/real_blackbox", "packed_simd"]
 default = ["sprs"]
 
 [[bench]]

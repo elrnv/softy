@@ -9,5 +9,6 @@ edition = "2018"
 name = "benchmark"
 
 [dependencies]
+packed_simd = "0.3"
 utils = { path = "../utils" }
 rand = "0.5"

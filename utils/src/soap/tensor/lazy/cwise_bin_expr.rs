@@ -57,9 +57,11 @@ where
 
 impl<L: Expression, R> Expression for CwiseBinExpr<L, Tensor<R>, Multiplication> {}
 impl<L: Expression, R> ExprSize for CwiseBinExpr<L, Tensor<R>, Multiplication> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.left.expr_size()
     }
+    #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.left.total_size_hint(cwise_reduce)
     }
@@ -92,9 +94,11 @@ where
 
 impl<L, R: Iterator + Expression> Expression for CwiseBinExpr<Tensor<L>, R, Multiplication> {}
 impl<L, R: Iterator + Expression> ExprSize for CwiseBinExpr<Tensor<L>, R, Multiplication> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.right.expr_size()
     }
+    #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.right.total_size_hint(cwise_reduce)
     }

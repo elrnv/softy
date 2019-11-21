@@ -1542,6 +1542,21 @@ where
     }
 }
 
+impl<S, M: Unsigned> SplitPrefix<M> for ChunkedN<S>
+where
+    S: SplitAt + Set,
+{
+    type Prefix = ChunkedN<S>;
+    fn split_prefix(self) -> Option<(Self::Prefix, Self)> {
+        let mid = self.chunk_size * M::to_usize();
+        if mid < self.len() {
+            Some(self.split_at(mid))
+        } else {
+            None
+        }
+    }
+}
+
 impl<S, M> UniChunkable<M> for ChunkedN<S> {
     type Chunk = ChunkedN<S>; // The exact size is determined at run-time
 }

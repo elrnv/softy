@@ -279,8 +279,14 @@ static const char *theDsFile = R"THEDSFILE(
                 hidewhen "{ friction# == 0 }"
 
                 parm {
+                    name "smoothingweight#"
+                    label "Smoothing Weight"
+                    type float
+                    default { "0.5" }
+                    range { 0! 1! }
+                }
+                parm {
                     name "dynamiccof#"
-                    cppname "DynamicCof"
                     label "Dynamic Coefficient"
                     type float
                     default { "0.5" }
@@ -288,7 +294,6 @@ static const char *theDsFile = R"THEDSFILE(
                 }
                 parm {
                     name "frictiontolerance#"
-                    cppname "FrictionTolerance"
                     label "Tolerance"
                     type log
                     default { "1e-5" }
@@ -296,7 +301,6 @@ static const char *theDsFile = R"THEDSFILE(
                 }
                 parm {
                     name "frictioninneriterations#"
-                    cppname "FrictionInnerIterations"
                     label "Inner Iterations"
                     type integer
                     default { "40" }
@@ -579,6 +583,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         if (sop_fc.friction) {
+            fc_params.smoothing_weight = sop_fc.smoothingweight;
             fc_params.dynamic_cof = sop_fc.dynamiccof;
             fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
         } else {

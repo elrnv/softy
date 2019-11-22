@@ -20,6 +20,7 @@ pub struct FrictionSolveResult {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FrictionParams {
+    pub smoothing_weight: f64,
     pub dynamic_friction: f64,
     pub inner_iterations: usize,
     pub tolerance: f64,

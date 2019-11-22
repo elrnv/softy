@@ -259,13 +259,14 @@ impl LinearizedPointContactConstraint {
             .zip(neighbourhood_indices.iter())
             .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
             .flat_map(|(nbrhood, valid_idx)| {
-                std::iter::repeat(valid_idx).zip(nbrhood.iter()).filter_map(
-                    |(valid_idx, nbr_idx)| {
+                let n = nbrhood.iter().filter(|&nbr_idx| neighbourhood_indices[*nbr_idx].is_valid()).count();
+                std::iter::repeat((valid_idx, weight / n as f64)).zip(nbrhood.iter()).filter_map(
+                    |((valid_idx, normalized_weight), nbr_idx)| {
                         neighbourhood_indices[*nbr_idx]
                             .into_option()
-                            .map(|valid_nbr| (valid_idx, valid_nbr, weight))
+                            .map(|valid_nbr| (valid_idx, valid_nbr, normalized_weight))
                     },
-                )
+                ).chain(std::iter::once((valid_idx, valid_idx, 1.0 - weight)))
             });
 
         // Don't need to sort or compress.
@@ -1052,11 +1053,15 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,
     ) {
-        let lap = self.build_contact_laplacian(0.5);
+        let (lap, jac) = if let Some(smoothing_weight) = self.frictional_contact.as_ref().map(|fc| fc.params.smoothing_weight) {
+            let lap = self.build_contact_laplacian(smoothing_weight);
 
-        let [obj_jac, coll_jac] = self.build_constraint_jacobian([object_pos, collider_pos]);
-        //let jac = [obj_jac.map(|j| lap.view() * j.view()), coll_jac.map(|j| lap.view() * j.view())];
-        let jac = [obj_jac, coll_jac];
+            let [obj_jac, coll_jac] = self.build_constraint_jacobian([object_pos, collider_pos]);
+            let jac = [obj_jac.map(|j| lap.view() * j.view()), coll_jac.map(|j| lap.view() * j.view())];
+            (Some(lap), jac)
+        } else {
+            (None, self.build_constraint_jacobian([object_pos, collider_pos]))
+        };
 
         self.constraint_jacobian.replace(jac);
         let contact_points = self.contact_points.borrow();
@@ -1065,8 +1070,11 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         let mut c0 = vec![0.0; num_non_zero_constraints];
         self.implicit_surface
             .local_potential(contact_points.view().into(), c0.as_mut_slice());
-        //self.constraint_value = lap.view() * Tensor::new(c0.view());
-        self.constraint_value = c0;
+        if let Some(lap) = lap {
+            self.constraint_value = (lap.expr() * c0.expr()).eval();
+        } else {
+            self.constraint_value = c0;
+        }
     }
     fn is_linear(&self) -> bool {
         true

@@ -168,13 +168,13 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
-        //impl<T, S> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
-        //    where Self: Push<[T; $n]>
-        //{
-        //    fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
-        //        self.push(tensor.into_inner());
-        //    }
-        //}
+        impl<T: Scalar, S> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
+            where Self: Push<[T; $n]>
+        {
+            fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
+                self.push(tensor.into_inner());
+            }
+        }
 
         impl<T, I> std::ops::Mul<Tensor<[T; $n]>> for UniChunkedIterExpr<I, $nty> {
             type Output = CwiseUnExpr<CwiseBinExpr<UniChunkedIterExpr<I, $nty>, Repeat<Tensor<[T; $n]>>, CwiseMultiplication>, Summation>;

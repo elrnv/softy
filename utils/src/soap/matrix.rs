@@ -1449,16 +1449,42 @@ impl<'a> Mul<Tensor<Chunked3<&'a [f64]>>> for DSBlockMatrix3View<'_> {
     }
 }
 
-impl<'a> Mul<DSBlockMatrix1x3View<'_>> for DSMatrixView<'_> {
+impl Mul<DSBlockMatrix1x3View<'_>> for DSMatrixView<'_> {
     type Output = DSBlockMatrix1x3;
     fn mul(self, rhs: DSBlockMatrix1x3View<'_>) -> Self::Output {
-        let blocks = Chunked1::from_flat(Chunked3::from_flat(Vec::new()));
-        let mut data = Sparse::from_dim(Vec::new(), rhs.num_cols(), blocks);
+        let mut blocks = Chunked1::from_flat(Chunked3::from_flat(Vec::new()));
+        let mut offsets = vec![0];
+        offsets.reserve(self.data.len());
+        let mut indices = Vec::new();
+        indices.reserve(5*rhs.data.len());
+        let mut workspace_blocks = Vec::new();
 
         for row in self.data.iter() {
-            //data.eval_extend(row.expr().dot_op(rhs.data.expr()));
+            let mut out_expr = row.expr().cwise_mul(rhs.data.expr());
+
+            // Write out block sums into a dense vector of blocks
+            if let Some(next) = out_expr.next() {
+                workspace_blocks.resize(next.expr.target_size(), Tensor::new([[0.0; 3]; 1]));
+                for elem in next.expr {
+                    workspace_blocks[elem.index] += elem.expr;
+                }
+                for next in out_expr {
+                    for elem in next.expr {
+                        workspace_blocks[elem.index] += elem.expr;
+                    }
+                }
+            }
+
+            // Condense the dense blocks into a sparse vector
+            for (i, block) in workspace_blocks.iter_mut().enumerate().filter(|(_, b)| b.data != [[0.0; 3]; 1]) {
+                indices.push(i);
+                blocks.eval_extend(std::mem::replace(block, Tensor::new([[0.0; 3]; 1])));
+            }
+
+            offsets.push(blocks.len());
         }
-        Tensor::new(Chunked::from_offsets(vec![0], data))
+        let data = Sparse::from_dim(indices, rhs.num_cols(), blocks);
+        Tensor::new(Chunked::from_offsets(offsets, data))
     }
 }
 
@@ -2036,5 +2062,28 @@ mod tests {
         for (&val, &exp) in val_vec.iter().zip(exp_vec.iter()) {
             assert_relative_eq!(val, exp);
         }
+    }
+
+    #[test]
+    fn ds_mtx_mul_ds_block_mtx_1x3() {
+        // [1 2 .]
+        // [. . 3]
+        // [. 2 .]
+        let ds = Chunked::from_sizes(vec![2, 1, 1], Sparse::from_dim(vec![0, 1, 2, 1], 3, vec![1.0,2.0,3.0,2.0]));
+        // [1 2 3 . . .]
+        // [1 2 1 4 5 6]
+        // [7 8 9 . . .]
+        let blocks = Chunked1::from_flat(Chunked3::from_flat(
+                vec![1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]));
+        let ds_block_mtx_1x3 = Chunked::from_sizes(vec![1, 2, 1], Sparse::from_dim(vec![0, 0, 1, 0], 2, blocks));
+
+        let out = Tensor::new(ds.view()) * Tensor::new(ds_block_mtx_1x3.view());
+
+        // [ 3  6  5  8 10 12]
+        // [21 24 27  .  .  .]
+        // [ 2  4  2  8 10 12]
+        let exp_blocks = Chunked1::from_flat(Chunked3::from_flat(
+                vec![3.0,6.0,5.0,8.0,10.0,12.0,21.0,24.0,27.0,2.0,4.0,2.0,8.0,10.0,12.0]));
+        assert_eq!(out.data, Chunked::from_sizes(vec![2,1,2], Sparse::from_dim(vec![0,1,0,0,1], 2, exp_blocks)));
     }
 }

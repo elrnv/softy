@@ -21,7 +21,7 @@ pub use enumerate::Enumerate;
 pub use eval::{EvalExtend, Evaluate};
 pub use sparse_expr::SparseExpr;
 pub use cwise_bin_expr::*;
-pub use target::Target;
+pub use target::*;
 pub use expr_mut::*;
 pub use iterator::*;
 
@@ -344,6 +344,9 @@ impl<E> Repeat<E> {
 pub struct Reduce<E, F> {
     expr: E,
     op: F,
+    // TODO: Add a default value: Some sparse reduce operations are empty but we need to return an
+    // empty value.
+    // def: ?
 }
 
 impl<E, F: Default> Reduce<E, F> {
@@ -414,6 +417,7 @@ impl<'a, A: DenseExpr, B: DenseExpr, F> DenseExpr for CwiseBinExpr<A, B, F> {}
 impl<'a, A: DenseExpr, B, F> DenseExpr for CwiseBinExpr<A, Tensor<B>, F> {}
 impl<'a, A, B: DenseExpr, F> DenseExpr for CwiseBinExpr<Tensor<A>, B, F> {}
 impl<'a, E: DenseExpr> DenseExpr for Repeat<E> {}
+impl<'a, E: DenseExpr> DenseExpr for Enumerate<E> {}
 impl<'a, T> DenseExpr for Repeat<Tensor<T>> {}
 
 /// A trait describing types that can be evaluated.
@@ -493,7 +497,15 @@ where
             self.clone().fold(Some(0), |acc, item| {
                 acc.and_then(|acc| {
                     item.total_size_hint(cwise_reduce >> 1)
-                        .map(|tot| acc + tot / item.expr_size())
+                        .map(|tot| {
+                            acc + if item.expr_size() > 0 {
+                                debug_assert!(tot > 0);
+                                tot / item.expr_size()
+                            } else {
+                                debug_assert_eq!(tot, 0);
+                                0
+                            }
+                        })
                 })
             })
         } else {
@@ -787,8 +799,8 @@ where
 /// to implement operations on sparse structures.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IndexedExpr<E> {
-    index: usize,
-    expr: E,
+    pub(crate) index: usize,
+    pub(crate) expr: E,
 }
 
 impl<E> IndexedExpr<E> {
@@ -2227,11 +2239,32 @@ mod tests {
 
     #[test]
     fn sparse_matrix_vector_mul() {
+        // Variable length rows with one empty:
+        // [1 0]
+        // [0 0]
+        //let a = Chunked::from_sizes(vec![1, 0], Sparse::from_dim(vec![0], 2, vec![1]));
+        //let b = vec![1, 2];
+        //let mut out = a.expr() * b.expr();
+        //dbg!(&out);
+        //let next = out.next().unwrap();
+        //dbg!(&next);
+        //let mut next = out.next().unwrap();
+        //dbg!(&next);
+        //let out: Vec<i32> = (a.expr() * b.expr()).eval();
+        //assert_eq!(vec![1, 0], out);
+
+        //// Empty sparse matrix
+        //let a = Chunked::from_offsets(vec![0], Sparse::from_dim(Vec::new(), 1, Vec::<i32>::new()));
+        //let b = vec![2];
+        //let out: Vec<i32> = (a.expr() * b.expr()).eval();
+        //assert_eq!(vec![0], out);
+
         // Sparse matrix with 2 entries in each row, there are 2 rows and 4 columns.
         let a = ChunkedN::from_flat_with_stride(Sparse::from_dim(vec![0, 2, 1, 3], 4, vec![1,2,3,4]), 2);
         let b = vec![2, 1, 3, 4];
         let out: Vec<i32> = (a.expr() * b.expr()).eval();
         assert_eq!(vec![8, 19], out);
+
     }
 
     //TODO: There are some difficulties implementing this completely.

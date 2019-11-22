@@ -1,14 +1,15 @@
-use super::{SparseIterExpr, SparseExpr, CwiseUnExpr};
-use super::cwise_bin_expr::CwiseBinExpr;
+use super::*;
 use crate::soap::Set;
 
+type Zeros = std::ops::RangeTo<usize>;
+
 /// A trait to retrieve the target type of a sparse expression.
+/// The target is the set of default values of a sparse expression.
+/// Most matrix expressions assume a target of zeros.
 pub trait Target {
-    type Target: Set;
+    type Target;
     fn target(&self) -> &Self::Target;
-    fn target_size(&self) -> usize {
-        self.target().len()
-    }
+    fn target_size(&self) -> usize;
 }
 
 impl<'a, S, T: Set> Target for SparseIterExpr<'a, S, T> {
@@ -16,6 +17,9 @@ impl<'a, S, T: Set> Target for SparseIterExpr<'a, S, T> {
 
     fn target(&self) -> &Self::Target {
         &self.target
+    }
+    fn target_size(&self) -> usize {
+        self.target.len()
     }
 }
 
@@ -25,19 +29,29 @@ impl<E: Target + Iterator> Target for SparseExpr<E> {
     fn target(&self) -> &Self::Target {
         &self.expr.target()
     }
+    fn target_size(&self) -> usize {
+        self.expr.target_size()
+    }
 }
 
-impl<L, R, T: Set, F> Target for CwiseBinExpr<L, R, F>
-where
-    L: Target<Target = T>,
-    R: Target<Target = T>,
-    T: PartialEq + std::fmt::Debug,
-{
-    type Target = T;
+impl<E: Target> Target for IndexedExpr<E> {
+    type Target = E::Target;
 
     fn target(&self) -> &Self::Target {
-        debug_assert_eq!(self.left.target(), self.right.target());
-        &self.left.target()
+        self.expr.target()
+    }
+    fn target_size(&self) -> usize {
+        self.expr.target_size()
+    }
+}
+impl<E: Target> Target for Enumerate<E> {
+    type Target = E::Target;
+
+    fn target(&self) -> &Self::Target {
+        &self.iter.target()
+    }
+    fn target_size(&self) -> usize {
+        self.iter.target_size()
     }
 }
 
@@ -46,5 +60,150 @@ impl<E: Target, F> Target for CwiseUnExpr<E, F> {
 
     fn target(&self) -> &Self::Target {
         self.expr.target()
+    }
+    fn target_size(&self) -> usize {
+        self.expr.target_size()
+    }
+}
+
+// TODO: Refactor Tensor multiplication into a repeat
+impl<L, R, T, F> Target for CwiseBinExpr<Tensor<L>, R, F>
+where
+    R: Target<Target = T>,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        &self.right.target()
+    }
+    fn target_size(&self) -> usize {
+        self.right.target_size()
+    }
+}
+
+impl<L, R, T, F> Target for CwiseBinExpr<L, Tensor<R>, F>
+where
+    L: Target<Target = T>,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        &self.left.target()
+    }
+    fn target_size(&self) -> usize {
+        self.left.target_size()
+    }
+}
+
+impl<L, R, T, F> Target for CwiseBinExpr<SparseExpr<L>, R, F>
+where
+    L: Iterator,
+    SparseExpr<L>: Target<Target = Zeros>,
+    R: DenseExpr + Target<Target = T>,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        debug_assert_eq!(self.left.target_size(), self.right.target_size());
+        &self.right.target()
+    }
+    fn target_size(&self) -> usize {
+        self.right.target_size()
+    }
+}
+
+impl<L, R, T, F> Target for CwiseBinExpr<L, SparseExpr<R>, F>
+where
+    L: DenseExpr + Target<Target = T>,
+    R: Iterator,
+    SparseExpr<R>: Target<Target = Zeros>,
+{
+    type Target = T;
+
+    fn target(&self) -> &Self::Target {
+        debug_assert_eq!(self.left.target_size(), self.right.target_size());
+        &self.left.target()
+    }
+    fn target_size(&self) -> usize {
+        self.left.target_size()
+    }
+}
+
+impl<L, R, F> Target for CwiseBinExpr<SparseExpr<L>, SparseExpr<R>, F>
+where
+    L: Iterator,
+    R: Iterator,
+    SparseExpr<L>: Target<Target = Zeros>,
+    SparseExpr<R>: Target<Target = Zeros>,
+{
+    type Target = Zeros;
+
+    fn target(&self) -> &Self::Target {
+        debug_assert_eq!(self.left.target_size(), self.right.target_size());
+        &self.left.target()
+    }
+    fn target_size(&self) -> usize {
+        self.left.target_size()
+    }
+}
+
+impl<'a, T> Target for SliceIterExpr<'a, T> {
+    type Target = Self;
+
+    fn target(&self) -> &Self::Target {
+        &self
+    }
+    fn target_size(&self) -> usize {
+        self.expr_size()
+    }
+}
+
+impl<T> Target for VecIterExpr<T> {
+    type Target = Self;
+
+    fn target(&self) -> &Self::Target {
+        &self
+    }
+    fn target_size(&self) -> usize {
+        self.expr_size()
+    }
+}
+
+impl<S, N> Target for UniChunkedIterExpr<S, N>
+where Self: ExprSize
+{
+    type Target = Self;
+
+    fn target(&self) -> &Self::Target {
+        &self
+    }
+    fn target_size(&self) -> usize {
+        self.expr_size()
+    }
+}
+
+impl<'a, S> Target for ChunkedIterExpr<'a, S>
+where Self: ExprSize
+{
+    type Target = Self;
+
+    fn target(&self) -> &Self::Target {
+        &self
+    }
+    fn target_size(&self) -> usize {
+        self.expr_size()
+    }
+}
+
+impl<'a, S> Target for SubsetIterExpr<'a, S>
+where Self: ExprSize
+{
+    type Target = Self;
+
+    fn target(&self) -> &Self::Target {
+        &self
+    }
+    fn target_size(&self) -> usize {
+        self.expr_size()
     }
 }

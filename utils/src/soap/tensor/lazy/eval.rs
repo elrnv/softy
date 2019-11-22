@@ -230,10 +230,10 @@ impl_array_vector_eval_traits!(1, 2, 3, 4);
 
 macro_rules! impl_array_matrix_eval_traits {
     () => {};
-    (($r:expr, $c:expr, $cty:ident)) => { // Allow optional trailing comma
-        impl_array_matrix_eval_traits!(($r, $c, $cty),);
+    (($r:expr, $c:expr, $rty:ident, $cty:ident)) => { // Allow optional trailing comma
+        impl_array_matrix_eval_traits!(($r, $c, $rty, $cty),);
     };
-    (($r:expr, $c:expr, $cty:ident), $($ns:tt)*) => {
+    (($r:expr, $c:expr, $rty:ident, $cty:ident), $($ns:tt)*) => {
         impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [[T; $c]; $r]
         where
             E: Iterator<Item = Tensor<[[T; $c]; $r]>>,
@@ -257,16 +257,16 @@ macro_rules! impl_array_matrix_eval_traits {
             }
         }
 
-        impl<T: Scalar, S> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<S, $cty>
-        where
-            S: Set + EvalExtend<Tensor<[T; $c]>>,
-        {
+        impl<T: Scalar> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<Vec<T>, $cty> {
             #[inline]
-            #[unroll_for_loops]
             fn eval_extend(&mut self, tensor: Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    self.data.eval_extend(*unsafe { tensor.data.get_unchecked(i) }.as_tensor());
-                }
+                self.data.extend_from_slice(tensor.data.as_slice());
+            }
+        }
+        impl<T: Scalar> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<UniChunked<Vec<T>, $cty>, $rty> {
+            #[inline]
+            fn eval_extend(&mut self, tensor: Tensor<[[T; $c]; $r]>) {
+                self.data.data.extend_from_slice(tensor.data.as_slice());
             }
         }
 
@@ -275,10 +275,10 @@ macro_rules! impl_array_matrix_eval_traits {
 }
 
 impl_array_matrix_eval_traits!(
-    (1, 1, U1), (1, 2, U2), (1, 3, U3), (1, 4, U4),
-    (2, 1, U1), (2, 2, U2), (2, 3, U3), (2, 4, U4),
-    (3, 1, U1), (3, 2, U2), (3, 3, U3), (3, 4, U4),
-    (4, 1, U1), (4, 2, U2), (4, 3, U3), (4, 4, U4),
+    (1, 1, U1, U1), (1, 2, U1, U2), (1, 3, U1, U3), (1, 4, U1, U4),
+    (2, 1, U2, U1), (2, 2, U2, U2), (2, 3, U2, U3), (2, 4, U2, U4),
+    (3, 1, U3, U1), (3, 2, U3, U2), (3, 3, U3, U3), (3, 4, U3, U4),
+    (4, 1, U4, U1), (4, 2, U4, U2), (4, 3, U4, U3), (4, 4, U4, U4),
 );
 
 /*

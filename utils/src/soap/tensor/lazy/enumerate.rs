@@ -2,8 +2,8 @@ use super::*;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Enumerate<I> {
-    iter: I,
-    count: usize,
+    pub(crate) iter: I,
+    pub(crate) count: usize,
 }
 impl<I> Enumerate<I> {
     pub fn new(iter: I) -> Enumerate<I> {

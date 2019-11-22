@@ -405,6 +405,7 @@ mod tests {
     fn sliding_point() -> Result<(), Error> {
         use std::f64::consts::PI;
         let params = FrictionParams {
+            smoothing_weight: 0.0,
             dynamic_friction: 1.5,
             inner_iterations: 30,
             tolerance: 1e-5,

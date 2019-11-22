@@ -65,6 +65,7 @@ fn pinch_against_implicit() -> Result<(), Error> {
             radius_multiplier: 1.5,
         },
         friction_params: Some(FrictionParams {
+            smoothing_weight: 0.0,
             dynamic_friction: 0.4,
             inner_iterations: 40,
             tolerance: 1e-5,

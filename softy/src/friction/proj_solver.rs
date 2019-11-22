@@ -110,6 +110,7 @@ mod tests {
 
     fn sliding_point_tester(mu: f64, mass: f64) -> Result<(Vector2<f64>, Vector2<f64>), Error> {
         let params = FrictionParams {
+            smoothing_weight: 0.0,
             dynamic_friction: mu,
             inner_iterations: 30,
             tolerance: 1e-10,
@@ -151,6 +152,7 @@ mod tests {
     #[test]
     fn sliding_tet() -> Result<(), Error> {
         let params = FrictionParams {
+            smoothing_weight: 0.0,
             dynamic_friction: 0.001,
             inner_iterations: 40,
             tolerance: 1e-10,

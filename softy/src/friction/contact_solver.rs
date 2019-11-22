@@ -184,6 +184,7 @@ mod tests {
         let mass = 1.0;
 
         let params = FrictionParams {
+            smoothing_weight: 0.0,
             dynamic_friction: 0.0, // ignored
             inner_iterations: 30,
             tolerance: 1e-15,

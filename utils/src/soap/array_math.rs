@@ -471,6 +471,7 @@ macro_rules! impl_array_matrices {
         pub type $mtxn<T> = Tensor<[[T; $c]; $r]>;
 
         impl<T> AsSlice<T> for [[T; $c]; $r] {
+            #[inline]
             fn as_slice(&self) -> &[T] {
                 unsafe { reinterpret::reinterpret_slice(&self[..]) } 
             }

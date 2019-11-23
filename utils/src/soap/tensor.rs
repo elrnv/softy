@@ -251,6 +251,7 @@ macro_rules! impl_scalar {
             }
 
             impl AsSlice<$type> for $type {
+                #[inline]
                 fn as_slice(&self) -> &[$type] {
                     unsafe {
                         std::slice::from_raw_parts(self as *const _, 1)
@@ -447,6 +448,7 @@ macro_rules! impl_array_tensors {
             Tensor<T>: Neg<Output = Tensor<T>>,
         {
             type Output = Self;
+            #[inline]
             #[unroll_for_loops]
             fn neg(mut self) -> Self::Output {
                 for i in 0..$n {
@@ -461,6 +463,7 @@ macro_rules! impl_array_tensors {
             Tensor<T>: Neg<Output = Tensor<T>>,
         {
             type Output = Tensor<[T; $n]>;
+            #[inline]
             fn neg(self) -> Self::Output {
                 Neg::neg(Tensor::new(self.data))
             }

@@ -159,6 +159,7 @@ where
     F: Fn(T) -> O,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, input: T) -> Self::Output {
         self(input)
     }
@@ -168,6 +169,7 @@ impl<T, F> UnOpAssign<T> for F
 where
     F: Fn(&mut T),
 {
+    #[inline]
     fn apply_assign(&self, inout: &mut T) {
         self(inout)
     }
@@ -178,6 +180,7 @@ where
     T: SumOp<Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, input: T) -> Self::Output {
         input.sum_op()
     }
@@ -188,6 +191,7 @@ where
     T: NegOp<Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, val: T) -> Self::Output {
         -val
     }
@@ -196,6 +200,7 @@ impl<T> UnOpAssign<T> for Negation
 where
     T: Copy + NegOp<Output = T>,
 {
+    #[inline]
     fn apply_assign(&self, val: &mut T) {
         *val = -*val;
     }
@@ -203,6 +208,7 @@ where
 
 pub trait BinOp<L, R> {
     type Output;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output;
 }
 
@@ -215,6 +221,7 @@ where
     F: Fn(L, R) -> O,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output {
         self(lhs, rhs)
     }
@@ -224,6 +231,7 @@ impl<L: ?Sized, R, F> BinOpAssign<L, R> for F
 where
     F: Fn(&mut L, R),
 {
+    #[inline]
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         self(lhs, rhs)
     }
@@ -234,6 +242,7 @@ where
     L: AddOp<R, Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output {
         lhs + rhs
     }
@@ -243,6 +252,7 @@ impl<L: ?Sized, R> BinOpAssign<L, R> for Addition
 where
     L: AddAssignOp<R>,
 {
+    #[inline]
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         *lhs += rhs;
     }
@@ -253,6 +263,7 @@ where
     L: SubOp<R, Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output {
         lhs - rhs
     }
@@ -261,6 +272,7 @@ impl<L: ?Sized, R> BinOpAssign<L, R> for Subtraction
 where
     L: SubAssignOp<R>,
 {
+    #[inline]
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         *lhs -= rhs;
     }
@@ -271,6 +283,7 @@ where
     L: CwiseMulOp<R, Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output {
         lhs.cwise_mul(rhs)
     }
@@ -279,6 +292,7 @@ impl<L: ?Sized, R> BinOpAssign<L, R> for CwiseMultiplication
 where
     L: CwiseMulAssignOp<R>,
 {
+    #[inline]
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         lhs.cwise_mul_assign(rhs);
     }
@@ -289,6 +303,7 @@ where
     L: MulOp<R, Output = O>,
 {
     type Output = O;
+    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output {
         lhs.mul(rhs)
     }
@@ -297,6 +312,7 @@ impl<L: ?Sized, R> BinOpAssign<L, R> for Multiplication
 where
     L: MulAssignOp<R>,
 {
+    #[inline]
     fn apply_assign(&self, lhs: &mut L, rhs: R) {
         lhs.mul_assign(rhs);
     }
@@ -422,6 +438,7 @@ impl<'a, T> DenseExpr for Repeat<Tensor<T>> {}
 
 /// A trait describing types that can be evaluated.
 pub trait Expression: ExprSize {
+    #[inline]
     fn eval<T>(self) -> T
     where
         Self: Sized,
@@ -430,6 +447,7 @@ pub trait Expression: ExprSize {
         Evaluate::eval(self)
     }
 
+    #[inline]
     fn dot<T, R>(self, rhs: R) -> T
     where
         Self: Sized + DotOp<R>,
@@ -438,14 +456,7 @@ pub trait Expression: ExprSize {
         Evaluate::eval(self.dot_op(rhs))
     }
 
-    //fn sum<T>(self) -> T
-    //where
-    //    Self: Sized,
-    //    T: Evaluate<Reduce<Self, Addition>>,
-    //{
-    //    Evaluate::eval(Reduce::new(self))
-    //}
-
+    #[inline]
     fn reduce<T, F>(self, f: F) -> T
     where
         Self: Sized,
@@ -467,6 +478,7 @@ pub trait ExprSize {
     /// # Panics
     ///
     /// This function will panic on an expression that evaluates infinitely.
+    #[inline]
     fn reserve_hint(&self) -> usize {
         self.total_size_hint(0).unwrap()
     }
@@ -518,6 +530,7 @@ where
 
 impl<T: Expression> Expression for Tensor<T> {}
 impl<T: ExprSize> ExprSize for Tensor<T> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.data.expr_size()
     }
@@ -530,6 +543,7 @@ impl<T: ExprSize> ExprSize for Tensor<T> {
 
 impl<E: Iterator + Expression, F> Expression for Reduce<E, F> {}
 impl<E: Iterator + Expression, F> ExprSize for Reduce<E, F> {
+    #[inline]
     fn expr_size(&self) -> usize {
         1
     }
@@ -557,6 +571,7 @@ impl<'a, T: Clone + IntoExpr> Iterator for SliceIterExpr<'a, T> {
 impl<'a, T> Expression for SliceIterExpr<'a, T> {}
 impl<'a, T: Clone + IntoExpr> ExactSizeIterator for SliceIterExpr<'a, T> {}
 impl<'a, T> ExprSize for SliceIterExpr<'a, T> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.0.size_hint().1.unwrap_or(self.0.size_hint().0)
     }
@@ -579,6 +594,7 @@ impl<'a, T: IntoExpr> Iterator for VecIterExpr<T> {
 impl<T: IntoExpr> Expression for VecIterExpr<T> {}
 impl<T: IntoExpr> ExactSizeIterator for VecIterExpr<T> {}
 impl<T> ExprSize for VecIterExpr<T> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.0.size_hint().1.unwrap_or(self.0.size_hint().0)
     }
@@ -618,6 +634,7 @@ impl<S: Set, N> ExprSize for UniChunkedIterExpr<S, N>
 where
     Self: BaseExprTotalSizeHint,
 {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.data.len()
     }
@@ -787,6 +804,7 @@ impl<'a, S: Set> ExprSize for SubsetIterExpr<'a, S>
 where
     Self: BaseExprTotalSizeHint,
 {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.data.len()
     }
@@ -804,6 +822,7 @@ pub struct IndexedExpr<E> {
 }
 
 impl<E> IndexedExpr<E> {
+    #[inline]
     pub fn map_expr<G>(self, f: impl FnOnce(E) -> G) -> IndexedExpr<G> {
         IndexedExpr {
             index: self.index,
@@ -813,6 +832,7 @@ impl<E> IndexedExpr<E> {
 }
 
 impl<E> From<(usize, E)> for IndexedExpr<E> {
+    #[inline]
     fn from(pair: (usize, E)) -> Self {
         IndexedExpr {
             index: pair.0,
@@ -823,6 +843,7 @@ impl<E> From<(usize, E)> for IndexedExpr<E> {
 
 impl<E: SumOp> SumOp for IndexedExpr<E> {
     type Output = IndexedExpr<E::Output>;
+    #[inline]
     fn sum_op(self) -> Self::Output {
         let IndexedExpr { index, expr } = self;
         IndexedExpr {
@@ -834,6 +855,7 @@ impl<E: SumOp> SumOp for IndexedExpr<E> {
 
 impl<E: RecursiveSumOp> RecursiveSumOp for IndexedExpr<E> {
     type Output = E::Output;
+    #[inline]
     fn recursive_sum(self) -> Self::Output {
         self.expr.recursive_sum()
     }
@@ -980,6 +1002,7 @@ pub enum SparseAddResult<L, R, E> {
     Expr(E),
 }
 impl<T> From<SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>> for Tensor<T> {
+    #[inline]
     fn from(res: SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>) -> Tensor<T> {
         match res {
             SparseAddResult::Left(val) => val,
@@ -993,6 +1016,7 @@ impl<R, A: CwiseMulOp<R>, B: CwiseMulOp<R>, C: CwiseMulOp<R>> CwiseMulOp<R>
     for SparseAddResult<A, B, C>
 {
     type Output = SparseAddResult<A::Output, B::Output, C::Output>;
+    #[inline]
     fn cwise_mul(self, rhs: R) -> Self::Output {
         match self {
             SparseAddResult::Left(val) => SparseAddResult::Left(val.cwise_mul(rhs)),
@@ -1004,6 +1028,7 @@ impl<R, A: CwiseMulOp<R>, B: CwiseMulOp<R>, C: CwiseMulOp<R>> CwiseMulOp<R>
 
 impl<R, A: AddOp<R>, B: AddOp<R>, C: AddOp<R>> AddOp<R> for SparseAddResult<A, B, C> {
     type Output = SparseAddResult<A::Output, B::Output, C::Output>;
+    #[inline]
     fn add(self, rhs: R) -> Self::Output {
         match self {
             SparseAddResult::Left(val) => SparseAddResult::Left(val.add(rhs)),
@@ -1531,6 +1556,7 @@ impl<E: Clone> std::iter::FusedIterator for Repeat<E> {}
 
 impl<E: Expression> Expression for Repeat<E> {}
 impl<E: Expression> ExprSize for Repeat<E> {
+    #[inline]
     fn expr_size(&self) -> usize {
         std::usize::MAX
     }
@@ -1560,6 +1586,7 @@ where
 
 impl<E: Iterator + Expression, F: Reduction> Expression for CwiseUnExpr<E, F> {}
 impl<E: Iterator + Expression, F: Reduction> ExprSize for CwiseUnExpr<E, F> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.expr.expr_size()
     }
@@ -1569,6 +1596,7 @@ impl<E: Iterator + Expression, F: Reduction> ExprSize for CwiseUnExpr<E, F> {
 }
 impl<E: Iterator + Expression> Expression for CwiseUnExpr<E, Negation> {}
 impl<E: Iterator + Expression> ExprSize for CwiseUnExpr<E, Negation> {
+    #[inline]
     fn expr_size(&self) -> usize {
         self.expr.expr_size()
     }
@@ -1588,30 +1616,35 @@ macro_rules! impl_array_vector_traits {
     ($n:expr, $($ns:tt)*) => {
         impl<T: Scalar> IntoExpr for [T; $n] {
             type Expr = Tensor<[T; $n]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 Tensor::new(self)
             }
         }
         impl<T: Scalar> IntoExpr for &[T; $n] {
             type Expr = Tensor<[T; $n]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 Tensor::new(*self)
             }
         }
         impl<'a, T: Scalar> IntoExpr for &'a mut [T; $n] {
             type Expr = &'a mut Tensor<[T; $n]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 self.as_mut_tensor()
             }
         }
         impl<'a, T: Scalar> Expr<'a> for [T; $n] {
             type Output = Tensor<[T; $n]>;
+            #[inline]
             fn expr(&'a self) -> Self::Output {
                 Tensor::new(*self)
             }
         }
         impl<'a, T> IntoExpr for ChunkedN<&'a [T; $n]> {
             type Expr = ChunkedNIterExpr<&'a [T]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 UniChunkedIterExpr {
                     data: self.data.view(),
@@ -1621,6 +1654,7 @@ macro_rules! impl_array_vector_traits {
         }
         impl<'a, T> IntoExpr for ChunkedN<&'a mut [T; $n]> {
             type Expr = ChunkedNIterExpr<&'a mut [T]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 UniChunkedIterExpr {
                     data: self.data.view_mut(),
@@ -1632,6 +1666,7 @@ macro_rules! impl_array_vector_traits {
             where Self: AsMatrix<Matrix = &'a Tensor<A>>,
         {
             type Expr = Tensor<A>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 *self.as_matrix()
             }
@@ -1640,15 +1675,18 @@ macro_rules! impl_array_vector_traits {
             where Self: AsMatrix<Matrix = &'a mut Tensor<A>>,
         {
             type Expr = &'a mut Tensor<A>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 self.as_matrix()
             }
         }
         impl<T: Scalar> Expression for [T; $n] {}
         impl<T: Scalar> ExprSize for [T; $n] {
+            #[inline]
             fn expr_size(&self) -> usize {
                 $n
             }
+            #[inline]
             fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
                 Some($n)
             }
@@ -1667,24 +1705,28 @@ macro_rules! impl_array_matrix_traits {
     (($r:expr, $c:expr, $cty:ident), $($ns:tt)*) => {
         impl<T: Scalar> IntoExpr for [[T; $c]; $r] {
             type Expr = Tensor<[[T; $c]; $r]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 Tensor::new(self)
             }
         }
         impl<T: Scalar> IntoExpr for &[[T; $c]; $r] {
             type Expr = Tensor<[[T; $c]; $r]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 Tensor::new(*self)
             }
         }
         impl<'a, T: Scalar> IntoExpr for &'a mut [[T; $c]; $r] {
             type Expr = &'a mut Tensor<[[T; $c]; $r]>;
+            #[inline]
             fn into_expr(self) -> Self::Expr {
                 self.as_mut_tensor()
             }
         }
         impl<'a, T: Scalar> Expr<'a> for [[T; $c]; $r] {
             type Output = Tensor<[[T; $c]; $r]>;
+            #[inline]
             fn expr(&'a self) -> Self::Output {
                 Tensor::new(*self)
             }
@@ -1706,9 +1748,11 @@ macro_rules! impl_array_matrix_traits {
 
         impl<T: Scalar> Expression for [[T; $c]; $r] {}
         impl<T: Scalar> ExprSize for [[T; $c]; $r] {
+            #[inline]
             fn expr_size(&self) -> usize {
                 $r * $c
             }
+            #[inline]
             fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
                 Some($r * $c)
             }
@@ -1731,6 +1775,7 @@ impl_array_matrix_traits!(
 
 impl<T: Scalar> RecursiveSumOp for Tensor<T> {
     type Output = Tensor<T>;
+    #[inline]
     fn recursive_sum(self) -> Self::Output {
         self
     }
@@ -1743,6 +1788,7 @@ where
     Out: Default + AddOp<Output = Out>,
 {
     type Output = Out;
+    #[inline]
     fn recursive_sum(self) -> Self::Output {
         self.fold(Default::default(), |acc, x| acc + x.recursive_sum())
     }
@@ -1750,6 +1796,7 @@ where
 
 impl<T: Scalar> SumOp for Tensor<T> {
     type Output = Tensor<T>;
+    #[inline]
     fn sum_op(self) -> Self::Output {
         self
     }
@@ -1757,6 +1804,7 @@ impl<T: Scalar> SumOp for Tensor<T> {
 
 impl<I: Iterator> SumOp for I {
     type Output = Sum<I>;
+    #[inline]
     fn sum_op(self) -> Self::Output {
         Sum::new(self)
     }
@@ -1768,6 +1816,7 @@ impl<I: Iterator> SumOp for I {
 
 impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
     type Output = Tensor<<L as MulOp<R>>::Output>;
+    #[inline]
     fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
         Tensor::new(self.data * rhs.data)
     }
@@ -1780,6 +1829,7 @@ where
     C: RecursiveSumOp<Output = Tensor<D>>,
 {
     type Output = Tensor<D>;
+    #[inline]
     fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
         self.cwise_mul(rhs).recursive_sum()
     }
@@ -1793,6 +1843,7 @@ where
     C: RecursiveSumOp<Output = Tensor<D>>,
 {
     type Output = Tensor<D>;
+    #[inline]
     fn dot_op(self, rhs: R) -> Self::Output {
         self.cwise_mul(rhs).recursive_sum()
     }
@@ -1807,6 +1858,7 @@ where
     C: RecursiveSumOp<Output = Tensor<D>>,
 {
     type Output = Tensor<D>;
+    #[inline]
     fn dot_op(self, rhs: R) -> Self::Output {
         self.cwise_mul(rhs).recursive_sum()
     }

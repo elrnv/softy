@@ -26,28 +26,33 @@ macro_rules! impl_array_for_typenum {
         impl<T> Set for [T; $n] {
             type Elem = T;
             type Atom = T;
+            #[inline]
             fn len(&self) -> usize {
                 $n
             }
         }
         impl<T> AsSlice<T> for [T; $n] {
+            #[inline]
             fn as_slice(&self) -> &[T] {
                 &self[..]
             }
         }
         impl<'a, T: 'a> View<'a> for [T; $n] {
             type Type = &'a [T];
+            #[inline]
             fn view(&'a self) -> Self::Type {
                 self
             }
         }
         impl<'a, T: 'a> ViewMut<'a> for [T; $n] {
             type Type = &'a mut [T];
+            #[inline]
             fn view_mut(&'a mut self) -> Self::Type {
                 self
             }
         }
         impl<T: Dummy + Copy> Dummy for [T; $n] {
+            #[inline]
             unsafe fn dummy() -> Self {
                 [Dummy::dummy(); $n]
             }
@@ -59,6 +64,7 @@ macro_rules! impl_array_for_typenum {
                 <N as Array<T>>::Array: 'a,
         {
             type Output = &'a N::Array;
+            #[inline]
             fn get(self, set: &&'a [T; $n]) -> Option<Self::Output> {
                 if self.end() <= set.len() {
                     let slice = *set;
@@ -75,6 +81,7 @@ macro_rules! impl_array_for_typenum {
             <N as Array<T>>::Array: 'a,
         {
             type Output = &'a N::Array;
+            #[inline]
             fn try_isolate(self, set: &'a [T; $n]) -> Option<Self::Output> {
                 if self.end() <= set.len() {
                     Some(unsafe { &*(set.as_ptr().add(self.start()) as *const N::Array) })
@@ -87,12 +94,15 @@ macro_rules! impl_array_for_typenum {
         impl<T> Array<T> for consts::$nty {
             type Array = [T; $n];
 
+            #[inline]
             fn iter_mut(array: &mut Self::Array) -> std::slice::IterMut<T> {
                 array.iter_mut()
             }
+            #[inline]
             fn iter(array: &Self::Array) -> std::slice::Iter<T> {
                 array.iter()
             }
+            #[inline]
             fn as_slice(array: &Self::Array) -> &[T] {
                 array
             }
@@ -157,12 +167,14 @@ macro_rules! impl_array_for_typenum {
         }
 
         impl<T: Clone> CloneIntoOther<[T; $n]> for [T; $n] {
+            #[inline]
             fn clone_into_other(&self, other: &mut [T; $n]) {
                 other.clone_from(self);
             }
         }
 
         impl<T: Clone> CloneIntoOther<&mut [T; $n]> for [T; $n] {
+            #[inline]
             fn clone_into_other(&self, other: &mut &mut [T; $n]) {
                 (*other).clone_from(self);
             }
@@ -171,6 +183,7 @@ macro_rules! impl_array_for_typenum {
         impl<T: Scalar, S> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
             where Self: Push<[T; $n]>
         {
+            #[inline]
             fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
                 self.push(tensor.into_inner());
             }

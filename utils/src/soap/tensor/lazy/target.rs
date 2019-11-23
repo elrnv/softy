@@ -15,9 +15,11 @@ pub trait Target {
 impl<'a, S, T: Set> Target for SparseIterExpr<'a, S, T> {
     type Target = T;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self.target
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.target.len()
     }
@@ -26,9 +28,11 @@ impl<'a, S, T: Set> Target for SparseIterExpr<'a, S, T> {
 impl<E: Target + Iterator> Target for SparseExpr<E> {
     type Target = E::Target;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self.expr.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr.target_size()
     }
@@ -37,9 +41,11 @@ impl<E: Target + Iterator> Target for SparseExpr<E> {
 impl<E: Target> Target for IndexedExpr<E> {
     type Target = E::Target;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         self.expr.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr.target_size()
     }
@@ -47,9 +53,11 @@ impl<E: Target> Target for IndexedExpr<E> {
 impl<E: Target> Target for Enumerate<E> {
     type Target = E::Target;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self.iter.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.iter.target_size()
     }
@@ -58,9 +66,11 @@ impl<E: Target> Target for Enumerate<E> {
 impl<E: Target, F> Target for CwiseUnExpr<E, F> {
     type Target = E::Target;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         self.expr.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr.target_size()
     }
@@ -73,9 +83,11 @@ where
 {
     type Target = T;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self.right.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.right.target_size()
     }
@@ -87,9 +99,11 @@ where
 {
     type Target = T;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self.left.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.left.target_size()
     }
@@ -103,10 +117,12 @@ where
 {
     type Target = T;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         debug_assert_eq!(self.left.target_size(), self.right.target_size());
         &self.right.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.right.target_size()
     }
@@ -120,10 +136,12 @@ where
 {
     type Target = T;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         debug_assert_eq!(self.left.target_size(), self.right.target_size());
         &self.left.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.left.target_size()
     }
@@ -138,10 +156,12 @@ where
 {
     type Target = Zeros;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         debug_assert_eq!(self.left.target_size(), self.right.target_size());
         &self.left.target()
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.left.target_size()
     }
@@ -150,9 +170,11 @@ where
 impl<'a, T> Target for SliceIterExpr<'a, T> {
     type Target = Self;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr_size()
     }
@@ -161,9 +183,11 @@ impl<'a, T> Target for SliceIterExpr<'a, T> {
 impl<T> Target for VecIterExpr<T> {
     type Target = Self;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr_size()
     }
@@ -174,9 +198,11 @@ where Self: ExprSize
 {
     type Target = Self;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr_size()
     }
@@ -187,9 +213,11 @@ where Self: ExprSize
 {
     type Target = Self;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr_size()
     }
@@ -200,9 +228,11 @@ where Self: ExprSize
 {
     type Target = Self;
 
+    #[inline]
     fn target(&self) -> &Self::Target {
         &self
     }
+    #[inline]
     fn target_size(&self) -> usize {
         self.expr_size()
     }

@@ -768,23 +768,26 @@ impl ObjectData {
 
     /// Update the shell meshes with the given global array of vertex positions
     /// and velocities for all shells.
-    pub fn update_shell_vertices(&mut self, new_pos: Chunked3<&[f64]>) -> Result<(), crate::Error> {
+    pub fn update_shell_vertices(&mut self, new_pos: Chunked3<&[f64]>, time_step: f64) -> Result<(), crate::Error> {
         // Some shells are simulated on a per vertex level, some are rigid or
         // fixed, so we will update `prev_x` for the former and `pos` for the
         // latter.
-        let ObjectData { prev_x, pos, .. } = self;
+        let ObjectData { prev_x, prev_v, pos, vel, .. } = self;
 
         let mut prev_x = prev_x.view_mut().isolate(1);
-        //let mut prev_v = prev_x.view_mut().isolate(1);
+        let mut prev_v = prev_v.view_mut().isolate(1);
         let mut pos = pos.view_mut().isolate(1);
+        let mut vel = vel.view_mut().isolate(1);
 
-        //let dt_inv = if self.time_step > 0.0 { 1.0 / self.time_step } else { 1.0 };
+        debug_assert!(time_step > 0.0);
+        let dt_inv = 1.0 / time_step;
 
         // Get the trimesh and prev_x/pos so we can update the fixed vertices.
-        for (shell, (mut prev_x, mut pos)) in self
+        for ((shell, (mut prev_pos, mut prev_vel)), (mut pos, mut vel)) in self
             .shells
             .iter()
-            .zip(prev_x.iter_mut().zip(pos.iter_mut()))
+            .zip(prev_x.iter_mut().zip(prev_v.iter_mut()))
+            .zip(pos.iter_mut().zip(vel.iter_mut()))
         {
             // Get the vertex index of the original vertex (point in given point cloud).
             // This is done because meshes can be reordered when building the
@@ -802,17 +805,20 @@ impl ObjectData {
                     let fixed_iter = shell
                         .trimesh
                         .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
-                    prev_x
+                    prev_pos
                         .iter_mut()
+                        .zip(prev_vel.iter_mut())
                         .zip(new_pos_iter)
                         .zip(fixed_iter)
-                        .filter_map(|(pair, &fixed)| if fixed != 0i8 { Some(pair) } else { None })
-                        .for_each(|(pos, new_pos)| {
+                        .filter_map(|(data, &fixed)| if fixed != 0i8 { Some(data) } else { None })
+                        .for_each(|((pos, vel), new_pos)| {
                             // It's possible that the new vector of positions is missing some
                             // vertices that were fixed before, so we try to update those we
                             // actually find in the `new_pos` collection.
                             if let Some(&new_pos) = new_pos {
-                                *pos = new_pos;
+                                *vel.as_mut_tensor() =
+                                    (*new_pos.as_tensor() - *(*pos).as_tensor()) * dt_inv;
+                                //*pos = new_pos; // automatically updated via solve.
                             }
                         });
                 }
@@ -839,9 +845,11 @@ impl ObjectData {
                 ShellProperties::Fixed => {
                     // This mesh is fixed and doesn't obey any physics. Simply
                     // copy the positions and velocities over.
-                    pos.iter_mut().zip(new_pos_iter).for_each(|(pos, new_pos)| {
+                    pos.iter_mut().zip(vel.iter_mut()).zip(new_pos_iter).for_each(|((pos, vel), new_pos)| {
                         if let Some(&new_pos) = new_pos {
-                            *pos = new_pos;
+                            *vel.as_mut_tensor() =
+                                (*new_pos.as_tensor() - *(*pos).as_tensor()) * dt_inv;
+                            //*pos = new_pos; // automatically updated via solve.
                         }
                     });
                 }
@@ -1121,7 +1129,7 @@ impl NonLinearProblem {
     /// Update the shell meshes with the given points.
     pub fn update_shell_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
         let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
-        self.object_data.update_shell_vertices(new_pos.view())
+        self.object_data.update_shell_vertices(new_pos.view(), self.time_step())
     }
 
     pub fn update_current_velocity(
@@ -2132,6 +2140,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             .object_data
             .update_current_velocity(uv_flat_view, 1.0 / self.variable_scale());
         let solid_prev_uv = unscaled_vel.view().isolate(0);
+        let shell_prev_uv = unscaled_vel.view().isolate(1);
 
         uv_l.iter_mut().for_each(|x| *x = -bound);
         uv_u.iter_mut().for_each(|x| *x = bound);
@@ -2172,7 +2181,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
             }
         }
 
-        for (i, shell) in self.object_data.shells.iter().enumerate() {
+        for (i, (shell, uv)) in self
+            .object_data
+            .shells
+            .iter()
+            .zip(shell_prev_uv.iter())
+            .enumerate()
+        {
             if let Ok(fixed_verts) = shell
                 .trimesh
                 .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
@@ -2182,11 +2197,12 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 // Find and set fixed vertices.
                 uv_l.iter_mut()
                     .zip(uv_u.iter_mut())
+                    .zip(uv.iter())
                     .zip(fixed_verts.iter())
                     .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|((l, u), _)| {
-                        *l = [0.0; 3];
-                        *u = [0.0; 3];
+                    .for_each(|(((l, u), uv), _)| {
+                        *l = *uv;
+                        *u = *uv;
                     });
             }
         }

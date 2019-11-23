@@ -18,5 +18,5 @@ exclude = [
 ]
 
 [profile.release]
-debug = true # Change this to true to enable debug symbols in release mode
+debug = false # Change this to true to enable debug symbols in release mode
 rpath = false

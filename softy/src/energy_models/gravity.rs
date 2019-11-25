@@ -91,12 +91,14 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
     }
 }
 
-impl EnergyHessian for TetMeshGravity<'_> {
+impl EnergyHessianTopology for TetMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values<T: Real>(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+}
+impl<T: Real> EnergyHessian<T> for TetMeshGravity<'_> {
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
 /*
@@ -179,12 +181,15 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
     }
 }
 
-impl EnergyHessian for TriMeshGravity<'_> {
+impl EnergyHessianTopology for TriMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
-    fn energy_hessian_values<T: Real>(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+}
+
+impl<T: Real> EnergyHessian<T> for TriMeshGravity<'_> {
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
 #[cfg(test)]

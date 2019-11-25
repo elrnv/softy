@@ -6,27 +6,9 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
-use geo::prim::Tetrahedron;
 use num_traits::FromPrimitive;
-use utils::soap::{Matrix3, Real};
-
+use utils::soap::Real;
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
-
-/// Tetrahedron energy interface. Abstracting over tet energies is useful for damping
-/// implementations like Rayleigh damping which depend on the elasticity model used.
-pub trait TetEnergy<T: Real> {
-    /// Constructor accepts:
-    /// `Dx`: the deformed shape matrix
-    /// `DX_inv`: the undeformed shape matrix
-    /// `volume`: volume of the tetrahedron
-    /// `lambda` and `mu`: Lamé parameters
-    #[allow(non_snake_case)]
-    fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self;
-    /// Elasticity Hessian*displacement product tranpose per element. Represented by a 3x3 matrix
-    /// where row `i` produces the hessian product contribution for the vertex `i` within the
-    /// current element.
-    fn elastic_energy_hessian_product_transpose(&self, dx: &Tetrahedron<T>) -> Matrix3<T>;
-}
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
@@ -55,10 +37,8 @@ pub trait EnergyGradient<T: Real> {
     fn add_energy_gradient(&self, x: &[T], dx: &[T], grad: &mut [T]);
 }
 
-/// This trait provides an interface for retrieving the energy Hessian just like
-/// `EnergyHessianIndicesValues`, however the indices and values are combined together into
-/// the `MatrixElementTriplet` type.
-pub trait EnergyHessian {
+/// The topology (sparsity) of the energy hessian.
+pub trait EnergyHessianTopology {
     /// The number of non-zeros in the Hessian matrix of the energy.
     fn energy_hessian_size(&self) -> usize;
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
@@ -69,24 +49,6 @@ pub trait EnergyHessian {
         offset: MatrixElementIndex,
         indices: &mut [MatrixElementIndex],
     );
-
-    /// Compute the Hessian matrix values corresponding to their positions in the matrix returned
-    /// by `energy_hessian_indices` or `energy_hessian_indices_offset`.
-    ///
-    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
-    /// example elastic energy expects position while momentum energy expects velocity.
-    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
-    /// differential of `x` but it often is.
-    ///
-    /// This derivative is with respect to `dx`.
-    fn energy_hessian_values<T: Real + Send + Sync>(
-        &self,
-        x: &[T],
-        dx: &[T],
-        scale: T,
-        values: &mut [T],
-    );
-
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     fn energy_hessian_indices(&self, indices: &mut [MatrixElementIndex]) {
         self.energy_hessian_indices_offset((0, 0).into(), indices)
@@ -119,6 +81,28 @@ pub trait EnergyHessian {
             *c = I::from_usize(col).unwrap();
         }
     }
+}
+
+/// This trait provides an interface for retrieving the energy Hessian just like
+/// `EnergyHessianIndicesValues`, however the indices and values are combined together into
+/// the `MatrixElementTriplet` type.
+pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
+    /// Compute the Hessian matrix values corresponding to their positions in the matrix returned
+    /// by `energy_hessian_indices` or `energy_hessian_indices_offset`.
+    ///
+    ///   - `x` is the variable expected by the specific energy for the previous configuration. For
+    /// example elastic energy expects position while momentum energy expects velocity.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    /// differential of `x` but it often is.
+    ///
+    /// This derivative is with respect to `dx`.
+    fn energy_hessian_values(
+        &self,
+        x: &[T],
+        dx: &[T],
+        scale: T,
+        values: &mut [T],
+    );
 
     /*
      * Below are convenience functions for auxiliary applications. Users should provide custom
@@ -135,7 +119,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_offset<T: Real + Send + Sync>(
+    fn energy_hessian_offset(
         &self,
         x: &[T],
         dx: &[T],
@@ -161,7 +145,7 @@ pub trait EnergyHessian {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian<T: Real + Send + Sync>(
+    fn energy_hessian(
         &self,
         x: &[T],
         dx: &[T],
@@ -170,63 +154,64 @@ pub trait EnergyHessian {
     ) {
         self.energy_hessian_offset(x, dx, (0, 0).into(), scale, triplets)
     }
+}
 
-    /// Construct an ArrayFire matrix.
-    #[cfg(feature = "af")]
-    fn energy_hessian_af(&self, x: &[f64], dx: &[f64], scale: f64) -> af::Array<f64> {
-        let nnz = self.energy_hessian_size();
-        let mut rows = vec![0i32; nnz];
-        let mut cols = vec![0i32; nnz];
+/// Construct an ArrayFire matrix.
+#[cfg(feature = "af")]
+fn energy_hessian_af<E: EnergyHessian<f64>>(e: &E, x: &[f64], dx: &[f64], scale: f64) -> af::Array<f64> {
+    let nnz = e.energy_hessian_size();
+    let mut rows = vec![0i32; nnz];
+    let mut cols = vec![0i32; nnz];
 
-        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
-        self.energy_hessian_indices(indices.as_mut_slice());
+    let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
+    e.energy_hessian_indices(indices.as_mut_slice());
 
-        for (MatrixElementIndex { row, col }, (r, c)) in indices
-            .into_iter()
-            .zip(rows.iter_mut().zip(cols.iter_mut()))
-        {
-            *r = row as i32;
-            *c = col as i32;
-        }
-
-        let mut values = vec![0.0; nnz];
-        self.energy_hessian_values(x, dx, scale, &mut values);
-
-        // Build arrayfire matrix
-        let nnz = nnz as u64;
-        let num_rows = x.len() as u64;
-        let num_cols = x.len() as u64;
-
-        let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
-        let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
-        let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
-
-        af::sparse(
-            num_rows,
-            num_cols,
-            &values,
-            &row_indices,
-            &col_indices,
-            af::SparseFormat::COO,
-        )
+    for (MatrixElementIndex { row, col }, (r, c)) in indices
+        .into_iter()
+        .zip(rows.iter_mut().zip(cols.iter_mut()))
+    {
+        *r = row as i32;
+        *c = col as i32;
     }
 
-    /// Construct a sparse matrix in CSR format.
-    fn energy_hessian_sprs(&self, x: &[f64], dx: &[f64], scale: f64) -> sprs::CsMat<f64> {
-        let nnz = self.energy_hessian_size();
-        let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
-        self.energy_hessian_indices(indices.as_mut_slice());
+    let mut values = vec![0.0; nnz];
+    e.energy_hessian_values(x, dx, scale, &mut values);
 
-        let (rows, cols) = indices
-            .into_iter()
-            .map(|MatrixElementIndex { row, col }| (row, col))
-            .unzip();
+    // Build arrayfire matrix
+    let nnz = nnz as u64;
+    let num_rows = x.len() as u64;
+    let num_cols = x.len() as u64;
 
-        let mut values = vec![0.0; nnz];
-        self.energy_hessian_values(x, dx, scale, &mut values);
+    let values = af::Array::new(&values, af::Dim4::new(&[nnz, 1, 1, 1]));
+    let row_indices = af::Array::new(&rows, af::Dim4::new(&[nnz, 1, 1, 1]));
+    let col_indices = af::Array::new(&cols, af::Dim4::new(&[nnz, 1, 1, 1]));
 
-        let num_rows = x.len();
-        let num_cols = x.len();
-        sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
-    }
+    af::sparse(
+        num_rows,
+        num_cols,
+        &values,
+        &row_indices,
+        &col_indices,
+        af::SparseFormat::COO,
+    )
+}
+
+/// Construct a sparse matrix in CSR format.
+#[allow(dead_code)]
+fn energy_hessian_sprs<E: EnergyHessian<f64>>(e: &E, x: &[f64], dx: &[f64], scale: f64) -> sprs::CsMat<f64> {
+    let nnz = e.energy_hessian_size();
+    let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
+    e.energy_hessian_indices(indices.as_mut_slice());
+
+    let (rows, cols) = indices
+        .into_iter()
+        .map(|MatrixElementIndex { row, col }| (row, col))
+        .unzip();
+
+    let mut values = vec![0.0; nnz];
+    e.energy_hessian_values(x, dx, scale, &mut values);
+
+    let num_rows = x.len();
+    let num_cols = x.len();
+    sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
 }

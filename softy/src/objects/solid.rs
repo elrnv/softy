@@ -55,9 +55,9 @@ impl TetMeshSolid {
     }
 }
 
-impl<'a> Elasticity<'a, TetMeshNeoHookean<'a>> for TetMeshSolid {
-    fn elasticity(&'a self) -> TetMeshNeoHookean<'a> {
-        TetMeshNeoHookean(self)
+impl<'a> Elasticity<'a, TetMeshNeoHookean<'a, f64>> for TetMeshSolid {
+    fn elasticity(&'a self) -> TetMeshNeoHookean<'a, f64> {
+        TetMeshNeoHookean::new(self)
     }
 }
 

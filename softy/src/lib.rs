@@ -9,7 +9,7 @@ mod constraint;
 mod constraints;
 mod contact;
 mod energy;
-mod energy_models;
+pub mod energy_models;
 pub mod fem;
 mod friction;
 pub mod mask_iter;

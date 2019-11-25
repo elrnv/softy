@@ -24,7 +24,7 @@ impl<T: Real, E: EnergyGradient<T>> EnergyGradient<T> for Option<E> {
     }
 }
 
-impl<E: EnergyHessian> EnergyHessian for Option<E> {
+impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
     fn energy_hessian_size(&self) -> usize {
         self.as_ref().map_or(0, |e| e.energy_hessian_size())
     }
@@ -38,7 +38,10 @@ impl<E: EnergyHessian> EnergyHessian for Option<E> {
             None => {}
         }
     }
-    fn energy_hessian_values<T: Real + Send + Sync>(
+}
+
+impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> {
+    fn energy_hessian_values(
         &self,
         x0: &[T],
         x1: &[T],
@@ -130,7 +133,7 @@ pub(crate) mod test_utils {
 
     pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
-        E: EnergyGradient<F> + EnergyHessian,
+        E: EnergyGradient<F> + EnergyHessian<F>,
     {
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 

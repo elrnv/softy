@@ -92,7 +92,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
     }
 }
 
-impl EnergyHessian for TetMeshInertia<'_> {
+impl EnergyHessianTopology for TetMeshInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.tetmesh.num_cells() * Self::NUM_HESSIAN_TRIPLETS_PER_TET
     }
@@ -163,9 +163,11 @@ impl EnergyHessian for TetMeshInertia<'_> {
                 }
             });
     }
+}
 
+impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values<T: Real + Send + Sync>(
+    fn energy_hessian_values(
         &self,
         _v0: &[T],
         _v1: &[T],

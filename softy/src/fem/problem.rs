@@ -849,7 +849,7 @@ impl ObjectData {
                         if let Some(&new_pos) = new_pos {
                             *vel.as_mut_tensor() =
                                 (*new_pos.as_tensor() - *(*pos).as_tensor()) * dt_inv;
-                            //*pos = new_pos; // automatically updated via solve.
+                            *pos = new_pos; // automatically updated via solve.
                         }
                     });
                 }

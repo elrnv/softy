@@ -1,3 +1,4 @@
+#[cfg(features = "packed_simd")]
 use packed_simd::*;
 use utils::soap::*;
 
@@ -22,6 +23,8 @@ pub fn outer_read_local(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     }
     out
 }
+
+#[cfg(features = "packed_simd")]
 pub fn inner_simd_unchecked(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; v.len()];
     for (row, out) in m.iter().zip(out.iter_mut()) {
@@ -36,6 +39,7 @@ pub fn inner_simd_unchecked(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     out
 }
 
+#[cfg(features = "packed_simd")]
 pub fn inner_simd(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; v.len()];
     for (row, out) in m.iter().zip(out.iter_mut()) {

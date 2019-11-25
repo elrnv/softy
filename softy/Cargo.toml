@@ -42,3 +42,7 @@ harness = false
 [[bench]]
 name = "box_squish"
 harness = false
+
+[[bench]]
+name = "energy_hessian"
+harness = false

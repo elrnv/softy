@@ -211,6 +211,7 @@ impl<T: Real> TetEnergy<T> for NeoHookeanTetEnergy<T> {
 /// This type wraps a `TetMeshSolid` to provide an interfce for computing a hyperelastic energy.
 pub struct TetMeshElasticity<'a, E>(pub &'a TetMeshSolid, std::marker::PhantomData<E>);
 
+
 /// NeoHookean elasticity model.
 pub type TetMeshNeoHookean<'a, T> = TetMeshElasticity<'a, NeoHookeanTetEnergy<T>>;
 
@@ -544,6 +545,7 @@ mod tests {
         SolidMaterial::new(0).with_elasticity(ElasticityParameters {
             lambda: 5.4,
             mu: 263.1,
+            model: ElasticityModel::NeoHookean,
         })
     }
 

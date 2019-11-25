@@ -3,11 +3,11 @@ use geo::prim::Tetrahedron;
 use geo::ops::*;
 use num_traits::Zero;
 use utils::soap::*;
-use softy::energy_models::elasticity::{TetEnergy, NeoHookeanTetEnergy};
+use softy::energy_models::elasticity::{TetEnergy, NeoHookeanTetEnergy, StableNeoHookeanTetEnergy};
 
 /// Compute the energy hessian directly using the elastic_energy_hessian implementation.
 #[allow(non_snake_case)]
-pub(crate) fn energy_hessian_direct() -> [[Matrix3<f64>; 4]; 4] {
+pub(crate) fn energy_hessian_direct<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4]; 4] {
     let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
     let cell = [0, 1, 2, 3];
 
@@ -15,13 +15,13 @@ pub(crate) fn energy_hessian_direct() -> [[Matrix3<f64>; 4]; 4] {
 
     let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix()).inverse_transpose().unwrap();
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
-    let energy = NeoHookeanTetEnergy::new(Dx, DX_inv, 1.0, 1.0, 1.0);
+    let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
     energy.elastic_energy_hessian()
 }
 
 /// Compute the energy hessian using products.
 #[allow(non_snake_case)]
-pub(crate) fn energy_hessian_product() -> [[Matrix3<f64>; 4]; 4] {
+pub(crate) fn energy_hessian_product<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4]; 4] {
     let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
     let cell = [0, 1, 2, 3];
 
@@ -29,7 +29,7 @@ pub(crate) fn energy_hessian_product() -> [[Matrix3<f64>; 4]; 4] {
 
     let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix()).inverse_transpose().unwrap();
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
-    let energy = NeoHookeanTetEnergy::new(Dx, DX_inv, 1.0, 1.0, 1.0);
+    let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
 
     let mut d_verts = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
 
@@ -72,14 +72,22 @@ fn tet_energy_hessian(c: &mut Criterion) {
     //    }
     //}
     //eprintln!("");
-    assert_eq!(energy_hessian_direct(), energy_hessian_product());
+    assert_eq!(energy_hessian_direct::<NeoHookeanTetEnergy<f64>>(), energy_hessian_product::<NeoHookeanTetEnergy<f64>>());
 
-    group.bench_function(BenchmarkId::new("Direct", "1"), |b| {
-        b.iter(|| energy_hessian_direct())
+    group.bench_function(BenchmarkId::new("Direct", "NH"), |b| {
+        b.iter(|| energy_hessian_direct::<NeoHookeanTetEnergy<f64>>())
     });
 
-    group.bench_function(BenchmarkId::new("Product", "1"), |b| {
-        b.iter(|| energy_hessian_product())
+    group.bench_function(BenchmarkId::new("Product", "NH"), |b| {
+        b.iter(|| energy_hessian_product::<NeoHookeanTetEnergy<f64>>())
+    });
+
+    group.bench_function(BenchmarkId::new("Direct", "SNH"), |b| {
+        b.iter(|| energy_hessian_direct::<StableNeoHookeanTetEnergy<f64>>())
+    });
+
+    group.bench_function(BenchmarkId::new("Product", "SNH"), |b| {
+        b.iter(|| energy_hessian_product::<StableNeoHookeanTetEnergy<f64>>())
     });
 
     group.finish();

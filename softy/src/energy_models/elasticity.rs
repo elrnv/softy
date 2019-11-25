@@ -7,6 +7,7 @@ mod tet_snh;
 //mod tri_nh;
 
 pub use tet_nh::*;
+pub use tet_snh::*;
 //pub use tet_inv_nh::*;
 //pub use tri_nh::*;
 

@@ -47,6 +47,7 @@ pub fn default_solid() -> SolidMaterial {
         .with_elasticity(ElasticityParameters {
             lambda: 93333.33,
             mu: 10e3,
+            model: ElasticityModel::NeoHookean,
         })
         .with_density(1000.0)
 }

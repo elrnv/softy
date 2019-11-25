@@ -219,6 +219,9 @@ impl SolidMaterial {
     pub fn scaled_damping(&self) -> f32 {
         self.properties.deformable.damping
     }
+    pub fn model(&self) -> ElasticityModel {
+        self.properties.deformable.elasticity.map_or(ElasticityModel::NeoHookean, |x| x.model)
+    }
 }
 
 impl<P: Default> Material<P> {
@@ -330,7 +333,14 @@ impl DeformableProperties {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ElasticityModel {
+    StableNeoHookean,
+    NeoHookean,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ElasticityParameters {
+    pub model: ElasticityModel,
     /// First Lame parameter. Measured in Pa = N/m² = kg/(ms²).
     pub lambda: f32,
     /// Second Lame parameter. Measured in Pa = N/m² = kg/(ms²).
@@ -342,6 +352,7 @@ impl ElasticityParameters {
         ElasticityParameters {
             lambda: self.lambda * scale,
             mu: self.mu * scale,
+            model: self.model,
         }
     }
 
@@ -358,22 +369,40 @@ impl ElasticityParameters {
         scale
     }
 
+    /// Construct elasticity parameters from standard Lame parameters.
+    pub fn from_lame(lambda: f32, mu: f32, model: ElasticityModel) -> Self {
+        match model {
+            ElasticityModel::NeoHookean => ElasticityParameters {
+                model,
+                lambda,
+                mu,
+            },
+            // In case of Stable NeoHookean, we need to reparameterize lame coefficients.
+            ElasticityModel::StableNeoHookean => ElasticityParameters {
+                model,
+                lambda: lambda + 5.0 * mu / 6.0,
+                mu: 4.0 * mu / 3.0,
+            }
+        }
+    }
+
     /// Bulk modulus measures the material's resistance to expansion and compression, i.e. its
     /// incompressibility. The larger the value, the more incompressible the material is.
     /// Think of this as "Volume Stiffness".
     /// Shear modulus measures the material's resistance to shear deformation. The larger the
     /// value, the more it resists changes in shape. Think of this as "Shape Stiffness".
     pub fn from_bulk_shear(bulk: f32, shear: f32) -> Self {
-        ElasticityParameters {
-            lambda: bulk - 2.0 * shear / 3.0,
-            mu: shear,
-        }
+        Self::from_bulk_shear_with_model(bulk, shear, ElasticityModel::NeoHookean)
     }
     pub fn from_young_poisson(young: f32, poisson: f32) -> Self {
-        ElasticityParameters {
-            lambda: young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson),
-            mu: young / (2.0 * (1.0 + poisson)),
-        }
+        Self::from_young_poisson_with_model(young, poisson, ElasticityModel::NeoHookean)
+    }
+
+    pub fn from_bulk_shear_with_model(bulk: f32, shear: f32, model: ElasticityModel) -> Self {
+        Self::from_lame(bulk - 2.0 * shear / 3.0, shear, model)
+    }
+    pub fn from_young_poisson_with_model(young: f32, poisson: f32, model: ElasticityModel) -> Self {
+        Self::from_lame(young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson), young / (2.0 * (1.0 + poisson)), model)
     }
 }
 
@@ -487,6 +516,7 @@ mod tests {
             .with_elasticity(ElasticityParameters {
                 lambda: 123.0,
                 mu: 0.01,
+                model: ElasticityModel::NeoHookean,
             })
             .with_density(100.0)
             .with_damping(0.125, 0.0725);

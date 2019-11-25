@@ -1,4 +1,5 @@
 use crate::attrib_defines::*;
+use crate::energy_models::Either;
 use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
@@ -55,9 +56,12 @@ impl TetMeshSolid {
     }
 }
 
-impl<'a> Elasticity<'a, TetMeshNeoHookean<'a, f64>> for TetMeshSolid {
-    fn elasticity(&'a self) -> TetMeshNeoHookean<'a, f64> {
-        TetMeshNeoHookean::new(self)
+impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>>> for TetMeshSolid {
+    fn elasticity(&'a self) -> Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>> {
+        match self.material.model() {
+            ElasticityModel::NeoHookean => Either::Left(TetMeshNeoHookean::new(self)),
+            ElasticityModel::StableNeoHookean => Either::Right(TetMeshStableNeoHookean::new(self)),
+        }
     }
 }
 

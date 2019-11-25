@@ -193,6 +193,7 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
     /// produces the hessian product contribution for the vertex `i` within the current element.
     /// The contribution to the last vertex is given by the negative sum of all the rows.
     #[allow(non_snake_case)]
+    #[unroll_for_loops]
     #[inline]
     fn elastic_energy_hessian_product_transpose(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
         let StableNeoHookeanTetEnergy {
@@ -254,6 +255,7 @@ mod tests {
         SolidMaterial::new(0).with_elasticity(ElasticityParameters {
             lambda: 5.4,
             mu: 263.1,
+            model: ElasticityModel::StableNeoHookean,
         })
     }
 

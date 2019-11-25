@@ -55,6 +55,67 @@ impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> 
     }
 }
 
+/// Another energy adapter for combining two different energies.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
+    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+        match self {
+            Either::Left(e) => e.energy(x0, x1),
+            Either::Right(e) => e.energy(x0, x1),
+        }
+    }
+}
+
+impl<T: Real, A: EnergyGradient<T>, B: EnergyGradient<T>> EnergyGradient<T> for Either<A, B> {
+    fn add_energy_gradient(&self, x0: &[T], x1: &[T], g: &mut [T]) {
+        match self {
+            Either::Left(e) => e.add_energy_gradient(x0, x1, g),
+            Either::Right(e) => e.add_energy_gradient(x0, x1, g),
+        }
+    }
+}
+
+impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology for Either<A, B> {
+    fn energy_hessian_size(&self) -> usize {
+        match self {
+            Either::Left(e) => e.energy_hessian_size(),
+            Either::Right(e) => e.energy_hessian_size(),
+        }
+    }
+    fn energy_hessian_indices_offset(
+        &self,
+        off: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
+        match self {
+            Either::Left(e) => e.energy_hessian_indices_offset(off, indices),
+            Either::Right(e) => e.energy_hessian_indices_offset(off, indices),
+        }
+    }
+}
+
+impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for Either<A, B> {
+    fn energy_hessian_values(
+        &self,
+        x0: &[T],
+        x1: &[T],
+        scale: T,
+        vals: &mut [T],
+    ) {
+        match self {
+            Either::Left(e) => e.energy_hessian_values(x0, x1, scale, vals),
+            Either::Right(e) => e.energy_hessian_values(x0, x1, scale, vals),
+        }
+    }
+}
+
+
+
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::energy::*;

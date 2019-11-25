@@ -1,9 +1,9 @@
-use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams};
+use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams, EL_SoftyElasticityModel};
 use geo::mesh::attrib::*;
 use geo::mesh::topology::*;
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt};
+use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt, ElasticityModel};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -11,6 +11,15 @@ mod solver;
 
 pub use self::solver::*;
 use super::*;
+
+impl From<EL_SoftyElasticityModel> for ElasticityModel {
+    fn from(model: EL_SoftyElasticityModel) -> Self {
+        match model {
+            EL_SoftyElasticityModel::StableNeoHookean => ElasticityModel::StableNeoHookean,
+            EL_SoftyElasticityModel::NeoHookean => ElasticityModel::NeoHookean,
+        }
+    }
+}
 
 /// A registry for solvers to be used as a global instance. We use a `HashMap` instead of `Vec` to
 /// avoid dealing with fragmentation.
@@ -147,6 +156,7 @@ fn get_solid_material(
     match materials.as_slice().get((material_id - 1) as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
+            elasticity_model,
             bulk_modulus,
             shear_modulus,
             density,
@@ -159,9 +169,10 @@ fn get_solid_material(
                 });
             }
             Ok(softy::SolidMaterial::new(material_id as usize)
-                .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                .with_elasticity(softy::ElasticityParameters::from_bulk_shear_with_model(
                     bulk_modulus,
                     shear_modulus,
+                    elasticity_model.into(),
                 ))
                 .with_volume_preservation(volume_constraint)
                 .with_density(density)
@@ -194,6 +205,7 @@ fn get_shell_material(
             shear_modulus,
             density,
             damping,
+            ..
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
                 return Err(Error::MaterialObjectMismatch {

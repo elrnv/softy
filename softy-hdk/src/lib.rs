@@ -53,6 +53,13 @@ pub enum EL_SoftyObjectType {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
+pub enum EL_SoftyElasticityModel {
+    StableNeoHookean,
+    NeoHookean,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EL_SoftyContactType {
     LinearizedPoint,
     Point,
@@ -78,6 +85,7 @@ pub enum EL_SoftyMuStrategy {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct EL_SoftyMaterialProperties {
     pub object_type: EL_SoftyObjectType,
+    pub elasticity_model: EL_SoftyElasticityModel,
     pub density: f32,
     pub damping: f32,
     pub bulk_modulus: f32,

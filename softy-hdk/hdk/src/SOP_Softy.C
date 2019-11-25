@@ -112,6 +112,19 @@ static const char *theDsFile = R"THEDSFILE(
             }
 
             parm {
+                name "elasticitymodel#"
+                cppname "ElasticityModel"
+                label "Elasticity Model"
+                type ordinal
+                default { "0" }
+                hidewhen "{ objtype# == shell }"
+                menu {
+                    "snh" "Stable Neo-Hookean"
+                    "nh" "Neo-Hookean"
+                }
+            }
+
+            parm {
                 name "density#"
                 label "Density"
                 type float
@@ -491,6 +504,16 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
                 break;
             case SOP_SoftyEnums::ObjectType::SHELL:
                 mtl_props.object_type = EL_SoftyObjectType::Shell;
+                break;
+        }
+
+        auto sop_elasticity_model = static_cast<SOP_SoftyEnums::ElasticityModel>(sop_mtl.elasticitymodel);
+        switch (sop_elasticity_model) {
+            case SOP_SoftyEnums::ElasticityModel::SNH:
+                mtl_props.elasticity_model = EL_SoftyElasticityModel::StableNeoHookean;
+                break;
+            case SOP_SoftyEnums::ElasticityModel::NH:
+                mtl_props.elasticity_model = EL_SoftyElasticityModel::NeoHookean;
                 break;
         }
 

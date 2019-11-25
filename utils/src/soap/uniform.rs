@@ -162,12 +162,16 @@ impl<'a, T: Clone, N: Array<T> + Unsigned> Into<&'a mut [N::Array]>
 }
 
 /// Define aliases for common uniform chunked types.
+pub type ChunkedN<S> = UniChunked<S, usize>;
+pub type Chunked9<S> = UniChunked<S, U9>;
+pub type Chunked8<S> = UniChunked<S, U8>;
+pub type Chunked7<S> = UniChunked<S, U7>;
+pub type Chunked6<S> = UniChunked<S, U6>;
 pub type Chunked5<S> = UniChunked<S, U5>;
 pub type Chunked4<S> = UniChunked<S, U4>;
 pub type Chunked3<S> = UniChunked<S, U3>;
 pub type Chunked2<S> = UniChunked<S, U2>;
 pub type Chunked1<S> = UniChunked<S, U1>;
-pub type ChunkedN<S> = UniChunked<S, usize>;
 
 /*
  * A uniform way to get the chunk size from a unichunked collection with dynamically or statically

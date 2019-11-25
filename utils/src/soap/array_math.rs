@@ -197,6 +197,7 @@ macro_rules! impl_array_vectors {
                 }
                 init
             }
+
         }
 
         impl<T: std::ops::Add<Output = T> + Zero + Copy> Tensor<[T; $n]> {
@@ -444,6 +445,29 @@ macro_rules! impl_array_vectors {
     };
 }
 
+macro_rules! impl_square_reshape {
+    ($n:expr, $r:expr) => {
+        impl<T: Copy> Tensor<[T; $n]> {
+            /// Construct a square matrix from this vector. This is a specialized version of
+            /// reshape.
+            #[inline]
+            pub fn mtx(&self) -> Tensor<[[T; $r]; $r]> {
+                unsafe {
+                    debug_assert_eq!(
+                        std::mem::size_of::<[T; $n]>(),
+                        std::mem::size_of::<[[T; $r]; $r]>()
+                    );
+                    std::mem::transmute_copy(self)
+                }
+            }
+        }
+    }
+}
+
+impl_square_reshape!(9, 3);
+impl_square_reshape!(4, 2);
+impl_square_reshape!(16, 4);
+
 impl_array_vectors!(Vector1, RowVector1; 1);
 impl_array_vectors!(Vector2, RowVector2; 2);
 impl_array_vectors!(Vector3, RowVector3; 3);
@@ -533,6 +557,16 @@ macro_rules! impl_array_matrices {
                     std::mem::size_of::<[[U; $c]; $r]>()
                 );
                 Tensor::new(unsafe { std::mem::transmute_copy::<_, [[U; $c]; $r]>(&out) })
+            }
+            #[inline]
+            pub fn vec(&self) -> Tensor<[T; $c*$r]> {
+                unsafe {
+                    debug_assert_eq!(
+                        std::mem::size_of::<[T; $c*$r]>(),
+                        std::mem::size_of::<[[T; $c]; $r]>()
+                    );
+                    std::mem::transmute_copy(self)
+                }
             }
         }
 
@@ -855,6 +889,28 @@ macro_rules! impl_array_matrices {
             }
         }
 
+
+        impl<T: Scalar> CwiseMulAssignOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn cwise_mul_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+                for r in 0..$r {
+                    for c in 0..$c {
+                        self[r][c] *= rhs[r][c];
+                    }
+                }
+            }
+        }
+
+        impl<T: Scalar> CwiseMulOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<[[T; $c]; $r]>;
+            #[inline]
+            fn cwise_mul(mut self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+                self.cwise_mul_assign(rhs);
+                self
+            }
+        }
+
         impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[[T; $c]; $r]> {
             type Output = Tensor<[[T; $c]; $r]>;
             #[inline]
@@ -891,6 +947,14 @@ macro_rules! impl_array_matrices {
             }
         }
 
+        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+            type Output = Tensor<T>;
+            #[inline]
+            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+                Tensor::new(self.cwise_mul(rhs).sum_inner())
+            }
+        }
+
         impl<T: Scalar> RecursiveSumOp for Tensor<[[T; $c]; $r]> {
             type Output = Tensor<T>;
             #[inline]
@@ -918,6 +982,7 @@ impl_array_matrices!(Matrix1; 1, 1);
 impl_array_matrices!(Matrix2; 2, 2);
 impl_array_matrices!(Matrix3; 3, 3);
 impl_array_matrices!(Matrix4; 4, 4);
+impl_array_matrices!(Matrix9; 9, 9);
 
 // Common Rectangular matrices
 impl_array_matrices!(Matrix2x1; 2, 1);
@@ -1034,6 +1099,8 @@ impl_matrix_matrix_mul!(4, 4, 1);
 impl_matrix_matrix_mul!(4, 4, 2);
 impl_matrix_matrix_mul!(4, 4, 3);
 impl_matrix_matrix_mul!(4, 4, 4);
+
+impl_matrix_matrix_mul!(1, 9, 9);
 
 pub trait AsMatrix {
     type Matrix;

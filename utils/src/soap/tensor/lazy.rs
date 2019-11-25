@@ -208,7 +208,6 @@ where
 
 pub trait BinOp<L, R> {
     type Output;
-    #[inline]
     fn apply(&self, lhs: L, rhs: R) -> Self::Output;
 }
 

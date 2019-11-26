@@ -849,7 +849,7 @@ impl ObjectData {
                         if let Some(&new_pos) = new_pos {
                             *vel.as_mut_tensor() =
                                 (*new_pos.as_tensor() - *(*pos).as_tensor()) * dt_inv;
-                            *pos = new_pos; // automatically updated via solve.
+                            *pos = new_pos; // Not automatically updated since these are not part of the solve.
                         }
                     });
                 }
@@ -869,6 +869,8 @@ impl ObjectData {
             prev_prev_v,
             solids,
             shells,
+            vel,
+            pos,
             ..
         } = self;
 
@@ -914,7 +916,8 @@ impl ObjectData {
             }
         }
 
-        Self::update_meshes_with(solids, shells, prev_x.view(), prev_v.view());
+        Self::update_simulated_meshes_with(solids, shells, prev_x.view(), prev_v.view());
+        Self::update_fixed_meshes(shells, vel.view(), pos.view());
     }
 
     pub fn revert_prev_step(&mut self) {
@@ -942,7 +945,7 @@ impl ObjectData {
         }
     }
 
-    pub fn update_meshes_with(
+    pub fn update_simulated_meshes_with(
         solids: &mut [TetMeshSolid],
         shells: &mut [TriMeshShell],
         x: VertexView3<&[f64]>,
@@ -976,6 +979,27 @@ impl ObjectData {
                     // Nothing to do here, fixed meshes aren't moved by
                     // simulation.
                 }
+            }
+        }
+    }
+
+    pub fn update_fixed_meshes(
+        shells: &mut [TriMeshShell],
+        v: VertexView3<&[f64]>,
+        x: VertexView3<&[f64]>,
+    ) {
+        // Update iferred velocities on fixed meshes
+        for (i, shell) in shells.iter_mut().enumerate() {
+            match shell.material.properties {
+                ShellProperties::Fixed => {
+                    shell.trimesh.vertex_positions_mut().copy_from_slice(x.at(1).at(i).into());
+                    shell
+                        .trimesh
+                        .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
+                        .expect("Missing velocity attribute")
+                        .copy_from_slice(v.at(1).at(i).into());
+                }
+                _ => { }
             }
         }
     }
@@ -1111,7 +1135,7 @@ impl NonLinearProblem {
         let x = self.compute_step(v.view());
         let mut solids = self.object_data.solids.clone();
         let mut shells = self.object_data.shells.clone();
-        ObjectData::update_meshes_with(&mut solids, &mut shells, x.view(), v.view());
+        ObjectData::update_simulated_meshes_with(&mut solids, &mut shells, x.view(), v.view());
         geo::io::save_tetmesh(
             &solids[0].tetmesh,
             &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),

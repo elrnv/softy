@@ -728,6 +728,7 @@ impl SolverBuilder {
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
+        //ipopt.set_option("bound_relax_factor", 0.0);
 
         match params.mu_strategy {
             MuStrategy::Monotone => ipopt.set_option("mu_strategy", "monotone"),
@@ -1452,10 +1453,12 @@ impl Solver {
                     * if dt > 0.0 { dt } else { 1.0 };
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
                 if self.max_step != new_max_step {
-                    info!("Relaxing max step from {} to {}", self.max_step, new_max_step);
+                    info!(
+                        "Relaxing max step from {} to {}",
+                        self.max_step, new_max_step
+                    );
                     self.max_step = new_max_step;
                     problem.update_max_step(new_max_step);
-                    problem.reset_constraint_set();
                 }
             }
         }
@@ -1702,18 +1705,22 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
-                    //{
-                    //    let SolverDataMut {
-                    //        problem, solution, ..
-                    //    } = self.solver.solver_data_mut();
-                    //    problem.save_intermediate(solution.primal_variables, self.step_count);
-                    //}
+                    {
+                        let SolverDataMut {
+                            problem, solution, ..
+                        } = self.solver.solver_data_mut();
+                        problem.save_intermediate(solution.primal_variables, self.step_count);
+                    }
 
                     if all_contacts_linear || self.check_inner_step() {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {
-                            debug_assert!(all_contacts_linear || self
-                                .problem()
-                                .is_same_as_constraint_set(self.old_active_constraint_set.view()));
+                            debug_assert!(
+                                all_contacts_linear
+                                    // Check that the constraint set hasn't been modified in the check inner step.
+                                    || self.problem().is_same_as_constraint_set(
+                                        self.old_active_constraint_set.view()
+                                    )
+                            );
                             let is_finished = self.compute_friction_impulse(
                                 &step_result.constraint_values,
                                 &mut friction_steps,
@@ -1734,6 +1741,10 @@ impl Solver {
                             // Reset time step progress
                             self.time_step_remaining = self.max_time_step;
                             break;
+                        }
+                        if !all_contacts_linear {
+                            // Completing the time step, we need to reset constraint set for next step
+                            self.problem_mut().reset_constraint_set();
                         }
                     }
                 }
@@ -2010,10 +2021,7 @@ mod tests {
         );
 
         // Complex test
-        let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1]
-            .iter()
-            .map(new_solid)
-            .collect();
+        let solids: Vec<_> = [0, 0, 0, 1, 2, 1, 0, 1].iter().map(new_solid).collect();
         let shells: Vec<_> = [3, 4, 0, 1, 0, 6, 10].iter().map(new_shell).collect();
         let srcs = SolverBuilder::build_material_sources(&solids, &shells);
         assert_eq!(

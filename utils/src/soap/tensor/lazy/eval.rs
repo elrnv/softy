@@ -275,10 +275,22 @@ macro_rules! impl_array_matrix_eval_traits {
 }
 
 impl_array_matrix_eval_traits!(
-    (1, 1, U1, U1), (1, 2, U1, U2), (1, 3, U1, U3), (1, 4, U1, U4),
-    (2, 1, U2, U1), (2, 2, U2, U2), (2, 3, U2, U3), (2, 4, U2, U4),
-    (3, 1, U3, U1), (3, 2, U3, U2), (3, 3, U3, U3), (3, 4, U3, U4),
-    (4, 1, U4, U1), (4, 2, U4, U2), (4, 3, U4, U3), (4, 4, U4, U4),
+    (1, 1, U1, U1),
+    (1, 2, U1, U2),
+    (1, 3, U1, U3),
+    (1, 4, U1, U4),
+    (2, 1, U2, U1),
+    (2, 2, U2, U2),
+    (2, 3, U2, U3),
+    (2, 4, U2, U4),
+    (3, 1, U3, U1),
+    (3, 2, U3, U2),
+    (3, 3, U3, U3),
+    (3, 4, U3, U4),
+    (4, 1, U4, U1),
+    (4, 2, U4, U2),
+    (4, 3, U4, U3),
+    (4, 4, U4, U4),
 );
 
 /*
@@ -474,6 +486,8 @@ impl<'a, I: ExprSize, J> ExprSize for SparseValIter<'a, I, J> {
     fn expr_size(&self) -> usize {
         self.iter.expr_size()
     }
+}
+impl<'a, I: TotalExprSize, J> TotalExprSize for SparseValIter<'a, I, J> {
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.iter.total_size_hint(cwise_reduce)
@@ -578,8 +592,8 @@ where
         while let Some(next) = rhs.left.next() {
             *out[0..n].as_mut_tensor() += Tensor::new((next * rhs.right).data.as_slice());
             if let Some(next) = rhs.left.next() {
-                *out[n..2*n].as_mut_tensor() += Tensor::new((next * rhs.right).data.as_slice());
-                out = &mut out[2*n..];
+                *out[n..2 * n].as_mut_tensor() += Tensor::new((next * rhs.right).data.as_slice());
+                out = &mut out[2 * n..];
             } else {
                 break;
             }
@@ -596,14 +610,14 @@ where
     Tensor<L>: std::ops::Mul<A, Output = Tensor<Out>>,
 {
     #[inline]
-    fn add_assign(&mut self, mut rhs: CwiseBinExpr<Tensor<L>,R, Multiplication>) {
+    fn add_assign(&mut self, mut rhs: CwiseBinExpr<Tensor<L>, R, Multiplication>) {
         let mut out = &mut self.data; // &mut [T]
         let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
         while let Some(next) = rhs.right.next() {
             *out[0..n].as_mut_tensor() += Tensor::new((rhs.left * next).data.as_slice());
             if let Some(next) = rhs.right.next() {
-                *out[n..2*n].as_mut_tensor() += Tensor::new((rhs.left* next).data.as_slice());
-                out = &mut out[2*n..];
+                *out[n..2 * n].as_mut_tensor() += Tensor::new((rhs.left * next).data.as_slice());
+                out = &mut out[2 * n..];
             } else {
                 break;
             }
@@ -621,7 +635,7 @@ where
     Tensor<[T]>: for<'a> AddAssign<Tensor<&'a [T]>>,
 {
     #[inline]
-    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L,R, Multiplication>) {
+    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L, R, Multiplication>) {
         let mut out = &mut self.data; // &mut [T]
         let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
         loop {
@@ -637,8 +651,8 @@ where
 
             if let Some(r) = rhs.right.next() {
                 if let Some(l) = rhs.left.next() {
-                    *out[n..2*n].as_mut_tensor() += Tensor::new((l * r).data.as_slice());
-                    out = &mut out[2*n..];
+                    *out[n..2 * n].as_mut_tensor() += Tensor::new((l * r).data.as_slice());
+                    out = &mut out[2 * n..];
                 } else {
                     break;
                 }

@@ -39,10 +39,10 @@ pub type CwiseMulExpr<L, R> = CwiseBinExpr<L, R, CwiseMultiplication>;
  * Dense * Tensor
  */
 
-impl<L: Iterator+ DenseExpr, R, Out> Iterator for CwiseBinExpr<L, Tensor<R>, Multiplication>
+impl<L: Iterator + DenseExpr, R, Out> Iterator for CwiseBinExpr<L, Tensor<R>, Multiplication>
 where
     R: Copy,
-    L::Item: MulOp<Tensor<R>, Output = Out>
+    L::Item: MulOp<Tensor<R>, Output = Out>,
 {
     type Item = Out;
     #[inline]
@@ -56,11 +56,13 @@ where
 }
 
 impl<L: Expression, R> Expression for CwiseBinExpr<L, Tensor<R>, Multiplication> {}
-impl<L: Expression, R> ExprSize for CwiseBinExpr<L, Tensor<R>, Multiplication> {
+impl<L: ExprSize, R> ExprSize for CwiseBinExpr<L, Tensor<R>, Multiplication> {
     #[inline]
     fn expr_size(&self) -> usize {
         self.left.expr_size()
     }
+}
+impl<L: TotalExprSize, R> TotalExprSize for CwiseBinExpr<L, Tensor<R>, Multiplication> {
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.left.total_size_hint(cwise_reduce)
@@ -79,7 +81,7 @@ impl<L: ExactSizeIterator, R> ExactSizeIterator for CwiseBinExpr<L, Tensor<R>, M
 impl<L, R: Iterator + DenseExpr, Out> Iterator for CwiseBinExpr<Tensor<L>, R, Multiplication>
 where
     L: Copy,
-    Tensor<L>: MulOp<R::Item, Output = Out>
+    Tensor<L>: MulOp<R::Item, Output = Out>,
 {
     type Item = Out;
     #[inline]
@@ -93,11 +95,13 @@ where
 }
 
 impl<L, R: Iterator + Expression> Expression for CwiseBinExpr<Tensor<L>, R, Multiplication> {}
-impl<L, R: Iterator + Expression> ExprSize for CwiseBinExpr<Tensor<L>, R, Multiplication> {
+impl<L, R: Iterator + ExprSize> ExprSize for CwiseBinExpr<Tensor<L>, R, Multiplication> {
     #[inline]
     fn expr_size(&self) -> usize {
         self.right.expr_size()
     }
+}
+impl<L, R: Iterator + TotalExprSize> TotalExprSize for CwiseBinExpr<Tensor<L>, R, Multiplication> {
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.right.total_size_hint(cwise_reduce)
@@ -139,13 +143,16 @@ impl<L: DenseExpr + Iterator + Expression, R: DenseExpr + Iterator + Expression,
     for CwiseBinExpr<L, R, F>
 {
 }
-impl<L: DenseExpr + Iterator + Expression, R: DenseExpr + Iterator + Expression, F> ExprSize
-    for CwiseBinExpr<L, R, F>
-{
+impl<L: DenseExpr + ExprSize, R: DenseExpr + ExprSize, F> ExprSize for CwiseBinExpr<L, R, F> {
     #[inline]
     fn expr_size(&self) -> usize {
-        self.left.expr_size().min(self.right.expr_size())
+        assert_eq!(self.left.expr_size(), self.right.expr_size());
+        self.left.expr_size()
     }
+}
+impl<L: DenseExpr + TotalExprSize, R: DenseExpr + TotalExprSize, F> TotalExprSize
+    for CwiseBinExpr<L, R, F>
+{
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         if let Some(left) = self.left.total_size_hint(cwise_reduce) {
@@ -167,7 +174,6 @@ where
 {
 }
 
-
 /**************
  * SPARSE OPS *
  **************/
@@ -176,10 +182,11 @@ where
  * Sparse * Tensor
  */
 
-impl<L: Iterator<Item = IndexedExpr<A>>, A, R, Out> Iterator for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication>
+impl<L: Iterator<Item = IndexedExpr<A>>, A, R, Out> Iterator
+    for CwiseBinExpr<SparseExpr<L>, Tensor<R>, Multiplication>
 where
     R: Copy,
-    A: MulOp<Tensor<R>, Output = Out>
+    A: MulOp<Tensor<R>, Output = Out>,
 {
     type Item = IndexedExpr<Out>;
     #[inline]
@@ -211,10 +218,11 @@ where
  * Tensor * Sparse
  */
 
-impl<L, R: Iterator<Item = IndexedExpr<A>>, A, Out> Iterator for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication>
+impl<L, R: Iterator<Item = IndexedExpr<A>>, A, Out> Iterator
+    for CwiseBinExpr<Tensor<L>, SparseExpr<R>, Multiplication>
 where
     L: Copy,
-    Tensor<L>: MulOp<A, Output = Out>
+    Tensor<L>: MulOp<A, Output = Out>,
 {
     type Item = IndexedExpr<Out>;
     #[inline]
@@ -372,13 +380,17 @@ impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> Expressi
     for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F>
 {
 }
-impl<L: DenseExpr + Iterator + Expression, R: Iterator + Expression, F> ExprSize
+impl<L: DenseExpr, R: Iterator + ExprSize, F> ExprSize
     for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F>
 {
     #[inline]
     fn expr_size(&self) -> usize {
         self.right.expr_size()
     }
+}
+impl<L: DenseExpr, R: Iterator + TotalExprSize, F> TotalExprSize
+    for CwiseBinExpr<Enumerate<L>, SparseExpr<R>, F>
+{
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.right.total_size_hint(cwise_reduce)
@@ -416,13 +428,17 @@ impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> Expressi
     for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F>
 {
 }
-impl<L: Iterator + Expression, R: DenseExpr + Iterator + Expression, F> ExprSize
+impl<L: Iterator + ExprSize, R: DenseExpr, F> ExprSize
     for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F>
 {
     #[inline]
     fn expr_size(&self) -> usize {
         self.left.expr_size()
     }
+}
+impl<L: Iterator + TotalExprSize, R: DenseExpr, F> TotalExprSize
+    for CwiseBinExpr<SparseExpr<L>, Enumerate<R>, F>
+{
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.left.total_size_hint(cwise_reduce)
@@ -506,6 +522,13 @@ where
     fn expr_size(&self) -> usize {
         self.left.expr_size() + self.right.expr_size()
     }
+}
+impl<L: Iterator, R: Iterator, F> TotalExprSize for CwiseBinExpr<SparseExpr<L>, SparseExpr<R>, F>
+where
+    F: Additive,
+    SparseExpr<L>: Iterator + Expression,
+    SparseExpr<R>: Iterator + Expression,
+{
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         if let Some(left) = self.left.total_size_hint(cwise_reduce) {
@@ -587,6 +610,12 @@ where
     fn expr_size(&self) -> usize {
         self.left.expr_size().min(self.right.expr_size())
     }
+}
+impl<L: Iterator, R: Iterator> TotalExprSize for CwiseMulExpr<SparseExpr<L>, SparseExpr<R>>
+where
+    SparseExpr<L>: Iterator + Expression,
+    SparseExpr<R>: Iterator + Expression,
+{
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         if let Some(left) = self.left.total_size_hint(cwise_reduce) {
@@ -600,4 +629,3 @@ where
         }
     }
 }
-

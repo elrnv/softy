@@ -189,7 +189,9 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
-        impl<T, I> std::ops::Mul<Tensor<[T; $n]>> for UniChunkedIterExpr<I, $nty> {
+        impl<T, I> std::ops::Mul<Tensor<[T; $n]>> for UniChunkedIterExpr<I, $nty>
+        where Self: ExprSize,
+        {
             type Output = CwiseUnExpr<CwiseBinExpr<UniChunkedIterExpr<I, $nty>, Repeat<Tensor<[T; $n]>>, CwiseMultiplication>, Summation>;
             #[inline]
             fn mul(self, rhs: Tensor<[T; $n]>) -> Self::Output {
@@ -265,5 +267,3 @@ impl_array_for_typenum!(U13, 13);
 impl_array_for_typenum!(U14, 14);
 impl_array_for_typenum!(U15, 15);
 impl_array_for_typenum!(U16, 16);
-
-

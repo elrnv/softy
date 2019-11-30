@@ -1,11 +1,10 @@
 /**
  * Assignable expressions.
  */
-
 use super::*;
 
 #[derive(Debug)]
-pub struct SliceIterExprMut<'a, T>(std::slice::IterMut<'a, T>); 
+pub struct SliceIterExprMut<'a, T>(std::slice::IterMut<'a, T>);
 
 impl<'a, T> DenseExpr for SliceIterExprMut<'a, T> {}
 
@@ -29,6 +28,8 @@ impl<'a, T> ExprSize for SliceIterExprMut<'a, T> {
     fn expr_size(&self) -> usize {
         self.0.size_hint().1.unwrap_or(self.0.size_hint().0)
     }
+}
+impl<'a, T> TotalExprSize for SliceIterExprMut<'a, T> {
     fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
         Some(self.0.size_hint().1.unwrap_or(self.0.size_hint().0))
     }
@@ -121,4 +122,3 @@ impl<'a, T: ExprMut<'a> + ?Sized> ExprMut<'a> for Tensor<T> {
         self.data.expr_mut()
     }
 }
-

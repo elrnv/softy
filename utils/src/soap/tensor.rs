@@ -13,10 +13,17 @@ use unroll::unroll_for_loops;
 /// outer index `I0` and inner index `I1`. This means that a transpose can be implemented simply by
 /// swapping positions of `I0` and `I1`, which means a matrix with `I == (I1, I0)` has structure
 /// that is transpose of the matix with `I = (I0, I1)`.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialOrd)]
 #[repr(transparent)]
 pub struct Tensor<T: ?Sized> {
     pub data: T,
+}
+
+impl<U: ?Sized, T: ?Sized + PartialEq<U>> PartialEq<Tensor<U>> for Tensor<T> {
+    #[inline]
+    fn eq(&self, other: &Tensor<U>) -> bool {
+        self.data.eq(&other.data)
+    }
 }
 
 /// Synonymous with `AsRef<Tensor<_>>`.
@@ -244,6 +251,8 @@ macro_rules! impl_scalar {
                 fn expr_size(&self) -> usize {
                     1
                 }
+            }
+            impl TotalExprSize for $type {
                 #[inline]
                 fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
                     Some(1)
@@ -1494,24 +1503,24 @@ macro_rules! impl_chunked_tensor_arithmetic {
         //    }
         //}
 
-        impl<S, O> Sub for Tensor<$chunked<S, O>>
-        where
-            $chunked<S, O>: Set,
-            S: IntoOwnedData,
-            Tensor<S>: Sub<Output = Tensor<S::OwnedData>>,
-        {
-            type Output = Tensor<$chunked<S::OwnedData, O>>;
+        //impl<S, O> Sub for Tensor<$chunked<S, O>>
+        //where
+        //    $chunked<S, O>: Set,
+        //    S: IntoOwnedData,
+        //    Tensor<S>: Sub<Output = Tensor<S::OwnedData>>,
+        //{
+        //    type Output = Tensor<$chunked<S::OwnedData, O>>;
 
-            /// Subtract a tensor of chunked from another.
-            fn sub(self, other: Self) -> Self::Output {
-                assert_eq!(self.data.len(), other.data.len());
-                let $chunked { $chunks, data } = self.data;
-                Tensor::new($chunked {
-                    $chunks,
-                    data: (Tensor::new(data) - Tensor::new(other.data.data)).data,
-                })
-            }
-        }
+        //    /// Subtract a tensor of chunked from another.
+        //    fn sub(self, other: Self) -> Self::Output {
+        //        assert_eq!(self.data.len(), other.data.len());
+        //        let $chunked { $chunks, data } = self.data;
+        //        Tensor::new($chunked {
+        //            $chunks,
+        //            data: (Tensor::new(data) - Tensor::new(other.data.data)).data,
+        //        })
+        //    }
+        //}
 
         /*
          * Scalar multiplication

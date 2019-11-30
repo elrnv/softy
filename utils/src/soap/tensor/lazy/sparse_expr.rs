@@ -2,11 +2,13 @@
  * `SparseExpr` wraps any sparse expr, this is partially used as a speialization workaround and
  * partially to simplify the iteration algorithms for binary operators.
  */
-
 use super::*;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SparseExpr<E> where E: Iterator {
+pub struct SparseExpr<E>
+where
+    E: Iterator,
+{
     pub(crate) expr: E,
     /// Remember a peeked value, even if it was None.
     peeked: Option<Option<E::Item>>,
@@ -18,13 +20,14 @@ impl<I: Iterator> SparseExpr<I> {
     }
 }
 
-
 impl<E: Expression + Iterator> Expression for SparseExpr<E> {}
 impl<E: ExprSize + Iterator> ExprSize for SparseExpr<E> {
     #[inline]
     fn expr_size(&self) -> usize {
         self.expr.expr_size()
     }
+}
+impl<E: TotalExprSize + Iterator> TotalExprSize for SparseExpr<E> {
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.expr.total_size_hint(cwise_reduce)
@@ -89,7 +92,8 @@ impl<I: Iterator> Iterator for SparseExpr<I> {
 
     #[inline]
     fn fold<Acc, Fold>(self, init: Acc, mut fold: Fold) -> Acc
-        where Fold: FnMut(Acc, Self::Item) -> Acc,
+    where
+        Fold: FnMut(Acc, Self::Item) -> Acc,
     {
         let acc = match self.peeked {
             Some(None) => return init,
@@ -99,15 +103,21 @@ impl<I: Iterator> Iterator for SparseExpr<I> {
         self.expr.fold(acc, fold)
     }
 }
-impl<I> DoubleEndedIterator for SparseExpr<I> where I: DoubleEndedIterator {
+impl<I> DoubleEndedIterator for SparseExpr<I>
+where
+    I: DoubleEndedIterator,
+{
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.expr.next_back().or_else(|| self.peeked.take().and_then(|x| x))
+        self.expr
+            .next_back()
+            .or_else(|| self.peeked.take().and_then(|x| x))
     }
 
     #[inline]
     fn rfold<Acc, Fold>(self, init: Acc, mut fold: Fold) -> Acc
-        where Fold: FnMut(Acc, Self::Item) -> Acc,
+    where
+        Fold: FnMut(Acc, Self::Item) -> Acc,
     {
         match self.peeked {
             Some(None) => init,

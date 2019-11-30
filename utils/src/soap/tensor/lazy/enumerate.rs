@@ -17,6 +17,8 @@ impl<E: ExprSize> ExprSize for Enumerate<E> {
     fn expr_size(&self) -> usize {
         self.iter.expr_size()
     }
+}
+impl<E: TotalExprSize> TotalExprSize for Enumerate<E> {
     #[inline]
     fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
         self.iter.total_size_hint(cwise_reduce)

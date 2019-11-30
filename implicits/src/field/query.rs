@@ -205,6 +205,23 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    /// Produce a `Vec` of normals at each surface vertex position. This is a convenience function
+    /// of calling query jacobian on all surface vertices. This function also normalizes the
+    /// resulting vectors.
+    pub fn surface_vertex_normals(&self) -> Vec<[T; 3]> {
+        let mut normals = vec![[T::zero(); 3]; self.surface_vertex_positions().len()];
+        let pos = reinterpret::reinterpret_slice(self.surface_vertex_positions());
+        self.query_jacobian_full(pos, &mut normals);
+        for n in normals.iter_mut() {
+            let nml = Vector3::new(*n);
+            let len = nml.norm();
+            if len > T::zero() {
+                *n = (nml / len).into();
+            }
+        }
+        normals
+    }
+
     /*
      * Update functions
      */

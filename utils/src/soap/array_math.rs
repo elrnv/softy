@@ -14,6 +14,140 @@ macro_rules! impl_array_vectors {
         pub type $vecn<T> = Tensor<[T; $n]>;
         pub type $rowvecn<T> = Tensor<[[T; $n]; 1]>;
 
+        impl<T: Scalar> Tensor<[T; $n]> {
+            pub fn zeros() -> Tensor<[T; $n]> {
+                Tensor::new([T::zero(); $n])
+            }
+            #[inline]
+            #[allow(unused_mut)]
+            #[unroll_for_loops]
+            pub fn dot(self, other: Tensor<[T; $n]>) -> T {
+                let mut prod = self.data[0] * other.data[0];
+                for i in 1..$n {
+                    prod += self.data[i] * other.data[i];
+                }
+                prod
+            }
+            #[inline]
+            pub fn norm_squared(&self) -> T {
+                (*self).map(|x| x * x).sum()
+            }
+            /// Computes the index of the vector component with the largest value.
+            #[inline]
+            #[allow(unused_mut)]
+            #[allow(unused_assignments)]
+            #[unroll_for_loops]
+            pub fn imax(&self) -> usize {
+                use std::ops::Index;
+                let mut max_value = self.data.index(0);
+                let mut max_index = 0;
+                for index in 1..$n {
+                    let value = unsafe { self.data.get_unchecked(index) };
+                    if value > max_value {
+                        max_value = value;
+                        max_index = index;
+                    }
+                }
+
+                max_index
+            }
+
+            /// Computes the index of the vector component with the smallest value.
+            #[inline]
+            #[allow(unused_mut)]
+            #[allow(unused_assignments)]
+            #[unroll_for_loops]
+            pub fn imin(&self) -> usize {
+                use std::ops::Index;
+                let mut min_value = self.data.index(0);
+                let mut min_index = 0;
+                for index in 1..$n {
+                    let value = unsafe { self.data.get_unchecked(index) };
+                    if value < min_value {
+                        min_value = value;
+                        min_index = index;
+                    }
+                }
+
+                min_index
+            }
+        }
+
+        impl<T: Scalar + num_traits::Signed> Tensor<[T; $n]> {
+            /// Computes the index of the vector component with the largest absolute value.
+            #[inline]
+            #[allow(unused_mut)]
+            #[allow(unused_assignments)]
+            #[unroll_for_loops]
+            pub fn iamax(&self) -> usize {
+                use std::ops::Index;
+                let mut max_value = self.data.index(0).abs();
+                let mut max_index = 0;
+                for index in 1..$n {
+                    let value = unsafe { self.data.get_unchecked(index).abs() };
+                    if value > max_value {
+                        max_value = value;
+                        max_index = index;
+                    }
+                }
+
+                max_index
+            }
+            /// Computes the index of the vector component with the smallest absolute value.
+            #[inline]
+            #[allow(unused_mut)]
+            #[allow(unused_assignments)]
+            #[unroll_for_loops]
+            pub fn iamin(&self) -> usize {
+                use std::ops::Index;
+                let mut min_value = self.data.index(0).abs();
+                let mut min_index = 0;
+                for index in 1..$n {
+                    let value = unsafe { self.data.get_unchecked(index).abs() };
+                    if value < min_value {
+                        min_value = value;
+                        min_index = index;
+                    }
+                }
+
+                min_index
+            }
+        }
+
+        impl<T: Copy> Tensor<[T; $n]> {
+            #[inline]
+            #[unroll_for_loops]
+            pub fn map<U: Pod, F>(&self, mut f: F) -> Tensor<[U; $n]>
+            where
+                F: FnMut(T) -> U,
+            {
+                // We use MaybeUninit here mostly to avoid a Zero trait bound.
+                let mut out: [MaybeUninit<U>; $n] = unsafe { MaybeUninit::uninit().assume_init() };
+                for i in 0..$n {
+                    out[i] = MaybeUninit::new(f(self.data[i]));
+                }
+                // The Pod trait bound ensures safety here in release builds.
+                // Sanity check here just in debug builds only, since this code is very likely in a
+                // critical section.
+                debug_assert_eq!(
+                    std::mem::size_of::<[MaybeUninit<U>; $n]>(),
+                    std::mem::size_of::<[U; $n]>()
+                );
+                Tensor::new(unsafe { std::mem::transmute_copy::<_, [U; $n]>(&out) })
+            }
+            #[inline]
+            #[unroll_for_loops]
+            pub fn fold<B, F>(&self, mut init: B, mut f: F) -> B
+            where
+                F: FnMut(B, T) -> B,
+            {
+                for i in 0..$n {
+                    init = f(init, self.data[i])
+                }
+                init
+            }
+        }
+
         impl<T: Scalar> Matrix for Tensor<[T; $n]> {
             type Transpose = $rowvecn<T>;
             #[inline]
@@ -62,7 +196,6 @@ macro_rules! impl_array_vectors {
                 }
             }
         }
-
 
         impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<Vec<T>> {
             #[inline]
@@ -145,61 +278,6 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> Tensor<[T; $n]> {
-            pub fn zeros() -> Tensor<[T; $n]> {
-                Tensor::new([T::zero(); $n])
-            }
-            #[inline]
-            #[allow(unused_mut)]
-            #[unroll_for_loops]
-            pub fn dot(self, other: Tensor<[T; $n]>) -> T {
-                let mut prod = self.data[0] * other.data[0];
-                for i in 1..$n {
-                    prod += self.data[i] * other.data[i];
-                }
-                prod
-            }
-            #[inline]
-            pub fn norm_squared(&self) -> T {
-                (*self).map(|x| x * x).sum()
-            }
-        }
-
-        impl<T: Copy> Tensor<[T; $n]> {
-            #[inline]
-            #[unroll_for_loops]
-            pub fn map<U: Pod, F>(&self, mut f: F) -> Tensor<[U; $n]>
-            where
-                F: FnMut(T) -> U,
-            {
-                // We use MaybeUninit here mostly to avoid a Zero trait bound.
-                let mut out: [MaybeUninit<U>; $n] = unsafe { MaybeUninit::uninit().assume_init() };
-                for i in 0..$n {
-                    out[i] = MaybeUninit::new(f(self.data[i]));
-                }
-                // The Pod trait bound ensures safety here in release builds.
-                // Sanity check here just in debug builds only, since this code is very likely in a
-                // critical section.
-                debug_assert_eq!(
-                    std::mem::size_of::<[MaybeUninit<U>; $n]>(),
-                    std::mem::size_of::<[U; $n]>()
-                );
-                Tensor::new(unsafe { std::mem::transmute_copy::<_, [U; $n]>(&out) })
-            }
-            #[inline]
-            #[unroll_for_loops]
-            pub fn fold<B, F>(&self, mut init: B, mut f: F) -> B
-            where
-                F: FnMut(B, T) -> B,
-            {
-                for i in 0..$n {
-                    init = f(init, self.data[i])
-                }
-                init
-            }
-
-        }
-
         impl<T: std::ops::Add<Output = T> + Zero + Copy> Tensor<[T; $n]> {
             #[inline]
             pub fn sum(&self) -> T {
@@ -211,6 +289,30 @@ macro_rules! impl_array_vectors {
             #[inline]
             pub fn norm(&self) -> T {
                 self.norm_squared().sqrt()
+            }
+
+            /// Normalize vector in place. Return its norm.
+            #[inline]
+            #[unroll_for_loops]
+            pub fn normalize(&mut self) -> T {
+                let norm = self.norm();
+                if norm.is_zero() {
+                    return norm;
+                }
+                let denom = T::one() / norm;
+                for i in 0..$n {
+                    unsafe {
+                        *self.data.get_unchecked_mut(i) *= denom;
+                    }
+                }
+                norm
+            }
+
+            /// Return a normalized vector.
+            #[inline]
+            pub fn normalized(mut self) -> Self {
+                self.normalize();
+                self
             }
         }
 
@@ -442,6 +544,78 @@ macro_rules! impl_array_vectors {
                 self.map(|x| U::from(x).unwrap())
             }
         }
+
+        #[cfg(feature = "approx")]
+        impl<U, T: approx::AbsDiffEq<U>> approx::AbsDiffEq<Tensor<[U; $n]>> for Tensor<[T; $n]>
+        where
+            T::Epsilon: Copy,
+        {
+            type Epsilon = T::Epsilon;
+            #[inline]
+            fn default_epsilon() -> Self::Epsilon {
+                T::default_epsilon()
+            }
+            #[inline]
+            #[unroll_for_loops]
+            fn abs_diff_eq(&self, other: &Tensor<[U; $n]>, epsilon: Self::Epsilon) -> bool {
+                for i in 0..$n {
+                    if !self.data[i].abs_diff_eq(&other.data[i], epsilon) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+        #[cfg(feature = "approx")]
+        impl<U, T: approx::RelativeEq<U>> approx::RelativeEq<Tensor<[U; $n]>> for Tensor<[T; $n]>
+        where
+            T::Epsilon: Copy,
+        {
+            #[inline]
+            fn default_max_relative() -> Self::Epsilon {
+                T::default_max_relative()
+            }
+            #[inline]
+            #[unroll_for_loops]
+            fn relative_eq(
+                &self,
+                other: &Tensor<[U; $n]>,
+                epsilon: Self::Epsilon,
+                max_relative: Self::Epsilon,
+            ) -> bool {
+                for i in 0..$n {
+                    if !self.data[i].relative_eq(&other.data[i], epsilon, max_relative) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+        #[cfg(feature = "approx")]
+        impl<U, T: approx::UlpsEq<U>> approx::UlpsEq<Tensor<[U; $n]>> for Tensor<[T; $n]>
+        where
+            T::Epsilon: Copy,
+        {
+            #[inline]
+            fn default_max_ulps() -> u32 {
+                T::default_max_ulps()
+            }
+            #[inline]
+            #[unroll_for_loops]
+            fn ulps_eq(
+                &self,
+                other: &Tensor<[U; $n]>,
+                epsilon: Self::Epsilon,
+                max_ulps: u32,
+            ) -> bool {
+                for i in 0..$n {
+                    if !self.data[i].ulps_eq(&other.data[i], epsilon, max_ulps) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
     };
 }
 
@@ -461,7 +635,7 @@ macro_rules! impl_square_reshape {
                 }
             }
         }
-    }
+    };
 }
 
 impl_square_reshape!(9, 3);
@@ -497,7 +671,7 @@ macro_rules! impl_array_matrices {
         impl<T> AsSlice<T> for [[T; $c]; $r] {
             #[inline]
             fn as_slice(&self) -> &[T] {
-                unsafe { reinterpret::reinterpret_slice(&self[..]) } 
+                unsafe { reinterpret::reinterpret_slice(&self[..]) }
             }
         }
 
@@ -559,10 +733,10 @@ macro_rules! impl_array_matrices {
                 Tensor::new(unsafe { std::mem::transmute_copy::<_, [[U; $c]; $r]>(&out) })
             }
             #[inline]
-            pub fn vec(&self) -> Tensor<[T; $c*$r]> {
+            pub fn vec(&self) -> Tensor<[T; $c * $r]> {
                 unsafe {
                     debug_assert_eq!(
-                        std::mem::size_of::<[T; $c*$r]>(),
+                        std::mem::size_of::<[T; $c * $r]>(),
                         std::mem::size_of::<[[T; $c]; $r]>()
                     );
                     std::mem::transmute_copy(self)
@@ -888,7 +1062,6 @@ macro_rules! impl_array_matrices {
                 self.map_inner(|x| U::from(x).unwrap())
             }
         }
-
 
         impl<T: Scalar> CwiseMulAssignOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
             #[inline]

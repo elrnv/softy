@@ -1705,12 +1705,12 @@ impl Solver {
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);
-                    {
-                        let SolverDataMut {
-                            problem, solution, ..
-                        } = self.solver.solver_data_mut();
-                        problem.save_intermediate(solution.primal_variables, self.step_count);
-                    }
+                    //{
+                    //    let SolverDataMut {
+                    //        problem, solution, ..
+                    //    } = self.solver.solver_data_mut();
+                    //    problem.save_intermediate(solution.primal_variables, self.step_count);
+                    //}
 
                     if all_contacts_linear || self.check_inner_step() {
                         if !friction_steps.is_empty() && total_friction_steps > 0 {

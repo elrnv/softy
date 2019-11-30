@@ -339,6 +339,7 @@ impl ContactBasis {
     /// Update the basis for the contact space at each contact point given the specified set of
     /// normals. The tangent space is chosen arbitrarily.
     pub fn update_from_normals(&mut self, normals: Vec<[f64; 3]>) {
+        self.tangents.clear();
         self.tangents.resize(normals.len(), [0.0; 3]);
         self.normals = normals;
 
@@ -352,6 +353,38 @@ impl ContactBasis {
             *t.as_mut_tensor() -= Tensor::new(n) * n[tangent_axis];
 
             t.as_mut_tensor().normalize(); // Normalize in-place.
+        }
+    }
+
+    /// A convenience function for projecting onto the tangent space of this basis.
+    ///
+    /// This is a faster and more accurate way to compute:
+    /// ```ignore
+    /// let vecs2d: Vec<_> = basis.to_tangent_space(&vecs).collect();
+    /// let projected_vecs: Vec<_> = basis.from_tangent_space(&vecs2d).collect();
+    /// ```
+    /// given
+    pub fn project_to_tangent_space<'a, V>(&self, vecs: V)
+    where V: Iterator,
+          V::Item: Into<&'a mut Vector3<f64>>,
+    {
+        Self::project_out_normal_component(self.normals.iter().cloned(), vecs);
+    }
+
+    /// A basis independent version of `project_to_tangent_space`.
+    ///
+    /// This function projects out the normal component from the given iterator of vectors in-place.
+    pub fn project_out_normal_component<'a, N, V>(normals: N, vecs: V)
+    where N: Iterator,
+          V: Iterator,
+          N::Item: Into<Vector3<f64>>,
+          V::Item: Into<&'a mut Vector3<f64>>,
+    {
+        for (n, v) in normals.zip(vecs) {
+            let n = n.into();
+            let v = v.into();
+            let nml_component = n.dot(*v);
+            *v -= n * nml_component;
         }
     }
 }
@@ -492,7 +525,9 @@ mod tests {
     use geo::mesh::builder::*;
     use geo::mesh::{topology::*, TriMesh, VertexPositions};
 
-    fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>) -> ContactBasis {
+    /// We pass a contact basis here by mutable reference. This tests that a basis can be reused
+    /// safely.
+    fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>, basis: &mut ContactBasis) {
         use utils::soap::*;
         let mut normals = vec![[0.0; 3]; trimesh.num_vertices()];
         geo::algo::compute_vertex_area_weighted_normals(
@@ -506,37 +541,7 @@ mod tests {
             *n.as_mut_tensor() /= norm;
         }
 
-        let mut basis = ContactBasis::new();
         basis.update_from_normals(reinterpret_vec(normals));
-        basis
-    }
-
-    // Tangent projection regression test
-    #[test]
-    fn tangent_projection_regression_test() -> Result<(), crate::Error> {
-        let nmls = vec![[-0.7103548922334376, 0.7013568730035822, 0.0591139896357717]];
-        let mut basis = ContactBasis::new();
-        basis.update_from_normals(nmls.clone());
-        dbg!(&basis.normals);
-        dbg!(&basis.tangents);
-
-        let vecs = vec![[
-            0.00000000000000039077336638890403,
-            0.000000000000005462321147878942,
-            -0.00000000000006178557673187383,
-        ]];
-
-        let tangent_vecs: Vec<_> = basis.to_tangent_space(vecs.as_slice()).collect();
-        dbg!(&tangent_vecs);
-        let proj_vecs: Vec<_> = basis.from_tangent_space(tangent_vecs.as_slice()).collect();
-        let nml = Tensor::new(nmls[0]);
-        let exp_proj_vecs = vec![Tensor::new(vecs[0]) - nml * nml.dot(Tensor::new(vecs[0]))];
-
-        dbg!(&exp_proj_vecs);
-        dbg!(&proj_vecs);
-        assert_relative_eq!(exp_proj_vecs[0], proj_vecs[0].as_tensor());
-        assert!(false);
-        Ok(())
     }
 
     // Verify that converting to contact space and back to physical space produces the same
@@ -546,20 +551,11 @@ mod tests {
         // TODO: upon migrating from nalgebra to soap. The relative comparisons below required a
         //       larger max_relative tolerance.
         //       Investigate why this is so.
-        let run = |trimesh: TriMesh<f64>| -> Result<(), crate::Error> {
-            let basis = contact_basis_from_trimesh(&trimesh);
+        let mut basis = ContactBasis::new();
+        let mut run = |trimesh: TriMesh<f64>| -> Result<(), crate::Error> {
+            contact_basis_from_trimesh(&trimesh, &mut basis);
 
-            let mut vecs = utils::random_vectors(trimesh.num_vertices());
-            for v in vecs.iter_mut() {
-                for x in v {
-                    *x *= 0.000000000000001;
-                }
-            }
-            vecs[0] = [
-                0.00000000000000039077336638890403,
-                0.000000000000005462321147878942,
-                -0.00000000000006178557673187383,
-            ];
+            let vecs = utils::random_vectors(trimesh.num_vertices());
 
             // Test euclidean basis
             let contact_vecs: Vec<_> = basis
@@ -636,7 +632,8 @@ mod tests {
     #[test]
     fn contact_basis_matrix_test() {
         let trimesh = PlatonicSolidBuilder::build_octahedron();
-        let basis = contact_basis_from_trimesh(&trimesh);
+        let mut basis = ContactBasis::new();
+        contact_basis_from_trimesh(&trimesh, &mut basis);
 
         let vecs = Chunked3::from_array_vec(utils::random_vectors(trimesh.num_vertices()));
 

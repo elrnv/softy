@@ -63,7 +63,7 @@ pub struct LinearizedPointContactConstraint {
     /// Jacobian. If one is fixed, it will be `None`.
     constraint_jacobian: LazyCell<[Option<DSBlockMatrix1x3>; 2]>,
 
-    /// Vertex to vertex topology of the collider mesh.
+    /// Vertex to vertex topology of the collider mesh along with a cotangent weight.
     collider_vertex_topo: Chunked<Vec<(usize, f64)>>,
 }
 
@@ -363,7 +363,7 @@ impl LinearizedPointContactConstraint {
             .enumerate()
             .filter_map(|(i, (&cf, dist))| {
                 if cf != 0.0
-                    && dist * dist_scale < 1e-2
+                    && dist * dist_scale < 1e-4
                     && surf.num_neighbours_within_distance(query_points[query_indices[i]], radius)
                         > 0
                 {
@@ -567,6 +567,37 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         )
     }
 
+    fn collider_contact_normals(&self, mut out_normals: Chunked3<&mut [f64]>) {
+        if self.frictional_contact.is_none() {
+            return;
+        }
+
+        let normals = self.contact_normals();
+        let FrictionalContact {
+            collider_impulse, // for active point contacts
+            ..
+        } = self.frictional_contact.as_ref().unwrap();
+
+        let query_indices = self.implicit_surface.nonempty_neighbourhood_indices();
+        assert_eq!(query_indices.len(), normals.len());
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [0.0; 3], // Default normal (there should not be any).
+            query_indices.into_iter(),
+            collider_impulse.selection().index_iter().cloned(),
+        )
+        .collect();
+
+        for (&aci, &nml) in zip!(
+            collider_impulse.selection().index_iter(),
+            remapped_normals.iter(),
+        ) {
+            out_normals[aci] = nml;
+        }
+    }
+
     fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]) {
         if self.frictional_contact.is_none() {
             return;
@@ -574,12 +605,39 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         self.update_contact_pos(x);
 
         let normals = self.contact_normals();
-        self.frictional_contact
-            .as_mut()
-            .unwrap()
-            .contact_basis
-            .update_from_normals(normals.into());
-        // TODO: Finish this
+        let query_indices = self.active_constraint_indices();
+
+        let FrictionalContact {
+            contact_basis,
+            object_impulse,
+            collider_impulse, // for active point contacts
+            ..
+        } = self.frictional_contact.as_mut().unwrap();
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [0.0; 3], // Default normal (there should not be many).
+            query_indices.into_iter(),
+            collider_impulse.selection().index_iter().cloned(),
+        )
+        .collect();
+
+        if remapped_normals.is_empty() {
+            return;
+        }
+
+        // Project contact impulse
+        ContactBasis::project_out_normal_component(
+            remapped_normals.into_iter(),
+            collider_impulse.source_iter_mut().map(|(_, imp)| imp)
+        );
+
+        // Project object impulse
+        ContactBasis::project_out_normal_component(
+            self.implicit_surface.surface_vertex_normals().into_iter(),
+            object_impulse.iter_mut().map(|(_, imp)| imp)
+        );
     }
 
     /// Update the position configuration of contacting objects using the given position data.
@@ -620,14 +678,26 @@ impl ContactConstraint for LinearizedPointContactConstraint {
             .contact_basis
             .update_from_normals(normals.into());
 
-        //let lap = self.build_contact_laplacian(0.5, Some(&active_contact_indices));
-        //let smoothed_contact_impulse_n: Vec<f64> =
-        //    (lap.expr() * orig_contact_impulse_n.expr()).eval();
-        let smoothed_contact_impulse_n = orig_contact_impulse_n.to_vec();
-        assert_eq!(
-            orig_contact_impulse_n.len(),
-            smoothed_contact_impulse_n.len()
-        );
+        let smoothing_weight = self
+            .frictional_contact
+            .as_ref()
+            .unwrap()
+            .params
+            .smoothing_weight;
+        let smoothed_contact_impulse_n = if smoothing_weight > 0.0 {
+            let lap = self.build_contact_laplacian(smoothing_weight, Some(&active_contact_indices));
+            let smoothed_contact_impulse_n: Vec<f64> =
+                (lap.expr() * orig_contact_impulse_n.expr()).eval();
+            let smoothed_contact_impulse_n: Vec<f64> =
+                (lap.expr() * smoothed_contact_impulse_n.expr()).eval();
+            assert_eq!(
+                orig_contact_impulse_n.len(),
+                smoothed_contact_impulse_n.len()
+            );
+            smoothed_contact_impulse_n
+        } else {
+            orig_contact_impulse_n.to_vec()
+        };
 
         let jac = self.compute_contact_jacobian(&active_contact_indices);
         let effective_mass_inv =
@@ -673,19 +743,14 @@ impl ContactConstraint for LinearizedPointContactConstraint {
             .from_normal_space(&smoothed_contact_impulse_n)
             .collect();
         // Prepare true predictor for the friction solve.
-        let predictor_impulse = Self::compute_predictor_impulse(
+        let mut predictor_impulse = Self::compute_predictor_impulse(
             v,
             &active_contact_indices,
             jac.view(),
             effective_mass_inv.view(),
         );
         // Project out the normal component.
-        let predictor_impulse: Vec<_> = contact_basis
-            .to_tangent_space(&predictor_impulse.into_arrays())
-            .collect();
-        let predictor_impulse: Chunked3<Vec<_>> = contact_basis
-            .from_tangent_space(&predictor_impulse)
-            .collect();
+        contact_basis.project_to_tangent_space(predictor_impulse.iter_mut());
 
         // Friction impulse to be subtracted.
         let prev_step_friction_impulse = prev_friction_impulse.clone();
@@ -981,6 +1046,32 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         }
     }
 
+    fn add_friction_corrector_impulse(
+        &self,
+        mut out: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        multiplier: f64,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if !frictional_contact.object_impulse.is_empty() && !out[0].is_empty() {
+                for (i, (&cr, _)) in frictional_contact.object_impulse.iter().enumerate() {
+                    out[0][i] = (Vector3::new(out[0][i]) + Vector3::new(cr) * multiplier).into();
+                }
+            }
+
+            if frictional_contact.collider_impulse.is_empty() || out[1].is_empty() {
+                return;
+            }
+
+            for (contact_idx, (i, (&cr, _))) in frictional_contact
+                .collider_impulse
+                .indexed_source_iter()
+                .enumerate()
+            {
+                out[1][i] = (Vector3::new(out[1][i]) + Tensor::new(cr) * multiplier).into();
+            }
+        }
+    }
+
     fn add_friction_impulse(
         &self,
         mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
@@ -1002,21 +1093,6 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 .indexed_source_iter()
                 .enumerate()
             {
-                //// Project out the normal component
-                //let r_t = if !frictional_contact.contact_basis.is_empty() {
-                //    let f = frictional_contact
-                //        .contact_basis
-                //        .to_contact_coordinates(r, contact_idx);
-                //    Vector3::new(
-                //        frictional_contact
-                //            .contact_basis
-                //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                //            .into(),
-                //    )
-                //} else {
-                //    Vector3::zero()
-                //};
-
                 grad[1][i] = (Vector3::new(grad[1][i]) + Tensor::new(r) * multiplier).into();
             }
         }
@@ -1041,21 +1117,6 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                 .enumerate()
             {
                 if let Some(i) = i.into() {
-                    // Project out normal component.
-                    //let r_t = if !frictional_contact.contact_basis.is_empty() {
-                    //    let f = frictional_contact
-                    //        .contact_basis
-                    //        .to_contact_coordinates(r, contact_idx);
-                    //    Vector3::new(
-                    //        frictional_contact
-                    //            .contact_basis
-                    //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                    //            .into(),
-                    //    )
-                    //} else {
-                    //    Vector3::zero()
-                    //};
-
                     dissipation += Vector3::new(v[1][i]).dot(Tensor::new(r));
                 }
             }

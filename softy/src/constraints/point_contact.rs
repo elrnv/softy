@@ -398,7 +398,7 @@ impl PointContactConstraint {
             .enumerate()
             .filter_map(|(i, (&cf, dist))| {
                 if cf != 0.0
-                    && dist * dist_scale < 1e-4
+                    //&& dist * dist_scale < 1e-2
                     && surf.num_neighbours_within_distance(query_points[query_indices[i]], radius)
                         > 0
                 {
@@ -754,6 +754,23 @@ impl ContactConstraint for PointContactConstraint {
             .contact_basis
             .update_from_normals(normals.into());
 
+        let smoothing_weight = self
+            .frictional_contact
+            .as_ref()
+            .unwrap()
+            .params
+            .smoothing_weight;
+        let lap = self.build_contact_laplacian(smoothing_weight, Some(&active_contact_indices));
+        let smoothed_contact_impulse_n: Vec<f64> =
+            (lap.expr() * orig_contact_impulse_n.expr()).eval();
+        let smoothed_contact_impulse_n: Vec<f64> =
+            (lap.expr() * smoothed_contact_impulse_n.expr()).eval();
+        let smoothed_contact_impulse_n = orig_contact_impulse_n.to_vec();
+        assert_eq!(
+            orig_contact_impulse_n.len(),
+            smoothed_contact_impulse_n.len()
+        );
+
         let jac = self.compute_contact_jacobian(&active_contact_indices);
         let effective_mass_inv =
             self.compute_effective_mass_inv(&active_contact_indices, jac.view());
@@ -794,7 +811,8 @@ impl ContactConstraint for PointContactConstraint {
         }
 
         let mut contact_impulse: Chunked3<Vec<f64>> = contact_basis
-            .from_normal_space(&orig_contact_impulse_n)
+            //.from_normal_space(&orig_contact_impulse_n)
+            .from_normal_space(&smoothed_contact_impulse_n)
             .collect();
         // Prepare true predictor for the friction solve.
         let predictor_impulse = Self::compute_predictor_impulse(

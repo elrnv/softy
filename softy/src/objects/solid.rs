@@ -85,7 +85,7 @@ pub(crate) struct TetMeshSurface {
 
 impl From<&TetMesh> for TetMeshSurface {
     /// Extract the triangle surface of this tetmesh. The returned trimesh
-    /// maintains a link to the original tetmesh via the.
+    /// maintains a link to the original tetmesh via the `indices` vector.
     fn from(tetmesh: &TetMesh) -> TetMeshSurface {
         let mut trimesh = tetmesh.surface_trimesh_with_mapping(
             Some(TETMESH_VERTEX_INDEX_ATTRIB),

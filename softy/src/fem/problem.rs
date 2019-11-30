@@ -223,7 +223,7 @@ pub struct ObjectData {
 }
 
 impl ObjectData {
-    /// Build a `VertexData` struct with an zero entry for each vertex of each
+    /// Build a `VertexData` struct with a zero entry for each vertex of each
     /// mesh.
     pub fn build_vertex_data(&self) -> VertexData<Vec<f64>> {
         let mut mesh_sizes = Vec::new();
@@ -238,7 +238,7 @@ impl ObjectData {
         Chunked::from_offsets(vec![0, num_solids, num_solids + num_shells], out)
     }
 
-    /// Build a `VertexData3` struct with an zero entry for each vertex of each
+    /// Build a `VertexData3` struct with a zero entry for each vertex of each
     /// mesh.
     pub fn build_vertex_data3(&self) -> VertexData3<Vec<f64>> {
         let mut mesh_sizes = Vec::new();

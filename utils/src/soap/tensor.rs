@@ -85,6 +85,18 @@ impl<T> From<T> for Tensor<T> {
     }
 }
 
+impl<'a, T: ?Sized> From<&'a mut T> for &'a mut Tensor<T> {
+    fn from(t: &'a mut T) -> &'a mut Tensor<T> {
+        t.as_mut_tensor()
+    }
+}
+
+impl<'a, T: ?Sized> From<&'a T> for &'a Tensor<T> {
+    fn from(t: &'a T) -> &'a Tensor<T> {
+        t.as_tensor()
+    }
+}
+
 impl<T: Default> Default for Tensor<T> {
     fn default() -> Self {
         Tensor {

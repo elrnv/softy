@@ -188,6 +188,13 @@ pub trait ContactConstraint:
     #[cfg(feature = "af")]
     fn contact_jacobian_af(&self) -> af::Array<f64>;
 
+    /// Project friction impulses to the tangential plane according to the provided positional
+    /// configuration.
+    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]);
+
+    /// Update the position configuration of contacting objects using the given position data.
+    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]);
+
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,
@@ -202,6 +209,13 @@ pub trait ContactConstraint:
         &self,
         x: [SubsetView<Chunked3<&mut [f64]>>; 2],
     );
+
+    fn smooth_collider_values(&self, _: SubsetView<&mut [f64]>) {}
+
+    /// Add the friction corrector impulse to the given vector.
+    fn add_friction_corrector_impulse(&self, _: [SubsetView<Chunked3<&mut [f64]>>; 2], _: f64) {}
+
+    fn collider_contact_normals(&self, _: Chunked3<&mut [f64]>) {}
 
     /// Add the frictional impulse to the given gradient vector.
     fn add_friction_impulse(

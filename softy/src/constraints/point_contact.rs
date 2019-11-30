@@ -56,6 +56,9 @@ pub struct PointContactConstraint {
 
     /// Internal constraint function buffer used to store temporary constraint computations.
     constraint_buffer: RefCell<Vec<f64>>,
+
+    /// Vertex to vertex topology of the collider mesh.
+    collider_vertex_topo: Chunked<Vec<usize>>,
 }
 
 impl PointContactConstraint {
@@ -115,6 +118,7 @@ impl PointContactConstraint {
                 collider_is_fixed,
                 constraint_buffer: RefCell::new(vec![0.0; query_points.len()]),
                 problem_diameter: bbox.diameter(),
+                collider_vertex_topo: Self::build_vertex_topo(collider),
             };
 
             Ok(constraint)
@@ -135,6 +139,94 @@ impl PointContactConstraint {
                 }
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Compute vertex to vertex topology of the entire collider mesh. This makes it easy to query
+    /// neighbours when we are computing laplacians.
+    fn build_vertex_topo(mesh: &TriMesh) -> Chunked<Vec<usize>> {
+        let mut topo = vec![Vec::with_capacity(5); mesh.num_vertices()];
+
+        // Accumulate all the neighbours
+        mesh.face_iter().for_each(|&[v0, v1, v2]| {
+            topo[v0].push(v1);
+            topo[v0].push(v2);
+            topo[v1].push(v0);
+            topo[v1].push(v2);
+            topo[v2].push(v0);
+            topo[v2].push(v1);
+        });
+
+        // Sort and dedup neighbourhoods
+        for nbrhood in topo.iter_mut() {
+            nbrhood.sort();
+            nbrhood.dedup();
+        }
+
+        // Flatten data layout to make access faster.
+        Chunked::from_nested_vec(topo)
+    }
+
+    /// Build a matrix that smoothes values at contact points with their neighbours by the given
+    /// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
+    fn build_contact_laplacian(
+        &self,
+        weight: f64,
+        active_contact_indices: Option<&[usize]>,
+    ) -> DSMatrix {
+        let surf = &self.implicit_surface;
+        if let Some(active_contact_indices) = active_contact_indices {
+            let size = active_contact_indices.len();
+            let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
+            for (i, &aci) in active_contact_indices.iter().enumerate() {
+                neighbourhood_indices[aci] = Index::new(i);
+            }
+
+            let triplets =
+                active_contact_indices
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(valid_idx, &active_idx)| {
+                        let nbrhood = &self.collider_vertex_topo[active_idx];
+                        let n = nbrhood
+                            .iter()
+                            .filter(|&nbr_idx| neighbourhood_indices[*nbr_idx].is_valid())
+                            .count();
+                        std::iter::repeat((valid_idx, weight / n as f64))
+                            .zip(nbrhood.iter())
+                            .filter_map(|((valid_idx, normalized_weight), nbr_idx)| {
+                                neighbourhood_indices[*nbr_idx]
+                                    .into_option()
+                                    .map(|valid_nbr| (valid_idx, valid_nbr, normalized_weight))
+                            })
+                            .chain(std::iter::once((valid_idx, valid_idx, 1.0 - weight)))
+                    });
+            // Don't need to sort or compress.
+            DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
+        } else {
+            let neighbourhood_indices = nonempty_neighbourhood_indices(&surf);
+            let size = surf.num_neighbourhoods();
+            let triplets = self
+                .collider_vertex_topo
+                .iter()
+                .zip(neighbourhood_indices.iter())
+                .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
+                .flat_map(|(nbrhood, valid_idx)| {
+                    let n = nbrhood
+                        .iter()
+                        .filter(|&nbr_idx| neighbourhood_indices[*nbr_idx].is_valid())
+                        .count();
+                    std::iter::repeat((valid_idx, weight / n as f64))
+                        .zip(nbrhood.iter())
+                        .filter_map(|((valid_idx, normalized_weight), nbr_idx)| {
+                            neighbourhood_indices[*nbr_idx]
+                                .into_option()
+                                .map(|valid_nbr| (valid_idx, valid_nbr, normalized_weight))
+                        })
+                        .chain(std::iter::once((valid_idx, valid_idx, 1.0 - weight)))
+                });
+            // Don't need to sort or compress.
+            DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
         }
     }
 
@@ -391,8 +483,7 @@ impl PointContactConstraint {
         let collider_velocity = Subset::from_unique_ordered_indices(active_contact_indices, v[1]);
 
         let mut object_velocity = jac.view() * Tensor::new(v[0]);
-        //let mut relative_velocity = object_velocity.view_mut();
-        *&mut object_velocity.expr_mut()-= collider_velocity.expr();
+        *&mut object_velocity.expr_mut() -= collider_velocity.expr();
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
         //        let ldlt_solver =
@@ -400,8 +491,11 @@ impl PointContactConstraint {
         //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
         if !object_velocity.is_empty() {
-            sprs::linalg::trisolve::lsolve_csr_dense_rhs(sprs_effective_mass_inv.view(), object_velocity.storage_mut())
-                .unwrap();
+            sprs::linalg::trisolve::lsolve_csr_dense_rhs(
+                sprs_effective_mass_inv.view(),
+                object_velocity.storage_mut(),
+            )
+            .unwrap();
         }
 
         // The solve turns our relative velocity into a relative impulse.
@@ -409,15 +503,24 @@ impl PointContactConstraint {
     }
 }
 
-fn neighbourhood_indices(surf: &QueryTopo) -> Vec<Index> {
+/// Enumerate non-empty neighbourhoods in place.
+fn nonempty_neighbourhood_indices(surf: &QueryTopo) -> Vec<Index> {
+    neighbourhood_indices_with(surf, |_, s| s != 0)
+}
+
+/// Prune neighbourhood indices using a given function that takes the index (query point)
+/// and size of the neighbourhood.
+/// Only those neighbourhoods for which `f` returns true will be present in the output.
+fn neighbourhood_indices_with(surf: &QueryTopo, f: impl Fn(usize, usize) -> bool) -> Vec<Index> {
     let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
 
     let neighbourhood_sizes = surf.neighbourhood_sizes();
 
-    for (i, (idx, _)) in neighbourhood_indices
+    for (i, (_, (idx, _))) in neighbourhood_indices
         .iter_mut()
         .zip(neighbourhood_sizes.iter())
-        .filter(|&(_, &s)| s != 0)
+        .enumerate()
+        .filter(|&(i, (_, &s))| f(i, s))
         .enumerate()
     {
         *idx = Index::new(i);
@@ -482,6 +585,143 @@ impl ContactConstraint for PointContactConstraint {
         )
     }
 
+    fn collider_contact_normals(&self, mut out_normals: Chunked3<&mut [f64]>) {
+        if self.frictional_contact.is_none() {
+            return;
+        }
+
+        let normals = self.contact_normals();
+        let FrictionalContact {
+            collider_impulse, // for active point contacts
+            ..
+        } = self.frictional_contact.as_ref().unwrap();
+
+        let query_indices = self.implicit_surface.nonempty_neighbourhood_indices();
+        assert_eq!(query_indices.len(), normals.len());
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [0.0; 3], // Default normal (there should not be any).
+            query_indices.into_iter(),
+            collider_impulse.selection().index_iter().cloned(),
+        )
+        .collect();
+
+        for (&aci, &nml) in zip!(
+            collider_impulse.selection().index_iter(),
+            remapped_normals.iter(),
+        ) {
+            out_normals[aci] = nml;
+        }
+    }
+
+    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]) {
+        if self.frictional_contact.is_none() {
+            return;
+        }
+
+        let normals = self.contact_normals();
+        let query_indices = self.active_constraint_indices();
+
+        let FrictionalContact {
+            contact_basis,
+            object_impulse,
+            collider_impulse, // for active point contacts
+            ..
+        } = self.frictional_contact.as_mut().unwrap();
+
+        // Only interested in normals at contact points on the collider impulse.
+        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+            normals.into_iter(),
+            [0.0; 3], // Default normal (there should not be many).
+            query_indices.into_iter(),
+            collider_impulse.selection().index_iter().cloned(),
+        )
+        .collect();
+
+        if remapped_normals.is_empty() {
+            return;
+        }
+
+        let mut collider_impulse_clone = collider_impulse.clone();
+        debug!(
+            "Impulse Before: {:?}",
+            collider_impulse.source().view().at(0).1
+        );
+        for (&n, (_, imp)) in remapped_normals
+            .iter()
+            .zip(collider_impulse.source_iter_mut())
+        {
+            let n = Vector3::new(n);
+            let nml_component = n.dot(Vector3::new(*imp));
+            *imp.as_mut_tensor() -= n * nml_component;
+        }
+        debug!(
+            "Impulse After subtract normal: {:?}",
+            collider_impulse.source().view().at(0).1
+        );
+
+        assert_eq!(remapped_normals.len(), collider_impulse.len());
+
+        contact_basis.update_from_normals(remapped_normals.into());
+        dbg!(contact_basis.normals[0]);
+        dbg!(contact_basis.tangents[0]);
+        if !contact_basis.is_empty() {
+            let dense_collider_impulse: Vec<[f64; 3]> = collider_impulse_clone
+                .source_iter()
+                .map(|(_, &src)| src)
+                .collect();
+
+            debug!("Impulse Before: {:?}", &dense_collider_impulse[0]);
+            let dense_collider_impulse: Vec<[f64; 2]> = contact_basis
+                .to_tangent_space(&dense_collider_impulse)
+                .collect();
+            debug!("Impulse Contact Space: {:?}", &dense_collider_impulse[0]);
+            let dense_collider_impulse: Chunked3<Vec<f64>> = contact_basis
+                .from_tangent_space(&dense_collider_impulse)
+                .collect();
+            debug!(
+                "Impulse After project tangent: {:?}",
+                &dense_collider_impulse[0]
+            );
+
+            assert_eq!(collider_impulse.len(), dense_collider_impulse.len());
+            collider_impulse_clone
+                .source_mut()
+                .data_mut()
+                .1
+                .copy_from_slice(dense_collider_impulse.data());
+        }
+
+        for (i, ((ai, a, at), (bi, b, bt))) in collider_impulse_clone
+            .iter()
+            .zip(collider_impulse.iter())
+            .enumerate()
+        {
+            assert_eq!(at, bt);
+            assert_eq!(ai, bi);
+            dbg!(contact_basis.normals[i]);
+            dbg!(contact_basis.tangents[i]);
+            approx::assert_relative_eq!(a.0.as_tensor(), b.0.as_tensor());
+            approx::assert_relative_eq!(a.1.as_tensor(), b.1.as_tensor());
+        }
+
+        // Project object impulse
+        let normals = self.implicit_surface.surface_vertex_normals();
+        for (&n, (_, imp)) in normals.iter().zip(object_impulse.iter_mut()) {
+            let n = Vector3::new(n);
+            let nml_component = n.dot(Vector3::new(*imp));
+            *imp.as_mut_tensor() -= n * nml_component;
+        }
+    }
+
+    /// Update the position configuration of contacting objects using the given position data.
+    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]) {
+        self.update_surface_with_mesh_pos(x[0]);
+        self.update_contact_points(x[1]);
+    }
+
     fn update_frictional_contact_impulse(
         &mut self,
         orig_contact_impulse_n: &[f64],
@@ -494,8 +734,7 @@ impl ContactConstraint for PointContactConstraint {
             return 0;
         }
 
-        self.update_surface_with_mesh_pos(x[0]);
-        self.update_contact_points(x[1]);
+        self.update_contact_pos(x);
 
         // Note that there is a distinction between active *contacts* and active *constraints*.
         // Active *constraints* correspond to to those points that are in the MLS neighbourhood of
@@ -503,6 +742,7 @@ impl ContactConstraint for PointContactConstraint {
         // are considered in contact.
         let (active_constraint_subset, active_contact_indices, orig_contact_impulse_n) =
             self.in_contact_indices(orig_contact_impulse_n, potential_values);
+
         let normals = self.contact_normals();
         let normals_subset = Subset::from_unique_ordered_indices(active_constraint_subset, normals);
         let mut normals = Chunked3::from_array_vec(vec![[0.0; 3]; normals_subset.len()]);
@@ -544,7 +784,8 @@ impl ContactConstraint for PointContactConstraint {
 
         if active_contact_indices.is_empty() {
             // If there are no active contacts, there is nothing to update.
-            // Clear object_impulse before returning.
+            // Clear object_impulse and collider_impulse before returning.
+            collider_impulse.clear();
             object_impulse.iter_mut().for_each(|(x, y)| {
                 *x = [0.0; 3];
                 *y = [0.0; 3]
@@ -726,10 +967,10 @@ impl ContactConstraint for PointContactConstraint {
                     //println!("prev friction impulse: {:?}", f_prev.norm());
                     //println!("cur friction impulse: {:?}", f_cur.norm());
 
-                    let f_delta = f_prev - f_cur;
+                    let f_delta: Chunked3<Vec<f64>> = (f_prev.expr() - f_cur.expr()).eval();
                     let rel_err_numerator: f64 = f_delta
                         .expr()
-                        .dot((effective_mass_inv.view() * f_delta.view()).expr());
+                        .dot((effective_mass_inv.view() * Tensor::new(f_delta.view())).expr());
                     let rel_err = rel_err_numerator
                         / f_prev
                             .expr()
@@ -788,16 +1029,20 @@ impl ContactConstraint for PointContactConstraint {
         // deforming surface mesh. An additional remapping puts these impulses on the volume mesh
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
-        let prev_contact_impulse: Chunked3<Vec<f64>> = contact_basis
-            .from_normal_space(&orig_contact_impulse_n)
-            .collect();
-        let impulse: Chunked3<Vec<f64>> =
-            (friction_impulse.expr() + contact_impulse.expr() - prev_contact_impulse.expr()).eval();
+        //let prev_contact_impulse: Chunked3<Vec<f64>> = contact_basis
+        //    .from_normal_space(&orig_contact_impulse_n)
+        //    .collect();
+        //let impulse: Chunked3<Vec<f64>> =
+        //    (friction_impulse.expr()).eval();
         // Correct friction_impulse by subtracting previous friction impulse
-        let impulse_corrector: Chunked3<Vec<f64>> =
-            (impulse.expr() - prev_step_friction_impulse.expr()).eval();
-        let mut object_impulse_tensor = jac.view().transpose() * Tensor::new(impulse.view());
-        object_impulse_tensor.negate();
+        let impulse_corrector: Chunked3<Vec<f64>> = (friction_impulse.expr()
+            //+ contact_impulse.expr()
+            //- prev_contact_impulse.expr()
+            - prev_step_friction_impulse.expr())
+        .eval();
+        let mut object_friction_impulse_tensor =
+            jac.view().transpose() * Tensor::new(friction_impulse.view());
+        object_friction_impulse_tensor.negate();
 
         let mut object_impulse_corrector_tensor =
             jac.view().transpose() * Tensor::new(impulse_corrector.view());
@@ -805,13 +1050,13 @@ impl ContactConstraint for PointContactConstraint {
 
         *object_impulse = Chunked3::from_flat((
             object_impulse_corrector_tensor.data.into_flat(),
-            object_impulse_tensor.data.into_flat(),
+            object_friction_impulse_tensor.data.into_flat(),
         ));
 
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.borrow().len(),
-            Chunked3::from_flat((impulse_corrector.into_flat(), impulse.into_flat())),
+            Chunked3::from_flat((impulse_corrector.into_flat(), friction_impulse.into_flat())),
         );
 
         if friction_steps > 0 {
@@ -855,11 +1100,34 @@ impl ContactConstraint for PointContactConstraint {
                     .0,
             );
             let add_vel = collider_mass_inv * Tensor::new(corrector);
-            let mut out_vel = Subset::from_unique_ordered_indices(
-                indices.as_slice(),
-                collider_vel,
-            );
+            let mut out_vel = Subset::from_unique_ordered_indices(indices.as_slice(), collider_vel);
             *&mut out_vel.expr_mut() += add_vel.expr();
+        }
+    }
+
+    fn add_friction_corrector_impulse(
+        &self,
+        mut out: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        multiplier: f64,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if !frictional_contact.object_impulse.is_empty() && !out[0].is_empty() {
+                for (i, (&cr, _)) in frictional_contact.object_impulse.iter().enumerate() {
+                    out[0][i] = (Vector3::new(out[0][i]) + Vector3::new(cr) * multiplier).into();
+                }
+            }
+
+            if frictional_contact.collider_impulse.is_empty() || out[1].is_empty() {
+                return;
+            }
+
+            for (contact_idx, (i, (&cr, _))) in frictional_contact
+                .collider_impulse
+                .indexed_source_iter()
+                .enumerate()
+            {
+                out[1][i] = (Vector3::new(out[1][i]) + Tensor::new(cr) * multiplier).into();
+            }
         }
     }
 
@@ -884,22 +1152,22 @@ impl ContactConstraint for PointContactConstraint {
                 .indexed_source_iter()
                 .enumerate()
             {
-                // Project out the normal component
-                let r_t = if !frictional_contact.contact_basis.is_empty() {
-                    let f = frictional_contact
-                        .contact_basis
-                        .to_contact_coordinates(r, contact_idx);
-                    Vector3::new(
-                        frictional_contact
-                            .contact_basis
-                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                            .into(),
-                    )
-                } else {
-                    Vector3::zero()
-                };
+                //// Project out the normal component
+                //let r_t = if !frictional_contact.contact_basis.is_empty() {
+                //    let f = frictional_contact
+                //        .contact_basis
+                //        .to_contact_coordinates(r, contact_idx);
+                //    Vector3::new(
+                //        frictional_contact
+                //            .contact_basis
+                //            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                //            .into(),
+                //    )
+                //} else {
+                //    Vector3::zero()
+                //};
 
-                grad[1][i] = (Vector3::new(grad[1][i]) + r_t * multiplier).into();
+                grad[1][i] = (Vector3::new(grad[1][i]) + Tensor::new(r) * multiplier).into();
             }
         }
     }
@@ -1037,8 +1305,14 @@ impl ContactConstraint for PointContactConstraint {
             self.implicit_surface.surface_vertex_positions().len()
         );
         self.update_contact_points(collider_pos);
-        let contact_points = self.contact_points.borrow();
-        self.implicit_surface.reset(contact_points.as_arrays())
+
+        let updated = {
+            let contact_points = self.contact_points.borrow();
+            self.implicit_surface.reset(contact_points.as_arrays())
+        };
+
+        self.project_friction_impulses([object_pos, collider_pos]);
+        updated
     }
 }
 
@@ -1147,7 +1421,7 @@ impl ConstraintJacobian<'_, f64> for PointContactConstraint {
             )
         };
 
-        let neighbourhood_indices = neighbourhood_indices(&self.implicit_surface);
+        let neighbourhood_indices = nonempty_neighbourhood_indices(&self.implicit_surface);
         Ok(Box::new(idx_iter.map(move |(row, col)| {
             assert!(neighbourhood_indices[row].is_valid());
             MatrixElementIndex {

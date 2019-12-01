@@ -32,6 +32,13 @@ impl<T> Evaluate<Tensor<T>> for T {
     }
 }
 
+impl<E, T: Evaluate<E>> Evaluate<IndexedExpr<E>> for T {
+    #[inline]
+    fn eval(indexed_expr: IndexedExpr<E>) -> Self {
+        Evaluate::eval(indexed_expr.expr)
+    }
+}
+
 impl<T: Scalar, E, F, A> Evaluate<Reduce<E, F>> for T
 where
     E: Iterator<Item = A>,
@@ -299,14 +306,12 @@ impl_array_matrix_eval_traits!(
 
 impl<T, E, F> EvalExtend<Reduce<E, F>> for Vec<T>
 where
-    E::Item: std::fmt::Debug,
     E: Iterator + DenseExpr,
     F: BinOpAssign<Tensor<[T]>, E::Item>,
     Self: EvalExtend<E::Item>,
 {
     #[inline]
-    fn eval_extend(&mut self, reduce: Reduce<E, F>) {
-        let Reduce { mut expr, op } = reduce;
+    fn eval_extend(&mut self, Reduce { mut expr, op }: Reduce<E, F>) {
         if let Some(row) = expr.next() {
             let start = self.len();
             self.eval_extend(row);
@@ -352,15 +357,15 @@ impl<T> EvalExtend<Tensor<T>> for Vec<T> {
     }
 }
 
-impl<I, T> EvalExtend<I> for Vec<T>
+impl<I, T, A> EvalExtend<I> for Vec<T>
 where
-    I: Iterator + DenseExpr,
-    Vec<T>: EvalExtend<I::Item>,
+    I: Iterator<Item = A> + DenseExpr,
+    T: Evaluate<A>,
 {
     #[inline]
     fn eval_extend(&mut self, iter: I) {
         for i in iter {
-            self.eval_extend(i);
+            self.push(Evaluate::eval(i));
         }
     }
 }
@@ -403,17 +408,25 @@ where
     }
 }
 
-impl<S, E, N, F> EvalExtend<Reduce<E, F>> for UniChunked<S, N>
+impl<S, E, N, F, A> EvalExtend<Reduce<E, F>> for UniChunked<S, N>
 where
-    E: Iterator,
-    S: Set + EvalExtend<Reduce<E, F>>,
+    E: Iterator<Item = A>,
+    A: Iterator,
+    F: for<'a> BinOpAssign<Tensor<<Self as ViewMutIterator<'a>>::Item>, A::Item>,
+    Self: Set + EvalExtend<A> + for<'a> ViewMutIterator<'a>,
     N: Dimension,
 {
     #[inline]
-    fn eval_extend(&mut self, reduce: Reduce<E, F>) {
-        let orig_len = self.data.len();
-        self.data.eval_extend(reduce);
-        debug_assert_eq!((self.data.len() - orig_len) % self.chunk_size(), 0);
+    fn eval_extend(&mut self, Reduce { mut expr, op }: Reduce<E, F>) {
+        if let Some(row) = expr.next() {
+            let start = self.len();
+            self.eval_extend(row);
+            while let Some(next) = expr.next() {
+                for (mut output, input) in self.view_mut_iter().skip(start).zip(next) {
+                    op.apply_assign(output.as_mut_tensor(), input);
+                }
+            }
+        }
     }
 }
 

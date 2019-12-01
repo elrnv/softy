@@ -2254,6 +2254,14 @@ mod tests {
     }
 
     #[test]
+    fn reduce_into_unichunked() {
+        let b = vec![2, 1];
+        let a = ChunkedN::from_flat_with_stride(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), 3);
+        let out: Chunked2<_> = Evaluate::eval(Reduce::with_op(a.expr().cwise_mul(b.expr()), Addition));
+        assert_eq!(Chunked2::from_flat(vec![9i32, 12, 15, 18, 21, 24]), out);
+    }
+
+    #[test]
     fn contraction() {
         let a = vec![1, 2, 3];
         let b = vec![4, 5, 6];
@@ -2320,28 +2328,28 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tensor_tensor_mul() {
-        //let flat_a = ChunkedN::from_flat_with_stride(vec![1,2,5,6, 3,4,7,8, 9,10,13,14, 11,12,15,16], 4);
-        // 2x2 Block matrix of 2x2 blocks
-        let a = ChunkedN::from_flat_with_stride(
-            Chunked2::from_flat(Chunked2::from_flat(vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-            ])),
-            2,
-        );
+    //#[test]
+    //fn tensor_tensor_mul() {
+    //    //let flat_a = ChunkedN::from_flat_with_stride(vec![1,2,5,6, 3,4,7,8, 9,10,13,14, 11,12,15,16], 4);
+    //    // 2x2 Block matrix of 2x2 blocks
+    //    let a = ChunkedN::from_flat_with_stride(
+    //        Chunked2::from_flat(Chunked2::from_flat(vec![
+    //            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    //        ])),
+    //        2,
+    //    );
 
-        let out: ChunkedN<_> = Evaluate::eval(a.expr() * a.expr());
-        assert_eq!(
-            ChunkedN::from_flat_with_stride(
-                Chunked2::from_flat(Chunked2::from_flat(vec![
-                    118, 132, 166, 188, 174, 188, 254, 276, 310, 356, 358, 412, 494, 540, 574, 628
-                ])),
-                2
-            ),
-            out
-        );
-    }
+    //    let out: ChunkedN<_> = Evaluate::eval(a.expr() * a.expr());
+    //    assert_eq!(
+    //        ChunkedN::from_flat_with_stride(
+    //            Chunked2::from_flat(Chunked2::from_flat(vec![
+    //                118, 132, 166, 188, 174, 188, 254, 276, 310, 356, 358, 412, 494, 540, 574, 628
+    //            ])),
+    //            2
+    //        ),
+    //        out
+    //    );
+    //}
 
     #[test]
     fn sparse_matrix_vector_mul() {

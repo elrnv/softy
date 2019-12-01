@@ -1323,7 +1323,7 @@ where
     }
 }
 
-impl<S> UniChunked<S, usize> {
+impl<S> ChunkedN<S> {
     pub fn iter<'a>(&'a self) -> Chunks<S::Type>
     where
         S: View<'a>,

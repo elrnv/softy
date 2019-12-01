@@ -34,8 +34,7 @@ macro_rules! impl_array_vectors {
             }
             /// Computes the index of the vector component with the largest value.
             #[inline]
-            #[allow(unused_mut)]
-            #[allow(unused_assignments)]
+            #[allow(unused_mut, unused_assignments, unused_variables)]
             #[unroll_for_loops]
             pub fn imax(&self) -> usize {
                 use std::ops::Index;
@@ -54,8 +53,7 @@ macro_rules! impl_array_vectors {
 
             /// Computes the index of the vector component with the smallest value.
             #[inline]
-            #[allow(unused_mut)]
-            #[allow(unused_assignments)]
+            #[allow(unused_mut, unused_assignments, unused_variables)]
             #[unroll_for_loops]
             pub fn imin(&self) -> usize {
                 use std::ops::Index;
@@ -76,8 +74,7 @@ macro_rules! impl_array_vectors {
         impl<T: Scalar + num_traits::Signed> Tensor<[T; $n]> {
             /// Computes the index of the vector component with the largest absolute value.
             #[inline]
-            #[allow(unused_mut)]
-            #[allow(unused_assignments)]
+            #[allow(unused_mut, unused_assignments, unused_variables)]
             #[unroll_for_loops]
             pub fn iamax(&self) -> usize {
                 use std::ops::Index;
@@ -95,8 +92,7 @@ macro_rules! impl_array_vectors {
             }
             /// Computes the index of the vector component with the smallest absolute value.
             #[inline]
-            #[allow(unused_mut)]
-            #[allow(unused_assignments)]
+            #[allow(unused_mut, unused_assignments, unused_variables)]
             #[unroll_for_loops]
             pub fn iamin(&self) -> usize {
                 use std::ops::Index;
@@ -327,6 +323,16 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                for i in 0..$n {
+                    self.data[i] += rhs.data[i];
+                }
+            }
+        }
+
         impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
@@ -361,6 +367,16 @@ macro_rules! impl_array_vectors {
             fn sub(mut self, rhs: Self) -> Self::Output {
                 self -= rhs;
                 self
+            }
+        }
+
+        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
+            #[inline]
+            #[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
+                for i in 0..$n {
+                    self.data[i] -= rhs.data[i];
+                }
             }
         }
 
@@ -680,7 +696,7 @@ macro_rules! impl_array_matrices {
             type Transpose = Tensor<[[T; $r]; $c]>;
             #[inline]
             #[unroll_for_loops]
-            fn transpose(mut self) -> Self::Transpose {
+            fn transpose(self) -> Self::Transpose {
                 let mut m: [[MaybeUninit<T>; $r]; $c] =
                     unsafe { MaybeUninit::uninit().assume_init() };
 

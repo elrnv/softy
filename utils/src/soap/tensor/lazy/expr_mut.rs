@@ -115,10 +115,13 @@ where
     }
 }
 
-impl<'a, T: ExprMut<'a> + ?Sized> ExprMut<'a> for Tensor<T> {
-    type Output = T::Output;
+impl<'a, T: ?Sized, D: 'a + ?Sized> ExprMut<'a> for Tensor<T>
+where Self: AsMutData<Data = D>,
+      D: ExprMut<'a>,
+{
+    type Output = D::Output;
     #[inline]
     fn expr_mut(&'a mut self) -> Self::Output {
-        self.data.expr_mut()
+        self.as_mut_data().expr_mut()
     }
 }

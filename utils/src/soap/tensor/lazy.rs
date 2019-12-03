@@ -528,18 +528,16 @@ where
     }
 }
 
-impl<T: Expression> Expression for Tensor<T> {}
-impl<T: ExprSize> ExprSize for Tensor<T> {
+impl<T: Scalar + Expression> Expression for Tensor<T> {}
+impl<T: Scalar + ExprSize> ExprSize for Tensor<T> {
     #[inline]
     fn expr_size(&self) -> usize {
-        self.data.expr_size()
+        1
     }
 }
-impl<T: TotalExprSize> TotalExprSize for Tensor<T> {
+impl<T: Scalar + TotalExprSize> TotalExprSize for Tensor<T> {
     fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
-        // Can't be reduced since Tensors are not iterators. Reduction should be done explicitly
-        // By an eager operator on tensors.
-        Some(self.data.expr_size())
+        Some(1)
     }
 }
 
@@ -1224,11 +1222,14 @@ where
     }
 }
 
-impl<'a, T: Expr<'a> + ?Sized> Expr<'a> for Tensor<T> {
-    type Output = T::Output;
+impl<'a, T: ?Sized, D: 'a + ?Sized> Expr<'a> for Tensor<T>
+where Self: AsData<Data = D>,
+      D: Expr<'a>,
+{
+    type Output = D::Output;
     #[inline]
     fn expr(&'a self) -> Self::Output {
-        self.data.expr()
+        self.as_data().expr()
     }
 }
 
@@ -1381,7 +1382,7 @@ macro_rules! impl_scalar_mul {
             type Output = CwiseBinExpr<Self, Tensor<T>, Multiplication>;
             #[inline]
             fn mul(self, rhs: T) -> Self::Output {
-                CwiseBinExpr::new(self, Tensor::new(rhs))
+                CwiseBinExpr::new(self, Tensor { data: rhs })
             }
         }
         impl<$($type_vars),*> MulOp<Tensor<T>> for $type where T: Scalar, $($type_constraints)* {
@@ -1645,31 +1646,31 @@ macro_rules! impl_array_vector_traits {
     };
     ($n:expr, $($ns:tt)*) => {
         impl<T: Scalar> IntoExpr for [T; $n] {
-            type Expr = Tensor<[T; $n]>;
+            type Expr = Tensor<[Tensor<T>; $n]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
-                Tensor::new(self)
+                self.into_tensor()
             }
         }
         impl<T: Scalar> IntoExpr for &[T; $n] {
-            type Expr = Tensor<[T; $n]>;
+            type Expr = Tensor<[Tensor<T>; $n]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
-                Tensor::new(*self)
+                (*self).into_tensor()
             }
         }
         impl<'a, T: Scalar> IntoExpr for &'a mut [T; $n] {
-            type Expr = &'a mut Tensor<[T; $n]>;
+            type Expr = &'a mut Tensor<[Tensor<T>; $n]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
                 self.as_mut_tensor()
             }
         }
         impl<'a, T: Scalar> Expr<'a> for [T; $n] {
-            type Output = Tensor<[T; $n]>;
+            type Output = Tensor<[Tensor<T>; $n]>;
             #[inline]
             fn expr(&'a self) -> Self::Output {
-                Tensor::new(*self)
+                (*self).into_tensor()
             }
         }
         impl<'a, T> IntoExpr for ChunkedN<&'a [T; $n]> {
@@ -1710,17 +1711,36 @@ macro_rules! impl_array_vector_traits {
                 self.as_matrix()
             }
         }
-        impl<T: Scalar> Expression for [T; $n] {}
-        impl<T: Scalar> ExprSize for [T; $n] {
+        impl<T: Copy + TotalExprSize> Expression for Tensor<[T; $n]> {}
+        impl<T> ExprSize for Tensor<[T; $n]> {
             #[inline]
             fn expr_size(&self) -> usize {
                 $n
             }
         }
-        impl<T: Scalar> TotalExprSize for [T; $n] {
+        impl<T: Copy + TotalExprSize> TotalExprSize for Tensor<[T; $n]> {
             #[inline]
-            fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
-                Some($n)
+            #[unroll_for_loops]
+            fn total_size_hint(&self, cwise_reduce: u32) -> Option<usize> {
+                if cwise_reduce & 1 == 1 {
+                    self.fold(Some(0), |acc, elem| {
+                        acc.and_then(|acc| {
+                            elem.total_size_hint(cwise_reduce >> 1).map(|tot| {
+                                acc + if elem.expr_size() > 0 {
+                                    debug_assert!(tot > 0);
+                                    tot / elem.expr_size()
+                                } else {
+                                    debug_assert_eq!(tot, 0);
+                                    0
+                                }
+                            })
+                        })
+                    })
+                } else {
+                    self.fold(Some(0), |acc, item| {
+                        acc.and_then(|acc| item.total_size_hint(cwise_reduce >> 1).map(|tot| acc + tot))
+                    })
+                }
             }
         }
         impl_array_vector_traits!($($ns)*);
@@ -1736,31 +1756,31 @@ macro_rules! impl_array_matrix_traits {
     };
     (($r:expr, $c:expr, $cty:ident), $($ns:tt)*) => {
         impl<T: Scalar> IntoExpr for [[T; $c]; $r] {
-            type Expr = Tensor<[[T; $c]; $r]>;
+            type Expr = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
-                Tensor::new(self)
+                self.into_tensor()
             }
         }
         impl<T: Scalar> IntoExpr for &[[T; $c]; $r] {
-            type Expr = Tensor<[[T; $c]; $r]>;
+            type Expr = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
-                Tensor::new(*self)
+                (*self).into_tensor()
             }
         }
         impl<'a, T: Scalar> IntoExpr for &'a mut [[T; $c]; $r] {
-            type Expr = &'a mut Tensor<[[T; $c]; $r]>;
+            type Expr = &'a mut Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
             #[inline]
             fn into_expr(self) -> Self::Expr {
                 self.as_mut_tensor()
             }
         }
         impl<'a, T: Scalar> Expr<'a> for [[T; $c]; $r] {
-            type Output = Tensor<[[T; $c]; $r]>;
+            type Output = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
             #[inline]
             fn expr(&'a self) -> Self::Output {
-                Tensor::new(*self)
+                (*self).into_tensor()
             }
         }
 
@@ -1778,19 +1798,19 @@ macro_rules! impl_array_matrix_traits {
         //    }
         //}
 
-        impl<T: Scalar> Expression for [[T; $c]; $r] {}
-        impl<T: Scalar> ExprSize for [[T; $c]; $r] {
-            #[inline]
-            fn expr_size(&self) -> usize {
-                $r * $c
-            }
-        }
-        impl<T: Scalar> TotalExprSize for [[T; $c]; $r] {
-            #[inline]
-            fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
-                Some($r * $c)
-            }
-        }
+        //impl<T: Scalar> Expression for [[T; $c]; $r] {}
+        //impl<T: Scalar> ExprSize for [[T; $c]; $r] {
+        //    #[inline]
+        //    fn expr_size(&self) -> usize {
+        //        $r * $c
+        //    }
+        //}
+        //impl<T: Scalar> TotalExprSize for [[T; $c]; $r] {
+        //    #[inline]
+        //    fn total_size_hint(&self, _cwise_reduce: u32) -> Option<usize> {
+        //        Some($r * $c)
+        //    }
+        //}
         impl_array_matrix_traits!($($ns)*);
     };
 }
@@ -1863,7 +1883,7 @@ impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
     type Output = Tensor<<L as MulOp<R>>::Output>;
     #[inline]
     fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
-        Tensor::new(self.data * rhs.data)
+        Tensor { data: self.data * rhs.data }
     }
 }
 
@@ -1967,11 +1987,11 @@ mod tests {
     fn dot() {
         let a = vec![1, 2, 3, 4];
         let b = vec![5, 6, 7, 8];
-        assert_eq!(Tensor::new(70), DotOp::dot_op(a.expr(), b.expr()));
+        assert_eq!(70.into_tensor(), DotOp::dot_op(a.expr(), b.expr()));
         assert_eq!(70, a.expr().dot(b.expr()));
         assert_eq!(
             70,
-            a.view().as_tensor().expr().dot(b.view().as_tensor().expr())
+            Expr::expr(a.view().as_tensor()).dot(b.view().as_tensor().expr())
         );
         assert_eq!(70, a.as_tensor().expr().dot(b.as_tensor().expr()));
     }
@@ -1985,7 +2005,7 @@ mod tests {
 
         let a = Chunked2::from_flat(vec![1, 2, 3, 4]);
         let b = Chunked2::from_flat(vec![5, 6, 7, 8]);
-        assert_eq!(70, a.expr().dot(b.expr()));
+        assert_eq!(70, Expression::dot(a.expr(), b.expr()));
     }
 
     #[test]
@@ -2080,7 +2100,7 @@ mod tests {
         let a = ChunkedN::from_flat_with_stride(vec![1, 2, 3, 4], 2);
         let b = ChunkedN::from_flat_with_stride(vec![5, 6, 7, 8], 2);
         let c = ChunkedN::from_flat_with_stride(vec![9, 10, 11, 12], 2);
-        let out: i32 = (Tensor::new(2) * c.expr() + (b.expr() * a.expr().dot_op(c.expr()))
+        let out: i32 = (2i32.into_tensor() * c.expr() + (b.expr() * a.expr().dot_op(c.expr()))
             - a.expr())
         .dot(b.expr());
         assert_eq!(19626, out);

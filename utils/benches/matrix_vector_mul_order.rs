@@ -34,7 +34,7 @@ pub fn lazy_expr4(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out4 = Chunked4::from_flat(vec![0.0; v.len()]);
     for (row, out) in m4.iter().zip(out4.iter_mut()) {
         for (col, &rhs) in row.iter().zip(v4.iter()) {
-            *out.as_mut_tensor() += (*col.as_matrix())*Tensor::new(rhs);
+            *out.as_mut_tensor() += (*col.as_matrix())*Vector4::new(rhs);
         }
     }
     out4.into_flat()
@@ -104,7 +104,7 @@ pub fn inner_chunked(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; v.len()];
     for (row, out) in m.iter().zip(out.iter_mut()) {
         for (&col, &rhs) in Chunked4::from_flat(row).iter().zip(Chunked4::from_flat(v).iter()) {
-            *out += Tensor::new(col).dot(Tensor::new(rhs));
+            *out += Vector4::new(col).dot(Vector4::new(rhs));
         }
     }
     out

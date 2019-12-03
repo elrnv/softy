@@ -9,29 +9,192 @@ use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign};
 use unroll::unroll_for_loops;
 
+/// The following array math library aims to be generic over the inner tensor. This means that
+/// many methods should work for vectors as well as matrices or higher order tensors.
+/// This approach complicates the code a bit but makes it shorter.
 macro_rules! impl_array_vectors {
     ($vecn:ident, $rowvecn:ident; $n:expr) => {
-        pub type $vecn<T> = Tensor<[T; $n]>;
-        pub type $rowvecn<T> = Tensor<[[T; $n]; 1]>;
+        pub type $vecn<S> = Tensor<[Tensor<S>; $n]>;
+        pub type $rowvecn<S> = Tensor<[Tensor<[Tensor<S>; $n]>; 1]>;
 
-        impl<T: Scalar> Tensor<[T; $n]> {
-            pub fn zeros() -> Tensor<[T; $n]> {
-                Tensor::new([T::zero(); $n])
+        impl<T> Tensor<[T; $n]> {
+            pub fn new<D>(data: [D; $n]) -> Self
+            where
+                D: IntoTensor<Tensor = T>,
+                T: IntoData<Data = D>,
+            {
+                data.into_tensor()
             }
+        }
+
+        impl<T: IntoData> Into<[T::Data; $n]> for Tensor<[T; $n]> {
+            fn into(self) -> [T::Data; $n] {
+                self.into_data()
+            }
+        }
+        impl<T: IntoTensor> From<[T; $n]> for Tensor<[T::Tensor; $n]> {
+            fn from(data: [T; $n]) -> Self {
+                data.into_tensor()
+            }
+        }
+        impl<'a, T: IntoTensor> From<&'a mut [T; $n]> for &'a mut Tensor<[T::Tensor; $n]> {
+            fn from(data: &'a mut [T; $n]) -> Self {
+                data.as_mut_tensor()
+            }
+        }
+        impl<'a, T: IntoTensor> From<&'a [T; $n]> for &'a Tensor<[T::Tensor; $n]> {
+            fn from(data: &'a [T; $n]) -> Self {
+                data.as_tensor()
+            }
+        }
+
+        impl<T: IntoTensor> IntoTensor for [T; $n] {
+            type Tensor = Tensor<[T::Tensor; $n]>;
+            #[inline]
+            fn into_tensor(self) -> Self::Tensor {
+                unsafe { Tensor::reinterpret(self) }
+            }
+        }
+        impl<T: IntoData> IntoData for Tensor<[T; $n]> {
+            type Data = [T::Data; $n];
+            #[inline]
+            fn into_data(self) -> Self::Data {
+                debug_assert_eq!(
+                    std::mem::size_of::<[T::Data; $n]>(),
+                    std::mem::size_of::<[Tensor<T>; $n]>(),
+                );
+                unsafe { std::mem::transmute_copy(&self) }
+            }
+        }
+        impl<T: IntoTensor> AsTensor for [T; $n]
+        where
+            T::Tensor: Sized,
+        {
+            type Inner = [T::Tensor; $n];
+            #[inline]
+            fn as_tensor(&self) -> &Tensor<Self::Inner> {
+                unsafe { Tensor::as_ref(self) }
+            }
+        }
+        impl<T: IntoTensor> AsMutTensor for [T; $n]
+        where
+            T::Tensor: Sized,
+        {
+            #[inline]
+            fn as_mut_tensor(&mut self) -> &mut Tensor<Self::Inner> {
+                unsafe { Tensor::as_mut(self) }
+            }
+        }
+
+        impl<S: Scalar> Tensor<[Tensor<S>; $n]> {
+            #[inline]
+            fn as_slice(&self) -> &[S] {
+                unsafe { reinterpret::reinterpret_slice(&self.data[..]) }
+            }
+            #[inline]
+            fn as_mut_slice(&mut self) -> &mut [S] {
+                unsafe { reinterpret::reinterpret_mut_slice(&mut self.data[..]) }
+            }
+        }
+
+        impl<T: Zero + Copy> Tensor<[T; $n]> {
+            pub fn zeros() -> Tensor<[T; $n]> {
+                Tensor {
+                    data: [T::zero(); $n],
+                }
+            }
+        }
+
+        impl<T: Add<Output = T> + Copy + IntoData> Tensor<[T; $n]> {
+            #[inline]
+            pub fn sum(&self) -> T::Data {
+                self.sum_op().into_data()
+            }
+        }
+
+        impl<T: AddAssign + DotOp<Output = T> + Copy + IntoData> Tensor<[T; $n]> {
             #[inline]
             #[allow(unused_mut)]
             #[unroll_for_loops]
-            pub fn dot(self, other: Tensor<[T; $n]>) -> T {
-                let mut prod = self.data[0] * other.data[0];
+            pub fn dot(self, other: Tensor<[T; $n]>) -> T::Data {
+                self.dot_op(other).into_data()
+            }
+        }
+
+        impl<T: DotOp + Copy> DotOp for Tensor<[T; $n]>
+        where
+            T::Output: AddAssign,
+        {
+            type Output = T::Output;
+            #[inline]
+            fn dot_op(self, rhs: Self) -> T::Output {
+                let mut prod = self.data[0].dot_op(rhs.data[0]);
                 for i in 1..$n {
-                    prod += self.data[i] * other.data[i];
+                    prod += self.data[i].dot_op(rhs.data[i]);
                 }
                 prod
             }
+        }
+
+        impl<S, T: DotOp + Copy> Tensor<[T; $n]>
+        where
+            T::Output: AddAssign + IntoData<Data = S>,
+        {
             #[inline]
-            pub fn norm_squared(&self) -> T {
-                (*self).map(|x| x * x).sum()
+            #[allow(unused_mut)]
+            #[unroll_for_loops]
+            pub fn norm_squared(&self) -> S {
+                let mut prod = self.data[0].dot_op(self.data[0]);
+                for i in 1..$n {
+                    prod += self.data[i].dot_op(self.data[i]);
+                }
+                prod.into_data()
             }
+        }
+
+        impl<S, T: DotOp + Copy> Tensor<[T; $n]>
+        where
+            S: Float,
+            T::Output: AddAssign + IntoData<Data = S>,
+        {
+            #[inline]
+            pub fn norm(&self) -> S {
+                self.norm_squared().sqrt()
+            }
+        }
+
+        impl<S, T: DotOp + Copy> Tensor<[T; $n]>
+        where
+            S: Scalar + Float,
+            T: MulAssign<Tensor<S>>,
+            T::Output: AddAssign + IntoData<Data = S>,
+        {
+            /// Normalize vector in place. Return its norm.
+            #[inline]
+            //#[unroll_for_loops]
+            pub fn normalize(&mut self) -> S {
+                let norm = self.norm();
+                if norm.is_zero() {
+                    return norm;
+                }
+                let denom = S::one() / norm;
+                for i in 0..$n {
+                    unsafe {
+                        *self.data.get_unchecked_mut(i) *= denom.into_tensor();
+                    }
+                }
+                norm
+            }
+
+            /// Return a normalized vector.
+            #[inline]
+            pub fn normalized(mut self) -> Self {
+                self.normalize();
+                self
+            }
+        }
+
+        impl<T: PartialOrd> Tensor<[T; $n]> {
             /// Computes the index of the vector component with the largest value.
             #[inline]
             #[allow(unused_mut, unused_assignments, unused_variables)]
@@ -71,7 +234,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar + num_traits::Signed> Tensor<[T; $n]> {
+        impl<T: PartialOrd + num_traits::Signed> Tensor<[T; $n]> {
             /// Computes the index of the vector component with the largest absolute value.
             #[inline]
             #[allow(unused_mut, unused_assignments, unused_variables)]
@@ -110,7 +273,46 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Copy> Tensor<[Tensor<T>; $n]> {
+            /// Apply a function to each data element of this tensor along the outer dimension.
+            ///
+            /// This is similar to `map` but the function is applied to the `data` portion of each
+            /// element of this tensor.
+            #[inline]
+            pub fn mapd<U: Pod, F>(&self, mut f: F) -> Tensor<[Tensor<U>; $n]>
+            where
+                F: FnMut(T) -> U,
+            {
+                self.map(|x| Tensor { data: f(x.data) })
+            }
+        }
+
         impl<T: Copy> Tensor<[T; $n]> {
+            /// Low level utility to zip two tensors along the outer dimension with a given function.
+            #[inline]
+            #[unroll_for_loops]
+            pub fn zip_with<B, U, F>(&self, other: Tensor<[B; $n]>, mut f: F) -> Tensor<[U; $n]>
+            where
+                B: Copy,
+                U: Pod,
+                F: FnMut(T, B) -> U,
+            {
+                // We use MaybeUninit here mostly to avoid a Zero trait bound.
+                let mut out: [MaybeUninit<U>; $n] = unsafe { MaybeUninit::uninit().assume_init() };
+                for i in 0..$n {
+                    out[i] = MaybeUninit::new(f(self.data[i], other.data[i]));
+                }
+                // The Pod trait bound ensures safety here in release builds.
+                // Sanity check here just in debug builds only, since this code is very likely in a
+                // critical section.
+                debug_assert_eq!(
+                    std::mem::size_of::<[MaybeUninit<U>; $n]>(),
+                    std::mem::size_of::<Tensor<[U; $n]>>()
+                );
+                unsafe { std::mem::transmute_copy::<_, Tensor<[U; $n]>>(&out) }
+            }
+
+            /// Apply a function to each element of the tensor along the outer dimension.
             #[inline]
             #[unroll_for_loops]
             pub fn map<U: Pod, F>(&self, mut f: F) -> Tensor<[U; $n]>
@@ -127,10 +329,12 @@ macro_rules! impl_array_vectors {
                 // critical section.
                 debug_assert_eq!(
                     std::mem::size_of::<[MaybeUninit<U>; $n]>(),
-                    std::mem::size_of::<[U; $n]>()
+                    std::mem::size_of::<Tensor<[U; $n]>>()
                 );
-                Tensor::new(unsafe { std::mem::transmute_copy::<_, [U; $n]>(&out) })
+                unsafe { std::mem::transmute_copy::<_, Tensor<[U; $n]>>(&out) }
             }
+
+            /// Fold this tensor along the outer dimension.
             #[inline]
             #[unroll_for_loops]
             pub fn fold<B, F>(&self, mut init: B, mut f: F) -> B
@@ -142,13 +346,29 @@ macro_rules! impl_array_vectors {
                 }
                 init
             }
+            /// Fold this tensor along the outer dimension with an initializer that consumes the
+            /// first element.
+            #[inline]
+            #[allow(unused_mut, unused_variables)]
+            #[unroll_for_loops]
+            pub fn fold1<B, F, G>(&self, mut first: G, mut f: F) -> B
+            where
+                G: FnOnce(T) -> B,
+                F: FnMut(B, T) -> B,
+            {
+                let mut acc = first(self.data[0]);
+                for i in 1..$n {
+                    acc = f(acc, self.data[i])
+                }
+                acc
+            }
         }
 
-        impl<T: Scalar> Matrix for Tensor<[T; $n]> {
-            type Transpose = $rowvecn<T>;
+        impl<S: Scalar> Matrix for Tensor<[Tensor<S>; $n]> {
+            type Transpose = $rowvecn<S>;
             #[inline]
             fn transpose(self) -> Self::Transpose {
-                Tensor::new([self.data; 1])
+                Tensor { data: [self; 1] }
             }
             #[inline]
             fn num_rows(&self) -> usize {
@@ -160,159 +380,109 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> CwiseMulAssignOp<Tensor<[T; $n]>> for Tensor<[T]> {
+        impl<T: Copy + CwiseMulAssignOp<T>> CwiseMulAssignOp<Tensor<[Tensor<T>; $n]>>
+            for Tensor<[T]>
+        {
             #[inline]
-            #[unroll_for_loops]
-            fn cwise_mul_assign(&mut self, rhs: Tensor<[T; $n]>) {
+            //#[unroll_for_loops]
+            fn cwise_mul_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
-                    unsafe { *self.data.get_unchecked_mut(i) *= *rhs.data.get_unchecked(i) };
+                    unsafe {
+                        self.data
+                            .get_unchecked_mut(i)
+                            .cwise_mul_assign(rhs.data.get_unchecked(i).data)
+                    };
                 }
             }
         }
 
-        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<[T]> {
+        impl<T: Copy + AddAssign<T>> AddAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
+            //#[unroll_for_loops]
+            fn add_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
-                    unsafe { *self.data.get_unchecked_mut(i) += *rhs.data.get_unchecked(i) };
+                    unsafe { *self.data.get_unchecked_mut(i) += rhs.data.get_unchecked(i).data };
                 }
             }
         }
 
-        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for Tensor<[T]> {
+        impl<T: Copy + SubAssign<T>> SubAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
+            //#[unroll_for_loops]
+            fn sub_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
-                    unsafe { *self.data.get_unchecked_mut(i) += *rhs.data.get_unchecked(i) };
+                    unsafe { *self.data.get_unchecked_mut(i) -= rhs.data.get_unchecked(i).data };
                 }
             }
         }
 
-        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<Vec<T>> {
+        impl<T: MulAssign<R::Tensor>, R: Copy + IntoTensor> CwiseMulOp<R> for Tensor<[T; $n]> {
+            type Output = Self;
             #[inline]
-            fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
-                self.data.as_mut_slice().as_mut_tensor().add_assign(rhs);
-            }
-        }
-
-        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for Tensor<Vec<T>> {
-            #[inline]
-            fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
-                self.data.as_mut_slice().as_mut_tensor().sub_assign(rhs);
-            }
-        }
-
-        impl<T: Scalar> CwiseMulOp<Tensor<T>> for Tensor<[T; $n]> {
-            type Output = Tensor<[T; $n]>;
-            #[inline]
-            fn cwise_mul(self, rhs: Tensor<T>) -> Self::Output {
+            fn cwise_mul(self, rhs: R) -> Self::Output {
                 self * rhs
             }
         }
 
-        impl<T: Scalar> CwiseMulOp<Tensor<[T; $n]>> for Tensor<T> {
+        // Scalar multiply
+        impl<S: Scalar, T: MulAssign<Tensor<S>>> CwiseMulOp<Tensor<[T; $n]>> for Tensor<S> {
             type Output = Tensor<[T; $n]>;
             #[inline]
             fn cwise_mul(self, rhs: Tensor<[T; $n]>) -> Self::Output {
-                rhs * self
+                self * rhs
             }
         }
 
-        impl<T: Scalar> CwiseMulOp for Tensor<[T; $n]> {
+        impl<T: MulAssign + Copy> CwiseMulOp for Tensor<[T; $n]> {
             type Output = Tensor<[T; $n]>;
             #[inline]
             #[unroll_for_loops]
             fn cwise_mul(mut self, rhs: Self) -> Self::Output {
                 for i in 0..$n {
-                    self[i] *= rhs[i];
+                    self.data[i] *= rhs.data[i];
                 }
                 self
             }
         }
 
-        impl<T: Scalar> RecursiveSumOp for Tensor<[T; $n]> {
-            type Output = Tensor<T>;
+        impl<T: Copy + RecursiveSumOp<Output = O>, O> RecursiveSumOp for Tensor<[T; $n]>
+        where
+            O: Zero + Add<Output = O>,
+        {
+            type Output = O;
             #[inline]
             fn recursive_sum(self) -> Self::Output {
-                Tensor::new(self.sum())
+                self.fold(O::zero(), |acc, x| acc + x.recursive_sum())
             }
         }
-        impl<T: Scalar> SumOp for Tensor<[T; $n]> {
-            type Output = Tensor<T>;
+        impl<T: Copy + Add<Output = T>> SumOp for Tensor<[T; $n]> {
+            type Output = T;
             #[inline]
             fn sum_op(self) -> Self::Output {
-                Tensor::new(self.sum())
+                self.fold1(|x| x, |acc, x| acc + x)
             }
         }
 
-        impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[T; $n]> {
+        impl<T: MulAssign<Tensor<R>>, R: Scalar> DotOp<Tensor<R>> for Tensor<[T; $n]> {
             type Output = Tensor<[T; $n]>;
             #[inline]
-            fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
-                self * rhs
-            }
-        }
-
-        impl<T: Scalar> DotOp<Tensor<[T; $n]>> for Tensor<T> {
-            type Output = Tensor<[T; $n]>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<[T; $n]>) -> Self::Output {
+            fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
                 rhs * self
             }
         }
 
-        impl<T: Scalar> DotOp for Tensor<[T; $n]> {
-            type Output = Tensor<T>;
+        impl<S: Scalar, T: MulAssign<Tensor<S>>> DotOp<Tensor<[T; $n]>> for Tensor<S> {
+            type Output = Tensor<[T; $n]>;
             #[inline]
-            fn dot_op(self, rhs: Self) -> Tensor<T> {
-                Tensor::new(Self::dot(self, rhs))
+            fn dot_op(self, rhs: Tensor<[T; $n]>) -> Self::Output {
+                self * rhs
             }
         }
 
-        impl<T: std::ops::Add<Output = T> + Zero + Copy> Tensor<[T; $n]> {
-            #[inline]
-            pub fn sum(&self) -> T {
-                self.fold(T::zero(), |acc, x| acc + x)
-            }
-        }
-
-        impl<T: Float + Scalar> Tensor<[T; $n]> {
-            #[inline]
-            pub fn norm(&self) -> T {
-                self.norm_squared().sqrt()
-            }
-
-            /// Normalize vector in place. Return its norm.
-            #[inline]
-            #[unroll_for_loops]
-            pub fn normalize(&mut self) -> T {
-                let norm = self.norm();
-                if norm.is_zero() {
-                    return norm;
-                }
-                let denom = T::one() / norm;
-                for i in 0..$n {
-                    unsafe {
-                        *self.data.get_unchecked_mut(i) *= denom;
-                    }
-                }
-                norm
-            }
-
-            /// Return a normalized vector.
-            #[inline]
-            pub fn normalized(mut self) -> Self {
-                self.normalize();
-                self
-            }
-        }
-
-        impl<T: Scalar> Add for Tensor<[T; $n]> {
+        impl<T: AddAssign + Copy> Add for Tensor<[T; $n]> {
             type Output = Self;
 
             /// Add two tensor arrays together.
@@ -323,7 +493,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
+        impl<T: AddAssign + Copy> AddAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
@@ -333,7 +503,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> AddAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
+        impl<T: AddAssign + Copy> AddAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Tensor<[T; $n]>) {
@@ -342,7 +512,7 @@ macro_rules! impl_array_vectors {
                 }
             }
         }
-        impl<T: Scalar> AddAssign for Tensor<[T; $n]> {
+        impl<T: AddAssign + Copy> AddAssign for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Self) {
@@ -351,7 +521,7 @@ macro_rules! impl_array_vectors {
                 }
             }
         }
-        impl<T: Scalar> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
+        impl<T: AddAssign + Copy> AddAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn add_assign(&mut self, rhs: &Tensor<[T; $n]>) {
@@ -360,7 +530,7 @@ macro_rules! impl_array_vectors {
                 }
             }
         }
-        impl<T: Scalar> Sub for Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy> Sub for Tensor<[T; $n]> {
             type Output = Self;
 
             #[inline]
@@ -370,7 +540,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
+        impl<T: SubAssign + Copy> SubAssign<Tensor<[T; $n]>> for Tensor<&mut [T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
@@ -380,7 +550,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> SubAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy> SubAssign<Tensor<[T; $n]>> for &mut Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Tensor<[T; $n]>) {
@@ -390,7 +560,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> SubAssign for Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy> SubAssign for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Self) {
@@ -400,7 +570,7 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T: Scalar> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
+        impl<T: SubAssign + Copy> SubAssign<&Tensor<[T; $n]>> for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: &Tensor<[T; $n]>) {
@@ -414,103 +584,59 @@ macro_rules! impl_array_vectors {
          * Vector-RowVector multiply
          * This sepecial case treats Vectors as column vectors
          */
-        impl<T: Scalar> Mul<Tensor<[[T; $n]; 1]>> for Tensor<[T; $n]> {
-            type Output = Tensor<[[T; $n]; $n]>;
+        impl<T, U> Mul<Tensor<[Tensor<[T; $n]>; 1]>> for Tensor<[T; $n]>
+        where
+            Tensor<[Tensor<[T; 1]>; $n]>: Mul<Tensor<[Tensor<[T; $n]>; 1]>, Output = U>,
+        {
+            type Output = U;
             #[inline]
-            fn mul(self, rhs: Tensor<[[T; $n]; 1]>) -> Self::Output {
-                self.map(|row| (Tensor::new(rhs.data[0]) * Tensor::new(row)).data)
+            fn mul(self, rhs: Tensor<[Tensor<[T; $n]>; 1]>) -> Self::Output {
+                let lhs: Tensor<[Tensor<[T; 1]>; $n]> = unsafe { Tensor::reinterpret(self) };
+                lhs * rhs
             }
         }
 
-        // Right scalar multiply by a raw scalar.
-        impl<T: Scalar> Mul<T> for Tensor<[T; $n]> {
-            type Output = Self;
-            #[inline]
-            fn mul(mut self, rhs: T) -> Self::Output {
-                self *= rhs;
-                self
-            }
-        }
+        /*
+         * Scalar ops
+         */
 
-        // Scalar multiply assign by a raw scalar.
-        impl<T: Scalar> MulAssign<T> for Tensor<[T; $n]> {
-            #[inline]
-            fn mul_assign(&mut self, rhs: T) {
-                *self *= Tensor::new(rhs);
-            }
-        }
-
-        // Scalar divide by a raw scalar.
-        impl<T: Scalar> Div<T> for Tensor<[T; $n]> {
-            type Output = Self;
-            #[inline]
-            fn div(mut self, rhs: T) -> Self::Output {
-                self /= rhs;
-                self
-            }
-        }
-
-        // Scalar divide assign by a raw scalar.
-        impl<T: Scalar> DivAssign<T> for Tensor<[T; $n]> {
-            #[inline]
-            fn div_assign(&mut self, rhs: T) {
-                *self /= Tensor::new(rhs);
-            }
-        }
-
-        // Right multiply by a scalar tensor.
+        // Right multiply by a scalar.
         // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T: Scalar> Mul<Tensor<T>> for Tensor<[T; $n]> {
+        impl<T: MulAssign<R::Tensor>, R: Copy + IntoTensor> Mul<R> for Tensor<[T; $n]> {
             type Output = Self;
             #[inline]
-            fn mul(mut self, rhs: Tensor<T>) -> Self::Output {
+            fn mul(mut self, rhs: R) -> Self::Output {
                 self *= rhs;
                 self
             }
         }
 
-        impl<T: Scalar> MulAssign<Tensor<T>> for Tensor<[T; $n]> {
+        impl<T: MulAssign<R::Tensor>, R: Copy + IntoTensor> MulAssign<R> for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
-            fn mul_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
+            fn mul_assign(&mut self, rhs: R) {
                 for i in 0..$n {
-                    *self.data.index_mut(i).as_mut_tensor() *= rhs.clone();
+                    self.data[i] *= rhs.into_tensor();
                 }
             }
         }
 
-        impl<T: Scalar> Div<Tensor<T>> for Tensor<[T; $n]> {
+        impl<T: DivAssign<R::Tensor>, R: Copy + IntoTensor> Div<R> for Tensor<[T; $n]> {
             type Output = Self;
             #[inline]
-            fn div(mut self, rhs: Tensor<T>) -> Self::Output {
+            fn div(mut self, rhs: R) -> Self::Output {
                 self /= rhs;
                 self
             }
         }
 
-        impl<T: Scalar> DivAssign<Tensor<T>> for Tensor<[T; $n]> {
+        impl<T: DivAssign<R::Tensor>, R: Copy + IntoTensor> DivAssign<R> for Tensor<[T; $n]> {
             #[inline]
             #[unroll_for_loops]
-            fn div_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
+            fn div_assign(&mut self, rhs: R) {
                 for i in 0..$n {
-                    *self.data.index_mut(i).as_mut_tensor() /= rhs.clone();
+                    self.data[i] /= rhs.into_tensor();
                 }
-            }
-        }
-
-        impl<T: Scalar> Index<usize> for Tensor<[T; $n]> {
-            type Output = T;
-            #[inline]
-            fn index(&self, index: usize) -> &Self::Output {
-                &self.data[index]
-            }
-        }
-        impl<T: Scalar> IndexMut<usize> for Tensor<[T; $n]> {
-            #[inline]
-            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.data[index]
             }
         }
 
@@ -518,18 +644,41 @@ macro_rules! impl_array_vectors {
         // Note that left scalar multiply cannot work generically with raw scalars because of
         // Rust's orphan rules. However, if we wrap a scalar in a tensor struct, this will
         // work.
-        impl<T: Scalar> Mul<Tensor<[T; $n]>> for Tensor<T> {
+        impl<S: Scalar, T: MulAssign<Tensor<S>>> Mul<Tensor<[T; $n]>> for Tensor<S> {
             type Output = Tensor<[T; $n]>;
             #[inline]
             fn mul(self, mut rhs: Tensor<[T; $n]>) -> Self::Output {
-                rhs *= self;
+                for i in 0..$n {
+                    rhs.data[i] *= self;
+                }
                 rhs
             }
         }
-        impl<T: Scalar> Zero for Tensor<[T; $n]> {
+
+        /*
+         * Index ops
+         */
+
+        impl<S: Scalar, I: std::slice::SliceIndex<[S]>> Index<I> for Tensor<[Tensor<S>; $n]> {
+            type Output = I::Output;
+            #[inline]
+            fn index(&self, index: I) -> &Self::Output {
+                &self.as_slice()[index]
+            }
+        }
+        impl<S: Scalar, I: std::slice::SliceIndex<[S]>> IndexMut<I> for Tensor<[Tensor<S>; $n]> {
+            #[inline]
+            fn index_mut(&mut self, index: I) -> &mut Self::Output {
+                &mut self.as_mut_slice()[index]
+            }
+        }
+
+        impl<T: Zero + Copy + AddAssign + PartialEq> Zero for Tensor<[T; $n]> {
             #[inline]
             fn zero() -> Self {
-                Tensor::new([Zero::zero(); $n])
+                Tensor {
+                    data: [Zero::zero(); $n],
+                }
             }
             #[inline]
             fn is_zero(&self) -> bool {
@@ -537,27 +686,27 @@ macro_rules! impl_array_vectors {
             }
         }
 
-        impl<T> Into<[T; $n]> for Tensor<[T; $n]> {
-            #[inline]
-            fn into(self) -> [T; $n] {
-                self.into_inner()
-            }
-        }
-        impl<T> Into<[T; $n]> for Tensor<[[T; $n]; 1]> {
-            #[inline]
-            fn into(self) -> [T; $n] {
-                let [x] = self.into_inner();
-                x
-            }
-        }
-        impl<T: Copy + num_traits::ToPrimitive> Tensor<[T; $n]> {
+        //impl<T> Into<[T; $n]> for Tensor<[T; $n]> {
+        //    #[inline]
+        //    fn into(self) -> [T; $n] {
+        //        self.into_inner()
+        //    }
+        //}
+        //impl<T> Into<[T; $n]> for Tensor<[[T; $n]; 1]> {
+        //    #[inline]
+        //    fn into(self) -> [T; $n] {
+        //        let [x] = self.into_inner();
+        //        x
+        //    }
+        //}
+        impl<T: Copy + num_traits::ToPrimitive> Tensor<[Tensor<T>; $n]> {
             /// Casts the components of the vector into another type.
             ///
             /// # Panics
             /// This function panics if the cast fails.
             #[inline]
-            pub fn cast<U: Pod + num_traits::NumCast>(&self) -> Tensor<[U; $n]> {
-                self.map(|x| U::from(x).unwrap())
+            pub fn cast<U: Pod + num_traits::NumCast>(&self) -> Tensor<[Tensor<U>; $n]> {
+                self.mapd(|x| U::from(x).unwrap())
             }
         }
 
@@ -641,11 +790,11 @@ macro_rules! impl_square_reshape {
             /// Construct a square matrix from this vector. This is a specialized version of
             /// reshape.
             #[inline]
-            pub fn mtx(&self) -> Tensor<[[T; $r]; $r]> {
+            pub fn mtx(&self) -> Tensor<[Tensor<[T; $r]>; $r]> {
                 unsafe {
                     debug_assert_eq!(
-                        std::mem::size_of::<[T; $n]>(),
-                        std::mem::size_of::<[[T; $r]; $r]>()
+                        std::mem::size_of::<Tensor<[T; $n]>>(),
+                        std::mem::size_of::<Tensor<[Tensor<[T; $r]>; $r]>>()
                     );
                     std::mem::transmute_copy(self)
                 }
@@ -667,22 +816,30 @@ impl_array_vectors!(Vector6, RowVector6; 6);
 impl_array_vectors!(Vector7, RowVector7; 7);
 impl_array_vectors!(Vector8, RowVector8; 8);
 impl_array_vectors!(Vector9, RowVector9; 9);
+impl_array_vectors!(Vector10, RowVector10; 10);
+impl_array_vectors!(Vector11, RowVector11; 11);
+impl_array_vectors!(Vector12, RowVector12; 12);
+impl_array_vectors!(Vector13, RowVector13; 13);
+impl_array_vectors!(Vector14, RowVector14; 14);
+impl_array_vectors!(Vector15, RowVector15; 15);
+impl_array_vectors!(Vector16, RowVector16; 16);
 
-impl<T: Scalar> Tensor<[T; 3]> {
+impl<T: Scalar> Vector3<T> {
     #[inline]
-    pub fn cross(self, other: Tensor<[T; 3]>) -> Tensor<[T; 3]> {
-        Tensor::new([
+    pub fn cross(self, other: Vector3<T>) -> Vector3<T> {
+        [
             self[1] * other[2] - self[2] * other[1],
             self[2] * other[0] - self[0] * other[2],
             self[0] * other[1] - self[1] * other[0],
-        ])
+        ]
+        .into_tensor()
     }
 }
 
 macro_rules! impl_array_matrices {
     ($mtxn:ident; $r:expr, $c:expr) => {
         // Row-major square matrix.
-        pub type $mtxn<T> = Tensor<[[T; $c]; $r]>;
+        pub type $mtxn<T> = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
 
         impl<T> AsSlice<T> for [[T; $c]; $r] {
             #[inline]
@@ -692,8 +849,8 @@ macro_rules! impl_array_matrices {
         }
 
         // Transposes of small matrices are implemented eagerly.
-        impl<T: Scalar> Matrix for Tensor<[[T; $c]; $r]> {
-            type Transpose = Tensor<[[T; $r]; $c]>;
+        impl<T: Scalar> Matrix for Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
+            type Transpose = Tensor<[Tensor<[Tensor<T>; $r]>; $c]>;
             #[inline]
             #[unroll_for_loops]
             fn transpose(self) -> Self::Transpose {
@@ -710,7 +867,7 @@ macro_rules! impl_array_matrices {
                     std::mem::size_of::<[[MaybeUninit<T>; $r]; $c]>(),
                     std::mem::size_of::<[[T; $r]; $c]>()
                 );
-                Tensor::new(unsafe { std::mem::transmute_copy::<_, [[T; $r]; $c]>(&m) })
+                unsafe { std::mem::transmute_copy::<_, [[T; $r]; $c]>(&m) }.into_tensor()
             }
             #[inline]
             fn num_rows(&self) -> usize {
@@ -722,11 +879,23 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T: Copy> Tensor<[[T; $c]; $r]> {
+        impl<T: Copy> Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
+            /// Similar to `mapd` but applies the given function to each inner element.
+            #[inline]
+            pub fn mapd_inner<U, F>(&self, mut f: F) -> Tensor<[Tensor<[Tensor<U>; $c]>; $r]>
+            where
+                U: Pod,
+                F: FnMut(T) -> U,
+            {
+                self.map_inner(|x| Tensor { data: f(x.data) })
+            }
+        }
+
+        impl<T: Copy> Tensor<[Tensor<[T; $c]>; $r]> {
             /// Similar to `map` but applies the given function to each inner element.
             #[inline]
             #[unroll_for_loops]
-            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[[U; $c]; $r]>
+            pub fn map_inner<U, F>(&self, mut f: F) -> Tensor<[Tensor<[U; $c]>; $r]>
             where
                 U: Pod,
                 F: FnMut(T) -> U,
@@ -736,7 +905,7 @@ macro_rules! impl_array_matrices {
                     unsafe { MaybeUninit::uninit().assume_init() };
                 for row in 0..$r {
                     for col in 0..$c {
-                        out[row][col] = MaybeUninit::new(f(self.data[row][col]));
+                        out[row][col] = MaybeUninit::new(f(self.data[row].data[col]));
                     }
                 }
                 // The Pod trait bound ensures safety here in release builds.
@@ -744,9 +913,9 @@ macro_rules! impl_array_matrices {
                 // critical section.
                 debug_assert_eq!(
                     std::mem::size_of::<[[MaybeUninit<U>; $c]; $r]>(),
-                    std::mem::size_of::<[[U; $c]; $r]>()
+                    std::mem::size_of::<Tensor<[Tensor<[U; $c]>; $r]>>()
                 );
-                Tensor::new(unsafe { std::mem::transmute_copy::<_, [[U; $c]; $r]>(&out) })
+                unsafe { std::mem::transmute_copy::<_, Tensor<[Tensor<[U; $c]>; $r]>>(&out) }
             }
             #[inline]
             pub fn vec(&self) -> Tensor<[T; $c * $r]> {
@@ -760,410 +929,397 @@ macro_rules! impl_array_matrices {
             }
         }
 
-        impl<T: Scalar> Tensor<[[T; $c]; $r]> {
-            /// Zip the rows of this matrix and another tensor with the given combinator.
+        impl<S: Scalar> Tensor<[Tensor<[Tensor<S>; $c]>; $r]> {
             #[inline]
-            #[unroll_for_loops]
-            pub fn zip_with<B, U, F>(&self, other: Tensor<[B; $r]>, mut f: F) -> Tensor<[U; $r]>
-            where
-                B: Copy,
-                U: Zero + Copy,
-                F: FnMut([T; $c], B) -> U,
-            {
-                let mut out = [U::zero(); $r];
-                for i in 0..$r {
-                    out[i] = f(self.data[i], other.data[i]);
-                }
-                Tensor::new(out)
-            }
-
-            #[inline]
-            pub fn identity() -> Tensor<[[T; $c]; $r]> {
-                Self::from_diag_iter(std::iter::repeat(T::one()))
+            pub fn identity() -> Self {
+                Self::from_diag_iter(std::iter::repeat(S::one()))
             }
             #[inline]
-            pub fn diag(diag: &[T]) -> Tensor<[[T; $c]; $r]> {
+            pub fn diag(diag: &[S]) -> Self {
                 Self::from_diag_iter(diag.into_iter().cloned())
             }
-            pub fn from_diag_iter<Iter: IntoIterator<Item = T>>(
-                diag: Iter,
-            ) -> Tensor<[[T; $c]; $r]> {
+            pub fn from_diag_iter<Iter: IntoIterator<Item = S>>(diag: Iter) -> Self {
                 let mut out = Self::zeros();
                 for (i, elem) in diag.into_iter().take($r.min($c)).enumerate() {
-                    out.data[i][i] = elem;
+                    out[i][i] = elem;
                 }
                 out
-            }
-            #[inline]
-            pub fn zeros() -> Tensor<[[T; $c]; $r]> {
-                Tensor::new([[T::zero(); $c]; $r])
             }
 
             #[inline]
             #[unroll_for_loops]
             pub fn fold_inner<B, F>(&self, mut init: B, mut f: F) -> B
             where
-                F: FnMut(B, T) -> B,
+                F: FnMut(B, S) -> B,
             {
                 for i in 0..$r {
-                    init = Tensor::new(self.data[i]).fold(init, |acc, x| f(acc, x));
+                    init = self[i].fold(init, |acc, x| f(acc, x.data));
                 }
                 init
             }
 
             /// Compute the sum of all entries in this matrix.
             #[inline]
-            pub fn sum_inner(&self) -> T {
-                self.fold_inner(T::zero(), |acc, x| acc + x)
+            pub fn sum_inner(&self) -> S {
+                self.fold_inner(S::zero(), |acc, x| acc + x)
             }
 
             // TODO: optimize this function
             #[inline]
-            pub fn trace(&self) -> T {
-                let mut tr = self.data[0][0];
+            pub fn trace(&self) -> S {
+                let mut tr = self[0][0];
                 for i in 1..$r.min($c) {
-                    tr += self.data[i][i];
+                    tr += self[i][i];
                 }
                 tr
             }
             #[inline]
-            pub fn frob_norm_squared(&self) -> T {
+            pub fn frob_norm_squared(&self) -> S {
                 (*self).map_inner(|x| x * x).sum_inner()
             }
         }
 
-        impl<T: Float + Scalar> Tensor<[[T; $c]; $r]> {
+        impl<S: Float + Scalar> Tensor<[Tensor<[Tensor<S>; $c]>; $r]> {
             #[inline]
-            pub fn frob_norm(&self) -> T {
+            pub fn frob_norm(&self) -> S {
                 self.frob_norm_squared().sqrt()
             }
         }
 
-        impl<T: Scalar> Add for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
+        //impl<T: Scalar> Add for Tensor<[Tensor<[T; $c]>; $r]> {
+        //    type Output = Self;
 
-            /// Add two tensor arrays together.
-            #[inline]
-            fn add(mut self, rhs: Self) -> Self::Output {
-                self += rhs;
-                self
-            }
-        }
+        //    /// Add two tensor arrays together.
+        //    #[inline]
+        //    fn add(mut self, rhs: Self) -> Self::Output {
+        //        self += rhs;
+        //        self
+        //    }
+        //}
 
-        impl<T: Copy + AddAssign> AddAssign<Tensor<[[T; $c]; $r]>> for Tensor<[T]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    for j in 0..$c {
-                        self.data[$r * i + j] += rhs.data[i][j];
-                    }
-                }
-            }
-        }
+        //impl<T: Copy + AddAssign> AddAssign<Tensor<[Tensor<[T; $c]>; $r]>> for Tensor<[T]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn add_assign(&mut self, rhs: Tensor<[Tensor<[T; $c]>; $r]>) {
+        //        for i in 0..$r {
+        //            for j in 0..$c {
+        //                self.data[$r * i + j] += rhs.data[i][j];
+        //            }
+        //        }
+        //    }
+        //}
 
-        impl<T: Scalar> AddAssign<Tensor<[[T; $c]; $r]>> for &mut Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() += *rhs.data[i].as_tensor();
-                }
-            }
-        }
-        impl<T: Scalar> AddAssign for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: Self) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() += *rhs.data[i].as_tensor();
-                }
-            }
-        }
-        impl<T: Scalar> AddAssign<&Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn add_assign(&mut self, rhs: &Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() += rhs.data[i].as_tensor();
-                }
-            }
-        }
-        impl<T: Scalar> Sub for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
+        //impl<T: Scalar> AddAssign<Tensor<[Tensor<[T; $c]>; $r]>> for &mut Tensor<[Tensor<[T; $c]>; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn add_assign(&mut self, rhs: Tensor<[Tensor<[T; $c]>; $r]>) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() += *rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
+        //impl<T: Scalar> AddAssign for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn add_assign(&mut self, rhs: Self) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() += *rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
+        //impl<T: Scalar> AddAssign<&Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn add_assign(&mut self, rhs: &Tensor<[[T; $c]; $r]>) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() += rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
+        //impl<T: Scalar> Sub for Tensor<[[T; $c]; $r]> {
+        //    type Output = Self;
 
-            #[inline]
-            fn sub(mut self, rhs: Self) -> Self::Output {
-                self -= rhs;
-                self
-            }
-        }
+        //    #[inline]
+        //    fn sub(mut self, rhs: Self) -> Self::Output {
+        //        self -= rhs;
+        //        self
+        //    }
+        //}
 
-        impl<T: Copy + SubAssign> SubAssign<Tensor<[[T; $c]; $r]>> for Tensor<[T]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    for j in 0..$c {
-                        self.data[$r * i + j] -= rhs.data[i][j];
-                    }
-                }
-            }
-        }
+        //impl<T: Copy + SubAssign> SubAssign<Tensor<[[T; $c]; $r]>> for Tensor<[T]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn sub_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+        //        for i in 0..$r {
+        //            for j in 0..$c {
+        //                self.data[$r * i + j] -= rhs.data[i][j];
+        //            }
+        //        }
+        //    }
+        //}
 
-        impl<T: Scalar> SubAssign<Tensor<[[T; $c]; $r]>> for &mut Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
-                }
-            }
-        }
-        impl<T: Scalar> SubAssign for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: Self) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
-                }
-            }
-        }
+        //impl<T: Scalar> SubAssign<Tensor<[[T; $c]; $r]>> for &mut Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn sub_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
+        //impl<T: Scalar> SubAssign for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn sub_assign(&mut self, rhs: Self) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
 
-        impl<T: Scalar> SubAssign<&Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn sub_assign(&mut self, rhs: &Tensor<[[T; $c]; $r]>) {
-                for i in 0..$r {
-                    *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
-                }
-            }
-        }
+        //impl<T: Scalar> SubAssign<&Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn sub_assign(&mut self, rhs: &Tensor<[[T; $c]; $r]>) {
+        //        for i in 0..$r {
+        //            *self.data[i].as_mut_tensor() -= rhs.data[i].as_tensor();
+        //        }
+        //    }
+        //}
 
         /*
          * Matrix-vector multiply
          */
-        impl<T: Scalar> Mul<Tensor<[T; $c]>> for Tensor<[[T; $c]; $r]> {
+        impl<T: Pod> Mul<Tensor<[T; $c]>> for Tensor<[Tensor<[T; $c]>; $r]>
+        where
+            Tensor<[T; $c]>: DotOp<Output = T>,
+        {
             type Output = Tensor<[T; $r]>;
             #[inline]
             fn mul(self, rhs: Tensor<[T; $c]>) -> Self::Output {
-                Tensor::new(self.map(|row| row.as_tensor().dot(rhs)).data)
+                self.map(|row| row.dot_op(rhs))
             }
         }
 
         // Right scalar multiply by a raw scalar.
-        impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
-            #[inline]
-            fn mul(mut self, rhs: T) -> Self::Output {
-                self *= rhs;
-                self
-            }
-        }
+        //impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Self;
+        //    #[inline]
+        //    fn mul(mut self, rhs: T) -> Self::Output {
+        //        self *= rhs;
+        //        self
+        //    }
+        //}
 
-        // Scalar multiply assign by a raw scalar.
-        impl<T: Scalar> MulAssign<T> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            fn mul_assign(&mut self, rhs: T) {
-                *self *= Tensor::new(rhs);
-            }
-        }
+        //// Scalar multiply assign by a raw scalar.
+        //impl<T: Scalar> MulAssign<T> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    fn mul_assign(&mut self, rhs: T) {
+        //        *self *= Tensor::new(rhs);
+        //    }
+        //}
 
-        // Scalar divide by a raw scalar.
-        impl<T: Scalar> Div<T> for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
-            #[inline]
-            fn div(mut self, rhs: T) -> Self::Output {
-                self /= rhs;
-                self
-            }
-        }
+        //// Scalar divide by a raw scalar.
+        //impl<T: Scalar> Div<T> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Self;
+        //    #[inline]
+        //    fn div(mut self, rhs: T) -> Self::Output {
+        //        self /= rhs;
+        //        self
+        //    }
+        //}
 
-        // Divide assign by a raw scalar.
-        impl<T: Scalar> DivAssign<T> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            fn div_assign(&mut self, rhs: T) {
-                *self /= Tensor::new(rhs);
-            }
-        }
+        //// Divide assign by a raw scalar.
+        //impl<T: Scalar> DivAssign<T> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    fn div_assign(&mut self, rhs: T) {
+        //        *self /= Tensor::new(rhs);
+        //    }
+        //}
 
         // Right multiply by a tensor scalar.
         // Note the clone trait is required for cloning the RHS for every row in Self.
-        impl<T: Scalar> Mul<Tensor<T>> for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
-            #[inline]
-            fn mul(mut self, rhs: Tensor<T>) -> Self::Output {
-                self *= rhs;
-                self
-            }
-        }
+        //impl<T: Scalar> Mul<Tensor<T>> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Self;
+        //    #[inline]
+        //    fn mul(mut self, rhs: Tensor<T>) -> Self::Output {
+        //        self *= rhs;
+        //        self
+        //    }
+        //}
 
         // Divide by a tensor scalar.
-        impl<T: Scalar> Div<Tensor<T>> for Tensor<[[T; $c]; $r]> {
-            type Output = Self;
-            #[inline]
-            fn div(mut self, rhs: Tensor<T>) -> Self::Output {
-                self /= rhs;
-                self
-            }
-        }
+        //impl<T: Scalar> Div<Tensor<T>> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Self;
+        //    #[inline]
+        //    fn div(mut self, rhs: Tensor<T>) -> Self::Output {
+        //        self /= rhs;
+        //        self
+        //    }
+        //}
 
         // Multiply assign by a tensor scalar
-        impl<T: Scalar> MulAssign<Tensor<T>> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn mul_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
-                for i in 0..$r {
-                    *self.data.index_mut(i).as_mut_tensor() *= rhs.clone();
-                }
-            }
-        }
+        //impl<T: Scalar> MulAssign<Tensor<T>> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn mul_assign(&mut self, rhs: Tensor<T>) {
+        //        use std::ops::IndexMut;
+        //        for i in 0..$r {
+        //            *self.data.index_mut(i).as_mut_tensor() *= rhs.clone();
+        //        }
+        //    }
+        //}
 
-        // Divide assign by a tensor scalar
-        impl<T: Scalar> DivAssign<Tensor<T>> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn div_assign(&mut self, rhs: Tensor<T>) {
-                use std::ops::IndexMut;
-                for i in 0..$r {
-                    *self.data.index_mut(i).as_mut_tensor() /= rhs.clone();
-                }
-            }
-        }
+        //// Divide assign by a tensor scalar
+        //impl<T: Scalar> DivAssign<Tensor<T>> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn div_assign(&mut self, rhs: Tensor<T>) {
+        //        use std::ops::IndexMut;
+        //        for i in 0..$r {
+        //            *self.data.index_mut(i).as_mut_tensor() /= rhs.clone();
+        //        }
+        //    }
+        //}
 
         // Left scalar multiply by a scalar wrapped as a tensor.
         // Note that left scalar multiply cannot work generically with raw scalars because of
         // Rust's orphan rules. However, if we wrap a scalar in a tensor struct, this will
         // work.
-        impl<T: Scalar> Mul<Tensor<[[T; $c]; $r]>> for Tensor<T> {
-            type Output = Tensor<[[T; $c]; $r]>;
-            #[inline]
-            fn mul(self, mut rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
-                rhs *= self;
-                rhs
-            }
-        }
-        impl<T: Scalar> Zero for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            fn zero() -> Self {
-                Tensor::new([[Zero::zero(); $c]; $r])
-            }
-            #[inline]
-            fn is_zero(&self) -> bool {
-                *self == Self::zero()
-            }
-        }
+        //impl<T: Scalar> Mul<Tensor<[[T; $c]; $r]>> for Tensor<T> {
+        //    type Output = Tensor<[[T; $c]; $r]>;
+        //    #[inline]
+        //    fn mul(self, mut rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+        //        rhs *= self;
+        //        rhs
+        //    }
+        //}
+        //impl<T: Scalar> Zero for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    fn zero() -> Self {
+        //        Tensor::new([[Zero::zero(); $c]; $r])
+        //    }
+        //    #[inline]
+        //    fn is_zero(&self) -> bool {
+        //        *self == Self::zero()
+        //    }
+        //}
 
-        impl<T: Scalar> Index<usize> for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<[T; $c]>;
+        impl<T, I: std::slice::SliceIndex<[Tensor<[T; $c]>]>> Index<I>
+            for Tensor<[Tensor<[T; $c]>; $r]>
+        {
+            type Output = I::Output;
             #[inline]
-            fn index(&self, index: usize) -> &Self::Output {
-                self.data[index].as_tensor()
+            fn index(&self, index: I) -> &Self::Output {
+                &self.data[index]
             }
         }
-        impl<T: Scalar> IndexMut<usize> for Tensor<[[T; $c]; $r]> {
+        impl<T, I: std::slice::SliceIndex<[Tensor<[T; $c]>]>> IndexMut<I>
+            for Tensor<[Tensor<[T; $c]>; $r]>
+        {
             #[inline]
-            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                self.data[index].as_mut_tensor()
+            fn index_mut(&mut self, index: I) -> &mut Self::Output {
+                &mut self.data[index]
             }
         }
-        impl<T: Copy + num_traits::ToPrimitive> Tensor<[[T; $c]; $r]> {
+        impl<T: Copy + num_traits::ToPrimitive> Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
             /// Casts the components of the matrix into another type.
             ///
             /// # Panics
             /// This function panics if the cast fails.
             #[inline]
-            pub fn cast_inner<U: Pod + num_traits::NumCast>(&self) -> Tensor<[[U; $c]; $r]> {
-                self.map_inner(|x| U::from(x).unwrap())
+            pub fn cast_inner<U: Pod + num_traits::NumCast>(
+                &self,
+            ) -> Tensor<[Tensor<[Tensor<U>; $c]>; $r]> {
+                self.map_inner(|x| Tensor {
+                    data: U::from(x.data).unwrap(),
+                })
             }
         }
 
-        impl<T: Scalar> CwiseMulAssignOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
-            #[inline]
-            #[unroll_for_loops]
-            fn cwise_mul_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
-                for r in 0..$r {
-                    for c in 0..$c {
-                        self[r][c] *= rhs[r][c];
-                    }
-                }
-            }
-        }
+        //impl<T: Scalar> CwiseMulAssignOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+        //    #[inline]
+        //    #[unroll_for_loops]
+        //    fn cwise_mul_assign(&mut self, rhs: Tensor<[[T; $c]; $r]>) {
+        //        for r in 0..$r {
+        //            for c in 0..$c {
+        //                self[r][c] *= rhs[r][c];
+        //            }
+        //        }
+        //    }
+        //}
 
-        impl<T: Scalar> CwiseMulOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<[[T; $c]; $r]>;
-            #[inline]
-            fn cwise_mul(mut self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
-                self.cwise_mul_assign(rhs);
-                self
-            }
-        }
+        //impl<T: Scalar> CwiseMulOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
+        //    type Output = Tensor<[[T; $c]; $r]>;
+        //    #[inline]
+        //    fn cwise_mul(mut self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
+        //        self.cwise_mul_assign(rhs);
+        //        self
+        //    }
+        //}
 
-        impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<[[T; $c]; $r]>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
-                self * rhs
-            }
-        }
+        //impl<T: Scalar> DotOp<Tensor<T>> for Tensor<[Tensor<[T; $c]>; $r]> {
+        //    type Output = Tensor<[Tensor<[T; $c]>; $r]>;
+        //    #[inline]
+        //    fn dot_op(self, rhs: Tensor<T>) -> Self::Output {
+        //        self * rhs
+        //    }
+        //}
 
-        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<T> {
-            type Output = Tensor<[[T; $c]; $r]>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
-                rhs * self
-            }
-        }
+        //impl<T: Scalar> DotOp<Tensor<[Tensor<[T; $c]>; $r]>> for Tensor<T> {
+        //    type Output = Tensor<[Tensor<[T; $c]>; $r]>;
+        //    #[inline]
+        //    fn dot_op(self, rhs: Tensor<[Tensor<[T; $c]>; $r]>) -> Self::Output {
+        //        rhs * self
+        //    }
+        //}
 
-        // Dot operator as compared to multiplication is always commutative. This means that no
-        // matter the order, it will always chose to contract along the outer dimension.
-        impl<T: Scalar> DotOp<Tensor<[T; $r]>> for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<[T; $c]>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<[T; $r]>) -> Self::Output {
-                let Tensor { data: [vec] } = rhs.transpose() * self;
-                Tensor::new(vec)
-            }
-        }
+        //// Dot operator as compared to multiplication is always commutative. This means that no
+        //// matter the order, it will always chose to contract along the outer dimension.
+        //impl<S: Scalar> DotOp<Tensor<[Tensor<S>; $r]>> for Tensor<[Tensor<[Tensor<S>; $c]>; $r]> {
+        //    type Output = Tensor<[Tensor<S>; $c]>;
+        //    #[inline]
+        //    fn dot_op(self, rhs: Tensor<[Tensor<S>; $r]>) -> Self::Output {
+        //        rhs.transpose() * self
+        //    }
+        //}
 
-        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<[T; $r]> {
-            type Output = Tensor<[T; $c]>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
-                let Tensor { data: [vec] } = self.transpose() * rhs;
-                Tensor::new(vec)
-            }
-        }
+        //impl<S: Scalar> DotOp<Tensor<[Tensor<[Tensor<S>; $c]>; $r]>> for Tensor<[Tensor<S>; $r]> {
+        //    type Output = Tensor<[Tensor<S>; $c]>;
+        //    #[inline]
+        //    fn dot_op(self, rhs: Tensor<[Tensor<[Tensor<S>; $c]>; $r]>) -> Self::Output {
+        //        self.transpose() * rhs
+        //    }
+        //}
 
-        impl<T: Scalar> DotOp<Tensor<[[T; $c]; $r]>> for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<T>;
-            #[inline]
-            fn dot_op(self, rhs: Tensor<[[T; $c]; $r]>) -> Self::Output {
-                Tensor::new(self.cwise_mul(rhs).sum_inner())
-            }
-        }
+        //impl<T: Scalar> DotOp<Tensor<[Tensor<[T; $c]>; $r]>> for Tensor<[Tensor<[T; $c]>; $r]> {
+        //    type Output = Tensor<T>;
+        //    #[inline]
+        //    fn dot_op(self, rhs: Tensor<[Tensor<[T; $c]>; $r]>) -> Self::Output {
+        //        Tensor { data: self.cwise_mul(rhs).sum_inner() }
+        //    }
+        //}
 
-        impl<T: Scalar> RecursiveSumOp for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<T>;
-            #[inline]
-            fn recursive_sum(self) -> Self::Output {
-                Tensor::new(self.sum_inner())
-            }
-        }
-        impl<T: Scalar> SumOp for Tensor<[[T; $c]; $r]> {
-            type Output = Tensor<[T; $c]>;
-            #[inline]
-            #[allow(unused_mut)]
-            #[unroll_for_loops]
-            fn sum_op(self) -> Self::Output {
-                let mut sum = self[0];
-                for i in 1..$r {
-                    sum += self[i];
-                }
-                sum
-            }
-        }
+        //impl<T: Scalar> RecursiveSumOp for Tensor<[Tensor<[T; $c]>; $r]> {
+        //    type Output = Tensor<T>;
+        //    #[inline]
+        //    fn recursive_sum(self) -> Self::Output {
+        //        Tensor { data: self.sum_inner() }
+        //    }
+        //}
+        //impl<T: Scalar> SumOp for Tensor<[Tensor<[T; $c]>; $r]> {
+        //    type Output = Tensor<[T; $c]>;
+        //    #[inline]
+        //    #[allow(unused_mut)]
+        //    #[unroll_for_loops]
+        //    fn sum_op(self) -> Self::Output {
+        //        let mut sum = self[0];
+        //        for i in 1..$r {
+        //            sum += self[i];
+        //        }
+        //        sum
+        //    }
+        //}
     };
 }
 
@@ -1190,20 +1346,15 @@ impl_array_matrices!(Matrix3x2; 3, 2);
 macro_rules! impl_matrix_matrix_mul {
     ($m:expr, $p:expr, $n:expr) => {
         // Implement A * B matrix multiplication where A is m-by-p and B is p-by-n.
-        impl<T: Scalar> Mul<Tensor<[[T; $n]; $p]>> for Tensor<[[T; $p]; $m]> {
-            type Output = Tensor<[[T; $n]; $m]>;
+        impl<T: Pod, U: Pod> Mul<Tensor<[Tensor<[T; $n]>; $p]>> for Tensor<[Tensor<[T; $p]>; $m]>
+        where
+            Tensor<[T; $n]>: Mul<T, Output = Tensor<[U; $n]>>,
+            Tensor<[Tensor<[U; $n]>; $p]>: SumOp<Output = Tensor<[U; $n]>>,
+        {
+            type Output = Tensor<[Tensor<[U; $n]>; $m]>;
             #[inline]
-            fn mul(self, rhs: Tensor<[[T; $n]; $p]>) -> Self::Output {
-                Tensor::new(
-                    self.map(|row| {
-                        rhs.zip_with(Tensor::new(row), |rhs_row, entry| {
-                            Tensor::new(rhs_row) * Tensor::new(entry)
-                        })
-                        .sum()
-                    })
-                    .map(|row_tensor| row_tensor.into_inner())
-                    .data,
-                )
+            fn mul(self, rhs: Tensor<[Tensor<[T; $n]>; $p]>) -> Self::Output {
+                self.map(|row| rhs.zip_with(row, |rhs_row, entry| rhs_row * entry).sum_op())
             }
         }
     };
@@ -1291,6 +1442,20 @@ impl_matrix_matrix_mul!(4, 4, 4);
 
 impl_matrix_matrix_mul!(1, 9, 9);
 
+// Outer products:
+impl_matrix_matrix_mul!(5, 1, 5);
+impl_matrix_matrix_mul!(6, 1, 6);
+impl_matrix_matrix_mul!(7, 1, 7);
+impl_matrix_matrix_mul!(8, 1, 8);
+impl_matrix_matrix_mul!(9, 1, 9);
+impl_matrix_matrix_mul!(10, 1, 10);
+impl_matrix_matrix_mul!(11, 1, 11);
+impl_matrix_matrix_mul!(12, 1, 12);
+impl_matrix_matrix_mul!(13, 1, 13);
+impl_matrix_matrix_mul!(14, 1, 14);
+impl_matrix_matrix_mul!(15, 1, 15);
+impl_matrix_matrix_mul!(16, 1, 16);
+
 pub trait AsMatrix {
     type Matrix;
     fn as_matrix(self) -> Self::Matrix;
@@ -1299,15 +1464,15 @@ pub trait AsMatrix {
 macro_rules! impl_as_matrix {
     ($outer_n:expr; $inner_n:expr, $inner_nty:ident) => {
         // Convert UniChunked arrays into matrices
-        impl<'a, T: Scalar> AsMatrix for UniChunked<&'a [T; $outer_n], $inner_nty> {
-            type Matrix = &'a Tensor<[[T; $inner_n]; $outer_n / $inner_n]>;
+        impl<'a, S: Scalar> AsMatrix for UniChunked<&'a [S; $outer_n], $inner_nty> {
+            type Matrix = &'a Tensor<[Tensor<[Tensor<S>; $inner_n]>; $outer_n / $inner_n]>;
             #[inline]
             fn as_matrix(self) -> Self::Matrix {
                 self.into_arrays().as_tensor()
             }
         }
-        impl<'a, T: Scalar> AsMatrix for UniChunked<&'a mut [T; $outer_n], $inner_nty> {
-            type Matrix = &'a mut Tensor<[[T; $inner_n]; $outer_n / $inner_n]>;
+        impl<'a, S: Scalar> AsMatrix for UniChunked<&'a mut [S; $outer_n], $inner_nty> {
+            type Matrix = &'a mut Tensor<[Tensor<[Tensor<S>; $inner_n]>; $outer_n / $inner_n]>;
             #[inline]
             fn as_matrix(self) -> Self::Matrix {
                 self.into_arrays().as_mut_tensor()
@@ -1373,15 +1538,15 @@ impl_as_matrix!(16; 16, U16);
 /*
  * Skew symmetric matrix representing the cross product operator
  */
-impl<T: Scalar + std::ops::Neg<Output = T>> Vector3<T> {
+impl<S: Scalar + std::ops::Neg<Output = S>> Vector3<S> {
     /// Convert this vector into a skew symmetric matrix, which represents the cross
     /// product operator (when applied to another vector).
     #[inline]
-    pub fn skew(&self) -> Matrix3<T> {
+    pub fn skew(&self) -> Matrix3<S> {
         Matrix3::new([
-            [T::zero(), -self[2], self[1]],
-            [self[2], T::zero(), -self[0]],
-            [-self[1], self[0], T::zero()],
+            [S::zero(), -self[2], self[1]],
+            [self[2], S::zero(), -self[0]],
+            [-self[1], self[0], S::zero()],
         ])
     }
 }
@@ -1391,51 +1556,53 @@ impl<T: Scalar + std::ops::Neg<Output = T>> Vector3<T> {
  */
 
 /// Determinant of a 1x1 Matrix.
-impl<T: Scalar> Tensor<[[T; 1]; 1]> {
+impl<S: Scalar> Matrix1<S> {
     #[inline]
-    pub fn determinant(&self) -> T {
-        self.data[0][0]
+    pub fn determinant(&self) -> S {
+        self[0][0]
     }
 }
 
 macro_rules! impl_determinant {
     ($n:expr) => {
         /// Determinant of a 2x2 Matrix.
-        impl<T: Scalar> Tensor<[[T; $n]; $n]> {
+        impl<S: Scalar> Tensor<[Tensor<[Tensor<S>; $n]>; $n]> {
             /// Construct a matrix smaller in both dimensions by 1 that is the same as the
             /// original matrix but without the first row and a given column. Although this is
             /// a very specific function, it is useful for efficient co-factor expansions.
             #[inline]
             #[allow(unused_mut)]
             #[unroll_for_loops]
-            pub fn without_row_and_first_col(&self, col: usize) -> Tensor<[[T; $n - 1]; $n - 1]> {
+            pub fn without_row_and_first_col(
+                &self,
+                col: usize,
+            ) -> Tensor<[Tensor<[Tensor<S>; $n - 1]>; $n - 1]> {
                 // Ensure that T has the same size as MaybeUninit.
                 debug_assert_eq!(
-                    std::mem::size_of::<[[MaybeUninit<T>; $n - 1]; $n - 1]>(),
-                    std::mem::size_of::<[[T; $n - 1]; $n - 1]>()
+                    std::mem::size_of::<[[MaybeUninit<S>; $n - 1]; $n - 1]>(),
+                    std::mem::size_of::<Tensor<[Tensor<[Tensor<S>; $n - 1]>; $n - 1]>>()
                 );
-                let mut m: [[MaybeUninit<T>; $n - 1]; $n - 1] =
+                let mut m: [[MaybeUninit<S>; $n - 1]; $n - 1] =
                     unsafe { MaybeUninit::uninit().assume_init() };
                 for i in 1..$n {
                     // Transmute to a MaybeUninit slice.
                     let slice = unsafe {
-                        std::mem::transmute(&self.data[if i < col + 1 { i - 1 } else { i }][1..$n])
+                        std::mem::transmute(&self[if i < col + 1 { i - 1 } else { i }][1..$n])
                     };
                     m[i - 1].copy_from_slice(slice);
                 }
                 // Transmute back to initialized type.
-                Tensor::new(unsafe { std::mem::transmute_copy(&m) })
+                unsafe { std::mem::transmute_copy(&m) }
             }
 
             /// Compute the determinant of the matrix recursively.
             #[inline]
             #[allow(unused_mut)]
             #[unroll_for_loops]
-            pub fn determinant(&self) -> T {
-                let mut det = self.data[0][0] * self.without_row_and_first_col(0).determinant();
+            pub fn determinant(&self) -> S {
+                let mut det = self[0][0] * self.without_row_and_first_col(0).determinant();
                 for row in 1..$n {
-                    let cofactor =
-                        self.data[row][0] * self.without_row_and_first_col(row).determinant();
+                    let cofactor = self[row][0] * self.without_row_and_first_col(row).determinant();
                     if row & 1 == 0 {
                         det += cofactor;
                     } else {
@@ -1456,13 +1623,13 @@ impl_determinant!(4);
  * The inverse of a matrix
  */
 
-impl<T: Scalar> Tensor<[[T; 1]; 1]> {
+impl<S: Scalar> Matrix1<S> {
     /// Compute the inverse of a 1x1 matrix.
     #[inline]
     pub fn inverse(&self) -> Option<Self> {
-        let denom = self.data[0][0];
-        if denom != T::zero() {
-            Some(Self::new([[T::one() / denom]]))
+        let denom = self[0][0];
+        if denom != S::zero() {
+            Some(Self::new([[S::one() / denom]]))
         } else {
             None
         }
@@ -1470,9 +1637,9 @@ impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     /// Invert the 1x1 matrix in place. Return true if inversion was successful.
     #[inline]
     pub fn invert(&mut self) -> bool {
-        let denom = self.data[0][0];
-        if denom != T::zero() {
-            self.data[0][0] = T::one() / denom;
+        let denom = self[0][0];
+        if denom != S::zero() {
+            self[0][0] = S::one() / denom;
             true
         } else {
             false
@@ -1480,16 +1647,19 @@ impl<T: Scalar> Tensor<[[T; 1]; 1]> {
     }
 }
 
-impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
+impl<S: Scalar + Float> Matrix2<S> {
     /// Compute the inverse of a 2x2 matrix.
     #[inline]
-    pub fn inverse(&self) -> Option<Tensor<[[T; 2]; 2]>> {
+    pub fn inverse(&self) -> Option<Matrix2<S>> {
         let det = self.determinant();
-        if det != T::zero() {
-            Some(Tensor::new([
-                [self.data[1][1] / det, -self.data[0][1] / det],
-                [-self.data[1][0] / det, self.data[0][0] / det],
-            ]))
+        if det != S::zero() {
+            Some(
+                [
+                    [self[1][1] / det, -self[0][1] / det],
+                    [-self[1][0] / det, self[0][0] / det],
+                ]
+                .into_tensor(),
+            )
         } else {
             None
         }
@@ -1498,11 +1668,14 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     #[inline]
     pub fn inverse_transpose(&self) -> Option<Self> {
         let det = self.determinant();
-        if det != T::zero() {
-            Some(Self::new([
-                [self.data[1][1] / det, -self.data[1][0] / det],
-                [-self.data[0][1] / det, self.data[0][0] / det],
-            ]))
+        if det != S::zero() {
+            Some(
+                [
+                    [self[1][1] / det, -self[1][0] / det],
+                    [-self[0][1] / det, self[0][0] / det],
+                ]
+                .into_tensor(),
+            )
         } else {
             None
         }
@@ -1513,13 +1686,23 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
     #[inline]
     pub fn invert(&mut self) -> bool {
         let det = self.determinant();
-        if det != T::zero() {
+        if det != S::zero() {
             unsafe {
-                let m00 = self.data.get_unchecked_mut(0).get_unchecked_mut(0) as *mut T;
-                let m11 = self.data.get_unchecked_mut(1).get_unchecked_mut(1) as *mut T;
+                let m00 =
+                    self.data.get_unchecked_mut(0).data.get_unchecked_mut(0) as *mut Tensor<S>;
+                let m11 =
+                    self.data.get_unchecked_mut(1).data.get_unchecked_mut(1) as *mut Tensor<S>;
                 std::ptr::swap(m00, m11);
-                *self.data.get_unchecked_mut(0).get_unchecked_mut(1) *= -T::one();
-                *self.data.get_unchecked_mut(1).get_unchecked_mut(0) *= -T::one();
+                self.data
+                    .get_unchecked_mut(0)
+                    .data
+                    .get_unchecked_mut(1)
+                    .data *= -S::one();
+                self.data
+                    .get_unchecked_mut(1)
+                    .data
+                    .get_unchecked_mut(0)
+                    .data *= -S::one();
             }
             *self /= det;
             true
@@ -1528,22 +1711,24 @@ impl<T: Scalar + Float> Tensor<[[T; 2]; 2]> {
         }
     }
 }
-impl<T: Scalar + Float> Tensor<[[T; 3]; 3]> {
+impl<S: Scalar + Float> Matrix3<S> {
     /// Compute the inverse of a 3x3 matrix.
     #[inline]
-    pub fn inverse(&self) -> Option<Tensor<[[T; 3]; 3]>> {
+    pub fn inverse(&self) -> Option<Matrix3<S>> {
         self.inverse_transpose().map(|x| x.transpose())
     }
     /// Compute the transpose of a 3x3 matrix inverse.
     #[inline]
     pub fn inverse_transpose(&self) -> Option<Self> {
         let det = self.determinant();
-        if det != T::zero() {
-            Some(Self::new([
-                (Tensor::new(self.data[1]).cross(Tensor::new(self.data[2])) / det).into_inner(),
-                (Tensor::new(self.data[2]).cross(Tensor::new(self.data[0])) / det).into_inner(),
-                (Tensor::new(self.data[0]).cross(Tensor::new(self.data[1])) / det).into_inner(),
-            ]))
+        if det != S::zero() {
+            Some(Tensor {
+                data: [
+                    self[1].cross(self[2]) / det,
+                    self[2].cross(self[0]) / det,
+                    self[0].cross(self[1]) / det,
+                ],
+            })
         } else {
             None
         }
@@ -1569,25 +1754,54 @@ mod tests {
 
     #[test]
     fn vector_scalar_mul() {
-        let mut a = Tensor::new([1, 2, 3, 4]);
+        let mut a = Vector4::new([1, 2, 3, 4]);
 
         // Right multiply by raw scalar.
-        assert_eq!(Tensor::new([3, 6, 9, 12]), a * 3);
+        assert_eq!(Vector4::new([3, 6, 9, 12]), a * 3);
+
+        // Right multiply by wrapped scalar.
+        assert_eq!(Vector4::new([3, 6, 9, 12]), a * 3.into_tensor());
 
         // Right assign multiply by raw scalar.
         a *= 2;
-        assert_eq!(Tensor::new([2, 4, 6, 8]), a);
+        assert_eq!(Vector4::new([2, 4, 6, 8]), a);
+
+        // Right assign multiply by wrapped scalar.
+        a *= 2.into_tensor();
+        assert_eq!(Vector4::new([4, 8, 12, 16]), a);
     }
 
     #[test]
     fn vector_scalar_div() {
-        let mut a = Tensor::new([1.0, 2.0, 4.0, 8.0]);
+        let mut a = Vector4::new([1.0, 2.0, 4.0, 8.0]);
 
         // Right divide by raw scalar.
-        assert_eq!(Tensor::new([0.5, 1.0, 2.0, 4.0]), a / 2.0);
+        assert_eq!(Vector4::new([0.5, 1.0, 2.0, 4.0]), a / 2.0);
 
         // Right assign divide by raw scalar.
         a /= 2.0;
-        assert_eq!(Tensor::new([0.5, 1.0, 2.0, 4.0]), a);
+        assert_eq!(Vector4::new([0.5, 1.0, 2.0, 4.0]), a);
+    }
+
+    #[test]
+    fn vector_add() {
+        let a = Vector4::new([1, 2, 3, 4]);
+        let b = Vector4::new([5, 6, 7, 8]);
+        assert_eq!(Vector4::new([6, 8, 10, 12]), a + b);
+
+        let mut c = Vector4::new([0, 1, 2, 3]);
+        c += a;
+        assert_eq!(Vector4::new([1, 3, 5, 7]), c);
+    }
+
+    #[test]
+    fn vector_sub() {
+        let a = Vector4::new([1, 2, 3, 4]);
+        let b = Vector4::new([5, 6, 7, 8]);
+        assert_eq!(Vector4::new([4, 4, 4, 4]), b - a);
+
+        let mut c = Vector4::new([1, 3, 5, 7]);
+        c -= a;
+        assert_eq!(Vector4::new([0, 1, 2, 3]), c);
     }
 }

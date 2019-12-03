@@ -288,6 +288,20 @@ impl<'a, T> StorageMut for &'a mut [T] {
     }
 }
 
+impl<T> Storage for [T] {
+    type Storage = [T];
+    fn storage(&self) -> &Self::Storage {
+        self
+    }
+}
+
+impl<T> StorageMut for [T] {
+    /// A slice is a type of storage, simply return a mutable reference to self.
+    fn storage_mut(&mut self) -> &mut Self::Storage {
+        self
+    }
+}
+
 impl<'a, T: 'a> CloneWithStorage<Vec<T>> for &'a [T] {
     type CloneType = Vec<T>;
     /// This function simply ignores self and returns storage since self is already
@@ -393,8 +407,7 @@ where
     }
 }
 
-impl<T> Viewed for &[T] {}
-impl<T> Viewed for &mut [T] {}
+impl<T> Viewed for [T] {}
 
 impl<T> Truncate for &[T] {
     fn truncate(&mut self, new_len: usize) {

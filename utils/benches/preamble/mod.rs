@@ -2,7 +2,7 @@
 pub use cgmath::prelude::*;
 pub use rand::{FromEntropy, IsaacRng, Rng};
 pub use utils::soap;
-pub use utils::soap::Matrix;
+pub use utils::soap::{Expr, IntoData, Matrix};
 pub use std::ops::Mul;
 
 // Cgmath

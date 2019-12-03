@@ -13,7 +13,7 @@ fn frob_norm_squared_benchmark(c: &mut Criterion) {
     group.bench_with_input(BenchmarkId::new("map_inner", 4), &m,
         |b, &m| b.iter(|| m.map_inner(|x| x * x).sum_inner()));
 
-    let m = matrix4().data;
+    let m = matrix4().into_data();
     group.bench_with_input(BenchmarkId::new("benchmark", 4), &m,
         |b, &m| b.iter(|| unsafe {
               m.get_unchecked(0).get_unchecked(0) * m.get_unchecked(0).get_unchecked(0)

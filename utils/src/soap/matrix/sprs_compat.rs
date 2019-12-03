@@ -5,7 +5,7 @@
 use super::*;
 use std::convert::AsRef;
 
-impl<S, I> Into<sprs::CsMat<f64>> for DSBlockMatrix3<S, I>
+impl<S, I> Into<sprs::CsMat<f64>> for DSBlockMatrixBase<S, I, U3, U3>
 where
     // Needed for num_cols/num_rows
     S: Set,
@@ -18,7 +18,7 @@ where
         let num_rows = view.num_total_rows();
         let num_cols = view.num_total_cols();
 
-        let view = view.data;
+        let view = view.as_data();
         let values = view.clone().into_flat().as_ref().to_vec();
 
         let (rows, cols) = {
@@ -44,7 +44,7 @@ impl Into<sprs::CsMat<f64>> for DSMatrix {
         let num_cols = self.num_cols();
 
         let (rows, cols) = {
-            self.data
+            self.as_data()
                 .view()
                 .into_iter()
                 .enumerate()
@@ -54,7 +54,7 @@ impl Into<sprs::CsMat<f64>> for DSMatrix {
                 .unzip()
         };
 
-        let values = self.data.into_flat();
+        let values = self.into_data().into_flat();
 
         sprs::TriMat::from_triplets((num_rows, num_cols), rows, cols, values).to_csr()
     }

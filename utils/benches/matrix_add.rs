@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize};
 use utils::soap::*;
-use rayon::prelude::*;
-use approx::assert_relative_eq;
+//use rayon::prelude::*;
+//use approx::assert_relative_eq;
 
 /// Generate a random vector of float values between -1 and 1.
 pub fn random_vec(n: usize) -> Vec<f64> {

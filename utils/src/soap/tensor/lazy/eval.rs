@@ -21,14 +21,14 @@ impl<T> Evaluate<SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>> for T {
     #[inline]
     fn eval(value: SparseAddResult<Tensor<T>, Tensor<T>, Tensor<T>>) -> T {
         let t: Tensor<T> = value.into();
-        t.into_inner()
+        t.data
     }
 }
 
 impl<T> Evaluate<Tensor<T>> for T {
     #[inline]
     fn eval(expr: Tensor<T>) -> Self {
-        expr.into_inner()
+        expr.data
     }
 }
 
@@ -211,21 +211,21 @@ macro_rules! impl_array_vector_eval_traits {
         impl_array_vector_eval_traits!($n,);
     };
     ($n:expr, $($ns:tt)*) => {
-        impl<T: Copy> EvalExtend<Tensor<[T; $n]>> for Vec<T> {
+        impl<T: Copy> EvalExtend<Tensor<[Tensor<T>; $n]>> for Vec<T> {
             #[unroll_for_loops]
-            fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
+            fn eval_extend(&mut self, tensor: Tensor<[Tensor<T>; $n]>) {
                 for i in 0..$n {
-                    self.push(unsafe { *tensor.data.get_unchecked(i) });
+                    self.push(unsafe { tensor.data.get_unchecked(i).data });
                 }
             }
         }
         impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [T; $n]
         where
-            E: Iterator<Item = Tensor<[T; $n]>>,
-            F: BinOp<Tensor<Self>, Tensor<Self>, Output = Tensor<Self>>,
+            E: Iterator<Item = Tensor<[Tensor<T>; $n]>>,
+            F: BinOp<<Self as IntoTensor>::Tensor, <Self as IntoTensor>::Tensor, Output = <Self as IntoTensor>::Tensor>,
         {
             fn eval(Reduce { expr, op }: Reduce<E, F>) -> Self {
-                expr.fold(Tensor::new([T::zero(); $n]), |acc, x| op.apply(acc, x)).into_inner()
+                expr.fold([T::zero(); $n].into_tensor(), |acc, x| op.apply(acc, x)).into_data()
             }
         }
 
@@ -243,37 +243,35 @@ macro_rules! impl_array_matrix_eval_traits {
     (($r:expr, $c:expr, $rty:ident, $cty:ident), $($ns:tt)*) => {
         impl<T: Scalar, E, F> Evaluate<Reduce<E, F>> for [[T; $c]; $r]
         where
-            E: Iterator<Item = Tensor<[[T; $c]; $r]>>,
-            F: BinOp<Tensor<Self>, Tensor<Self>, Output = Tensor<Self>>,
+            E: Iterator<Item = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>>,
+            F: BinOp<<Self as IntoTensor>::Tensor, <Self as IntoTensor>::Tensor, Output = <Self as IntoTensor>::Tensor>,
         {
             fn eval(Reduce { expr, op }: Reduce<E, F>) -> Self {
-                expr.fold(Tensor::new([[T::zero(); $c]; $r]), |acc, x| op.apply(acc, x)).into_inner()
+                expr.fold([[T::zero(); $c]; $r].into_tensor(), |acc, x| op.apply(acc, x)).into_data()
             }
         }
-        impl<T: Copy> EvalExtend<Tensor<[[T; $c]; $r]>> for Vec<T> {
+        impl<T: Scalar> EvalExtend<Tensor<[Tensor<[Tensor<T>; $c]>; $r]>> for Vec<T> {
             #[inline]
-            #[unroll_for_loops]
-            fn eval_extend(&mut self, value: Tensor<[[T; $c]; $r]>) {
+            //#[unroll_for_loops]
+            fn eval_extend(&mut self, value: Tensor<[Tensor<[Tensor<T>; $c]>; $r]>) {
                 for r in 0..$r {
                     for c in 0..$c {
-                        self.push(unsafe {
-                            *value.data.get_unchecked(r).get_unchecked(c)
-                        });
+                        self.push(value[r][c]);
                     }
                 }
             }
         }
 
-        impl<T: Scalar> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<Vec<T>, $cty> {
+        impl<T: Scalar> EvalExtend<Tensor<[Tensor<[Tensor<T>; $c]>; $r]>> for UniChunked<Vec<T>, $cty> {
             #[inline]
-            fn eval_extend(&mut self, tensor: Tensor<[[T; $c]; $r]>) {
-                self.data.extend_from_slice(tensor.data.as_slice());
+            fn eval_extend(&mut self, tensor: Tensor<[Tensor<[Tensor<T>; $c]>; $r]>) {
+                self.data.extend_from_slice(tensor.into_data().as_slice());
             }
         }
-        impl<T: Scalar> EvalExtend<Tensor<[[T; $c]; $r]>> for UniChunked<UniChunked<Vec<T>, $cty>, $rty> {
+        impl<T: Scalar> EvalExtend<Tensor<[Tensor<[Tensor<T>; $c]>; $r]>> for UniChunked<UniChunked<Vec<T>, $cty>, $rty> {
             #[inline]
-            fn eval_extend(&mut self, tensor: Tensor<[[T; $c]; $r]>) {
-                self.data.data.extend_from_slice(tensor.data.as_slice());
+            fn eval_extend(&mut self, tensor: Tensor<[Tensor<[Tensor<T>; $c]>; $r]>) {
+                self.data.data.extend_from_slice(tensor.into_data().as_slice());
             }
         }
 
@@ -353,7 +351,7 @@ where
 impl<T> EvalExtend<Tensor<T>> for Vec<T> {
     #[inline]
     fn eval_extend(&mut self, value: Tensor<T>) {
-        self.push(value.into_inner());
+        self.push(value.data);
     }
 }
 
@@ -408,12 +406,13 @@ where
     }
 }
 
-impl<S, E, N, F, A> EvalExtend<Reduce<E, F>> for UniChunked<S, N>
+impl<S, E, N, F, A, O> EvalExtend<Reduce<E, F>> for UniChunked<S, N>
 where
     E: Iterator<Item = A>,
     A: Iterator,
-    F: for<'a> BinOpAssign<Tensor<<Self as ViewMutIterator<'a>>::Item>, A::Item>,
-    Self: Set + EvalExtend<A> + for<'a> ViewMutIterator<'a>,
+    O: AsMutTensor,
+    F: BinOpAssign<Tensor<O::Inner>, A::Item>,
+    Self: Set + EvalExtend<A> + for<'a> ViewMutIterator<'a, Item = &'a mut O>,
     N: Dimension,
 {
     #[inline]
@@ -422,7 +421,7 @@ where
             let start = self.len();
             self.eval_extend(row);
             while let Some(next) = expr.next() {
-                for (mut output, input) in self.view_mut_iter().skip(start).zip(next) {
+                for (output, input) in self.view_mut_iter().skip(start).zip(next) {
                     op.apply_assign(output.as_mut_tensor(), input);
                 }
             }
@@ -570,17 +569,14 @@ use std::ops::{AddAssign, SubAssign};
 
 impl<T, I, A> AddAssign<I> for Tensor<[T]>
 where
-    A: ExprSize,
-    I: Unoptimized + Iterator<Item = A>,
-    Tensor<[T]>: AddAssign<A>,
+    T: AsMutTensor,
+    I: Iterator<Item = A>,
+    Tensor<T::Inner>: AddAssign<A>,
 {
     #[inline]
     fn add_assign(&mut self, rhs: I) {
-        let mut out = &mut self.data;
-        for rhs in rhs {
-            let size = rhs.expr_size();
-            out.as_mut_tensor().add_assign(rhs);
-            out = &mut out[size..];
+        for (l, r) in self.data.iter_mut().zip(rhs) {
+            l.as_mut_tensor().add_assign(r);
         }
     }
 }
@@ -589,92 +585,92 @@ where
  * Optimized multiply adds:
  */
 
-impl<T, L, R, A, Out> AddAssign<CwiseBinExpr<L, Tensor<R>, Multiplication>> for Tensor<[T]>
-where
-    R: Copy,
-    T: std::any::Any,
-    Out: std::any::Any + AsSlice<T>,
-    L: Iterator<Item = A>,
-    Tensor<[T]>: for<'a> AddAssign<Tensor<&'a [T]>>,
-    A: std::ops::Mul<Tensor<R>, Output = Tensor<Out>>,
-{
-    #[inline]
-    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L, Tensor<R>, Multiplication>) {
-        let mut out = &mut self.data; // &mut [T]
-        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
-        while let Some(next) = rhs.left.next() {
-            *out[0..n].as_mut_tensor() += Tensor::new((next * rhs.right).data.as_slice());
-            if let Some(next) = rhs.left.next() {
-                *out[n..2 * n].as_mut_tensor() += Tensor::new((next * rhs.right).data.as_slice());
-                out = &mut out[2 * n..];
-            } else {
-                break;
-            }
-        }
-    }
-}
-impl<T, L, R, A, Out> AddAssign<CwiseBinExpr<Tensor<L>, R, Multiplication>> for Tensor<[T]>
-where
-    L: Copy,
-    T: std::any::Any,
-    Out: std::any::Any + AsSlice<T>,
-    R: Iterator<Item = A>,
-    Tensor<[T]>: for<'a> AddAssign<Tensor<&'a [T]>>,
-    Tensor<L>: std::ops::Mul<A, Output = Tensor<Out>>,
-{
-    #[inline]
-    fn add_assign(&mut self, mut rhs: CwiseBinExpr<Tensor<L>, R, Multiplication>) {
-        let mut out = &mut self.data; // &mut [T]
-        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
-        while let Some(next) = rhs.right.next() {
-            *out[0..n].as_mut_tensor() += Tensor::new((rhs.left * next).data.as_slice());
-            if let Some(next) = rhs.right.next() {
-                *out[n..2 * n].as_mut_tensor() += Tensor::new((rhs.left * next).data.as_slice());
-                out = &mut out[2 * n..];
-            } else {
-                break;
-            }
-        }
-    }
-}
-
-impl<T, L, R, A, B, Out> AddAssign<CwiseBinExpr<L, R, Multiplication>> for Tensor<[T]>
-where
-    T: std::any::Any,
-    Out: std::any::Any + AsSlice<T>,
-    L: Iterator<Item = A>,
-    R: Iterator<Item = B>,
-    A: std::ops::Mul<B, Output = Tensor<Out>>,
-    Tensor<[T]>: for<'a> AddAssign<Tensor<&'a [T]>>,
-{
-    #[inline]
-    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L, R, Multiplication>) {
-        let mut out = &mut self.data; // &mut [T]
-        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
-        loop {
-            if let Some(r) = rhs.right.next() {
-                if let Some(l) = rhs.left.next() {
-                    *out[0..n].as_mut_tensor() += Tensor::new((l * r).data.as_slice());
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-
-            if let Some(r) = rhs.right.next() {
-                if let Some(l) = rhs.left.next() {
-                    *out[n..2 * n].as_mut_tensor() += Tensor::new((l * r).data.as_slice());
-                    out = &mut out[2 * n..];
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-}
+//impl<T, L, R, A, Out> AddAssign<CwiseBinExpr<L, Tensor<R>, Multiplication>> for Tensor<[T]>
+//where
+//    R: Copy,
+//    T: std::any::Any,
+//    Out: std::any::Any + AsSlice<T>,
+//    L: Iterator<Item = A>,
+//    Tensor<[T]>: for<'a> AddAssign<&'a Tensor<[T]>>,
+//    A: std::ops::Mul<Tensor<R>, Output = Tensor<Out>>,
+//{
+//    #[inline]
+//    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L, Tensor<R>, Multiplication>) {
+//        let mut out = &mut self.data; // &mut [T]
+//        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
+//        while let Some(next) = rhs.left.next() {
+//            *out[0..n].as_mut_tensor() += (next * rhs.right).data.as_slice().as_tensor();
+//            if let Some(next) = rhs.left.next() {
+//                *out[n..2 * n].as_mut_tensor() += (next * rhs.right).data.as_slice().as_tensor();
+//                out = &mut out[2 * n..];
+//            } else {
+//                break;
+//            }
+//        }
+//    }
+//}
+//impl<T, L, R, A, Out> AddAssign<CwiseBinExpr<Tensor<L>, R, Multiplication>> for Tensor<[T]>
+//where
+//    L: Copy,
+//    T: std::any::Any,
+//    Out: std::any::Any + AsSlice<T>,
+//    R: Iterator<Item = A>,
+//    Tensor<[T]>: for<'a> AddAssign<&'a Tensor<[T]>>,
+//    Tensor<L>: std::ops::Mul<A, Output = Tensor<Out>>,
+//{
+//    #[inline]
+//    fn add_assign(&mut self, mut rhs: CwiseBinExpr<Tensor<L>, R, Multiplication>) {
+//        let mut out = &mut self.data; // &mut [T]
+//        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
+//        while let Some(next) = rhs.right.next() {
+//            *out[0..n].as_mut_tensor() += (rhs.left * next).data.as_slice().as_tensor();
+//            if let Some(next) = rhs.right.next() {
+//                *out[n..2 * n].as_mut_tensor() += (rhs.left * next).data.as_slice().as_tensor();
+//                out = &mut out[2 * n..];
+//            } else {
+//                break;
+//            }
+//        }
+//    }
+//}
+//
+//impl<T, L, R, A, B, Out> AddAssign<CwiseBinExpr<L, R, Multiplication>> for Tensor<[T]>
+//where
+//    T: std::any::Any,
+//    Out: std::any::Any + AsSlice<T>,
+//    L: Iterator<Item = A>,
+//    R: Iterator<Item = B>,
+//    A: std::ops::Mul<B, Output = Tensor<Out>>,
+//    Tensor<[T]>: for<'a> AddAssign<&'a Tensor<[T]>>,
+//{
+//    #[inline]
+//    fn add_assign(&mut self, mut rhs: CwiseBinExpr<L, R, Multiplication>) {
+//        let mut out = &mut self.data; // &mut [T]
+//        let n = std::mem::size_of::<Out>() / std::mem::size_of::<T>();
+//        loop {
+//            if let Some(r) = rhs.right.next() {
+//                if let Some(l) = rhs.left.next() {
+//                    *out[0..n].as_mut_tensor() += (l * r).data.as_slice().as_tensor();
+//                } else {
+//                    break;
+//                }
+//            } else {
+//                break;
+//            }
+//
+//            if let Some(r) = rhs.right.next() {
+//                if let Some(l) = rhs.left.next() {
+//                    *out[n..2 * n].as_mut_tensor() += (l * r).data.as_slice().as_tensor();
+//                    out = &mut out[2 * n..];
+//                } else {
+//                    break;
+//                }
+//            } else {
+//                break;
+//            }
+//        }
+//    }
+//}
 
 //impl<T, I> AddAssign<I> for Tensor<Vec<T>>
 //where

@@ -19,7 +19,7 @@ fn sum_benchmark(c: &mut Criterion) {
 
     group.bench_function(BenchmarkId::new("benchmark", 4),
         |b| {
-            let m = matrix4().into_inner();
+            let m = matrix4().into_data();
             b.iter(|| 
             unsafe {
                 m.get_unchecked(0).get_unchecked(0)

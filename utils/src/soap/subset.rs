@@ -905,7 +905,7 @@ impl<S: Truncate, I: Truncate> Truncate for Subset<S, I> {
  * Conversions
  */
 
-impl<S, I> From<S> for Subset<S, I> {
+impl<S: NonTensor, I> From<S> for Subset<S, I> {
     fn from(set: S) -> Subset<S, I> {
         Subset::all(set)
     }

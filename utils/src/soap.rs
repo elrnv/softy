@@ -176,6 +176,8 @@ impl<S, I> ValueType for Subset<S, I> {}
 impl<S, I> ValueType for Chunked<S, I> {}
 impl<S, N> ValueType for UniChunked<S, N> {}
 
+impl<S: Viewed + ?Sized> Viewed for &S {}
+impl<S: Viewed + ?Sized> Viewed for &mut S {}
 impl<S: Viewed, T: Viewed, I: Viewed> Viewed for Sparse<S, T, I> {}
 impl<S: Viewed, I: Viewed> Viewed for Select<S, I> {}
 impl<S: Viewed, I: Viewed> Viewed for Subset<S, I> {}
@@ -207,6 +209,30 @@ impl<T> Dense for Vec<T> {}
 impl<T> Dense for [T] {}
 impl<'a, T> Dense for &'a [T] {}
 impl<'a, T> Dense for &'a mut [T] {}
+
+/// A marker trait for basic flat types without any implied hierarchical structure. This describes
+/// collections from the standard library.
+pub trait Flat {}
+impl<T> Flat for std::ops::RangeTo<T> {}
+impl<T> Flat for std::ops::Range<T> {}
+impl<T> Flat for Box<[T]> {}
+impl<T> Flat for Vec<T> {}
+impl<T> Flat for [T] {}
+impl<'a, T> Flat for &'a [T] {}
+impl<'a, T> Flat for &'a mut [T] {}
+
+/// A marker trait indicating non-tensor types. These are all supported collecitons.
+pub trait NonTensor {}
+impl<S, I> NonTensor for Select<S, I> {}
+impl<S, I> NonTensor for Subset<S, I> {}
+impl<S, N> NonTensor for UniChunked<S, N> {}
+impl<S, O> NonTensor for Chunked<S, O> {}
+impl<S, T, I> NonTensor for Sparse<S, T, I> {}
+impl<T> NonTensor for std::ops::Range<T> {}
+impl<T> NonTensor for Vec<T> {}
+impl<T> NonTensor for [T] {}
+impl<'a, T> NonTensor for &'a [T] {}
+impl<'a, T> NonTensor for &'a mut [T] {}
 
 /// A marker trait to indicate a collection type that can be chunked. More precisely this is a type that can be composed with types in this crate.
 //pub trait Chunkable<'a>:

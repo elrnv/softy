@@ -22,6 +22,7 @@ impl<N: Default> Default for U<N> {
 
 macro_rules! impl_array_for_typenum {
     ($nty:ident, $n:expr) => {
+        impl<T> NonTensor for [T; $n] {}
         pub type $nty = U<consts::$nty>;
         impl<T> Set for [T; $n] {
             type Elem = T;
@@ -37,6 +38,7 @@ macro_rules! impl_array_for_typenum {
                 &self[..]
             }
         }
+
         impl<'a, T: 'a> View<'a> for [T; $n] {
             type Type = &'a [T];
             #[inline]
@@ -180,12 +182,13 @@ macro_rules! impl_array_for_typenum {
             }
         }
 
-        impl<T: Scalar, S> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
-            where Self: Push<[T; $n]>
+        impl<T: Scalar, S, D> EvalExtend<Tensor<[T; $n]>> for UniChunked<S, $nty>
+            where Self: Push<D>,
+                  Tensor<[T; $n]>: IntoData<Data = D>,
         {
             #[inline]
             fn eval_extend(&mut self, tensor: Tensor<[T; $n]>) {
-                self.push(tensor.into_inner());
+                self.push(tensor.into_data());
             }
         }
 

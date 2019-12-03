@@ -816,7 +816,7 @@ impl SolverBuilder {
             .map(|cell| {
                 let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
-                Matrix3::new(ref_shape_matrix).inverse_transpose().unwrap()
+                Matrix3::new(ref_shape_matrix).inverse().unwrap()
             })
             .collect()
     }

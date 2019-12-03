@@ -143,7 +143,7 @@ impl ContactBasis {
     pub fn contact_basis_matrix(&self, contact_index: usize) -> Matrix3<f64> {
         let n = self.normals[contact_index];
         let t = self.tangents[contact_index];
-        let b = Tensor::new(n).cross(Tensor::new(t)).into();
+        let b = Vector3::new(n).cross(Vector3::new(t)).into();
         //b = b/b.norm(); // b may need to be renormalized here.
         Matrix3::new([n, t, b])
     }
@@ -154,7 +154,7 @@ impl ContactBasis {
     where
         V3: Into<[f64; 3]>,
     {
-        (self.contact_basis_matrix(contact_index) * Tensor::new(v.into())).into()
+        (self.contact_basis_matrix(contact_index) * Vector3::new(v.into())).into()
     }
 
     pub fn from_cylindrical_contact_coordinates(
@@ -171,7 +171,7 @@ impl ContactBasis {
     where
         V3: Into<[f64; 3]>,
     {
-        (self.contact_basis_matrix(contact_index).transpose() * Tensor::new(v.into())).into()
+        (self.contact_basis_matrix(contact_index).transpose() * Vector3::new(v.into())).into()
     }
 
     /// Transform a given stacked vector of vectors in physical space
@@ -241,8 +241,8 @@ impl ContactBasis {
         let n = self.normals.len();
 
         // A vector of column major change of basis "matrices"
-        let row_mtx = Vector3::new([0, 1, 2]);
-        let col_mtx = Vector3::new([0, 0, 0]);
+        let row_mtx = Vector3::new([0usize, 1, 2]);
+        let col_mtx = Vector3::new([0usize, 0, 0]);
         let mut rows = vec![[0; 3]; n];
         let mut cols = vec![[0; 3]; n];
         let mut bases = vec![[0.0; 3]; n];
@@ -252,8 +252,8 @@ impl ContactBasis {
             let mtx = self.contact_basis_matrix(contact_idx);
             *m = mtx[0].into();
 
-            *r = row_mtx.map(|x| x + 3 * contact_idx).into();
-            *c = col_mtx.map(|x| x + contact_idx).into();
+            *r = row_mtx.mapd(|x| x + 3 * contact_idx).into();
+            *c = col_mtx.mapd(|x| x + contact_idx).into();
         }
 
         let num_rows = 3 * n;
@@ -271,8 +271,8 @@ impl ContactBasis {
         let n = self.normals.len();
 
         // A vector of column major change of basis matrices
-        let row_stencil = Tensor::new([[0, 0, 1], [1, 2, 2]]);
-        let col_stencil = Tensor::new([[0, 1, 0], [1, 0, 1]]);
+        let row_stencil = Matrix2x3::new([[0usize, 0, 1], [1, 2, 2]]);
+        let col_stencil = Matrix2x3::new([[0usize, 1, 0], [1, 0, 1]]);
         let mut rows = vec![[[0; 3]; 2]; n];
         let mut cols = vec![[[0; 3]; 2]; n];
         let mut bases = vec![[[0.0; 3]; 2]; n];
@@ -283,8 +283,8 @@ impl ContactBasis {
             m[0] = mtx[1].into();
             m[1] = mtx[2].into();
 
-            *r = row_stencil.map_inner(|x| x + 3 * contact_idx).into();
-            *c = col_stencil.map_inner(|x| x + 2 * contact_idx).into();
+            *r = row_stencil.mapd_inner(|x| x + 3 * contact_idx).into();
+            *c = col_stencil.mapd_inner(|x| x + 2 * contact_idx).into();
         }
 
         let num_rows = 3 * n;
@@ -346,11 +346,11 @@ impl ContactBasis {
         for (&n, t) in self.normals.iter().zip(self.tangents.iter_mut()) {
             // Find the axis that is most aligned with the normal, then use the next axis for the
             // tangent.
-            let tangent_axis = (Tensor::new(n).iamax() + 1) % 3;
+            let tangent_axis = (Vector3::new(n).iamax() + 1) % 3;
             t[tangent_axis] = 1.0;
 
             // Project out the normal component.
-            *t.as_mut_tensor() -= Tensor::new(n) * n[tangent_axis];
+            *t.as_mut_tensor() -= Vector3::new(n) * n[tangent_axis];
 
             t.as_mut_tensor().normalize(); // Normalize in-place.
         }
@@ -365,8 +365,9 @@ impl ContactBasis {
     /// ```
     /// given
     pub fn project_to_tangent_space<'a, V>(&self, vecs: V)
-    where V: Iterator,
-          V::Item: Into<&'a mut Vector3<f64>>,
+    where
+        V: Iterator,
+        V::Item: Into<&'a mut Vector3<f64>>,
     {
         Self::project_out_normal_component(self.normals.iter().cloned(), vecs);
     }
@@ -375,10 +376,11 @@ impl ContactBasis {
     ///
     /// This function projects out the normal component from the given iterator of vectors in-place.
     pub fn project_out_normal_component<'a, N, V>(normals: N, vecs: V)
-    where N: Iterator,
-          V: Iterator,
-          N::Item: Into<Vector3<f64>>,
-          V::Item: Into<&'a mut Vector3<f64>>,
+    where
+        N: Iterator,
+        V: Iterator,
+        N::Item: Into<Vector3<f64>>,
+        V::Item: Into<&'a mut Vector3<f64>>,
     {
         for (n, v) in normals.zip(vecs) {
             let n = n.into();
@@ -435,8 +437,8 @@ pub(crate) fn build_triplet_contact_jacobian<'a>(
 /// to query points (contact points). Not all contact points are active, so rows
 /// are sparse, and not all surface vertex positions are affected by each query
 /// point, so columns are also sparse.
-pub type ContactJacobian<S = Vec<f64>, I = Vec<usize>> = SSBlockMatrix3<S, I>;
-pub type ContactJacobianView<'a> = ContactJacobian<&'a [f64], &'a [usize]>;
+pub type ContactJacobian<T = f64> = SSBlockMatrix3<T>;
+pub type ContactJacobianView<'a, T = f64> = SSBlockMatrix3View<'a, T>;
 
 impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
     fn into(self) -> ContactJacobian {
@@ -509,14 +511,14 @@ where
 //}
 
 /// A diagonal mass matrix chunked by triplet blocks (one triplet for each vertex).
-pub type MassMatrix<S = Vec<f64>> = DiagonalBlockMatrix3<S>;
-pub type MassMatrixView<'a> = MassMatrix<&'a [f64]>;
+pub type MassMatrix<T = f64> = DiagonalBlockMatrix3<T>;
+pub type MassMatrixView<'a, T = f64> = DiagonalBlockMatrix3View<'a, T>;
 
-pub type Delassus<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
-pub type DelassusView<'a> = Delassus<&'a [f64], &'a [usize]>;
+pub type Delassus<T = f64> = DSBlockMatrix3<T>;
+pub type DelassusView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 
-pub(crate) type EffectiveMassInv<S = Vec<f64>, I = Vec<usize>> = DSBlockMatrix3<S, I>;
-pub(crate) type EffectiveMassInvView<'a> = EffectiveMassInv<&'a [f64], &'a [usize]>;
+pub(crate) type EffectiveMassInv<T = f64> = DSBlockMatrix3<T>;
+pub(crate) type EffectiveMassInvView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 
 #[cfg(test)]
 mod tests {
@@ -567,8 +569,8 @@ mod tests {
             // Manually project out normal component for another point of comparison:
             let mut vecs_t = vecs.clone();
             for (v_out, &n) in vecs_t.iter_mut().zip(basis.normals.iter()) {
-                let n = Tensor::new(n);
-                let v = Tensor::new(*v_out);
+                let n = Vector3::new(n);
+                let v = Vector3::new(*v_out);
                 *v_out.as_mut_tensor() -= n * v.dot(n);
             }
 
@@ -640,8 +642,8 @@ mod tests {
         let nml_basis_mtx = basis.normal_basis_matrix();
 
         let exp_contact_vecs: Vec<_> = basis.to_normal_space(vecs.view().into_arrays()).collect();
-        let contact_vecs = nml_basis_mtx.view().transpose() * Tensor::new(vecs.view());
+        let contact_vecs = nml_basis_mtx.view().transpose() * UTensor3::new(vecs.view());
 
-        assert_eq!(exp_contact_vecs, contact_vecs.into_inner());
+        assert_eq!(exp_contact_vecs, contact_vecs.into_data());
     }
 }

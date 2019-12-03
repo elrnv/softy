@@ -58,12 +58,12 @@ impl<'a> FrictionSolver<'a> {
         // well scaled at the minimum.
         let predictor_impulse: Chunked3<Vec<f64>> = variable_scales(contact_impulse, mu)
             .zip(predictor_impulse.iter())
-            .map(|(s, &p)| (Tensor::new(p) * s).into_inner())
+            .map(|(s, &p)| (Vector3::new(p) * s).into_data())
             .collect();
 
         let prev_friction_impulse_t: Chunked2<Vec<f64>> = variable_scales(contact_impulse, mu)
             .zip(prev_friction_impulse_t.iter())
-            .map(|(s, &p)| (Tensor::new(p) * s).into_inner())
+            .map(|(s, &p)| (Vector2::new(p) * s).into_data())
             .collect();
 
         let problem = SemiImplicitFrictionProblem(FrictionProblem {
@@ -112,7 +112,7 @@ impl<'a> FrictionSolver<'a> {
         );
         let solution: Vec<[f64; 2]> = variable_scales(cr, mu)
             .zip(Chunked2::from_flat(solver_data.solution.primal_variables).iter())
-            .map(|(s, &r)| (Tensor::new(r) / s).into_inner())
+            .map(|(s, &r)| (Vector2::new(r) / s).into_data())
             .collect();
 
         let result = FrictionSolveResult {
@@ -172,16 +172,16 @@ impl<'a> FrictionProblem<'a> {
         )
         .enumerate()
         {
-            let p_norm = Tensor::new(p).norm();
+            let p_norm = Vector3::new(p).norm();
             let pred = self.contact_basis.to_contact_coordinates(p, i);
             let radius = cr.abs() * self.mu;
             if radius > 0.0 {
                 let constraint_radius = 1.0;
                 if p_norm > constraint_radius {
-                    *r = (Tensor::new([pred[1], pred[2]]) * (constraint_radius / p_norm))
-                        .into_inner();
+                    *r = (Vector2::new([pred[1], pred[2]]) * (constraint_radius / p_norm))
+                        .into_data();
                 } else {
-                    *r = (Tensor::new([pred[1], pred[2]])).into_inner();
+                    *r = (Vector2::new([pred[1], pred[2]])).into_data();
                 }
             } else {
                 *r = [0.0; 2];
@@ -274,13 +274,13 @@ impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {
         //let grad = diff.view();
 
         let grad_t: Vec<_> = contact_basis
-            .to_tangent_space(grad.view().into_inner().into())
+            .to_tangent_space(grad.view().into_data().into())
             .collect();
 
         let mut grad_f_t = Chunked2::from_flat(grad_f_t);
         for (g_out, &g) in grad_f_t.iter_mut().zip(grad_t.iter()) {
             //*g_out = g;
-            *g_out = (Tensor::new(g) * self.0.objective_scale).into_inner();
+            *g_out = (Vector2::new(g) * self.0.objective_scale).into_data();
             //dbg!(f64::max(g_out[0].abs(), g_out[1].abs()));
         }
 
@@ -352,7 +352,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         let mut jacobian = Chunked2::from_flat(vals);
         let r = Chunked2::from_flat(r);
         for (jac, &r) in zip!(jacobian.iter_mut(), r.iter()) {
-            *jac.as_mut_tensor() = Tensor::new(r) * 2.0;
+            *jac.as_mut_tensor() = Vector2::new(r) * 2.0;
             //dbg!(f64::max(jac[0].abs(), jac[1].abs()));
         }
         true
@@ -361,7 +361,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
         // Constraint Hessian is diagonal.
         let mut idx = 0;
-        for (row_idx, row) in self.0.hessian.data.iter().enumerate() {
+        for (row_idx, row) in self.0.hessian.as_data().iter().enumerate() {
             for col_idx in row.index_iter() {
                 if row_idx > col_idx {
                     idx += 4;
@@ -378,7 +378,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         // Diagonal objective Hessian.
         let offset = {
             let mut idx = 0;
-            for (row_idx, row) in self.0.hessian.data.iter().enumerate() {
+            for (row_idx, row) in self.0.hessian.as_data().iter().enumerate() {
                 for col_idx in row.index_iter() {
                     if row_idx < col_idx {
                         continue;
@@ -420,7 +420,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
         vals: &mut [Number],
     ) -> bool {
         let mut idx = 0;
-        for (row_idx, row) in self.0.hessian.data.iter().enumerate() {
+        for (row_idx, row) in self.0.hessian.as_data().iter().enumerate() {
             for (col_idx, block) in row.indexed_source_iter() {
                 if row_idx < col_idx {
                     continue;
@@ -428,7 +428,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
 
                 let hess_block =
                     (*block.into_arrays().as_tensor() * obj_factor * self.0.objective_scale)
-                        .into_inner();
+                        .into_data();
 
                 vals[idx] = hess_block[0][0];
                 idx += 1;
@@ -448,7 +448,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
 
         let mut hess = Chunked2::from_flat(&mut vals[idx..]);
         for (&l, h) in zip!(lambda.iter(), hess.iter_mut()) {
-            *h.as_mut_tensor() = Tensor::new([2.0; 2]) * l;
+            *h.as_mut_tensor() = Vector2::new([2.0; 2]) * l;
         }
 
         true

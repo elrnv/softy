@@ -25,9 +25,9 @@ impl<'a> ContactSolver<'a> {
             .diagonal_congruence_transform3x1(basis_mtx.view());
 
         let predictor_impulse = Chunked3::from_array_slice(predictor_impulse);
-        let pred = mass_inv_mtx.view() * Tensor::new(predictor_impulse.view());
+        let pred = mass_inv_mtx.view() * predictor_impulse.view().into_tensor();
         let predictor_impulse_n: Vec<f64> = contact_basis
-            .to_normal_space(pred.view().into_inner().into())
+            .to_normal_space(pred.view().into_data().into())
             .collect();
 
         let problem = ContactProblem {
@@ -108,7 +108,7 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
 
         assert_eq!(predictor_impulse_n.len(), r_n.len());
 
-        let mut rhs = hessian.view() * (Tensor::new(r_n) * 0.5).view();
+        let mut rhs = hessian.view() * (r_n.as_tensor() * 0.5).view();
         rhs -= predictor_impulse_n.view().as_tensor();
 
         *obj = r_n.expr().dot(rhs.expr());
@@ -123,11 +123,11 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
             ..
         } = self;
 
-        let mut rhs = hessian.view() * Tensor::new(r_n);
+        let mut rhs = hessian.view() * r_n.as_tensor();
         rhs -= predictor_impulse_n.view().as_tensor();
 
         assert_eq!(grad_f_n.len(), rhs.len());
-        grad_f_n.copy_from_slice(rhs.view().into_inner());
+        grad_f_n.copy_from_slice(rhs.view().into_data());
 
         true
     }
@@ -136,7 +136,7 @@ impl ipopt::BasicProblem for ContactProblem<'_> {
 impl ipopt::NewtonProblem for ContactProblem<'_> {
     fn num_hessian_non_zeros(&self) -> usize {
         let mut idx = 0;
-        for (row_idx, row) in self.hessian.data.iter().enumerate() {
+        for (row_idx, row) in self.hessian.as_data().iter().enumerate() {
             for col_idx in row.index_iter() {
                 if row_idx >= col_idx {
                     idx += 1;
@@ -149,7 +149,7 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
     fn hessian_indices(&self, rows: &mut [Index], cols: &mut [Index]) -> bool {
         // Diagonal objective Hessian.
         let mut idx = 0;
-        for (row_idx, row) in self.hessian.data.iter().enumerate() {
+        for (row_idx, row) in self.hessian.as_data().iter().enumerate() {
             for col_idx in row.index_iter() {
                 if row_idx >= col_idx {
                     rows[idx] = row_idx as Index;
@@ -163,7 +163,7 @@ impl ipopt::NewtonProblem for ContactProblem<'_> {
 
     fn hessian_values(&self, _r: &[Number], vals: &mut [Number]) -> bool {
         let mut idx = 0;
-        for (row_idx, row) in self.hessian.data.iter().enumerate() {
+        for (row_idx, row) in self.hessian.as_data().iter().enumerate() {
             for (col_idx, &entry) in row.indexed_source_iter() {
                 if row_idx >= col_idx {
                     vals[idx] = entry;

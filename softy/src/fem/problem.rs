@@ -1770,8 +1770,8 @@ impl NonLinearProblem {
                 ))
             .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
                 let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
-                *strain = NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
-                    .elastic_energy()
+                *strain =
+                    NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu).energy()
             });
 
         solid
@@ -1819,7 +1819,7 @@ impl NonLinearProblem {
             .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
                 let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
                 NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
-                    .elastic_energy_gradient()
+                    .energy_gradient()
             });
 
         for (grad, cell) in grad_iter.zip(solid.tetmesh.cells().iter()) {
@@ -1975,11 +1975,9 @@ impl NonLinearProblem {
     }
 
     pub fn collider_normals(&self) -> Chunked<Chunked<Chunked3<Vec<f64>>>> {
-        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
         let NonLinearProblem {
             object_data,
             frictional_contacts,
-            volume_constraints,
             ..
         } = self;
 
@@ -1988,9 +1986,6 @@ impl NonLinearProblem {
         let mut coll_nml = Vec::new();
 
         for fc in frictional_contacts.iter() {
-            // Get contact force from the warm start.
-            let n = fc.constraint.borrow().constraint_size();
-
             coll_nml.clear();
             coll_nml.resize(
                 object_data.mesh_surface_vertex_count(fc.collider_index),

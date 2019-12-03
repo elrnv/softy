@@ -218,20 +218,23 @@ pub(crate) mod test_utils {
                 }
             }
 
+            let mut success = true;
             for i in 0..x0.len() {
                 x1[i] = F::var(x1[i]);
                 let mut grad = vec![F::zero(); x0.len()];
                 energy.add_energy_gradient(&x0, &x1, &mut grad);
                 for j in 0..x0.len() {
-                    assert_relative_eq!(
+                    success &= relative_eq!(
                         hess[i][j].value(),
                         grad[j].deriv(),
                         max_relative = 1e-6,
                         epsilon = 1e-10
                     );
+                    eprintln!("{} vs. {}", hess[i][j].value(), grad[j].deriv());
                 }
                 x1[i] = F::cst(x1[i]);
             }
+            assert!(success);
         }
     }
 }

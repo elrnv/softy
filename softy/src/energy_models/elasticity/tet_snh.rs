@@ -3,13 +3,13 @@
 
 //use std::path::Path;
 //use geo::io::save_tetmesh;
-use super::TetEnergy;
+use super::tet_nh::TetMeshElasticity;
+use super::LinearElementEnergy;
 use geo::ops::*;
 use geo::prim::Tetrahedron;
 use num_traits::Zero;
-use utils::soap::*;
-use super::tet_nh::TetMeshElasticity;
 use unroll::unroll_for_loops;
+use utils::soap::*;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -22,23 +22,12 @@ pub struct StableNeoHookeanTetEnergy<T: Real> {
     mu: T,
 }
 
-impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
-    #[allow(non_snake_case)]
-    fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self {
-        StableNeoHookeanTetEnergy {
-            Dx,
-            DX_inv,
-            volume,
-            lambda,
-            mu,
-        }
-    }
-
+impl<T: Real> StableNeoHookeanTetEnergy<T> {
     /// Compute the deformation gradient `F` for this tet.
     #[allow(non_snake_case)]
     #[inline]
     fn deformation_gradient(&self) -> Matrix3<T> {
-        self.Dx * self.DX_inv
+        self.DX_inv * self.Dx
     }
 
     /// Compute the deformation gradient differential `dF` for this tet.
@@ -46,52 +35,8 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
     #[inline]
     fn deformation_gradient_differential(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
         // Build differential dDx
-        let dDx = Matrix3::new(tet_dx.shape_matrix()).transpose();
-        dDx * self.DX_inv
-    }
-
-    /// Elastic strain energy per element.
-    /// This is a helper function that computes the strain energy given shape matrices, which can
-    /// be obtained from a tet and its reference configuration.
-    #[allow(non_snake_case)]
-    #[inline]
-    fn elastic_energy(&self) -> T {
-        let StableNeoHookeanTetEnergy {
-            volume, mu, lambda, ..
-        } = *self;
-        let F = self.deformation_gradient();
-        let I = F.frob_norm_squared(); // tr(F^TF)
-        let J = F.determinant();
-        let half = T::from(0.5).unwrap();
-        let J_minus_1 = J - T::one();
-        let J_minus_alpha =  J_minus_1 - T::from(0.75).unwrap() * mu / lambda;
-        volume
-            * half * (mu * (I - T::from(3.0).unwrap() - (I + T::one()).ln())
-                + lambda * J_minus_alpha*J_minus_alpha)
-    }
-
-    /// Elastic energy gradient per element vertex.
-    /// This is a helper function that computes the energy gradient given shape matrices, which can
-    /// be obtained from a tet and its reference configuration.
-    #[allow(non_snake_case)]
-    #[inline]
-    fn elastic_energy_gradient(&self) -> [Vector3<T>; 4] {
-        let StableNeoHookeanTetEnergy {
-            DX_inv,
-            volume,
-            mu,
-            lambda,
-            ..
-        } = *self;
-        let F = self.deformation_gradient();
-        let I = F.frob_norm_squared(); // tr(F^TF)
-        let J = F.determinant();
-        let alpha = T::one() + T::from(0.75).unwrap() * mu / lambda;
-        let dJdF = Matrix3::new([F[1].cross(F[2]).data, F[2].cross(F[0]).data, F[0].cross(F[1]).data]);
-        let P = F * (mu * (I / (I + T::one()))) + dJdF * (lambda * (J - alpha));
-        //let PT = (F.transpose() * mu + F_inv * (lambda * logJ - mu));
-        let H = DX_inv * P.transpose() * volume;
-        [H[0], H[1], H[2], -H[0] - H[1] - H[2]]
+        let dDx = Matrix3::new(tet_dx.shape_matrix());
+        self.DX_inv * dDx
     }
 
     /// Elasticity Hessian per element with respect to deformation gradient. This is a 3x3 matrix
@@ -100,31 +45,33 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
     #[unroll_for_loops]
     #[inline]
     fn elastic_energy_deformation_hessian(&self) -> [[Matrix3<T>; 3]; 3] {
-        let StableNeoHookeanTetEnergy { lambda, mu, ..  } = *self;
-        let F = self.deformation_gradient();
+        let StableNeoHookeanTetEnergy { lambda, mu, .. } = *self;
+        let F = self.deformation_gradient().transpose();
         let I = F.frob_norm_squared(); // tr(F^TF)
         let I_plus_1 = I + T::one();
         let J = F.determinant();
-        let J_minus_alpha =  J - T::one() - T::from(0.75).unwrap() * mu / lambda;
+        let J_minus_alpha = J - T::one() - T::from(0.75).unwrap() * mu / lambda;
 
         let Ti = Matrix9::identity();
         let f = F.vec();
         let M = f * f.transpose();
-        let dJdF = Matrix3::new([F[1].cross(F[2]).data, F[2].cross(F[0]).data, F[0].cross(F[1]).data]);
+        let dJdF = Matrix3 {
+            data: [F[1].cross(F[2]), F[2].cross(F[0]), F[0].cross(F[1])],
+        };
         let g = dJdF.vec();
         let G = g * g.transpose();
-        let zero = [[T::zero(); 3]; 3];
+        let zero = Matrix3::zero();
         let H_blocks = [
-            [zero, (-F[2]).skew().data, F[1].skew().data],
-            [F[2].skew().data, zero, (-F[0]).skew().data],
-            [(-F[1]).skew().data, F[0].skew().data, zero]
+            [zero, (-F[2]).skew(), F[1].skew()],
+            [F[2].skew(), zero, (-F[0]).skew()],
+            [(-F[1]).skew(), F[0].skew(), zero],
         ];
         let mut H = Matrix9::<T>::zero();
         for r in 0..3 {
             for c in 0..3 {
                 for i in 0..3 {
                     for j in 0..3 {
-                        H[3*r + i][3*c + j] = H_blocks[r][c][i][j];
+                        H[3 * r + i][3 * c + j] = H_blocks[r][c][i][j];
                     }
                 }
             }
@@ -138,10 +85,76 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
         let mut out = [[Matrix3::zero(); 3]; 3];
         for i in 0..3 {
             for j in 0..3 {
-                out[i][j] = dfdF[3*i + j].mtx()
+                out[i][j] = dfdF[3 * i + j].mtx()
             }
         }
         out
+    }
+}
+
+impl<T: Real> LinearElementEnergy<T> for StableNeoHookeanTetEnergy<T> {
+    type Element = Tetrahedron<T>;
+    type ShapeMatrix = Matrix3<T>;
+    type RefShapeMatrix = Matrix3<T>;
+    type Gradient = [Vector3<T>; 4];
+    type Hessian = [[Matrix3<T>; 4]; 4];
+
+    #[allow(non_snake_case)]
+    fn new(Dx: Matrix3<T>, DX_inv: Matrix3<T>, volume: T, lambda: T, mu: T) -> Self {
+        StableNeoHookeanTetEnergy {
+            Dx,
+            DX_inv,
+            volume,
+            lambda,
+            mu,
+        }
+    }
+
+    /// Elastic strain energy per element.
+    /// This is a helper function that computes the strain energy given shape matrices, which can
+    /// be obtained from a tet and its reference configuration.
+    #[allow(non_snake_case)]
+    #[inline]
+    fn energy(&self) -> T {
+        let StableNeoHookeanTetEnergy {
+            volume, mu, lambda, ..
+        } = *self;
+        let F = self.deformation_gradient();
+        let I = F.frob_norm_squared(); // tr(F^TF)
+        let J = F.determinant();
+        let half = T::from(0.5).unwrap();
+        let J_minus_1 = J - T::one();
+        let J_minus_alpha = J_minus_1 - T::from(0.75).unwrap() * mu / lambda;
+        volume
+            * half
+            * (mu * (I - T::from(3.0).unwrap() - (I + T::one()).ln())
+                + lambda * J_minus_alpha * J_minus_alpha)
+    }
+
+    /// Elastic energy gradient per element vertex.
+    /// This is a helper function that computes the energy gradient given shape matrices, which can
+    /// be obtained from a tet and its reference configuration.
+    #[allow(non_snake_case)]
+    #[inline]
+    fn energy_gradient(&self) -> [Vector3<T>; 4] {
+        let StableNeoHookeanTetEnergy {
+            DX_inv,
+            volume,
+            mu,
+            lambda,
+            ..
+        } = *self;
+        let F = self.deformation_gradient();
+        let I = F.frob_norm_squared(); // tr(F^TF)
+        let J = F.determinant();
+        let alpha = T::one() + T::from(0.75).unwrap() * mu / lambda;
+        let dJdF = Matrix3 {
+            data: [F[1].cross(F[2]), F[2].cross(F[0]), F[0].cross(F[1])],
+        };
+        let P = F * (mu * (I / (I + T::one()))) + dJdF * (lambda * (J - alpha));
+        //let PT = (F.transpose() * mu + F_inv * (lambda * logJ - mu));
+        let H = DX_inv.transpose() * P * volume;
+        [H[0], H[1], H[2], -H[0] - H[1] - H[2]]
     }
 
     /// Elasticity Hessian per element. This is represented by a 4x4 block matrix of 3x3 matrices. The
@@ -150,24 +163,26 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
     #[inline]
-    fn elastic_energy_hessian(&self) -> [[Matrix3<T>; 4]; 4] {
-        let StableNeoHookeanTetEnergy {
-            DX_inv,
-            volume,
-            ..
-        } = *self;
+    fn energy_hessian(&self) -> [[Matrix3<T>; 4]; 4] {
+        let StableNeoHookeanTetEnergy { DX_inv, volume, .. } = *self;
+        let DX_inv = DX_inv.transpose();
 
         let dfdF = self.elastic_energy_deformation_hessian();
 
         let mut local_hessians = [[Matrix3::zeros(); 4]; 4];
 
-        for r in 0..3 { // vertex
-            for c in 0..3 { // vertex
-                for i in 0..3 { // component
-                    for j in 0..3 { // component
+        for r in 0..3 {
+            // vertex
+            for c in 0..3 {
+                // vertex
+                for i in 0..3 {
+                    // component
+                    for j in 0..3 {
+                        // component
                         // F contraction
                         for k in 0..3 {
-                            local_hessians[r][c][i][j] += volume * dfdF[j][k][i].dot(DX_inv[r]) * DX_inv[c][k];
+                            local_hessians[r][c][i][j] +=
+                                volume * dfdF[j][k][i].dot(DX_inv[r]) * DX_inv[c][k];
                         }
                     }
                 }
@@ -195,7 +210,7 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
     #[inline]
-    fn elastic_energy_hessian_product_transpose(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
+    fn energy_hessian_product_transpose(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
         let StableNeoHookeanTetEnergy {
             DX_inv,
             volume,
@@ -208,21 +223,23 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
         let J = F.determinant();
         let I = F.frob_norm_squared(); // tr(F^TF)
         let I_plus_1 = I + T::one();
-        let dJdF = Matrix3::new([F[1].cross(F[2]).data, F[2].cross(F[0]).data, F[0].cross(F[1]).data]);
+        let dJdF = Matrix3 {
+            data: [F[1].cross(F[2]), F[2].cross(F[0]), F[0].cross(F[1])],
+        };
         let alpha = T::one() + T::from(0.75).unwrap() * mu / lambda;
 
-        let zero = Matrix3::zero().data;
+        let zero = Matrix3::zero();
         let H_blocks = [
-            [zero, (-F[2]).skew().data, F[1].skew().data],
-            [F[2].skew().data, zero, (-F[0]).skew().data],
-            [(-F[1]).skew().data, F[0].skew().data, zero]
+            [zero, (-F[2]).skew(), F[1].skew()],
+            [F[2].skew(), zero, (-F[0]).skew()],
+            [(-F[1]).skew(), F[0].skew(), zero],
         ];
         let mut H = Matrix9::<T>::zero();
         for r in 0..3 {
             for c in 0..3 {
                 for i in 0..3 {
                     for j in 0..3 {
-                        H[3*r + i][3*c + j] = H_blocks[r][c][i][j];
+                        H[3 * r + i][3 * c + j] = H_blocks[r][c][i][j];
                     }
                 }
             }
@@ -232,10 +249,11 @@ impl<T: Real> TetEnergy<T> for StableNeoHookeanTetEnergy<T> {
         let FdFtrace = F.vec().dot(dF.vec());
 
         let dP = (dF * (I / I_plus_1)
-                  + F * (FdFtrace * T::from(2.0).unwrap() / (I_plus_1 * I_plus_1))) * mu
-            + (dJdF * dJdF.vec().dot(dF.vec())  + h_mtx * (J - alpha)) * lambda;
+            + F * (FdFtrace * T::from(2.0).unwrap() / (I_plus_1 * I_plus_1)))
+            * mu
+            + (dJdF * dJdF.vec().dot(dF.vec()) + h_mtx * (J - alpha)) * lambda;
 
-        DX_inv * dP.transpose() * volume
+        DX_inv.transpose() * dP * volume
     }
 }
 
@@ -243,11 +261,11 @@ pub type TetMeshStableNeoHookean<'a, T> = TetMeshElasticity<'a, StableNeoHookean
 
 #[cfg(test)]
 mod tests {
-    use crate::objects::material::*;
     use super::*;
-    use crate::energy_models::test_utils::*;
     use crate::energy_models::elasticity::test_utils::*;
+    use crate::energy_models::test_utils::*;
     use crate::fem::SolverBuilder;
+    use crate::objects::material::*;
     use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 
@@ -275,7 +293,9 @@ mod tests {
             .collect()
     }
 
-    fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshStableNeoHookean<autodiff::F>, Vec<[f64; 3]>)> {
+    fn build_energies(
+        solids: &[TetMeshSolid],
+    ) -> Vec<(TetMeshStableNeoHookean<autodiff::F>, Vec<[f64; 3]>)> {
         solids
             .iter()
             .map(|solid| {
@@ -286,7 +306,6 @@ mod tests {
             })
             .collect()
     }
-
 
     #[test]
     fn tet_energy_gradient() {

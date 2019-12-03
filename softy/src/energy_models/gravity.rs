@@ -41,7 +41,7 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
             .cell_iter()
             .map(|cell| Tetrahedron::from_indexed_slice(cell, pos1));
 
-        let g = self.g.map(|x| T::from(x).unwrap());
+        let g = self.g.cast::<T>();
 
         zip!(
             tetmesh
@@ -70,7 +70,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
         let tetmesh = &self.solid.tetmesh;
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
 
-        let g = self.g.map(|x| T::from(x).unwrap());
+        let g = self.g.cast::<T>();
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (&vol, density, cell) in zip!(
@@ -131,7 +131,7 @@ impl<T: Real> Energy<T> for TriMeshGravity<'_> {
             .face_iter()
             .map(|face| Triangle::from_indexed_slice(face, pos1));
 
-        let g = self.g.map(|x| T::from(x).unwrap());
+        let g = self.g.cast::<T>();
 
         zip!(
             trimesh
@@ -160,7 +160,7 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
         let trimesh = &self.shell.trimesh;
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
 
-        let g = self.g.map(|x| T::from(x).unwrap());
+        let g = self.g.cast::<T>();
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (&area, density, face) in zip!(

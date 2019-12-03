@@ -56,14 +56,14 @@ impl<'a> FrictionSolver<'a> {
             self.contact_impulse.iter()
         ) {
             // This needs to incorporate effective mass.
-            let rc = Tensor::new(pred_p); // Impulse candidate
+            let rc = Vector2::new(pred_p); // Impulse candidate
 
             // Project onto the unit circle.
             let radius = self.mu * cr.abs();
             if rc.dot(rc) > radius * radius {
-                *r = ((rc - Tensor::new(prev_r)) * (radius / rc.norm())).into_inner();
+                *r = ((rc - Vector2::new(prev_r)) * (radius / rc.norm())).into_data();
             } else {
-                *r = (rc - Tensor::new(prev_r)).into_inner();
+                *r = (rc - Vector2::new(prev_r)).into_data();
             }
         }
 

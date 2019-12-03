@@ -58,7 +58,7 @@ pub fn inner(m: ChunkedN<&[f64]>, v: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; v.len()];
     for (row, out) in m.iter().zip(out.iter_mut()) {
         for (&col, &rhs) in Chunked4::from_flat(row).iter().zip(Chunked4::from_flat(v).iter()) {
-            *out += Tensor::new(col).dot(Tensor::new(rhs));
+            *out += Vector4::new(col).dot(Vector4::new(rhs));
         }
     }
     out

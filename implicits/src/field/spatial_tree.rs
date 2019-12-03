@@ -1,6 +1,6 @@
 use super::samples::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
-use utils::soap::{Scalar, Vector3};
+use utils::soap::{Scalar, Vector3, IntoData};
 
 /// Implement the trait required for `Sample` to live inside an `RTree`.
 impl<T: Scalar> RTreeObject for Sample<T> {
@@ -17,7 +17,7 @@ impl<T: Scalar> PointDistance for Sample<T> {
     }
 
     fn contains_point(&self, point: &[f64; 3]) -> bool {
-        *point == self.pos.cast::<f64>().into_inner()
+        *point == self.pos.cast::<f64>().into_data()
     }
     fn distance_2_if_less_or_equal(&self, point: &[f64; 3], max_distance_2: f64) -> Option<f64> {
         let distance_2 = self.distance_2(point);

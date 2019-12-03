@@ -29,9 +29,9 @@ impl<T: Scalar> Sample<T> {
     pub fn cast<S: Scalar>(self) -> Sample<S> {
         Sample {
             index: self.index,
-            pos: self.pos.map(|x| S::from(x).unwrap()),
-            nml: self.nml.map(|x| S::from(x).unwrap()),
-            vel: self.vel.map(|x| S::from(x).unwrap()),
+            pos: self.pos.mapd(|x| S::from(x).unwrap()),
+            nml: self.nml.mapd(|x| S::from(x).unwrap()),
+            vel: self.vel.mapd(|x| S::from(x).unwrap()),
             value: S::from(self.value).unwrap(),
         }
     }

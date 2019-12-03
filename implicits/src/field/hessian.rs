@@ -185,7 +185,7 @@ impl<T: Real> QueryTopo<T> {
             .zip(hess_iter)
             .for_each(|(mtx, new_mtx)| {
                 let mut i = 0;
-                for (c, new_col) in new_mtx.into_inner().iter().enumerate() {
+                for (c, new_col) in new_mtx.into_data().iter().enumerate() {
                     for &new_val in new_col.iter().skip(c) {
                         mtx[i] = new_val * scale;
                         i += 1;

@@ -581,22 +581,6 @@ macro_rules! impl_array_vectors {
         }
 
         /*
-         * Vector-RowVector multiply
-         * This sepecial case treats Vectors as column vectors
-         */
-        impl<T, U> Mul<Tensor<[Tensor<[T; $n]>; 1]>> for Tensor<[T; $n]>
-        where
-            Tensor<[Tensor<[T; 1]>; $n]>: Mul<Tensor<[Tensor<[T; $n]>; 1]>, Output = U>,
-        {
-            type Output = U;
-            #[inline]
-            fn mul(self, rhs: Tensor<[Tensor<[T; $n]>; 1]>) -> Self::Output {
-                let lhs: Tensor<[Tensor<[T; 1]>; $n]> = unsafe { Tensor::reinterpret(self) };
-                lhs * rhs
-            }
-        }
-
-        /*
          * Scalar ops
          */
 
@@ -1100,6 +1084,23 @@ macro_rules! impl_array_matrices {
                 self.map(|row| row.dot_op(rhs))
             }
         }
+
+        /*
+         * Vector-RowVector multiply
+         * This sepecial case treats Vectors as column vectors
+         */
+        impl<T, U> Mul<Tensor<[Tensor<[T; $c]>; 1]>> for Tensor<[T; $r]>
+        where
+            Tensor<[Tensor<[T; 1]>; $r]>: Mul<Tensor<[Tensor<[T; $c]>; 1]>, Output = U>,
+        {
+            type Output = U;
+            #[inline]
+            fn mul(self, rhs: Tensor<[Tensor<[T; $c]>; 1]>) -> Self::Output {
+                let lhs: Tensor<[Tensor<[T; 1]>; $r]> = unsafe { Tensor::reinterpret(self) };
+                lhs * rhs
+            }
+        }
+
 
         // Right scalar multiply by a raw scalar.
         //impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]> {

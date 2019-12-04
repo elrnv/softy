@@ -8,7 +8,7 @@ pub use sprs_compat::*;
 use super::*;
 use crate::zip;
 use chunked::Offsets;
-use num_traits::Float;
+use num_traits::{Zero, Float};
 use std::convert::AsRef;
 use std::ops::{Add, Mul, MulAssign};
 
@@ -1430,44 +1430,44 @@ impl<'a> Mul<Tensor<Chunked3<&'a Tensor<[f64]>>>> for DSBlockMatrix3View<'_> {
     }
 }
 
-//impl Mul<DSBlockMatrix1x3View<'_>> for DSMatrixView<'_> {
-//    type Output = DSBlockMatrix1x3;
-//    fn mul(self, rhs: DSBlockMatrix1x3View<'_>) -> Self::Output {
-//        let mut blocks = Chunked1::from_flat(Chunked3::from_flat(Vec::new()));
-//        let mut offsets = vec![0];
-//        offsets.reserve(self.data.len());
-//        let mut indices = Vec::new();
-//        indices.reserve(5*rhs.as_data().len());
-//        let mut workspace_blocks = Vec::new();
-//
-//        for row in self.as_data().iter() {
-//            let mut out_expr = row.expr().cwise_mul(rhs.as_data().expr());
-//
-//            // Write out block sums into a dense vector of blocks
-//            if let Some(next) = out_expr.next() {
-//                workspace_blocks.resize(next.expr.target_size(), Matrix1x3::new([[0.0; 3]; 1]));
-//                for elem in next.expr {
-//                    workspace_blocks[elem.index] += elem.expr;
-//                }
-//                for next in out_expr {
-//                    for elem in next.expr {
-//                        workspace_blocks[elem.index] += elem.expr;
-//                    }
-//                }
-//            }
-//
-//            // Condense the dense blocks into a sparse vector
-//            for (i, block) in workspace_blocks.iter_mut().enumerate().filter(|(_, &b)| b.as_data() != &[[0.0; 3]; 1]) {
-//                indices.push(i);
-//                blocks.eval_extend(std::mem::replace(block, Matrix1x3::new([[0.0; 3]; 1])));
-//            }
-//
-//            offsets.push(blocks.len());
-//        }
-//        let data = Sparse::from_dim(indices, rhs.num_cols(), blocks);
-//        Chunked::from_offsets(offsets, data).into_tensor()
-//    }
-//}
+impl Mul<DSBlockMatrix1x3View<'_>> for DSMatrixView<'_> {
+    type Output = DSBlockMatrix1x3;
+    fn mul(self, rhs: DSBlockMatrix1x3View<'_>) -> Self::Output {
+        let mut blocks = Chunked1::from_flat(Chunked3::from_flat(Vec::new()));
+        let mut offsets = vec![0];
+        offsets.reserve(self.data.len());
+        let mut indices = Vec::new();
+        indices.reserve(5*rhs.as_data().len());
+        let mut workspace_blocks = Vec::new();
+
+        for row in self.as_data().iter() {
+            let mut out_expr = row.expr().cwise_mul(rhs.as_data().expr());
+
+            // Write out block sums into a dense vector of blocks
+            if let Some(next) = out_expr.next() {
+                workspace_blocks.resize(next.expr.target_size(), Matrix1x3::new([[0.0; 3]; 1]));
+                for elem in next.expr {
+                    workspace_blocks[elem.index] += elem.expr;
+                }
+                for next in out_expr {
+                    for elem in next.expr {
+                        workspace_blocks[elem.index] += elem.expr;
+                    }
+                }
+            }
+
+            // Condense the dense blocks into a sparse vector
+            for (i, block) in workspace_blocks.iter_mut().enumerate().filter(|(_, b)| !b.is_zero()) {
+                indices.push(i);
+                blocks.eval_extend(std::mem::replace(block, Matrix1x3::new([[0.0; 3]; 1])));
+            }
+
+            offsets.push(blocks.len());
+        }
+        let data = Sparse::from_dim(indices, rhs.num_cols(), blocks);
+        Chunked::from_offsets(offsets, data).into_tensor()
+    }
+}
 
 impl<'a, Rhs> Mul<Rhs> for DSBlockMatrix1x3View<'_>
 where

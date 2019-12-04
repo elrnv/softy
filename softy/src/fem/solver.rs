@@ -88,6 +88,17 @@ pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
     Tetrahedron::from_indexed_slice(indices, ref_pos)
 }
 
+/// Get reference triangle.
+/// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
+pub fn ref_tri(trimesh: &TriMesh, indices: &[usize; 3]) -> Triangle<f64> {
+    let ref_pos = trimesh
+        .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
+        .unwrap()
+        .as_slice::<[f64; 3]>()
+        .unwrap();
+    Triangle::from_indexed_slice(indices, ref_pos)
+}
+
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
     sim_params: SimParams,
@@ -796,6 +807,29 @@ impl SolverBuilder {
 
         Ok(mesh.face_iter().map(|face| ref_tri(face).area()).collect())
     }
+    /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
+    fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Vec<Matrix2<f64>> {
+        // Compute reference shape matrix inverses
+        mesh.face_iter()
+            .map(|face| {
+                let ref_shape_matrix = ref_tri(&mesh, face).shape_matrix();
+                // We assume that reference triangles are non-degenerate.
+
+                // Project (orthogonally) second row onto the first.
+                let scale = ref_shape_matrix[0].dot(ref_shape_matrix[1]) / ref_shape_matrix[0].norm_squared();
+                let r1_proj = ref_shape_matrix[0] * scale;
+
+                let q = Matrix2 {
+                    data: [
+                        ref_shape_matrix[0].normalized(),
+                        (ref_shape_matrix[1] - r1_proj).normalized(),
+                    ]
+                };
+
+                ref_shape_matrix * q;
+            })
+            .collect()
+    }
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
@@ -1045,6 +1079,21 @@ impl SolverBuilder {
         Ok(())
     }
 
+    pub(crate) fn prepare_deformable_trimesh_attributes(mesh: &mut TriMesh) -> Result<(), Error> {
+        let ref_areas = Self::compute_ref_tri_areas(mesh)?;
+        mesh.set_attrib_data::<RefAreaType, FaceIndex>(
+            REFERENCE_AREA_ATTRIB,
+            ref_areas.as_slice(),
+            )?;
+
+        let ref_shape_mtx_inverses = Self::compute_ref_tri_shape_matrix_inverses(mesh);
+        mesh.set_attrib_data::<_, FaceIndex>(
+            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+            ref_shape_mtx_inverses.as_slice(),
+        )?;
+        Ok(())
+    }
+
     /// A utility for initializing the source index attribute to use for
     /// updating mesh vertices. This can be used explicitly by the user on the
     /// mesh before building the solver. For instance if the user splits the
@@ -1130,11 +1179,7 @@ impl SolverBuilder {
             ShellProperties::Deformable { .. } => {
                 Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
 
-                let ref_areas = Self::compute_ref_tri_areas(mesh)?;
-                mesh.set_attrib_data::<RefAreaType, FaceIndex>(
-                    REFERENCE_AREA_ATTRIB,
-                    ref_areas.as_slice(),
-                )?;
+                Self::prepare_deformable_trimesh_attributes(mesh)?;
 
                 {
                     // Add elastic strain energy attribute.

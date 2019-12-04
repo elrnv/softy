@@ -1,4 +1,4 @@
-use utils::soap::Matrix3;
+use utils::soap::{Matrix3, Matrix2};
 
 pub const SOURCE_INDEX_ATTRIB: &str = "src_idx";
 pub const FIXED_ATTRIB: &str = "fixed";
@@ -30,7 +30,8 @@ pub(crate) type VelType = [f64; 3];
 pub(crate) type RefPosType = [f64; 3];
 pub(crate) type RefVolType = f64;
 pub(crate) type RefAreaType = f64;
-pub(crate) type RefShapeMtxInvType = Matrix3<f64>;
+pub(crate) type RefTetShapeMtxInvType = Matrix3<f64>;
+pub(crate) type RefTriShapeMtxInvType = Matrix2<f64>;
 pub(crate) type StrainEnergyType = f64;
 pub(crate) type ElasticForceType = [f64; 3];
 pub(crate) type PotentialType = f64;

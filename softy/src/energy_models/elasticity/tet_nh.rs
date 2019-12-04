@@ -202,12 +202,11 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTetEnergy<T> {
             let alpha = mu - lambda * J.ln();
 
             let F_inv_tr = F.inverse_transpose().unwrap();
-            let F_inv = F_inv_tr.transpose();
             let dF_tr_F_inv_tr = dF.transpose() * F_inv_tr;
 
             let dP = dF * mu
-                + F_inv_tr * (dF_tr_F_inv_tr * alpha
-                + (dF_tr_F_inv_tr.trace() * lambda));
+                + F_inv_tr * dF_tr_F_inv_tr * alpha
+                + F_inv_tr * (dF_tr_F_inv_tr.trace() * lambda);
 
             DX_inv.transpose() * dP * volume
         } else {
@@ -285,7 +284,7 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetMeshElasticity<'_, E> {
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
             tetmesh
-                .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                 .unwrap(),
             tetmesh.cell_iter(),
             tetmesh
@@ -344,7 +343,7 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
             tetmesh
-                .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                 .unwrap(),
             tetmesh.cell_iter(),
             tetmesh
@@ -486,7 +485,7 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
                     .unwrap()
                     .par_iter(),
                 tetmesh
-                    .attrib_as_slice::<RefShapeMtxInvType, CellIndex>(
+                    .attrib_as_slice::<RefTetShapeMtxInvType, CellIndex>(
                         REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                     )
                     .unwrap()

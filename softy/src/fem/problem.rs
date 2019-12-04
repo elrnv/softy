@@ -1762,7 +1762,7 @@ impl NonLinearProblem {
                         .unwrap(),
                     solid
                         .tetmesh
-                        .attrib_iter::<RefShapeMtxInvType, CellIndex>(
+                        .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(
                             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
                         )
                         .unwrap(),
@@ -1812,7 +1812,7 @@ impl NonLinearProblem {
                 .unwrap(),
             solid
                 .tetmesh
-                .attrib_iter::<RefShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB,)
+                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB,)
                 .unwrap(),
             solid.tetmesh.tet_iter()
         )

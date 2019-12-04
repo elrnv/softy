@@ -203,10 +203,11 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTetEnergy<T> {
 
             let F_inv_tr = F.inverse_transpose().unwrap();
             let F_inv = F_inv_tr.transpose();
+            let dF_tr_F_inv_tr = dF.transpose() * F_inv_tr;
 
             let dP = dF * mu
-                + F_inv_tr * dF.transpose() * F_inv_tr * alpha
-                + F_inv_tr * ((F_inv * dF).trace() * lambda);
+                + F_inv_tr * (dF_tr_F_inv_tr * alpha
+                + (dF_tr_F_inv_tr.trace() * lambda));
 
             DX_inv.transpose() * dP * volume
         } else {

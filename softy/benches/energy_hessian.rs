@@ -5,7 +5,7 @@ use num_traits::Zero;
 use utils::soap::*;
 use softy::energy_models::elasticity::{TetEnergy, NeoHookeanTetEnergy, StableNeoHookeanTetEnergy};
 
-/// Compute the energy hessian directly using the elastic_energy_hessian implementation.
+/// Compute the energy hessian directly using the energy_hessian implementation.
 #[allow(non_snake_case)]
 pub(crate) fn energy_hessian_direct<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4]; 4] {
     let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
@@ -16,7 +16,7 @@ pub(crate) fn energy_hessian_direct<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4]; 
     let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix()).inverse_transpose().unwrap();
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
-    energy.elastic_energy_hessian()
+    energy.energy_hessian()
 }
 
 /// Compute the energy hessian using products.
@@ -31,15 +31,15 @@ pub(crate) fn energy_hessian_product<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4];
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
 
-    let mut d_verts = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
+    let mut d_verts = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
 
     let mut hess = [[Matrix3::zero(); 4]; 4];
     for wrt_vtx in 0..3 {
         for wrt_i in 0..3 {
             d_verts[wrt_vtx][wrt_i] = 1.0;
-            let tet_dx = Tetrahedron::from_indexed_slice(&cell, &d_verts);
+            let tet_dx = Tetrahedron::from_indexed_slice(&cell, &d_verts[..]);
 
-            let h = energy.elastic_energy_hessian_product_transpose(&tet_dx);
+            let h = energy.energy_hessian_product_transpose(&tet_dx);
             for vtx in 0..3 {
                 for i in 0..3 {
                     if wrt_vtx < vtx || (wrt_vtx == vtx && i >= wrt_i) {

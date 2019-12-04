@@ -77,30 +77,32 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     #[allow(non_snake_case)]
     #[inline]
     fn energy(&self) -> T {
-        let NeoHookeanTetEnergy {
+        let NeoHookeanTriEnergy {
             volume, mu, lambda, ..
         } = *self;
         let F = self.deformation_gradient();
-        let I = F.frob_norm_squared(); // tr(F^TF)
-        let J = F.determinant();
-        if J <= T::zero() {
+        let C = F * F.transpose();
+        let C_det = C.determinant();
+        let I = C[0][0] + C[1][1]; // trace
+        if C_det <= T::zero() {
             T::infinity()
         } else {
-            let logJ = J.ln();
             let half = T::from(0.5).unwrap();
+            let log_C_det = C_det.ln();
+            let _2 = T::from(2.0).unwrap();
             volume
-                * (half * mu * (I - T::from(3.0).unwrap()) - mu * logJ
-                    + half * lambda * logJ * logJ)
+                * half * (mu * (I - _2 - log_C_det)
+                    + T::from(0.25).unwrap() * lambda * log_C_det * log_C_det)
         }
     }
 
     /// Elastic energy gradient per element vertex.
     /// This is a helper function that computes the energy gradient given shape matrices, which can
-    /// be obtained from a tet and its reference configuration.
+    /// be obtained from a triangle and its reference configuration.
     #[allow(non_snake_case)]
     #[inline]
-    fn energy_gradient(&self) -> [Vector3<T>; 4] {
-        let NeoHookeanTetEnergy {
+    fn energy_gradient(&self) -> [Vector3<T>; 3] {
+        let NeoHookeanTriEnergy {
             DX_inv,
             volume,
             mu,
@@ -108,14 +110,16 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             ..
         } = *self;
         let F = self.deformation_gradient();
-        let J = F.determinant();
-        if J <= T::zero() {
+        let C = F * F.transpose();
+        let C_det = C.determinant();
+        if C_det <= T::zero() {
             [Vector3::zero(); 4]
         } else {
-            let F_inv = F.inverse().unwrap();
-            let logJ = J.ln();
-            let H = DX_inv * (F.transpose() * mu + F_inv * (lambda * logJ - mu)) * volume;
-            [H[0], H[1], H[2], -H[0] - H[1] - H[2]]
+            let F_inv_tr = C.inverse().unwrap() * F;
+            let logJ = T::from(0.5).unwrap() * C_det.ln();
+            let P = F * mu + F_inv_tr * (lambda * logJ - mu);
+            let H = DX_inv.transpose() * P * volume;
+            [H[0], H[1], -H[0] - H[1]]
         }
     }
 
@@ -137,53 +141,21 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
         let mut local_hessians = [[Matrix3::zeros(); 4]; 4];
 
         let F = self.deformation_gradient();
-        let J = F.determinant();
-        if J <= T::zero() {
+        let C = F * F.transpose();
+        let C_det = C.determinant();
+        if C_det <= T::zero() {
             return local_hessians;
         }
 
-        let A = DX_inv * DX_inv.transpose();
-
-        // Theoretically we known Dx is invertible since F is, but it could have
-        // numerical differences, so we check anyways.
-        let Dx_inv_tr = match self.Dx.inverse_transpose() {
-            Some(inv) => inv,
-            None => return local_hessians,
-        };
+        let A = DX_inv.transpose() * DX_inv;
 
         let alpha = mu - lambda * J.ln();
-
         // Off-diagonal elements
-        for row in 0..3 {
-            for col in 0..3 {
-                let mut last_hess = T::zero();
-                for n in 0..3 {
-                    // which vertex
-                    for k in 0..3 {
-                        // with respect to which vertex
-                        let c_lambda = lambda * Dx_inv_tr[row][n] * Dx_inv_tr[col][k];
-                        let c_alpha = alpha * Dx_inv_tr[col][n] * Dx_inv_tr[row][k];
-                        let mut h = volume * (c_alpha + c_lambda);
-                        if col == row {
-                            h += volume * mu * A[n][k];
-                        }
-
-                        // skip upper trianglar part
-                        if (n == k && row >= col) || n > k {
-                            local_hessians[n][k][row][col] = h;
-                        }
-                        // with respect to last vertex
-                        local_hessians[3][k][row][col] -= h;
-                        last_hess += h;
-                    }
-                }
 
                 // last vertex
                 if row >= col {
                     local_hessians[3][3][row][col] = last_hess;
                 }
-            }
-        }
 
         local_hessians
     }
@@ -193,8 +165,8 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     /// The contribution to the last vertex is given by the negative sum of all the rows.
     #[allow(non_snake_case)]
     #[inline]
-    fn energy_hessian_product_transpose(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
-        let NeoHookeanTetEnergy {
+    fn energy_hessian_product_transpose(&self, tri_dx: &Triangle<T>) -> Matrix3<T> {
+        let NeoHookeanTriEnergy {
             DX_inv,
             volume,
             lambda,
@@ -202,17 +174,22 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             ..
         } = *self;
         let F = self.deformation_gradient();
-        let dF = self.deformation_gradient_differential(tet_dx);
-        let J = F.determinant();
-        if J > T::zero() {
-            let alpha = mu - lambda * J.ln();
+        let dF = self.deformation_gradient_differential(tri_dx);
+        let C = F * F.transpose();
+        let C_det = C.determinant();
+        if C_det > T::zero() {
+            let alpha = mu - lambda * T::from(0.5).unwrap() * C_det.ln();
 
-            let F_inv_tr = F.inverse_transpose().unwrap();
+            let C_inv = C.inverse().unwrap();
+            let F_inv_tr = C_inv * F;
             let F_inv = F_inv_tr.transpose();
+            let dF_tr_F_inv_tr = dF.transpose() * F_inv_tr;
+            let n = F[0].cross(F[1]).normalized();
 
             let dP = dF * mu
-                + F_inv_tr * dF.transpose() * F_inv_tr * alpha
-                + F_inv_tr * ((F_inv * dF).trace() * lambda);
+                + F_inv_tr * (dF_tr_F_inv_tr * alpha
+                + (dF_tr_F_inv_tr.trace() * lambda))
+                - n * (n.transpose() * dF * C_inv) * alpha;
 
             DX_inv * dP.transpose() * volume
         } else {
@@ -222,8 +199,8 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
 }
 
 /// A possibly non-linear elastic energy for tetrahedral meshes.
-/// This type wraps a `TetMeshSolid` to provide an interfce for computing a hyperelastic energy.
-pub struct TetMeshElasticity<'a, E>(pub &'a TetMeshSolid, std::marker::PhantomData<E>);
+/// This type wraps a `TriMeshSolid` to provide an interfce for computing a hyperelastic energy.
+pub struct TriMeshElasticity<'a, E>(pub &'a TriMeshSolid, std::marker::PhantomData<E>);
 
 /// NeoHookean elasticity model.
 pub type TetMeshNeoHookean<'a, T> = TetMeshElasticity<'a, NeoHookeanTetEnergy<T>>;

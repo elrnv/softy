@@ -1,7 +1,7 @@
 use crate::attrib_defines::*;
 use crate::fem::*;
 use crate::objects::*;
-use crate::{TetMesh, PolyMesh};
+use crate::{TriMesh, TetMesh, PolyMesh};
 use geo::mesh::attrib::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
@@ -50,6 +50,52 @@ pub fn default_solid() -> SolidMaterial {
             model: ElasticityModel::NeoHookean,
         })
         .with_density(1000.0)
+}
+
+/// A flat triangle in the xz plane with vertices at origin, in positive x and positive z
+/// directions with the first two vertices fixed such that there is a unique solution when the
+/// triangle is simulated under gravity.
+pub fn make_one_tri_mesh() -> TriMesh {
+    let verts = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let indices = vec![0, 2, 1];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0])
+        .unwrap();
+
+    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
+        .unwrap();
+    mesh
+}
+
+/// The triangle from `make_one_tri_mesh` sample deformed at the unfixed vertex
+pub fn make_one_deformed_tri_mesh() -> TriMesh {
+    let mut mesh = make_one_tri_mesh();
+    mesh.vertex_positions_mut()[2][2] = 2.0;
+    mesh
+}
+
+/// A strip of two quads in the xz plane fixed at two vertices.
+pub fn make_four_tri_mesh() -> TriMesh {
+    let verts = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [0.0, 0.0, 2.0],
+        [1.0, 0.0, 2.0],
+    ];
+    let indices = vec![0, 2, 1, 2, 1, 3, 3, 1, 4, 3, 4, 5];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
+        .unwrap();
+
+    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
+        .unwrap();
+    mesh
 }
 
 pub fn make_one_tet_mesh() -> TetMesh {

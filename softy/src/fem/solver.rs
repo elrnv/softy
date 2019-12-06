@@ -807,26 +807,33 @@ impl SolverBuilder {
 
         Ok(mesh.face_iter().map(|face| ref_tri(face).area()).collect())
     }
+
+    /// Convert a 3D triangle shape matrix into a 2D matrix assuming an isotropic deformation
+    /// model.
+    ///
+    /// Assume that reference triangles are non-degenerate.
+    pub fn isotropic_tri_shape_matrix<T: Real>(m: Matrix2x3<T>) -> Matrix2<T> {
+        // Project (orthogonally) second row onto the first.
+        let scale = m[0].dot(m[1]) / m[0].norm_squared();
+        let r1_proj = m[0] * scale;
+
+        let q = Matrix2x3 {
+            data: [
+                m[0].normalized(),
+                (m[1] - r1_proj).normalized(),
+            ]
+        };
+
+        m * q.transpose()
+    }
+
     /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
     fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Vec<Matrix2<f64>> {
         // Compute reference shape matrix inverses
         mesh.face_iter()
             .map(|face| {
-                let ref_shape_matrix = ref_tri(&mesh, face).shape_matrix();
-                // We assume that reference triangles are non-degenerate.
-
-                // Project (orthogonally) second row onto the first.
-                let scale = ref_shape_matrix[0].dot(ref_shape_matrix[1]) / ref_shape_matrix[0].norm_squared();
-                let r1_proj = ref_shape_matrix[0] * scale;
-
-                let q = Matrix2 {
-                    data: [
-                        ref_shape_matrix[0].normalized(),
-                        (ref_shape_matrix[1] - r1_proj).normalized(),
-                    ]
-                };
-
-                ref_shape_matrix * q;
+                let ref_shape_matrix = Matrix2x3::new(ref_tri(&mesh, face).shape_matrix());
+                Self::isotropic_tri_shape_matrix(ref_shape_matrix).inverse().unwrap()
             })
             .collect()
     }

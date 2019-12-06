@@ -280,7 +280,7 @@ mod tests {
     fn test_solids() -> Vec<TetMeshSolid> {
         let material = material();
 
-        test_meshes()
+        test_tetmeshes()
             .into_iter()
             .map(|mut tetmesh| {
                 // Prepare attributes relevant for elasticity computations.

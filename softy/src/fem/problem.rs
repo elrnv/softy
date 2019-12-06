@@ -445,7 +445,7 @@ impl ObjectData {
         source: [SourceIndex; 2],
     ) -> [MeshVertexData<D>; 2]
     where
-        D: Set + RemovePrefix + SplitAt,
+        D: Set + RemovePrefix + SplitAt + std::fmt::Debug,
         std::ops::Range<usize>: IsolateIndex<D, Output = D>,
         Alt: Into<Option<VertexView<'x, D>>>,
     {
@@ -461,7 +461,7 @@ impl ObjectData {
         shells: &[TriMeshShell],
     ) -> [MeshVertexData<D>; 2]
     where
-        D: Set + RemovePrefix + SplitAt,
+        D: Set + RemovePrefix + SplitAt + std::fmt::Debug,
         std::ops::Range<usize>: IsolateIndex<D, Output = D>,
         Alt: Into<Option<VertexView<'x, D>>>,
     {
@@ -542,19 +542,26 @@ impl ObjectData {
                                     ),
                                 ],
                                 SourceIndex::Shell(j) => {
-                                    let x = match props {
-                                        ShellProperties::Deformable { .. } => x,
-                                        _ => alt, // Both non-deformable shells.
+                                    let props = shells[j].material.properties;
+                                    return match props {
+                                        ShellProperties::Deformable { .. } => {
+                                            [
+                                                Subset::all(alt.isolate(1).isolate(i)),
+                                                Subset::all(x.isolate(1).isolate(j))
+                                            ]
+                                        },
+                                        _ => {
+                                            // Both non-deformable shells.
+                                            if i < j {
+                                                let (l, r) = alt.isolate(1).split_at(j);
+                                                [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
+                                            } else {
+                                                assert_ne!(i, j); // This needs special handling for self contact.
+                                                let (l, r) = alt.isolate(1).split_at(i);
+                                                [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
+                                            }
+                                        },
                                     };
-
-                                    if i < j {
-                                        let (l, r) = x.isolate(1).split_at(j);
-                                        [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
-                                    } else {
-                                        assert_ne!(i, j); // This needs special handling for self contact.
-                                        let (l, r) = x.isolate(1).split_at(i);
-                                        [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
-                                    }
                                 }
                             };
                         }
@@ -612,10 +619,11 @@ impl ObjectData {
         };
 
         // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
-        let trimesh_coordinates = |mesh_index| {
+        let trimesh_coordinates = |mesh_index, surf_vtx_idx| {
             let prev_v = self.prev_v.view().at(1);
-            assert!(!prev_v.is_empty());
-            3 * prev_v.offset_value(mesh_index) + coord
+            assert!(!prev_v.is_empty()); // The trimesh should be coincident with degrees of freedom.
+            let offset = prev_v.offset_value(mesh_index);
+            3 * (offset + surf_vtx_idx) + coord % 3
         };
 
         let num_object_surface_indices: usize;
@@ -630,7 +638,7 @@ impl ObjectData {
             SourceIndex::Shell(obj_i) => {
                 num_object_surface_indices = self.shells[obj_i].trimesh.num_vertices();
                 if surf_vtx_idx < num_object_surface_indices {
-                    return trimesh_coordinates(obj_i);
+                    return trimesh_coordinates(obj_i, surf_vtx_idx);
                 }
             }
         }
@@ -648,7 +656,7 @@ impl ObjectData {
             }
             SourceIndex::Shell(coll_i) => {
                 assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
-                trimesh_coordinates(coll_i)
+                trimesh_coordinates(coll_i, surf_vtx_idx)
             }
         }
     }
@@ -1636,10 +1644,11 @@ impl NonLinearProblem {
         for (i, shell) in self.object_data.shells.iter().enumerate() {
             let x0 = x0.at(1).at(i).into_flat();
             let x1 = x1.at(1).at(i).into_flat();
-            //let v0 = v0.at(1).at(i).into_flat();
-            //obj += shell.elasticity().energy(x0, x1);
+            let v0 = v0.at(1).at(i).into_flat();
+            let v = v.at(1).at(i).into_flat();
+            obj += shell.elasticity().energy(x0, x1);
             obj += shell.gravity(self.gravity).energy(x0, x1);
-            //obj += shell.inertia().energy(v0, v);
+            obj += shell.inertia().energy(v0, v);
         }
 
         // If time_step is 0.0, this is a pure static solve, which means that
@@ -2507,9 +2516,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
         for (i, shell) in self.object_data.shells.iter().enumerate() {
             let x0 = x0.at(1).at(i).into_flat();
             let x1 = x1.at(1).at(i).into_flat();
-            //let v0 = v0.at(1).at(i).into_flat();
             let g = grad.view_mut().isolate(1).isolate(i).into_flat();
-            //shell.elasticity().energy(x0, x1, g);
+            shell.elasticity().add_energy_gradient(x0, x1, g);
             shell.gravity(self.gravity).add_energy_gradient(x0, x1, g);
         }
 
@@ -2527,6 +2535,13 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 let v = v.at(0).at(i).into_flat();
                 let g = grad.view_mut().isolate(0).isolate(i).into_flat();
                 solid.inertia().add_energy_gradient(v0, v, g);
+            }
+
+            for (i, shell) in self.object_data.shells.iter().enumerate() {
+                let v0 = v0.at(1).at(i).into_flat();
+                let v = v.at(1).at(i).into_flat();
+                let g = grad.view_mut().isolate(1).isolate(i).into_flat();
+                shell.inertia().add_energy_gradient(v0, v, g);
             }
 
             for fc in self.frictional_contacts.iter() {
@@ -2750,6 +2765,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                     self.object_data
                         .source_coordinates(fc.object_index, fc.collider_index, col)
                         as ipopt::Index;
+                debug_assert!(rows[count] < nrows as i32);
+                debug_assert!(cols[count] < ipopt::BasicProblem::num_variables(self) as i32);
                 //jac[col][row] = 1;
                 count += 1;
             }
@@ -2812,7 +2829,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                     &mut vals[count..count + n],
                 )
                 .ok();
-            //println!("jac g vals = {:?}", &vals[count..count+n]);
             let scale = self.contact_constraint_scale();
             vals[count..count + n].iter_mut().for_each(|v| *v *= scale);
             count += n;
@@ -2842,9 +2858,14 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                     0
                 };
         }
-        //for shell in self.shells.iter() {
-        //    num += shell.inertia().energy_hessian_size();
-        //}
+        for shell in self.object_data.shells.iter() {
+            num += shell.elasticity().energy_hessian_size()
+                + if !self.is_static() {
+                    shell.inertia().energy_hessian_size()
+                } else {
+                    0
+                };
+        }
         for (_, vc) in self.volume_constraints.iter() {
             num += vc.borrow().constraint_hessian_size();
         }
@@ -2857,6 +2878,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn hessian_indices(&self, rows: &mut [ipopt::Index], cols: &mut [ipopt::Index]) -> bool {
         // This is used for counting offsets.
         let prev_v_solid = self.object_data.prev_v.view().at(0);
+        let prev_v_shell = self.object_data.prev_v.view().at(1);
 
         let mut count = 0; // Constraint counter
 
@@ -2885,12 +2907,26 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
-        //for shell in self.shells.iter() {
-        //    let inertia = shell.inertia();
-        //    let n = inertia.energy_hessian_size();
-        //    inertia.energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
-        //    count += n;
-        //}
+        for (shell_idx, shell) in self.object_data.shells.iter().enumerate() {
+            let offset = prev_v_shell.offset_value(shell_idx) * 3;
+            let elasticity = shell.elasticity();
+            let n = elasticity.energy_hessian_size();
+            elasticity.energy_hessian_rows_cols_offset(
+                (offset, offset).into(),
+                &mut rows[count..count + n],
+                &mut cols[count..count + n],
+            );
+
+            count += n;
+
+            if !self.is_static() {
+                let inertia = shell.inertia();
+                let n = inertia.energy_hessian_size();
+                inertia.energy_hessian_rows_cols_offset(
+                    (offset, offset).into(), &mut rows[count..count + n], &mut cols[count..count + n]);
+                count += n;
+            }
+        }
 
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
@@ -2946,7 +2982,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Correction to make the above hessian wrt velocity instead of displacement.
         let dt = self.time_step();
 
-        let mut count = 0; // Constraint counter
+        let mut count = 0; // Values counter
 
         for (solid_idx, solid) in self.object_data.solids.iter().enumerate() {
             let x0 = x0.at(0).at(solid_idx).into_flat();
@@ -2966,14 +3002,23 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             }
         }
 
-        //for (shell_idx, shell) in self.shells.iter().enumerate() {
-        //    let v0 = v0.at(1).at(shell_idx).into_flat();
-        //    let v = v.at(1).at(shell_idx).into_flat();
-        //    let inertia = shell.inertia();
-        //    let n = inertia.energy_hessian_size();
-        //    inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
-        //    count += n;
-        //}
+        for (shell_idx, shell) in self.object_data.shells.iter().enumerate() {
+            let x0 = x0.at(1).at(shell_idx).into_flat();
+            let x1 = x1.at(1).at(shell_idx).into_flat();
+            let v0 = v0.at(1).at(shell_idx).into_flat();
+            let v = v.at(1).at(shell_idx).into_flat();
+            let elasticity = shell.elasticity();
+            let n = elasticity.energy_hessian_size();
+            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[count..count + n]);
+            count += n;
+
+            if !self.is_static() {
+                let inertia = shell.inertia();
+                let n = inertia.energy_hessian_size();
+                inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+                count += n;
+            }
+        }
 
         // Multiply energy hessian by objective factor.
         let factor =

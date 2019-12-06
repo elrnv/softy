@@ -1,4 +1,6 @@
 use crate::energy_models::gravity::*;
+use crate::energy_models::inertia::*;
+use crate::energy_models::elasticity::*;
 use crate::fem::problem::Var;
 use crate::objects::*;
 use crate::TriMesh;
@@ -47,25 +49,23 @@ impl TriMeshShell {
     }
 }
 
-//impl<'a> Elasticity<TriMeshNeoHookean<'a>> for TriMeshShell {
-//    fn elasticity(&'a self) -> TriMeshNeoHookean<'a> {
-//        match self.material.properties {
-//            ShellMaterial::Deformable => unimplemented!(),// TriMeshNeoHookean(self),
-//            ShellMaterial::Rigid => unimplemented!(),
-//            ShellMaterial::Static => unimplemented!(),
-//        }
-//    }
-//}
-//
-//impl<'a> Inertia<TriMeshInertia<'a>> for TriMeshShell {
-//    fn inertia(&'a self) -> TriMeshInertia<'a> {
-//        match self.material.properties {
-//            ShellMaterial::Deformable => unimplemented!(), //TriMeshInertia(self),
-//            ShellMaterial::Rigid => unimplemented!(),
-//            ShellMaterial::Static => unimplemented!(),
-//        }
-//    }
-//}
+impl<'a> Elasticity<'a, Option<TriMeshNeoHookean<'a, f64>>> for TriMeshShell {
+    fn elasticity(&'a self) -> Option<TriMeshNeoHookean<'a, f64>> {
+        match self.material.properties {
+            ShellProperties::Deformable { .. } => Some(TriMeshNeoHookean::new(self)),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> Inertia<'a, Option<TriMeshInertia<'a>>> for TriMeshShell {
+    fn inertia(&'a self) -> Option<TriMeshInertia<'a>> {
+        match self.material.properties {
+            ShellProperties::Fixed => None,
+            _ => Some(TriMeshInertia(self)),
+        }
+    }
+}
 
 impl<'a> Gravity<'a, Option<TriMeshGravity<'a>>> for TriMeshShell {
     fn gravity(&'a self, g: [f64; 3]) -> Option<TriMeshGravity<'a>> {

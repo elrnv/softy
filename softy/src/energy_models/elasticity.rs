@@ -108,6 +108,7 @@ pub trait Elasticity<'a, E> {
 #[cfg(test)]
 mod test_utils {
     use super::*;
+    use crate::fem::solver::SolverBuilder;
     use approx::*;
     use autodiff::F;
     use geo::ops::*;
@@ -357,10 +358,10 @@ mod test_utils {
 
         let df = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = Matrix3::new(tri_x0.clone().shape_matrix())
+            let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                 .inverse()
                 .unwrap();
-            let Dx = Matrix3::new(tri_x1.clone().shape_matrix());
+            let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
             let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
             energy.energy_gradient()
         };
@@ -380,10 +381,10 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = Matrix3::new(tri_x0.clone().shape_matrix())
+                let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                     .inverse()
                     .unwrap();
-                let Dx = Matrix3::new(tri_x1.shape_matrix());
+                let Dx = Matrix2x3::new(tri_x1.shape_matrix());
                 let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
 
                 let f = energy.energy();
@@ -401,7 +402,7 @@ mod test_utils {
     }
 
     #[allow(non_snake_case)]
-    pub(crate) fn tri_energy_hessian_tester<E: TetEnergy<F>>() {
+    pub(crate) fn tri_energy_hessian_tester<E: TriEnergy<F>>() {
         let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
         let deformed_verts = vec![[0.2; 3], [0.01, 1.2, 0.01], [2.01, 0.2, 0.01]];
         //let deformed_verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 2.0]];
@@ -420,10 +421,10 @@ mod test_utils {
 
         let ddf = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = Matrix3::new(tri_x0.clone().shape_matrix())
+            let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                 .inverse()
                 .unwrap();
-            let Dx = Matrix3::new(tri_x1.clone().shape_matrix());
+            let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
             let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
             energy.energy_hessian()
         };
@@ -448,11 +449,11 @@ mod test_utils {
         for vtx_idx in 0..3 {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
-                let tri_x1 = Triangle::from_indexed_slice(&cell, &deformed_verts);
-                let DX_inv = Matrix3::new(tri_x0.clone().shape_matrix())
+                let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
+                let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                     .inverse()
                     .unwrap();
-                let Dx = Matrix3::new(tri_x1.shape_matrix());
+                let Dx = Matrix2x3::new(tri_x1.shape_matrix());
                 let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
                 let df = energy.energy_gradient();
                 dbg!(&vtx_idx);
@@ -505,11 +506,11 @@ mod test_utils {
 
         let tri_x0 = Triangle::from_indexed_slice(&face, &verts);
 
-        let DX_inv = Matrix3::new(tri_x0.clone().shape_matrix())
+        let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
             .inverse()
             .unwrap();
         let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-        let Dx = Matrix3::new(tri_x1.clone().shape_matrix());
+        let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
         let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
         let ddf = energy.energy_hessian();
 
@@ -533,20 +534,20 @@ mod test_utils {
             [0.0, 0.0, 0.0],
         ];
 
-        for wrt_vtx in 0..3 {
+        for wrt_vtx in 0..2 {
             for wrt_i in 0..3 {
                 d_verts[wrt_vtx][wrt_i] = 1.0;
                 let tri_dx = Triangle::from_indexed_slice(&face, &d_verts);
 
                 let h = energy.energy_hessian_product_transpose(&tri_dx);
                 // Print hessian flat
-                for wrt_vtx_idx in 0..3 {
+                for wrt_vtx_idx in 0..2 {
                     for j in 0..3 {
                         eprintln!("{:10.2e}", h[wrt_vtx_idx][j]);
                     }
                 }
                 eprintln!("");
-                for vtx in 0..3 {
+                for vtx in 0..2 {
                     for i in 0..3 {
                         if wrt_vtx < vtx || (wrt_vtx == vtx && i >= wrt_i) {
                             assert_relative_eq!(

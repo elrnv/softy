@@ -138,9 +138,14 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             for row in 0..3 { // component
                 tri_dx[i][row] = T::one();
                 let h = self.energy_hessian_product_transpose(&tri_dx);
-                for j in 0..3 { // vertex
+                for j in 0..2 { // vertex
                     for col in 0..3 { // component
-                        hess[i][j][row][col] = h[j][col];
+                        if i > j || (i == j && row >= col) {
+                            hess[i][j][row][col] += h[j][col];
+                            if i == 2 {
+                                hess[i][2][row][col] -= h[j][col];
+                            }
+                        }
                     }
                 }
                 tri_dx[i][row] = T::zero();
@@ -175,12 +180,12 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             let dF_F_inv: Matrix2<_> = dF * F_inv;
             let n = F[0].cross(F[1]).normalized();
 
-            let dP: Matrix3x2<_> = dF.transpose() * mu
+            let dP_tr: Matrix3x2<_> = dF.transpose() * mu
                 + F_inv * dF_F_inv * alpha
                 + F_inv * (dF_F_inv.trace() * lambda)
                 - n * (n.transpose() * dF.transpose() * C_inv) * alpha;
 
-            DX_inv * dP.transpose() * area
+            DX_inv.transpose() * dP_tr.transpose() * area
         } else {
             Matrix2x3::zero()
         }
@@ -258,7 +263,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
             trimesh
                 .attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                 .unwrap(),
-            trimesh.cell_iter(),
+            trimesh.face_iter(),
             trimesh
                 .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
                 .unwrap(),
@@ -266,9 +271,11 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
         )
         .map(|(&area, &DX_inv, face, &lambda, &mu)| {
             let tri_x1 = Triangle::from_indexed_slice(face, pos1);
-            let tri_dx = &tri_x1 - &Triangle::from_indexed_slice(face, pos0);
-            let Dx = Matrix3::new(tri_x1.shape_matrix()).transpose();
-            let DX_inv = DX_inv.map_inner(|x| T::from(x).unwrap());
+            let tri_x0 = Triangle::from_indexed_slice(face, pos0);
+            let tri_dx = Triangle::new(
+                (*tri_x1.as_array().as_tensor() - tri_x0.into_array().into_tensor()).into());
+            let Dx = Matrix2x3::new(tri_x1.shape_matrix());
+            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let area = T::from(area).unwrap();
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
@@ -308,7 +315,7 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
-        // Transfer forces from cell-vertices to vertices themeselves
+        // Transfer forces from face-vertices to vertices themeselves
         for (&area, &DX_inv, face, &lambda, &mu) in zip!(
             trimesh
                 .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
@@ -316,7 +323,7 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
             trimesh
                 .attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
                 .unwrap(),
-            trimesh.cell_iter(),
+            trimesh.face_iter(),
             trimesh
                 .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
                 .unwrap(),
@@ -325,16 +332,18 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
             // Make deformed tri.
             let tri_x1 = Triangle::from_indexed_slice(face, pos1);
             // Make tri displacement.
-            let tri_dx = &tri_x1 - &Triangle::from_indexed_slice(face, pos0);
+            let tri_x0 = Triangle::from_indexed_slice(face, pos0);
+            let tri_dx = Triangle::new(
+                (*tri_x1.as_array().as_tensor() - tri_x0.into_array().into_tensor()).into());
 
-            let DX_inv = DX_inv.map_inner(|x| T::from(x).unwrap());
+            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let area = T::from(area).unwrap();
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
             let damping = T::from(damping).unwrap();
 
             let tri_energy = E::new(
-                Matrix3::new(tri_x1.shape_matrix()).transpose(),
+                Matrix2x3::new(tri_x1.shape_matrix()),
                 DX_inv,
                 area,
                 lambda,
@@ -360,7 +369,7 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
 
 impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
-        Self::NUM_HESSIAN_TRIPLETS_PER_TRI * self.0.trimesh.num_cells()
+        Self::NUM_HESSIAN_TRIPLETS_PER_TRI * self.0.trimesh.num_faces()
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
@@ -376,8 +385,8 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
 
         {
             // Break up the hessian indices into chunks of elements for each tri.
-            let hess_row_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(rows);
-            let hess_col_chunks: &mut [[I; Self::NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(cols);
+            let hess_row_chunks: &mut [[I; 45]] = reinterpret_mut_slice(rows);
+            let hess_col_chunks: &mut [[I; 45]] = reinterpret_mut_slice(cols);
 
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
@@ -413,7 +422,7 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex; Self::NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(indices);
+            let hess_chunks: &mut [[MatrixElementIndex; 45]] = reinterpret_mut_slice(indices);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(trimesh.faces().par_iter());
 
@@ -454,7 +463,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[T; Self::NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(values);
+            let hess_chunks: &mut [[T; 45]] = reinterpret_mut_slice(values);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
                 trimesh
@@ -478,13 +487,13 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
                     .par_iter(),
             ));
 
-            hess_iter.for_each(|(tri_hess, (&area, &DX_inv, cell, &lambda, &mu))| {
+            hess_iter.for_each(|(tri_hess, (&area, &DX_inv, face, &lambda, &mu))| {
                 // Make deformed tet.
-                let tri_x1 = Triangle::from_indexed_slice(cell, pos1);
+                let tri_x1 = Triangle::from_indexed_slice(face, pos1);
 
-                let Dx = Matrix3::new(tri_x1.shape_matrix()).transpose();
+                let Dx = Matrix2x3::new(tri_x1.shape_matrix());
 
-                let DX_inv = DX_inv.map_inner(|x| T::from(x).unwrap());
+                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
                 let area = T::from(area).unwrap();
                 let lambda = T::from(lambda).unwrap();
                 let mu = T::from(mu).unwrap();
@@ -524,7 +533,7 @@ mod tests {
     fn test_shells() -> Vec<TriMeshShell> {
         let material = material();
 
-        test_meshes()
+        test_trimeshes()
             .into_iter()
             .map(|mut trimesh| {
                 // Prepare attributes relevant for elasticity computations.
@@ -544,7 +553,7 @@ mod tests {
             .iter()
             .map(|shell| {
                 (
-                    TriMeshNeoHookean::new(solid),
+                    TriMeshNeoHookean::new(shell),
                     shell.trimesh.vertex_positions().to_vec(),
                 )
             })

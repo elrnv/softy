@@ -162,6 +162,8 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
 
         let g = self.g.cast::<T>();
 
+        let third = 1.0 / 3.0;
+
         // Transfer forces from cell-vertices to vertices themeselves
         for (&area, density, face) in zip!(
             trimesh
@@ -175,7 +177,7 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
         ) {
             for i in 0..3 {
                 // Energy gradient is in opposite direction to the force hence minus here.
-                gradient[face[i]] -= g * T::from(0.25 * area * density).unwrap();
+                gradient[face[i]] -= g * T::from(third * area * density).unwrap();
             }
         }
     }
@@ -197,49 +199,99 @@ mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
     use crate::fem::SolverBuilder;
-    use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 
-    fn material() -> SolidMaterial {
-        SolidMaterial::new(0).with_density(1000.0)
+    mod solid {
+        use super::*;
+
+        fn solid_material() -> SolidMaterial {
+            SolidMaterial::new(0).with_density(1000.0)
+        }
+
+        fn test_solids() -> Vec<TetMeshSolid> {
+            let material = solid_material();
+
+            test_tetmeshes()
+                .into_iter()
+                .map(|mut tetmesh| {
+                    // Prepare attributes relevant for elasticity computations.
+                    SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
+                    let mut solid = TetMeshSolid::new(tetmesh, material);
+                    SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                    solid
+                })
+                .collect()
+        }
+
+        fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshGravity, Vec<[f64; 3]>)> {
+            solids
+                .iter()
+                .map(|solid| {
+                    (
+                        solid.gravity([0.0, -9.81, 0.0]),
+                        solid.tetmesh.vertex_positions().to_vec(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn gradient() {
+            let solids = test_solids();
+            gradient_tester(build_energies(&solids), EnergyType::Position);
+        }
+
+        #[test]
+        fn hessian() {
+            let solids = test_solids();
+            hessian_tester(build_energies(&solids), EnergyType::Position);
+        }
     }
 
-    fn test_solids() -> Vec<TetMeshSolid> {
-        let material = material();
+    mod shell {
+        use super::*;
 
-        test_meshes()
-            .into_iter()
-            .map(|mut tetmesh| {
-                // Prepare attributes relevant for elasticity computations.
-                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
-                let mut solid = TetMeshSolid::new(tetmesh, material);
-                SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
-                solid
-            })
-            .collect()
-    }
+        fn shell_material() -> ShellMaterial {
+            ShellMaterial::new(0).with_density(1000.0)
+        }
 
-    fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshGravity, Vec<[f64; 3]>)> {
-        solids
-            .iter()
-            .map(|solid| {
-                (
-                    solid.gravity([0.0, -9.81, 0.0]),
-                    solid.tetmesh.vertex_positions().to_vec(),
-                )
-            })
-            .collect()
-    }
+        fn test_shells() -> Vec<TriMeshShell> {
+            let material = shell_material();
 
-    #[test]
-    fn gradient() {
-        let solids = test_solids();
-        gradient_tester(build_energies(&solids), EnergyType::Position);
-    }
+            test_trimeshes()
+                .into_iter()
+                .map(|mut trimesh| {
+                    // Prepare attributes relevant for elasticity computations.
+                    SolverBuilder::prepare_deformable_trimesh_attributes(&mut trimesh).unwrap();
+                    let mut shell = TriMeshShell::new(trimesh, material);
+                    SolverBuilder::prepare_density_attribute(&mut shell).unwrap();
+                    shell
+                })
+                .collect()
+        }
 
-    #[test]
-    fn hessian() {
-        let solids = test_solids();
-        hessian_tester(build_energies(&solids), EnergyType::Position);
+        fn build_energies(shells: &[TriMeshShell]) -> Vec<(TriMeshGravity, Vec<[f64; 3]>)> {
+            shells
+                .iter()
+                .map(|shell| {
+                    (
+                        shell.gravity([0.0, -9.81, 0.0]).unwrap(),
+                        shell.trimesh.vertex_positions().to_vec(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn gradient() {
+            let shells = test_shells();
+            gradient_tester(build_energies(&shells), EnergyType::Position);
+        }
+
+        #[test]
+        fn hessian() {
+            let shells = test_shells();
+            hessian_tester(build_energies(&shells), EnergyType::Position);
+        }
     }
 }

@@ -120,17 +120,25 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
 pub(crate) mod test_utils {
     use crate::energy::*;
     use crate::test_utils::*;
-    use crate::TetMesh;
+    use crate::{TriMesh, TetMesh};
     use approx::*;
     use autodiff::F;
     use num_traits::Zero;
     use reinterpret::*;
 
-    pub(crate) fn test_meshes() -> Vec<TetMesh> {
+    pub(crate) fn test_tetmeshes() -> Vec<TetMesh> {
         vec![
             make_one_tet_mesh(),
             make_one_deformed_tet_mesh(),
             make_three_tet_mesh(),
+        ]
+    }
+
+    pub(crate) fn test_trimeshes() -> Vec<TriMesh> {
+        vec![
+            make_one_tri_mesh(),
+            make_one_deformed_tri_mesh(),
+            make_four_tri_mesh(),
         ]
     }
 

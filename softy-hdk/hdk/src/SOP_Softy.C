@@ -37,7 +37,7 @@ newSopOperator(OP_OperatorTable *table)
                 "Softy",                     // UI name
                 SOP_Softy::myConstructor,    // How to build the SOP
                 SOP_Softy::buildTemplates(), // My parameters
-                1,                              // Min # of sources
+                0,                              // Min # of sources
                 2,                              // Max # of sources
                 nullptr,                        // Local variables
                 OP_FLAG_GENERATOR));            // Flag it as generator
@@ -639,13 +639,20 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
 
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    UT_ASSERT(input0);
+    const GU_Detail *input1 = cookparms.inputGeo(1);
+    UT_ASSERT(input0 || input1);
 
     int64 solver_id = -1;
 
+    // Select the main input (if input0 is missing we are solving for cloth only).
+    const GU_Detail *main_input = input0;
+    if (!main_input) {
+        main_input = input1;
+    }
+
     // Retrieve a unique ID for the solver being used by softy.
     // This will allow us to reuse existing memory in the solver.
-    GA_ROHandleID attrib(input0->findIntTuple(GA_ATTRIB_GLOBAL, "softy", 1));
+    GA_ROHandleID attrib(main_input->findIntTuple(GA_ATTRIB_GLOBAL, "softy", 1));
     if (!attrib.isInvalid()) {
         solver_id = attrib.get(GA_Offset(0));
     }
@@ -657,9 +664,10 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         // If there is no previously allocated solver we can use, we need to extract the geometry
         // from the detail. Otherwise, the geometry stored in the solver itself will be used.
 
-        tetmesh = build_tetmesh(input0);
+        if (input0) {
+            tetmesh = build_tetmesh(input0);
+        }
 
-        const GU_Detail *input1 = cookparms.inputGeo(1);
         if (input1) {
             polymesh = build_polymesh(input1);
         }
@@ -685,8 +693,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 
     if (solver_id >= 0) {
         // If it's an old one, update its meshes.
-        tetmesh_ptcloud = build_pointcloud(input0);
-        const GU_Detail *input1 = cookparms.inputGeo(1);
+        if (input0) {
+            tetmesh_ptcloud = build_pointcloud(input0);
+        }
         if (input1) {
             polymesh_ptcloud = build_pointcloud(input1);
         }

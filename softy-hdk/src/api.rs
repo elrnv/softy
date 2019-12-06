@@ -78,10 +78,7 @@ pub(crate) fn get_solver(
         Ok((id, solver))
     } else {
         // Given solver id is invalid, need to create a new solver.
-        match tetmesh {
-            Some(tetmesh) => register_new_solver(*tetmesh, polymesh, params),
-            None => Err(Error::MissingSolverAndMesh),
-        }
+        register_new_solver(tetmesh, polymesh, params)
     }
 }
 
@@ -207,7 +204,7 @@ fn get_shell_material(
             damping,
             ..
         }) => {
-            if object_type != EL_SoftyObjectType::Solid {
+            if object_type != EL_SoftyObjectType::Shell {
                 return Err(Error::MaterialObjectMismatch {
                     material_id: material_id as u32,
                     object_type,
@@ -320,24 +317,28 @@ fn mode_test() {
 //#[allow(clippy::needless_pass_by_value)]
 #[inline]
 pub(crate) fn register_new_solver(
-    mut tetmesh: TetMesh,
+    solid: Option<Box<TetMesh>>,
     shell: Option<Box<PolyMesh>>,
     params: EL_SoftySimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     use geo::algo::SplitIntoConnectedComponents;
+    if solid.is_none() && shell.is_none() {
+        return Err(Error::MissingSolverAndMesh);
+    }
 
     // Build a basic solver with a solid material.
     let mut solver_builder = fem::SolverBuilder::new(params.into());
 
-    fem::SolverBuilder::initialize_source_index_attribute(&mut tetmesh)?;
-
-    for mesh in TetMeshExt::from(tetmesh).split_into_connected_components() {
-        let material_id = mesh
-            .attrib_as_slice::<i32, CellIndex>("mtl_id")
-            .map(|slice| mode(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
-            .unwrap_or(0);
-        let solid_material = get_solid_material(params, material_id)?;
-        solver_builder.add_solid(TetMesh::from(mesh), solid_material);
+    if let Some(mut tetmesh) = solid {
+        fem::SolverBuilder::initialize_source_index_attribute(&mut *tetmesh)?;
+        for mesh in TetMeshExt::from(*tetmesh).split_into_connected_components() {
+            let material_id = mesh
+                .attrib_as_slice::<i32, CellIndex>("mtl_id")
+                .map(|slice| mode(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
+                .unwrap_or(0);
+            let solid_material = get_solid_material(params, material_id)?;
+            solver_builder.add_solid(TetMesh::from(mesh), solid_material);
+        }
     }
 
     // Add a shell if one was given.

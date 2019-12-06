@@ -219,26 +219,18 @@ pub unsafe extern "C" fn el_softy_register_new_solver(
     polymesh: *mut cffi::HR_PolyMesh,
     sim_params: EL_SoftySimParams,
 ) -> EL_SoftyRegistryResult {
-    if let Some(tetmesh) = interop::into_box(tetmesh) {
-        // Get an optional shell object (cloth or animated static object).
-        let shell = interop::into_box(polymesh);
+    let solid = interop::into_box(tetmesh);
+    let shell = interop::into_box(polymesh);
 
-        match api::register_new_solver(*tetmesh, shell, sim_params) {
-            Ok((id, _)) => EL_SoftyRegistryResult {
-                solver_id: i64::from(id),
-                cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
-            },
-            Err(err) => EL_SoftyRegistryResult {
-                solver_id: -1,
-                cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
-            },
-        }
-    } else {
-        EL_SoftyRegistryResult {
+    match api::register_new_solver(solid, shell, sim_params) {
+        Ok((id, _)) => EL_SoftyRegistryResult {
+            solver_id: i64::from(id),
+            cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
+        },
+        Err(err) => EL_SoftyRegistryResult {
             solver_id: -1,
-            cook_result: hdkrs::interop::CookResult::Error("Given TetMesh is null.".to_owned())
-                .into(),
-        }
+            cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
+        },
     }
 }
 

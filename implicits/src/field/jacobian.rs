@@ -1180,9 +1180,9 @@ mod tests {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
-            points: vec![Vector3::new([0.2, 0.1, 0.0]).map(|x| F::cst(x))],
-            normals: vec![Vector3::new([0.3, 1.0, 0.1]).map(|x| F::cst(x)).into()],
-            velocities: vec![Vector3::new([2.3, 3.0, 0.2]).map(|x| F::cst(x))],
+            points: vec![Vector3::new([0.2, 0.1, 0.0]).mapd(|x| F::cst(x))],
+            normals: vec![Vector3::new([0.3, 1.0, 0.1]).mapd(|x| F::cst(x)).into()],
+            velocities: vec![Vector3::new([2.3, 3.0, 0.2]).mapd(|x| F::cst(x))],
             values: vec![F::cst(0.0)],
         };
 
@@ -1193,7 +1193,7 @@ mod tests {
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
         // Initialize the query point.
-        let q = Vector3::new([0.5, 0.3, 0.0]).map(|x| F::cst(x));
+        let q = Vector3::new([0.5, 0.3, 0.0]).mapd(|x| F::cst(x));
 
         // There is no surface for the set of samples. As a result, the normal derivative should be
         // skipped in this test.
@@ -1285,7 +1285,7 @@ mod tests {
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
         let mut ad_tet_verts: Vec<Vector3<F>> =
-            tet_verts.iter().map(|&v| v.map(|x| F::cst(x))).collect();
+            tet_verts.iter().map(|&v| v.mapd(|x| F::cst(x))).collect();
 
         for &q in tri_verts.iter() {
             // Compute the Jacobian.
@@ -1318,7 +1318,7 @@ mod tests {
                 }
             };
 
-            let q = q.map(|x| F::cst(x));
+            let q = q.mapd(|x| F::cst(x));
 
             for (vtx, jac) in vert_jac.iter().enumerate() {
                 for i in 0..3 {
@@ -1411,7 +1411,7 @@ mod tests {
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
         let mut ad_tet_verts: Vec<Vector3<F>> =
-            tet_verts.iter().map(|&v| v.map(|x| F::cst(x))).collect();
+            tet_verts.iter().map(|&v| v.mapd(|x| F::cst(x))).collect();
 
         for (vtx, g) in grad.iter().enumerate() {
             for i in 0..3 {
@@ -1429,7 +1429,7 @@ mod tests {
                 let mut exp = F::cst(0.0);
                 for sample in view.clone().iter() {
                     exp += Vector3::new(ad_samples.normals[sample.index])
-                        .dot(dx(sample).map(|x| F::cst(x)));
+                        .dot(dx(sample).mapd(|x| F::cst(x)));
                 }
 
                 assert_relative_eq!(g[i], exp.deriv(), max_relative = 1e-5, epsilon = 1e-10);
@@ -1490,9 +1490,9 @@ mod tests {
 
         // Prepare autodiff variables.
         let mut ad_samples =
-            Samples::new_point_samples(points.iter().map(|&pos| pos.map(|x| F::cst(x))).collect());
+            Samples::new_point_samples(points.iter().map(|&pos| pos.mapd(|x| F::cst(x))).collect());
 
-        let q = q.map(|x| F::cst(x));
+        let q = q.mapd(|x| F::cst(x));
 
         // Perform the derivative test on each of the variables.
         for i in 0..points.len() {
@@ -1557,14 +1557,14 @@ mod tests {
         let mut ad_tet_verts: Vec<[F; 3]> = tet_verts
             .iter()
             .cloned()
-            .map(|v| v.map(|x| F::cst(x)).into())
+            .map(|v| v.mapd(|x| F::cst(x)).into())
             .collect();
 
         let ad_surf = crate::mls_from_trimesh::<F>(&tet, params)
             .expect("Failed to create a surface for a autodiff tet.");
         let ad_tri_verts: Vec<[F; 3]> = tri_vert_vecs
             .iter()
-            .map(|&v| v.map(|x| F::cst(x)).into())
+            .map(|&v| v.mapd(|x| F::cst(x)).into())
             .collect();
 
         let query_surf = surf.query_topo(&tri_verts);
@@ -1683,7 +1683,7 @@ mod tests {
         let ad_tet_verts: Vec<Vector3<F>> = tet_verts
             .iter()
             .cloned()
-            .map(|v| v.map(|x| F::cst(x)))
+            .map(|v| v.mapd(|x| F::cst(x)))
             .collect();
 
         for &q in tri_verts.iter() {
@@ -1692,7 +1692,7 @@ mod tests {
 
             let jac = query_jacobian_at(q, view, None, kernel, bg_field_params);
 
-            let mut q = q.map(|x| F::cst(x));
+            let mut q = q.mapd(|x| F::cst(x));
 
             for i in 0..3 {
                 q[i] = F::var(q[i]);
@@ -1815,7 +1815,7 @@ mod tests {
         }
 
         let expected = weighted_normal;
-        for i in 0..3 {
+        for i in 0usize..3 {
             assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
         }
         Ok(())
@@ -1851,7 +1851,7 @@ mod tests {
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
         let test_vector = Vector3::new([1.5, 0.3, 0.5]);
-        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.into(); 3])?;
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.cast::<f32>().into(); 3])?;
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
 
         let surf = mls_from_trimesh(&trimesh, surf_params).unwrap();
@@ -1877,14 +1877,14 @@ mod tests {
         let tangents_vec = result_attrib.clone_into_vec()?;
         let result2: [f32; 3] = tangents_vec[0];
 
-        for i in 0..3 {
-            assert_relative_eq!(result[i], result2[i], max_relative = 1e-5, epsilon = 1e-10);
+        for i in 0usize..3 {
+            assert_relative_eq!(result[i], result2[i] as f64, max_relative = 1e-5, epsilon = 1e-10);
         }
 
         // Finally verify that the produced vector is indeed the same as the input test_vector.
         // That is interpolating the same vector better produce that same vector.
         let expected = test_vector;
-        for i in 0..3 {
+        for i in 0usize..3 {
             assert_relative_eq!(result[i], expected[i], max_relative = 1e-5, epsilon = 1e-10);
         }
         Ok(())
@@ -1910,7 +1910,7 @@ mod tests {
         let multipliers_f32: Vec<_> = multiplier_vecs
             .iter()
             .cloned()
-            .map(|v| Vector3::new(v).map(|x| x as f32).into())
+            .map(|v| Vector3::new(v).mapd(|x| x as f32).into())
             .collect();
         tet.set_attrib_data::<[f32; 3], VertexIndex>("V", &multipliers_f32)
             .unwrap();
@@ -1931,7 +1931,7 @@ mod tests {
             .attrib_as_slice::<[f32; 3], VertexIndex>("V")
             .unwrap()
             .iter()
-            .map(|&x| Vector3::new(x).map(|x| f64::from(x)).into_inner())
+            .map(|&x| Vector3::new(x).mapd(|x| f64::from(x)).into_data())
             .collect();
         let surf = mls_from_trimesh(&trimesh, surf_params).unwrap();
         let query_surf = surf.query_topo(&tri_verts);

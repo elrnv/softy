@@ -837,12 +837,12 @@ mod tests {
 
         let mut ad_tri_verts: Vec<_> = surf_mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).map(|x| F::cst(x)).into_inner())
+            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)).into_data())
             .collect();
         let num_verts = ad_tri_verts.len();
         let ad_query_points: Vec<_> = query_points
             .iter()
-            .map(|&a| Vector3::new(a).map(|x| F::cst(x)).into_inner())
+            .map(|&a| Vector3::new(a).mapd(|x| F::cst(x)).into_data())
             .collect();
         let num_query_points = query_points.len();
 
@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn one_tet_hessian_test() -> Result<(), Error> {
         let qs: Vec<_> = (0..4)
-            .map(|i| Vector3::new([0.0, -0.5 + 0.25 * i as f64, 0.0]).into_inner())
+            .map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0])
             .collect();
 
         let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
@@ -982,7 +982,7 @@ mod tests {
         let mut perturb = make_perturb_fn();
         let tri_verts = make_test_triangle(0.0, &mut perturb)
             .into_iter()
-            .map(|x| x.into_inner())
+            .map(|x| x.into_data())
             .collect();
         let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
 
@@ -1051,7 +1051,7 @@ mod tests {
     ) {
         let tri_verts: Vec<_> = make_test_triangle(0.0, perturb)
             .into_iter()
-            .map(|x| x.into_inner())
+            .map(|x| x.into_data())
             .collect();
         let tri_indices = vec![0usize, 1, 2];
         let tri = TriMesh::new(tri_verts, tri_indices);
@@ -1078,10 +1078,10 @@ mod tests {
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) {
-        let q = q.map(|x| F::cst(x)); // convert to autodiff
+        let q = q.mapd(|x| F::cst(x)); // convert to autodiff
         let mut tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).map(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)))
             .collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
         let num_verts = tri_verts.len();
@@ -1316,10 +1316,10 @@ mod tests {
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) {
-        let q = q.map(|x| F::cst(x)); // convert to autodiff
+        let q = q.mapd(|x| F::cst(x)); // convert to autodiff
         let tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).map(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)))
             .collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
 
@@ -1538,7 +1538,7 @@ mod tests {
         let multipliers = utils::random_vectors(faces.len());
         let ad_multipliers: Vec<_> = multipliers
             .iter()
-            .map(|&v| Vector3::new(v).map(|x| F::cst(x)))
+            .map(|&v| Vector3::new(v).mapd(|x| F::cst(x)))
             .collect();
 
         let multiplier = move |Sample { index, .. }| Vector3::new(multipliers[index]);
@@ -1577,7 +1577,7 @@ mod tests {
         let mut ad_verts: Vec<Vector3<F>> = verts
             .iter()
             .cloned()
-            .map(|v| v.map(|x| F::cst(x)))
+            .map(|v| v.mapd(|x| F::cst(x)))
             .collect();
 
         let mut success = true;

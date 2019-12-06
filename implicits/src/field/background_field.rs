@@ -752,6 +752,7 @@ mod tests {
     use geo::mesh::builder::*;
     use geo::mesh::VertexPositions;
     use geo::ops::transform::*;
+    use utils::soap::IntoData;
 
     #[test]
     fn constant_unweighted_bg() -> Result<(), Error> {
@@ -869,7 +870,7 @@ mod tests {
 
         let query_points: Vec<_> = qs
             .iter()
-            .map(|&q| q.map(|x| F::cst(x)).into_inner())
+            .map(|&q| q.mapd(|x| F::cst(x)).into_data())
             .collect();
 
         let query_topo = surface.query_topo(&query_points);
@@ -1000,7 +1001,7 @@ mod tests {
 
         let mut query_points: Vec<_> = qs
             .iter()
-            .map(|&q| q.map(|x| F::cst(x)).into_inner())
+            .map(|&q| q.mapd(|x| F::cst(x)).into_data())
             .collect();
 
         let query_topo = surface.query_topo(&query_points);

@@ -442,7 +442,7 @@ mod tests {
                     .cloned()
                     .enumerate()
                     .map(|(j, mut v)| {
-                        v = v.map(|x| F::cst(x)); // reset variables to constants
+                        v = v.mapd(|x| F::cst(x)); // reset variables to constants
                         if j == cur_pt_idx {
                             v[i] = F::var(v[i]); // set the current tested variable
                         }

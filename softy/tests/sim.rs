@@ -33,7 +33,7 @@ fn sim_test() {
         [1.0, 0.0, 1.0],
     ];
 
-    mesh.add_attrib_data::<_, VertexIndex>("ref", ref_verts)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>("ref", ref_verts)
         .unwrap();
 
     assert!(

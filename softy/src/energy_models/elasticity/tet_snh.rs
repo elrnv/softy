@@ -285,6 +285,7 @@ mod tests {
             .map(|mut tetmesh| {
                 // Prepare attributes relevant for elasticity computations.
                 SolverBuilder::prepare_deformable_mesh_vertex_attributes(&mut tetmesh).unwrap();
+                SolverBuilder::prepare_vertex_ref_pos_attribute(&mut tetmesh).unwrap();
                 SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
                 let mut solid = TetMeshSolid::new(tetmesh, material);
                 SolverBuilder::prepare_elasticity_attributes(&mut solid).unwrap();

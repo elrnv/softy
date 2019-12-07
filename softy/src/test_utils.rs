@@ -7,6 +7,7 @@ use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
 use geo::mesh::builder::*;
 use geo::ops::*;
+use utils::soap::{Vector3, IntoData};
 
 pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
@@ -66,7 +67,8 @@ pub fn make_one_tri_mesh() -> TriMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0])
         .unwrap();
 
-    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -93,7 +95,8 @@ pub fn make_four_tri_mesh() -> TriMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
         .unwrap();
 
-    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -110,7 +113,8 @@ pub fn make_one_tet_mesh() -> TetMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
         .unwrap();
 
-    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts)
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -136,7 +140,7 @@ pub fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
         [1.0, 0.0, 1.0],
     ];
 
-    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
         .unwrap();
     mesh
 }
@@ -157,7 +161,7 @@ pub fn make_three_tet_mesh() -> TetMesh {
 pub fn make_box(i: usize) -> TetMesh {
     let mut box_mesh = SolidBoxBuilder { res: [i, i, i] }.build();
     box_mesh.uniform_scale(0.5);
-    let ref_verts = box_mesh.vertex_positions().to_vec();
+    let ref_verts = box_mesh.vertex_position_iter().map(|&[a,b,c]| [a as f32, b as f32, c as f32]).collect();
     box_mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
     box_mesh

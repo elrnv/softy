@@ -2760,12 +2760,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let constraint = fc.constraint.borrow();
             let iter = constraint.constraint_jacobian_indices_iter().unwrap();
             for MatrixElementIndex { row, col } in iter {
+                debug_assert!(row < nrows);
                 rows[count] = (row + row_offset) as ipopt::Index;
                 cols[count] =
                     self.object_data
                         .source_coordinates(fc.object_index, fc.collider_index, col)
                         as ipopt::Index;
-                debug_assert!(rows[count] < nrows as i32);
                 debug_assert!(cols[count] < ipopt::BasicProblem::num_variables(self) as i32);
                 //jac[col][row] = 1;
                 count += 1;

@@ -16,6 +16,7 @@ use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
+use unroll::unroll_for_loops;
 
 use crate::inf_norm;
 
@@ -78,25 +79,24 @@ impl std::fmt::Display for SolveResult {
     }
 }
 /// Get reference tetrahedron.
-/// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
-pub fn ref_tet(tetmesh: &TetMesh, indices: &[usize; 4]) -> Tetrahedron<f64> {
-    let ref_pos = tetmesh
-        .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
-        .unwrap()
-        .as_slice::<[f64; 3]>()
-        .unwrap();
-    Tetrahedron::from_indexed_slice(indices, ref_pos)
+/// This routine assumes that there is a vertex attribute called `ref` of type `[f32;3]`.
+pub fn ref_tet(ref_pos: &[RefPosType], indices: &[usize; 4]) -> Tetrahedron<f64> {
+    Tetrahedron::new([
+        Vector3::new(ref_pos[indices[0]]).cast::<f64>().into(),
+        Vector3::new(ref_pos[indices[1]]).cast::<f64>().into(),
+        Vector3::new(ref_pos[indices[2]]).cast::<f64>().into(),
+        Vector3::new(ref_pos[indices[3]]).cast::<f64>().into()
+    ])
 }
 
 /// Get reference triangle.
-/// This routine assumes that there is a vertex attribute called `ref` of type `[f64;3]`.
-pub fn ref_tri(trimesh: &TriMesh, indices: &[usize; 3]) -> Triangle<f64> {
-    let ref_pos = trimesh
-        .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
-        .unwrap()
-        .as_slice::<[f64; 3]>()
-        .unwrap();
-    Triangle::from_indexed_slice(indices, ref_pos)
+/// This routine assumes that there is a face vertex attribute called `ref` of type `[f32;3]`.
+pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
+    Triangle::new([
+        Vector3::new(ref_tri[0]).cast::<f64>().into(),
+        Vector3::new(ref_tri[1]).cast::<f64>().into(),
+        Vector3::new(ref_tri[2]).cast::<f64>().into()
+    ])
 }
 
 #[derive(Clone, Debug)]
@@ -798,14 +798,8 @@ impl SolverBuilder {
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tri_areas(mesh: &mut TriMesh) -> Result<Vec<f64>, Error> {
-        let ref_pos = mesh
-            .attrib::<VertexIndex>(REFERENCE_POSITION_ATTRIB)
-            .unwrap()
-            .as_slice::<[f64; 3]>()?;
-
-        let ref_tri = |indices| Triangle::from_indexed_slice(indices, ref_pos);
-
-        Ok(mesh.face_iter().map(|face| ref_tri(face).area()).collect())
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+        Ok(ref_pos.chunks_exact(3).map(|tri| ref_tri(tri).area()).collect())
     }
 
     /// Convert a 3D triangle shape matrix into a 2D matrix assuming an isotropic deformation
@@ -828,21 +822,23 @@ impl SolverBuilder {
     }
 
     /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
-    fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Vec<Matrix2<f64>> {
+    fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Result<Vec<Matrix2<f64>>, Error> {
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         // Compute reference shape matrix inverses
-        mesh.face_iter()
-            .map(|face| {
-                let ref_shape_matrix = Matrix2x3::new(ref_tri(&mesh, face).shape_matrix());
+        Ok(ref_pos.chunks_exact(3)
+            .map(|tri| {
+                let ref_shape_matrix = Matrix2x3::new(ref_tri(tri).shape_matrix());
                 Self::isotropic_tri_shape_matrix(ref_shape_matrix).inverse().unwrap()
             })
-            .collect()
+            .collect())
     }
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
             .cell_iter()
-            .map(|cell| ref_tet(&mesh, cell).signed_volume())
+            .map(|cell| ref_tet(ref_pos, cell).signed_volume())
             .collect();
         if ref_volumes.iter().any(|&x| x <= 0.0) {
             return Err(Error::InvertedReferenceElement);
@@ -851,15 +847,16 @@ impl SolverBuilder {
     }
 
     /// Compute shape matrix inverses for reference elements in the given `TetMesh`.
-    fn compute_ref_tet_shape_matrix_inverses(mesh: &mut TetMesh) -> Vec<Matrix3<f64>> {
+    fn compute_ref_tet_shape_matrix_inverses(mesh: &mut TetMesh) -> Result<Vec<Matrix3<f64>>, Error> {
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         // Compute reference shape matrix inverses
-        mesh.cell_iter()
+        Ok(mesh.cell_iter()
             .map(|cell| {
-                let ref_shape_matrix = ref_tet(&mesh, cell).shape_matrix();
+                let ref_shape_matrix = ref_tet(ref_pos, cell).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
                 Matrix3::new(ref_shape_matrix).inverse().unwrap()
             })
-            .collect()
+            .collect())
     }
 
     fn prepare_kinematic_mesh_vertex_attributes<M: NumVertices + VertexAttrib + Attrib>(
@@ -896,6 +893,54 @@ impl SolverBuilder {
         Ok(())
     }
 
+    /// A helper function to populate the vertex reference position attribute.
+    pub(crate) fn prepare_vertex_ref_pos_attribute<M>(mesh: &mut M) -> Result<(), Error>
+    where
+        M: NumVertices + VertexPositions<Element = [f64; 3]> + VertexAttrib + Attrib,
+    {
+        let verts: Vec<RefPosType> = mesh
+            .vertex_position_iter()
+            .map(|&x| Vector3::new(x).cast::<f32>().into())
+            .collect();
+
+        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
+            REFERENCE_POSITION_ATTRIB,
+            verts.as_slice(),
+        )?;
+        Ok(())
+    }
+
+    /// A helper function to populate the vertex face reference position attribute.
+    #[unroll_for_loops]
+    pub(crate) fn prepare_vertex_face_ref_pos_attribute(mesh: &mut TriMesh) -> Result<(), Error>
+    {
+        let mut ref_pos = vec![[0.0; 3]; mesh.num_face_vertices()];
+        let pos = if let Ok(vtx_ref_pos) = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB) {
+            // There is a reference attribute on the vertices themselves, just transfer these to
+            // face vertices instead of using mesh position.
+            vtx_ref_pos.to_vec()
+        } else {
+            mesh.vertex_position_iter()
+                .map(|&x| Vector3::new(x).cast::<f32>().into())
+                .collect()
+        };
+
+        for (face_idx, face) in mesh.face_iter().enumerate() {
+            for i in 0..3 {
+                let face_vtx_idx: usize = mesh.face_vertex(face_idx, i).unwrap().into();
+                for j in 0..3 {
+                    ref_pos[face_vtx_idx][j] = pos[face[i]][j];
+                }
+            }
+        }
+
+        mesh.attrib_or_add_data::<RefPosType, FaceVertexIndex>(
+            REFERENCE_POSITION_ATTRIB,
+            ref_pos.as_slice(),
+        )?;
+        Ok(())
+    }
+
     /// A helper function to populate vertex attributes for simulation on a deformable mesh.
     pub(crate) fn prepare_deformable_mesh_vertex_attributes<M>(mesh: &mut M) -> Result<(), Error>
     where
@@ -904,15 +949,8 @@ impl SolverBuilder {
         // Deformable meshes are dynamic. Prepare dynamic attributes first.
         Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
 
-        let verts = mesh.vertex_positions().to_vec();
-
-        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
-            verts.as_slice(),
-        )?;
-
         {
-            // Add elastic elastic force attributes.
+            // Add elastic force attributes.
             // These will be computed at the end of the time step.
             mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
         }
@@ -1072,13 +1110,14 @@ impl SolverBuilder {
     }
 
     pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
+        Self::prepare_vertex_ref_pos_attribute(mesh)?;
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
         mesh.set_attrib_data::<RefVolType, CellIndex>(
             REFERENCE_VOLUME_ATTRIB,
             ref_volumes.as_slice(),
         )?;
 
-        let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh);
+        let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh)?;
         mesh.set_attrib_data::<_, CellIndex>(
             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
             ref_shape_mtx_inverses.as_slice(),
@@ -1087,13 +1126,14 @@ impl SolverBuilder {
     }
 
     pub(crate) fn prepare_deformable_trimesh_attributes(mesh: &mut TriMesh) -> Result<(), Error> {
+        Self::prepare_vertex_face_ref_pos_attribute(mesh)?;
         let ref_areas = Self::compute_ref_tri_areas(mesh)?;
         mesh.set_attrib_data::<RefAreaType, FaceIndex>(
             REFERENCE_AREA_ATTRIB,
             ref_areas.as_slice(),
-            )?;
+        )?;
 
-        let ref_shape_mtx_inverses = Self::compute_ref_tri_shape_matrix_inverses(mesh);
+        let ref_shape_mtx_inverses = Self::compute_ref_tri_shape_matrix_inverses(mesh)?;
         mesh.set_attrib_data::<_, FaceIndex>(
             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
             ref_shape_mtx_inverses.as_slice(),
@@ -1128,7 +1168,6 @@ impl SolverBuilder {
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
-        //
         let TetMeshSolid {
             tetmesh: ref mut mesh,
             ref mut material,

@@ -694,6 +694,33 @@ macro_rules! impl_array_vectors {
             }
         }
 
+        impl<T: Pod> Tensor<[Tensor<[Tensor<T>; $n]>; $n]> {
+            /// Convert this square matrix into a vector of its lower triangular entries.
+            /// The entries appear in row-major order as usual.
+            #[inline]
+            #[unroll_for_loops]
+            pub fn lower_triangular_vec(&self) -> Tensor<[Tensor<T>; ($n*($n - 1))/2 + $n]> {
+                const LEN: usize = ($n*($n - 1))/2 + $n;
+                let mut v: [MaybeUninit<T>; LEN] = unsafe { MaybeUninit::uninit().assume_init() };
+
+                let mut i = 0;
+                for row in 0..$n {
+                    for col in 0..=row {
+                        v[i] = MaybeUninit::new(self.data[row].data[col].data);
+                        i += 1;
+                    }
+                }
+
+                // Sanity check required because we can't use transmute on generic types.
+                debug_assert_eq!(
+                    std::mem::size_of::<[MaybeUninit<T>; LEN]>(),
+                    std::mem::size_of::<Tensor<[Tensor<T>; LEN]>>()
+                );
+
+                unsafe { std::mem::transmute_copy::<_, Tensor<[Tensor<T>; LEN]>>(&v) }
+            }
+        }
+
         #[cfg(feature = "approx")]
         impl<U, T: approx::AbsDiffEq<U>> approx::AbsDiffEq<Tensor<[U; $n]>> for Tensor<[T; $n]>
         where
@@ -1758,18 +1785,18 @@ mod tests {
         let mut a = Vector4::new([1, 2, 3, 4]);
 
         // Right multiply by raw scalar.
-        assert_eq!(Vector4::new([3, 6, 9, 12]), a * 3);
+        assert_eq!(a * 3, Vector4::new([3, 6, 9, 12]));
 
         // Right multiply by wrapped scalar.
-        assert_eq!(Vector4::new([3, 6, 9, 12]), a * 3.into_tensor());
+        assert_eq!(a * 3.into_tensor(), Vector4::new([3, 6, 9, 12]));
 
         // Right assign multiply by raw scalar.
         a *= 2;
-        assert_eq!(Vector4::new([2, 4, 6, 8]), a);
+        assert_eq!(a, Vector4::new([2, 4, 6, 8]));
 
         // Right assign multiply by wrapped scalar.
         a *= 2.into_tensor();
-        assert_eq!(Vector4::new([4, 8, 12, 16]), a);
+        assert_eq!(a, Vector4::new([4, 8, 12, 16]));
     }
 
     #[test]
@@ -1777,11 +1804,11 @@ mod tests {
         let mut a = Vector4::new([1.0, 2.0, 4.0, 8.0]);
 
         // Right divide by raw scalar.
-        assert_eq!(Vector4::new([0.5, 1.0, 2.0, 4.0]), a / 2.0);
+        assert_eq!(a / 2.0, Vector4::new([0.5, 1.0, 2.0, 4.0]));
 
         // Right assign divide by raw scalar.
         a /= 2.0;
-        assert_eq!(Vector4::new([0.5, 1.0, 2.0, 4.0]), a);
+        assert_eq!(a, Vector4::new([0.5, 1.0, 2.0, 4.0]));
     }
 
     #[test]
@@ -1792,7 +1819,7 @@ mod tests {
 
         let mut c = Vector4::new([0, 1, 2, 3]);
         c += a;
-        assert_eq!(Vector4::new([1, 3, 5, 7]), c);
+        assert_eq!(c, Vector4::new([1, 3, 5, 7]));
     }
 
     #[test]
@@ -1803,6 +1830,12 @@ mod tests {
 
         let mut c = Vector4::new([1, 3, 5, 7]);
         c -= a;
-        assert_eq!(Vector4::new([0, 1, 2, 3]), c);
+        assert_eq!(c, Vector4::new([0, 1, 2, 3]));
+    }
+
+    #[test]
+    fn lower_triangular_vec() {
+        let m = Matrix3::new([[0, 1, 2], [3, 4, 5], [6, 7, 8]]);
+        assert_eq!(m.lower_triangular_vec(), Vector6::new([0, 3, 4, 6, 7, 8]));
     }
 }

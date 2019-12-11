@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 pub use cgmath::prelude::*;
 pub use rand::{FromEntropy, IsaacRng, Rng};
+pub use std::ops::Mul;
 pub use utils::soap;
 pub use utils::soap::{Expr, IntoData, Matrix};
-pub use std::ops::Mul;
 
 // Cgmath
 

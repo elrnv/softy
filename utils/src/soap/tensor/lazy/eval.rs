@@ -738,17 +738,14 @@ impl_bin_op_assign!(impl<'a, S> SubAssign for SubsetIterExpr<'a, S> { sub_assign
 
 impl<T, I, A> SubAssign<I> for Tensor<[T]>
 where
-    A: ExprSize,
+    T: AsMutTensor,
     I: Iterator<Item = A>,
-    Tensor<[T]>: SubAssign<A>,
+    Tensor<T::Inner>: SubAssign<A>,
 {
     #[inline]
     fn sub_assign(&mut self, rhs: I) {
-        let mut out = &mut self.data;
-        for rhs in rhs {
-            let size = rhs.expr_size();
-            out.as_mut_tensor().sub_assign(rhs);
-            out = &mut out[size..];
+        for (l, r) in self.data.iter_mut().zip(rhs) {
+            l.as_mut_tensor().sub_assign(r);
         }
     }
 }

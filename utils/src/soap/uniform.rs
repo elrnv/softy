@@ -120,18 +120,21 @@ impl<S: Set, N: Array<<S as Set>::Elem>> UniChunked<S, U<N>> {
     /// let v_result = Chunked3::from_array_slice_mut(v.as_mut_slice()).into_arrays();
     /// assert_eq!(v_exp.as_mut_slice(), v_result);
     /// ```
+    #[inline]
     pub fn into_arrays(self) -> S::Output
     where
         S: ReinterpretAsGrouped<N>,
     {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.into_inner())
     }
+    #[inline]
     pub fn as_mut_arrays<'a>(&'a mut self) -> <&'a mut S as ReinterpretAsGrouped<N>>::Output
     where
         &'a mut S: ReinterpretAsGrouped<N>,
     {
         ReinterpretAsGrouped::<N>::reinterpret_as_grouped(self.data_mut())
     }
+    #[inline]
     pub fn as_arrays<'a>(&'a self) -> <&'a S as ReinterpretAsGrouped<N>>::Output
     where
         &'a S: ReinterpretAsGrouped<N>,
@@ -142,12 +145,14 @@ impl<S: Set, N: Array<<S as Set>::Elem>> UniChunked<S, U<N>> {
 
 // Note: These must be separate in order to avoid conflict with standard library.
 impl<T: Clone, N: Array<T> + Unsigned> Into<Vec<N::Array>> for UniChunked<Vec<T>, U<N>> {
+    #[inline]
     fn into(self) -> Vec<N::Array> {
         self.into_arrays()
     }
 }
 
 impl<'a, T: Clone, N: Array<T> + Unsigned> Into<&'a [N::Array]> for UniChunked<&'a [T], U<N>> {
+    #[inline]
     fn into(self) -> &'a [N::Array] {
         self.into_arrays()
     }
@@ -156,6 +161,7 @@ impl<'a, T: Clone, N: Array<T> + Unsigned> Into<&'a [N::Array]> for UniChunked<&
 impl<'a, T: Clone, N: Array<T> + Unsigned> Into<&'a mut [N::Array]>
     for UniChunked<&'a mut [T], U<N>>
 {
+    #[inline]
     fn into(self) -> &'a mut [N::Array] {
         self.into_arrays()
     }

@@ -1,15 +1,17 @@
 //! Stable Neo-Hookean energy model for tetrahedral meshes.
 //! See http://graphics.pixar.com/library/StableElasticity/paper.pdf for details.
 
+use num_traits::Zero;
+use unroll::unroll_for_loops;
+
+use geo::ops::*;
+use geo::prim::Tetrahedron;
+use utils::soap::*;
+
+use super::LinearElementEnergy;
 //use std::path::Path;
 //use geo::io::save_tetmesh;
 use super::tet_nh::TetMeshElasticity;
-use super::LinearElementEnergy;
-use geo::ops::*;
-use geo::prim::Tetrahedron;
-use num_traits::Zero;
-use unroll::unroll_for_loops;
-use utils::soap::*;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -261,13 +263,15 @@ pub type TetMeshStableNeoHookean<'a, T> = TetMeshElasticity<'a, StableNeoHookean
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use geo::mesh::VertexPositions;
+
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
     use crate::fem::SolverBuilder;
+    use crate::objects::{Object, TetMeshSolid};
     use crate::objects::material::*;
-    use crate::objects::TetMeshSolid;
-    use geo::mesh::VertexPositions;
+
+    use super::*;
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0).with_elasticity(ElasticityParameters {
@@ -282,13 +286,13 @@ mod tests {
 
         test_tetmeshes()
             .into_iter()
-            .map(|mut tetmesh| {
+            .map(|tetmesh| {
                 // Prepare attributes relevant for elasticity computations.
-                SolverBuilder::prepare_deformable_mesh_vertex_attributes(&mut tetmesh).unwrap();
-                SolverBuilder::prepare_vertex_ref_pos_attribute(&mut tetmesh).unwrap();
-                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
                 let mut solid = TetMeshSolid::new(tetmesh, material);
-                SolverBuilder::prepare_elasticity_attributes(&mut solid).unwrap();
+                solid.init_deformable_vertex_attributes().unwrap();
+                SolverBuilder::prepare_vertex_ref_pos_attribute(&mut solid.tetmesh).unwrap();
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh).unwrap();
+                solid.init_elasticity_attributes().unwrap();
                 solid
             })
             .collect()

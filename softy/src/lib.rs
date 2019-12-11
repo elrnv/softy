@@ -37,6 +37,7 @@ pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::material::*;
+pub use self::objects::init_mesh_source_index_attribute;
 use geo::mesh::attrib;
 pub use utils::index::Index;
 
@@ -80,7 +81,6 @@ pub enum Error {
         name: String,
     },
     MissingSourceIndex,
-    MissingDensityParam,
     MissingElasticityParams,
     MissingContactParams,
     MissingContactConstraint,
@@ -169,9 +169,6 @@ impl From<Error> for SimResult {
             Error::MissingSourceIndex => {
                 SimResult::Error("Missing source index vertex attribute".to_string())
             }
-            Error::MissingDensityParam => SimResult::Error(
-                "Missing density parameter or per-element density attribute".to_string(),
-            ),
             Error::MissingElasticityParams => SimResult::Error(
                 "Missing elasticity parameters or per-element elasticity attributes".to_string(),
             ),

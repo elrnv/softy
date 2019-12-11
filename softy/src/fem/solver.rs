@@ -4,19 +4,18 @@ use crate::contact::*;
 use crate::fem::problem::{FrictionalContactConstraint, Var};
 use crate::objects::*;
 use geo::mesh::{
-    attrib::{self, VertexAttrib},
+    attrib::VertexAttrib,
     topology::*,
     Attrib, VertexPositions,
 };
-use geo::ops::{Area, ShapeMatrix, Volume};
-use geo::prim::{Tetrahedron, Triangle};
+use geo::ops::{ShapeMatrix, Volume};
+use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use log::*;
 use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
-use unroll::unroll_for_loops;
 
 use crate::inf_norm;
 
@@ -86,16 +85,6 @@ pub fn ref_tet(ref_pos: &[RefPosType], indices: &[usize; 4]) -> Tetrahedron<f64>
         Vector3::new(ref_pos[indices[1]]).cast::<f64>().into(),
         Vector3::new(ref_pos[indices[2]]).cast::<f64>().into(),
         Vector3::new(ref_pos[indices[3]]).cast::<f64>().into()
-    ])
-}
-
-/// Get reference triangle.
-/// This routine assumes that there is a face vertex attribute called `ref` of type `[f32;3]`.
-pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
-    Triangle::new([
-        Vector3::new(ref_tri[0]).cast::<f64>().into(),
-        Vector3::new(ref_tri[1]).cast::<f64>().into(),
-        Vector3::new(ref_tri[2]).cast::<f64>().into()
     ])
 }
 
@@ -302,8 +291,7 @@ impl SolverBuilder {
                                         .chain(shell_iter.into_iter().flatten())
                                 })
                             })
-                    })
-            })
+                    })})
             .collect()
     }
 
@@ -364,6 +352,7 @@ impl SolverBuilder {
         for TriMeshShell {
             trimesh: ref mesh,
             material,
+            ..
         } in shells.iter()
         {
             match material.properties {
@@ -440,10 +429,10 @@ impl SolverBuilder {
         for (polymesh, material) in shells.into_iter() {
             let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
-            out.push(Self::prepare_shell_attributes(TriMeshShell {
+            out.push(TriMeshShell::new(
                 trimesh,
                 material,
-            })?)
+            ).with_fem_attributes()?)
         }
 
         Ok(out)
@@ -616,6 +605,7 @@ impl SolverBuilder {
         for TriMeshShell {
             ref trimesh,
             material,
+            ..
         } in shells.iter()
         {
             match material.properties {
@@ -797,43 +787,6 @@ impl SolverBuilder {
     }
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
-    fn compute_ref_tri_areas(mesh: &mut TriMesh) -> Result<Vec<f64>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
-        Ok(ref_pos.chunks_exact(3).map(|tri| ref_tri(tri).area()).collect())
-    }
-
-    /// Convert a 3D triangle shape matrix into a 2D matrix assuming an isotropic deformation
-    /// model.
-    ///
-    /// Assume that reference triangles are non-degenerate.
-    pub fn isotropic_tri_shape_matrix<T: Real>(m: Matrix2x3<T>) -> Matrix2<T> {
-        // Project (orthogonally) second row onto the first.
-        let scale = m[0].dot(m[1]) / m[0].norm_squared();
-        let r1_proj = m[0] * scale;
-
-        let q = Matrix2x3 {
-            data: [
-                m[0].normalized(),
-                (m[1] - r1_proj).normalized(),
-            ]
-        };
-
-        m * q.transpose()
-    }
-
-    /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
-    fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Result<Vec<Matrix2<f64>>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
-        // Compute reference shape matrix inverses
-        Ok(ref_pos.chunks_exact(3)
-            .map(|tri| {
-                let ref_shape_matrix = Matrix2x3::new(ref_tri(tri).shape_matrix());
-                Self::isotropic_tri_shape_matrix(ref_shape_matrix).inverse().unwrap()
-            })
-            .collect())
-    }
-
-    /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
         let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
@@ -859,39 +812,7 @@ impl SolverBuilder {
             .collect())
     }
 
-    fn prepare_kinematic_mesh_vertex_attributes<M: NumVertices + VertexAttrib + Attrib>(
-        mesh: &mut M,
-    ) -> Result<(), Error> {
-        mesh.attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
-        Ok(())
-    }
 
-    /// A helper function to populate vertex attributes for simulation on a dynamic mesh.
-    fn prepare_dynamic_mesh_vertex_attributes<M: NumVertices + VertexAttrib + Attrib>(
-        mesh: &mut M,
-    ) -> Result<(), Error> {
-        Self::prepare_kinematic_mesh_vertex_attributes(mesh)?;
-
-        // If this attribute doesn't exist, assume no vertices are fixed. This function will
-        // return an error if there is an existing Fixed attribute with the wrong type.
-        {
-            use geo::mesh::attrib::*;
-            let fixed_buf = mesh
-                .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
-                .unwrap_or_else(|_| {
-                    Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])
-                })
-                .into_buffer();
-            let mut fixed = fixed_buf.cast_into_vec::<FixedIntType>();
-            if fixed.is_empty() {
-                // If non-numeric type detected, just fill it with zeros.
-                fixed.resize(mesh.num_vertices(), 0);
-            }
-            mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::from_vec(fixed))?;
-        }
-
-        Ok(())
-    }
 
     /// A helper function to populate the vertex reference position attribute.
     pub(crate) fn prepare_vertex_ref_pos_attribute<M>(mesh: &mut M) -> Result<(), Error>
@@ -910,53 +831,26 @@ impl SolverBuilder {
         Ok(())
     }
 
-    /// A helper function to populate the vertex face reference position attribute.
-    #[unroll_for_loops]
-    pub(crate) fn prepare_vertex_face_ref_pos_attribute(mesh: &mut TriMesh) -> Result<(), Error>
-    {
-        let mut ref_pos = vec![[0.0; 3]; mesh.num_face_vertices()];
-        let pos = if let Ok(vtx_ref_pos) = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB) {
-            // There is a reference attribute on the vertices themselves, just transfer these to
-            // face vertices instead of using mesh position.
-            vtx_ref_pos.to_vec()
-        } else {
-            mesh.vertex_position_iter()
-                .map(|&x| Vector3::new(x).cast::<f32>().into())
-                .collect()
-        };
+    ///// A helper function to populate the edge reference angles used to compute bending energies.
+    //#[unroll_for_loops]
+    //pub(crate) fn prepare_edge_ref_angle_attribute(mesh: &mut TriMesh) -> Result<(), Error>
+    //{
+    //    for (face_idx, face) in mesh.edge_iter().enumerate() {
+    //        for i in 0..3 {
+    //            let face_vtx_idx: usize = mesh.face_vertex(face_idx, i).unwrap().into();
+    //            for j in 0..3 {
+    //                ref_pos[face_vtx_idx][j] = pos[face[i]][j];
+    //            }
+    //        }
+    //    }
 
-        for (face_idx, face) in mesh.face_iter().enumerate() {
-            for i in 0..3 {
-                let face_vtx_idx: usize = mesh.face_vertex(face_idx, i).unwrap().into();
-                for j in 0..3 {
-                    ref_pos[face_vtx_idx][j] = pos[face[i]][j];
-                }
-            }
-        }
+    //    mesh.attrib_or_add_data::<RefAngleType, EdgeIndex>(
+    //        REFERENCE_POSITION_ATTRIB,
+    //        ref_pos.as_slice(),
+    //    )?;
+    //    Ok(())
+    //}
 
-        mesh.attrib_or_add_data::<RefPosType, FaceVertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
-            ref_pos.as_slice(),
-        )?;
-        Ok(())
-    }
-
-    /// A helper function to populate vertex attributes for simulation on a deformable mesh.
-    pub(crate) fn prepare_deformable_mesh_vertex_attributes<M>(mesh: &mut M) -> Result<(), Error>
-    where
-        M: NumVertices + VertexPositions<Element = [f64; 3]> + VertexAttrib + Attrib,
-    {
-        // Deformable meshes are dynamic. Prepare dynamic attributes first.
-        Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
-
-        {
-            // Add elastic force attributes.
-            // These will be computed at the end of the time step.
-            mesh.set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
-        }
-
-        Ok(())
-    }
 
     /// Compute vertex masses on the given solid. The solid is assumed to have
     /// volume and density attributes already.
@@ -984,130 +878,6 @@ impl SolverBuilder {
             .unwrap();
     }
 
-    /// Compute vertex masses on the given shell. The shell is assumed to have
-    /// area and density attributes already.
-    pub fn compute_shell_vertex_masses(shell: &mut TriMeshShell) {
-        let trimesh = &mut shell.trimesh;
-        let mut masses = vec![0.0; trimesh.num_vertices()];
-
-        for (&area, density, face) in zip!(
-            trimesh
-                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
-                .unwrap(),
-            trimesh
-                .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                .unwrap()
-                .map(|&x| f64::from(x)),
-            trimesh.face_iter()
-        ) {
-            for i in 0..3 {
-                masses[face[i]] += area * density / 3.0;
-            }
-        }
-
-        trimesh
-            .add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
-            .unwrap();
-    }
-
-    pub(crate) fn prepare_density_attribute<Obj: Object>(object: &mut Obj) -> Result<(), Error> {
-        // Prepare density parameter
-        if let Some(density) = object.material().scaled_density() {
-            let num_elements = object.num_elements();
-            match object
-                .mesh_mut()
-                .add_attrib_data::<DensityType, Obj::ElementIndex>(
-                    DENSITY_ATTRIB,
-                    vec![density as f32; num_elements],
-                ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // No global density parameter was given. Check that it exists on the mesh itself.
-            if object
-                .mesh()
-                .attrib_check::<DensityType, Obj::ElementIndex>(DENSITY_ATTRIB)
-                .is_err()
-            {
-                return Err(Error::MissingDensityParam);
-            }
-
-            // Scale the mesh parameter so that it is consistent with the rest
-            // of the material.
-
-            let scale = object.material().scale();
-            for density in object
-                .mesh_mut()
-                .attrib_iter_mut::<DensityType, Obj::ElementIndex>(DENSITY_ATTRIB)?
-            {
-                *density *= scale;
-            }
-        }
-        Ok(())
-    }
-
-    /// Transfer parameters `lambda` and `mu` from the object material to the
-    /// mesh if it hasn't already been populated on the input.
-    pub(crate) fn prepare_elasticity_attributes<Obj: Object>(obj: &mut Obj) -> Result<(), Error> {
-        if let Some(elasticity) = obj.material().scaled_elasticity() {
-            let num_elements = obj.num_elements();
-            match obj
-                .mesh_mut()
-                .add_attrib_data::<LambdaType, Obj::ElementIndex>(
-                    LAMBDA_ATTRIB,
-                    vec![elasticity.lambda; num_elements],
-                ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-            match obj.mesh_mut().add_attrib_data::<MuType, Obj::ElementIndex>(
-                MU_ATTRIB,
-                vec![elasticity.mu; num_elements],
-            ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {}
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // No global elasticity parameters were given. Check that the mesh has the right
-            // parameters.
-            if obj
-                .mesh()
-                .attrib_check::<LambdaType, Obj::ElementIndex>(LAMBDA_ATTRIB)
-                .is_err()
-                || obj
-                    .mesh()
-                    .attrib_check::<MuType, Obj::ElementIndex>(MU_ATTRIB)
-                    .is_err()
-            {
-                return Err(Error::MissingElasticityParams);
-            }
-
-            // Scale the mesh parameters so that they are consistent with the
-            // rest of the material.
-
-            let scale = obj.material().scale();
-            for lambda in obj
-                .mesh_mut()
-                .attrib_iter_mut::<LambdaType, Obj::ElementIndex>(LAMBDA_ATTRIB)?
-            {
-                *lambda *= scale;
-            }
-            for mu in obj
-                .mesh_mut()
-                .attrib_iter_mut::<MuType, Obj::ElementIndex>(MU_ATTRIB)?
-            {
-                *mu *= scale;
-            }
-        }
-        Ok(())
-    }
 
     pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
         Self::prepare_vertex_ref_pos_attribute(mesh)?;
@@ -1125,67 +895,21 @@ impl SolverBuilder {
         Ok(())
     }
 
-    pub(crate) fn prepare_deformable_trimesh_attributes(mesh: &mut TriMesh) -> Result<(), Error> {
-        Self::prepare_vertex_face_ref_pos_attribute(mesh)?;
-        let ref_areas = Self::compute_ref_tri_areas(mesh)?;
-        mesh.set_attrib_data::<RefAreaType, FaceIndex>(
-            REFERENCE_AREA_ATTRIB,
-            ref_areas.as_slice(),
-        )?;
-
-        let ref_shape_mtx_inverses = Self::compute_ref_tri_shape_matrix_inverses(mesh)?;
-        mesh.set_attrib_data::<_, FaceIndex>(
-            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-            ref_shape_mtx_inverses.as_slice(),
-        )?;
-        Ok(())
-    }
-
-    /// A utility for initializing the source index attribute to use for
-    /// updating mesh vertices. This can be used explicitly by the user on the
-    /// mesh before building the solver. For instance if the user splits the
-    /// mesh before adding it to the solver, it is necessary to initialize the
-    /// source index attribute so that the meshes can be updated via a global
-    /// vertex position array (point cloud).
-    /// The attribute is only set if it doesn't already exist.
-    pub fn initialize_source_index_attribute<M>(mesh: &mut M) -> Result<(), Error>
-    where
-        M: NumVertices + Attrib + VertexAttrib,
-    {
-        // Need source index for meshes so that their vertices can be updated.
-        // If this index is missing, it is assumed that the source is coincident
-        // with the provided mesh.
-        let num_verts = mesh.num_vertices();
-        match mesh.add_attrib_data::<SourceIndexType, VertexIndex>(
-            SOURCE_INDEX_ATTRIB,
-            (0..num_verts).collect::<Vec<_>>(),
-        ) {
-            Err(attrib::Error::AlreadyExists(_)) => Ok(()),
-            Err(e) => Err(e.into()),
-            _ => Ok(()),
-        }
-    }
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
-        let TetMeshSolid {
-            tetmesh: ref mut mesh,
-            ref mut material,
-            ..
-        } = &mut solid;
+        solid.material = solid.material.normalized();
 
-        *material = material.normalized();
+        solid.init_source_index_attribute()?;
 
-        Self::initialize_source_index_attribute(mesh)?;
+        solid.init_deformable_vertex_attributes()?;
 
-        Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
-
-        Self::prepare_deformable_tetmesh_attributes(mesh)?;
+        Self::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh)?;
 
         {
             // Add elastic strain energy and elastic force attributes.
             // These will be computed at the end of the time step.
-            mesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+            solid.tetmesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
         }
 
         // Below we prepare attributes that give elasticity and density parameters. If such were
@@ -1193,9 +917,9 @@ impl SolverBuilder {
         // behaviour is justified because variable material properties are most likely more
         // accurate and probably determined from a data driven method.
 
-        Self::prepare_elasticity_attributes(&mut solid)?;
+        solid.init_elasticity_attributes()?;
 
-        Self::prepare_density_attribute(&mut solid)?;
+        solid.init_density_attribute()?;
 
         // Compute vertex masses.
         Self::compute_solid_vertex_masses(&mut solid);
@@ -1203,52 +927,6 @@ impl SolverBuilder {
         Ok(solid)
     }
 
-    /// Precompute attributes necessary for FEM simulation on the given mesh.
-    pub(crate) fn prepare_shell_attributes(mut shell: TriMeshShell) -> Result<TriMeshShell, Error> {
-        let TriMeshShell {
-            trimesh: ref mut mesh,
-            material,
-        } = &mut shell;
-
-        *material = material.normalized();
-
-        Self::initialize_source_index_attribute(mesh)?;
-
-        match material.properties {
-            ShellProperties::Fixed => {
-                // Kinematic meshes don't have material properties.
-                Self::prepare_kinematic_mesh_vertex_attributes(mesh)?;
-            }
-            ShellProperties::Rigid { .. } => {
-                Self::prepare_dynamic_mesh_vertex_attributes(mesh)?;
-            }
-            ShellProperties::Deformable { .. } => {
-                Self::prepare_deformable_mesh_vertex_attributes(mesh)?;
-
-                Self::prepare_deformable_trimesh_attributes(mesh)?;
-
-                {
-                    // Add elastic strain energy attribute.
-                    // This will be computed at the end of the time step.
-                    mesh.set_attrib::<StrainEnergyType, FaceIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
-                }
-
-                // Below we prepare attributes that give elasticity and density parameters. If such were
-                // already provided on the mesh, then any given global parameters are ignored. This
-                // behaviour is justified because variable material properties are most likely more
-                // accurate and probably determined from a data driven method.
-
-                Self::prepare_elasticity_attributes(&mut shell)?;
-
-                Self::prepare_density_attribute(&mut shell)?;
-
-                // Compute vertex masses.
-                Self::compute_shell_vertex_masses(&mut shell);
-            }
-        };
-
-        Ok(shell)
-    }
 }
 
 /// Finite element engine.

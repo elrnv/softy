@@ -1,15 +1,17 @@
+use num_traits::FromPrimitive;
+//use rayon::prelude::*;
+use reinterpret::*;
+
+use geo::mesh::{Attrib, topology::*};
+use geo::prim::{Tetrahedron, Triangle};
+use utils::soap::{AsTensor, IntoTensor, Real, Vector3};
+use utils::zip;
+
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::objects::solid::*;
 use crate::objects::shell::*;
-use geo::mesh::{topology::*, Attrib};
-use geo::prim::{Tetrahedron, Triangle};
-use num_traits::FromPrimitive;
-use utils::soap::{Real, Vector3, AsTensor, IntoTensor};
-//use rayon::prelude::*;
-use reinterpret::*;
-use utils::zip;
+use crate::objects::solid::*;
 
 const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 12;
 const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 9;
@@ -403,12 +405,14 @@ impl<T: Real> EnergyHessian<T> for TriMeshInertia<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use geo::mesh::VertexPositions;
+
     use crate::energy_models::test_utils::*;
     use crate::fem::SolverBuilder;
-    use crate::objects::material::*;
-    use geo::mesh::VertexPositions;
-    
+    use crate::objects::{Object, material::*};
+
+    use super::*;
+
     mod solid {
         use super::*;
 
@@ -425,7 +429,7 @@ mod tests {
                     // Prepare attributes relevant for elasticity computations.
                     SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
                     let mut solid = TetMeshSolid::new(tetmesh, material);
-                    SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                    solid.init_density_attribute().unwrap();
                     solid
                 })
                 .collect()
@@ -463,11 +467,11 @@ mod tests {
 
             test_trimeshes()
                 .into_iter()
-                .map(|mut trimesh| {
+                .map(|trimesh| {
                     // Prepare attributes relevant for elasticity computations.
-                    SolverBuilder::prepare_deformable_trimesh_attributes(&mut trimesh).unwrap();
                     let mut shell = TriMeshShell::new(trimesh, material);
-                    SolverBuilder::prepare_density_attribute(&mut shell).unwrap();
+                    shell.init_deformable_attributes().unwrap();
+                    shell.init_density_attribute().unwrap();
                     shell
                 })
                 .collect()

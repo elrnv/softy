@@ -217,7 +217,7 @@ mod tests {
                     // Prepare attributes relevant for elasticity computations.
                     SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
                     let mut solid = TetMeshSolid::new(tetmesh, material);
-                    SolverBuilder::prepare_density_attribute(&mut solid).unwrap();
+                    solid.init_density_attribute().unwrap();
                     solid
                 })
                 .collect()
@@ -260,11 +260,11 @@ mod tests {
 
             test_trimeshes()
                 .into_iter()
-                .map(|mut trimesh| {
+                .map(|trimesh| {
                     // Prepare attributes relevant for elasticity computations.
-                    SolverBuilder::prepare_deformable_trimesh_attributes(&mut trimesh).unwrap();
                     let mut shell = TriMeshShell::new(trimesh, material);
-                    SolverBuilder::prepare_density_attribute(&mut shell).unwrap();
+                    shell.init_deformable_attributes().unwrap();
+                    shell.init_density_attribute().unwrap();
                     shell
                 })
                 .collect()

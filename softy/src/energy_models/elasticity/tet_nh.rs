@@ -549,12 +549,12 @@ mod tests {
 
         test_tetmeshes()
             .into_iter()
-            .map(|mut tetmesh| {
+            .map(|tetmesh| {
                 // Prepare attributes relevant for elasticity computations.
-                SolverBuilder::prepare_deformable_mesh_vertex_attributes(&mut tetmesh).unwrap();
-                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut tetmesh).unwrap();
                 let mut solid = TetMeshSolid::new(tetmesh, material);
-                SolverBuilder::prepare_elasticity_attributes(&mut solid).unwrap();
+                solid.init_deformable_vertex_attributes().unwrap();
+                SolverBuilder::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh).unwrap();
+                solid.init_elasticity_attributes().unwrap();
                 solid
             })
             .collect()

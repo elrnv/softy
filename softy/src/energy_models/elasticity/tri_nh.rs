@@ -1,25 +1,26 @@
-//! Neo-Hookean energy model for tetrahedral meshes.
+//! Neo-Hookean energy model for triangle meshes.
 
-//use std::path::Path;
-//use geo::io::save_tetmesh;
-use super::{LinearElementEnergy, TriEnergy};
-use crate::attrib_defines::*;
-use crate::energy::*;
-use crate::matrix::*;
-use crate::objects::*;
-use geo::mesh::{topology::*, Attrib};
-use geo::ops::*;
-use geo::prim::Triangle;
 use num_traits::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use reinterpret::*;
 use unroll::unroll_for_loops;
+
+use geo::mesh::{Attrib, topology::*};
+use geo::ops::*;
+use geo::prim::Triangle;
 use utils::soap::*;
 use utils::zip;
 
-/// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
-/// for tet energy computation. It encapsulates tet specific energy computation.
+use crate::attrib_defines::*;
+use crate::energy::*;
+use crate::matrix::*;
+use crate::objects::*;
+
+use super::{LinearElementEnergy, TriEnergy};
+
+/// Per-triangle Neo-Hookean energy model. This struct stores conveniently precomputed values
+/// for triangle energy computation. It encapsulates triangle specific energy computation.
 #[allow(non_snake_case)]
 pub struct NeoHookeanTriEnergy<T> {
     Dx: Matrix2x3<T>,
@@ -73,7 +74,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
 
     /// Elastic strain energy per element.
     /// This is a helper function that computes the strain energy given shape matrices, which can
-    /// be obtained from a tet and its reference configuration.
+    /// be obtained from a triangle and its reference configuration.
     #[allow(non_snake_case)]
     #[inline]
     fn energy(&self) -> T {
@@ -192,33 +193,38 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     }
 }
 
-/// A possibly non-linear elastic energy for tetrahedral meshes.
-/// This type wraps a `TriMeshSolid` to provide an interfce for computing a hyperelastic energy.
+/// A possibly non-linear elastic energy for triangle meshes.
+///
+/// This type wraps a `TriMeshShell` to provide an interfce for computing a membrane and bending
+/// elastic energies. `E` specifies the per element membrane energy model.
 pub struct TriMeshElasticity<'a, E>(pub &'a TriMeshShell, std::marker::PhantomData<E>);
 
 /// NeoHookean elasticity model.
 pub type TriMeshNeoHookean<'a, T> = TriMeshElasticity<'a, NeoHookeanTriEnergy<T>>;
 
-impl<'a, E> TriMeshElasticity<'a, E> {
-    const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 45; // There are 3*6 + 3*9 = 45 triplets per triangle (overestimate)
+const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 45; // There are 3*6 + 3*9 = 45 triplets per triangle
 
+// There are 4*6 = 24 triplets on the diagonal blocks per interior edge.
+const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG: usize = 24;
+// There are 4*6 + 3*3*5 = 69 triplets per interior edge in total.
+const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE: usize = 69;
+
+impl<'a, E> TriMeshElasticity<'a, E> {
     pub fn new(shell: &'a TriMeshShell) -> Self {
         TriMeshElasticity(shell, std::marker::PhantomData)
     }
 
-    /// Helper for distributing local Hessian entries into the global Hessian matrix.
+    /// Helper for distributing local membrane Hessian entries into the global Hessian matrix.
+    ///
     /// This function provides the order of Hessian matrix non-zeros.
-    /// `indices` is a map from the local tet vertex indices to their position in the global
-    /// tetmesh
-    /// `local_hess` is the function that computes a local hessian matrix for a pair of vertex
-    /// indices
+    /// `local_hess` computes a local hessian matrix for a pair of vertex indices.
     /// `value` is the mapping function that would compute the hessian value. In particular
     /// `value` takes 3 pairs of (row, col) indices in this order:
     ///     - vertex indices
     ///     - local matrix indices
     /// as well as the local hessian matrix computed by `local_hess`.
     #[inline]
-    fn hessian_for_each<H, L, F>(mut local_hess: L, mut value: F)
+    fn tri_hessian_for_each<H, L, F>(mut local_hess: L, mut value: F)
     where
         L: FnMut(usize, usize) -> H,
         F: FnMut(usize, (usize, usize), (usize, usize), &mut H),
@@ -237,26 +243,123 @@ impl<'a, E> TriMeshElasticity<'a, E> {
             }
         }
 
-        assert_eq!(i, Self::NUM_HESSIAN_TRIPLETS_PER_TRI)
+        assert_eq!(i, NUM_HESSIAN_TRIPLETS_PER_TRI)
+    }
+
+    /// Helper for distributing bending Hessian entries into the global Hessian matrix.
+    ///
+    /// This function is similar to `tri_hessian_for_each` but for the bending energy.
+    ///
+    /// Each edge neighbourhood is described in [`InteriorEdge`].
+    #[inline]
+    fn edge_hessian_for_each<D, L, DH, LH, DF, LF>(mut diag_hess: D, mut lower_hess: L, mut diag_value: DF, mut lower_value: LF)
+        where
+            D: FnMut(usize) -> DH,
+            L: FnMut(usize) -> LH,
+            DF: FnMut(usize, usize, (usize, usize), usize, &mut DH),
+            LF: FnMut(usize, (usize, usize), (usize, usize), &mut LH),
+    {
+        let mut triplet_idx = 0; // Triplet index for the edge. there should be 69 in total.
+
+        // Diagonal part
+        for vtx in 0..4 {
+            let mut i = 0; // x,y,z component counter.
+            let mut h = diag_hess(vtx);
+            for row in 0..3 {
+                for col in 0..row + 1 {
+                    diag_value(triplet_idx, vtx, (row, col), i, &mut h);
+                    triplet_idx += 1;
+                    i += 1;
+                }
+            }
+        }
+        assert_eq!(triplet_idx, NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+
+        // Reset index since this function should be writing to disjoint arrays anyways
+        triplet_idx = 0;
+
+        // Lower triangular off-diagonal part
+        let mut vtx = 0; // Vertex counter (only lower triangular vertices are counted).
+        for row_vtx in 1..4 {
+            for col_vtx in 0..row_vtx {
+                if row_vtx + col_vtx == 5 { // There is a known zero block at row: 3, col: 2
+                    continue;
+                }
+                let mut h = lower_hess(vtx);
+                for row in 0..3 {
+                    for col in 0..3 {
+                        lower_value(triplet_idx, (row_vtx, col_vtx), (row, col), &mut h);
+                        triplet_idx += 1;
+                    }
+                }
+                vtx += 1;
+            }
+        }
+
+        assert_eq!(triplet_idx, NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE - NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+    }
+
+    #[inline]
+    fn proj_angle<T: Real>(angle: T) -> T {
+        let pi = T::from(std::f64::consts::PI).unwrap();
+        let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+        let mut out = (angle + pi) % two_pi - pi;
+        if out < -pi {
+            out += two_pi;
+        }
+        out
+    }
+
+    fn incremental_angle<T: Real>(angle: T, prev_angle: T) -> T {
+        let pi = T::from(std::f64::consts::PI).unwrap();
+        let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+        let prev_angle_proj = Self::proj_angle(prev_angle);
+        let mut angle_diff = angle - prev_angle_proj;
+        if angle_diff < -pi {
+            angle_diff += two_pi;
+        } else if angle_diff > pi {
+            angle_diff -= two_pi;
+        }
+        prev_angle + angle_diff
     }
 }
 
-/// Define a hyperelastic energy model for `TriMeshSolid`s.
+/// Define a hyperelastic energy model for `TriMeshShell`s.
 impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     fn energy(&self, x0: &[T], x1: &[T]) -> T {
         let TriMeshShell {
             ref trimesh,
             material,
-            ..
+            ref interior_edges,
+            ref interior_edge_angles,
+            ref interior_edge_ref_angles,
+            ref interior_edge_ref_length,
+            ref interior_edge_bending_stiffness,
         } = *self.0;
 
         let damping = material.scaled_damping();
 
-        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1 = Chunked3::from_flat(x1).into_arrays();
+        let pos0 = Chunked3::from_flat(x0).into_arrays();
 
-        zip!(
+        // Bending energy
+        let bending: T = zip!(
+            interior_edges.iter(),
+            interior_edge_angles.iter(),
+            interior_edge_ref_angles.iter(),
+            interior_edge_ref_length.iter(),
+            interior_edge_bending_stiffness.iter(),
+        ).map(|(e, &prev_theta, &ref_theta, &ref_length, &k)| {
+            let mut theta = e.edge_angle(pos1, trimesh.faces());
+            let prev_theta = T::from(prev_theta).unwrap();
+            theta = Self::incremental_angle(theta, prev_theta);
+            let theta_strain = theta - T::from(ref_theta).unwrap();
+            T::from(0.5 * ref_length * k).unwrap() * theta_strain * theta_strain
+        }).sum();
+
+        // Membrane energy
+        let membrane: T = zip!(
             trimesh
                 .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
                 .unwrap(),
@@ -292,7 +395,9 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
                         - (dH * Vector3::new(tri_dx.2.into())).sum()
                 }
         })
-        .sum()
+        .sum();
+
+        membrane + bending
     }
 }
 
@@ -302,6 +407,11 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
         let TriMeshShell {
             ref trimesh,
             material,
+            ref interior_edges,
+            ref interior_edge_angles,
+            ref interior_edge_ref_angles,
+            ref interior_edge_ref_length,
+            ref interior_edge_bending_stiffness,
             ..
         } = *self.0;
 
@@ -310,12 +420,38 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
 
-        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1 = Chunked3::from_flat(x1).into_arrays();
+        let pos0 = Chunked3::from_flat(x0).into_arrays();
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
-        // Transfer forces from face-vertices to vertices themeselves
+        // Gradient of bending energy.
+        for (e, &prev_theta, &ref_theta, &ref_length, &k) in zip!(
+            interior_edges.iter(),
+            interior_edge_angles.iter(),
+            interior_edge_ref_angles.iter(),
+            interior_edge_ref_length.iter(),
+            interior_edge_bending_stiffness.iter(),
+        ) {
+            // Compute energy derivative with respect to theta.
+            let mut theta = e.edge_angle(pos1, trimesh.faces());
+            let prev_theta = T::from(prev_theta).unwrap();
+            theta = Self::incremental_angle(theta, prev_theta);
+            let dE_dTh = T::from(ref_length * k).unwrap() * (theta - T::from(ref_theta).unwrap());
+
+            // Theta derivative with respect to x.
+            let dTh_dx = e.edge_angle_gradient(pos1, trimesh.faces());
+
+            // Distribute gradient.
+            let edge_verts = e.edge_verts(trimesh.faces());
+            let tangent_verts = e.tangent_verts(trimesh.faces());
+            gradient[edge_verts[0]] += Vector3::new(dTh_dx[0]) * dE_dTh;
+            gradient[edge_verts[1]] += Vector3::new(dTh_dx[1]) * dE_dTh;
+            gradient[tangent_verts[0]] += Vector3::new(dTh_dx[2]) * dE_dTh;
+            gradient[tangent_verts[1]] += Vector3::new(dTh_dx[3]) * dE_dTh;
+        }
+
+        // Gradient of membrane energy.
         for (&area, &DX_inv, face, &lambda, &mu) in zip!(
             trimesh
                 .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
@@ -359,7 +495,6 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
             // Needed for damping.
             let dH = tri_energy.energy_hessian_product_transpose(&tri_dx);
             for i in 0..2 {
-                // Damping
                 gradient[face[i]] += dH[i] * damping;
                 gradient[face[2]] -= dH[i] * damping;
             }
@@ -369,7 +504,8 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
 
 impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
-        Self::NUM_HESSIAN_TRIPLETS_PER_TRI * self.0.trimesh.num_faces()
+        NUM_HESSIAN_TRIPLETS_PER_TRI * self.0.trimesh.num_faces()
+        + NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE * self.0.interior_edges.len()
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
@@ -381,30 +517,74 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
-        let trimesh = &self.0.trimesh;
+        let shell = &self.0;
+        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * shell.trimesh.num_faces();
 
+        // Membrane Hessian indices
         {
             // Break up the hessian indices into chunks of elements for each tri.
-            let hess_row_chunks: &mut [[I; 45]] = reinterpret_mut_slice(rows);
-            let hess_col_chunks: &mut [[I; 45]] = reinterpret_mut_slice(cols);
+            let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+                reinterpret_mut_slice(&mut rows[..tri_entries]);
+            let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+                reinterpret_mut_slice(&mut cols[..tri_entries]);
 
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
                 .zip(hess_col_chunks.par_iter_mut())
-                .zip(trimesh.faces().par_iter());
+                .zip(shell.trimesh.faces().par_iter());
 
             hess_iter.for_each(|((tri_hess_rows, tri_hess_cols), face)| {
-                Self::hessian_for_each(
+                Self::tri_hessian_for_each(
                     |_, _| (),
                     |i, (n, k), (row, col), _| {
                         let mut global_row = 3 * face[n] + row;
                         let mut global_col = 3 * face[k] + col;
                         if face[n] < face[k] {
                             // In the upper triangular part of the global matrix, transpose
+                            // This is necessary because even though local matrix may be lower
+                            // triangular, its global configuration may not be.
                             std::mem::swap(&mut global_row, &mut global_col);
                         }
                         tri_hess_rows[i] = I::from_usize(global_row + offset.row).unwrap();
                         tri_hess_cols[i] = I::from_usize(global_col + offset.col).unwrap();
+                    },
+                );
+            });
+        }
+
+        // Bending Hessian indices
+        {
+            // Break up the hessian indices into chunks of elements for each edge.
+            let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] = reinterpret_mut_slice(&mut rows[tri_entries..]);
+            let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] = reinterpret_mut_slice(&mut cols[tri_entries..]);
+
+            let hess_iter = hess_row_chunks
+                .par_iter_mut()
+                .zip(hess_col_chunks.par_iter_mut())
+                .zip(shell.interior_edges.par_iter());
+
+            hess_iter.for_each(|((edge_hess_rows, edge_hess_cols), edge)| {
+                let x = edge.verts(shell.trimesh.faces());
+                let (diag_rows, lower_rows) = edge_hess_rows.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+                let (diag_cols, lower_cols) = edge_hess_cols.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+                Self::edge_hessian_for_each(
+                    |_| (),
+                    |_| (),
+                    |triplet_idx, vtx, (row, col), _, _| {
+                        let global_row = 3 * x[vtx] + row;
+                        let global_col = 3 * x[vtx] + col;
+                        diag_rows[triplet_idx] = I::from_usize(global_row + offset.row).unwrap();
+                        diag_cols[triplet_idx] = I::from_usize(global_col + offset.col).unwrap();
+                    },
+                    |triplet_idx, (row_vtx, col_vtx), (row, col), _| {
+                        let mut global_row = 3 * x[row_vtx] + row;
+                        let mut global_col = 3 * x[col_vtx] + col;
+                        if x[row_vtx] < x[col_vtx] {
+                            // In the upper triangular part of the global matrix, transpose
+                            std::mem::swap(&mut global_row, &mut global_col);
+                        }
+                        lower_rows[triplet_idx] = I::from_usize(global_row + offset.row).unwrap();
+                        lower_cols[triplet_idx] = I::from_usize(global_col + offset.col).unwrap();
                     },
                 );
             });
@@ -418,16 +598,19 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
-        let trimesh = &self.0.trimesh;
+        let shell = &self.0;
+        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * shell.trimesh.num_faces();
 
+        // Membrane Hessian indices
         {
-            // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex; 45]] = reinterpret_mut_slice(indices);
+            // Break up the hessian indices into chunks of elements for each triangle.
+            let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+                reinterpret_mut_slice(&mut indices[..tri_entries]);
 
-            let hess_iter = hess_chunks.par_iter_mut().zip(trimesh.faces().par_iter());
+            let hess_iter = hess_chunks.par_iter_mut().zip(shell.trimesh.faces().par_iter());
 
             hess_iter.for_each(|(tri_hess, face)| {
-                Self::hessian_for_each(
+                Self::tri_hessian_for_each(
                     |_, _| (),
                     |i, (n, k), (row, col), _| {
                         let mut global_row = 3 * face[n] + row;
@@ -444,6 +627,44 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
                 );
             });
         }
+
+        // Bending Hessian indices
+        {
+            // Break up the hessian indices into chunks of elements for each edge.
+            let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
+                reinterpret_mut_slice(&mut indices[tri_entries..]);
+
+            let hess_iter = hess_chunks.par_iter_mut().zip(shell.interior_edges.par_iter());
+
+            hess_iter.for_each(|(edge_hess, edge)| {
+                let x = edge.verts(shell.trimesh.faces());
+                let (diag_hess, lower_hess) = edge_hess.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+                Self::edge_hessian_for_each(
+                    |_| (),
+                    |_| (),
+                    |triplet_idx, vtx, (row, col), _, _| {
+                        let global_row = 3 * x[vtx] + row;
+                        let global_col = 3 * x[vtx] + col;
+                        diag_hess[triplet_idx] = MatrixElementIndex {
+                            row: global_row + offset.row,
+                            col: global_col + offset.col,
+                        }
+                    },
+                    |triplet_idx, (row_vtx, col_vtx), (row, col), _| {
+                        let mut global_row = 3 * x[row_vtx] + row;
+                        let mut global_col = 3 * x[col_vtx] + col;
+                        if x[row_vtx] < x[col_vtx] {
+                            // In the upper triangular part of the global matrix, transpose
+                            std::mem::swap(&mut global_row, &mut global_col);
+                        }
+                        lower_hess[triplet_idx] = MatrixElementIndex {
+                            row: global_row + offset.row,
+                            col: global_col + offset.col,
+                        }
+                    },
+                );
+            });
+        }
     }
 }
 
@@ -454,16 +675,21 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
         let TriMeshShell {
             ref trimesh,
             material,
+            ref interior_edges,
+            ref interior_edge_ref_length,
+            ref interior_edge_bending_stiffness,
             ..
         } = *self.0;
 
+        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * trimesh.num_faces();
         let damping = material.scaled_damping();
 
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1 = Chunked3::from_flat(x1).into_arrays();
 
+        // Membrane Hessian
         {
-            // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[T; 45]] = reinterpret_mut_slice(values);
+            // Break up the hessian triplets into chunks of elements for each triangle.
+            let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(&mut values[..tri_entries]);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
                 trimesh
@@ -488,7 +714,7 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
             ));
 
             hess_iter.for_each(|(tri_hess, (&area, &DX_inv, face, &lambda, &mu))| {
-                // Make deformed tet.
+                // Make deformed triangle.
                 let tri_x1 = Triangle::from_indexed_slice(face, pos1);
 
                 let Dx = Matrix2x3::new(tri_x1.shape_matrix());
@@ -504,9 +730,38 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
 
                 let local_hessians = tri_energy.energy_hessian();
 
-                Self::hessian_for_each(
+                Self::tri_hessian_for_each(
                     |n, k| local_hessians[n][k] * factor,
                     |i, _, (row, col), h| tri_hess[i] = h[row][col],
+                );
+            });
+        }
+
+        // Bending Hessian
+        {
+            // Break up the hessian triplets into chunks of elements for each triangle.
+            let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
+                reinterpret_mut_slice(&mut values[tri_entries..]);
+
+            let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
+                interior_edges.par_iter(),
+                interior_edge_ref_length.par_iter(),
+                interior_edge_bending_stiffness.par_iter(),
+            ));
+
+            hess_iter.for_each(|(edge_hess, (e, &ref_length, &k))| {
+                let local_hessians = e.edge_angle_hessian(pos1, trimesh.faces());
+                let (diag_hess, lower_hess) = edge_hess.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
+
+                Self::edge_hessian_for_each(
+                    |vtx| Vector6::new(local_hessians.0[vtx]) * T::from(k * ref_length).unwrap(),
+                    |vtx| Matrix3::new(local_hessians.1[vtx]) * T::from(k * ref_length).unwrap(),
+                    |triplet_idx, _, _, i, h| {
+                        diag_hess[triplet_idx] = h[i];
+                    },
+                    |triplet_idx, _, (row, col), h| {
+                        lower_hess[triplet_idx] = h[row][col];
+                    }
                 );
             });
         }
@@ -515,12 +770,13 @@ impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElastic
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use geo::mesh::VertexPositions;
+
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
-    use crate::fem::SolverBuilder;
     use crate::objects::TriMeshShell;
-    use geo::mesh::VertexPositions;
+
+    use super::*;
 
     fn material() -> ShellMaterial {
         ShellMaterial::new(0).with_elasticity(ElasticityParameters {
@@ -535,12 +791,12 @@ mod tests {
 
         test_trimeshes()
             .into_iter()
-            .map(|mut trimesh| {
+            .map(|trimesh| {
                 // Prepare attributes relevant for elasticity computations.
-                SolverBuilder::prepare_deformable_mesh_vertex_attributes(&mut trimesh).unwrap();
-                SolverBuilder::prepare_deformable_trimesh_attributes(&mut trimesh).unwrap();
                 let mut shell = TriMeshShell::new(trimesh, material);
-                SolverBuilder::prepare_elasticity_attributes(&mut shell).unwrap();
+                shell.init_deformable_vertex_attributes().unwrap();
+                shell.init_deformable_attributes().unwrap();
+                shell.init_elasticity_attributes().unwrap();
                 shell
             })
             .collect()

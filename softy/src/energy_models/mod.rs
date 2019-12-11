@@ -206,7 +206,9 @@ pub(crate) mod test_utils {
     {
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
-        for (energy, pos) in configurations.iter() {
+        for (config_idx, (energy, pos)) in configurations.iter().enumerate() {
+            dbg!(config_idx, pos);
+
             let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
 
             let mut hess_triplets =
@@ -232,13 +234,16 @@ pub(crate) mod test_utils {
                 let mut grad = vec![F::zero(); x0.len()];
                 energy.add_energy_gradient(&x0, &x1, &mut grad);
                 for j in 0..x0.len() {
-                    success &= relative_eq!(
+                    let res = relative_eq!(
                         hess[i][j].value(),
                         grad[j].deriv(),
                         max_relative = 1e-6,
                         epsilon = 1e-10
                     );
-                    eprintln!("{} vs. {}", hess[i][j].value(), grad[j].deriv());
+                    if !res {
+                        success = false;
+                        eprintln!("({}, {}): {} vs. {}", i, j, hess[i][j].value(), grad[j].deriv());
+                    }
                 }
                 x1[i] = F::cst(x1[i]);
             }

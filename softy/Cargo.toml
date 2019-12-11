@@ -25,6 +25,7 @@ af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git
 snafu = "0.5"
 lazycell = "1.2"
 log = "0.4"
+fnv = "1"
 
 [dev-dependencies]
 criterion = "0.3"

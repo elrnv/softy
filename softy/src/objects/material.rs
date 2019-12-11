@@ -52,7 +52,10 @@ pub enum ShellProperties {
     /// A rigid shell has 6 degrees of freedom: 3 for translation and 3 for rotation.
     Rigid { density: f32 },
     /// A deformable shell has a 3 degrees of freedom for every vertex.
-    Deformable { deformable: DeformableProperties },
+    Deformable {
+        deformable: DeformableProperties,
+        bending_stiffness: Option<f32>,
+    },
 }
 
 impl Default for ShellProperties {
@@ -126,12 +129,14 @@ impl ShellMaterial {
     pub fn deformable(id: usize, deformable: DeformableProperties) -> Self {
         Material {
             id,
-            properties: ShellProperties::Deformable { deformable },
+            properties: ShellProperties::Deformable { deformable, bending_stiffness: None },
         }
     }
     pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> ShellMaterial {
         match &mut self.properties {
-            ShellProperties::Deformable { deformable } => {
+            ShellProperties::Deformable {
+                deformable, ..
+            } => {
                 deformable.elasticity = Some(elasticity);
                 self
             }
@@ -149,7 +154,7 @@ impl ShellMaterial {
     }
     pub fn with_damping(mut self, damping: f32, time_step: f32) -> ShellMaterial {
         match &mut self.properties {
-            ShellProperties::Deformable { deformable } => {
+            ShellProperties::Deformable { deformable, .. } => {
                 *deformable = deformable.with_damping(damping, time_step);
                 self
             }
@@ -167,7 +172,7 @@ impl ShellMaterial {
     }
     pub fn with_density(mut self, density: f32) -> ShellMaterial {
         match &mut self.properties {
-            ShellProperties::Deformable { deformable } => {
+            ShellProperties::Deformable { deformable, .. } => {
                 deformable.density = Some(density);
                 self
             }
@@ -180,14 +185,49 @@ impl ShellMaterial {
             ShellProperties::Fixed => Self::rigid(self.id, density),
         }
     }
+    pub fn with_bending_stiffness(mut self, stiffness: f32) -> ShellMaterial {
+        match &mut self.properties {
+            ShellProperties::Deformable { bending_stiffness, .. } => {
+                *bending_stiffness = Some(stiffness);
+                self
+            },
+            ShellProperties::Rigid {
+                density,
+            } => {
+                Self::deformable(self.id, DeformableProperties::default()
+                    .with_density(*density))
+                    .with_bending_stiffness(stiffness)
+            },
+            ShellProperties::Fixed => {
+                Self::deformable(self.id, DeformableProperties::default())
+                    .with_bending_stiffness(stiffness)
+            },
+        }
+    }
 
     pub fn normalized(mut self) -> ShellMaterial {
         match &mut self.properties {
-            ShellProperties::Deformable { ref mut deformable } => {
+            ShellProperties::Deformable { deformable, bending_stiffness } => {
                 *deformable = deformable.normalized();
+                bending_stiffness.as_mut().map(|s| *s *= deformable.scale());
                 self
             }
             _ => self,
+        }
+    }
+
+    pub fn scaled_bending_stiffness(&self) -> Option<f32> {
+        match self.properties {
+            ShellProperties::Deformable { bending_stiffness, .. } => bending_stiffness,
+            _ => None,
+        }
+    }
+    pub fn bending_stiffness(&self) -> Option<f32> {
+        match self.properties {
+            ShellProperties::Deformable { deformable, bending_stiffness } => {
+                bending_stiffness.map(|s| s / deformable.scale())
+            },
+            _ => None,
         }
     }
 }
@@ -215,9 +255,6 @@ impl SolidMaterial {
     }
     pub fn volume_preservation(&self) -> bool {
         self.properties.volume_preservation
-    }
-    pub fn scaled_damping(&self) -> f32 {
-        self.properties.deformable.damping
     }
     pub fn model(&self) -> ElasticityModel {
         self.properties.deformable.elasticity.map_or(ElasticityModel::NeoHookean, |x| x.model)
@@ -437,45 +474,45 @@ impl Deformable for DeformableProperties {
 impl Deformable for ShellMaterial {
     fn scale(&self) -> f32 {
         match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.scale(),
+            ShellProperties::Deformable { deformable, .. } => deformable.scale(),
             _ => 1.0,
         }
     }
     fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
         match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.scaled_elasticity(),
+            ShellProperties::Deformable { deformable, .. } => deformable.scaled_elasticity(),
             _ => None,
         }
     }
     fn scaled_damping(&self) -> f32 {
         match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.scaled_damping(),
+            ShellProperties::Deformable { deformable, .. } => deformable.scaled_damping(),
             _ => 0.0,
         }
     }
     fn scaled_density(&self) -> Option<f32> {
         match self.properties {
             ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable } => deformable.scaled_density(),
+            ShellProperties::Deformable { deformable, .. } => deformable.scaled_density(),
             ShellProperties::Fixed => None,
         }
     }
     fn elasticity(&self) -> Option<ElasticityParameters> {
         match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.elasticity(),
+            ShellProperties::Deformable { deformable, .. } => deformable.elasticity(),
             _ => None,
         }
     }
     fn damping(&self) -> f32 {
         match self.properties {
-            ShellProperties::Deformable { deformable } => deformable.damping(),
+            ShellProperties::Deformable { deformable, .. } => deformable.damping(),
             _ => 0.0,
         }
     }
     fn density(&self) -> Option<f32> {
         match self.properties {
             ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable } => deformable.density(),
+            ShellProperties::Deformable { deformable, .. } => deformable.density(),
             ShellProperties::Fixed => None,
         }
     }

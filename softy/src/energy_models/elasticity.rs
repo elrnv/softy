@@ -108,7 +108,7 @@ pub trait Elasticity<'a, E> {
 #[cfg(test)]
 mod test_utils {
     use super::*;
-    use crate::fem::solver::SolverBuilder;
+    use crate::objects::shell::TriMeshShell;
     use approx::*;
     use autodiff::F;
     use geo::ops::*;
@@ -358,7 +358,7 @@ mod test_utils {
 
         let df = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                 .inverse()
                 .unwrap();
             let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
@@ -381,7 +381,7 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                     .inverse()
                     .unwrap();
                 let Dx = Matrix2x3::new(tri_x1.shape_matrix());
@@ -421,7 +421,7 @@ mod test_utils {
 
         let ddf = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                 .inverse()
                 .unwrap();
             let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
@@ -450,7 +450,7 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
                     .inverse()
                     .unwrap();
                 let Dx = Matrix2x3::new(tri_x1.shape_matrix());
@@ -506,7 +506,7 @@ mod test_utils {
 
         let tri_x0 = Triangle::from_indexed_slice(&face, &verts);
 
-        let DX_inv = SolverBuilder::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+        let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
             .inverse()
             .unwrap();
         let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);

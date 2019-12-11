@@ -8,6 +8,10 @@ edition = "2018"
 [lib]
 name = "benchmark"
 
+[[bin]]
+name = "matrix_vector_mul"
+path = "src/matrix_vector_mul.rs"
+
 [dependencies]
 packed_simd = { version = "0.3", optional = true }
 utils = { path = "../utils" }

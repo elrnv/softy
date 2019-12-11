@@ -60,3 +60,6 @@ harness = false
 [[bench]]
 name = "matrix_add"
 harness = false
+[[bench]]
+name = "angle"
+harness = false

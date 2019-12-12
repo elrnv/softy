@@ -88,6 +88,7 @@ pub struct EL_SoftyMaterialProperties {
     pub elasticity_model: EL_SoftyElasticityModel,
     pub density: f32,
     pub damping: f32,
+    pub bending_stiffness: f32,
     pub bulk_modulus: f32,
     pub shear_modulus: f32,
 }

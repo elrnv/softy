@@ -158,6 +158,7 @@ fn get_solid_material(
             shear_modulus,
             density,
             damping,
+            .. // bending stiffness is ignored
         }) => {
             if object_type != EL_SoftyObjectType::Solid {
                 return Err(Error::MaterialObjectMismatch {
@@ -198,6 +199,7 @@ fn get_shell_material(
     match materials.as_slice().get((material_id - 1) as usize) {
         Some(&EL_SoftyMaterialProperties {
             object_type,
+            bending_stiffness,
             bulk_modulus,
             shear_modulus,
             density,
@@ -215,6 +217,7 @@ fn get_shell_material(
                     bulk_modulus,
                     shear_modulus,
                 ))
+                .with_bending_stiffness(bending_stiffness)
                 .with_density(density)
                 .with_damping(damping, time_step))
         }

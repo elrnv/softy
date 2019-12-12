@@ -125,6 +125,16 @@ static const char *theDsFile = R"THEDSFILE(
             }
 
             parm {
+                name "bendingstiffness#"
+                cppname "BendingStiffness"
+                label "Bending Stiffness"
+                type float
+                default { "0" }
+                range { 0 100 }
+                hidewhen "{ objtype# == solid }"
+            }
+
+            parm {
                 name "density#"
                 label "Density"
                 type float
@@ -484,6 +494,13 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     using namespace hdkrs;
     using namespace hdkrs::mesh;
 
+    const GU_Detail *input0 = cookparms.inputGeo(0);
+    const GU_Detail *input1 = cookparms.inputGeo(1);
+    if(!input0 && !input1) {
+        // No inputs, nothing to do.
+        return;
+    }
+
     auto &&sopparms = cookparms.parms<SOP_SoftyParms>();
 
     // Gather simulation parameters
@@ -530,6 +547,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
             mtl_props.shear_modulus = E / (2.0*(1.0 + nu));
         }
 
+        mtl_props.bending_stiffness = sop_mtl.bendingstiffness;
         mtl_props.damping = sop_mtl.damping;
         mtl_props.density = sop_mtl.density;
         materials_vec.push_back(mtl_props);
@@ -637,10 +655,6 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
 
     interrupt::InterruptChecker interrupt_checker("Solving Softy");
-
-    const GU_Detail *input0 = cookparms.inputGeo(0);
-    const GU_Detail *input1 = cookparms.inputGeo(1);
-    UT_ASSERT(input0 || input1);
 
     int64 solver_id = -1;
 

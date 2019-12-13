@@ -80,8 +80,84 @@ pub fn make_one_deformed_tri_mesh() -> TriMesh {
     mesh
 }
 
+/// Two triangles forming a quad unconstrained undeformed.
+pub fn make_two_tri_mesh() -> TriMesh {
+    let mut verts = vec![
+        [1.0, 0.0, 0.25],  // slight bend
+        [0.0, 1.0, 0.0],
+        [0.0; 3],
+        [1.0, 1.0, 0.0],
+    ];
+
+    let indices = vec![2, 0, 1, 0, 3, 1];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+
+    // Top two vertices are fixed to remove the nullspace in shell sims.
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 0, 1]).unwrap();
+
+    // Reference configuration is flat.
+    verts[0][2] = 0.0;
+
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>()
+        .into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+        .unwrap();
+    mesh
+}
+
+/// Three triangle strip.
+pub fn make_three_tri_mesh() -> TriMesh {
+    let mut verts = vec![
+        [0.0; 3],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.5, -1.0, 0.5],
+        [1.0, 1.0, 0.0],
+    ];
+
+    let indices = vec![0, 1, 2, 0, 3, 1, 1, 4, 2];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+
+    // Top two vertices are fixed to remove the nullspace in shell sims.
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 0, 1])
+        .unwrap();
+
+    // Reference configuration is bent the other way.
+    verts[3][2] = -0.5;
+
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+        .unwrap();
+    mesh
+}
+
 /// A strip of two quads in the xz plane fixed at two vertices.
 pub fn make_four_tri_mesh() -> TriMesh {
+    let mut verts = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [0.0, 0.0, 2.0],
+        [1.0, 0.1, 2.0], // slight bend
+    ];
+    let indices = vec![0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
+        .unwrap();
+
+    // Reference configuration is flat.
+    verts[5][1] = 0.0;
+
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+        .unwrap();
+    mesh
+}
+
+/// A strip of two quads in the xz plane fixed at two vertices.
+/// First two quads are oriented in the opposite direction.
+pub fn make_four_tri_mesh_unoriented() -> TriMesh {
     let verts = vec![
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -90,7 +166,7 @@ pub fn make_four_tri_mesh() -> TriMesh {
         [0.0, 0.0, 2.0],
         [1.0, 0.0, 2.0],
     ];
-    let indices = vec![0, 2, 1, 2, 1, 3, 3, 1, 4, 3, 4, 5];
+    let indices = vec![0, 2, 1, 2, 3, 1, 2, 3, 4, 4, 3, 5];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
         .unwrap();

@@ -166,7 +166,7 @@ pub(crate) mod test_utils {
             make_two_tri_mesh(),
             make_three_tri_mesh(),
             make_four_tri_mesh(),
-            //make_four_tri_mesh_unoriented(),
+            make_four_tri_mesh_unoriented(),
         ]
     }
 

@@ -188,17 +188,40 @@ impl InteriorEdge {
     #[inline]
     pub fn face1_tangent<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
         let [v0, v1] = [
-            faces[self.faces[1]][((self.edge_start[1] + 1)%3) as usize],
+            faces[self.faces[0]][(self.edge_start[0]) as usize],
             self.tangent_verts(faces)[1]
         ];
+        debug_assert!(
+            v0 == faces[self.faces[1]][((self.edge_start[1] + 1)%3) as usize] ||
+            v0 == faces[self.faces[1]][self.edge_start[1] as usize]
+        );
         (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
+    }
+
+    /// Return `true` if the adjacent faces have the same orientation.
+    #[inline]
+    pub fn is_oriented(&self, faces: &[[usize; 3]]) -> bool {
+        faces[self.faces[0]][(self.edge_start[0]) as usize] != faces[self.faces[1]][self.edge_start[1] as usize]
+    }
+
+    /// Compute the area weighted normals of adjacent faces.
+    ///
+    /// This function will reverse the normal of `faces[1]` if it's orientation is opposite to
+    /// the orientation of `faces[0]`.
+    #[inline]
+    pub fn face_area_normals<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [Vector3<T>; 2] {
+        let an0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area_normal().into_tensor();
+        let f1 = faces[self.faces[1]];
+        let is_oriented = self.is_oriented(faces);
+        let idx = [usize::from(!is_oriented), usize::from(is_oriented)];
+        let an1 = Triangle::new([pos[f1[idx[0]]], pos[f1[idx[1]]], pos[f1[2]]]).area_normal().into_tensor();
+        [an0, an1]
     }
 
     /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge.
     #[inline]
     pub(crate) fn edge_angle<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> T {
-        let an0 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area_normal());
-        let an1 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area_normal());
+        let [an0, an1] = self.face_area_normals(pos, faces);
         let t = self.face0_tangent(pos, faces);
         an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
     }
@@ -257,8 +280,7 @@ impl InteriorEdge {
     /// The gradient is zero if any of the triangles are found to be degenerate.
     #[inline]
     pub(crate) fn edge_angle_gradient<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [[T; 3]; 4] {
-        let an0 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area_normal());
-        let an1 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area_normal());
+        let [an0, an1] = self.face_area_normals(pos, faces);
         let e0 = self.edge_vector(pos, faces);
         let e1 = self.face0_tangent(pos, faces);
         let e2 = self.face1_tangent(pos, faces);
@@ -305,8 +327,7 @@ impl InteriorEdge {
     pub(crate) fn edge_angle_hessian<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]])
                                               -> ([[T; 6]; 4], [[[T; 3]; 3]; 5])
     {
-        let an0 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area_normal());
-        let an1 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area_normal());
+        let [an0, an1] = self.face_area_normals(pos, faces);
         let e0 = self.edge_vector(pos, faces);
         let e1 = self.face0_tangent(pos, faces);
         let e2 = self.face1_tangent(pos, faces);
@@ -648,8 +669,6 @@ impl TriMeshShell {
         assert_eq!(interior_edges.len(), interior_edge_ref_angles.len());
         assert_eq!(interior_edges.len(), interior_edge_ref_length.len());
 
-        dbg!(&interior_edge_ref_angles);
-
         self.interior_edges = interior_edges;
         self.interior_edge_bending_stiffness = interior_edge_bending_stiffness;
         self.interior_edge_angles = interior_edge_angles;
@@ -878,6 +897,25 @@ mod tests {
         (e, x, faces)
     }
 
+    /// A test example of two adjacent triangles with opposite orientations.
+    fn make_test_interior_edge_unoriented() -> (InteriorEdge, [[f64; 3]; 4], [[usize; 3]; 2]) {
+        let x = [
+            [1.0, 0.0, 0.25],
+            [0.0, 1.0, 0.0],
+            [0.0; 3],
+            [1.0, 1.0, 0.0],
+        ];
+
+        let faces = [
+            [2, 0, 1],
+            [0, 1, 3]
+        ];
+
+        let e = InteriorEdge::new([0,1], [1, 0]);
+
+        (e, x, faces)
+    }
+
     #[test]
     fn interior_edge_structure() {
         let (e, x, faces) = make_test_interior_edge();
@@ -925,6 +963,8 @@ mod tests {
         let (e,x,f) = make_test_interior_edge();
         edge_angle_gradient_tester(e, &x, &f);
         let (e, x, f) = make_test_interior_edge_alt();
+        edge_angle_gradient_tester(e, &x, &f);
+        let (e, x, f) = make_test_interior_edge_unoriented();
         edge_angle_gradient_tester(e, &x, &f);
     }
 
@@ -979,6 +1019,8 @@ mod tests {
         let (e, x, f) = make_test_interior_edge();
         edge_angle_hessian_tester(e, &x, &f);
         let (e, x, f) = make_test_interior_edge_alt();
+        edge_angle_hessian_tester(e, &x, &f);
+        let (e, x, f) = make_test_interior_edge_unoriented();
         edge_angle_hessian_tester(e, &x, &f);
     }
 

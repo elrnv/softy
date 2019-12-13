@@ -5,6 +5,7 @@ pub mod inertia;
 use crate::energy::*;
 use crate::matrix::MatrixElementIndex;
 use utils::soap::Real;
+use num_traits::FromPrimitive;
 
 /// Define a nullable energy, which is used to represent zero energies. For example
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
@@ -35,6 +36,18 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
     ) {
         match self {
             Some(e) => e.energy_hessian_indices_offset(off, indices),
+            None => {}
+        }
+    }
+    // This method is often overloaded so we forward it here explicitly for efficiency.
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+        &self,
+        off: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
+        match self {
+            Some(e) => e.energy_hessian_rows_cols_offset(off, rows, cols),
             None => {}
         }
     }
@@ -97,6 +110,18 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
             Either::Right(e) => e.energy_hessian_indices_offset(off, indices),
         }
     }
+    // This method is often overloaded so we forward it here explicitly for efficiency.
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+        &self,
+        off: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
+        match self {
+            Either::Left(e) => e.energy_hessian_rows_cols_offset(off, rows, cols),
+            Either::Right(e) => e.energy_hessian_rows_cols_offset(off, rows, cols),
+        }
+    }
 }
 
 impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for Either<A, B> {
@@ -138,7 +163,10 @@ pub(crate) mod test_utils {
         vec![
             make_one_tri_mesh(),
             make_one_deformed_tri_mesh(),
+            make_two_tri_mesh(),
+            make_three_tri_mesh(),
             make_four_tri_mesh(),
+            //make_four_tri_mesh_unoriented(),
         ]
     }
 
@@ -195,6 +223,7 @@ pub(crate) mod test_utils {
                     max_relative = 1e-6,
                     epsilon = 1e-10
                 );
+
                 x1[i] = F::cst(x1[i]);
             }
         }
@@ -204,27 +233,29 @@ pub(crate) mod test_utils {
     where
         E: EnergyGradient<F> + EnergyHessian<F>,
     {
+        // An arbitrary scale (!=1.0) that will ensure that Hessians are scaled correctly.
+        let scale = 0.2;
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
-        for (config_idx, (energy, pos)) in configurations.iter().enumerate() {
-            dbg!(config_idx, pos);
+        for (energy, pos) in configurations.iter() {
 
             let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
 
             let mut hess_triplets =
                 vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];
-            energy.energy_hessian(&x0, &x1, F::cst(1.0), &mut hess_triplets);
+            energy.energy_hessian(&x0, &x1, F::cst(scale), &mut hess_triplets);
 
             // Build a dense hessian
-            let mut hess = vec![vec![F::zero(); x0.len()]; x0.len()];
+            let mut hess_ad = vec![vec![0.0; x0.len()]; x0.len()];
+            let mut hess = vec![vec![0.0; x0.len()]; x0.len()];
             for Triplet {
                 idx: Index { row, col },
                 val,
             } in hess_triplets.into_iter()
             {
-                hess[row][col] += val;
+                hess[row][col] += val.value();
                 if row != col {
-                    hess[col][row] += val;
+                    hess[col][row] += val.value();
                 }
             }
 
@@ -233,19 +264,40 @@ pub(crate) mod test_utils {
                 x1[i] = F::var(x1[i]);
                 let mut grad = vec![F::zero(); x0.len()];
                 energy.add_energy_gradient(&x0, &x1, &mut grad);
+                grad.iter_mut().for_each(|g| *g *= scale);
                 for j in 0..x0.len() {
                     let res = relative_eq!(
-                        hess[i][j].value(),
+                        hess[i][j],
                         grad[j].deriv(),
                         max_relative = 1e-6,
                         epsilon = 1e-10
                     );
+                    hess_ad[i][j] = grad[j].deriv();
                     if !res {
                         success = false;
-                        eprintln!("({}, {}): {} vs. {}", i, j, hess[i][j].value(), grad[j].deriv());
+                        eprintln!("({}, {}): {} vs. {}", i, j, hess[i][j], grad[j].deriv());
                     }
                 }
                 x1[i] = F::cst(x1[i]);
+            }
+
+            if !success && x0.len() < 15 {
+                // Print dense hessian if its small
+                eprintln!("Actual:");
+                for row in 0..x0.len() {
+                    for col in 0..=row {
+                        eprint!("{:10.2e}", hess[row][col]);
+                    }
+                    eprintln!("");
+                }
+
+                eprintln!("Expected:");
+                for row in 0..x0.len() {
+                    for col in 0..=row {
+                        eprint!("{:10.2e}", hess_ad[row][col]);
+                    }
+                    eprintln!("");
+                }
             }
             assert!(success);
         }

@@ -27,6 +27,7 @@ pub struct TriMeshShell {
     pub(crate) interior_edges: Vec<InteriorEdge>,
     pub(crate) interior_edge_ref_angles: Vec<f64>,
     pub(crate) interior_edge_angles: Vec<f64>,
+    /// A normalized (unitless) reference length.
     pub(crate) interior_edge_ref_length: Vec<f64>,
     pub(crate) interior_edge_bending_stiffness: Vec<f64>,
     pub material: ShellMaterial,
@@ -75,7 +76,7 @@ impl Object for TriMeshShell {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct InteriorEdge {
     pub faces: [usize; 2],
-    /// Each edge_start[i] is a vertex in `faces[i]` that marks the start of the
+    /// Each `edge_start[i]` is a vertex in `faces[i]` that marks the start of the
     /// edge. This value is either `0`, `1` or `2` for a triangle face.
     edge_start: [u8; 2],
 }
@@ -92,9 +93,31 @@ impl InteriorEdge {
     /// Get edge verts followed by tangent verts `x0` to `x3`.
     #[inline]
     pub fn verts(&self, faces: &[[usize; 3]]) -> [usize; 4] {
-        let [x0, x1] = self.edge_verts(faces);
-        let [x2, x3] = self.tangent_verts(faces);
-        [x0, x1, x2, x3]
+        let [v0, v1] = self.edge_verts(faces);
+        let [v2, v3] = self.tangent_verts(faces);
+        [v0, v1, v2, v3]
+    }
+
+    /// Compute the span of the tile.
+    ///
+    /// The given positions are expected to be of the undeformed configuration. There should be
+    /// exactly 3 positions per element in `ref_pos`, which corresponds to one face.
+    ///
+    /// This corresponds to the quantity `\bar{h}_e` in the "Discrete Shells" paper
+    /// [[Grinspun et al. 2003]](http://www.cs.columbia.edu/cg/pdfs/10_ds.pdf).
+    #[inline]
+    pub fn tile_span<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
+        let [x0, x1, x2, x3] = [
+            ref_pos[self.faces[0]][self.edge_start[0] as usize].into_tensor(),
+            ref_pos[self.faces[0]][((self.edge_start[0] + 1)%3) as usize].into_tensor(),
+            ref_pos[self.faces[0]][((self.edge_start[0] + 2)%3) as usize].into_tensor(),
+            ref_pos[self.faces[1]][((self.edge_start[1] + 2)%3) as usize].into_tensor(),
+        ];
+        debug_assert_ne!((x1 - x0).norm_squared(), T::zero());
+        let e0 = (x1 - x0).normalized();
+        let h0 = (x2-x0).cross(e0).norm();
+        let h1 = (x3-x0).cross(e0).norm();
+        (h0 + h1) / T::from(6.0).unwrap()
     }
 
     /// Get the vertex indices of the edge endpoints.
@@ -104,16 +127,42 @@ impl InteriorEdge {
          faces[self.faces[0]][((self.edge_start[0] + 1)%3) as usize]]
     }
 
+    /// Get the vertex positions of the edge vertices in reference configuration for each face.
     #[inline]
-    pub fn tangent_verts(&self, faces: &[[usize; 3]]) -> [usize; 2] {
+    pub fn ref_edge_verts<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> [[[T; 3]; 2]; 2] {
+        [
+            [
+                ref_pos[self.faces[0]][self.edge_start[0] as usize],
+                ref_pos[self.faces[0]][((self.edge_start[0] + 1)%3) as usize],
+            ],
+            [
+                ref_pos[self.faces[1]][self.edge_start[1] as usize],
+                ref_pos[self.faces[1]][((self.edge_start[1] + 1)%3) as usize],
+             ]
+        ]
+    }
+
+    /// Get the vertex positions of the tangent vertices.
+    ///
+    /// `faces` can be either triplets of vertex indices or reference positions.
+    #[inline]
+    pub fn tangent_verts<U: Copy>(&self, faces: &[[U; 3]]) -> [U; 2] {
         [faces[self.faces[0]][((self.edge_start[0] + 2)%3) as usize],
          faces[self.faces[1]][((self.edge_start[1] + 2)%3) as usize]]
     }
 
-    /// Compute the edge length.
+    /// Compute the reference edge length.
+    ///
+    /// This is the average of the lengths of the corresponding edges from the two adjacent faces.
+    /// Note that faces may not be stitched in the reference configuration.
+    ///
+    /// The given positions are expected to be of the undeformed configuration. There should be
+    /// exactly 3 positions per element in `ref_pos`, which corresponds to one face.
     #[inline]
-    pub fn length<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> T {
-        self.edge_vector(pos, faces).norm()
+    pub fn ref_length<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
+        let [[f0x0, f0x1], [f1x0, f1x1]] = self.ref_edge_verts(ref_pos);
+        ((Vector3::new(f0x1) - Vector3::new(f0x0)).norm()
+        + (Vector3::new(f1x1) - Vector3::new(f1x0)).norm()) * T::from(0.5).unwrap()
     }
 
     /// Produce the 3D vector corresponding to this edge.
@@ -152,8 +201,53 @@ impl InteriorEdge {
         let an1 = Vector3::new(Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area_normal());
         let t = self.face0_tangent(pos, faces);
         an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
-        //let e0 = self.edge_vector(pos, faces);
-        //(e0.dot(an0.cross(an1))/e0.norm()).atan2(an0.dot(an1))
+    }
+
+    /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge from
+    /// the reference configuration.
+    ///
+    /// If the two edge vertex positions are coincident in the reference configuration,
+    /// then we compute the edge angle between the two faces, otherwise this is zero.
+    #[inline]
+    pub(crate) fn ref_edge_angle<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
+        let an0 = Vector3::new(Triangle::new(ref_pos[self.faces[0]]).area_normal());
+        let an1 = Vector3::new(Triangle::new(ref_pos[self.faces[1]]).area_normal());
+        let rv = self.ref_edge_verts(ref_pos);
+
+        // Check if the edge is coincident between the two faces. If so, use the angle between them
+        // as the reference angle.
+        if rv[0] == rv[1] || rv[0][0] == rv[1][1] && rv[0][1] == rv[1][0] {
+            let t = self.tangent_verts(ref_pos)[0].into_tensor() - rv[0][0].into_tensor();
+            an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
+        } else {
+            T::zero()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn project_angle<T: Real>(angle: T) -> T {
+        let pi = T::from(std::f64::consts::PI).unwrap();
+        let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+        let mut out = (angle + pi) % two_pi - pi;
+        if out < -pi {
+            out += two_pi;
+        }
+        out
+    }
+
+    /// Compute an edge angle that is no more than π radians away from `prev_angle`.
+    #[inline]
+    pub(crate) fn incremental_angle<T: Real>(&self, prev_angle: T, pos: &[[T; 3]], faces: &[[usize; 3]]) -> T {
+        let pi = T::from(std::f64::consts::PI).unwrap();
+        let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+        let prev_angle_proj = Self::project_angle(prev_angle);
+        let mut angle_diff = self.edge_angle(pos, faces) - prev_angle_proj;
+        if angle_diff < -pi {
+            angle_diff += two_pi;
+        } else if angle_diff > pi {
+            angle_diff -= two_pi;
+        }
+        prev_angle + angle_diff
     }
 
     /// Compute the gradient of the reflex angle given by `edge_angle` for the four significant
@@ -228,8 +322,6 @@ impl InteriorEdge {
 
         let e0_norm = e0_norm_squared.sqrt();
         let e0u = e0.transpose() / e0_norm;
-        let e1u = e1.transpose() / e0_norm;
-        let e2u = e2.transpose() / e0_norm;
         let e0u_e1 = (e0u*e1).into_data()[0];
         let e0u_e2 = (e0u*e2).into_data()[0];
 
@@ -246,8 +338,8 @@ impl InteriorEdge {
         let dn1de2 = (-e0).skew();
 
         let dth_de = [
-            dan0nn*dn0de0*e0u_e1 + an0nn*(e1u - e0u*e0u_e1)
-                + dan1nn*dn1de0*e0u_e2 + an1nn*(e2u - e0u*e0u_e2), // e0e0
+            dan0nn*dn0de0*e0u_e1 + an0nn*((e1.transpose() - e0u*e0u_e1)/e0_norm)
+                + dan1nn*dn1de0*e0u_e2 + an1nn*((e2.transpose() - e0u*e0u_e2)/e0_norm), // e0e0
             dan0nn*dn0de1*e0u_e1 + an0nn*e0u, // e1e0 or transpose for e0e1
             dan1nn*dn1de2*e0u_e2 + an1nn*e0u, // e2e0 or transpose for e0e2
             dan0nn*dn0de1*-e0_norm,// e1e1
@@ -343,26 +435,14 @@ pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
 
 impl TriMeshShell {
     pub fn new(trimesh: TriMesh, material: ShellMaterial) -> TriMeshShell {
-        let pos = if let Ok(ref_pos) = trimesh.attrib_iter::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB) {
-            ref_pos.map(|&p| Vector3::new(p).cast::<f64>().into_data()).collect()
-        } else {
-            trimesh.vertex_positions().to_vec()
-        };
-        let interior_edges = Self::compute_interior_edge_topology(&trimesh);
-        let interior_edge_bending_stiffness = vec![0.0; interior_edges.len()];
-        let (interior_edge_ref_angles, interior_edge_ref_length): (Vec<_>, Vec<_>) =
-            interior_edges.iter().map(|e|
-            (e.edge_angle(&pos, trimesh.faces()), e.length(&pos, trimesh.faces()))
-        ).unzip();
-
         TriMeshShell {
             trimesh,
             material,
-            interior_edges,
-            interior_edge_angles: interior_edge_ref_angles.clone(),
-            interior_edge_ref_angles,
-            interior_edge_ref_length,
-            interior_edge_bending_stiffness,
+            interior_edges: Vec::new(),
+            interior_edge_angles: Vec::new(),
+            interior_edge_ref_angles: Vec::new(),
+            interior_edge_ref_length: Vec::new(),
+            interior_edge_bending_stiffness: Vec::new(),
         }
     }
 
@@ -424,7 +504,7 @@ impl TriMeshShell {
 
     pub(crate) fn init_deformable_attributes(&mut self) -> Result<(), Error> {
         self.init_vertex_face_ref_pos_attribute()?;
-        self.init_bending_stiffness()?;
+        self.init_bending_attributes()?;
 
         let mesh = &mut self.trimesh;
 
@@ -479,7 +559,8 @@ impl TriMeshShell {
             .collect())
     }
 
-    pub(crate) fn init_bending_stiffness(&mut self) -> Result<(), Error> {
+    pub(crate) fn init_bending_attributes(&mut self) -> Result<(), Error> {
+        // Initialize bending stiffness face attribute
         let num_elements = self.num_elements();
         if let Some(bending_stiffness) = self.material().scaled_bending_stiffness() {
             match self.mesh_mut()
@@ -507,20 +588,73 @@ impl TriMeshShell {
             crate::objects::scale_param(scale, attrib.iter_mut::<BendingStiffnessType>()?);
         }
 
+        let mesh = self.mesh();
+
+        // Initialize edge topology and reference quantities.
+        let ref_pos = Chunked3::from_flat(mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?).into_arrays();
+        let mut interior_edges = Self::compute_interior_edge_topology(&mesh);
+        let mut interior_edge_bending_stiffness = vec![0.0; interior_edges.len()];
+        let (mut interior_edge_ref_angles, mut interior_edge_ref_length): (Vec<_>, Vec<_>) =
+            interior_edges.iter().map(|e| {
+                let length = f64::from(e.ref_length(&ref_pos));
+                // A triangle height measure used to normalize the length. This allows the energy
+                // model to correctly approximate mean curvature.
+                let h_e = f64::from(e.tile_span(&ref_pos));
+                let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));
+                (ref_angle, length / h_e)
+            }).unzip();
+
+        // Check if there are any additional reference angle attributes in the mesh, and ADD them
+        // to the computed reference angles. This allows for non-coincident edges in reference
+        // configuration to have a non-zero reference angle.
+        if let Ok(ref_angles) = mesh.attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB) {
+            let ref_angles = Chunked3::from_flat(ref_angles).into_arrays();
+            interior_edges.iter().zip(interior_edge_ref_angles.iter_mut())
+                .for_each(|(e, ref_angle)| *ref_angle += f64::from(ref_angles[e.faces[0]][e.edge_start[0] as usize]));
+        }
+        
+
+        // Initialize interior_edge_angles.
+        let mut interior_edge_angles: Vec<_> =
+            interior_edges.iter().map(|e| {
+                e.edge_angle(mesh.vertex_positions(), mesh.faces())
+            }).collect();
+
         // At this point we are confident that bending stiffness is correctly initialized on the mesh.
-        // Now it remains to move it to interior edges
-        // by averaging of the bending stiffnesses of the adjacent faces.
-        let Self {
-            trimesh,
-            interior_edges,
-            interior_edge_bending_stiffness,
-            ..
-        } = self;
-        let face_bending_stiffnesses = trimesh.attrib_as_slice::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB)?;
+        // Now it remains to move it to interior edges by averaging of the bending stiffnesses of
+        // the adjacent faces.
+        let face_bending_stiffnesses = mesh.attrib_as_slice::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB)?;
         for (e, mult) in interior_edges.iter().zip(interior_edge_bending_stiffness.iter_mut()) {
             *mult = 0.5*(face_bending_stiffnesses[e.faces[0]] as f64 +
                          face_bending_stiffnesses[e.faces[1]] as f64);
         }
+
+        // This should be the last step in initializing parameters for computing bending energy.
+        // We can prune all edges for which bending stiffness is zero as to lower the computation
+        // cost during simulation as much as possible.
+        let mut bs_iter = interior_edge_bending_stiffness.iter().cloned();
+        interior_edges.retain(|_| bs_iter.next().unwrap() != 0.0);
+        let mut bs_iter = interior_edge_bending_stiffness.iter().cloned();
+        interior_edge_angles.retain(|_| bs_iter.next().unwrap() != 0.0);
+        let mut bs_iter = interior_edge_bending_stiffness.iter().cloned();
+        interior_edge_ref_angles.retain(|_| bs_iter.next().unwrap() != 0.0);
+        let mut bs_iter = interior_edge_bending_stiffness.iter().cloned();
+        interior_edge_ref_length.retain(|_| bs_iter.next().unwrap() != 0.0);
+        interior_edge_bending_stiffness.retain(|&bs| bs != 0.0);
+
+        // Ensure that whatever pruning algorithm used above produces same sized vectors.
+        assert_eq!(interior_edges.len(), interior_edge_bending_stiffness.len());
+        assert_eq!(interior_edges.len(), interior_edge_angles.len());
+        assert_eq!(interior_edges.len(), interior_edge_ref_angles.len());
+        assert_eq!(interior_edges.len(), interior_edge_ref_length.len());
+
+        dbg!(&interior_edge_ref_angles);
+
+        self.interior_edges = interior_edges;
+        self.interior_edge_bending_stiffness = interior_edge_bending_stiffness;
+        self.interior_edge_angles = interior_edge_angles;
+        self.interior_edge_ref_angles = interior_edge_ref_angles;
+        self.interior_edge_ref_length = interior_edge_ref_length;
         Ok(())
     }
 
@@ -726,6 +860,24 @@ mod tests {
         (e, x, faces)
     }
 
+    fn make_test_interior_edge_alt() -> (InteriorEdge, [[f64; 3]; 4], [[usize; 3]; 2]) {
+        let x = [
+            [1.0, 0.0, 0.25],
+            [0.0, 1.0, 0.0],
+            [0.0; 3],
+            [1.0, 1.0, 0.0],
+        ];
+
+        let faces = [
+            [2, 0, 1],
+            [0, 3, 1]
+        ];
+
+        let e = InteriorEdge::new([0,1], [1, 2]);
+
+        (e, x, faces)
+    }
+
     #[test]
     fn interior_edge_structure() {
         let (e, x, faces) = make_test_interior_edge();
@@ -734,16 +886,49 @@ mod tests {
         assert_eq!(e.faces, [0, 1]);
         assert_eq!(e.edge_verts(&faces[..]), [0, 1]);
         assert_eq!(e.tangent_verts(&faces[..]), [2, 3]);
-        assert_eq!(e.length(&x[..], &faces[..]), 1.0);
+        assert_eq!(e.verts(&faces[..]), [0, 1, 2, 3]);
         assert_eq!(e.edge_vector(&x[..], &faces[..]), Vector3::new([1.0, 0.0, 0.0]));
         assert_eq!(e.face0_tangent(&x[..], &faces[..]), Vector3::new([0.0, 1.0, 0.0]));
         assert_eq!(e.face1_tangent(&x[..], &faces[..]), Vector3::new([0.5, -1.0, 0.5]));
     }
 
     #[test]
-    fn edge_angle_gradient() {
-        let (e, x, faces) = make_test_interior_edge();
+    fn project_angle() {
+        assert_eq!(InteriorEdge::project_angle(0.0), 0.0);
+        let pi = std::f64::consts::PI;
+        assert_eq!(InteriorEdge::project_angle(pi/2.0), pi/2.0);
+        assert_eq!(InteriorEdge::project_angle(-pi/2.0), -pi/2.0);
+        assert_eq!(InteriorEdge::project_angle(3.0*pi/2.0), -pi/2.0);
+        assert_eq!(InteriorEdge::project_angle(-3.0*pi/2.0), pi/2.0);
+        assert_eq!(InteriorEdge::project_angle(-3.0*pi/2.0), pi/2.0);
+        assert_eq!(InteriorEdge::project_angle(2.0*pi), 0.0);
+        assert_relative_eq!(InteriorEdge::project_angle(7.0*pi + 0.01), -pi + 0.01, max_relative = 1e-8);
+        assert_relative_eq!(InteriorEdge::project_angle(-7.0*pi - 0.01), pi - 0.01, max_relative = 1e-8);
+    }
 
+    #[test]
+    fn incremental_angle() {
+        // Test for idempotency (approximate).
+        let (e, x, faces) = make_test_interior_edge();
+        let inc = |a| e.incremental_angle(a, &x[..], &faces[..]);
+        let a = e.edge_angle(&x[..], &faces[..]);
+        assert_relative_eq!(inc(a), a, max_relative = 1e-8);
+
+        let (e, x, faces) = make_test_interior_edge_alt();
+        let inc = |a| e.incremental_angle(a, &x[..], &faces[..]);
+        let a = e.edge_angle(&x[..], &faces[..]);
+        assert_relative_eq!(inc(a), a, max_relative = 1e-8);
+    }
+
+    #[test]
+    fn edge_angle_gradient() {
+        let (e,x,f) = make_test_interior_edge();
+        edge_angle_gradient_tester(e, &x, &f);
+        let (e, x, f) = make_test_interior_edge_alt();
+        edge_angle_gradient_tester(e, &x, &f);
+    }
+
+    fn edge_angle_gradient_tester(e: InteriorEdge, x: &[[f64;3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
             Vector3::new(x[0]).cast::<F>().into_data(),
             Vector3::new(x[1]).cast::<F>().into_data(),
@@ -751,17 +936,23 @@ mod tests {
             Vector3::new(x[3]).cast::<F>().into_data(),
         ];
 
+        let verts = e.verts(&faces[..]);
+
         let grad = e.edge_angle_gradient(&x[..], &faces[..]);
         let mut grad_ad = [[0.0; 3]; 4]; // Autodiff version of the grad for debugging
 
         let mut success = true;
         for vtx in 0..4 {
             for i in 0..3 {
-                x_ad[vtx][i] = F::var(x_ad[vtx][i]);
+                x_ad[verts[vtx]][i] = F::var(x_ad[verts[vtx]][i]);
                 let a = e.edge_angle(&x_ad[..], &faces[..]);
                 grad_ad[vtx][i] = a.deriv();
-                success &= relative_eq!(grad[vtx][i], a.deriv());
-                x_ad[vtx][i] = F::cst(x_ad[vtx][i]);
+                let ret = relative_eq!(grad[vtx][i], a.deriv(), max_relative = 1e-8);
+                if !ret {
+                    success = false;
+                    eprintln!("{:?} vs. {:?}", grad[vtx][i], a.deriv());
+                }
+                x_ad[verts[vtx]][i] = F::cst(x_ad[verts[vtx]][i]);
             }
         }
 
@@ -785,14 +976,21 @@ mod tests {
 
     #[test]
     fn edge_angle_hessian() {
-        let (e, x, faces) = make_test_interior_edge();
+        let (e, x, f) = make_test_interior_edge();
+        edge_angle_hessian_tester(e, &x, &f);
+        let (e, x, f) = make_test_interior_edge_alt();
+        edge_angle_hessian_tester(e, &x, &f);
+    }
 
+    fn edge_angle_hessian_tester(e: InteriorEdge, x: &[[f64;3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
             Vector3::new(x[0]).cast::<F>().into_data(),
             Vector3::new(x[1]).cast::<F>().into_data(),
             Vector3::new(x[2]).cast::<F>().into_data(),
             Vector3::new(x[3]).cast::<F>().into_data(),
         ];
+
+        let verts = e.verts(&faces[..]);
 
         let hess = e.edge_angle_hessian(&x[..], &faces[..]);
         let mut hess_ad = ([[0.0; 6]; 4], [[[0.0; 3]; 3]; 5]); // Autodiff version of the hessian for debugging
@@ -802,29 +1000,30 @@ mod tests {
         let mut success = true;
         for col_vtx in 0..4 {
             for col in 0..3 {
-                x_ad[col_vtx][col] = F::var(x_ad[col_vtx][col]);
+                x_ad[verts[col_vtx]][col] = F::var(x_ad[verts[col_vtx]][col]);
                 let g = e.edge_angle_gradient(&x_ad[..], &faces[..]);
                 for row_vtx in col_vtx..4 {
                     if (row_vtx == 2 && col_vtx == 3) || (row_vtx == 3 && col_vtx == 2) {
-                        continue;
-                    }
-                    if row_vtx == col_vtx {
+                        for row in 0..3 {
+                            assert_eq!(g[row_vtx][row].deriv(), 0.0);
+                        }
+                    } else if row_vtx == col_vtx {
                         for row in col..3 {
                             let i = idx_map[row][col];
                             let ad = g[row_vtx][row].deriv();
                             hess_ad.0[row_vtx][i] = ad;
-                            success &= relative_eq!(hess.0[row_vtx][i], ad);
+                            success &= relative_eq!(hess.0[row_vtx][i], ad, max_relative = 1e-8);
                         }
                     } else {
                         for row in 0..3 {
                             let ad = g[row_vtx][row].deriv();
                             let vtx = vtx_map[row_vtx][col_vtx];
                             hess_ad.1[vtx][row][col] = ad;
-                            success &= relative_eq!(hess.1[vtx][row][col], ad);
+                            success &= relative_eq!(hess.1[vtx][row][col], ad, max_relative = 1e-8);
                         }
                     }
                 }
-                x_ad[col_vtx][col] = F::cst(x_ad[col_vtx][col]);
+                x_ad[verts[col_vtx]][col] = F::cst(x_ad[verts[col_vtx]][col]);
             }
         }
 

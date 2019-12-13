@@ -1,18 +1,19 @@
 use geo::mesh::VertexPositions;
 pub use softy::test_utils::*;
-use softy::*;
 
 /// Utility function to compare positions of two meshes.
-pub fn compare_meshes(solution: &TetMesh, expected: &TetMesh, tol: f64) {
+pub fn compare_meshes<M>(solution: &M, expected: &M, tol: f64)
+where M: VertexPositions<Element = [f64; 3]>
+{
     use approx::*;
     for (pos, expected_pos) in solution
         .vertex_positions()
         .iter()
         .zip(expected.vertex_positions().iter())
     {
-        for j in 0..3 {
-            assert_relative_eq!(pos[j], expected_pos[j], max_relative = tol, epsilon = 5e-6);
-        }
+        assert_relative_eq!(pos[0], expected_pos[0], max_relative = tol, epsilon = 5e-6);
+        assert_relative_eq!(pos[1], expected_pos[1], max_relative = tol, epsilon = 5e-6);
+        assert_relative_eq!(pos[2], expected_pos[2], max_relative = tol, epsilon = 5e-6);
     }
 }
 

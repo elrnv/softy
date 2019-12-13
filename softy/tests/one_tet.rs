@@ -38,7 +38,7 @@ fn equilibrium() {
 
     // Expect the tet to remain in original configuration
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &mesh, 1e-6);
+    compare_meshes(solution, &mesh, 1e-6);
 }
 
 /// Test one deformed tet under gravity fixed at two vertices. This is not an easy test because
@@ -79,7 +79,7 @@ fn consistent_outer_iterations() -> Result<(), Error> {
     let mut expected_solver = one_tet_solver();
     expected_solver.step()?;
     let expected = &expected_solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-6);
+    compare_meshes(solution, &expected, 1e-6);
     Ok(())
 }
 

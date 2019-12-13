@@ -15,7 +15,7 @@ fn static_sim() -> Result<(), Error> {
     let solution = &solver.solid(0).tetmesh;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_static_expected.vtk"))?;
-    compare_meshes(&solution, &expected, 1e-3);
+    compare_meshes(solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -29,7 +29,7 @@ fn dynamic_sim() -> Result<(), Error> {
     let solution = &solver.solid(0).tetmesh;
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/three_tets_dynamic_expected.vtk"))?;
-    compare_meshes(&solution, &expected, 1e-2);
+    compare_meshes(solution, &expected, 1e-2);
     Ok(())
 }
 
@@ -45,7 +45,7 @@ fn static_volume_constraint() -> Result<(), Error> {
     let exptected = geo::io::load_tetmesh(&PathBuf::from(
         "assets/three_tets_static_volume_constraint_expected.vtk",
     ))?;
-    compare_meshes(&solution, &exptected, 1e-3);
+    compare_meshes(solution, &exptected, 1e-3);
     Ok(())
 }
 
@@ -61,7 +61,7 @@ fn dynamic_volume_constraint() -> Result<(), Error> {
     let expected = geo::io::load_tetmesh(&PathBuf::from(
         "assets/three_tets_dynamic_volume_constraint_expected.vtk",
     ))?;
-    compare_meshes(&solution, &expected, 1e-2);
+    compare_meshes(solution, &expected, 1e-2);
     Ok(())
 }
 

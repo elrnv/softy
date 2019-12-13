@@ -41,7 +41,7 @@ fn equilibrium() {
 
     // Expect the box to remain in original configuration
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &mesh, 1e-6);
+    compare_meshes(solution, &mesh, 1e-6);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn stretch_plain() -> Result<(), Error> {
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-2);
+    compare_meshes(solution, &expected, 1e-2);
     Ok(())
 }
 
@@ -78,7 +78,7 @@ fn stretch_volume_constraint() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-3);
+    compare_meshes(solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -98,7 +98,7 @@ fn twist_plain() -> Result<(), Error> {
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-3);
+    compare_meshes(solution, &expected, 1e-3);
     Ok(())
 }
 
@@ -136,7 +136,7 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
     //geo::io::save_tetmesh(solution, &PathBuf::from("out/box_twisted_const_volume.vtk"))?;
-    compare_meshes(&solution, &expected, 1e-2);
+    compare_meshes(solution, &expected, 1e-2);
     Ok(())
 }
 
@@ -158,7 +158,7 @@ fn twist_volume_constraint() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-6);
+    compare_meshes(solution, &expected, 1e-6);
     Ok(())
 }
 
@@ -190,6 +190,6 @@ fn twist_volume_constraint_consistent_outer_iterations() -> Result<(), Error> {
     let expected: TetMesh =
         geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted_const_volume.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
-    compare_meshes(&solution, &expected, 1e-6);
+    compare_meshes(solution, &expected, 1e-6);
     Ok(())
 }

@@ -1,17 +1,20 @@
+use std::cell::RefCell;
+
+use ipopt::{self, Number};
+use log::{debug, error, trace};
+
+use geo::mesh::{Attrib, topology::*, VertexPositions};
+use utils::{soap::*, zip};
+use utils::soap::Vector3;
+
 use crate::attrib_defines::*;
 use crate::constraint::*;
-use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
+use crate::constraints::{ContactConstraint, volume::VolumeConstraint};
 use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
 use crate::PointCloud;
-use geo::mesh::{topology::*, Attrib, VertexPositions};
-use ipopt::{self, Number};
-use log::{debug, error, trace};
-use std::cell::RefCell;
-use utils::soap::Vector3;
-use utils::{soap::*, zip};
 
 const FORWARD_FRICTION: bool = true;
 
@@ -930,11 +933,12 @@ impl ObjectData {
         }
 
         Self::update_simulated_meshes_with(solids, shells, prev_x.view(), prev_v.view());
-        Self::update_fixed_meshes(shells, vel.view(), pos.view());
+        Self::update_fixed_meshes(shells,  pos.view(), vel.view());
     }
 
     pub fn revert_prev_step(&mut self) {
         let ObjectData {
+            shells,
             prev_x,
             prev_v,
             prev_prev_x,
@@ -956,6 +960,17 @@ impl ObjectData {
                 .zip(prev_v_flat_view.iter_mut())
                 .for_each(|(prev, cur)| *cur = *prev);
         }
+
+        // We don't need to update all meshes in this case, just the interior edge angles since
+        // these are actually used in simulation.
+        for (i, shell) in shells.iter_mut().enumerate() {
+            match shell.material.properties {
+                ShellProperties::Deformable { .. } => {
+                    shell.update_interior_edge_angles(prev_x.view().at(1).at(i).into());
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn update_simulated_meshes_with(
@@ -964,7 +979,7 @@ impl ObjectData {
         x: VertexView3<&[f64]>,
         v: VertexView3<&[f64]>,
     ) {
-        // Update mesh vertex positions and velocities
+        // Update mesh vertex positions and velocities.
         for (i, solid) in solids.iter_mut().enumerate() {
             let verts = solid.tetmesh.vertex_positions_mut();
             verts.copy_from_slice(x.at(0).at(i).into());
@@ -984,24 +999,32 @@ impl ObjectData {
                         .attrib_as_mut_slice::<_, VertexIndex>(VELOCITY_ATTRIB)
                         .expect("Missing velocity attribute")
                         .copy_from_slice(v.at(1).at(i).into());
+                    shell.update_interior_edge_angles(x.at(1).at(i).into());
                 }
                 ShellProperties::Rigid { .. } => {
                     unimplemented!();
                 }
                 ShellProperties::Fixed => {
-                    // Nothing to do here, fixed meshes aren't moved by
-                    // simulation.
+                    // Not simulated, nothing to do here.
+                    // These meshes are updated only for visualization purposes, which is done in
+                    // `update_fixed_meshes`, which doesn't need to happen for instance when
+                    // reverting a solve.
                 }
             }
         }
     }
 
+    /// We need to update the internal meshes since these are used for output.
+    ///
+    /// Note that the update for fixed meshes is coming from point clouds, and this function is
+    /// needed to copy that data onto the meshes that will be output by this solver even though
+    /// they are not simulated.
     pub fn update_fixed_meshes(
         shells: &mut [TriMeshShell],
-        v: VertexView3<&[f64]>,
         x: VertexView3<&[f64]>,
+        v: VertexView3<&[f64]>,
     ) {
-        // Update iferred velocities on fixed meshes
+        // Update inferred velocities on fixed meshes
         for (i, shell) in shells.iter_mut().enumerate() {
             match shell.material.properties {
                 ShellProperties::Fixed => {
@@ -2916,7 +2939,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 &mut rows[count..count + n],
                 &mut cols[count..count + n],
             );
-
+            //debug!("total elasticity hessian non zeros: {}", n);
+            //for (r, c) in rows[count..count + n].iter().zip(cols[count..count + n].iter()) {
+            //    debug!("({}, {})", r, c);
+            //}
             count += n;
 
             if !self.is_static() {
@@ -2961,7 +2987,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn hessian_values(
         &self,
         uv: &[Number],
-        obj_factor: Number,
+        mut obj_factor: Number,
         lambda: &[Number],
         vals: &mut [Number],
     ) -> bool {
@@ -2982,6 +3008,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         // Correction to make the above hessian wrt velocity instead of displacement.
         let dt = self.time_step();
 
+        // Multiply energy hessian by objective factor and scaling factors.
+        obj_factor *= self.variable_scale() * self.variable_scale() * self.impulse_inv_scale();
+
         let mut count = 0; // Values counter
 
         for (solid_idx, solid) in self.object_data.solids.iter().enumerate() {
@@ -2991,13 +3020,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let v = v.at(0).at(solid_idx).into_flat();
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[count..count + n]);
+            elasticity.energy_hessian_values(x0, x1, dt * dt * obj_factor, &mut vals[count..count + n]);
             count += n;
 
             if !self.is_static() {
                 let inertia = solid.inertia();
                 let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+                inertia.energy_hessian_values(v0, v, obj_factor, &mut vals[count..count + n]);
                 count += n;
             }
         }
@@ -3009,22 +3038,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let v = v.at(1).at(shell_idx).into_flat();
             let elasticity = shell.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(x0, x1, dt * dt, &mut vals[count..count + n]);
+            elasticity.energy_hessian_values(x0, x1, dt * dt * obj_factor, &mut vals[count..count + n]);
             count += n;
 
             if !self.is_static() {
                 let inertia = shell.inertia();
                 let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_values(v0, v, 1.0, &mut vals[count..count + n]);
+                inertia.energy_hessian_values(v0, v, obj_factor, &mut vals[count..count + n]);
                 count += n;
             }
-        }
-
-        // Multiply energy hessian by objective factor.
-        let factor =
-            obj_factor * self.variable_scale() * self.variable_scale() * self.impulse_inv_scale();
-        for v in vals[0..count].iter_mut() {
-            *v *= factor;
         }
 
         let mut coff = 0;

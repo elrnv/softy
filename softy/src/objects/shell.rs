@@ -366,6 +366,20 @@ impl TriMeshShell {
         }
     }
 
+    /// Given a set of new vertex positions update the set of interior edge angles.
+    pub(crate) fn update_interior_edge_angles<T: Real>(&mut self, x1: &[[T; 3]]) {
+        let Self {
+            ref trimesh,
+            ref interior_edges,
+            ref mut interior_edge_angles,
+            ..
+        } = *self;
+
+        interior_edges.iter().zip(interior_edge_angles.iter_mut()).for_each(|(e, t)| {
+            *t = e.incremental_angle(T::from(*t).unwrap(), x1, trimesh.faces()).to_f64().unwrap();
+        });
+    }
+
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn with_fem_attributes(mut self) -> Result<TriMeshShell, Error> {
         self.material = self.material.normalized();

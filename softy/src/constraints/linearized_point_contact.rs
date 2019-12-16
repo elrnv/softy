@@ -1209,7 +1209,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
 
         // Recompute constraint jacobian.
         self.linearize_constraint(object_pos, collider_pos);
-        //self.project_friction_impulses([object_pos, collider_pos]);
+        self.project_friction_impulses([object_pos, collider_pos]);
 
         topo_updated
     }

@@ -3,13 +3,13 @@ use std::cell::RefCell;
 use ipopt::{self, Number};
 use log::{debug, error, trace};
 
-use geo::mesh::{Attrib, topology::*, VertexPositions};
-use utils::{soap::*, zip};
+use geo::mesh::{topology::*, Attrib, VertexPositions};
 use utils::soap::Vector3;
+use utils::{soap::*, zip};
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
-use crate::constraints::{ContactConstraint, volume::VolumeConstraint};
+use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
 use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
@@ -361,21 +361,19 @@ impl ObjectData {
         Self::mesh_vertex_subset_impl(prev_v.view_mut(), vel.view_mut(), src_idx, solids, shells)
     }
 
-    pub fn grad_mut<'a>(&self, src_idx: [SourceIndex; 2], grad_vtx: VertexView3<'a, &'a mut [f64]>, grad_dof: VertexView3<'a, &'a mut [f64]>) -> [MeshVertexData3<&'a mut [f64]>; 2] {
-        let ObjectData {
-            solids,
-            shells,
-            ..
-        } = self;
+    pub fn grad_mut<'a>(
+        &self,
+        src_idx: [SourceIndex; 2],
+        grad_vtx: VertexView3<'a, &'a mut [f64]>,
+        grad_dof: VertexView3<'a, &'a mut [f64]>,
+    ) -> [MeshVertexData3<&'a mut [f64]>; 2] {
+        let ObjectData { solids, shells, .. } = self;
         Self::mesh_vertex_subset_split_mut_impl(grad_dof, grad_vtx, src_idx, solids, shells)
     }
 
     pub fn update_grad(&self, source: SourceIndex, grad_x: VertexView3<&mut [f64]>) {
         let ObjectData {
-            grad,
-            pos,
-            shells,
-            ..
+            grad, pos, shells, ..
         } = self;
         match source {
             SourceIndex::Shell(i) => {
@@ -390,9 +388,12 @@ impl ObjectData {
                         grad_dofs[0] = *g_vtx;
                         let r = p.into_tensor() - cm;
                         if let Some(inertia_inv) = inertia.inverse() {
-                            grad_dofs[1] = (inertia_inv * r.cross((*g_vtx).into_tensor())).into_data();
+                            grad_dofs[1] =
+                                (inertia_inv * r.cross((*g_vtx).into_tensor())).into_data();
                         } else {
-                            warn!("Unable to invert inertia matrix. angular momentum not transferred");
+                            warn!(
+                                "Unable to invert inertia matrix. angular momentum not transferred"
+                            );
                         }
                         *g_vtx = [0.0; 3]; // Value moved over, reset it.
                     }
@@ -550,23 +551,27 @@ impl ObjectData {
                                 ],
                                 SourceIndex::Shell(j) => {
                                     return match shells[j].data {
-                                        ShellData::Soft { .. } => {
-                                            [
-                                                Subset::all(alt.isolate(1).isolate(i)),
-                                                Subset::all(x.isolate(1).isolate(j))
-                                            ]
-                                        },
+                                        ShellData::Soft { .. } => [
+                                            Subset::all(alt.isolate(1).isolate(i)),
+                                            Subset::all(x.isolate(1).isolate(j)),
+                                        ],
                                         _ => {
                                             // Both non-deformable shells.
                                             if i < j {
                                                 let (l, r) = alt.isolate(1).split_at(j);
-                                                [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
+                                                [
+                                                    Subset::all(l.isolate(i)),
+                                                    Subset::all(r.isolate(0)),
+                                                ]
                                             } else {
                                                 assert_ne!(i, j); // This needs special handling for self contact.
                                                 let (l, r) = alt.isolate(1).split_at(i);
-                                                [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
+                                                [
+                                                    Subset::all(r.isolate(0)),
+                                                    Subset::all(l.isolate(j)),
+                                                ]
                                             }
-                                        },
+                                        }
                                     };
                                 }
                             };
@@ -848,7 +853,8 @@ impl ObjectData {
                         FixedVerts::One(vtx) => {
                             // For 1 fixed vertex, assign the appropriate velocity to that vertex.
                             if let Some(&new_pos) = new_pos.get(source_indices[vtx]) {
-                                *(&mut vel[vtx]).as_mut_tensor() = (new_pos.into_tensor() - pos[vtx].into_tensor()) * dt_inv;
+                                *(&mut vel[vtx]).as_mut_tensor() =
+                                    (new_pos.into_tensor() - pos[vtx].into_tensor()) * dt_inv;
                                 // Position will by updated by the solve automatically.
                             }
                         }
@@ -858,8 +864,10 @@ impl ObjectData {
                             //       quite easily. Rsolve this.
                             if let Some(&p0) = new_pos.get(source_indices[verts[0]]) {
                                 if let Some(&p1) = new_pos.get(source_indices[verts[1]]) {
-                                    *(&mut vel[verts[0]]).as_mut_tensor() = (p0.into_tensor() - pos[verts[0]].into_tensor()) * dt_inv;
-                                    *(&mut vel[verts[1]]).as_mut_tensor() = (p1.into_tensor() - pos[verts[1]].into_tensor()) * dt_inv;
+                                    *(&mut vel[verts[0]]).as_mut_tensor() =
+                                        (p0.into_tensor() - pos[verts[0]].into_tensor()) * dt_inv;
+                                    *(&mut vel[verts[1]]).as_mut_tensor() =
+                                        (p1.into_tensor() - pos[verts[1]].into_tensor()) * dt_inv;
                                 }
                             }
                         }
@@ -943,7 +951,7 @@ impl ObjectData {
         }
 
         Self::update_simulated_meshes_with(solids, shells, prev_x.view(), prev_v.view());
-        Self::update_fixed_meshes(shells,  pos.view(), vel.view());
+        Self::update_fixed_meshes(shells, pos.view(), vel.view());
     }
 
     pub fn revert_prev_step(&mut self) {
@@ -1788,28 +1796,28 @@ impl NonLinearProblem {
             .iter_mut::<f64>()
             .unwrap()
             .zip(zip!(
-                    solid
-                        .tetmesh
-                        .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                        .unwrap()
-                        .map(|&x| f64::from(x)),
-                    solid
-                        .tetmesh
-                        .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
-                        .unwrap()
-                        .map(|&x| f64::from(x)),
-                    solid
-                        .tetmesh
-                        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                        .unwrap(),
-                    solid
-                        .tetmesh
-                        .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(
-                            REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                        )
-                        .unwrap(),
-                    solid.tetmesh.tet_iter()
-                ))
+                solid
+                    .tetmesh
+                    .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                solid
+                    .tetmesh
+                    .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                solid
+                    .tetmesh
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .unwrap(),
+                solid
+                    .tetmesh
+                    .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(
+                        REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                    )
+                    .unwrap(),
+                solid.tetmesh.tet_iter()
+            ))
             .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
                 let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
                 *strain =
@@ -1838,16 +1846,17 @@ impl NonLinearProblem {
             *f = [0.0; 3];
         }
 
-        let grad_iter =
-            zip!(
+        let grad_iter = zip!(
             solid
                 .tetmesh
                 .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                .unwrap().map(|&x| f64::from(x)),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             solid
                 .tetmesh
                 .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
-                .unwrap().map(|&x| f64::from(x)),
+                .unwrap()
+                .map(|&x| f64::from(x)),
             solid
                 .tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
@@ -1858,11 +1867,11 @@ impl NonLinearProblem {
                 .unwrap(),
             solid.tetmesh.tet_iter()
         )
-            .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
-                let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
-                NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
-                    .energy_gradient()
-            });
+        .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
+            let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
+            NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
+                .energy_gradient()
+        });
 
         for (grad, cell) in grad_iter.zip(solid.tetmesh.cells().iter()) {
             for j in 0..4 {
@@ -2603,7 +2612,11 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 // different degrees of freedom.
                 {
                     let mut grad_vtx = self.object_data.grad.borrow_mut();
-                    let [mut obj_g, mut coll_g] = self.object_data.grad_mut([fc.object_index, fc.collider_index], grad_vtx.view_mut(), grad.view_mut());
+                    let [mut obj_g, mut coll_g] = self.object_data.grad_mut(
+                        [fc.object_index, fc.collider_index],
+                        grad_vtx.view_mut(),
+                        grad.view_mut(),
+                    );
 
                     if FORWARD_FRICTION {
                         fc.constraint
@@ -2614,8 +2627,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
                 // Update `grad.view_mut()` with the newly computed gradients. This is a noop
                 // unless at least one of the objects is rigid.
-                self.object_data.update_grad(fc.object_index, grad.view_mut());
-                self.object_data.update_grad(fc.collider_index, grad.view_mut());
+                self.object_data
+                    .update_grad(fc.object_index, grad.view_mut());
+                self.object_data
+                    .update_grad(fc.collider_index, grad.view_mut());
             }
         }
 
@@ -2962,7 +2977,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 let inertia = shell.inertia();
                 let n = inertia.energy_hessian_size();
                 inertia.energy_hessian_rows_cols_offset(
-                    (offset, offset).into(), &mut rows[count..count + n], &mut cols[count..count + n]);
+                    (offset, offset).into(),
+                    &mut rows[count..count + n],
+                    &mut cols[count..count + n],
+                );
                 count += n;
             }
         }
@@ -3033,7 +3051,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let v = v.at(0).at(solid_idx).into_flat();
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(x0, x1, dt * dt * obj_factor, &mut vals[count..count + n]);
+            elasticity.energy_hessian_values(
+                x0,
+                x1,
+                dt * dt * obj_factor,
+                &mut vals[count..count + n],
+            );
             count += n;
 
             if !self.is_static() {
@@ -3051,7 +3074,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let v = v.at(1).at(shell_idx).into_flat();
             let elasticity = shell.elasticity();
             let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(x0, x1, dt * dt * obj_factor, &mut vals[count..count + n]);
+            elasticity.energy_hessian_values(
+                x0,
+                x1,
+                dt * dt * obj_factor,
+                &mut vals[count..count + n],
+            );
             count += n;
 
             if !self.is_static() {

@@ -2,9 +2,9 @@ use unroll::unroll_for_loops;
 
 use geo::mesh::{attrib, topology::*, VertexPositions};
 use geo::ops::*;
+use num_traits::Zero;
 use utils::soap::*;
 use utils::zip;
-use num_traits::Zero;
 
 use crate::attrib_defines::*;
 use crate::energy_models::elasticity::*;
@@ -17,7 +17,6 @@ use crate::TriMesh;
 
 mod interior_edge;
 pub use interior_edge::*;
-
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum FixedVerts {
@@ -131,7 +130,7 @@ impl TriMeshShell {
                 },
                 Some(m) => Some(Self::rigid(trimesh, *m)),
             },
-            Some(m) => Some(Self::fixed(trimesh, *m))
+            Some(m) => Some(Self::fixed(trimesh, *m)),
         }
     }
     pub fn soft(trimesh: TriMesh, material: SoftShellMaterial) -> TriMeshShell {
@@ -144,7 +143,7 @@ impl TriMeshShell {
                 interior_edge_ref_angles: Vec::new(),
                 interior_edge_ref_length: Vec::new(),
                 interior_edge_bending_stiffness: Vec::new(),
-            }
+            },
         }
     }
     pub fn rigid(trimesh: TriMesh, material: RigidMaterial) -> TriMeshShell {
@@ -159,15 +158,13 @@ impl TriMeshShell {
                 mass,
                 cm,
                 inertia,
-            }
+            },
         }
     }
     pub fn fixed(trimesh: TriMesh, material: FixedMaterial) -> TriMeshShell {
         TriMeshShell {
             trimesh,
-            data: ShellData::Fixed {
-                material,
-            }
+            data: ShellData::Fixed { material },
         }
     }
 
@@ -175,22 +172,21 @@ impl TriMeshShell {
     /// by the given triangle mesh.
     ///
     /// It is assumed that the mesh forms a closed surface.
-    pub(crate) fn integrate_rigid_properties(mesh: &TriMesh, density: f64) -> (f64, Vector3<f64>, Matrix3<f64>) {
+    pub(crate) fn integrate_rigid_properties(
+        mesh: &TriMesh,
+        density: f64,
+    ) -> (f64, Vector3<f64>, Matrix3<f64>) {
         let (one, xyz, x2y2z2, xy_xz_yz) = Self::integrate_polynomial_basis(mesh);
         let mass = one * density;
-        let cm = xyz/mass;
+        let cm = xyz / mass;
         let cm2 = cm.cwise_mul(cm);
-        let xx = x2y2z2[1] + x2y2z2[2] - mass*(cm2[1] + cm2[2]);
-        let yy = x2y2z2[0] + x2y2z2[2] - mass*(cm2[2] + cm2[0]);
-        let xy = mass*cm[0]*cm[1] - xy_xz_yz[0];
-        let zz = x2y2z2[0] + x2y2z2[1] - mass*(cm2[0] + cm2[1]);
-        let yz = mass*cm[1]*cm[2] - xy_xz_yz[1];
-        let xz = mass*cm[2]*cm[0] - xy_xz_yz[2];
-        let inertia = [
-            [xx, xy, xz],
-            [xy, yy, yz],
-            [xz, yz, zz],
-        ].into_tensor();
+        let xx = x2y2z2[1] + x2y2z2[2] - mass * (cm2[1] + cm2[2]);
+        let yy = x2y2z2[0] + x2y2z2[2] - mass * (cm2[2] + cm2[0]);
+        let xy = mass * cm[0] * cm[1] - xy_xz_yz[0];
+        let zz = x2y2z2[0] + x2y2z2[1] - mass * (cm2[0] + cm2[1]);
+        let yz = mass * cm[1] * cm[2] - xy_xz_yz[1];
+        let xz = mass * cm[2] * cm[0] - xy_xz_yz[2];
+        let inertia = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]].into_tensor();
         (mass, cm, inertia)
     }
 
@@ -201,9 +197,9 @@ impl TriMeshShell {
     ///
     /// The method for integrating quantities is taken from
     /// [David Eberly's writeup](https://www.geometrictools.com/Documentation/PolyhedralMassProperties.pdf)
-    fn integrate_polynomial_basis(mesh: &TriMesh)
-        -> (f64, Vector3<f64>, Vector3<f64>, Vector3<f64>)
-    {
+    fn integrate_polynomial_basis(
+        mesh: &TriMesh,
+    ) -> (f64, Vector3<f64>, Vector3<f64>, Vector3<f64>) {
         let mut one = 0.0;
         let mut xyz = Vector3::zero();
         let mut x2y2z2 = Vector3::zero();
@@ -217,48 +213,48 @@ impl TriMeshShell {
             let t2 = t1 + v[1].cwise_mul(t0);
             let f2 = t2 + v[0].cwise_mul(f1);
             let f3 = v[0].cwise_mul(t1) + v[1].cwise_mul(t2) + v[2].cwise_mul(f2);
-            let g = Tensor { data: [
-                f2 + v[0].cwise_mul(f1 + v[0]),
-                f2 + v[1].cwise_mul(f1 + v[1]),
-                f2 + v[2].cwise_mul(f1 + v[2]),
-            ] }.transpose();
+            let g = Tensor {
+                data: [
+                    f2 + v[0].cwise_mul(f1 + v[0]),
+                    f2 + v[1].cwise_mul(f1 + v[1]),
+                    f2 + v[2].cwise_mul(f1 + v[2]),
+                ],
+            }
+            .transpose();
 
-            one += an[0]*f1[0];
+            one += an[0] * f1[0];
             xyz += an.cwise_mul(f2);
             x2y2z2 += an.cwise_mul(f3);
             let w = v.transpose();
-            xy_xz_yz += an.cwise_mul(
-                [
-                    w[1].dot(g[0]),
-                    w[2].dot(g[1]),
-                    w[0].dot(g[2]),
-                ].into_tensor());
+            xy_xz_yz +=
+                an.cwise_mul([w[1].dot(g[0]), w[2].dot(g[1]), w[0].dot(g[2])].into_tensor());
         }
 
-        (one/6.0, xyz/24.0, x2y2z2/60.0, xy_xz_yz/120.0)
+        (one / 6.0, xyz / 24.0, x2y2z2 / 60.0, xy_xz_yz / 120.0)
     }
 
     /// Given a set of new vertex positions update the set of interior edge angles.
     pub(crate) fn update_interior_edge_angles<T: Real>(&mut self, x1: &[[T; 3]]) {
         let Self {
             ref trimesh,
-            ref mut data
+            ref mut data,
         } = *self;
 
         if let ShellData::Soft {
             ref interior_edges,
             ref mut interior_edge_angles,
             ..
-        } = data {
-            interior_edges.iter()
+        } = data
+        {
+            interior_edges
+                .iter()
                 .zip(interior_edge_angles.iter_mut())
-                .for_each( | (e, t) | {
-                *t = e.incremental_angle(
-                    T::from( * t).unwrap(),
-                    x1,
-                    trimesh.faces()
-                ).to_f64().unwrap();
-            });
+                .for_each(|(e, t)| {
+                    *t = e
+                        .incremental_angle(T::from(*t).unwrap(), x1, trimesh.faces())
+                        .to_f64()
+                        .unwrap();
+                });
         }
     }
 
@@ -284,7 +280,8 @@ impl TriMeshShell {
                 {
                     // Add elastic strain energy attribute.
                     // This will be computed at the end of the time step.
-                    self.trimesh.set_attrib::<StrainEnergyType, FaceIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+                    self.trimesh
+                        .set_attrib::<StrainEnergyType, FaceIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
                 }
 
                 // Below we prepare attributes that give elasticity and density parameters. If such were
@@ -327,8 +324,12 @@ impl TriMeshShell {
 
     /// Compute areas for reference triangles in the given `TriMesh`.
     fn compute_ref_tri_areas(mesh: &mut TriMesh) -> Result<Vec<f64>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
-        Ok(ref_pos.chunks_exact(3).map(|tri| ref_tri(tri).area()).collect())
+        let ref_pos =
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+        Ok(ref_pos
+            .chunks_exact(3)
+            .map(|tri| ref_tri(tri).area())
+            .collect())
     }
 
     /// Convert a 3D triangle shape matrix into a 2D matrix assuming an isotropic deformation
@@ -341,44 +342,53 @@ impl TriMeshShell {
         let r1_proj = m[0] * scale;
 
         let q = Matrix2x3 {
-            data: [
-                m[0].normalized(),
-                (m[1] - r1_proj).normalized(),
-            ]
+            data: [m[0].normalized(), (m[1] - r1_proj).normalized()],
         };
 
         m * q.transpose()
     }
 
     /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
-    fn compute_ref_tri_shape_matrix_inverses(mesh: &mut TriMesh) -> Result<Vec<Matrix2<f64>>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+    fn compute_ref_tri_shape_matrix_inverses(
+        mesh: &mut TriMesh,
+    ) -> Result<Vec<Matrix2<f64>>, Error> {
+        let ref_pos =
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         // Compute reference shape matrix inverses
-        Ok(ref_pos.chunks_exact(3)
+        Ok(ref_pos
+            .chunks_exact(3)
             .map(|tri| {
                 let ref_shape_matrix = Matrix2x3::new(ref_tri(tri).shape_matrix());
-                Self::isotropic_tri_shape_matrix(ref_shape_matrix).inverse().unwrap()
+                Self::isotropic_tri_shape_matrix(ref_shape_matrix)
+                    .inverse()
+                    .unwrap()
             })
             .collect())
     }
 
     pub(crate) fn init_bending_attributes(&mut self) -> Result<(), Error> {
-        let material  = match self.data {
+        let material = match self.data {
             ShellData::Soft { material, .. } => material,
-            _ => return Err(Error::ObjectMaterialMismatch)
+            _ => return Err(Error::ObjectMaterialMismatch),
         };
         // Initialize bending stiffness face attribute
         let num_elements = self.num_elements();
         if let Some(bending_stiffness) = material.scaled_bending_stiffness() {
-            match self.mesh_mut()
+            match self
+                .mesh_mut()
                 .add_attrib_data::<BendingStiffnessType, FaceIndex>(
                     BENDING_STIFFNESS_ATTRIB,
-                    vec![bending_stiffness; num_elements]
+                    vec![bending_stiffness; num_elements],
                 ) {
                 Err(attrib::Error::AlreadyExists(_)) => {
-                    crate::objects::scale_param(material.scale(), self.mesh_mut()
-                        .attrib_iter_mut::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB)
-                        .expect("Internal error: Missing bending stiffness"));
+                    crate::objects::scale_param(
+                        material.scale(),
+                        self.mesh_mut()
+                            .attrib_iter_mut::<BendingStiffnessType, FaceIndex>(
+                                BENDING_STIFFNESS_ATTRIB,
+                            )
+                            .expect("Internal error: Missing bending stiffness"),
+                    );
                 }
                 Err(e) => return Err(e.into()),
                 _ => {}
@@ -388,52 +398,67 @@ impl TriMeshShell {
             // is nothing on the mesh, simply initialize bending stiffness to zero. This is
             // a reasonable default.
             let scale = material.scale();
-            let attrib = self.mesh_mut().attrib_or_add::<BendingStiffnessType, FaceIndex>(
-                BENDING_STIFFNESS_ATTRIB,
-                0.0,
-            )?;
+            let attrib = self
+                .mesh_mut()
+                .attrib_or_add::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB, 0.0)?;
             crate::objects::scale_param(scale, attrib.iter_mut::<BendingStiffnessType>()?);
         }
 
         let mesh = self.mesh();
 
         // Initialize edge topology and reference quantities.
-        let ref_pos = Chunked3::from_flat(mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?).into_arrays();
+        let ref_pos = Chunked3::from_flat(
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?,
+        )
+        .into_arrays();
         let mut interior_edges = compute_interior_edge_topology(&mesh);
         let mut interior_edge_bending_stiffness = vec![0.0; interior_edges.len()];
         let (mut interior_edge_ref_angles, mut interior_edge_ref_length): (Vec<_>, Vec<_>) =
-            interior_edges.iter().map(|e| {
-                let length = f64::from(e.ref_length(&ref_pos));
-                // A triangle height measure used to normalize the length. This allows the energy
-                // model to correctly approximate mean curvature.
-                let h_e = f64::from(e.tile_span(&ref_pos));
-                let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));
-                (ref_angle, length / h_e)
-            }).unzip();
+            interior_edges
+                .iter()
+                .map(|e| {
+                    let length = f64::from(e.ref_length(&ref_pos));
+                    // A triangle height measure used to normalize the length. This allows the energy
+                    // model to correctly approximate mean curvature.
+                    let h_e = f64::from(e.tile_span(&ref_pos));
+                    let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));
+                    (ref_angle, length / h_e)
+                })
+                .unzip();
 
         // Check if there are any additional reference angle attributes in the mesh, and ADD them
         // to the computed reference angles. This allows for non-coincident edges in reference
         // configuration to have a non-zero reference angle.
-        if let Ok(ref_angles) = mesh.attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB) {
+        if let Ok(ref_angles) =
+            mesh.attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB)
+        {
             let ref_angles = Chunked3::from_flat(ref_angles).into_arrays();
-            interior_edges.iter().zip(interior_edge_ref_angles.iter_mut())
-                .for_each(|(e, ref_angle)| *ref_angle += f64::from(ref_angles[e.faces[0]][e.edge_start[0] as usize]));
+            interior_edges
+                .iter()
+                .zip(interior_edge_ref_angles.iter_mut())
+                .for_each(|(e, ref_angle)| {
+                    *ref_angle += f64::from(ref_angles[e.faces[0]][e.edge_start[0] as usize])
+                });
         }
 
-
         // Initialize interior_edge_angles.
-        let mut interior_edge_angles: Vec<_> =
-            interior_edges.iter().map(|e| {
-                e.edge_angle(mesh.vertex_positions(), mesh.faces())
-            }).collect();
+        let mut interior_edge_angles: Vec<_> = interior_edges
+            .iter()
+            .map(|e| e.edge_angle(mesh.vertex_positions(), mesh.faces()))
+            .collect();
 
         // At this point we are confident that bending stiffness is correctly initialized on the mesh.
         // Now it remains to move it to interior edges by averaging of the bending stiffnesses of
         // the adjacent faces.
-        let face_bending_stiffnesses = mesh.attrib_as_slice::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB)?;
-        for (e, mult) in interior_edges.iter().zip(interior_edge_bending_stiffness.iter_mut()) {
-            *mult = 0.5*(face_bending_stiffnesses[e.faces[0]] as f64 +
-                         face_bending_stiffnesses[e.faces[1]] as f64);
+        let face_bending_stiffnesses =
+            mesh.attrib_as_slice::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB)?;
+        for (e, mult) in interior_edges
+            .iter()
+            .zip(interior_edge_bending_stiffness.iter_mut())
+        {
+            *mult = 0.5
+                * (face_bending_stiffnesses[e.faces[0]] as f64
+                    + face_bending_stiffnesses[e.faces[1]] as f64);
         }
 
         // This should be the last step in initializing parameters for computing bending energy.
@@ -462,7 +487,8 @@ impl TriMeshShell {
             interior_edge_ref_angles: self_interior_edge_ref_angles,
             interior_edge_ref_length: self_interior_edge_ref_length,
             ..
-        } = &mut self.data {
+        } = &mut self.data
+        {
             *self_interior_edges = interior_edges;
             *self_interior_edge_bending_stiffness = interior_edge_bending_stiffness;
             *self_interior_edge_angles = interior_edge_angles;
@@ -477,7 +503,9 @@ impl TriMeshShell {
     pub(crate) fn init_vertex_face_ref_pos_attribute(&mut self) -> Result<(), Error> {
         let mesh = self.mesh_mut();
         let mut ref_pos = vec![[0.0; 3]; mesh.num_face_vertices()];
-        let pos = if let Ok(vtx_ref_pos) = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB) {
+        let pos = if let Ok(vtx_ref_pos) =
+            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)
+        {
             // There is a reference attribute on the vertices themselves, just transfer these to
             // face vertices instead of using mesh position.
             vtx_ref_pos.to_vec()
@@ -524,7 +552,7 @@ impl TriMeshShell {
             }
         }
 
-        trimesh.add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)?;
+        trimesh.set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, &masses)?;
         Ok(())
     }
 
@@ -549,10 +577,9 @@ impl<'a> Inertia<'a, Option<Either<SoftShellInertia<'a>, RigidShellInertia>>> fo
     fn inertia(&'a self) -> Option<Either<SoftShellInertia<'a>, RigidShellInertia>> {
         match self.data {
             ShellData::Fixed { .. } => None,
-            ShellData::Rigid { mass, cm, inertia, .. } =>
-                Some(Either::Right(RigidShellInertia {
-                    mass, cm, inertia,
-                })),
+            ShellData::Rigid {
+                mass, cm, inertia, ..
+            } => Some(Either::Right(RigidShellInertia { mass, cm, inertia })),
             ShellData::Soft { .. } => Some(Either::Left(SoftShellInertia(self))),
         }
     }
@@ -566,4 +593,3 @@ impl<'a> Gravity<'a, Option<TriMeshGravity<'a>>> for TriMeshShell {
         }
     }
 }
-

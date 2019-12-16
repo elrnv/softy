@@ -3,11 +3,7 @@ use crate::constraints::*;
 use crate::contact::*;
 use crate::fem::problem::{FrictionalContactConstraint, Var};
 use crate::objects::*;
-use geo::mesh::{
-    attrib::VertexAttrib,
-    topology::*,
-    Attrib, VertexPositions,
-};
+use geo::mesh::{attrib::VertexAttrib, topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
@@ -84,7 +80,7 @@ pub fn ref_tet(ref_pos: &[RefPosType], indices: &[usize; 4]) -> Tetrahedron<f64>
         Vector3::new(ref_pos[indices[0]]).cast::<f64>().into(),
         Vector3::new(ref_pos[indices[1]]).cast::<f64>().into(),
         Vector3::new(ref_pos[indices[2]]).cast::<f64>().into(),
-        Vector3::new(ref_pos[indices[3]]).cast::<f64>().into()
+        Vector3::new(ref_pos[indices[3]]).cast::<f64>().into(),
     ])
 }
 
@@ -142,7 +138,8 @@ impl SolverBuilder {
 
     /// Add a rigid polygon mesh representing an rigid solid.
     pub fn add_rigid(&mut self, shell: PolyMesh, density: f32, id: usize) -> &mut Self {
-        self.rigid_shells.push((shell, RigidMaterial::new(id, density)));
+        self.rigid_shells
+            .push((shell, RigidMaterial::new(id, density)));
         self
     }
 
@@ -305,7 +302,8 @@ impl SolverBuilder {
                                         .chain(shell_iter.into_iter().flatten())
                                 })
                             })
-                    })})
+                    })
+            })
             .collect()
     }
 
@@ -405,7 +403,10 @@ impl SolverBuilder {
         let pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], pos);
         let vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vel);
         let mut grad = vel.clone();
-        grad.view_mut().into_flat().iter_mut().for_each(|v| *v = 0.0); // Zero out gradient.
+        grad.view_mut()
+            .into_flat()
+            .iter_mut()
+            .for_each(|v| *v = 0.0); // Zero out gradient.
 
         Ok(ObjectData {
             prev_x: prev_x.clone(),
@@ -442,7 +443,7 @@ impl SolverBuilder {
     fn build_shells(
         soft_shells: Vec<(PolyMesh, SoftShellMaterial)>,
         rigid_shells: Vec<(PolyMesh, RigidMaterial)>,
-        fixed_shells: Vec<(PolyMesh, FixedMaterial)>
+        fixed_shells: Vec<(PolyMesh, FixedMaterial)>,
     ) -> Result<Vec<TriMeshShell>, Error> {
         // Equip `PolyMesh`es with physics parameters, making them bona-fide shells.
         let mut out = Vec::new();
@@ -628,11 +629,7 @@ impl SolverBuilder {
                 );
         }
 
-        for TriMeshShell {
-            ref trimesh,
-            data,
-        } in shells.iter()
-        {
+        for TriMeshShell { ref trimesh, data } in shells.iter() {
             match data {
                 ShellData::Soft { .. } => {
                     max_modulus = max_modulus
@@ -827,10 +824,13 @@ impl SolverBuilder {
     }
 
     /// Compute shape matrix inverses for reference elements in the given `TetMesh`.
-    fn compute_ref_tet_shape_matrix_inverses(mesh: &mut TetMesh) -> Result<Vec<Matrix3<f64>>, Error> {
+    fn compute_ref_tet_shape_matrix_inverses(
+        mesh: &mut TetMesh,
+    ) -> Result<Vec<Matrix3<f64>>, Error> {
         let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
         // Compute reference shape matrix inverses
-        Ok(mesh.cell_iter()
+        Ok(mesh
+            .cell_iter()
             .map(|cell| {
                 let ref_shape_matrix = ref_tet(ref_pos, cell).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
@@ -838,8 +838,6 @@ impl SolverBuilder {
             })
             .collect())
     }
-
-
 
     /// A helper function to populate the vertex reference position attribute.
     pub(crate) fn prepare_vertex_ref_pos_attribute<M>(mesh: &mut M) -> Result<(), Error>
@@ -878,7 +876,6 @@ impl SolverBuilder {
     //    Ok(())
     //}
 
-
     /// Compute vertex masses on the given solid. The solid is assumed to have
     /// volume and density attributes already.
     pub fn compute_solid_vertex_masses(solid: &mut TetMeshSolid) {
@@ -901,10 +898,9 @@ impl SolverBuilder {
         }
 
         tetmesh
-            .add_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
+            .set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, &masses)
             .unwrap();
     }
-
 
     pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
         Self::prepare_vertex_ref_pos_attribute(mesh)?;
@@ -922,7 +918,6 @@ impl SolverBuilder {
         Ok(())
     }
 
-
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
         solid.material = solid.material.normalized();
@@ -936,7 +931,9 @@ impl SolverBuilder {
         {
             // Add elastic strain energy and elastic force attributes.
             // These will be computed at the end of the time step.
-            solid.tetmesh.set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+            solid
+                .tetmesh
+                .set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
         }
 
         // Below we prepare attributes that give elasticity and density parameters. If such were
@@ -953,7 +950,6 @@ impl SolverBuilder {
 
         Ok(solid)
     }
-
 }
 
 /// Finite element engine.

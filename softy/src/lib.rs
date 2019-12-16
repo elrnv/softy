@@ -86,6 +86,8 @@ pub enum Error {
     MissingContactConstraint,
     NoSimulationMesh,
     NoKinematicMesh,
+    /// Incorrect object is used for the given material. This may be an internal error.
+    ObjectMaterialMismatch,
     /// Error during mesh IO. Typically during debugging.
     MeshIOError {
         source: geo::io::Error,
@@ -185,6 +187,9 @@ impl From<Error> for SimResult {
             }
             Error::InvalidParameter { name } => {
                 SimResult::Error(format!("Invalid parameter: {:?}", name))
+            }
+            Error::ObjectMaterialMismatch => {
+                SimResult::Error(err.to_string())
             }
             Error::MeshIOError { source } => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", source))

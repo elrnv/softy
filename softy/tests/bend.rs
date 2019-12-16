@@ -7,8 +7,8 @@ pub use test_utils::*;
 
 mod test_utils;
 
-fn shell_material() -> ShellMaterial {
-    ShellMaterial::new(0)
+fn soft_shell_material() -> SoftShellMaterial {
+    SoftShellMaterial::new(0)
         .with_elasticity(ElasticityParameters::from_bulk_shear(1000e3, 100e3))
         .with_density(1000.0)
         .with_bending_stiffness(1000.0)
@@ -34,7 +34,7 @@ fn equilibrium() {
     mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB).unwrap()[2] = 1;
 
     let mut solver = SolverBuilder::new(params)
-        .add_shell(PolyMesh::from(mesh.clone()), shell_material())
+        .add_soft_shell(PolyMesh::from(mesh.clone()), soft_shell_material())
         .build()
         .expect("Failed to build a solver for a three triangle test.");
     assert!(solver.step().is_ok());
@@ -54,7 +54,7 @@ fn simple_static_undeformed() {
     let mut solver = SolverBuilder::new(SimParams {
         ..STATIC_PARAMS
     })
-        .add_shell(PolyMesh::from(mesh), shell_material())
+        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
         .build()
         .expect("Failed to build a solver for a three triangle test.");
 
@@ -81,7 +81,7 @@ fn static_deformed() {
     let mut solver = SolverBuilder::new(SimParams {
         ..STATIC_PARAMS
     })
-        .add_shell(PolyMesh::from(mesh), shell_material())
+        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
         .build()
         .expect("Failed to build a solver for a three triangle test.");
 
@@ -113,7 +113,7 @@ fn dynamic_deformed() {
     let mut solver = SolverBuilder::new(SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         ..DYNAMIC_PARAMS
-    }).add_shell(PolyMesh::from(mesh), shell_material())
+    }).add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
       .build()
       .expect("Failed to build a solver for a three triangle test.");
 

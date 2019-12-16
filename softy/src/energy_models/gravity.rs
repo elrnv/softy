@@ -251,18 +251,18 @@ mod tests {
     mod shell {
         use super::*;
 
-        fn shell_material() -> ShellMaterial {
-            ShellMaterial::new(0).with_density(1000.0)
+        fn soft_shell_material() -> SoftShellMaterial {
+            SoftShellMaterial::new(0).with_density(1000.0)
         }
 
         fn test_shells() -> Vec<TriMeshShell> {
-            let material = shell_material();
+            let material = soft_shell_material();
 
             test_trimeshes()
                 .into_iter()
                 .map(|trimesh| {
                     // Prepare attributes relevant for elasticity computations.
-                    let mut shell = TriMeshShell::new(trimesh, material);
+                    let mut shell = TriMeshShell::soft(trimesh, material);
                     shell.init_deformable_attributes().unwrap();
                     shell.init_density_attribute().unwrap();
                     shell

@@ -177,6 +177,24 @@ pub fn make_four_tri_mesh_unoriented() -> TriMesh {
     mesh
 }
 
+pub fn make_one_tet_trimesh() -> TriMesh {
+    let verts = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let indices = vec![0, 2, 1, 0, 3, 2, 0, 1, 3, 1, 2, 3];
+    let mut mesh = TriMesh::new(verts.clone(), indices);
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
+        .unwrap();
+
+    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+        .unwrap();
+    mesh
+}
+
 pub fn make_one_tet_mesh() -> TetMesh {
     let verts = vec![
         [0.0, 0.0, 0.0],

@@ -3,9 +3,9 @@ use crate::energy_models::Either;
 use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
-use crate::objects::{material::*, Object};
+use crate::objects::{material::*, *};
 use crate::{TetMesh, TriMesh};
-use geo::mesh::{topology::*, Attrib};
+use geo::mesh::Attrib;
 use lazycell::LazyCell;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
@@ -22,7 +22,6 @@ pub struct TetMeshSolid {
 // TODO: This impl can be automated with a derive macro
 impl Object for TetMeshSolid {
     type Mesh = TetMesh;
-    type Material = SolidMaterial;
     type ElementIndex = CellIndex;
     fn num_elements(&self) -> usize {
         self.tetmesh.num_cells()
@@ -30,14 +29,25 @@ impl Object for TetMeshSolid {
     fn mesh(&self) -> &TetMesh {
         &self.tetmesh
     }
-    fn material(&self) -> &SolidMaterial {
-        &self.material
-    }
     fn mesh_mut(&mut self) -> &mut TetMesh {
         &mut self.tetmesh
     }
-    fn material_mut(&mut self) -> &mut SolidMaterial {
-        &mut self.material
+    fn material_scale(&self) -> f32 {
+        self.material.scale()
+    }
+    fn material_id(&self) -> usize { self.material.id }
+}
+
+impl DynamicObject for TetMeshSolid {
+    fn scaled_density(&self) -> Option<f32> {
+        self.material.scaled_density()
+    }
+}
+
+impl DeformableObject for TetMeshSolid {}
+impl ElasticObject for TetMeshSolid {
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.material.scaled_elasticity()
     }
 }
 

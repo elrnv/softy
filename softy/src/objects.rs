@@ -1,20 +1,19 @@
-pub mod material;
-pub mod shell;
-pub mod solid;
-
+use geo::mesh::{
+    attrib::{self, AttribIndex, VertexAttrib},
+    Attrib,
+    topology::*,
+    VertexPositions,
+};
 pub use material::*;
 pub use shell::*;
 pub use solid::*;
 
-use geo::mesh::{
-    attrib::{self, AttribIndex, VertexAttrib},
-    topology::*,
-    Attrib,
-    VertexPositions,
-};
 use crate::attrib_defines::*;
-
 use crate::Error;
+
+pub mod material;
+pub mod shell;
+pub mod solid;
 
 /// A utility function to scale the mesh parameters so that they are consistent with the
 /// rest of the material.
@@ -23,7 +22,6 @@ pub(crate) fn scale_param<'a, I: Iterator<Item=&'a mut f32>>(scale: f32, iter_mu
         *val *= scale;
     }
 }
-
 
 /// A utility for initializing the source index attribute to use for updating mesh vertices.
 ///
@@ -51,119 +49,54 @@ where M: NumVertices + Attrib + VertexAttrib
     }
 }
 
-/// A helper trait used to abstract over different types of objects.
+// TODO: Revise the Object trait hierarchy
+//       It is confusing to have multiple implementations of different object traits for a single
+//       object type because one type should have one type of material. In the case of
+//       TriMeshShell, currently it can represent multiple different types of objects.
+//       Probably the way forward is to separate different types of objects into different
+//       concrete types (e.g. RigidShell, SoftShell, FixedShell) and store them separately in
+//       ObjectData in the problem, or store them as trait objects with a more carefully designed
+//       Object trait.
+//       When/If the "Chunked" types are capable of storing multiple Vecs, ObjectData should be
+//       further rafctored and may further includes some common attributes.
+//       ObjectData is intended as a data iterface to the simulation objects for the non-linear
+//       problem, which draws onto common types of data like position, velocity in contiguous
+//       arrays and leaves object specific data like reference positions and matrices to be
+//       drawn directly from the object types (TriMeshShell and TetMeshSolid).
+
+/// An object is any entity that can be a part of the simulation in some way.
+///
+/// This trait helps access and initialize data needed for simulation.
 pub trait Object {
     type Mesh: NumVertices + Attrib + VertexAttrib;
-    type Material: Deformable;
     type ElementIndex: AttribIndex<Self::Mesh>;
+
+    fn material_scale(&self) -> f32;
     fn num_elements(&self) -> usize;
     fn mesh(&self) -> &Self::Mesh;
-    fn material(&self) -> &Self::Material;
     fn mesh_mut(&mut self) -> &mut Self::Mesh;
-    fn material_mut(&mut self) -> &mut Self::Material;
+    fn material_id(&self) -> usize;
 
-    fn init_density_attribute(&mut self) -> Result<(), Error> {
-        // Prepare density parameter
-        if let Some(density) = self.material().scaled_density() {
-            let num_elements = self.num_elements();
-            match self
-                .mesh_mut()
-                .add_attrib_data::<DensityType, Self::ElementIndex>(
-                    DENSITY_ATTRIB,
-                    vec![density as f32; num_elements],
-                ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {
-                    scale_param(self.material().scale(), self.mesh_mut().attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)
-                        .expect("Internal error: Missing density param"))
-                }
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // Scale the mesh parameter so that it is consistent with the rest
-            // of the material.
-            // This also ensures that there is a density parameter defined on the mesh.
-            scale_param(self.material().scale(), self.mesh_mut().attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)?)
-        }
+    fn init_kinematic_vertex_attributes( &mut self ) -> Result<(), Error> {
+        self.mesh_mut().attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
         Ok(())
     }
 
-    /// Transfer parameters `lambda` and `mu` from the object material to the
-    /// mesh if it hasn't already been populated on the input.
-    fn init_elasticity_attributes(&mut self) -> Result<(), Error> {
-        if let Some(elasticity) = self.material().scaled_elasticity() {
-            let num_elements = self.num_elements();
-            match self
-                .mesh_mut()
-                .add_attrib_data::<LambdaType, Self::ElementIndex>(
-                    LAMBDA_ATTRIB,
-                    vec![elasticity.lambda; num_elements],
-                ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {
-                    scale_param(self.material().scale(), self.mesh_mut().attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
-                        .expect("Internal error: Missing lambda param"))
-
-                }
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-            match self.mesh_mut().add_attrib_data::<MuType, Self::ElementIndex>(
-                MU_ATTRIB,
-                vec![elasticity.mu; num_elements],
-            ) {
-                // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => {
-                    scale_param(self.material().scale(), self
-                        .mesh_mut()
-                        .attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
-                        .expect("Internal error: Missing mu param"))
-                }
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        } else {
-            // No global elasticity parameters were given. Check that the mesh has the right
-            // parameters.
-            if self
-                .mesh()
-                .attrib_check::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
-                .is_err()
-                || self
-                .mesh()
-                .attrib_check::<MuType, Self::ElementIndex>(MU_ATTRIB)
-                .is_err()
-            {
-                return Err(Error::MissingElasticityParams);
-            }
-            scale_param(self.material().scale(), self.mesh_mut().attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
-                .expect("Internal error: Missing lambda param"));
-            scale_param(self.material().scale(), self.mesh_mut().attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
-                .expect("Internal error: Missing mu param"));
-        }
-        Ok(())
+    /// Initialize the source index attribute to use for updating mesh vertices.
+    ///
+    /// This is a wrapper for `init_mesh_source_index_attribute` for use when it hasn't
+    /// already been called on the actual source or the source has the same topology and
+    /// vertex order as the final simulation mesh.
+    fn init_source_index_attribute(&mut self) -> Result<(), Error> {
+        init_mesh_source_index_attribute(self.mesh_mut())
     }
+}
 
-    /// A helper function to populate vertex attributes for simulation on a deformable mesh.
-    fn init_deformable_vertex_attributes(&mut self) -> Result<(), Error>
-        where
-            Self::Mesh: VertexPositions<Element = [f64; 3]>,
-    {
-        // Deformable meshes are dynamic. Prepare dynamic attributes first.
-        self.init_dynamic_vertex_attributes()?;
-
-        {
-            // Add elastic force attributes.
-            // These will be computed at the end of the time step.
-            self.mesh_mut().set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
-        }
-
-        Ok(())
-    }
+pub trait DynamicObject: Object {
+    fn scaled_density(&self) -> Option<f32>;
 
     /// A helper function to populate vertex attributes for simulation on a dynamic mesh.
-    fn init_dynamic_vertex_attributes( &mut self, ) -> Result<(), Error> {
+    fn init_dynamic_vertex_attributes(&mut self) -> Result<(), Error> {
         self.init_kinematic_vertex_attributes()?;
 
         // If this attribute doesn't exist, assume no vertices are fixed. This function will
@@ -187,20 +120,110 @@ pub trait Object {
 
         Ok(())
     }
-
-    fn init_kinematic_vertex_attributes( &mut self ) -> Result<(), Error> {
-        self.mesh_mut().attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
+    fn init_density_attribute(&mut self) -> Result<(), Error> {
+        // Prepare density parameter
+        if let Some(density) = self.scaled_density() {
+            let num_elements = self.num_elements();
+            match self
+                .mesh_mut()
+                .add_attrib_data::<DensityType, Self::ElementIndex>(
+                    DENSITY_ATTRIB,
+                    vec![density as f32; num_elements],
+                ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {
+                    scale_param(self.material_scale(), self.mesh_mut().attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)
+                        .expect("Internal error: Missing density param"))
+                }
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        } else {
+            // Scale the mesh parameter so that it is consistent with the rest
+            // of the material.
+            // This also ensures that there is a density parameter defined on the mesh.
+            scale_param(self.material_scale(), self.mesh_mut().attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)?)
+        }
         Ok(())
     }
 
-    /// Initialize the source index attribute to use for updating mesh vertices.
-    ///
-    /// This is a wrapper for `init_mesh_source_index_attribute` for use when it hasn't
-    /// already been called on the actual source or the source has the same topology and
-    /// vertex order as the final simulation mesh.
-    fn init_source_index_attribute(&mut self) -> Result<(), Error> {
-        init_mesh_source_index_attribute(self.mesh_mut())
+}
+
+pub trait DeformableObject: DynamicObject {
+    /// A helper function to populate vertex attributes for simulation on a deformable mesh.
+    fn init_deformable_vertex_attributes(&mut self) -> Result<(), Error>
+        where
+            Self::Mesh: VertexPositions<Element = [f64; 3]>,
+    {
+        // Deformable meshes are dynamic. Prepare dynamic attributes first.
+        self.init_dynamic_vertex_attributes()?;
+
+        {
+            // Add elastic force attributes.
+            // These will be computed at the end of the time step.
+            self.mesh_mut().set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+        }
+
+        Ok(())
     }
 }
 
+pub trait ElasticObject: DeformableObject {
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
 
+    /// Transfer parameters `lambda` and `mu` from the object material to the
+    /// mesh if it hasn't already been populated on the input.
+    fn init_elasticity_attributes(&mut self) -> Result<(), Error> {
+        if let Some(elasticity) = self.scaled_elasticity() {
+            let num_elements = self.num_elements();
+            match self
+                .mesh_mut()
+                .add_attrib_data::<LambdaType, Self::ElementIndex>(
+                    LAMBDA_ATTRIB,
+                    vec![elasticity.lambda; num_elements],
+                ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {
+                    scale_param(self.material_scale(), self.mesh_mut().attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
+                        .expect("Internal error: Missing lambda param"))
+
+                }
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+            match self.mesh_mut().add_attrib_data::<MuType, Self::ElementIndex>(
+                MU_ATTRIB,
+                vec![elasticity.mu; num_elements],
+            ) {
+                // if ok or already exists, everything is ok.
+                Err(attrib::Error::AlreadyExists(_)) => {
+                    scale_param(self.material_scale(), self
+                        .mesh_mut()
+                        .attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
+                        .expect("Internal error: Missing mu param"))
+                }
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        } else {
+            // No global elasticity parameters were given. Check that the mesh has the right
+            // parameters.
+            if self
+                .mesh()
+                .attrib_check::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
+                .is_err()
+                || self
+                .mesh()
+                .attrib_check::<MuType, Self::ElementIndex>(MU_ATTRIB)
+                .is_err()
+            {
+                return Err(Error::MissingElasticityParams);
+            }
+            scale_param(self.material_scale(), self.mesh_mut().attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
+                .expect("Internal error: Missing lambda param"));
+            scale_param(self.material_scale(), self.mesh_mut().attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
+                .expect("Internal error: Missing mu param"));
+        }
+        Ok(())
+    }
+}

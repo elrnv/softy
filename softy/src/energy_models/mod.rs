@@ -170,6 +170,12 @@ pub(crate) mod test_utils {
         ]
     }
 
+    pub(crate) fn test_rigid_trimeshes() -> Vec<TriMesh> {
+        vec![
+            make_one_tet_trimesh()
+        ]
+    }
+
     fn random_displacement(n: usize) -> Vec<F> {
         use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
         let mut rng: StdRng = SeedableRng::from_seed([3; 32]);

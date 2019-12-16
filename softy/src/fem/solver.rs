@@ -92,7 +92,9 @@ pub fn ref_tet(ref_pos: &[RefPosType], indices: &[usize; 4]) -> Tetrahedron<f64>
 pub struct SolverBuilder {
     sim_params: SimParams,
     solids: Vec<(TetMesh, SolidMaterial)>,
-    shells: Vec<(PolyMesh, ShellMaterial)>,
+    soft_shells: Vec<(PolyMesh, SoftShellMaterial)>,
+    rigid_shells: Vec<(PolyMesh, RigidMaterial)>,
+    fixed_shells: Vec<(PolyMesh, FixedMaterial)>,
     frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
 }
 
@@ -103,7 +105,9 @@ impl SolverBuilder {
         SolverBuilder {
             sim_params,
             solids: Vec::new(),
-            shells: Vec::new(),
+            soft_shells: Vec::new(),
+            rigid_shells: Vec::new(),
+            fixed_shells: Vec::new(),
             frictional_contacts: Vec::new(),
         }
     }
@@ -116,19 +120,29 @@ impl SolverBuilder {
 
     /// Add a polygon mesh representing a shell (e.g. cloth).
     pub fn add_shell(&mut self, shell: PolyMesh, mat: ShellMaterial) -> &mut Self {
-        self.shells.push((shell, mat));
+        match mat {
+            ShellMaterial::Fixed(m) => self.fixed_shells.push((shell, m)),
+            ShellMaterial::Rigid(m) => self.rigid_shells.push((shell, m)),
+            ShellMaterial::Soft(m) => self.soft_shells.push((shell, m)),
+        }
+        self
+    }
+
+    /// Add a polygon mesh representing a soft shell (e.g. cloth).
+    pub fn add_soft_shell(&mut self, shell: PolyMesh, mat: SoftShellMaterial) -> &mut Self {
+        self.soft_shells.push((shell, mat));
         self
     }
 
     /// Add a static polygon mesh representing an immovable solid.
     pub fn add_fixed(&mut self, shell: PolyMesh, id: usize) -> &mut Self {
-        self.shells.push((shell, ShellMaterial::fixed(id)));
+        self.fixed_shells.push((shell, FixedMaterial::new(id)));
         self
     }
 
     /// Add a rigid polygon mesh representing an rigid solid.
     pub fn add_rigid(&mut self, shell: PolyMesh, density: f32, id: usize) -> &mut Self {
-        self.shells.push((shell, ShellMaterial::rigid(id, density)));
+        self.rigid_shells.push((shell, RigidMaterial::new(id, density)));
         self
     }
 
@@ -169,7 +183,7 @@ impl SolverBuilder {
         // Sort materials by material id.
         let to_mat_id = |k: &SourceIndex| match *k {
             SourceIndex::Solid(i) => solids[i].material.id,
-            SourceIndex::Shell(i) => shells[i].material.id,
+            SourceIndex::Shell(i) => shells[i].material_id(),
         };
         material_source.sort_by_key(to_mat_id);
 
@@ -351,12 +365,11 @@ impl SolverBuilder {
 
         for TriMeshShell {
             trimesh: ref mesh,
-            material,
-            ..
+            data,
         } in shells.iter()
         {
-            match material.properties {
-                ShellProperties::Rigid { .. } => {
+            match data {
+                ShellData::Rigid { .. } => {
                     let translation = Self::compute_centre_of_mass(mesh);
                     let rotation = [0.0; 3];
                     prev_x.push(vec![translation, rotation]);
@@ -367,7 +380,7 @@ impl SolverBuilder {
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
                     vel.push(mesh_vel);
                 }
-                ShellProperties::Deformable { .. } => {
+                ShellData::Soft { .. } => {
                     prev_x.push(mesh.vertex_positions().to_vec());
                     let mesh_prev_vel =
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
@@ -375,7 +388,7 @@ impl SolverBuilder {
                     pos.push(vec![]);
                     vel.push(vec![]);
                 }
-                ShellProperties::Fixed => {
+                ShellData::Fixed { .. } => {
                     prev_x.push(vec![]);
                     prev_v.push(vec![]);
                     pos.push(mesh.vertex_positions().to_vec());
@@ -391,6 +404,8 @@ impl SolverBuilder {
         let prev_v = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_v);
         let pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], pos);
         let vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vel);
+        let mut grad = vel.clone();
+        grad.view_mut().into_flat().iter_mut().for_each(|v| *v = 0.0); // Zero out gradient.
 
         Ok(ObjectData {
             prev_x: prev_x.clone(),
@@ -400,8 +415,9 @@ impl SolverBuilder {
             prev_prev_x: prev_x.into_flat(),
             prev_prev_v: prev_v.into_flat(),
 
-            pos: pos.clone(),
-            vel: vel.clone(),
+            pos,
+            vel,
+            grad: RefCell::new(grad),
 
             solids,
             shells,
@@ -423,16 +439,27 @@ impl SolverBuilder {
     }
 
     /// Helper function to build a list of shells with associated material properties and attributes.
-    fn build_shells(shells: Vec<(PolyMesh, ShellMaterial)>) -> Result<Vec<TriMeshShell>, Error> {
+    fn build_shells(
+        soft_shells: Vec<(PolyMesh, SoftShellMaterial)>,
+        rigid_shells: Vec<(PolyMesh, RigidMaterial)>,
+        fixed_shells: Vec<(PolyMesh, FixedMaterial)>
+    ) -> Result<Vec<TriMeshShell>, Error> {
         // Equip `PolyMesh`es with physics parameters, making them bona-fide shells.
         let mut out = Vec::new();
-        for (polymesh, material) in shells.into_iter() {
+        for (polymesh, material) in soft_shells.into_iter() {
             let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
-            out.push(TriMeshShell::new(
-                trimesh,
-                material,
-            ).with_fem_attributes()?)
+            out.push(TriMeshShell::soft(trimesh, material).with_fem_attributes()?)
+        }
+        for (polymesh, material) in rigid_shells.into_iter() {
+            let trimesh = TriMesh::from(polymesh);
+            // Prepare shell for simulation.
+            out.push(TriMeshShell::rigid(trimesh, material).with_fem_attributes()?)
+        }
+        for (polymesh, material) in fixed_shells.into_iter() {
+            let trimesh = TriMesh::from(polymesh);
+            // Prepare shell for simulation.
+            out.push(TriMeshShell::fixed(trimesh, material).with_fem_attributes()?)
         }
 
         Ok(out)
@@ -533,12 +560,11 @@ impl SolverBuilder {
 
         for TriMeshShell {
             ref trimesh,
-            ref material,
-            ..
+            ref data,
         } in shells.iter()
         {
-            match material.properties {
-                ShellProperties::Rigid { .. } | ShellProperties::Deformable { .. } => {
+            match data {
+                ShellData::Rigid { .. } | ShellData::Soft { .. } => {
                     bbox.absorb(trimesh.bounding_box());
                 }
                 _ => {}
@@ -604,12 +630,11 @@ impl SolverBuilder {
 
         for TriMeshShell {
             ref trimesh,
-            material,
-            ..
+            data,
         } in shells.iter()
         {
-            match material.properties {
-                ShellProperties::Deformable { .. } => {
+            match data {
+                ShellData::Soft { .. } => {
                     max_modulus = max_modulus
                         .max(
                             *trimesh
@@ -637,12 +662,14 @@ impl SolverBuilder {
         let SolverBuilder {
             sim_params: params,
             solids,
-            shells,
+            soft_shells,
+            rigid_shells,
+            fixed_shells,
             frictional_contacts,
         } = self.clone();
 
         let solids = Self::build_solids(solids)?;
-        let shells = Self::build_shells(shells)?;
+        let shells = Self::build_shells(soft_shells, rigid_shells, fixed_shells)?;
 
         let object_data = Self::build_object_data(solids, shells)?;
 
@@ -1763,7 +1790,7 @@ mod tests {
     fn build_material_sources_test() {
         // Convenience functions
         let new_solid = |&id| TetMeshSolid::new(TetMesh::default(), SolidMaterial::new(id));
-        let new_shell = |&id| TriMeshShell::new(TriMesh::default(), ShellMaterial::new(id));
+        let new_shell = |&id| TriMeshShell::soft(TriMesh::default(), SoftShellMaterial::new(id));
         let solid = |id| SourceIndex::Solid(id);
         let shell = |id| SourceIndex::Shell(id);
 

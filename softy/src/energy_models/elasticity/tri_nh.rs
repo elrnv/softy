@@ -11,6 +11,7 @@ use geo::ops::*;
 use geo::prim::Triangle;
 use utils::soap::*;
 use utils::zip;
+use crate::TriMesh;
 
 use crate::attrib_defines::*;
 use crate::energy::*;
@@ -197,7 +198,16 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
 ///
 /// This type wraps a `TriMeshShell` to provide an interfce for computing a membrane and bending
 /// elastic energies. `E` specifies the per element membrane energy model.
-pub struct TriMeshElasticity<'a, E>(pub &'a TriMeshShell, std::marker::PhantomData<E>);
+pub struct TriMeshElasticity<'a, E> {
+    trimesh: &'a TriMesh,
+    damping: f32,
+    interior_edges: &'a [InteriorEdge],
+    interior_edge_ref_angles: &'a [f64],
+    interior_edge_angles: &'a [f64],
+    interior_edge_ref_length: &'a [f64],
+    interior_edge_bending_stiffness: &'a [f64],
+    energy: std::marker::PhantomData<E>
+}
 
 /// NeoHookean elasticity model.
 pub type TriMeshNeoHookean<'a, T> = TriMeshElasticity<'a, NeoHookeanTriEnergy<T>>;
@@ -210,8 +220,34 @@ const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG: usize = 24;
 const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE: usize = 78;
 
 impl<'a, E> TriMeshElasticity<'a, E> {
-    pub fn new(shell: &'a TriMeshShell) -> Self {
-        TriMeshElasticity(shell, std::marker::PhantomData)
+    /// Construct a new elasticity model from the given `TriMeshShell`. Since `TriMeshShell`s can
+    /// be fixed or rigid, this may produce a `None` energy which effectively yields zeros for
+    /// all energy functions.
+    pub fn new(shell: &'a TriMeshShell) -> Option<Self> {
+        match &shell.data {
+            ShellData::Soft {
+                material,
+                interior_edges,
+                interior_edge_ref_angles,
+                interior_edge_angles,
+                interior_edge_ref_length,
+                interior_edge_bending_stiffness
+            } => {
+                Some(
+                    TriMeshElasticity {
+                        trimesh: &shell.trimesh,
+                        damping: material.scaled_damping(),
+                        interior_edges: interior_edges.as_slice(),
+                        interior_edge_ref_angles: interior_edge_ref_angles.as_slice(),
+                        interior_edge_angles: interior_edge_angles.as_slice(),
+                        interior_edge_ref_length: interior_edge_ref_length.as_slice(),
+                        interior_edge_bending_stiffness: interior_edge_bending_stiffness.as_slice(),
+                        energy: std::marker::PhantomData
+                    }
+                )
+            }
+            _ => None
+        }
     }
 
     /// Helper for distributing local membrane Hessian entries into the global Hessian matrix.
@@ -303,17 +339,16 @@ impl<'a, E> TriMeshElasticity<'a, E> {
 impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     fn energy(&self, x0: &[T], x1: &[T]) -> T {
-        let TriMeshShell {
+        let TriMeshElasticity {
             ref trimesh,
-            material,
+            damping,
             ref interior_edges,
             ref interior_edge_angles,
             ref interior_edge_ref_angles,
             ref interior_edge_ref_length,
             ref interior_edge_bending_stiffness,
-        } = *self.0;
-
-        let damping = material.scaled_damping();
+            ..
+        } = *self;
 
         let pos1 = Chunked3::from_flat(x1).into_arrays();
         let pos0 = Chunked3::from_flat(x0).into_arrays();
@@ -379,18 +414,16 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
     fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
-        let TriMeshShell {
+        let TriMeshElasticity {
             ref trimesh,
-            material,
+            damping,
             ref interior_edges,
             ref interior_edge_angles,
             ref interior_edge_ref_angles,
             ref interior_edge_ref_length,
             ref interior_edge_bending_stiffness,
             ..
-        } = *self.0;
-
-        let damping = material.scaled_damping();
+        } = *self;
 
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
@@ -475,10 +508,10 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
+impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
-        NUM_HESSIAN_TRIPLETS_PER_TRI * self.0.trimesh.num_faces()
-        + NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE * self.0.interior_edges.len()
+        NUM_HESSIAN_TRIPLETS_PER_TRI * self.trimesh.num_faces()
+        + NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE * self.interior_edges.len()
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
@@ -490,8 +523,7 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
-        let shell = &self.0;
-        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * shell.trimesh.num_faces();
+        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * self.trimesh.num_faces();
 
         // Membrane Hessian indices
         {
@@ -504,7 +536,7 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
                 .zip(hess_col_chunks.par_iter_mut())
-                .zip(shell.trimesh.faces().par_iter());
+                .zip(self.trimesh.faces().par_iter());
 
             hess_iter.for_each(|((tri_hess_rows, tri_hess_cols), face)| {
                 Self::tri_hessian_for_each(
@@ -534,10 +566,10 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
                 .zip(hess_col_chunks.par_iter_mut())
-                .zip(shell.interior_edges.par_iter());
+                .zip(self.interior_edges.par_iter());
 
             hess_iter.for_each(|((edge_hess_rows, edge_hess_cols), edge)| {
-                let verts = edge.verts(shell.trimesh.faces());
+                let verts = edge.verts(self.trimesh.faces());
                 let (diag_rows, lower_rows) = edge_hess_rows.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
                 let (diag_cols, lower_cols) = edge_hess_cols.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
                 Self::edge_hessian_for_each(
@@ -571,8 +603,7 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
-        let shell = &self.0;
-        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * shell.trimesh.num_faces();
+        let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * self.trimesh.num_faces();
 
         // Membrane Hessian indices
         {
@@ -580,7 +611,7 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
             let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
                 reinterpret_mut_slice(&mut indices[..tri_entries]);
 
-            let hess_iter = hess_chunks.par_iter_mut().zip(shell.trimesh.faces().par_iter());
+            let hess_iter = hess_chunks.par_iter_mut().zip(self.trimesh.faces().par_iter());
 
             hess_iter.for_each(|(tri_hess, face)| {
                 Self::tri_hessian_for_each(
@@ -607,10 +638,10 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
             let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
                 reinterpret_mut_slice(&mut indices[tri_entries..]);
 
-            let hess_iter = hess_chunks.par_iter_mut().zip(shell.interior_edges.par_iter());
+            let hess_iter = hess_chunks.par_iter_mut().zip(self.interior_edges.par_iter());
 
             hess_iter.for_each(|(edge_hess, edge)| {
-                let verts = edge.verts(shell.trimesh.faces());
+                let verts = edge.verts(self.trimesh.faces());
                 let (diag_hess, lower_hess) = edge_hess.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
                 Self::edge_hessian_for_each(
                     |_| (),
@@ -641,23 +672,22 @@ impl<E> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real + Send + Sync, E: TriEnergy<T>> EnergyHessian<T> for TriMeshElasticity<'_, E> {
+impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     fn energy_hessian_values(&self, _: &[T], x1: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
-        let TriMeshShell {
+        let TriMeshElasticity {
             ref trimesh,
-            material,
+            damping,
             ref interior_edges,
             ref interior_edge_angles,
             ref interior_edge_ref_angles,
             ref interior_edge_ref_length,
             ref interior_edge_bending_stiffness,
             ..
-        } = *self.0;
+        } = *self;
 
         let tri_entries = NUM_HESSIAN_TRIPLETS_PER_TRI * trimesh.num_faces();
-        let damping = material.scaled_damping();
 
         let pos1 = Chunked3::from_flat(x1).into_arrays();
 
@@ -771,8 +801,8 @@ mod tests {
 
     use super::*;
 
-    fn membrane_only_material() -> ShellMaterial {
-        ShellMaterial::new(0)
+    fn membrane_only_material() -> SoftShellMaterial {
+        SoftShellMaterial::new(0)
             .with_elasticity(ElasticityParameters {
                 lambda: 5.4,
                 mu: 263.1,
@@ -780,8 +810,8 @@ mod tests {
             })
     }
 
-    fn bend_only_material() -> ShellMaterial {
-        ShellMaterial::new(0)
+    fn bend_only_material() -> SoftShellMaterial {
+        SoftShellMaterial::new(0)
             .with_elasticity(ElasticityParameters {
                 lambda: 0.0,
                 mu: 0.0,
@@ -790,7 +820,7 @@ mod tests {
             .with_bending_stiffness(2.0)
     }
 
-    fn material() -> ShellMaterial {
+    fn material() -> SoftShellMaterial {
         membrane_only_material().with_bending_stiffness(2.0)
     }
 
@@ -798,7 +828,7 @@ mod tests {
         test_trimeshes()
             .into_iter()
             .map(|trimesh| {
-                let mut shell = TriMeshShell::new(trimesh, membrane_only_material());
+                let mut shell = TriMeshShell::soft(trimesh, membrane_only_material());
                 shell.init_deformable_vertex_attributes().unwrap();
                 shell.init_deformable_attributes().unwrap();
                 shell.init_elasticity_attributes().unwrap();
@@ -808,7 +838,7 @@ mod tests {
         test_trimeshes()
             .into_iter()
             .map(|trimesh| {
-                let mut shell = TriMeshShell::new(trimesh, bend_only_material());
+                let mut shell = TriMeshShell::soft(trimesh, bend_only_material());
                 shell.init_deformable_vertex_attributes().unwrap();
                 shell.init_deformable_attributes().unwrap();
                 shell.init_elasticity_attributes().unwrap();
@@ -818,7 +848,7 @@ mod tests {
         test_trimeshes()
             .into_iter()
             .map(|trimesh| {
-                let mut shell = TriMeshShell::new(trimesh, material());
+                let mut shell = TriMeshShell::soft(trimesh, material());
                 shell.init_deformable_vertex_attributes().unwrap();
                 shell.init_deformable_attributes().unwrap();
                 shell.init_elasticity_attributes().unwrap();
@@ -835,7 +865,7 @@ mod tests {
             .iter()
             .map(|shell| {
                 (
-                    TriMeshNeoHookean::new(shell),
+                    TriMeshNeoHookean::new(shell).unwrap(),
                     shell.trimesh.vertex_positions().to_vec(),
                 )
             })

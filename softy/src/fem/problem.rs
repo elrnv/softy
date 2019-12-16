@@ -15,6 +15,7 @@ use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
 use crate::PointCloud;
+use log::warn;
 
 const FORWARD_FRICTION: bool = true;
 
@@ -218,6 +219,9 @@ pub struct ObjectData {
     /// concrete velocities (as opposed to generalized coordinates) to
     /// constraint functions.
     pub vel: VertexData3<Vec<f64>>,
+    /// A workspace gradient for all meshes for which the generalized coordinates don't coincide
+    /// with vertex positions.
+    pub grad: RefCell<VertexData3<Vec<f64>>>,
 
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub solids: Vec<TetMeshSolid>,
@@ -357,14 +361,46 @@ impl ObjectData {
         Self::mesh_vertex_subset_impl(prev_v.view_mut(), vel.view_mut(), src_idx, solids, shells)
     }
 
-    //pub fn mesh_vertex_subset<'s, 'x, T: Clone + 'x>(
-    //    &self,
-    //    x: VertexView3<'x, &'x [T]>,
-    //    alt: VertexView3<'x, &'x [T]>,
-    //    source: SourceIndex,
-    //) -> MeshVertexData3<&'x [T]> {
-    //    Self::mesh_vertex_subset_impl(x, alt, source, &self.solids, &self.shells)
-    //}
+    pub fn grad_mut<'a>(&self, src_idx: [SourceIndex; 2], grad_vtx: VertexView3<'a, &'a mut [f64]>, grad_dof: VertexView3<'a, &'a mut [f64]>) -> [MeshVertexData3<&'a mut [f64]>; 2] {
+        let ObjectData {
+            solids,
+            shells,
+            ..
+        } = self;
+        Self::mesh_vertex_subset_split_mut_impl(grad_dof, grad_vtx, src_idx, solids, shells)
+    }
+
+    pub fn update_grad(&self, source: SourceIndex, grad_x: VertexView3<&mut [f64]>) {
+        let ObjectData {
+            grad,
+            pos,
+            shells,
+            ..
+        } = self;
+        match source {
+            SourceIndex::Shell(i) => {
+                if let ShellData::Rigid { cm, inertia, .. } = shells[i].data {
+                    let mut grad_dofs = grad_x.isolate(1).isolate(i);
+                    debug_assert_eq!(grad_dofs.len(), 2);
+                    let pos = pos.view().isolate(1).isolate(i);
+                    let mut grad = grad.borrow_mut();
+                    let mut grad_vtx = grad.view_mut().isolate(1).isolate(i);
+                    for (g_vtx, &p) in grad_vtx.iter_mut().zip(pos.iter()) {
+                        // Transfer gradient from vertices to degrees of freedom.
+                        grad_dofs[0] = *g_vtx;
+                        let r = p.into_tensor() - cm;
+                        if let Some(inertia_inv) = inertia.inverse() {
+                            grad_dofs[1] = (inertia_inv * r.cross((*g_vtx).into_tensor())).into_data();
+                        } else {
+                            warn!("Unable to invert inertia matrix. angular momentum not transferred");
+                        }
+                        *g_vtx = [0.0; 3]; // Value moved over, reset it.
+                    }
+                }
+            }
+            _ => {} // Noop. Nothing to do since vertices and degrees of freedom are the same.
+        }
+    }
 
     pub fn mesh_vertex_subset<'s, 'x, D: 'x, Alt>(
         &self,
@@ -379,32 +415,6 @@ impl ObjectData {
     {
         Self::mesh_vertex_subset_impl(x, alt, source, &self.solids, &self.shells)
     }
-
-    //fn mesh_vertex_subset_impl<'x, T: Clone + 'x>(
-    //    x: VertexView3<'x, &'x [T]>,
-    //    alt: VertexView3<'x, &'x [T]>,
-    //    source: SourceIndex,
-    //    solids: &[TetMeshSolid],
-    //    shells: &[TriMeshShell],
-    //) -> MeshVertexData3<&'x [T]> {
-    //    match source {
-    //        SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
-    //            solids[i].surface().indices.to_vec(),
-    //            x.at(0).at(i),
-    //        ),
-    //        SourceIndex::Shell(i) => {
-    //            let props = shells[i].material.properties;
-
-    //            // Determine source data.
-    //            let x = match props {
-    //                ShellProperties::Deformable { .. } => x,
-    //                _ => alt,
-    //            };
-
-    //            Subset::all(x.at(1).at(i))
-    //        }
-    //    }
-    //}
 
     // TODO: refactor this function together with the function above.
     fn mesh_vertex_subset_impl<'x, D: 'x, Alt>(
@@ -425,11 +435,9 @@ impl ObjectData {
                 x.isolate(0).isolate(i),
             ),
             SourceIndex::Shell(i) => {
-                let props = shells[i].material.properties;
-
                 // Determine source data.
-                let x = match props {
-                    ShellProperties::Deformable { .. } => x,
+                let x = match shells[i].data {
+                    ShellData::Soft { .. } => x,
                     _ => alt.into().unwrap_or(x),
                 };
 
@@ -499,11 +507,9 @@ impl ObjectData {
                     }
                 }
                 SourceIndex::Shell(j) => {
-                    let props = shells[j].material.properties;
-
                     // Determine source data.
-                    let x = match props {
-                        ShellProperties::Deformable { .. } => x,
+                    let x = match shells[j].data {
+                        ShellData::Soft { .. } => x,
                         _ => match alt.into() {
                             Some(alt) => {
                                 return [
@@ -529,11 +535,9 @@ impl ObjectData {
                 }
             },
             SourceIndex::Shell(i) => {
-                let props = shells[i].material.properties;
-
                 // Determine source data.
-                let x = match props {
-                    ShellProperties::Deformable { .. } => x,
+                let x = match shells[i].data {
+                    ShellData::Soft { .. } => x,
                     _ => match alt.into() {
                         Some(alt) => {
                             return match source[1] {
@@ -545,9 +549,8 @@ impl ObjectData {
                                     ),
                                 ],
                                 SourceIndex::Shell(j) => {
-                                    let props = shells[j].material.properties;
-                                    return match props {
-                                        ShellProperties::Deformable { .. } => {
+                                    return match shells[j].data {
+                                        ShellData::Soft { .. } => {
                                             [
                                                 Subset::all(alt.isolate(1).isolate(i)),
                                                 Subset::all(x.isolate(1).isolate(j))
@@ -761,10 +764,6 @@ impl ObjectData {
                         //*pos = new_pos; // automatically updated via solve.
                     }
                 });
-
-            // TODO: Compute new velocity from previous step. This is an explicit velocity estimate.
-            // TODO: determine if this is sufficient, or do we need the user to
-            // specify a more accurate velocity estimate for fixed vertices.
         }
         Ok(())
     }
@@ -812,8 +811,8 @@ impl ObjectData {
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
             let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx));
 
-            match shell.material.properties {
-                ShellProperties::Deformable { .. } => {
+            match shell.data {
+                ShellData::Soft { .. } => {
                     // Only update fixed vertices, if no such attribute exists, return an error.
                     let fixed_iter = shell
                         .trimesh
@@ -835,27 +834,38 @@ impl ObjectData {
                             }
                         });
                 }
-                ShellProperties::Rigid { .. } => {
-                    // A rigid mesh has different degrees of freedom than its vertex positions.
-                    // Here we extract a rigid motion from the fixed vertices
-                    // and apply it to the rest of the mesh.
+                ShellData::Rigid { fixed, .. } => {
+                    // Rigid bodies can have 0, 1, or 2 fixed vertices.
+                    // With 3 fixed vertices these become completely fixed.
+                    let source_indices = shell
+                        .trimesh
+                        .attrib_as_slice::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
 
-                    // TODO: do a least squares fit for a rotation from current
-                    // configuration to the given configuration of fixed
-                    // vertices.
-
-                    // Steps:
-                    // 1. Apply the current rigid transform (prev_x/prev_v) to
-                    //    `shell` and store in `pos/vel` to figure out the
-                    //    current vertex positions.
-                    // 2. Compute the rigid rotation between that and the given
-                    //    set of fixed points.
-                    // 3. Add this rotation and translation to (prev_x/prev_v)
-                    return Err(crate::Error::UnimplementedFeature {
-                        description: String::from("Rigid body update"),
-                    });
+                    match fixed {
+                        FixedVerts::Zero => {
+                            // For 0 fixed vertices, nothing needs to be done here.
+                        }
+                        FixedVerts::One(vtx) => {
+                            // For 1 fixed vertex, assign the appropriate velocity to that vertex.
+                            if let Some(&new_pos) = new_pos.get(source_indices[vtx]) {
+                                *(&mut vel[vtx]).as_mut_tensor() = (new_pos.into_tensor() - pos[vtx].into_tensor()) * dt_inv;
+                                // Position will by updated by the solve automatically.
+                            }
+                        }
+                        FixedVerts::Two(verts) => {
+                            // For 2 fixed vertices.
+                            // TODO: This may be a bad idea since it may generate infeasible configurations
+                            //       quite easily. Rsolve this.
+                            if let Some(&p0) = new_pos.get(source_indices[verts[0]]) {
+                                if let Some(&p1) = new_pos.get(source_indices[verts[1]]) {
+                                    *(&mut vel[verts[0]]).as_mut_tensor() = (p0.into_tensor() - pos[verts[0]].into_tensor()) * dt_inv;
+                                    *(&mut vel[verts[1]]).as_mut_tensor() = (p1.into_tensor() - pos[verts[1]].into_tensor()) * dt_inv;
+                                }
+                            }
+                        }
+                    }
                 }
-                ShellProperties::Fixed => {
+                ShellData::Fixed { .. } => {
                     // This mesh is fixed and doesn't obey any physics. Simply
                     // copy the positions and velocities over.
                     pos.iter_mut()
@@ -964,8 +974,8 @@ impl ObjectData {
         // We don't need to update all meshes in this case, just the interior edge angles since
         // these are actually used in simulation.
         for (i, shell) in shells.iter_mut().enumerate() {
-            match shell.material.properties {
-                ShellProperties::Deformable { .. } => {
+            match shell.data {
+                ShellData::Soft { .. } => {
                     shell.update_interior_edge_angles(prev_x.view().at(1).at(i).into());
                 }
                 _ => {}
@@ -990,8 +1000,8 @@ impl ObjectData {
                 .copy_from_slice(v.at(0).at(i).into());
         }
         for (i, shell) in shells.iter_mut().enumerate() {
-            match shell.material.properties {
-                ShellProperties::Deformable { .. } => {
+            match shell.data {
+                ShellData::Soft { .. } => {
                     let verts = shell.trimesh.vertex_positions_mut();
                     verts.copy_from_slice(x.at(1).at(i).into());
                     shell
@@ -1001,10 +1011,10 @@ impl ObjectData {
                         .copy_from_slice(v.at(1).at(i).into());
                     shell.update_interior_edge_angles(x.at(1).at(i).into());
                 }
-                ShellProperties::Rigid { .. } => {
+                ShellData::Rigid { .. } => {
                     unimplemented!();
                 }
-                ShellProperties::Fixed => {
+                ShellData::Fixed { .. } => {
                     // Not simulated, nothing to do here.
                     // These meshes are updated only for visualization purposes, which is done in
                     // `update_fixed_meshes`, which doesn't need to happen for instance when
@@ -1026,8 +1036,8 @@ impl ObjectData {
     ) {
         // Update inferred velocities on fixed meshes
         for (i, shell) in shells.iter_mut().enumerate() {
-            match shell.material.properties {
-                ShellProperties::Fixed => {
+            match shell.data {
+                ShellData::Fixed { .. } => {
                     shell
                         .trimesh
                         .vertex_positions_mut()
@@ -1395,8 +1405,8 @@ impl NonLinearProblem {
         let mut cur_v = cur_v.borrow_mut();
         for fc in frictional_contacts.iter() {
             // TODO: It is unfortunate that we have to leak abstraction here.
-            // Possibly we have to hide object_data behind a RefCell and use
-            // borrow splitting.
+            //       Possibly we have to hide object_data behind a RefCell and use
+            //       borrow splitting.
             let [mut obj_vel, mut coll_vel] = ObjectData::mesh_vertex_subset_split_mut_impl(
                 cur_v.view_mut(),
                 vel.view_mut(),
@@ -2570,35 +2580,42 @@ impl ipopt::BasicProblem for NonLinearProblem {
             for fc in self.frictional_contacts.iter() {
                 // Since add_fricton_impulse is looking for a valid gradient, this
                 // must involve only vertices that can change.
-                assert!(match fc.object_index {
-                    SourceIndex::Solid(_) => true,
-                    SourceIndex::Shell(i) => match self.object_data.shells[i].material.properties {
-                        ShellProperties::Fixed => match fc.collider_index {
-                            SourceIndex::Solid(_) => true,
-                            SourceIndex::Shell(i) => {
-                                match self.object_data.shells[i].material.properties {
-                                    ShellProperties::Fixed => false,
-                                    ShellProperties::Rigid { .. } => false, //unimplemented,
-                                    _ => true,
-                                }
-                            }
-                        },
-                        ShellProperties::Rigid { .. } => false, // unimplemented
-                        _ => true,
-                    },
-                });
+                //assert!(match fc.object_index {
+                //    SourceIndex::Solid(_) => true,
+                //    SourceIndex::Shell(i) => match self.object_data.shells[i].data {
+                //        ShellData::Fixed { .. } => match fc.collider_index {
+                //            SourceIndex::Solid(_) => true,
+                //            SourceIndex::Shell(i) => {
+                //                match self.object_data.shells[i].data {
+                //                    ShellData::Fixed { .. } => false,
+                //                    ShellData::Rigid { .. } => true,
+                //                    _ => true,
+                //                }
+                //            }
+                //        },
+                //        ShellData::Rigid { .. } => true,
+                //        _ => true,
+                //    },
+                //});
 
-                let [mut obj_g, mut coll_g] = self.object_data.mesh_vertex_subset_split_mut(
-                    grad.view_mut(),
-                    None,
-                    [fc.object_index, fc.collider_index],
-                );
+                // Get a zero initialized memory slice to which we can write the gradient to.
+                // This may be different than `grad.view_mut()` if the object is rigid and has
+                // different degrees of freedom.
+                {
+                    let mut grad_vtx = self.object_data.grad.borrow_mut();
+                    let [mut obj_g, mut coll_g] = self.object_data.grad_mut([fc.object_index, fc.collider_index], grad_vtx.view_mut(), grad.view_mut());
 
-                if FORWARD_FRICTION {
-                    fc.constraint
-                        .borrow()
-                        .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+                    if FORWARD_FRICTION {
+                        fc.constraint
+                            .borrow()
+                            .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+                    }
                 }
+
+                // Update `grad.view_mut()` with the newly computed gradients. This is a noop
+                // unless at least one of the objects is rigid.
+                self.object_data.update_grad(fc.object_index, grad.view_mut());
+                self.object_data.update_grad(fc.collider_index, grad.view_mut());
             }
         }
 
@@ -2939,10 +2956,6 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 &mut rows[count..count + n],
                 &mut cols[count..count + n],
             );
-            //debug!("total elasticity hessian non zeros: {}", n);
-            //for (r, c) in rows[count..count + n].iter().zip(cols[count..count + n].iter()) {
-            //    debug!("({}, {})", r, c);
-            //}
             count += n;
 
             if !self.is_static() {

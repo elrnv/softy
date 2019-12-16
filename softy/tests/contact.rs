@@ -8,7 +8,7 @@ use geo::mesh::VertexPositions;
 use geo::ops::transform::*;
 use softy::*;
 use std::path::PathBuf;
-pub use test_utils::*;
+use test_utils::*;
 
 pub fn medium_solid_material() -> SolidMaterial {
     default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))

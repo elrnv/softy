@@ -2,9 +2,14 @@
 //! Any material property set to `None` typically indicates that this property
 //! is defined on the mesh itself. This allows us to define variable material
 //! properties.
-//!
+
+pub trait Material {
+    /// Scale used to adjust internal material properties to be closer to 1.0.
+    fn scale(&self) -> f32;
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Material<P> {
+pub struct MaterialBase<P> {
     /// Material unique identifier.
     /// It is the user's responsibility to ensure that this value is used correctly:
     ///
@@ -42,34 +47,55 @@ impl Default for DeformableProperties {
     }
 }
 
-/// Shells can be deformable or completely rigid. Rigid shells are not to be
-/// confused with solids, which are in fact deformable and are fundamentally
-/// different because they contain properties of the interior material.
+/// Fixed material properties.
+///
+/// A fixed material is not subject to external physics and so has no physical properties.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum ShellProperties {
-    /// A static shell is an infinite mass kinematic object.
-    Fixed,
-    /// A rigid shell has 6 degrees of freedom: 3 for translation and 3 for rotation.
-    Rigid { density: f32 },
-    /// A deformable shell has a 3 degrees of freedom for every vertex.
-    Deformable {
-        deformable: DeformableProperties,
-        bending_stiffness: Option<f32>,
-    },
-}
+pub struct FixedProperties;
 
-impl Default for ShellProperties {
+impl Default for FixedProperties {
     fn default() -> Self {
-        ShellProperties::Fixed
+        FixedProperties
     }
 }
 
-/// Solids are always elastically deformable. For rigid solids, use shells,
-/// because rigid solids don't require interior properties.
+/// Rigid material properties.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct RigidProperties {
+    pub density: f32,
+}
+
+/// Soft shell material properties.
+///
+/// This struct describes the physical properties of a deformable shell object.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SoftShellProperties {
+    /// Bending stiffness sets the resistance of the material to bending.
+    ///
+    /// Bending stiffness is measured in kg/s^2 which are the units of surface tension.
+    /// When set to `None`, bending stiffness will be inferred from the underlying mesh or
+    /// otherwise assumed to be zero.
+    pub bending_stiffness: Option<f32>,
+    /// Common material properties shared among all deformable materials.
+    pub deformable: DeformableProperties,
+}
+
+impl Default for SoftShellProperties {
+    fn default() -> Self {
+        SoftShellProperties {
+            bending_stiffness: None,
+            deformable: DeformableProperties::default(),
+        }
+    }
+}
+
+/// Solids are always elastically deformable. For rigid solids, use rigid shells,
+/// because rigid objects don't require interior properties.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SolidProperties {
-    /// Volume preservation sets the material to be globally incompressible, if set to `true`. In
-    /// contrast to Bulk Modulus, this parameter affects global incompressibility,
+    /// Volume preservation sets the material to be globally incompressible.
+    ///
+    /// In contrast to Bulk Modulus, this parameter affects *global* incompressibility,
     /// while Bulk Modulus affects *local* incompressibility (on a per element level).
     pub volume_preservation: bool,
 
@@ -77,28 +103,30 @@ pub struct SolidProperties {
     pub deformable: DeformableProperties,
 }
 
+/// A trait for materials that can can be moved by external forces.
+pub trait DynamicMaterial: Material {
+    /// The exact density parameter used by solver. This is typically scaled to
+    /// be closer to 1.0.
+    fn scaled_density(&self) -> Option<f32>;
+    /// The density parameter provided in the input.
+    fn density(&self) -> Option<f32>;
+}
+
 /// A trait for materials capable of deforming. This helps generalize over Solid and Shell materials.
 /// If the output is `Option`al, it means that the object doesn't have that
 /// material set. If it is set to be some default value the option should not be
 /// `None`. This helps distinguish between variable and uniform material properties.
-pub trait Deformable {
-    /// Scale used to adjust internal material properties to be closer to 1.0.
-    fn scale(&self) -> f32;
+pub trait DeformableMaterial: DynamicMaterial {
     /// The exact elasticity parameters used by solver. These are typically
     /// scaled to be closer to 1.0.
     fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
     /// The exact damping parameter used by solver. This is typically scaled to
     /// be closer to 1.0.
     fn scaled_damping(&self) -> f32;
-    /// The exact density parameter used by solver. This is typically scaled to
-    /// be closer to 1.0.
-    fn scaled_density(&self) -> Option<f32>;
     /// The elasticity parameters provided in the input.
     fn elasticity(&self) -> Option<ElasticityParameters>;
     /// The damping parameter provided in the input.
     fn damping(&self) -> f32;
-    /// The density parameter provided in the input.
-    fn density(&self) -> Option<f32>;
 }
 
 impl Default for SolidProperties {
@@ -110,125 +138,268 @@ impl Default for SolidProperties {
     }
 }
 
-pub type ShellMaterial = Material<ShellProperties>;
-pub type SolidMaterial = Material<SolidProperties>;
+/// A generic material that can be assigned to a `TriMeshShell`.
+#[derive(Copy, Clone, Debug)]
+pub enum ShellMaterial {
+    Fixed(FixedMaterial),
+    Rigid(RigidMaterial),
+    Soft(SoftShellMaterial),
+}
+
+pub type FixedMaterial = MaterialBase<FixedProperties>;
+pub type RigidMaterial = MaterialBase<RigidProperties>;
+pub type SoftShellMaterial = MaterialBase<SoftShellProperties>;
+pub type SolidMaterial = MaterialBase<SolidProperties>;
+
+impl RigidMaterial {
+    /// Construct a rigid material with the given identifier and density.
+    ///
+    /// Creating a rigid material requires the density parameter because there is no sensible
+    /// common default for a rigid material.
+    pub fn new(id: usize, density: f32) -> RigidMaterial {
+        MaterialBase {
+            id,
+            properties: RigidProperties { density },
+        }
+    }
+}
+/*
+ * Important: When making changes to materials, make sure that the following conversions are up to
+ * date. The rest of the material constructors use this code for building new materials from old
+ * ones.
+ *
+ * The exception is RigidMaterial which cannot be created from a fixed material without knowing
+ * density in advance.
+ */
+
+impl From<FixedMaterial> for SoftShellMaterial {
+    fn from(mtl: FixedMaterial) -> Self {
+        mtl.with_properties(SoftShellProperties::default())
+    }
+}
+
+impl From<RigidMaterial> for SoftShellMaterial {
+    fn from(mtl: RigidMaterial) -> Self {
+        mtl.with_properties(SoftShellProperties::default())
+            .with_density(mtl.properties.density)
+    }
+}
+
+impl From<FixedMaterial> for ShellMaterial {
+    fn from(mtl: FixedMaterial) -> Self {
+        ShellMaterial::Fixed(mtl)
+    }
+}
+
+impl From<RigidMaterial> for ShellMaterial {
+    fn from(mtl: RigidMaterial) -> Self {
+        ShellMaterial::Rigid(mtl)
+    }
+}
+
+impl From<SoftShellMaterial> for ShellMaterial {
+    fn from(mtl: SoftShellMaterial) -> Self {
+        ShellMaterial::Soft(mtl)
+    }
+}
+
+/*
+ * Material assembly
+ */
+
+impl<P: Default> MaterialBase<P> {
+    /// Build a default material.
+    ///
+    /// This function may require specifying the generic properties parameter `P` explicitly.
+    /// Consider using one of `fixed`, `rigid`, `soft_shell` or `soft_solid` constructors instead.
+    pub fn new(id: usize) -> MaterialBase<P> {
+        MaterialBase {
+            id,
+            properties: Default::default(),
+        }
+    }
+
+    /// Overrides the preset `id`.
+    ///
+    /// This is useful for incrementing the material id
+    /// when building on top of an existing material.
+    pub fn with_id(mut self, id: usize) -> MaterialBase<P> {
+        self.id = id;
+        self
+    }
+}
+
+impl<P> MaterialBase<P> {
+    /// Set the properties of this material.
+    ///
+    /// This function will convert this material into a `Material<Q>` type where
+    /// `Q` is the type of the given properties.
+    pub fn with_properties<Q>(self, properties: Q) -> MaterialBase<Q> {
+        MaterialBase {
+            id: self.id,
+            properties,
+        }
+    }
+}
 
 impl ShellMaterial {
-    pub fn fixed(id: usize) -> Self {
-        Material {
-            id,
-            properties: ShellProperties::Fixed,
-        }
+    /// Build a default material.
+    pub fn new(id: usize) -> Self {
+        Self::Fixed(FixedMaterial::new(id))
     }
-    pub fn rigid(id: usize, density: f32) -> Self {
-        Material {
-            id,
-            properties: ShellProperties::Rigid { density },
-        }
+
+    /// Add elasticity parameters to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> Self {
+        match self {
+            ShellMaterial::Fixed(m) => m.with_elasticity(elasticity),
+            ShellMaterial::Rigid(m) => m.with_elasticity(elasticity),
+            ShellMaterial::Soft(m) => m.with_elasticity(elasticity),
+        }.into()
     }
-    pub fn deformable(id: usize, deformable: DeformableProperties) -> Self {
-        Material {
-            id,
-            properties: ShellProperties::Deformable { deformable, bending_stiffness: None },
-        }
+
+    /// Add damping to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_damping(self, damping: f32, time_step: f32) -> Self {
+        match self {
+            ShellMaterial::Fixed(m) => m.with_damping(damping, time_step),
+            ShellMaterial::Rigid(m) => m.with_damping(damping, time_step),
+            ShellMaterial::Soft(m) => m.with_damping(damping, time_step),
+        }.into()
     }
-    pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> ShellMaterial {
-        match &mut self.properties {
-            ShellProperties::Deformable {
-                deformable, ..
-            } => {
-                deformable.elasticity = Some(elasticity);
-                self
-            }
-            ShellProperties::Rigid { density } => Self::deformable(
-                self.id,
-                DeformableProperties::default()
-                    .with_elasticity(elasticity)
-                    .with_density(*density),
-            ),
-            ShellProperties::Fixed => Self::deformable(
-                self.id,
-                DeformableProperties::default().with_elasticity(elasticity),
-            ),
-        }
-    }
-    pub fn with_damping(mut self, damping: f32, time_step: f32) -> ShellMaterial {
-        match &mut self.properties {
-            ShellProperties::Deformable { deformable, .. } => {
-                *deformable = deformable.with_damping(damping, time_step);
-                self
-            }
-            ShellProperties::Rigid { density } => Self::deformable(
-                self.id,
-                DeformableProperties::default()
-                    .with_damping(damping, time_step)
-                    .with_density(*density),
-            ),
-            ShellProperties::Fixed => Self::deformable(
-                self.id,
-                DeformableProperties::default().with_damping(damping, time_step),
-            ),
-        }
-    }
-    pub fn with_density(mut self, density: f32) -> ShellMaterial {
-        match &mut self.properties {
-            ShellProperties::Deformable { deformable, .. } => {
-                deformable.density = Some(density);
-                self
-            }
-            ShellProperties::Rigid {
-                density: self_density,
-            } => {
-                *self_density = density;
-                self
-            }
-            ShellProperties::Fixed => Self::rigid(self.id, density),
-        }
-    }
-    pub fn with_bending_stiffness(mut self, stiffness: f32) -> ShellMaterial {
-        match &mut self.properties {
-            ShellProperties::Deformable { bending_stiffness, .. } => {
-                *bending_stiffness = Some(stiffness);
-                self
-            },
-            ShellProperties::Rigid {
-                density,
-            } => {
-                Self::deformable(self.id, DeformableProperties::default()
-                    .with_density(*density))
-                    .with_bending_stiffness(stiffness)
-            },
-            ShellProperties::Fixed => {
-                Self::deformable(self.id, DeformableProperties::default())
-                    .with_bending_stiffness(stiffness)
-            },
+
+    /// Add density to this material.
+    ///
+    /// This function converts this material to a `RigidMaterial`.
+    pub fn with_density(self, density: f32) -> Self {
+        match self {
+            ShellMaterial::Fixed(m) => m.with_density(density).into(),
+            ShellMaterial::Rigid(m) => m.with_density(density).into(),
+            ShellMaterial::Soft(m) => m.with_density(density).into(),
         }
     }
 
-    pub fn normalized(mut self) -> ShellMaterial {
-        match &mut self.properties {
-            ShellProperties::Deformable { deformable, bending_stiffness } => {
-                *deformable = deformable.normalized();
-                bending_stiffness.as_mut().map(|s| *s *= deformable.scale());
-                self
-            }
-            _ => self,
-        }
+    /// Add bending stiffness to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_bending_stiffness(self, stiffness: f32) -> Self {
+        match self {
+            ShellMaterial::Fixed(m) => m.with_bending_stiffness(stiffness),
+            ShellMaterial::Rigid(m) => m.with_bending_stiffness(stiffness),
+            ShellMaterial::Soft(m) => m.with_bending_stiffness(stiffness),
+        }.into()
+    }
+}
+
+impl FixedMaterial {
+    /// Add elasticity parameters to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_elasticity(elasticity)
     }
 
+    /// Add damping to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_damping(self, damping: f32, time_step: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_damping(damping, time_step)
+    }
+
+    /// Add density to this material.
+    ///
+    /// This function converts this material to a `RigidMaterial`.
+    pub fn with_density(self, density: f32) -> RigidMaterial {
+        RigidMaterial::new(self.id, density)
+    }
+
+    /// Add bending stiffness to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_bending_stiffness(self, stiffness: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_bending_stiffness(stiffness)
+    }
+}
+
+impl RigidMaterial {
+    /// Add elasticity parameters to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_elasticity(self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_elasticity(elasticity)
+    }
+
+    /// Add damping to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_damping(self, damping: f32, time_step: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_damping(damping, time_step)
+    }
+
+    /// Construct a new `RigidMaterial` for the current one with the given density parameter.
+    pub fn with_density(mut self, density: f32) -> RigidMaterial {
+        self.properties.density = density;
+        self
+    }
+
+    /// Add bending stiffness to this material.
+    ///
+    /// This function converts this material to a `SoftShellMaterial`.
+    pub fn with_bending_stiffness(self, stiffness: f32) -> SoftShellMaterial {
+        SoftShellMaterial::from(self).with_bending_stiffness(stiffness)
+    }
+}
+
+impl SoftShellMaterial {
+    /// Construct a new `SoftShellMaterial` from this one with the given elasticity parameter.
+    pub fn with_elasticity(mut self, elasticity: ElasticityParameters) -> SoftShellMaterial {
+        self.properties.deformable.elasticity = Some(elasticity);
+        self
+    }
+
+    /// Construct a new `SoftShellMaterial` from this one with the given damping parameter.
+    pub fn with_damping(mut self, damping: f32, time_step: f32) -> SoftShellMaterial {
+        self.properties.deformable = self.properties.deformable.with_damping(damping, time_step);
+        self
+    }
+
+    /// Construct a new `SoftShellMaterial` from this one with the given density parameter.
+    pub fn with_density(mut self, density: f32) -> SoftShellMaterial {
+        self.properties.deformable.density = Some(density);
+        self
+    }
+
+    /// Construct a new `SoftShellMaterial` from this one with the given bending stiffness
+    /// parameter.
+    pub fn with_bending_stiffness(mut self, stiffness: f32) -> SoftShellMaterial {
+        self.properties.bending_stiffness = Some(stiffness);
+        self
+    }
+
+    /// Normalize the parameters stored in this material.
+    ///
+    /// This may improve solver performance.
+    pub fn normalized(mut self) -> SoftShellMaterial {
+        let SoftShellProperties { deformable, bending_stiffness } = &mut self.properties;
+        *deformable = deformable.normalized();
+        bending_stiffness.as_mut().map(|s| *s *= deformable.scale());
+        self
+    }
+
+    /// Get the scaled bending stiffness parameter stored in this material.
+    ///
+    /// Note that this may not be the same parameter that this material was created with.
+    /// For the original parameter, use the `bending_stiffness` getter.
     pub fn scaled_bending_stiffness(&self) -> Option<f32> {
-        match self.properties {
-            ShellProperties::Deformable { bending_stiffness, .. } => bending_stiffness,
-            _ => None,
-        }
+        self.properties.bending_stiffness
     }
+
+    /// Get the unscaled bending stiffness parameter. This is the quantity that this material was
+    /// created with.
     pub fn bending_stiffness(&self) -> Option<f32> {
-        match self.properties {
-            ShellProperties::Deformable { deformable, bending_stiffness } => {
-                bending_stiffness.map(|s| s / deformable.scale())
-            },
-            _ => None,
-        }
+        self.properties.bending_stiffness.map(|s| s / self.properties.deformable.scale())
     }
 }
 
@@ -261,21 +432,6 @@ impl SolidMaterial {
     }
 }
 
-impl<P: Default> Material<P> {
-    pub fn new(id: usize) -> Material<P> {
-        Material {
-            id,
-            properties: Default::default(),
-        }
-    }
-    /// Overrides the preset id. This is useful for incrementing the material id
-    /// when building on top of an existing material.
-    pub fn with_id(mut self, id: usize) -> Material<P> {
-        self.id = id;
-        self
-    }
-}
-
 impl DeformableProperties {
     pub fn with_elasticity(self, elasticity: ElasticityParameters) -> DeformableProperties {
         DeformableProperties {
@@ -297,6 +453,25 @@ impl DeformableProperties {
         };
 
         DeformableProperties { damping, ..self }
+    }
+
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.elasticity
+    }
+    fn scaled_damping(&self) -> f32 {
+        self.damping
+    }
+    fn scaled_density(&self) -> Option<f32> {
+        self.density
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        self.unnormalized().elasticity
+    }
+    fn damping(&self) -> f32 {
+        self.unnormalized().damping
+    }
+    fn density(&self) -> Option<f32> {
+        self.unnormalized().density
     }
 
     pub fn scale(&self) -> f32 {
@@ -368,6 +543,10 @@ impl DeformableProperties {
         }
     }
 }
+
+/*
+ * Elasticity parameters
+ */
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ElasticityModel {
@@ -444,91 +623,66 @@ impl ElasticityParameters {
 }
 
 /*
- * Deformable implementations
+ * Material implementations
  */
 
-impl Deformable for DeformableProperties {
+impl Material for FixedMaterial {
     fn scale(&self) -> f32 {
-        DeformableProperties::scale(self)
-    }
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.elasticity
-    }
-    fn scaled_damping(&self) -> f32 {
-        self.damping
-    }
-    fn scaled_density(&self) -> Option<f32> {
-        self.density
-    }
-    fn elasticity(&self) -> Option<ElasticityParameters> {
-        self.unnormalized().elasticity
-    }
-    fn damping(&self) -> f32 {
-        self.unnormalized().damping
-    }
-    fn density(&self) -> Option<f32> {
-        self.unnormalized().density
+        1.0
     }
 }
 
-impl Deformable for ShellMaterial {
+impl Material for RigidMaterial {
     fn scale(&self) -> f32 {
-        match self.properties {
-            ShellProperties::Deformable { deformable, .. } => deformable.scale(),
-            _ => 1.0,
-        }
-    }
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        match self.properties {
-            ShellProperties::Deformable { deformable, .. } => deformable.scaled_elasticity(),
-            _ => None,
-        }
-    }
-    fn scaled_damping(&self) -> f32 {
-        match self.properties {
-            ShellProperties::Deformable { deformable, .. } => deformable.scaled_damping(),
-            _ => 0.0,
-        }
-    }
-    fn scaled_density(&self) -> Option<f32> {
-        match self.properties {
-            ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable, .. } => deformable.scaled_density(),
-            ShellProperties::Fixed => None,
-        }
-    }
-    fn elasticity(&self) -> Option<ElasticityParameters> {
-        match self.properties {
-            ShellProperties::Deformable { deformable, .. } => deformable.elasticity(),
-            _ => None,
-        }
-    }
-    fn damping(&self) -> f32 {
-        match self.properties {
-            ShellProperties::Deformable { deformable, .. } => deformable.damping(),
-            _ => 0.0,
-        }
-    }
-    fn density(&self) -> Option<f32> {
-        match self.properties {
-            ShellProperties::Rigid { density } => Some(density),
-            ShellProperties::Deformable { deformable, .. } => deformable.density(),
-            ShellProperties::Fixed => None,
-        }
+        1.0
     }
 }
-impl Deformable for SolidMaterial {
+
+impl Material for SoftShellMaterial {
     fn scale(&self) -> f32 {
         self.properties.deformable.scale()
     }
+}
+
+impl Material for SolidMaterial {
+    fn scale(&self) -> f32 {
+        self.properties.deformable.scale()
+    }
+}
+
+impl DynamicMaterial for RigidMaterial {
+    fn scaled_density(&self) -> Option<f32> {
+        Some(self.properties.density)
+    }
+    fn density(&self) -> Option<f32> {
+        Some(self.properties.density)
+    }
+}
+
+impl DynamicMaterial for SoftShellMaterial {
+    fn scaled_density(&self) -> Option<f32> {
+        self.properties.deformable.scaled_density()
+    }
+    fn density(&self) -> Option<f32> {
+        self.properties.deformable.density()
+    }
+}
+
+impl DynamicMaterial for SolidMaterial {
+    fn scaled_density(&self) -> Option<f32> {
+        self.properties.deformable.scaled_density()
+    }
+    fn density(&self) -> Option<f32> {
+        self.properties.deformable.density()
+    }
+}
+
+impl DeformableMaterial for SoftShellMaterial {
     fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
         self.properties.deformable.scaled_elasticity()
     }
     fn scaled_damping(&self) -> f32 {
         self.properties.deformable.scaled_damping()
-    }
-    fn scaled_density(&self) -> Option<f32> {
-        self.properties.deformable.scaled_density()
     }
     fn elasticity(&self) -> Option<ElasticityParameters> {
         self.properties.deformable.elasticity()
@@ -536,8 +690,20 @@ impl Deformable for SolidMaterial {
     fn damping(&self) -> f32 {
         self.properties.deformable.damping()
     }
-    fn density(&self) -> Option<f32> {
-        self.properties.deformable.density()
+}
+
+impl DeformableMaterial for SolidMaterial {
+    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+        self.properties.deformable.scaled_elasticity()
+    }
+    fn scaled_damping(&self) -> f32 {
+        self.properties.deformable.scaled_damping()
+    }
+    fn elasticity(&self) -> Option<ElasticityParameters> {
+        self.properties.deformable.elasticity()
+    }
+    fn damping(&self) -> f32 {
+        self.properties.deformable.damping()
     }
 }
 

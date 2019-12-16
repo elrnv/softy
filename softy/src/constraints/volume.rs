@@ -1,11 +1,14 @@
+use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::matrix::*;
 use crate::Error;
 use crate::TetMesh;
-use geo::{mesh::{attrib::*, topology::*}, ops::Volume};
+use geo::{
+    mesh::{attrib::*, topology::*},
+    ops::Volume,
+};
 use reinterpret::*;
 use utils::soap::{Matrix3, Vector3};
-use crate::attrib_defines::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {
@@ -27,7 +30,9 @@ impl VolumeConstraint {
     }
 
     pub fn compute_volume(tetmesh: &TetMesh) -> f64 {
-        let ref_pos = tetmesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB).unwrap();
+        let ref_pos = tetmesh
+            .attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)
+            .unwrap();
         tetmesh
             .cell_iter()
             .map(|cell| crate::fem::ref_tet(ref_pos, cell).volume())

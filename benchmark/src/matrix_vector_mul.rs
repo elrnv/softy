@@ -1,9 +1,9 @@
-use utils::soap::*;
 use benchmark::*;
+use utils::soap::*;
 
 fn main() {
     let n = 2000;
-    let m = ChunkedN::from_flat_with_stride(random_vec(n*n), n);
+    let m = ChunkedN::from_flat_with_stride(random_vec(n * n), n);
     let v = random_vec(n);
     //// symmetrize matrix to make consistent results
     //for i in 0..n {

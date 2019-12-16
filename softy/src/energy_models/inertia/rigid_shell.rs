@@ -2,7 +2,7 @@ use num_traits::FromPrimitive;
 use reinterpret::*;
 use unroll::unroll_for_loops;
 
-use utils::soap::{Chunked3, Matrix3, Matrix2x3, Real, Vector3, IntoData};
+use utils::soap::{Chunked3, IntoData, Matrix2x3, Matrix3, Real, Vector3};
 
 use crate::energy::*;
 use crate::matrix::*;
@@ -41,7 +41,7 @@ impl<T: Real> Energy<T> for RigidShellInertia {
             let p: T = dv[0].norm_squared() * T::from(self.mass).unwrap();
 
             // Rotational dofs
-            let l: T = dv[1].dot(self.inertia.cast_inner::<T>()*dv[1]);
+            let l: T = dv[1].dot(self.inertia.cast_inner::<T>() * dv[1]);
 
             l + p
         }
@@ -60,7 +60,7 @@ impl<T: Real> EnergyGradient<T> for RigidShellInertia {
 
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
-        gradient[0] += dv[0]*T::from(self.mass).unwrap();
+        gradient[0] += dv[0] * T::from(self.mass).unwrap();
         gradient[1] += self.inertia.cast_inner::<T>() * dv[1];
     }
 }
@@ -110,7 +110,10 @@ impl EnergyHessianTopology for RigidShellInertia {
 
         for i in 0..3 {
             // Translational degrees of freedom generate a diagonal matrix.
-            indices[i] = MatrixElementIndex { row: i + offset.row, col: i + offset.col };
+            indices[i] = MatrixElementIndex {
+                row: i + offset.row,
+                col: i + offset.col,
+            };
         }
 
         offset.row += 3;
@@ -120,7 +123,10 @@ impl EnergyHessianTopology for RigidShellInertia {
         for row in 0..3 {
             for col in 0..=row {
                 // Lower triangular part of the inertia matrix in row-major order.
-                indices[i] = MatrixElementIndex { row: row + offset.row, col: col + offset.col };
+                indices[i] = MatrixElementIndex {
+                    row: row + offset.row,
+                    col: col + offset.col,
+                };
                 i += 1;
             }
         }
@@ -130,19 +136,13 @@ impl EnergyHessianTopology for RigidShellInertia {
 
 impl<T: Real> EnergyHessian<T> for RigidShellInertia {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(
-        &self,
-        _v0: &[T],
-        _v1: &[T],
-        scale: T,
-        values: &mut [T],
-    ) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         debug_assert_eq!(values.len(), self.energy_hessian_size());
         for i in 0..3 {
             values[i] = T::from(self.mass).unwrap() * scale;
         }
         values[3..].copy_from_slice(
-            &(self.inertia.lower_triangular_vec().cast::<T>() * scale).into_data()[..]
+            &(self.inertia.lower_triangular_vec().cast::<T>() * scale).into_data()[..],
         );
     }
 }
@@ -151,9 +151,9 @@ impl<T: Real> EnergyHessian<T> for RigidShellInertia {
 mod tests {
     use crate::objects::shell::*;
 
-    use crate::energy_models::{Either, inertia::*, test_utils::*};
-    use crate::objects::*;
     use super::*;
+    use crate::energy_models::{inertia::*, test_utils::*, Either};
+    use crate::objects::*;
 
     fn rigid_shell_material() -> RigidMaterial {
         RigidMaterial::new(0, 1000.0)
@@ -174,12 +174,9 @@ mod tests {
     fn build_energies(shells: &[TriMeshShell]) -> Vec<(RigidShellInertia, Vec<[f64; 3]>)> {
         shells
             .iter()
-            .map(|shell| {
-                match shell.inertia().unwrap() {
-                    Either::Left(_) => unreachable!(),
-                    Either::Right(inertia) =>
-                        (inertia, vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
-                }
+            .map(|shell| match shell.inertia().unwrap() {
+                Either::Left(_) => unreachable!(),
+                Either::Right(inertia) => (inertia, vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
             })
             .collect()
     }

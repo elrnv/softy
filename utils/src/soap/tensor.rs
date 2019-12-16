@@ -1293,59 +1293,54 @@ impl<T: Scalar + Float> num_traits::Float for Tensor<T> {
     }
 }
 
-        #[cfg(feature = "approx")]
-        impl<U: Scalar, T: Scalar + approx::AbsDiffEq<U>> approx::AbsDiffEq<Tensor<U>> for Tensor<T>
-        where
-            T::Epsilon: Copy,
-        {
-            type Epsilon = T::Epsilon;
-            #[inline]
-            fn default_epsilon() -> Self::Epsilon {
-                T::default_epsilon()
-            }
-            #[inline]
-            fn abs_diff_eq(&self, other: &Tensor<U>, epsilon: Self::Epsilon) -> bool {
-                 self.data.abs_diff_eq(&other.data, epsilon)
-            }
-        }
-        #[cfg(feature = "approx")]
-        impl<U: Scalar, T: Scalar + approx::RelativeEq<U>> approx::RelativeEq<Tensor<U>> for Tensor<T>
-        where
-            T::Epsilon: Copy,
-        {
-            #[inline]
-            fn default_max_relative() -> Self::Epsilon {
-                T::default_max_relative()
-            }
-            #[inline]
-            fn relative_eq(
-                &self,
-                other: &Tensor<U>,
-                epsilon: Self::Epsilon,
-                max_relative: Self::Epsilon,
-            ) -> bool {
-                self.data.relative_eq(&other.data, epsilon, max_relative)
-            }
-        }
-        #[cfg(feature = "approx")]
-        impl<U:Scalar, T: Scalar + approx::UlpsEq<U>> approx::UlpsEq<Tensor<U>> for Tensor<T>
-        where
-            T::Epsilon: Copy,
-        {
-            #[inline]
-            fn default_max_ulps() -> u32 {
-                T::default_max_ulps()
-            }
-            #[inline]
-            fn ulps_eq(
-                &self,
-                other: &Tensor<U>,
-                epsilon: Self::Epsilon,
-                max_ulps: u32,
-            ) -> bool {
-                self.data.ulps_eq(&other.data, epsilon, max_ulps)
-            }
-        }
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::AbsDiffEq<U>> approx::AbsDiffEq<Tensor<U>> for Tensor<T>
+where
+    T::Epsilon: Copy,
+{
+    type Epsilon = T::Epsilon;
+    #[inline]
+    fn default_epsilon() -> Self::Epsilon {
+        T::default_epsilon()
+    }
+    #[inline]
+    fn abs_diff_eq(&self, other: &Tensor<U>, epsilon: Self::Epsilon) -> bool {
+        self.data.abs_diff_eq(&other.data, epsilon)
+    }
+}
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::RelativeEq<U>> approx::RelativeEq<Tensor<U>> for Tensor<T>
+where
+    T::Epsilon: Copy,
+{
+    #[inline]
+    fn default_max_relative() -> Self::Epsilon {
+        T::default_max_relative()
+    }
+    #[inline]
+    fn relative_eq(
+        &self,
+        other: &Tensor<U>,
+        epsilon: Self::Epsilon,
+        max_relative: Self::Epsilon,
+    ) -> bool {
+        self.data.relative_eq(&other.data, epsilon, max_relative)
+    }
+}
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::UlpsEq<U>> approx::UlpsEq<Tensor<U>> for Tensor<T>
+where
+    T::Epsilon: Copy,
+{
+    #[inline]
+    fn default_max_ulps() -> u32 {
+        T::default_max_ulps()
+    }
+    #[inline]
+    fn ulps_eq(&self, other: &Tensor<U>, epsilon: Self::Epsilon, max_ulps: u32) -> bool {
+        self.data.ulps_eq(&other.data, epsilon, max_ulps)
+    }
+}
 
 macro_rules! impl_scalar {
     ($($type:ty),*) => {

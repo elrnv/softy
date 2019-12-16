@@ -268,7 +268,7 @@ mod tests {
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
     use crate::fem::SolverBuilder;
-    use crate::objects::{TetMeshSolid};
+    use crate::objects::TetMeshSolid;
     use crate::objects::*;
 
     use super::*;

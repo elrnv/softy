@@ -36,10 +36,7 @@ pub(crate) struct InteriorEdge {
 impl InteriorEdge {
     #[inline]
     pub fn new(faces: [usize; 2], edge_start: [u8; 2]) -> Self {
-        InteriorEdge {
-            faces,
-            edge_start,
-        }
+        InteriorEdge { faces, edge_start }
     }
 
     /// Get edge verts followed by tangent verts `x0` to `x3`.
@@ -61,22 +58,24 @@ impl InteriorEdge {
     pub fn tile_span<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
         let [x0, x1, x2, x3] = [
             ref_pos[self.faces[0]][self.edge_start[0] as usize].into_tensor(),
-            ref_pos[self.faces[0]][((self.edge_start[0] + 1)%3) as usize].into_tensor(),
-            ref_pos[self.faces[0]][((self.edge_start[0] + 2)%3) as usize].into_tensor(),
-            ref_pos[self.faces[1]][((self.edge_start[1] + 2)%3) as usize].into_tensor(),
+            ref_pos[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize].into_tensor(),
+            ref_pos[self.faces[0]][((self.edge_start[0] + 2) % 3) as usize].into_tensor(),
+            ref_pos[self.faces[1]][((self.edge_start[1] + 2) % 3) as usize].into_tensor(),
         ];
         debug_assert_ne!((x1 - x0).norm_squared(), T::zero());
         let e0 = (x1 - x0).normalized();
-        let h0 = (x2-x0).cross(e0).norm();
-        let h1 = (x3-x0).cross(e0).norm();
+        let h0 = (x2 - x0).cross(e0).norm();
+        let h1 = (x3 - x0).cross(e0).norm();
         (h0 + h1) / T::from(6.0).unwrap()
     }
 
     /// Get the vertex indices of the edge endpoints.
     #[inline]
     pub fn edge_verts(&self, faces: &[[usize; 3]]) -> [usize; 2] {
-        [faces[self.faces[0]][self.edge_start[0] as usize],
-            faces[self.faces[0]][((self.edge_start[0] + 1)%3) as usize]]
+        [
+            faces[self.faces[0]][self.edge_start[0] as usize],
+            faces[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize],
+        ]
     }
 
     /// Get the vertex positions of the edge vertices in reference configuration for each face.
@@ -85,12 +84,12 @@ impl InteriorEdge {
         [
             [
                 ref_pos[self.faces[0]][self.edge_start[0] as usize],
-                ref_pos[self.faces[0]][((self.edge_start[0] + 1)%3) as usize],
+                ref_pos[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize],
             ],
             [
                 ref_pos[self.faces[1]][self.edge_start[1] as usize],
-                ref_pos[self.faces[1]][((self.edge_start[1] + 1)%3) as usize],
-            ]
+                ref_pos[self.faces[1]][((self.edge_start[1] + 1) % 3) as usize],
+            ],
         ]
     }
 
@@ -99,8 +98,10 @@ impl InteriorEdge {
     /// `faces` can be either triplets of vertex indices or reference positions.
     #[inline]
     pub fn tangent_verts<U: Copy>(&self, faces: &[[U; 3]]) -> [U; 2] {
-        [faces[self.faces[0]][((self.edge_start[0] + 2)%3) as usize],
-            faces[self.faces[1]][((self.edge_start[1] + 2)%3) as usize]]
+        [
+            faces[self.faces[0]][((self.edge_start[0] + 2) % 3) as usize],
+            faces[self.faces[1]][((self.edge_start[1] + 2) % 3) as usize],
+        ]
     }
 
     /// Compute the reference edge length.
@@ -114,7 +115,8 @@ impl InteriorEdge {
     pub fn ref_length<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
         let [[f0x0, f0x1], [f1x0, f1x1]] = self.ref_edge_verts(ref_pos);
         ((Vector3::new(f0x1) - Vector3::new(f0x0)).norm()
-            + (Vector3::new(f1x1) - Vector3::new(f1x0)).norm()) * T::from(0.5).unwrap()
+            + (Vector3::new(f1x1) - Vector3::new(f1x0)).norm())
+            * T::from(0.5).unwrap()
     }
 
     /// Produce the 3D vector corresponding to this edge.
@@ -130,7 +132,7 @@ impl InteriorEdge {
     pub fn face0_tangent<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
         let [v0, v1] = [
             faces[self.faces[0]][self.edge_start[0] as usize],
-            self.tangent_verts(faces)[0]
+            self.tangent_verts(faces)[0],
         ];
         (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
     }
@@ -141,11 +143,11 @@ impl InteriorEdge {
     pub fn face1_tangent<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
         let [v0, v1] = [
             faces[self.faces[0]][(self.edge_start[0]) as usize],
-            self.tangent_verts(faces)[1]
+            self.tangent_verts(faces)[1],
         ];
         debug_assert!(
-            v0 == faces[self.faces[1]][((self.edge_start[1] + 1)%3) as usize] ||
-                v0 == faces[self.faces[1]][self.edge_start[1] as usize]
+            v0 == faces[self.faces[1]][((self.edge_start[1] + 1) % 3) as usize]
+                || v0 == faces[self.faces[1]][self.edge_start[1] as usize]
         );
         (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
     }
@@ -153,7 +155,8 @@ impl InteriorEdge {
     /// Return `true` if the adjacent faces have the same orientation.
     #[inline]
     pub fn is_oriented(&self, faces: &[[usize; 3]]) -> bool {
-        faces[self.faces[0]][(self.edge_start[0]) as usize] != faces[self.faces[1]][self.edge_start[1] as usize]
+        faces[self.faces[0]][(self.edge_start[0]) as usize]
+            != faces[self.faces[1]][self.edge_start[1] as usize]
     }
 
     /// Compute the area weighted normals of adjacent faces.
@@ -161,12 +164,20 @@ impl InteriorEdge {
     /// This function will reverse the normal of `faces[1]` if it's orientation is opposite to
     /// the orientation of `faces[0]`.
     #[inline]
-    pub fn face_area_normals<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [Vector3<T>; 2] {
-        let an0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area_normal().into_tensor();
+    pub fn face_area_normals<T: Real>(
+        &self,
+        pos: &[[T; 3]],
+        faces: &[[usize; 3]],
+    ) -> [Vector3<T>; 2] {
+        let an0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos)
+            .area_normal()
+            .into_tensor();
         let f1 = faces[self.faces[1]];
         let is_oriented = self.is_oriented(faces);
         let idx = [usize::from(!is_oriented), usize::from(is_oriented)];
-        let an1 = Triangle::new([pos[f1[idx[0]]], pos[f1[idx[1]]], pos[f1[2]]]).area_normal().into_tensor();
+        let an1 = Triangle::new([pos[f1[idx[0]]], pos[f1[idx[1]]], pos[f1[2]]])
+            .area_normal()
+            .into_tensor();
         [an0, an1]
     }
 
@@ -212,7 +223,12 @@ impl InteriorEdge {
 
     /// Compute an edge angle that is no more than π radians away from `prev_angle`.
     #[inline]
-    pub(crate) fn incremental_angle<T: Real>(&self, prev_angle: T, pos: &[[T; 3]], faces: &[[usize; 3]]) -> T {
+    pub(crate) fn incremental_angle<T: Real>(
+        &self,
+        prev_angle: T,
+        pos: &[[T; 3]],
+        faces: &[[usize; 3]],
+    ) -> T {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
         let prev_angle_proj = Self::project_angle(prev_angle);
@@ -231,7 +247,11 @@ impl InteriorEdge {
     /// The area weighted normals are assumed to be computed as `an0 = e0 x e1` and `an1 = e2 x e0`.
     /// The gradient is zero if any of the triangles are found to be degenerate.
     #[inline]
-    pub(crate) fn edge_angle_gradient<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [[T; 3]; 4] {
+    pub(crate) fn edge_angle_gradient<T: Real>(
+        &self,
+        pos: &[[T; 3]],
+        faces: &[[usize; 3]],
+    ) -> [[T; 3]; 4] {
         let [an0, an1] = self.face_area_normals(pos, faces);
         let e0 = self.edge_vector(pos, faces);
         let e1 = self.face0_tangent(pos, faces);
@@ -259,7 +279,12 @@ impl InteriorEdge {
         let dx2 = an0nn * -e0_norm;
         let dx3 = an1nn * -e0_norm;
 
-        [dx0.into_data(), dx1.into_data(), dx2.into_data(), dx3.into_data()]
+        [
+            dx0.into_data(),
+            dx1.into_data(),
+            dx2.into_data(),
+            dx3.into_data(),
+        ]
     }
 
     /// Compute the hessian of the reflex angle given by `edge_angle` for the four significant
@@ -276,9 +301,11 @@ impl InteriorEdge {
     /// NOTE: The 3-2 (and 2-3) block is zero so it's omitted from the output array of off-diagonal
     ///       part.
     #[inline]
-    pub(crate) fn edge_angle_hessian<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]])
-                                              -> ([[T; 6]; 4], [[[T; 3]; 3]; 5])
-    {
+    pub(crate) fn edge_angle_hessian<T: Real>(
+        &self,
+        pos: &[[T; 3]],
+        faces: &[[usize; 3]],
+    ) -> ([[T; 6]; 4], [[[T; 3]; 3]; 5]) {
         let [an0, an1] = self.face_area_normals(pos, faces);
         let e0 = self.edge_vector(pos, faces);
         let e1 = self.face0_tangent(pos, faces);
@@ -295,15 +322,17 @@ impl InteriorEdge {
 
         let e0_norm = e0_norm_squared.sqrt();
         let e0u = e0.transpose() / e0_norm;
-        let e0u_e1 = (e0u*e1).into_data()[0];
-        let e0u_e2 = (e0u*e2).into_data()[0];
+        let e0u_e1 = (e0u * e1).into_data()[0];
+        let e0u_e2 = (e0u * e2).into_data()[0];
 
         // Compute normals per unit area
         let an0nn = an0 / a0_squared;
         let an1nn = an1 / a1_squared;
         let _2 = T::from(2.0).unwrap();
-        let dan0nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a0_squared)) - an0nn * an0nn.transpose() * _2;
-        let dan1nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a1_squared)) - an1nn * an1nn.transpose() * _2;
+        let dan0nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a0_squared))
+            - an0nn * an0nn.transpose() * _2;
+        let dan1nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a1_squared))
+            - an1nn * an1nn.transpose() * _2;
 
         let dn0de0 = (-e1).skew();
         let dn0de1 = (e0).skew();
@@ -311,12 +340,14 @@ impl InteriorEdge {
         let dn1de2 = (-e0).skew();
 
         let dth_de = [
-            dan0nn*dn0de0*e0u_e1 + an0nn*((e1.transpose() - e0u*e0u_e1)/e0_norm)
-                + dan1nn*dn1de0*e0u_e2 + an1nn*((e2.transpose() - e0u*e0u_e2)/e0_norm), // e0e0
-            dan0nn*dn0de1*e0u_e1 + an0nn*e0u, // e1e0 or transpose for e0e1
-            dan1nn*dn1de2*e0u_e2 + an1nn*e0u, // e2e0 or transpose for e0e2
-            dan0nn*dn0de1*-e0_norm,// e1e1
-            dan1nn*dn1de2*-e0_norm, // e2e2
+            dan0nn * dn0de0 * e0u_e1
+                + an0nn * ((e1.transpose() - e0u * e0u_e1) / e0_norm)
+                + dan1nn * dn1de0 * e0u_e2
+                + an1nn * ((e2.transpose() - e0u * e0u_e2) / e0_norm), // e0e0
+            dan0nn * dn0de1 * e0u_e1 + an0nn * e0u, // e1e0 or transpose for e0e1
+            dan1nn * dn1de2 * e0u_e2 + an1nn * e0u, // e2e0 or transpose for e0e2
+            dan0nn * dn0de1 * -e0_norm,             // e1e1
+            dan1nn * dn1de2 * -e0_norm,             // e2e2
         ];
         let dx0dx0 = dth_de[0] // from e0e0
             + dth_de[1] + dth_de[1].transpose()  // from e0e1 and e1e0
@@ -332,25 +363,27 @@ impl InteriorEdge {
         let dx1dx2 = dth_de[1].transpose(); // e0e1
         let dx1dx3 = dth_de[2].transpose(); // e0e2
         let dx2dx2 = dth_de[3]; // e1e1
-        //let dx2dx3 = Zero
+                                //let dx2dx3 = Zero
         let dx3dx3 = dth_de[4]; // e2e2
 
         // Output format:
         // -> (diagonal lower triangular blocks, lower triangular full blocks)
         // -> ([[T; 6]; 4], [[[T; 3]; 3]; 5])
-        ([
-             dx0dx0.lower_triangular_vec().into_data(),
-             dx1dx1.lower_triangular_vec().into_data(),
-             dx2dx2.lower_triangular_vec().into_data(),
-             dx3dx3.lower_triangular_vec().into_data(),
-         ],
-         [
-             dx0dx1.into_data(),
-             dx0dx2.into_data(),
-             dx1dx2.into_data(),
-             dx0dx3.into_data(),
-             dx1dx3.into_data(),
-         ])
+        (
+            [
+                dx0dx0.lower_triangular_vec().into_data(),
+                dx1dx1.lower_triangular_vec().into_data(),
+                dx2dx2.lower_triangular_vec().into_data(),
+                dx3dx3.lower_triangular_vec().into_data(),
+            ],
+            [
+                dx0dx1.into_data(),
+                dx0dx2.into_data(),
+                dx1dx2.into_data(),
+                dx0dx3.into_data(),
+                dx1dx3.into_data(),
+            ],
+        )
     }
 }
 
@@ -371,17 +404,15 @@ enum EdgeTopo {
 impl EdgeTopo {
     fn into_manifold_edge(&self) -> Option<[usize; 2]> {
         match self {
-            EdgeTopo::Manifold(e) => {
-                Some(*e)
-            }
-            _ => None
+            EdgeTopo::Manifold(e) => Some(*e),
+            _ => None,
         }
     }
 }
 
 struct EdgeData {
     vertices: [usize; 2],
-    topo: EdgeTopo
+    topo: EdgeTopo,
 }
 
 impl EdgeData {
@@ -402,7 +433,7 @@ pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
     Triangle::new([
         Vector3::new(ref_tri[0]).cast::<f64>().into(),
         Vector3::new(ref_tri[1]).cast::<f64>().into(),
-        Vector3::new(ref_tri[2]).cast::<f64>().into()
+        Vector3::new(ref_tri[2]).cast::<f64>().into(),
     ])
 }
 
@@ -420,16 +451,17 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 
     let add_face_edges = |(face_idx, face): (usize, &[usize; 3])| {
         for i in 0..3 {
-            let [v0, v1] = [face[i], face[(i+1)%3]];
+            let [v0, v1] = [face[i], face[(i + 1) % 3]];
 
             let key = if v0 < v1 { [v0, v1] } else { [v1, v0] }; // Sort edge
-            edges.entry(key)
+            edges
+                .entry(key)
                 .and_modify(|e: &mut EdgeData| {
                     match &mut e.topo {
-                        EdgeTopo::Boundary(i) =>
-                            e.topo = EdgeTopo::Manifold([*i, face_idx]),
-                        EdgeTopo::Manifold([a, b]) =>
-                            e.topo = EdgeTopo::NonManifold(vec![*a, *b, face_idx]),
+                        EdgeTopo::Boundary(i) => e.topo = EdgeTopo::Manifold([*i, face_idx]),
+                        EdgeTopo::Manifold([a, b]) => {
+                            e.topo = EdgeTopo::NonManifold(vec![*a, *b, face_idx])
+                        }
                         EdgeTopo::NonManifold(v) => {
                             v.push(face_idx);
                         }
@@ -483,7 +515,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 
             let edge_start = [
                 find_triangle_edge_start(verts, trimesh.face(faces[0])),
-                find_triangle_edge_start(verts, trimesh.face(faces[1]))
+                find_triangle_edge_start(verts, trimesh.face(faces[1])),
             ];
 
             interior_edges.push(InteriorEdge::new(faces, edge_start));
@@ -509,49 +541,30 @@ mod tests {
             [0.5, -1.0, 0.5], // slight bend and asymmetry
         ];
 
-        let faces = [
-            [0, 1, 2],
-            [0, 3, 1]
-        ];
+        let faces = [[0, 1, 2], [0, 3, 1]];
 
-        let e = InteriorEdge::new([0,1], [0, 2]);
+        let e = InteriorEdge::new([0, 1], [0, 2]);
 
         (e, x, faces)
     }
 
     fn make_test_interior_edge_alt() -> (InteriorEdge, [[f64; 3]; 4], [[usize; 3]; 2]) {
-        let x = [
-            [1.0, 0.0, 0.25],
-            [0.0, 1.0, 0.0],
-            [0.0; 3],
-            [1.0, 1.0, 0.0],
-        ];
+        let x = [[1.0, 0.0, 0.25], [0.0, 1.0, 0.0], [0.0; 3], [1.0, 1.0, 0.0]];
 
-        let faces = [
-            [2, 0, 1],
-            [0, 3, 1]
-        ];
+        let faces = [[2, 0, 1], [0, 3, 1]];
 
-        let e = InteriorEdge::new([0,1], [1, 2]);
+        let e = InteriorEdge::new([0, 1], [1, 2]);
 
         (e, x, faces)
     }
 
     /// A test example of two adjacent triangles with opposite orientations.
     fn make_test_interior_edge_unoriented() -> (InteriorEdge, [[f64; 3]; 4], [[usize; 3]; 2]) {
-        let x = [
-            [1.0, 0.0, 0.25],
-            [0.0, 1.0, 0.0],
-            [0.0; 3],
-            [1.0, 1.0, 0.0],
-        ];
+        let x = [[1.0, 0.0, 0.25], [0.0, 1.0, 0.0], [0.0; 3], [1.0, 1.0, 0.0]];
 
-        let faces = [
-            [2, 0, 1],
-            [0, 1, 3]
-        ];
+        let faces = [[2, 0, 1], [0, 1, 3]];
 
-        let e = InteriorEdge::new([0,1], [1, 0]);
+        let e = InteriorEdge::new([0, 1], [1, 0]);
 
         (e, x, faces)
     }
@@ -565,23 +578,40 @@ mod tests {
         assert_eq!(e.edge_verts(&faces[..]), [0, 1]);
         assert_eq!(e.tangent_verts(&faces[..]), [2, 3]);
         assert_eq!(e.verts(&faces[..]), [0, 1, 2, 3]);
-        assert_eq!(e.edge_vector(&x[..], &faces[..]), Vector3::new([1.0, 0.0, 0.0]));
-        assert_eq!(e.face0_tangent(&x[..], &faces[..]), Vector3::new([0.0, 1.0, 0.0]));
-        assert_eq!(e.face1_tangent(&x[..], &faces[..]), Vector3::new([0.5, -1.0, 0.5]));
+        assert_eq!(
+            e.edge_vector(&x[..], &faces[..]),
+            Vector3::new([1.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            e.face0_tangent(&x[..], &faces[..]),
+            Vector3::new([0.0, 1.0, 0.0])
+        );
+        assert_eq!(
+            e.face1_tangent(&x[..], &faces[..]),
+            Vector3::new([0.5, -1.0, 0.5])
+        );
     }
 
     #[test]
     fn project_angle() {
         assert_eq!(InteriorEdge::project_angle(0.0), 0.0);
         let pi = std::f64::consts::PI;
-        assert_eq!(InteriorEdge::project_angle(pi/2.0), pi/2.0);
-        assert_eq!(InteriorEdge::project_angle(-pi/2.0), -pi/2.0);
-        assert_eq!(InteriorEdge::project_angle(3.0*pi/2.0), -pi/2.0);
-        assert_eq!(InteriorEdge::project_angle(-3.0*pi/2.0), pi/2.0);
-        assert_eq!(InteriorEdge::project_angle(-3.0*pi/2.0), pi/2.0);
-        assert_eq!(InteriorEdge::project_angle(2.0*pi), 0.0);
-        assert_relative_eq!(InteriorEdge::project_angle(7.0*pi + 0.01), -pi + 0.01, max_relative = 1e-8);
-        assert_relative_eq!(InteriorEdge::project_angle(-7.0*pi - 0.01), pi - 0.01, max_relative = 1e-8);
+        assert_eq!(InteriorEdge::project_angle(pi / 2.0), pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(-pi / 2.0), -pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(3.0 * pi / 2.0), -pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(2.0 * pi), 0.0);
+        assert_relative_eq!(
+            InteriorEdge::project_angle(7.0 * pi + 0.01),
+            -pi + 0.01,
+            max_relative = 1e-8
+        );
+        assert_relative_eq!(
+            InteriorEdge::project_angle(-7.0 * pi - 0.01),
+            pi - 0.01,
+            max_relative = 1e-8
+        );
     }
 
     #[test]
@@ -600,7 +630,7 @@ mod tests {
 
     #[test]
     fn edge_angle_gradient() {
-        let (e,x,f) = make_test_interior_edge();
+        let (e, x, f) = make_test_interior_edge();
         edge_angle_gradient_tester(e, &x, &f);
         let (e, x, f) = make_test_interior_edge_alt();
         edge_angle_gradient_tester(e, &x, &f);
@@ -608,7 +638,7 @@ mod tests {
         edge_angle_gradient_tester(e, &x, &f);
     }
 
-    fn edge_angle_gradient_tester(e: InteriorEdge, x: &[[f64;3]; 4], faces: &[[usize; 3]; 2]) {
+    fn edge_angle_gradient_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
             Vector3::new(x[0]).cast::<F>().into_data(),
             Vector3::new(x[1]).cast::<F>().into_data(),
@@ -664,7 +694,7 @@ mod tests {
         edge_angle_hessian_tester(e, &x, &f);
     }
 
-    fn edge_angle_hessian_tester(e: InteriorEdge, x: &[[f64;3]; 4], faces: &[[usize; 3]; 2]) {
+    fn edge_angle_hessian_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
             Vector3::new(x[0]).cast::<F>().into_data(),
             Vector3::new(x[1]).cast::<F>().into_data(),
@@ -714,8 +744,11 @@ mod tests {
             for row in 0..3 {
                 for col_vtx in 0..4 {
                     for col in 0..3 {
-                        if row_vtx < col_vtx || (row_vtx == col_vtx && row < col)
-                            || row_vtx == 3 && col_vtx == 2 || row_vtx == 2 && col_vtx == 3 {
+                        if row_vtx < col_vtx
+                            || (row_vtx == col_vtx && row < col)
+                            || row_vtx == 3 && col_vtx == 2
+                            || row_vtx == 2 && col_vtx == 3
+                        {
                             eprint!("          ");
                         } else if row_vtx == col_vtx {
                             let i = idx_map[row][col];
@@ -735,8 +768,11 @@ mod tests {
             for row in 0..3 {
                 for col_vtx in 0..4 {
                     for col in 0..3 {
-                        if row_vtx < col_vtx || (row_vtx == col_vtx && row < col)
-                            || row_vtx == 3 && col_vtx == 2 || row_vtx == 2 && col_vtx == 3 {
+                        if row_vtx < col_vtx
+                            || (row_vtx == col_vtx && row < col)
+                            || row_vtx == 3 && col_vtx == 2
+                            || row_vtx == 2 && col_vtx == 3
+                        {
                             eprint!("          ");
                         } else if row_vtx == col_vtx {
                             let i = idx_map[row][col];

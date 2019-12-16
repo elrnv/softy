@@ -1,6 +1,9 @@
 pub trait IterExpr: Iterator {
     #[inline]
-    fn unroll4(mut self, mut f: impl FnMut(Self::Item)) where Self: Sized  {
+    fn unroll4(mut self, mut f: impl FnMut(Self::Item))
+    where
+        Self: Sized,
+    {
         loop {
             if let Some(next) = self.next() {
                 f(next);

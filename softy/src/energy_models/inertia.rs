@@ -14,11 +14,11 @@ pub trait Inertia<'a, E> {
 
 #[cfg(test)]
 mod tests {
-    use geo::mesh::VertexPositions;
-    use crate::objects::solid::*;
     use crate::objects::shell::*;
+    use crate::objects::solid::*;
+    use geo::mesh::VertexPositions;
 
-    use crate::energy_models::{Either, test_utils::*};
+    use crate::energy_models::{test_utils::*, Either};
     use crate::fem::SolverBuilder;
     use crate::objects::*;
 
@@ -89,12 +89,9 @@ mod tests {
         fn build_energies(shells: &[TriMeshShell]) -> Vec<(SoftShellInertia, Vec<[f64; 3]>)> {
             shells
                 .iter()
-                .map(|shell| {
-                    match shell.inertia().unwrap() {
-                        Either::Left(inertia) =>
-                            (inertia, shell.trimesh.vertex_positions().to_vec()),
-                        Either::Right(_) => unreachable!(),
-                    }
+                .map(|shell| match shell.inertia().unwrap() {
+                    Either::Left(inertia) => (inertia, shell.trimesh.vertex_positions().to_vec()),
+                    Either::Right(_) => unreachable!(),
                 })
                 .collect()
         }

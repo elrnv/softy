@@ -1,7 +1,7 @@
 use approx::*;
 
-use geo::mesh::{Attrib, VertexPositions};
 use geo::mesh::topology::VertexIndex;
+use geo::mesh::{Attrib, VertexPositions};
 use softy::*;
 pub use test_utils::*;
 
@@ -31,7 +31,8 @@ fn equilibrium() {
 
     // Fix another vertex to remove remaining null space.
     // (Though this should not affect most solvers).
-    mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB).unwrap()[2] = 1;
+    mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+        .unwrap()[2] = 1;
 
     let mut solver = SolverBuilder::new(params)
         .add_soft_shell(PolyMesh::from(mesh.clone()), soft_shell_material())
@@ -51,9 +52,7 @@ fn simple_static_undeformed() {
 
     mesh.vertex_positions_mut()[0][2] = 0.0; // Unbend
 
-    let mut solver = SolverBuilder::new(SimParams {
-        ..STATIC_PARAMS
-    })
+    let mut solver = SolverBuilder::new(SimParams { ..STATIC_PARAMS })
         .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
         .build()
         .expect("Failed to build a solver for a three triangle test.");
@@ -78,9 +77,7 @@ fn simple_static_undeformed() {
 fn static_deformed() {
     init_logger();
     let mesh = make_three_tri_mesh();
-    let mut solver = SolverBuilder::new(SimParams {
-        ..STATIC_PARAMS
-    })
+    let mut solver = SolverBuilder::new(SimParams { ..STATIC_PARAMS })
         .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
         .build()
         .expect("Failed to build a solver for a three triangle test.");
@@ -113,9 +110,10 @@ fn dynamic_deformed() {
     let mut solver = SolverBuilder::new(SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         ..DYNAMIC_PARAMS
-    }).add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
-      .build()
-      .expect("Failed to build a solver for a three triangle test.");
+    })
+    .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+    .build()
+    .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
     let solution = &solver.shell(0).trimesh;

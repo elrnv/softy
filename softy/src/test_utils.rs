@@ -1,13 +1,13 @@
 use crate::attrib_defines::*;
 use crate::fem::*;
 use crate::objects::*;
-use crate::{TriMesh, TetMesh, PolyMesh};
+use crate::{PolyMesh, TetMesh, TriMesh};
 use geo::mesh::attrib::*;
+use geo::mesh::builder::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
-use geo::mesh::builder::*;
 use geo::ops::*;
-use utils::soap::{Vector3, IntoData};
+use utils::soap::{IntoData, Vector3};
 
 pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],
@@ -57,17 +57,16 @@ pub fn default_solid() -> SolidMaterial {
 /// directions with the first two vertices fixed such that there is a unique solution when the
 /// triangle is simulated under gravity.
 pub fn make_one_tri_mesh() -> TriMesh {
-    let verts = vec![
-        [0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ];
+    let verts = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
     let indices = vec![0, 2, 1];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0])
         .unwrap();
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -83,7 +82,7 @@ pub fn make_one_deformed_tri_mesh() -> TriMesh {
 /// Two triangles forming a quad unconstrained undeformed.
 pub fn make_two_tri_mesh() -> TriMesh {
     let mut verts = vec![
-        [1.0, 0.0, 0.25],  // slight bend
+        [1.0, 0.0, 0.25], // slight bend
         [0.0, 1.0, 0.0],
         [0.0; 3],
         [1.0, 1.0, 0.0],
@@ -93,13 +92,16 @@ pub fn make_two_tri_mesh() -> TriMesh {
     let mut mesh = TriMesh::new(verts.clone(), indices);
 
     // Top two vertices are fixed to remove the nullspace in shell sims.
-    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 0, 1]).unwrap();
+    mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 0, 1])
+        .unwrap();
 
     // Reference configuration is flat.
     verts[0][2] = 0.0;
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>()
-        .into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -125,7 +127,10 @@ pub fn make_three_tri_mesh() -> TriMesh {
     // Reference configuration is bent the other way.
     verts[3][2] = -0.5;
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -149,7 +154,10 @@ pub fn make_four_tri_mesh() -> TriMesh {
     // Reference configuration is flat.
     verts[5][1] = 0.0;
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -171,7 +179,10 @@ pub fn make_four_tri_mesh_unoriented() -> TriMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
         .unwrap();
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -189,7 +200,10 @@ pub fn make_one_tet_trimesh() -> TriMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
         .unwrap();
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -207,7 +221,10 @@ pub fn make_one_tet_mesh() -> TetMesh {
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
         .unwrap();
 
-    let verts_f32: Vec<_> = verts.iter().map(|&x| Vector3::new(x).cast::<f32>().into_data()).collect();
+    let verts_f32: Vec<_> = verts
+        .iter()
+        .map(|&x| Vector3::new(x).cast::<f32>().into_data())
+        .collect();
     mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
         .unwrap();
     mesh
@@ -255,8 +272,12 @@ pub fn make_three_tet_mesh() -> TetMesh {
 pub fn make_box(i: usize) -> TetMesh {
     let mut box_mesh = SolidBoxBuilder { res: [i, i, i] }.build();
     box_mesh.uniform_scale(0.5);
-    let ref_verts = box_mesh.vertex_position_iter().map(|&[a,b,c]| [a as f32, b as f32, c as f32]).collect();
-    box_mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+    let ref_verts = box_mesh
+        .vertex_position_iter()
+        .map(|&[a, b, c]| [a as f32, b as f32, c as f32])
+        .collect();
+    box_mesh
+        .add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
     box_mesh
 }
@@ -292,5 +313,6 @@ pub fn make_grid(i: usize) -> PolyMesh {
         rows: i,
         cols: i,
         orientation: AxisPlaneOrientation::ZX,
-    }.build()
+    }
+    .build()
 }

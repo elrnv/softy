@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
+use geo::mesh::builder::*;
 use implicits::{surface_from_polymesh, KernelType, Params, SampleType};
 use utils::*;
-use geo::mesh::builder::*;
 
 fn potential_benchmark(c: &mut Criterion) {
     let params = Params {
@@ -13,12 +13,19 @@ fn potential_benchmark(c: &mut Criterion) {
         sample_type: SampleType::Face,
         ..Params::default()
     };
-    let torus = TorusBuilder { outer_radius: 0.5, inner_radius: 0.25, outer_divs: 100, inner_divs: 100 }.build();
+    let torus = TorusBuilder {
+        outer_radius: 0.5,
+        inner_radius: 0.25,
+        outer_divs: 100,
+        inner_divs: 100,
+    }
+    .build();
     let mut grid = GridBuilder {
         rows: 100,
         cols: 100,
         orientation: AxisPlaneOrientation::ZX,
-    }.build();
+    }
+    .build();
     let torus_surface = surface_from_polymesh(&torus, params).unwrap();
 
     c.bench_function("Potential", |b| {

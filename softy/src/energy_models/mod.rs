@@ -4,8 +4,8 @@ pub mod inertia;
 
 use crate::energy::*;
 use crate::matrix::MatrixElementIndex;
-use utils::soap::Real;
 use num_traits::FromPrimitive;
+use utils::soap::Real;
 
 /// Define a nullable energy, which is used to represent zero energies. For example
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.
@@ -54,13 +54,7 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
 }
 
 impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> {
-    fn energy_hessian_values(
-        &self,
-        x0: &[T],
-        x1: &[T],
-        scale: T,
-        vals: &mut [T],
-    ) {
+    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
         match self {
             Some(e) => e.energy_hessian_values(x0, x1, scale, vals),
             None => {}
@@ -124,14 +118,10 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
     }
 }
 
-impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for Either<A, B> {
-    fn energy_hessian_values(
-        &self,
-        x0: &[T],
-        x1: &[T],
-        scale: T,
-        vals: &mut [T],
-    ) {
+impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T>
+    for Either<A, B>
+{
+    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
         match self {
             Either::Left(e) => e.energy_hessian_values(x0, x1, scale, vals),
             Either::Right(e) => e.energy_hessian_values(x0, x1, scale, vals),
@@ -139,13 +129,11 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
     }
 }
 
-
-
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::energy::*;
     use crate::test_utils::*;
-    use crate::{TriMesh, TetMesh};
+    use crate::{TetMesh, TriMesh};
     use approx::*;
     use autodiff::F;
     use num_traits::Zero;
@@ -171,9 +159,7 @@ pub(crate) mod test_utils {
     }
 
     pub(crate) fn test_rigid_trimeshes() -> Vec<TriMesh> {
-        vec![
-            make_one_tet_trimesh()
-        ]
+        vec![make_one_tet_trimesh()]
     }
 
     fn random_displacement(n: usize) -> Vec<F> {
@@ -244,7 +230,6 @@ pub(crate) mod test_utils {
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
         for (energy, pos) in configurations.iter() {
-
             let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
 
             let mut hess_triplets =

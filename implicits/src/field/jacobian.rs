@@ -1851,7 +1851,10 @@ mod tests {
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
         let test_vector = Vector3::new([1.5, 0.3, 0.5]);
-        trimesh.add_attrib_data::<[f32; 3], VertexIndex>("V", vec![test_vector.cast::<f32>().into(); 3])?;
+        trimesh.add_attrib_data::<[f32; 3], VertexIndex>(
+            "V",
+            vec![test_vector.cast::<f32>().into(); 3],
+        )?;
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>("N", vec![[0.0, 1.0, 0.0]; 3])?;
 
         let surf = mls_from_trimesh(&trimesh, surf_params).unwrap();
@@ -1878,7 +1881,12 @@ mod tests {
         let result2: [f32; 3] = tangents_vec[0];
 
         for i in 0usize..3 {
-            assert_relative_eq!(result[i], result2[i] as f64, max_relative = 1e-5, epsilon = 1e-10);
+            assert_relative_eq!(
+                result[i],
+                result2[i] as f64,
+                max_relative = 1e-5,
+                epsilon = 1e-10
+            );
         }
 
         // Finally verify that the produced vector is indeed the same as the input test_vector.

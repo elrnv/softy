@@ -2,7 +2,7 @@ use num_traits::FromPrimitive;
 //use rayon::prelude::*;
 use reinterpret::*;
 
-use geo::mesh::{Attrib, topology::*};
+use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
 use utils::soap::{Real, Vector3};
 use utils::zip;
@@ -34,22 +34,22 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
                 .map(|&x| f64::from(x)),
             tetmesh.cell_iter(),
         )
-            .map(|(&vol, density, cell)| {
-                let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
-                let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
-                let tet_dv = tet_v1 - tet_v0;
+        .map(|(&vol, density, cell)| {
+            let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+            let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
+            let tet_dv = tet_v1 - tet_v0;
 
-                T::from(0.5).unwrap() * {
-                    let dvTdv: T = tet_dv
-                        .into_array()
-                        .iter()
-                        .map(|&dv| Vector3::new(dv).norm_squared())
-                        .sum();
-                    // momentum
-                    T::from(0.25 * vol * density).unwrap() * dvTdv
-                }
-            })
-            .sum()
+            T::from(0.5).unwrap() * {
+                let dvTdv: T = tet_dv
+                    .into_array()
+                    .iter()
+                    .map(|&dv| Vector3::new(dv).norm_squared())
+                    .sum();
+                // momentum
+                T::from(0.25 * vol * density).unwrap() * dvTdv
+            }
+        })
+        .sum()
     }
 }
 
@@ -105,10 +105,8 @@ impl EnergyHessianTopology for TetMeshInertia<'_> {
         let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] =
-            reinterpret_mut_slice(rows);
-        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] =
-            reinterpret_mut_slice(cols);
+        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(rows);
+        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(cols);
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
@@ -163,20 +161,13 @@ impl EnergyHessianTopology for TetMeshInertia<'_> {
 
 impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(
-        &self,
-        _v0: &[T],
-        _v1: &[T],
-        scale: T,
-        values: &mut [T],
-    ) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
         let TetMeshInertia(ref solid) = *self;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TET]] =
-            reinterpret_mut_slice(values);
+        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TET]] = reinterpret_mut_slice(values);
 
         let vol_iter = solid
             .tetmesh

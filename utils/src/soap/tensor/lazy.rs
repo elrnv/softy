@@ -1223,8 +1223,9 @@ where
 }
 
 impl<'a, T: ?Sized, D: 'a + ?Sized> Expr<'a> for Tensor<T>
-where Self: AsData<Data = D>,
-      D: Expr<'a>,
+where
+    Self: AsData<Data = D>,
+    D: Expr<'a>,
 {
     type Output = D::Output;
     #[inline]
@@ -1883,7 +1884,9 @@ impl<L: Scalar + MulOp<R>, R: Scalar> DotOp<Tensor<R>> for Tensor<L> {
     type Output = Tensor<<L as MulOp<R>>::Output>;
     #[inline]
     fn dot_op(self, rhs: Tensor<R>) -> Self::Output {
-        Tensor { data: self.data * rhs.data }
+        Tensor {
+            data: self.data * rhs.data,
+        }
     }
 }
 
@@ -2276,8 +2279,12 @@ mod tests {
     #[test]
     fn reduce_into_unichunked() {
         let b = vec![2, 1];
-        let a = ChunkedN::from_flat_with_stride(Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), 3);
-        let out: Chunked2<_> = Evaluate::eval(Reduce::with_op(a.expr().cwise_mul(b.expr()), Addition));
+        let a = ChunkedN::from_flat_with_stride(
+            Chunked2::from_flat(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+            3,
+        );
+        let out: Chunked2<_> =
+            Evaluate::eval(Reduce::with_op(a.expr().cwise_mul(b.expr()), Addition));
         assert_eq!(Chunked2::from_flat(vec![9i32, 12, 15, 18, 21, 24]), out);
     }
 

@@ -116,8 +116,9 @@ where
 }
 
 impl<'a, T: ?Sized, D: 'a + ?Sized> ExprMut<'a> for Tensor<T>
-where Self: AsMutData<Data = D>,
-      D: ExprMut<'a>,
+where
+    Self: AsMutData<Data = D>,
+    D: ExprMut<'a>,
 {
     type Output = D::Output;
     #[inline]

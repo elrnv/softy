@@ -6,9 +6,9 @@
  * trains in this module take a mutable reference to `self` instead of an immutable one.
  */
 
+use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 use num_traits::FromPrimitive;
 use utils::soap::Real;
-use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.
@@ -96,13 +96,7 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn energy_hessian_values(
-        &self,
-        x: &[T],
-        dx: &[T],
-        scale: T,
-        values: &mut [T],
-    );
+    fn energy_hessian_values(&self, x: &[T], dx: &[T], scale: T, values: &mut [T]);
 
     /*
      * Below are convenience functions for auxiliary applications. Users should provide custom
@@ -158,7 +152,12 @@ pub trait EnergyHessian<T: Real>: EnergyHessianTopology {
 
 /// Construct an ArrayFire matrix.
 #[cfg(feature = "af")]
-fn energy_hessian_af<E: EnergyHessian<f64>>(e: &E, x: &[f64], dx: &[f64], scale: f64) -> af::Array<f64> {
+fn energy_hessian_af<E: EnergyHessian<f64>>(
+    e: &E,
+    x: &[f64],
+    dx: &[f64],
+    scale: f64,
+) -> af::Array<f64> {
     let nnz = e.energy_hessian_size();
     let mut rows = vec![0i32; nnz];
     let mut cols = vec![0i32; nnz];
@@ -198,7 +197,12 @@ fn energy_hessian_af<E: EnergyHessian<f64>>(e: &E, x: &[f64], dx: &[f64], scale:
 
 /// Construct a sparse matrix in CSR format.
 #[allow(dead_code)]
-fn energy_hessian_sprs<E: EnergyHessian<f64>>(e: &E, x: &[f64], dx: &[f64], scale: f64) -> sprs::CsMat<f64> {
+fn energy_hessian_sprs<E: EnergyHessian<f64>>(
+    e: &E,
+    x: &[f64],
+    dx: &[f64],
+    scale: f64,
+) -> sprs::CsMat<f64> {
     let nnz = e.energy_hessian_size();
     let mut indices = vec![MatrixElementIndex { row: 0, col: 0 }; nnz];
     e.energy_hessian_indices(indices.as_mut_slice());

@@ -1,8 +1,8 @@
 use crate::attrib_defines::*;
-use crate::energy_models::Either;
 use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
+use crate::energy_models::Either;
 use crate::objects::{material::*, *};
 use crate::{TetMesh, TriMesh};
 use geo::mesh::Attrib;
@@ -35,7 +35,9 @@ impl Object for TetMeshSolid {
     fn material_scale(&self) -> f32 {
         self.material.scale()
     }
-    fn material_id(&self) -> usize { self.material.id }
+    fn material_id(&self) -> usize {
+        self.material.id
+    }
 }
 
 impl DynamicObject for TetMeshSolid {
@@ -66,8 +68,12 @@ impl TetMeshSolid {
     }
 }
 
-impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>>> for TetMeshSolid {
-    fn elasticity(&'a self) -> Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>> {
+impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>>>
+    for TetMeshSolid
+{
+    fn elasticity(
+        &'a self,
+    ) -> Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>> {
         match self.material.model() {
             ElasticityModel::NeoHookean => Either::Left(TetMeshNeoHookean::new(self)),
             ElasticityModel::StableNeoHookean => Either::Right(TetMeshStableNeoHookean::new(self)),

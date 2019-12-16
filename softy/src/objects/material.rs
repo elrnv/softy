@@ -256,7 +256,8 @@ impl ShellMaterial {
             ShellMaterial::Fixed(m) => m.with_elasticity(elasticity),
             ShellMaterial::Rigid(m) => m.with_elasticity(elasticity),
             ShellMaterial::Soft(m) => m.with_elasticity(elasticity),
-        }.into()
+        }
+        .into()
     }
 
     /// Add damping to this material.
@@ -267,7 +268,8 @@ impl ShellMaterial {
             ShellMaterial::Fixed(m) => m.with_damping(damping, time_step),
             ShellMaterial::Rigid(m) => m.with_damping(damping, time_step),
             ShellMaterial::Soft(m) => m.with_damping(damping, time_step),
-        }.into()
+        }
+        .into()
     }
 
     /// Add density to this material.
@@ -289,7 +291,8 @@ impl ShellMaterial {
             ShellMaterial::Fixed(m) => m.with_bending_stiffness(stiffness),
             ShellMaterial::Rigid(m) => m.with_bending_stiffness(stiffness),
             ShellMaterial::Soft(m) => m.with_bending_stiffness(stiffness),
-        }.into()
+        }
+        .into()
     }
 }
 
@@ -382,7 +385,10 @@ impl SoftShellMaterial {
     ///
     /// This may improve solver performance.
     pub fn normalized(mut self) -> SoftShellMaterial {
-        let SoftShellProperties { deformable, bending_stiffness } = &mut self.properties;
+        let SoftShellProperties {
+            deformable,
+            bending_stiffness,
+        } = &mut self.properties;
         *deformable = deformable.normalized();
         bending_stiffness.as_mut().map(|s| *s *= deformable.scale());
         self
@@ -399,7 +405,9 @@ impl SoftShellMaterial {
     /// Get the unscaled bending stiffness parameter. This is the quantity that this material was
     /// created with.
     pub fn bending_stiffness(&self) -> Option<f32> {
-        self.properties.bending_stiffness.map(|s| s / self.properties.deformable.scale())
+        self.properties
+            .bending_stiffness
+            .map(|s| s / self.properties.deformable.scale())
     }
 }
 
@@ -428,7 +436,10 @@ impl SolidMaterial {
         self.properties.volume_preservation
     }
     pub fn model(&self) -> ElasticityModel {
-        self.properties.deformable.elasticity.map_or(ElasticityModel::NeoHookean, |x| x.model)
+        self.properties
+            .deformable
+            .elasticity
+            .map_or(ElasticityModel::NeoHookean, |x| x.model)
     }
 }
 
@@ -588,17 +599,13 @@ impl ElasticityParameters {
     /// Construct elasticity parameters from standard Lame parameters.
     pub fn from_lame(lambda: f32, mu: f32, model: ElasticityModel) -> Self {
         match model {
-            ElasticityModel::NeoHookean => ElasticityParameters {
-                model,
-                lambda,
-                mu,
-            },
+            ElasticityModel::NeoHookean => ElasticityParameters { model, lambda, mu },
             // In case of Stable NeoHookean, we need to reparameterize lame coefficients.
             ElasticityModel::StableNeoHookean => ElasticityParameters {
                 model,
                 lambda: lambda + 5.0 * mu / 6.0,
                 mu: 4.0 * mu / 3.0,
-            }
+            },
         }
     }
 
@@ -618,7 +625,11 @@ impl ElasticityParameters {
         Self::from_lame(bulk - 2.0 * shear / 3.0, shear, model)
     }
     pub fn from_young_poisson_with_model(young: f32, poisson: f32, model: ElasticityModel) -> Self {
-        Self::from_lame(young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson), young / (2.0 * (1.0 + poisson)), model)
+        Self::from_lame(
+            young * poisson / (1.0 + poisson) * (1.0 - 2.0 * poisson),
+            young / (2.0 * (1.0 + poisson)),
+            model,
+        )
     }
 }
 

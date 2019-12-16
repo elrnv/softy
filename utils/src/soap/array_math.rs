@@ -699,8 +699,8 @@ macro_rules! impl_array_vectors {
             /// The entries appear in row-major order as usual.
             #[inline]
             #[unroll_for_loops]
-            pub fn lower_triangular_vec(&self) -> Tensor<[Tensor<T>; ($n*($n - 1))/2 + $n]> {
-                const LEN: usize = ($n*($n - 1))/2 + $n;
+            pub fn lower_triangular_vec(&self) -> Tensor<[Tensor<T>; ($n * ($n - 1)) / 2 + $n]> {
+                const LEN: usize = ($n * ($n - 1)) / 2 + $n;
                 let mut v: [MaybeUninit<T>; LEN] = unsafe { MaybeUninit::uninit().assume_init() };
 
                 let mut i = 0;
@@ -1127,7 +1127,6 @@ macro_rules! impl_array_matrices {
                 lhs * rhs
             }
         }
-
 
         // Right scalar multiply by a raw scalar.
         //impl<T: Scalar> Mul<T> for Tensor<[[T; $c]; $r]> {

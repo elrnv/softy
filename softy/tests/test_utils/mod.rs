@@ -3,7 +3,8 @@ pub use softy::test_utils::*;
 
 /// Utility function to compare positions of two meshes.
 pub fn compare_meshes<M>(solution: &M, expected: &M, tol: f64)
-where M: VertexPositions<Element = [f64; 3]>
+where
+    M: VertexPositions<Element = [f64; 3]>,
 {
     use approx::*;
     for (pos, expected_pos) in solution

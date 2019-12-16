@@ -194,7 +194,8 @@ impl<T> Target for VecIterExpr<T> {
 }
 
 impl<S, N> Target for UniChunkedIterExpr<S, N>
-where Self: ExprSize
+where
+    Self: ExprSize,
 {
     type Target = Self;
 
@@ -209,7 +210,8 @@ where Self: ExprSize
 }
 
 impl<'a, S> Target for ChunkedIterExpr<'a, S>
-where Self: ExprSize
+where
+    Self: ExprSize,
 {
     type Target = Self;
 
@@ -224,7 +226,8 @@ where Self: ExprSize
 }
 
 impl<'a, S> Target for SubsetIterExpr<'a, S>
-where Self: ExprSize
+where
+    Self: ExprSize,
 {
     type Target = Self;
 

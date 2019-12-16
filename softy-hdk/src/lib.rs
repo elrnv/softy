@@ -327,19 +327,24 @@ pub unsafe extern "C" fn el_softy_step(
 ) -> EL_SoftyStepResult {
     let (tetmesh_mb, polymesh_mb, cook_result) = if let Some(solver) = validate_solver_ptr(solver) {
         match solver.try_lock() {
-            Ok(mut solver) => {
-                 api::step(
-                    &mut *solver,
-                    interop::into_box(tetmesh_points),
-                    interop::into_box(polymesh_points),
-                    interop::interrupt_callback(interrupt_checker, check_interrupt),
-                )
-            }
-            Err(err) =>
-                (None, None, hdkrs::interop::CookResult::Error(format!("Global solver lock: {}", err))),
+            Ok(mut solver) => api::step(
+                &mut *solver,
+                interop::into_box(tetmesh_points),
+                interop::into_box(polymesh_points),
+                interop::interrupt_callback(interrupt_checker, check_interrupt),
+            ),
+            Err(err) => (
+                None,
+                None,
+                hdkrs::interop::CookResult::Error(format!("Global solver lock: {}", err)),
+            ),
         }
     } else {
-        (None, None, hdkrs::interop::CookResult::Error("Invalid solver".to_string()))
+        (
+            None,
+            None,
+            hdkrs::interop::CookResult::Error("Invalid solver".to_string()),
+        )
     };
 
     if let Some(solver_tetmesh) = tetmesh_mb {

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, BatchSize};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use geo::mesh::PolyMesh;
 use geo::ops::*;
 use softy::{test_utils::*, *};
@@ -48,51 +48,73 @@ fn box_squish(c: &mut Criterion) {
         let (top_grid, bottom_grid) = make_grids(10);
 
         let mut builder = SolverBuilder::new(SQUISH_PARAMS);
-        builder.add_solid(contact_box.clone(), stretch_material())
+        builder
+            .add_solid(contact_box.clone(), stretch_material())
             .add_fixed(top_grid.clone(), 1)
             .add_fixed(bottom_grid.clone(), 1)
             .add_frictional_contact(fc_point, (1, 0));
 
         let mut builder_lin = SolverBuilder::new(SQUISH_PARAMS);
-        builder_lin.add_solid(contact_box.clone(), stretch_material())
+        builder_lin
+            .add_solid(contact_box.clone(), stretch_material())
             .add_fixed(top_grid.clone(), 1)
             .add_fixed(bottom_grid.clone(), 1)
             .add_frictional_contact(fc_lin_point, (1, 0));
 
         group.bench_function(BenchmarkId::new("Point Contact Grid 10", i), |b| {
-            b.iter_batched_ref(|| builder.build().unwrap(),
-               |engine| engine.step().is_ok(), BatchSize::NumIterations(15))
+            b.iter_batched_ref(
+                || builder.build().unwrap(),
+                |engine| engine.step().is_ok(),
+                BatchSize::NumIterations(15),
+            )
         });
 
-        group.bench_function(BenchmarkId::new("Linearized Point Contact Grid 10", i), |b| {
-            b.iter_batched_ref(|| builder_lin.build().unwrap(),
-               |engine| engine.step().is_ok(), BatchSize::NumIterations(15))
-        });
+        group.bench_function(
+            BenchmarkId::new("Linearized Point Contact Grid 10", i),
+            |b| {
+                b.iter_batched_ref(
+                    || builder_lin.build().unwrap(),
+                    |engine| engine.step().is_ok(),
+                    BatchSize::NumIterations(15),
+                )
+            },
+        );
 
         // 20x20 grids
         let (top_grid, bottom_grid) = make_grids(20);
 
         let mut builder = SolverBuilder::new(SQUISH_PARAMS);
-        builder.add_solid(contact_box.clone(), stretch_material())
+        builder
+            .add_solid(contact_box.clone(), stretch_material())
             .add_fixed(top_grid.clone(), 1)
             .add_fixed(bottom_grid.clone(), 1)
             .add_frictional_contact(fc_point, (1, 0));
 
         let mut builder_lin = SolverBuilder::new(SQUISH_PARAMS);
-        builder_lin.add_solid(contact_box.clone(), stretch_material())
+        builder_lin
+            .add_solid(contact_box.clone(), stretch_material())
             .add_fixed(top_grid.clone(), 1)
             .add_fixed(bottom_grid.clone(), 1)
             .add_frictional_contact(fc_lin_point, (1, 0));
 
         group.bench_function(BenchmarkId::new("Point Contact Grid 20", i), |b| {
-            b.iter_batched_ref(|| builder.build().unwrap(),
-               |engine| engine.step().is_ok(), BatchSize::NumIterations(15))
+            b.iter_batched_ref(
+                || builder.build().unwrap(),
+                |engine| engine.step().is_ok(),
+                BatchSize::NumIterations(15),
+            )
         });
 
-        group.bench_function(BenchmarkId::new("Linearized Point Contact Grid 20", i), |b| {
-            b.iter_batched_ref(|| builder_lin.build().unwrap(),
-               |engine| engine.step().is_ok(), BatchSize::NumIterations(15))
-        });
+        group.bench_function(
+            BenchmarkId::new("Linearized Point Contact Grid 20", i),
+            |b| {
+                b.iter_batched_ref(
+                    || builder_lin.build().unwrap(),
+                    |engine| engine.step().is_ok(),
+                    BatchSize::NumIterations(15),
+                )
+            },
+        );
     }
 
     group.finish();

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use utils::soap::*;
 //use rayon::prelude::*;
 //use approx::assert_relative_eq;
@@ -8,9 +8,7 @@ pub fn random_vec(n: usize) -> Vec<f64> {
     use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     let range = Uniform::new(-1.0, 1.0);
-    (0..n)
-        .map(move |_| rng.sample(range))
-        .collect()
+    (0..n).map(move |_| rng.sample(range)).collect()
 }
 
 pub fn lazy_expr(a: ChunkedN<&[f64]>, b: ChunkedN<&[f64]>) -> ChunkedN<Vec<f64>> {
@@ -50,27 +48,51 @@ fn matrix_matrix_add_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Matrix Matrix Add");
 
     for &n in &[100, 250, 500, 750, 1000, 2500, 5000] {
-        let a = ChunkedN::from_flat_with_stride(random_vec(n*n), n);
-        let b = ChunkedN::from_flat_with_stride(random_vec(n*n), n);
+        let a = ChunkedN::from_flat_with_stride(random_vec(n * n), n);
+        let b = ChunkedN::from_flat_with_stride(random_vec(n * n), n);
 
-        group.bench_with_input(BenchmarkId::new("Lazy Expr", n), &(&a, &b),
+        group.bench_with_input(
+            BenchmarkId::new("Lazy Expr", n),
+            &(&a, &b),
             |bench, (a, b)| {
-                bench.iter_batched(|| (a.view(), b.view()), |(a,b)| lazy_expr(a, b), BatchSize::LargeInput)
-            });
-        group.bench_with_input(BenchmarkId::new("Manual", n), &(&a, &b),
+                bench.iter_batched(
+                    || (a.view(), b.view()),
+                    |(a, b)| lazy_expr(a, b),
+                    BatchSize::LargeInput,
+                )
+            },
+        );
+        group.bench_with_input(BenchmarkId::new("Manual", n), &(&a, &b), |bench, (a, b)| {
+            bench.iter_batched(
+                || (a.view(), b.view()),
+                |(a, b)| manual(a, b),
+                BatchSize::LargeInput,
+            )
+        });
+        group.bench_with_input(
+            BenchmarkId::new("Manual Init", n),
+            &(&a, &b),
             |bench, (a, b)| {
-                bench.iter_batched(|| (a.view(), b.view()), |(a,b)| manual(a, b), BatchSize::LargeInput)
-            });
-        group.bench_with_input(BenchmarkId::new("Manual Init", n), &(&a, &b),
+                bench.iter_batched(
+                    || (a.view(), b.view()),
+                    |(a, b)| manual_init(a, b),
+                    BatchSize::LargeInput,
+                )
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("Manual Assign", n),
+            &(&a, &b),
             |bench, (a, b)| {
-                bench.iter_batched(|| (a.view(), b.view()), |(a,b)| manual_init(a, b), BatchSize::LargeInput)
-            });
-        group.bench_with_input(BenchmarkId::new("Manual Assign", n), &(&a, &b),
-            |bench, (a, b)| {
-                bench.iter_batched(|| ((*a).clone(), b.view()), |(a,b)| manual_assign(a, b), BatchSize::LargeInput)
-            });
+                bench.iter_batched(
+                    || ((*a).clone(), b.view()),
+                    |(a, b)| manual_assign(a, b),
+                    BatchSize::LargeInput,
+                )
+            },
+        );
     }
-        
+
     group.finish();
 }
 

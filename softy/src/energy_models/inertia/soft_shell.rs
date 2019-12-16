@@ -2,7 +2,7 @@ use num_traits::FromPrimitive;
 //use rayon::prelude::*;
 use reinterpret::*;
 
-use geo::mesh::{Attrib, topology::*};
+use geo::mesh::{topology::*, Attrib};
 use geo::prim::Triangle;
 use utils::soap::{AsTensor, IntoTensor, Real, Vector3};
 use utils::zip;
@@ -34,21 +34,19 @@ impl<T: Real> Energy<T> for SoftShellInertia<'_> {
                 .map(|&x| f64::from(x)),
             trimesh.face_iter(),
         )
-            .map(|(&area, density, face)| {
-                let tri_v0 = Triangle::from_indexed_slice(face, vel0);
-                let tri_v1 = Triangle::from_indexed_slice(face, vel1);
-                let dv = tri_v1.into_array().into_tensor() - tri_v0.into_array().into_tensor();
+        .map(|(&area, density, face)| {
+            let tri_v0 = Triangle::from_indexed_slice(face, vel0);
+            let tri_v1 = Triangle::from_indexed_slice(face, vel1);
+            let dv = tri_v1.into_array().into_tensor() - tri_v0.into_array().into_tensor();
 
-                let third = 1.0 / 3.0;
-                T::from(0.5).unwrap() * {
-                    let dvTdv: T = dv
-                        .map(|dv| dv.norm_squared().into_tensor())
-                        .sum();
-                    // momentum
-                    T::from(third * area * density).unwrap() * dvTdv
-                }
-            })
-            .sum()
+            let third = 1.0 / 3.0;
+            T::from(0.5).unwrap() * {
+                let dvTdv: T = dv.map(|dv| dv.norm_squared().into_tensor()).sum();
+                // momentum
+                T::from(third * area * density).unwrap() * dvTdv
+            }
+        })
+        .sum()
     }
 }
 
@@ -81,8 +79,7 @@ impl<T: Real> EnergyGradient<T> for SoftShellInertia<'_> {
 
             let third = 1.0 / 3.0;
             for i in 0..3 {
-                gradient[face[i]] +=
-                    dv[i] * (T::from(third * area * density).unwrap());
+                gradient[face[i]] += dv[i] * (T::from(third * area * density).unwrap());
             }
         }
     }
@@ -105,10 +102,8 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
         let trimesh = &self.0.trimesh;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-            reinterpret_mut_slice(rows);
-        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-            reinterpret_mut_slice(cols);
+        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(rows);
+        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(cols);
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
@@ -163,20 +158,13 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
 
 impl<T: Real> EnergyHessian<T> for SoftShellInertia<'_> {
     #[allow(non_snake_case)]
-    fn energy_hessian_values(
-        &self,
-        _v0: &[T],
-        _v1: &[T],
-        scale: T,
-        values: &mut [T],
-    ) {
+    fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         debug_assert_eq!(values.len(), self.energy_hessian_size());
 
         let SoftShellInertia(ref shell) = *self;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-            reinterpret_mut_slice(values);
+        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(values);
 
         let vol_iter = shell
             .trimesh

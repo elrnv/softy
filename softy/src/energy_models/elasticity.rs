@@ -178,7 +178,12 @@ mod test_utils {
     #[allow(non_snake_case)]
     pub(crate) fn tet_energy_hessian_tester<E: TetEnergy<F>>() {
         let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
-        let deformed_verts = vec![[0.2; 3], [0.01, 1.2, 0.01], [1.01, 0.2, 0.01], [0.01, 0.2, 2.0]];
+        let deformed_verts = vec![
+            [0.2; 3],
+            [0.01, 1.2, 0.01],
+            [1.01, 0.2, 0.01],
+            [0.01, 0.2, 2.0],
+        ];
         //let deformed_verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 2.0]];
         let cell = [0, 1, 2, 3];
 
@@ -236,8 +241,7 @@ mod test_utils {
                 // Print Gradient derivative
                 for wrt_vtx_idx in 0..4 {
                     for j in 0..3 {
-                        autodiff_h[wrt_vtx_idx][vtx_idx][j][i] =
-                            df[wrt_vtx_idx][j].deriv();
+                        autodiff_h[wrt_vtx_idx][vtx_idx][j][i] = df[wrt_vtx_idx][j].deriv();
                     }
                 }
 
@@ -275,7 +279,12 @@ mod test_utils {
     #[allow(non_snake_case)]
     pub(crate) fn tet_energy_hessian_product_tester<E: TetEnergy<f64>>() {
         let verts = vec![[0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
-        let deformed_verts = vec![[0.2; 3], [0.01, 1.2, 0.01], [1.01, 0.2, 0.01], [0.01, 0.2, 2.0]];
+        let deformed_verts = vec![
+            [0.2; 3],
+            [0.01, 1.2, 0.01],
+            [1.01, 0.2, 0.01],
+            [0.01, 0.2, 2.0],
+        ];
         let cell = [0, 1, 2, 3];
 
         let tet_x0 = Tetrahedron::from_indexed_slice(&cell, &verts);
@@ -358,9 +367,11 @@ mod test_utils {
 
         let df = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-                .inverse()
-                .unwrap();
+            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                tri_x0.clone().shape_matrix(),
+            ))
+            .inverse()
+            .unwrap();
             let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
             let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
             energy.energy_gradient()
@@ -381,9 +392,11 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-                    .inverse()
-                    .unwrap();
+                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                    tri_x0.clone().shape_matrix(),
+                ))
+                .inverse()
+                .unwrap();
                 let Dx = Matrix2x3::new(tri_x1.shape_matrix());
                 let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
 
@@ -421,9 +434,11 @@ mod test_utils {
 
         let ddf = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-                .inverse()
-                .unwrap();
+            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                tri_x0.clone().shape_matrix(),
+            ))
+            .inverse()
+            .unwrap();
             let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
             let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
             energy.energy_hessian()
@@ -450,9 +465,11 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-                    .inverse()
-                    .unwrap();
+                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                    tri_x0.clone().shape_matrix(),
+                ))
+                .inverse()
+                .unwrap();
                 let Dx = Matrix2x3::new(tri_x1.shape_matrix());
                 let energy = E::new(Dx, DX_inv, F::cst(1.0), F::cst(1.0), F::cst(1.0));
                 let df = energy.energy_gradient();
@@ -462,8 +479,7 @@ mod test_utils {
                 // Print Gradient derivative
                 for wrt_vtx_idx in 0..3 {
                     for j in 0..3 {
-                        autodiff_h[wrt_vtx_idx][vtx_idx][j][i] =
-                            df[wrt_vtx_idx][j].deriv();
+                        autodiff_h[wrt_vtx_idx][vtx_idx][j][i] = df[wrt_vtx_idx][j].deriv();
                     }
                 }
 
@@ -506,9 +522,10 @@ mod test_utils {
 
         let tri_x0 = Triangle::from_indexed_slice(&face, &verts);
 
-        let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-            .inverse()
-            .unwrap();
+        let DX_inv =
+            TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
+                .inverse()
+                .unwrap();
         let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
         let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
         let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
@@ -528,11 +545,7 @@ mod test_utils {
         }
         eprintln!("");
 
-        let mut d_verts = vec![
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-        ];
+        let mut d_verts = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
 
         for wrt_vtx in 0..2 {
             for wrt_i in 0..3 {

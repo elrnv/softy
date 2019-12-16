@@ -950,9 +950,7 @@ mod tests {
     /// Test the highest level surface Hessian functions with a tetrahedron.
     #[test]
     fn one_tet_hessian_test() -> Result<(), Error> {
-        let qs: Vec<_> = (0..4)
-            .map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0])
-            .collect();
+        let qs: Vec<_> = (0..4).map(|i| [0.0, -0.5 + 0.25 * i as f64, 0.0]).collect();
 
         let trimesh = TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
 

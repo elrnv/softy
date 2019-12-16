@@ -36,8 +36,8 @@ pub use self::contact::*;
 pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};
 pub use self::friction::*;
-pub use self::objects::material::*;
 pub use self::objects::init_mesh_source_index_attribute;
+pub use self::objects::material::*;
 use geo::mesh::attrib;
 pub use utils::index::Index;
 
@@ -188,9 +188,7 @@ impl From<Error> for SimResult {
             Error::InvalidParameter { name } => {
                 SimResult::Error(format!("Invalid parameter: {:?}", name))
             }
-            Error::ObjectMaterialMismatch => {
-                SimResult::Error(err.to_string())
-            }
+            Error::ObjectMaterialMismatch => SimResult::Error(err.to_string()),
             Error::MeshIOError { source } => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", source))
             }

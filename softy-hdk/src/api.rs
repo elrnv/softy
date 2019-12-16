@@ -1,9 +1,9 @@
-use crate::{EL_SoftyMaterialProperties, EL_SoftySimParams, EL_SoftyElasticityModel};
+use crate::{EL_SoftyElasticityModel, EL_SoftyMaterialProperties, EL_SoftySimParams};
 use geo::mesh::attrib::*;
 use geo::mesh::topology::*;
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt, ElasticityModel};
+use softy::{self, fem, ElasticityModel, PointCloud, PolyMesh, TetMesh, TetMeshExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 

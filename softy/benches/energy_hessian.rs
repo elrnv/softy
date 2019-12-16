@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use geo::prim::Tetrahedron;
 use geo::ops::*;
+use geo::prim::Tetrahedron;
 use num_traits::Zero;
+use softy::energy_models::elasticity::{NeoHookeanTetEnergy, StableNeoHookeanTetEnergy, TetEnergy};
 use utils::soap::*;
-use softy::energy_models::elasticity::{TetEnergy, NeoHookeanTetEnergy, StableNeoHookeanTetEnergy};
 
 /// Compute the energy hessian directly using the energy_hessian implementation.
 #[allow(non_snake_case)]
@@ -13,7 +13,9 @@ pub(crate) fn energy_hessian_direct<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4]; 
 
     let tet_x0 = Tetrahedron::from_indexed_slice(&cell, &verts);
 
-    let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix()).inverse_transpose().unwrap();
+    let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix())
+        .inverse_transpose()
+        .unwrap();
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
     energy.energy_hessian()
@@ -27,11 +29,18 @@ pub(crate) fn energy_hessian_product<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4];
 
     let tet_x0 = Tetrahedron::from_indexed_slice(&cell, &verts);
 
-    let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix()).inverse_transpose().unwrap();
+    let DX_inv = Matrix3::new(tet_x0.clone().shape_matrix())
+        .inverse_transpose()
+        .unwrap();
     let Dx = Matrix3::new(tet_x0.clone().shape_matrix()).transpose();
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
 
-    let mut d_verts = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
+    let mut d_verts = [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ];
 
     let mut hess = [[Matrix3::zero(); 4]; 4];
     for wrt_vtx in 0..3 {
@@ -52,7 +61,7 @@ pub(crate) fn energy_hessian_product<E: TetEnergy<f64>>() -> [[Matrix3<f64>; 4];
             d_verts[wrt_vtx][wrt_i] = 0.0;
         }
     }
-    
+
     hess
 }
 
@@ -72,7 +81,10 @@ fn tet_energy_hessian(c: &mut Criterion) {
     //    }
     //}
     //eprintln!("");
-    assert_eq!(energy_hessian_direct::<NeoHookeanTetEnergy<f64>>(), energy_hessian_product::<NeoHookeanTetEnergy<f64>>());
+    assert_eq!(
+        energy_hessian_direct::<NeoHookeanTetEnergy<f64>>(),
+        energy_hessian_product::<NeoHookeanTetEnergy<f64>>()
+    );
 
     group.bench_function(BenchmarkId::new("Direct", "NH"), |b| {
         b.iter(|| energy_hessian_direct::<NeoHookeanTetEnergy<f64>>())

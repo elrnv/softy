@@ -6,12 +6,12 @@
 use crate::kernel::*;
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
+use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use utils::soap::{Matrix, Matrix3, Real, Scalar, Vector3, IntoData};
+use utils::soap::{IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
 use utils::zip;
-use num_traits::ToPrimitive;
 
 macro_rules! apply_kernel_query_fn {
     ($surf:expr, $f:expr) => {

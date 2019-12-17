@@ -31,7 +31,7 @@ impl VolumeConstraint {
 
     pub fn compute_volume(tetmesh: &TetMesh) -> f64 {
         let ref_pos = tetmesh
-            .attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)
+            .attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
             .unwrap();
         tetmesh
             .cell_iter()

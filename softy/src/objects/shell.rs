@@ -271,7 +271,7 @@ impl TriMeshShell {
                 self.init_dynamic_vertex_attributes()?;
             }
             ShellData::Soft { material, .. } => {
-                *material = material.normalized();
+                //*material = material.normalized();
 
                 self.init_deformable_vertex_attributes()?;
 
@@ -325,7 +325,7 @@ impl TriMeshShell {
     /// Compute areas for reference triangles in the given `TriMesh`.
     fn compute_ref_tri_areas(mesh: &mut TriMesh) -> Result<Vec<f64>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
         Ok(ref_pos
             .chunks_exact(3)
             .map(|tri| ref_tri(tri).area())
@@ -353,7 +353,7 @@ impl TriMeshShell {
         mesh: &mut TriMesh,
     ) -> Result<Vec<Matrix2<f64>>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
         Ok(ref_pos
             .chunks_exact(3)
@@ -408,7 +408,7 @@ impl TriMeshShell {
 
         // Initialize edge topology and reference quantities.
         let ref_pos = Chunked3::from_flat(
-            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_POSITION_ATTRIB)?,
+            mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?,
         )
         .into_arrays();
         let mut interior_edges = compute_interior_edge_topology(&mesh);
@@ -504,7 +504,7 @@ impl TriMeshShell {
         let mesh = self.mesh_mut();
         let mut ref_pos = vec![[0.0; 3]; mesh.num_face_vertices()];
         let pos = if let Ok(vtx_ref_pos) =
-            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)
+            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
         {
             // There is a reference attribute on the vertices themselves, just transfer these to
             // face vertices instead of using mesh position.
@@ -525,7 +525,7 @@ impl TriMeshShell {
         }
 
         mesh.attrib_or_add_data::<RefPosType, FaceVertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
+            REFERENCE_FACE_VERTEX_POS_ATTRIB,
             ref_pos.as_slice(),
         )?;
         Ok(())

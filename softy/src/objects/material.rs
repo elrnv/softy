@@ -383,7 +383,9 @@ impl SoftShellMaterial {
 
     /// Normalize the parameters stored in this material.
     ///
-    /// This may improve solver performance.
+    /// This may be used to improve solver performance.
+    /// Note that all materials must be scaled uniformly, otherwise their interaction
+    /// will produce unpredictable results.
     pub fn normalized(mut self) -> SoftShellMaterial {
         let SoftShellProperties {
             deformable,

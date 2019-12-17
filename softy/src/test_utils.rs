@@ -67,7 +67,7 @@ pub fn make_one_tri_mesh() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<_, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -102,7 +102,7 @@ pub fn make_two_tri_mesh() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -131,7 +131,7 @@ pub fn make_three_tri_mesh() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -158,7 +158,7 @@ pub fn make_four_tri_mesh() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -183,7 +183,7 @@ pub fn make_four_tri_mesh_unoriented() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -204,7 +204,7 @@ pub fn make_one_tet_trimesh() -> TriMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -225,7 +225,7 @@ pub fn make_one_tet_mesh() -> TetMesh {
         .iter()
         .map(|&x| Vector3::new(x).cast::<f32>().into_data())
         .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, verts_f32)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, verts_f32)
         .unwrap();
     mesh
 }
@@ -251,7 +251,7 @@ pub fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
         [1.0, 0.0, 1.0],
     ];
 
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .unwrap();
     mesh
 }
@@ -277,7 +277,7 @@ pub fn make_box(i: usize) -> TetMesh {
         .map(|&[a, b, c]| [a as f32, b as f32, c as f32])
         .collect();
     box_mesh
-        .add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB, ref_verts)
+        .add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
     box_mesh
 }

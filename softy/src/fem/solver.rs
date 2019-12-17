@@ -609,7 +609,7 @@ impl SolverBuilder {
     }
 
     /// Helper function to compute the maximum elastic modulus of all given meshes.
-    /// This aids in figuring out the correct scaling for the convergence tolerances.
+    /// This aids in figuring out the correct scaling for the problem.
     fn compute_max_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
         let mut max_modulus = 0.0_f32;
 
@@ -812,7 +812,7 @@ impl SolverBuilder {
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
             .cell_iter()
             .map(|cell| ref_tet(ref_pos, cell).signed_volume())
@@ -827,7 +827,7 @@ impl SolverBuilder {
     fn compute_ref_tet_shape_matrix_inverses(
         mesh: &mut TetMesh,
     ) -> Result<Vec<Matrix3<f64>>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_POSITION_ATTRIB)?;
+        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
         Ok(mesh
             .cell_iter()
@@ -850,7 +850,7 @@ impl SolverBuilder {
             .collect();
 
         mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
-            REFERENCE_POSITION_ATTRIB,
+            REFERENCE_VERTEX_POS_ATTRIB,
             verts.as_slice(),
         )?;
         Ok(())
@@ -920,7 +920,7 @@ impl SolverBuilder {
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
-        solid.material = solid.material.normalized();
+        //solid.material = solid.material.normalized();
 
         solid.init_source_index_attribute()?;
 

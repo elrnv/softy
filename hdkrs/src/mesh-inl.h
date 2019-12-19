@@ -143,29 +143,28 @@ template<>
 HRAttribLocation mesh_vertex_attrib_location<HR_TetMesh>() { return HRAttribLocation::HR_CELLVERTEX; }
 
 // Mark all points and vectors in the given detail that intersect the primitives of interest.
-std::pair<std::vector<bool>, std::vector<bool>>
-mark_points_and_vertices(
+std::tuple<std::vector<bool>, std::size_t>
+mark_points_and_count_vertices(
         const GU_Detail *detail,
         GA_PrimitiveTypeId prim_type_id)
 {
     std::vector<bool> points(detail->getNumPointOffsets(), false);
-    std::vector<bool> vertices(detail->getNumVertexOffsets(), false);
+    std::size_t num_vertices = 0;
     for ( GA_Offset prim_off : detail->getPrimitiveRange() )
     {
         const GEO_Primitive *prim = detail->getGEOPrimitive(prim_off);
         if (prim->getTypeId() == prim_type_id)
         {
-            GA_Size num_verts = detail->getPrimitiveVertexCount(prim_off);
-            for ( GA_Size idx = 0; idx < num_verts; ++idx ) {
+            GA_Size num_prim_verts = detail->getPrimitiveVertexCount(prim_off);
+            num_vertices += num_prim_verts;
+            for ( GA_Size idx = 0; idx < num_prim_verts; ++idx ) {
                 auto vtx_off = detail->getPrimitiveVertexOffset(prim_off, idx);
-                vertices[vtx_off] = true;
-                auto pt_off = detail->vertexPoint(vtx_off);
-                points[pt_off] = true;
+                points[detail->vertexPoint(vtx_off)] = true;
             }
         }
     }
 
-    return std::make_pair(std::move(points), std::move(vertices));
+    return std::make_pair(std::move(points), num_vertices);
 }
 
 template<typename T, typename M, typename S = T>
@@ -230,20 +229,23 @@ void fill_vertex_attrib(
         const GA_Attribute *attrib,
         std::size_t tuple_size,
         std::size_t num_elem,
-        const std::vector<bool> &group,
         M *mesh)
 {
     std::vector<T> data(tuple_size*num_elem);
     int i = 0;
-    for ( GA_Offset vtx_off : detail->getVertexRange() )
-    {
-        if (!group[vtx_off]) continue;
-        for ( int k = 0, k_end = tuple_size; k < k_end; ++k ) {
-            S val;
-            aif->get(attrib, vtx_off, val, k);
-            data[tuple_size*i + k] = val;
+    for ( GA_Offset prim_off : detail->getPrimitiveRange() ) {
+        const GEO_Primitive *prim = detail->getGEOPrimitive(prim_off);
+        if (prim->getTypeId() != mesh_prim_type_id<M>()) continue;
+        GA_Size num_prim_verts = detail->getPrimitiveVertexCount(prim_off);
+        for (GA_Size idx = 0; idx < num_prim_verts; ++idx) {
+            auto vtx_off = detail->getPrimitiveVertexOffset(prim_off, idx);
+            for (int k = 0, k_end = tuple_size; k < k_end; ++k) {
+                S val;
+                aif->get(attrib, vtx_off, val, k);
+                data[tuple_size * i + k] = val;
+            }
+            i += 1;
         }
-        i += 1;
     }
 
     auto name = attrib->getName().c_str();
@@ -329,7 +331,6 @@ void fill_vertex_str_attrib(
         const GA_Attribute *attrib,
         std::size_t tuple_size,
         std::size_t num_elem,
-        const std::vector<bool> &group,
         M *mesh)
 {
     // Try with different types
@@ -343,14 +344,18 @@ void fill_vertex_str_attrib(
     std::vector<int64_t> indices(tuple_size*num_elem, -1);
 
     int i = 0;
-    for ( GA_Offset vtx_off : detail->getVertexRange() )
-    {
-        if (!group[vtx_off]) continue;
-        for ( int k = 0, k_end = tuple_size; k < k_end; ++k ) {
-            GA_StringIndexType handle = aif->getHandle(attrib, vtx_off, k);
-            indices[tuple_size*i + k] = handle > -1 ? ids[handle] : -1;
+    for ( GA_Offset prim_off : detail->getPrimitiveRange() ) {
+        const GEO_Primitive *prim = detail->getGEOPrimitive(prim_off);
+        if (prim->getTypeId() != mesh_prim_type_id<M>()) continue;
+        GA_Size num_prim_verts = detail->getPrimitiveVertexCount(prim_off);
+        for (GA_Size idx = 0; idx < num_prim_verts; ++idx) {
+            auto vtx_off = detail->getPrimitiveVertexOffset(prim_off, idx);
+            for (int k = 0, k_end = tuple_size; k < k_end; ++k) {
+                GA_StringIndexType handle = aif->getHandle(attrib, vtx_off, k);
+                indices[tuple_size * i + k] = handle > -1 ? ids[handle] : -1;
+            }
+            i += 1;
         }
-        i += 1;
     }
 
     auto name = attrib->getName().c_str();
@@ -450,9 +455,8 @@ void transfer_point_attributes(const GU_Detail* detail, M* mesh, const std::vect
 
 // Transfer attributes from vertices marked in the given vtx_grp
 template<typename M>
-void transfer_vertex_attributes(const GU_Detail* detail, M* mesh, const std::vector<bool>& vtx_grp)
+void transfer_vertex_attributes(const GU_Detail* detail, M* mesh, std::size_t num_vertices)
 {
-    std::size_t num_vertices = std::count(vtx_grp.begin(), vtx_grp.end(), true);
     for (auto it = detail->getAttributeDict(GA_ATTRIB_VERTEX).begin(GA_SCOPE_PUBLIC); !it.atEnd(); ++it)
     {
         GA_Attribute *attrib = it.attrib();
@@ -463,17 +467,17 @@ void transfer_vertex_attributes(const GU_Detail* detail, M* mesh, const std::vec
             {
                 switch (aif->getStorage(attrib)) {
                     case GA_STORE_BOOL:
-                        fill_vertex_attrib<int8, M, int32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<int8, M, int32>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     case GA_STORE_INT8:
-                        fill_vertex_attrib<int8, M, int32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<int8, M, int32>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     case GA_STORE_INT32:
-                        fill_vertex_attrib<int32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<int32>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     case GA_STORE_INT64:
-                        fill_vertex_attrib<int64_t>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<int64_t>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     case GA_STORE_REAL32:
-                        fill_vertex_attrib<fpreal32>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<fpreal32>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     case GA_STORE_REAL64:
-                        fill_vertex_attrib<fpreal64>(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh); break;
+                        fill_vertex_attrib<fpreal64>(detail, aif, attrib, tuple_size, num_vertices, mesh); break;
                     default: break; // do nothing
                 }
             }
@@ -484,7 +488,7 @@ void transfer_vertex_attributes(const GU_Detail* detail, M* mesh, const std::vec
             auto aif = attrib->getAIFSharedStringTuple(); // array of strings
             if ( aif ) {
                 aif->compactStorage(attrib);
-                fill_vertex_str_attrib(detail, aif, attrib, tuple_size, num_vertices, vtx_grp, mesh);
+                fill_vertex_str_attrib(detail, aif, attrib, tuple_size, num_vertices, mesh);
             }
         }
 
@@ -499,11 +503,12 @@ void transfer_attributes(const GU_Detail* detail, M* mesh, std::size_t num_prims
 {
     transfer_primitive_attributes(detail, mesh, num_prims);
 
-    std::vector<bool> pt_grp, vtx_grp;
-    std::tie(pt_grp, vtx_grp) = mark_points_and_vertices(detail, mesh_prim_type_id<M>());
+    std::size_t num_vertices = 0;
+    std::vector<bool> pt_grp;
+    std::tie(pt_grp, num_vertices) = mark_points_and_count_vertices(detail, mesh_prim_type_id<M>());
 
     transfer_point_attributes(detail, mesh, pt_grp);
-    transfer_vertex_attributes(detail, mesh, vtx_grp);
+    transfer_vertex_attributes(detail, mesh, num_vertices);
 }
 
 template<typename HandleType, typename ArrayType>
@@ -746,7 +751,7 @@ void update_points(GU_Detail* detail, OwnedPtr<HR_PointCloud> ptcloud_ptr) {
 }
 
 OwnedPtr<HR_TetMesh> build_tetmesh(const GU_Detail *detail) {
-    // Get tets for the body from the first input
+    // Get tets for the solid from the first input
     std::vector<double> tet_vertices;
     tet_vertices.reserve(3*detail->getNumPointOffsets());
     std::vector<std::size_t> tet_indices;

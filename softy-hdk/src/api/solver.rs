@@ -1,5 +1,5 @@
 use geo::mesh::attrib::*;
-use softy::{fem, Error, PointCloud, SolveResult, TetMesh, TriMesh};
+use softy::{fem, Error, PointCloud, SolveResult, TetMesh, TriMesh, SOURCE_INDEX_ATTRIB};
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856
@@ -23,11 +23,11 @@ impl Solver for fem::Solver {
     }
     #[inline]
     fn solid_mesh(&self) -> TetMesh {
-        use geo::algo::Merge;
-        let mut tetmesh = TetMesh::default();
-        for solid in self.solids().iter() {
-            tetmesh.merge(solid.tetmesh.clone());
-        }
+        let mut tetmesh = TetMesh::merge_with_vertex_source(
+            self.solids().iter().map(|s| &s.tetmesh),
+            SOURCE_INDEX_ATTRIB,
+        )
+        .expect("Missing source index attribute.");
         tetmesh
             .set_attrib::<i32, geo::CellIndex>("object_type", 0)
             .unwrap();
@@ -35,12 +35,11 @@ impl Solver for fem::Solver {
     }
     #[inline]
     fn shell_mesh(&self) -> TriMesh {
-        use geo::algo::Merge;
-        let mut trimesh = TriMesh::default();
-        for shell in self.shells().iter() {
-            trimesh.merge(shell.trimesh.clone());
-        }
-
+        let mut trimesh = TriMesh::merge_with_vertex_source(
+            self.shells().iter().map(|s| &s.trimesh),
+            SOURCE_INDEX_ATTRIB,
+        )
+        .expect("Missing source index attribute.");
         trimesh
             .set_attrib::<i32, geo::FaceIndex>("object_type", 1)
             .unwrap();

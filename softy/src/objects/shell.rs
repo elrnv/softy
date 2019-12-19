@@ -270,9 +270,7 @@ impl TriMeshShell {
             ShellData::Rigid { .. } => {
                 self.init_dynamic_vertex_attributes()?;
             }
-            ShellData::Soft { material, .. } => {
-                //*material = material.normalized();
-
+            ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
 
                 self.init_deformable_attributes()?;
@@ -303,7 +301,6 @@ impl TriMeshShell {
 
     pub(crate) fn init_deformable_attributes(&mut self) -> Result<(), Error> {
         self.init_vertex_face_ref_pos_attribute()?;
-        self.init_bending_attributes()?;
 
         let mesh = &mut self.trimesh;
 
@@ -319,6 +316,8 @@ impl TriMeshShell {
             ref_shape_mtx_inverses.as_slice(),
         )?;
 
+        self.init_bending_attributes()?;
+
         Ok(())
     }
 
@@ -326,10 +325,19 @@ impl TriMeshShell {
     fn compute_ref_tri_areas(mesh: &mut TriMesh) -> Result<Vec<f64>, Error> {
         let ref_pos =
             mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
-        Ok(ref_pos
+        let areas: Vec<_> = ref_pos
             .chunks_exact(3)
             .map(|tri| ref_tri(tri).area())
-            .collect())
+            .collect();
+        let degens: Vec<_> = areas
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &a)| if a <= 0.0 { Some(i) } else { None })
+            .collect();
+        if !degens.is_empty() {
+            return Err(Error::DegenerateReferenceElement { degens });
+        }
+        Ok(areas)
     }
 
     /// Convert a 3D triangle shape matrix into a 2D matrix assuming an isotropic deformation

@@ -55,6 +55,10 @@ pub enum Error {
     AttribError {
         source: attrib::Error,
     },
+    /// Degenerate reference element detected
+    DegenerateReferenceElement {
+        degens: Vec<usize>,
+    },
     InvertedReferenceElement,
     /// Error during main solve step. This reports iterations, objective value and max inner
     /// iterations.
@@ -188,7 +192,6 @@ impl From<Error> for SimResult {
             Error::InvalidParameter { name } => {
                 SimResult::Error(format!("Invalid parameter: {:?}", name))
             }
-            Error::ObjectMaterialMismatch => SimResult::Error(err.to_string()),
             Error::MeshIOError { source } => {
                 SimResult::Error(format!("Error during mesh I/O: {:?}", source))
             }
@@ -204,6 +207,7 @@ impl From<Error> for SimResult {
             Error::UnimplementedFeature { description } => {
                 SimResult::Error(format!("Unimplemented feature: {:?}", description))
             }
+            _ => SimResult::Error(err.to_string()),
         }
     }
 }
@@ -252,6 +256,6 @@ where
 {
     iter.into_iter()
         .map(|x| x.abs())
-        .max_by(|a, b| a.partial_cmp(b).expect("Detected NaNs"))
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
         .unwrap_or(0.0)
 }

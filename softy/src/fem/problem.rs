@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use ipopt::{self, Number};
 use log::{debug, error, trace};
 
+use crate::TriMesh;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use utils::soap::Vector3;
 use utils::{soap::*, zip};
@@ -748,7 +749,7 @@ impl ObjectData {
             let source_index_iter = solid
                 .tetmesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx));
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx as usize));
 
             // Only update fixed vertices, if no such attribute exists, return an error.
             let fixed_iter = solid
@@ -814,7 +815,7 @@ impl ObjectData {
             let source_index_iter = shell
                 .trimesh
                 .attrib_iter::<SourceIndexType, VertexIndex>(SOURCE_INDEX_ATTRIB)?;
-            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx));
+            let new_pos_iter = source_index_iter.map(|&idx| new_pos.get(idx as usize));
 
             match shell.data {
                 ShellData::Soft { .. } => {
@@ -852,7 +853,7 @@ impl ObjectData {
                         }
                         FixedVerts::One(vtx) => {
                             // For 1 fixed vertex, assign the appropriate velocity to that vertex.
-                            if let Some(&new_pos) = new_pos.get(source_indices[vtx]) {
+                            if let Some(&new_pos) = new_pos.get(source_indices[vtx] as usize) {
                                 *(&mut vel[vtx]).as_mut_tensor() =
                                     (new_pos.into_tensor() - pos[vtx].into_tensor()) * dt_inv;
                                 // Position will by updated by the solve automatically.
@@ -862,8 +863,8 @@ impl ObjectData {
                             // For 2 fixed vertices.
                             // TODO: This may be a bad idea since it may generate infeasible configurations
                             //       quite easily. Rsolve this.
-                            if let Some(&p0) = new_pos.get(source_indices[verts[0]]) {
-                                if let Some(&p1) = new_pos.get(source_indices[verts[1]]) {
+                            if let Some(&p0) = new_pos.get(source_indices[verts[0]] as usize) {
+                                if let Some(&p1) = new_pos.get(source_indices[verts[1]] as usize) {
                                     *(&mut vel[verts[0]]).as_mut_tensor() =
                                         (p0.into_tensor() - pos[verts[0]].into_tensor()) * dt_inv;
                                     *(&mut vel[verts[1]]).as_mut_tensor() =
@@ -1278,6 +1279,15 @@ impl NonLinearProblem {
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     "forward_friction",
                     friction_impulse.view().at(0).at(idx).view().into(),
+                )
+                .ok();
+        }
+        for (idx, shell) in self.object_data.shells.iter_mut().enumerate() {
+            shell
+                .trimesh
+                .set_attrib_data::<FrictionImpulseType, VertexIndex>(
+                    "forward_friction",
+                    friction_impulse.view().at(1).at(idx).view().into(),
                 )
                 .ok();
         }
@@ -1784,6 +1794,92 @@ impl NonLinearProblem {
         is_finished
     }
 
+    /// Given a trimesh, compute the strain energy per triangle.
+    fn compute_trimesh_strain_energy_attrib(mesh: &mut TriMesh) {
+        use geo::ops::ShapeMatrix;
+        // Overwrite the "strain_energy" attribute.
+        let mut strain = mesh
+            .remove_attrib::<FaceIndex>(STRAIN_ENERGY_ATTRIB)
+            .unwrap();
+        strain
+            .iter_mut::<f64>()
+            .unwrap()
+            .zip(zip!(
+                mesh.attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                mesh.attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                mesh.attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                    .unwrap(),
+                mesh.attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(
+                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                )
+                .unwrap(),
+                mesh.tri_iter()
+            ))
+            .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tri))| {
+                let shape_mtx = Matrix2x3::new(tri.shape_matrix());
+                *strain =
+                    NeoHookeanTriEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu).energy()
+            });
+
+        mesh.insert_attrib::<FaceIndex>(STRAIN_ENERGY_ATTRIB, strain)
+            .unwrap();
+    }
+
+    /// Given a trimesh, compute the elastic forces per vertex, and save it at a vertex attribute.
+    fn compute_trimesh_elastic_forces_attrib(trimesh: &mut TriMesh) {
+        use geo::ops::ShapeMatrix;
+        let mut forces_attrib = trimesh
+            .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
+            .unwrap();
+
+        let mut forces =
+            Chunked3::from_array_slice_mut(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+
+        // Reset forces
+        for f in forces.iter_mut() {
+            *f = [0.0; 3];
+        }
+
+        let grad_iter = zip!(
+            trimesh
+                .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            trimesh
+                .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            trimesh
+                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                .unwrap(),
+            trimesh
+                .attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                .unwrap(),
+            trimesh.tri_iter()
+        )
+        .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tri)| {
+            let shape_mtx = Matrix2x3::new(tri.shape_matrix());
+            NeoHookeanTriEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
+                .energy_gradient()
+        });
+
+        for (grad, face) in grad_iter.zip(trimesh.faces().iter()) {
+            for j in 0..3 {
+                let f = Vector3::new(forces[face[j]]);
+                forces[face[j]] = (f - grad[j]).into();
+            }
+        }
+
+        // Reinsert forces back into the attrib map
+        trimesh
+            .insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)
+            .unwrap();
+    }
+
     /// Given a tetmesh, compute the strain energy per tetrahedron.
     fn compute_strain_energy_attrib(solid: &mut TetMeshSolid) {
         use geo::ops::ShapeMatrix;
@@ -1819,7 +1915,7 @@ impl NonLinearProblem {
                 solid.tetmesh.tet_iter()
             ))
             .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
-                let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
+                let shape_mtx = Matrix3::new(tet.shape_matrix());
                 *strain =
                     NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu).energy()
             });
@@ -1868,7 +1964,7 @@ impl NonLinearProblem {
             solid.tetmesh.tet_iter()
         )
         .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
-            let shape_mtx = Matrix3::new(tet.shape_matrix()).transpose();
+            let shape_mtx = Matrix3::new(tet.shape_matrix());
             NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
                 .energy_gradient()
         });
@@ -1915,7 +2011,7 @@ impl NonLinearProblem {
             let mut pot_view_mut =
                 object_data.mesh_vertex_subset(pot.view_mut(), None, fc.collider_index);
             for (&aci, &pot) in active_constraint_indices.iter().zip(workspace_pot.iter()) {
-                pot_view_mut[aci] = pot;
+                pot_view_mut[aci] += pot;
             }
         }
 
@@ -1962,13 +2058,13 @@ impl NonLinearProblem {
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {
-                *imp = *obj_imp;
+                *imp.as_mut_tensor() += *obj_imp.as_tensor();
             }
 
             let mut imp =
                 object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.collider_index);
             for (imp, coll_imp) in imp.iter_mut().zip(coll_imp.iter()) {
-                *imp = *coll_imp;
+                *imp.as_mut_tensor() += *coll_imp.as_tensor();
             }
         }
         impulse
@@ -2013,13 +2109,13 @@ impl NonLinearProblem {
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {
-                *imp = *obj_imp;
+                *imp.as_mut_tensor() += *obj_imp.as_tensor();
             }
 
             let mut imp =
                 object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.collider_index);
             for (imp, coll_imp) in imp.iter_mut().zip(coll_imp.iter()) {
-                *imp = *coll_imp;
+                *imp.as_mut_tensor() += *coll_imp.as_tensor();
             }
         }
         impulse
@@ -2054,7 +2150,7 @@ impl NonLinearProblem {
             let mut nml =
                 object_data.mesh_vertex_subset(normals.view_mut(), None, fc.collider_index);
             for (nml, coll_nml) in nml.iter_mut().zip(coll_nml_view.iter()) {
-                *nml = *coll_nml;
+                *nml.as_mut_tensor() += *coll_nml.as_tensor();
             }
         }
         normals
@@ -2117,15 +2213,16 @@ impl NonLinearProblem {
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp_view.iter()) {
-                *imp = *obj_imp;
+                *imp.as_mut_tensor() += *obj_imp.as_tensor();
             }
 
             let mut imp =
                 object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.collider_index);
             for (imp, coll_imp) in imp.iter_mut().zip(coll_imp_view.iter()) {
-                *imp = *coll_imp;
+                *imp.as_mut_tensor() += *coll_imp.as_tensor();
             }
         }
+        assert_eq!(offset, warm_start.constraint_multipliers.len());
         impulse
     }
 
@@ -2183,14 +2280,16 @@ impl NonLinearProblem {
     fn pressure(&self, contact_impulse: VertexView3<&[f64]>) -> VertexData<Vec<f64>> {
         let mut pressure = self.object_data.build_vertex_data();
         let vertex_areas = self.surface_vertex_areas();
-        for (imp, areas, pres) in zip!(
-            contact_impulse.view().at(0).iter(),
-            vertex_areas.view().at(0).iter(),
-            pressure.view_mut().isolate(0).iter_mut()
-        ) {
-            for (&i, &a, p) in zip!(imp.iter(), areas.iter(), pres.iter_mut()) {
-                if a > 0.0 {
-                    *p = i.as_tensor().norm() / a;
+        for obj_type in 0..2 {
+            for (imp, areas, pres) in zip!(
+                contact_impulse.view().at(obj_type).iter(),
+                vertex_areas.view().at(obj_type).iter(),
+                pressure.view_mut().isolate(obj_type).iter_mut()
+            ) {
+                for (&i, &a, p) in zip!(imp.iter(), areas.iter(), pres.iter_mut()) {
+                    if a > 0.0 {
+                        *p += i.as_tensor().norm() / a;
+                    }
                 }
             }
         }
@@ -2276,7 +2375,65 @@ impl NonLinearProblem {
             // Write back elastic forces on each node.
             Self::compute_elastic_forces_attrib(solid);
         }
-        // TODO: Do the same for shells
+        for (idx, shell) in self.object_data.shells.iter_mut().enumerate() {
+            // Write back friction and contact impulses
+            shell
+                .trimesh
+                .set_attrib_data::<FrictionImpulseType, VertexIndex>(
+                    "friction_corrector",
+                    friction_corrector_impulse
+                        .view()
+                        .at(1)
+                        .at(idx)
+                        .view()
+                        .into(),
+                )
+                .ok();
+            shell
+                .trimesh
+                .set_attrib_data::<FrictionImpulseType, VertexIndex>(
+                    FRICTION_ATTRIB,
+                    friction_impulse.view().at(1).at(idx).view().into(),
+                )
+                .ok();
+            shell
+                .trimesh
+                .set_attrib_data::<ContactImpulseType, VertexIndex>(
+                    CONTACT_ATTRIB,
+                    contact_impulse.view().at(1).at(idx).view().into(),
+                )
+                .ok();
+            shell
+                .trimesh
+                .set_attrib_data::<PotentialType, VertexIndex>(
+                    POTENTIAL_ATTRIB,
+                    potential.view().at(1).at(idx).view().into(),
+                )
+                .ok();
+            shell
+                .trimesh
+                .set_attrib_data::<PressureType, VertexIndex>(
+                    PRESSURE_ATTRIB,
+                    pressure.view().at(1).at(idx).view().into(),
+                )
+                .ok();
+
+            shell
+                .trimesh
+                .set_attrib_data::<FrictionImpulseType, VertexIndex>(
+                    "collider_normals",
+                    normals.view().at(1).at(idx).view().into(),
+                )
+                .ok();
+
+            if let ShellData::Soft { .. } = shell.data {
+                // Write back elastic strain energy for visualization.
+                Self::compute_trimesh_strain_energy_attrib(&mut shell.trimesh);
+
+                // Write back elastic forces on each node.
+                Self::compute_trimesh_elastic_forces_attrib(&mut shell.trimesh);
+            }
+        }
     }
 
     /*

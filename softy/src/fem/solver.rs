@@ -812,7 +812,8 @@ impl SolverBuilder {
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
+        let ref_pos =
+            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
             .cell_iter()
             .map(|cell| ref_tet(ref_pos, cell).signed_volume())
@@ -827,7 +828,8 @@ impl SolverBuilder {
     fn compute_ref_tet_shape_matrix_inverses(
         mesh: &mut TetMesh,
     ) -> Result<Vec<Matrix3<f64>>, Error> {
-        let ref_pos = mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
+        let ref_pos =
+            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
         Ok(mesh
             .cell_iter()
@@ -920,8 +922,6 @@ impl SolverBuilder {
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
     pub(crate) fn prepare_solid_attributes(mut solid: TetMeshSolid) -> Result<TetMeshSolid, Error> {
-        //solid.material = solid.material.normalized();
-
         solid.init_source_index_attribute()?;
 
         solid.init_deformable_vertex_attributes()?;

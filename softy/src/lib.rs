@@ -51,15 +51,20 @@ use snafu::Snafu;
 pub enum Error {
     /// Size mismatch error
     SizeMismatch,
-    #[snafu(display("Attribute error"))] //: {:?}", 0))]
+    #[snafu(display("Attribute error: {:?}", source))]
     AttribError {
         source: attrib::Error,
     },
-    /// Degenerate reference element detected
+    #[snafu(display("Degenerate reference element detected: {:?}", degens[0]))]
     DegenerateReferenceElement {
+        // Degens from Upcountry.
+        // Look, keep it at the end of the laneway. No degens on the property.
         degens: Vec<usize>,
     },
-    InvertedReferenceElement,
+    /// Inverted reference element detected
+    InvertedReferenceElement {
+        inverted: Vec<usize>,
+    },
     /// Error during main solve step. This reports iterations, objective value and max inner
     /// iterations.
     SolveError {
@@ -149,9 +154,6 @@ impl From<Error> for SimResult {
         match err {
             Error::SizeMismatch => SimResult::Error(format!("{}", err)),
             Error::AttribError { source } => SimResult::Error(format!("{}", source)),
-            Error::InvertedReferenceElement => {
-                SimResult::Error("Inverted reference element detected".to_string())
-            }
             Error::SolveError { status, result } => match status {
                 ipopt::SolveStatus::MaximumIterationsExceeded => {
                     SimResult::Warning(format!("Maximum iterations exceeded \n{}", result))

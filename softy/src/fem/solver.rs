@@ -818,8 +818,13 @@ impl SolverBuilder {
             .cell_iter()
             .map(|cell| ref_tet(ref_pos, cell).signed_volume())
             .collect();
-        if ref_volumes.iter().any(|&x| x <= 0.0) {
-            return Err(Error::InvertedReferenceElement);
+        let inverted: Vec<_> = ref_volumes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v <= 0.0 { Some(i) } else { None })
+            .collect();
+        if !inverted.is_empty() {
+            return Err(Error::InvertedReferenceElement { inverted });
         }
         Ok(ref_volumes)
     }

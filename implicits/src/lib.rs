@@ -118,7 +118,7 @@ pub fn mls_from_polymesh<T: Real>(
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    /// Computation was interruped.
+    /// Computation was interrupted.
     Interrupted,
     /// Normals are either missing or have the wrong type.
     MissingNormals,
@@ -140,7 +140,7 @@ pub enum Error {
 impl From<attrib::Error> for Error {
     fn from(err: attrib::Error) -> Self {
         match err {
-            attrib::Error::TypeMismatch => Error::MissingNormals,
+            attrib::Error::TypeMismatch { .. } => Error::MissingNormals,
             _ => Error::Failure,
         }
     }

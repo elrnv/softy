@@ -205,30 +205,23 @@ fn get_shell_material(
             density,
             damping,
             ..
-        }) => {
-            match object_type {
-                EL_SoftyObjectType::Shell => {
-                    Ok(softy::ShellMaterial::new(material_id as usize)
-                       .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
-                               bulk_modulus,
-                               shear_modulus,
-                               ))
-                       .with_bending_stiffness(bending_stiffness)
-                       .with_density(density)
-                       .with_damping(damping, time_step))
-                }
-                EL_SoftyObjectType::Rigid => {
-                    Ok(softy::ShellMaterial::new(material_id as usize)
-                       .with_density(density))
-                }
-                _ => {
-                    Err(Error::MaterialObjectMismatch {
-                        material_id: material_id as u32,
-                        object_type,
-                    })
-                }
+        }) => match object_type {
+            EL_SoftyObjectType::Shell => Ok(softy::ShellMaterial::new(material_id as usize)
+                .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                    bulk_modulus,
+                    shear_modulus,
+                ))
+                .with_bending_stiffness(bending_stiffness)
+                .with_density(density)
+                .with_damping(damping, time_step)),
+            EL_SoftyObjectType::Rigid => {
+                Ok(softy::ShellMaterial::new(material_id as usize).with_density(density))
             }
-        }
+            _ => Err(Error::MaterialObjectMismatch {
+                material_id: material_id as u32,
+                object_type,
+            }),
+        },
         None => Ok(softy::ShellMaterial::new(material_id as usize)),
     }
 }

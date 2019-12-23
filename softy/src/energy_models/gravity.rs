@@ -102,18 +102,18 @@ impl<T: Real> EnergyHessian<T> for TetMeshGravity<'_> {
 }
 
 /*
- * Gravity for TriMeshShell
+ * Gravity for trimesh shells
  */
 
 /// A constant directional force.
-pub struct TriMeshGravity<'a> {
+pub struct SoftShellGravity<'a> {
     shell: &'a TriMeshShell,
     g: Vector3<f64>,
 }
 
-impl<'a> TriMeshGravity<'a> {
-    pub fn new(shell: &'a TriMeshShell, gravity: [f64; 3]) -> TriMeshGravity<'a> {
-        TriMeshGravity {
+impl<'a> SoftShellGravity<'a> {
+    pub fn new(shell: &'a TriMeshShell, gravity: [f64; 3]) -> SoftShellGravity<'a> {
+        SoftShellGravity {
             shell,
             g: gravity.into(),
         }
@@ -122,7 +122,7 @@ impl<'a> TriMeshGravity<'a> {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
-impl<T: Real> Energy<T> for TriMeshGravity<'_> {
+impl<T: Real> Energy<T> for SoftShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
@@ -152,7 +152,7 @@ impl<T: Real> Energy<T> for TriMeshGravity<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
+impl<T: Real> EnergyGradient<T> for SoftShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
@@ -183,14 +183,60 @@ impl<T: Real> EnergyGradient<T> for TriMeshGravity<'_> {
     }
 }
 
-impl EnergyHessianTopology for TriMeshGravity<'_> {
+impl EnergyHessianTopology for SoftShellGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 
-impl<T: Real> EnergyHessian<T> for TriMeshGravity<'_> {
+impl<T: Real> EnergyHessian<T> for SoftShellGravity<'_> {
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+}
+
+/// A constant directional force.
+pub struct RigidShellGravity {
+    mass: f64,
+    g: Vector3<f64>,
+}
+
+impl RigidShellGravity {
+    pub fn new(gravity: [f64; 3], mass: f64) -> RigidShellGravity {
+        RigidShellGravity {
+            g: gravity.into(),
+            mass,
+        }
+    }
+}
+
+/// Define energy for gravity.
+/// Gravity is a position based energy.
+impl<T: Real> Energy<T> for RigidShellGravity {
+    /// Since gravity depends on position, `x` is expected to be a position quantity.
+    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
+        let pos = Vector3::new([x1[0], x1[1], x1[2]]);
+        T::from(self.mass).unwrap() * self.g.cast::<T>().dot(pos)
+    }
+}
+
+impl<T: Real> EnergyGradient<T> for RigidShellGravity {
+    /// Add the gravity gradient to the given global vector.
+    fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
+        use utils::soap::AsMutTensor;
+        debug_assert_eq!(grad.len(), _x0.len());
+
+        *grad[0..3].as_mut_tensor() += self.g.cast::<T>() * T::from(self.mass).unwrap();
+    }
+}
+
+impl EnergyHessianTopology for RigidShellGravity {
+    fn energy_hessian_size(&self) -> usize {
+        0
+    }
+    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
+}
+
+impl<T: Real> EnergyHessian<T> for RigidShellGravity {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
@@ -248,8 +294,9 @@ mod tests {
         }
     }
 
-    mod shell {
+    mod soft_shell {
         use super::*;
+        use crate::energy_models::Either;
 
         fn soft_shell_material() -> SoftShellMaterial {
             SoftShellMaterial::new(0).with_density(1000.0)
@@ -270,14 +317,18 @@ mod tests {
                 .collect()
         }
 
-        fn build_energies(shells: &[TriMeshShell]) -> Vec<(TriMeshGravity, Vec<[f64; 3]>)> {
+        fn build_energies(
+            shells: &[TriMeshShell],
+        ) -> Vec<(Either<SoftShellGravity, RigidShellGravity>, Vec<[f64; 3]>)> {
             shells
                 .iter()
                 .map(|shell| {
-                    (
-                        shell.gravity([0.0, -9.81, 0.0]).unwrap(),
-                        shell.trimesh.vertex_positions().to_vec(),
-                    )
+                    let g = shell.gravity([0.0, -9.81, 0.0]).unwrap();
+                    let pos = match &g {
+                        Either::Left(_) => shell.trimesh.vertex_positions().to_vec(),
+                        Either::Right(_) => vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+                    };
+                    (g, pos)
                 })
                 .collect()
         }

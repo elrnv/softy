@@ -8,7 +8,6 @@ use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use log::*;
-use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
@@ -115,8 +114,11 @@ impl SolverBuilder {
     }
 
     /// Add a polygon mesh representing a shell (e.g. cloth).
-    pub fn add_shell(&mut self, shell: PolyMesh, mat: ShellMaterial) -> &mut Self {
-        match mat {
+    pub fn add_shell<M>(&mut self, shell: PolyMesh, mat: M) -> &mut Self
+    where
+        M: Into<ShellMaterial>,
+    {
+        match mat.into() {
             ShellMaterial::Fixed(m) => self.fixed_shells.push((shell, m)),
             ShellMaterial::Rigid(m) => self.rigid_shells.push((shell, m)),
             ShellMaterial::Soft(m) => self.soft_shells.push((shell, m)),
@@ -320,21 +322,6 @@ impl SolverBuilder {
             .collect()
     }
 
-    /// Assuming `mesh` has prepopulated vertex masses, this function computes its center of mass.
-    fn compute_centre_of_mass(mesh: &TriMesh) -> [f64; 3] {
-        let mut com = Vector3::zero();
-        let mut total_mass = 0.0;
-
-        for (&v, &m) in mesh.vertex_position_iter().zip(
-            mesh.attrib_iter::<MassType, VertexIndex>(MASS_ATTRIB)
-                .unwrap(),
-        ) {
-            com += Vector3::new(v) * m;
-            total_mass += m;
-        }
-        (com / total_mass).into()
-    }
-
     /// Helper function to build a global array of vertex data. This is stacked
     /// vertex positions and velocities used by the solver to deform all meshes
     /// at the same time.
@@ -367,8 +354,8 @@ impl SolverBuilder {
         } in shells.iter()
         {
             match data {
-                ShellData::Rigid { .. } => {
-                    let translation = Self::compute_centre_of_mass(mesh);
+                ShellData::Rigid { cm, .. } => {
+                    let translation: [f64; 3] = *cm.as_data();
                     let rotation = [0.0; 3];
                     prev_x.push(vec![translation, rotation]);
                     prev_v.push(vec![[0.0; 3], [0.0; 3]]);
@@ -466,85 +453,60 @@ impl SolverBuilder {
         Ok(out)
     }
 
-    /// Helper function to compute the total mass in the problem.
-    #[cfg(ignore)]
-    fn compute_total_mass(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
-        let mut mass = 0.0_f64;
-
-        mass += solids
+    /// Helper function to compute the maximum element mass in the problem.
+    fn compute_max_element_mass(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        use std::cmp::Ordering;
+        let mut mass = solids
             .iter()
             .map(|TetMeshSolid { ref tetmesh, .. }| {
                 tetmesh
                     .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .ok()
                     .and_then(|ref_vol_iter| {
                         tetmesh
                             .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                            .map(|density_iter| {
+                            .ok()
+                            .and_then(|density_iter| {
                                 ref_vol_iter
                                     .zip(density_iter)
                                     .map(|(vol, &density)| vol * f64::from(density))
-                                    .sum()
+                                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
                             })
                     })
                     .unwrap_or(0.0)
             })
-            .sum::<f64>();
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+            .unwrap_or(0.0);
 
-        mass += shells
-            .iter()
-            .map(
-                |TriMeshShell {
-                     ref trimesh,
-                     ref material,
-                     ..
-                 }| {
-                    match material.properties {
-                        ShellProperties::Rigid { .. } => {
-                            let centroid = trimesh.vertex_position_iter().fold(
-                                (Vector3::zero(), 0),
-                                |(centroid, count), &v| {
-                                    let count_f = count as f64;
-                                    (
-                                        (centroid * count_f as f64 + Vector3::new(v))
-                                            / (count_f + 1.0),
-                                        count + 1,
-                                    )
-                                },
-                            );
-                            let total_volume = trimesh
-                                .tri_iter()
-                                .map(|tri| {
-                                    let tet = Tetrahedron::new([
-                                        centroid.0.into(),
-                                        tri.0.into(),
-                                        tri.1.into(),
-                                        tri.2.into(),
-                                    ]);
-                                    tet.signed_volume()
-                                })
-                                .sum::<f64>();
-
-                            total_volume
-                                * material
-                                    .scaled_density()
-                                    .expect("Missing rigid body density")
-                                    as f64
+        mass = mass.max(
+            shells
+                .iter()
+                .map(
+                    |TriMeshShell {
+                         ref trimesh,
+                         ref data,
+                         ..
+                     }| {
+                        match data {
+                            ShellData::Rigid { mass, .. } => *mass,
+                            ShellData::Soft { .. } => trimesh
+                                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                                .expect("Missing reference area attribute")
+                                .zip(
+                                    trimesh
+                                        .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
+                                        .expect("Missing density attribute on trimesh"),
+                                )
+                                .map(|(area, &density)| area * f64::from(density))
+                                .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+                                .unwrap_or(0.0),
+                            _ => 0.0,
                         }
-                        ShellProperties::Deformable { .. } => trimesh
-                            .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
-                            .expect("Missing reference area attribute")
-                            .zip(
-                                trimesh
-                                    .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
-                                    .expect("Missing density attribute on trimesh"),
-                            )
-                            .map(|(area, &density)| area * f64::from(density))
-                            .sum::<f64>(),
-                        _ => 0.0,
-                    }
-                },
-            )
-            .sum::<f64>();
+                    },
+                )
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+                .unwrap_or(0.0),
+        );
 
         mass
     }
@@ -655,6 +617,31 @@ impl SolverBuilder {
         Ok(max_modulus)
     }
 
+    /// Helper function to compute the maximum elastic bending stiffness.
+    fn compute_max_bending_stiffness(shells: &[TriMeshShell]) -> f64 {
+        let mut max_bending_stiffness = 0.0_f64;
+
+        for TriMeshShell { data, .. } in shells.iter() {
+            match data {
+                ShellData::Soft {
+                    interior_edge_bending_stiffness,
+                    ..
+                } => {
+                    max_bending_stiffness = max_bending_stiffness.max(
+                        interior_edge_bending_stiffness
+                            .iter()
+                            .cloned()
+                            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                            .unwrap_or(0.0),
+                    )
+                }
+                _ => {}
+            }
+        }
+
+        max_bending_stiffness
+    }
+
     fn build_problem(&self) -> Result<NonLinearProblem, Error> {
         let SolverBuilder {
             sim_params: params,
@@ -692,11 +679,34 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
-        //let total_mass = Self::compute_total_mass(&object_data.solids, &object_data.shells);
-        let max_modulus =
-            Self::compute_max_modulus(&object_data.solids, &object_data.shells)? as f64;
-
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
+
+        // The following scales have units of force (N).
+        let max_modulus_scale = Self::compute_max_modulus(&object_data.solids, &object_data.shells)?
+            as f64
+            * max_size
+            * max_size;
+
+        let max_element_mass_scale = if time_step > 0.0 {
+            Self::compute_max_element_mass(&object_data.solids, &object_data.shells) * max_size
+                / (time_step * time_step)
+        } else {
+            0.0
+        };
+
+        let max_element_bending_scale =
+            Self::compute_max_bending_stiffness(&object_data.shells) / max_size;
+
+        // Determine the most likely dominant force.
+        let mut max_scale = max_modulus_scale
+            .max(max_element_mass_scale)
+            .max(max_element_bending_scale);
+
+        // max_scale is a denominator. Ensure that it is never zero.
+        debug_assert_ne!(max_scale, 0.0);
+        if max_scale == 0.0 {
+            max_scale = 1.0;
+        }
 
         Ok(NonLinearProblem {
             object_data,
@@ -710,7 +720,7 @@ impl SolverBuilder {
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
             max_size,
-            max_modulus,
+            force_scale: max_scale,
         })
     }
 
@@ -723,14 +733,6 @@ impl SolverBuilder {
         // constraints. This means we can use these functions to initialize solution.
         problem.reset_warm_start();
 
-        //let max_element_size = Self::compute_element_max_size(
-        //    &problem.object_data.solids,
-        //    &problem.object_data.shells,
-        //);
-
-        //let max_modulus =
-        //    Self::compute_max_modulus(&problem.object_data.solids, &problem.object_data.shells)?;
-
         let all_contacts_linear = problem.all_contacts_linear();
 
         // Construct the Ipopt solver.
@@ -739,14 +741,6 @@ impl SolverBuilder {
         // Setup ipopt paramters using the input simulation params.
         let params = self.sim_params.clone();
 
-        // Determine the true force tolerance. To start we base this tolerance
-        // on the elastic response which depends on mu and lambda as well as per
-        // tet volume: Larger stiffnesses and volumes cause proportionally
-        // larger gradients. Thus our tolerance should reflect these properties.
-        //let max_area = max_element_size * max_element_size;
-        //let tol = f64::from(params.tolerance * max_modulus) * max_area;
-        //params.tolerance = tol as f32;
-        //params.outer_tolerance *= max_modulus * max_area as f32;
         let tol = params.tolerance as f64;
 
         info!("Ipopt tolerance: {:.2e}", tol);

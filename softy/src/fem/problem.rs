@@ -16,7 +16,6 @@ use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
 use crate::PointCloud;
-use log::warn;
 
 const FORWARD_FRICTION: bool = true;
 
@@ -214,12 +213,12 @@ pub struct ObjectData {
     /// don't coincide with vertex positions. These are used to pass concrete
     /// positions (as opposed to generalized coordinates) to constraint
     /// functions.
-    pub pos: VertexData3<Vec<f64>>,
+    pub pos: RefCell<VertexData3<Vec<f64>>>,
     /// Workspace velocities for all meshes for which the generalized
     /// coordinates don't coincide with vertex positions. These are used to pass
     /// concrete velocities (as opposed to generalized coordinates) to
     /// constraint functions.
-    pub vel: VertexData3<Vec<f64>>,
+    pub vel: RefCell<VertexData3<Vec<f64>>>,
     /// A workspace gradient for all meshes for which the generalized coordinates don't coincide
     /// with vertex positions.
     pub grad: RefCell<VertexData3<Vec<f64>>>,
@@ -275,7 +274,7 @@ impl ObjectData {
             shells,
             ..
         } = self;
-        Self::mesh_vertex_subset_impl(cur_x, pos.view(), src_idx, solids, shells)
+        Self::mesh_vertex_subset_impl(cur_x, pos.borrow().view(), src_idx, solids, shells)
     }
 
     pub fn prev_pos(&self, src_idx: SourceIndex) -> MeshVertexData3<&[f64]> {
@@ -286,7 +285,7 @@ impl ObjectData {
             shells,
             ..
         } = self;
-        Self::mesh_vertex_subset_impl(prev_x.view(), pos.view(), src_idx, solids, shells)
+        Self::mesh_vertex_subset_impl(prev_x.view(), pos.borrow().view(), src_idx, solids, shells)
     }
 
     pub fn cur_vel<'x>(
@@ -303,7 +302,7 @@ impl ObjectData {
             shells,
             ..
         } = self;
-        Self::mesh_vertex_subset_impl(cur_v, vel.view(), src_idx, solids, shells)
+        Self::mesh_vertex_subset_impl(cur_v, vel.borrow().view(), src_idx, solids, shells)
     }
 
     pub fn prev_vel(&self, src_idx: SourceIndex) -> MeshVertexData3<&[f64]> {
@@ -314,7 +313,7 @@ impl ObjectData {
             shells,
             ..
         } = self;
-        Self::mesh_vertex_subset_impl(prev_v.view(), vel.view(), src_idx, solids, shells)
+        Self::mesh_vertex_subset_impl(prev_v.view(), vel.borrow().view(), src_idx, solids, shells)
     }
 
     pub fn cur_pos_mut<'x>(
@@ -359,7 +358,13 @@ impl ObjectData {
             shells,
             ..
         } = self;
-        Self::mesh_vertex_subset_impl(prev_v.view_mut(), vel.view_mut(), src_idx, solids, shells)
+        Self::mesh_vertex_subset_impl(
+            prev_v.view_mut(),
+            vel.borrow().view_mut(),
+            src_idx,
+            solids,
+            shells,
+        )
     }
 
     pub fn grad_mut<'a>(
@@ -372,30 +377,25 @@ impl ObjectData {
         Self::mesh_vertex_subset_split_mut_impl(grad_dof, grad_vtx, src_idx, solids, shells)
     }
 
-    pub fn update_grad(&self, source: SourceIndex, grad_x: VertexView3<&mut [f64]>) {
+    /// Transfer internally stored workspace gradient to the given array of degrees of freedom.
+    /// This is a noop when degrees of freedom coinside with vertex velocities.
+    pub fn sync_grad(&self, source: SourceIndex, grad_x: VertexView3<&mut [f64]>) {
         let ObjectData {
             grad, pos, shells, ..
         } = self;
         match source {
             SourceIndex::Shell(i) => {
-                if let ShellData::Rigid { cm, inertia, .. } = shells[i].data {
+                if let ShellData::Rigid { cm, .. } = shells[i].data {
                     let mut grad_dofs = grad_x.isolate(1).isolate(i);
                     debug_assert_eq!(grad_dofs.len(), 2);
-                    let pos = pos.view().isolate(1).isolate(i);
+                    let pos = pos.borrow().view().isolate(1).isolate(i);
                     let mut grad = grad.borrow_mut();
                     let mut grad_vtx = grad.view_mut().isolate(1).isolate(i);
                     for (g_vtx, &p) in grad_vtx.iter_mut().zip(pos.iter()) {
                         // Transfer gradient from vertices to degrees of freedom.
-                        grad_dofs[0] = *g_vtx;
+                        *grad_dofs[0].as_mut_tensor() += *g_vtx.as_tensor();
                         let r = p.into_tensor() - cm;
-                        if let Some(inertia_inv) = inertia.inverse() {
-                            grad_dofs[1] =
-                                (inertia_inv * r.cross((*g_vtx).into_tensor())).into_data();
-                        } else {
-                            warn!(
-                                "Unable to invert inertia matrix. angular momentum not transferred"
-                            );
-                        }
+                        *grad_dofs[1].as_mut_tensor() += r.cross((*g_vtx).into_tensor());
                         *g_vtx = [0.0; 3]; // Value moved over, reset it.
                     }
                 }
@@ -451,20 +451,6 @@ impl ObjectData {
     /// Split a given array into a pair of mutable views.
     /// This works when contacts happen on two different objects, however
     /// if/when we implement self contact, this needs to be inspected carefully.
-    fn mesh_vertex_subset_split_mut<'x, D: 'x, Alt>(
-        &self,
-        x: VertexView<'x, D>,
-        alt: Alt,
-        source: [SourceIndex; 2],
-    ) -> [MeshVertexData<D>; 2]
-    where
-        D: Set + RemovePrefix + SplitAt + std::fmt::Debug,
-        std::ops::Range<usize>: IsolateIndex<D, Output = D>,
-        Alt: Into<Option<VertexView<'x, D>>>,
-    {
-        Self::mesh_vertex_subset_split_mut_impl(x, alt, source, &self.solids, &self.shells)
-    }
-
     // TODO: Refactor this monstrosity
     fn mesh_vertex_subset_split_mut_impl<'x, D: 'x, Alt>(
         x: VertexView<'x, D>,
@@ -696,6 +682,35 @@ impl ObjectData {
         self.cur_v.borrow()
     }
 
+    /// Update vertex positions of non dof vertices.
+    ///
+    /// This ensures that vertex data queried by constraint functions is current.
+    /// This function is only intended to sync pos with cur_x.
+    fn sync_pos(&self) {
+        let ObjectData {
+            cur_x, pos, shells, ..
+        } = self;
+        let rotation_mtx = |r| Matrix3::identity() + Matrix3::sin(theta);
+        for (i, shell) in shells.iter().enumerate() {
+            if let ShellData::Rigid { cm, .. } = shell.data {
+                let cur_x = cur_x.isolate(1).isolate(i);
+                debug_assert_eq!(cur_x.len(), 2);
+                let pos = pos.borrow_mut().view_mut().isolate(1).isolate(i);
+                // Apply the translation and rotation from cur_x to the shell and save it to pos.
+                // Previous values in pos are not used.
+                for (out_p, &x, &p) in pos
+                    .iter_mut()
+                    .zip(cur_x.iter())
+                    .zip(shell.trimesh.vertex_position_iter())
+                {
+                    let translation = Vector3::new([x[0], x[1], x[2]]);
+                    let rotation = Vector3::new([x[3], x[4], x[5]]);
+                    *out_p.as_mut_tensor() = p * rotation + translation;
+                }
+            }
+        }
+    }
+
     // Update `cur_x` using implicit integration with the given velocity `v`.
     fn integrate_step(&self, v: VertexView3<&[f64]>, dt: f64) {
         debug_assert!(dt > 0.0);
@@ -794,8 +809,8 @@ impl ObjectData {
 
         let mut prev_x = prev_x.view_mut().isolate(1);
         let mut prev_v = prev_v.view_mut().isolate(1);
-        let mut pos = pos.view_mut().isolate(1);
-        let mut vel = vel.view_mut().isolate(1);
+        let mut pos = pos.borrow_mut().view_mut().isolate(1);
+        let mut vel = vel.borrow_mut().view_mut().isolate(1);
 
         debug_assert!(time_step > 0.0);
         let dt_inv = 1.0 / time_step;
@@ -951,8 +966,15 @@ impl ObjectData {
             }
         }
 
-        Self::update_simulated_meshes_with(solids, shells, prev_x.view(), prev_v.view());
-        Self::update_fixed_meshes(shells, pos.view(), vel.view());
+        Self::update_simulated_meshes_with(
+            solids,
+            shells,
+            prev_x.view(),
+            prev_v.view(),
+            pos.borrow().view(),
+            vel.borrow().view(),
+        );
+        Self::update_fixed_meshes(shells, pos.borrow().view(), vel.borrow().view());
     }
 
     pub fn revert_prev_step(&mut self) {
@@ -997,6 +1019,8 @@ impl ObjectData {
         shells: &mut [TriMeshShell],
         x: VertexView3<&[f64]>,
         v: VertexView3<&[f64]>,
+        pos: VertexView3<&[f64]>,
+        vel: VertexView3<&[f64]>,
     ) {
         // Update mesh vertex positions and velocities.
         for (i, solid) in solids.iter_mut().enumerate() {
@@ -1021,7 +1045,7 @@ impl ObjectData {
                     shell.update_interior_edge_angles(x.at(1).at(i).into());
                 }
                 ShellData::Rigid { .. } => {
-                    unimplemented!();
+                    todo!();
                 }
                 ShellData::Fixed { .. } => {
                     // Not simulated, nothing to do here.
@@ -1090,7 +1114,8 @@ pub(crate) struct NonLinearProblem {
 
     /// The maximum size (diameter) of a simulated object (deformable or rigid).
     pub max_size: f64,
-    pub max_modulus: f64,
+    /// The scale of the energy gradient intended to be used for rescaling the objective gradient.
+    pub force_scale: f64,
 }
 
 impl NonLinearProblem {
@@ -1100,9 +1125,7 @@ impl NonLinearProblem {
     }
 
     fn impulse_inv_scale(&self) -> f64 {
-        utils::approx_power_of_two64(
-            100.0 / (self.time_step() * self.max_size * self.max_size * self.max_modulus),
-        )
+        utils::approx_power_of_two64(100.0 / (self.time_step() * self.force_scale))
     }
 
     fn volume_constraint_scale(&self) -> f64 {
@@ -1187,19 +1210,20 @@ impl NonLinearProblem {
     }
 
     /// Save an intermediate state of the solve. This is used for debugging.
-    #[allow(dead_code)]
-    pub fn save_intermediate(&mut self, uv: &[f64], step: usize) {
-        let v = self.update_current_velocity(uv);
-        let x = self.compute_step(v.view());
-        let mut solids = self.object_data.solids.clone();
-        let mut shells = self.object_data.shells.clone();
-        ObjectData::update_simulated_meshes_with(&mut solids, &mut shells, x.view(), v.view());
-        geo::io::save_tetmesh(
-            &solids[0].tetmesh,
-            &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
-        )
-        .unwrap();
-    }
+    //#[allow(dead_code)]
+    //pub fn save_intermediate(&mut self, uv: &[f64], step: usize) {
+    //    let v = self.update_current_velocity(uv);
+    //    let x = self.compute_step(v.view());
+    //    let mut solids = self.object_data.solids.clone();
+    //    let mut shells = self.object_data.shells.clone();
+    //    ObjectData::update_simulated_meshes_with(
+    //        &mut solids, &mut shells, x.view(), v.view());
+    //    geo::io::save_tetmesh(
+    //        &solids[0].tetmesh,
+    //        &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
+    //    )
+    //    .unwrap();
+    //}
 
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
@@ -1215,12 +1239,18 @@ impl NonLinearProblem {
             .update_shell_vertices(new_pos.view(), self.time_step())
     }
 
+    /// Update the underlying scaled velocity data with the given unscaled velocity.
+    ///
+    /// If `full` is true, then all vertex velocities are updated including ones for
+    /// rigid bodies. Note that `full` is only usually necessary when computing contact
+    /// constraints.
     pub fn update_current_velocity(
         &self,
         uv: &[Number],
+        full: bool,
     ) -> std::cell::Ref<'_, VertexData3<Vec<f64>>> {
         self.object_data
-            .update_current_velocity(uv, self.variable_scale())
+            .update_current_velocity(uv, self.variable_scale(), full)
     }
 
     /// Compute the set of currently active constraints into the given `Chunked` `Vec`.
@@ -1325,6 +1355,7 @@ impl NonLinearProblem {
         let x = solution.map(|sol| {
             let v = object_data.update_current_velocity(sol.primal_variables, scale);
             object_data.integrate_step(v.view(), time_step);
+            object_data.sync_pos();
             object_data.cur_x.borrow()
         });
 
@@ -1661,8 +1692,9 @@ impl NonLinearProblem {
     //    value
     //}
 
-    /// A convenience function to integrate the given velocity by the internal time step. For
-    /// implicit integration this boils down to a simple multiply by the time step.
+    /// A convenience function to integrate the given velocity by the internal time step.
+    ///
+    /// For implicit integration this boils down to a simple multiply by the time step.
     pub fn compute_step(
         &self,
         v: VertexView3<&[Number]>,
@@ -2574,12 +2606,6 @@ impl ipopt::BasicProblem for NonLinearProblem {
     fn bounds(&self, uv_l: &mut [Number], uv_u: &mut [Number]) -> bool {
         // Any value greater than 1e19 in absolute value is considered unbounded (infinity).
         let bound = 2e19;
-        //if self.is_static() {
-        //    2e19
-        //} else {
-        //    (self.max_size / self.time_step) / self.variable_scale()
-        //};
-        //debug!("Bound: {}", bound);
 
         uv_l.iter_mut().for_each(|x| *x = -bound);
         uv_u.iter_mut().for_each(|x| *x = bound);
@@ -2699,8 +2725,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
             Chunked::from_offsets(*v.data().offsets(), Chunked3::from_flat(grad_f)),
         );
 
-        let cur_pos = self.compute_step(v.view());
-        let x1 = cur_pos.view();
+        let cur_x = self.compute_step(v.view());
+        let x1 = cur_x.view();
         let x0 = self.object_data.prev_x.view();
         let v0 = self.object_data.prev_v.view();
 
@@ -2784,10 +2810,9 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
                 // Update `grad.view_mut()` with the newly computed gradients. This is a noop
                 // unless at least one of the objects is rigid.
+                self.object_data.sync_grad(fc.object_index, grad.view_mut());
                 self.object_data
-                    .update_grad(fc.object_index, grad.view_mut());
-                self.object_data
-                    .update_grad(fc.collider_index, grad.view_mut());
+                    .sync_grad(fc.collider_index, grad.view_mut());
             }
         }
 
@@ -2854,6 +2879,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     fn constraint(&self, uv: &[Number], g: &mut [Number]) -> bool {
         let cur_v = self.update_current_velocity(uv);
         let cur_x = self.compute_step(cur_v.view());
+        self.object_data.sync_pos();
         let x = cur_x.view();
         let x0 = self.object_data.prev_x.view();
 
@@ -3006,8 +3032,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
     fn constraint_jacobian_values(&self, uv: &[Number], vals: &mut [Number]) -> bool {
         let v = self.update_current_velocity(uv);
-        let cur_pos = self.compute_step(v.view());
-        let x = cur_pos.view();
+        let cur_x = self.compute_step(v.view());
+        self.object_data.sync_pos();
+        let x = cur_x.view();
         let x0 = self.object_data.prev_x.view();
 
         let mut count = 0; // Constraint counter
@@ -3181,8 +3208,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
     ) -> bool {
         let cur_vel = self.update_current_velocity(uv);
         let v = cur_vel.view();
-        let cur_pos = self.compute_step(v.view());
-        let x1 = cur_pos.view();
+        let cur_x = self.compute_step(v.view());
+        self.object_data.sync_pos();
+        let x1 = cur_x.view();
         let x0 = self.object_data.prev_x.view();
         let v0 = self.object_data.prev_v.view();
 

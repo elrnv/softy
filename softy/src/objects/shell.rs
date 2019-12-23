@@ -593,11 +593,12 @@ impl<'a> Inertia<'a, Option<Either<SoftShellInertia<'a>, RigidShellInertia>>> fo
     }
 }
 
-impl<'a> Gravity<'a, Option<TriMeshGravity<'a>>> for TriMeshShell {
-    fn gravity(&'a self, g: [f64; 3]) -> Option<TriMeshGravity<'a>> {
+impl<'a> Gravity<'a, Option<Either<SoftShellGravity<'a>, RigidShellGravity>>> for TriMeshShell {
+    fn gravity(&'a self, g: [f64; 3]) -> Option<Either<SoftShellGravity<'a>, RigidShellGravity>> {
         match self.data {
             ShellData::Fixed { .. } => None,
-            _ => Some(TriMeshGravity::new(self, g)),
+            ShellData::Rigid { mass, .. } => Some(Either::Right(RigidShellGravity::new(g, mass))),
+            ShellData::Soft { .. } => Some(Either::Left(SoftShellGravity::new(self, g))),
         }
     }
 }

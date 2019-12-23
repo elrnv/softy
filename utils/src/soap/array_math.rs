@@ -66,6 +66,13 @@ macro_rules! impl_array_vectors {
                 unsafe { std::mem::transmute_copy(&self) }
             }
         }
+        impl<T: IntoData> AsData for Tensor<[T; $n]> {
+            type Data = [T::Data; $n];
+            #[inline]
+            fn as_data(&self) -> &Self::Data {
+                unsafe { &*(self as *const Tensor<[T; $n]> as *const [T::Data; $n]) }
+            }
+        }
         impl<T: IntoTensor> AsTensor for [T; $n]
         where
             T::Tensor: Sized,

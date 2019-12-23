@@ -108,6 +108,7 @@ static const char *theDsFile = R"THEDSFILE(
                 menu {
                     "solid" "Solid"
                     "shell" "Shell"
+                    "rigid" "Rigid"
                 }
             }
 
@@ -117,7 +118,7 @@ static const char *theDsFile = R"THEDSFILE(
                 label "Elasticity Model"
                 type ordinal
                 default { "0" }
-                hidewhen "{ objtype# == shell }"
+                hidewhen "{ objtype# != solid }"
                 menu {
                     "snh" "Stable Neo-Hookean"
                     "nh" "Neo-Hookean"
@@ -131,7 +132,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "0" }
                 range { 0 100 }
-                hidewhen "{ objtype# == solid }"
+                hidewhen "{ objtype# != shell }"
             }
 
             parm {
@@ -147,6 +148,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "0.0" }
                 range { 0 1000 }
+                hidewhen "{ objtype# == rigid }"
             }
 
             parm {
@@ -155,6 +157,7 @@ static const char *theDsFile = R"THEDSFILE(
                 label "Stiffness Type"
                 type ordinal
                 default { "1" }
+                hidewhen "{ objtype# == rigid }"
                 menu {
                     "shearbulk" "Shear and Bulk Moduli"
                     "youngpoisson" "Young's Modulus and Poisson's Ratio"
@@ -168,7 +171,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "10" }
                 range { 0 100 }
-                hidewhen "{ stiffnesstype# == youngpoisson }"
+                hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
             }
 
             parm {
@@ -178,7 +181,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "1750" }
                 range { 0 10000 }
-                hidewhen "{ stiffnesstype# == youngpoisson }"
+                hidewhen "{ stiffnesstype# == youngpoisson } { objtype# == rigid }"
             }
 
             parm {
@@ -188,7 +191,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "3.24" }
                 range { 0 1000 }
-                hidewhen "{ stiffnesstype# == shearbulk }"
+                hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
             }
 
             parm {
@@ -198,7 +201,7 @@ static const char *theDsFile = R"THEDSFILE(
                 type float
                 default { "0.49" }
                 range { 0 0.5 }
-                hidewhen "{ stiffnesstype# == shearbulk }"
+                hidewhen "{ stiffnesstype# == shearbulk } { objtype# == rigid }"
             }
         }
     }
@@ -521,6 +524,9 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
                 break;
             case SOP_SoftyEnums::ObjectType::SHELL:
                 mtl_props.object_type = EL_SoftyObjectType::Shell;
+                break;
+            case SOP_SoftyEnums::ObjectType::RIGID:
+                mtl_props.object_type = EL_SoftyObjectType::Rigid;
                 break;
         }
 

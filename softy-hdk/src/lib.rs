@@ -49,6 +49,7 @@ use std::sync::{Arc, Mutex};
 pub enum EL_SoftyObjectType {
     Solid,
     Shell,
+    Rigid,
 }
 
 #[repr(C)]

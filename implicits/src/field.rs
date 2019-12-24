@@ -13,6 +13,26 @@ use rstar::RTree;
 use utils::soap::{IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
 use utils::zip;
 
+macro_rules! apply_kernel_query_fn_impl_iter {
+    ($surf:expr, $f:expr) => {{
+        match *$surf {
+            QueryTopo::Local {
+                surf:
+                    LocalMLS {
+                        kernel,
+                        base_radius,
+                        ..
+                    },
+                ..
+            } => Either::Left(apply_as_spherical_impl_iter!(kernel, base_radius, $f)),
+            QueryTopo::Global {
+                surf: GlobalMLS { kernel, .. },
+                ..
+            } => Either::Right(apply_as_spherical_impl_iter!(kernel, $f)),
+        }
+    }};
+}
+
 macro_rules! apply_kernel_query_fn {
     ($surf:expr, $f:expr) => {
         match *$surf {
@@ -938,6 +958,23 @@ where
     })
 }
 
+/// Parallel version of `compute_face_unit_normals_gradient_products`
+pub(crate) fn compute_face_unit_normals_gradient_products_par<'a, T, F>(
+    samples: SamplesView<'a, 'a, T>,
+    surface_vertices: &'a [Vector3<T>],
+    surface_topo: &'a [[usize; 3]],
+    multiplier: F,
+) -> impl IndexedParallelIterator<Item = Matrix3<T>> + 'a
+where
+    T: Real,
+    F: Fn(Sample<T>) -> Vector3<T> + Send + Sync + 'a,
+{
+    samples.into_par_iter().map(move |sample| {
+        let mult = multiplier(sample);
+        face_unit_normal_gradient_product(sample, surface_vertices, surface_topo, mult)
+    })
+}
+
 /// Compute the gradient of the face normal at the given sample with respect to
 /// its vertices. The returned triple of `Matrix3`s corresonds to the block column vector of
 /// three matrices corresponding to each triangle vertex, which together construct the actual
@@ -955,6 +992,27 @@ where
     let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
     // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
     (0..3).map(move |i| -Matrix3::new(tri.area_normal_gradient(i)) * nml_proj)
+}
+
+/// Parallel version of `face_unit_normal_gradient_iter`.
+pub(crate) fn face_unit_normal_gradient_product<T>(
+    sample: Sample<T>,
+    surface_vertices: &[Vector3<T>],
+    surface_topo: &[[usize; 3]],
+    mult: Vector3<T>,
+) -> Matrix3<T>
+where
+    T: Real,
+{
+    let nml_proj_mult = scaled_tangent_projection(sample) * mult;
+    let tri_indices = &surface_topo[sample.index];
+    let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
+    // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
+    Matrix3::new([
+        (Matrix3::new(tri.area_normal_gradient(0)) * nml_proj_mult).into(),
+        (Matrix3::new(tri.area_normal_gradient(1)) * nml_proj_mult).into(),
+        (Matrix3::new(tri.area_normal_gradient(2)) * nml_proj_mult).into(),
+    ])
 }
 
 /// Compute the matrix for projecting on the tangent plane of the given sample inversely scaled
@@ -981,48 +1039,76 @@ pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
     surface_topo: &'a [[usize; 3]],
     dual_topo: &'a [Vec<usize>],
-    mut dx: F,
+    dx: F,
 ) -> impl Iterator<Item = Vector3<T>> + 'a
 where
     T: Real,
-    F: FnMut(Sample<T>) -> Vector3<T> + 'a,
+    F: Fn(Sample<T>) -> Vector3<T> + Copy + 'a,
 {
     samples.into_iter().map(move |sample| {
-        let Sample { index, nml, .. } = sample;
-        let norm_inv = T::one() / nml.norm();
-        // Compute the normal component of the derivative
-        let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
-        let mut nml_deriv = Vector3::zero();
-        // Look at the ring of triangles around the vertex with respect to which we are
-        // taking the derivative.
-        for &tri_idx in dual_topo[index].iter() {
-            let tri_indices = &surface_topo[tri_idx];
-            // Pull contributions from all neighbours on the surface, not just ones part of the
-            // neighbourhood,
-            let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
-            // Note that area_normal_gradient returns column-major matrix, but we use row-major,
-            // since area_normal_gradient is skew symmetric, we interpret this as a negation.
-            let nml_grad = Matrix3::new(
-                tri.area_normal_gradient(
-                    tri_indices
-                        .iter()
-                        .position(|&j| j == index)
-                        .expect("Triangle mesh topology corruption."),
-                ),
-            );
-            let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
-            for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
-                if sample.index != index {
-                    let normk_inv = T::one() / sample.nml.norm();
-                    let nmlk_proj = Matrix3::identity()
-                        - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
-                    tri_grad += nmlk_proj * (dx(sample) * normk_inv);
-                }
-            }
-            nml_deriv -= nml_grad * tri_grad;
-        }
-        nml_deriv
+        compute_vertex_unit_normal_gradient_product(sample, samples, surface_topo, dual_topo, dx)
     })
+}
+pub(crate) fn compute_vertex_unit_normals_gradient_products_par<'a, T, F>(
+    samples: SamplesView<'a, 'a, T>,
+    surface_topo: &'a [[usize; 3]],
+    dual_topo: &'a [Vec<usize>],
+    dx: F,
+) -> impl IndexedParallelIterator<Item = Vector3<T>> + 'a
+where
+    T: Real,
+    F: Fn(Sample<T>) -> Vector3<T> + Copy + Send + Sync + 'a,
+{
+    samples.into_par_iter().map(move |sample| {
+        compute_vertex_unit_normal_gradient_product(sample, samples, surface_topo, dual_topo, dx)
+    })
+}
+
+pub(crate) fn compute_vertex_unit_normal_gradient_product<'a, T, F>(
+    sample: Sample<T>,
+    samples: SamplesView<'a, 'a, T>,
+    surface_topo: &'a [[usize; 3]],
+    dual_topo: &'a [Vec<usize>],
+    dx: F,
+) -> Vector3<T>
+where
+    T: Real,
+    F: Fn(Sample<T>) -> Vector3<T> + 'a,
+{
+    let Sample { index, nml, .. } = sample;
+    let norm_inv = T::one() / nml.norm();
+    // Compute the normal component of the derivative
+    let nml_proj = Matrix3::identity() - nml * (nml.transpose() * (norm_inv * norm_inv));
+    let mut nml_deriv = Vector3::zero();
+    // Look at the ring of triangles around the vertex with respect to which we are
+    // taking the derivative.
+    for &tri_idx in dual_topo[index].iter() {
+        let tri_indices = &surface_topo[tri_idx];
+        // Pull contributions from all neighbours on the surface, not just ones part of the
+        // neighbourhood,
+        let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
+        // Note that area_normal_gradient returns column-major matrix, but we use row-major,
+        // since area_normal_gradient is skew symmetric, we interpret this as a negation.
+        let nml_grad = Matrix3::new(
+            tri.area_normal_gradient(
+                tri_indices
+                    .iter()
+                    .position(|&j| j == index)
+                    .expect("Triangle mesh topology corruption."),
+            ),
+        );
+        let mut tri_grad = nml_proj * (dx(sample) * norm_inv);
+        for sample in SamplesView::from_view(tri_indices, samples).into_iter() {
+            if sample.index != index {
+                let normk_inv = T::one() / sample.nml.norm();
+                let nmlk_proj = Matrix3::identity()
+                    - sample.nml * (sample.nml.transpose() * (normk_inv * normk_inv));
+                tri_grad += nmlk_proj * (dx(sample) * normk_inv);
+            }
+        }
+        nml_deriv -= nml_grad * tri_grad;
+    }
+    nml_deriv
 }
 
 /// Generate a tetrahedron with vertex positions and indices for the triangle faces.

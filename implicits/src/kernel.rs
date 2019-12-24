@@ -100,6 +100,34 @@ macro_rules! apply_as_spherical {
     };
 }
 
+/// Same as above but with matching match arms producing an iterator.
+macro_rules! apply_as_spherical_impl_iter {
+    ($kernel:expr, $base_radius:expr, $f:expr) => {{
+        match $kernel {
+            LocalKernel::Interpolating { radius_multiplier } => Either::Left($f(
+                $crate::kernel::LocalInterpolating::new($base_radius * radius_multiplier),
+            )),
+            LocalKernel::Approximate {
+                radius_multiplier,
+                tolerance,
+            } => Either::Right(Either::Left($f($crate::kernel::LocalApproximate::new(
+                $base_radius * radius_multiplier,
+                tolerance,
+            )))),
+            LocalKernel::Cubic { radius_multiplier } => Either::Right(Either::Right($f(
+                $crate::kernel::LocalCubic::new($base_radius * radius_multiplier),
+            ))),
+        }
+    }};
+    ($kernel:expr, $f:expr) => {
+        match $kernel {
+            GlobalKernel::InvDistance2 { tolerance } => {
+                $f($crate::kernel::GlobalInvDistance2::new(tolerance))
+            }
+        }
+    };
+}
+
 impl From<KernelType> for LocalKernel {
     fn from(kernel: KernelType) -> Self {
         match kernel {

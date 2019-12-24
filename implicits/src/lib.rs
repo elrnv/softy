@@ -473,6 +473,7 @@ mod tests {
     #[test]
     fn complex_query_jacobian_test() {
         use autodiff::F;
+        use rayon::prelude::*;
         use utils::soap::Vector3;
 
         let grid = make_grid(23, 23);
@@ -498,16 +499,20 @@ mod tests {
             .expect("Failed to create implicit surface.");
 
         let query_surf = implicit_surface.query_topo(&grid_pos);
-        let nnz = query_surf.num_query_jacobian_entries();
-        let mut vals = vec![F::cst(0.0); nnz];
-        query_surf.query_jacobian_values(&grid_pos, &mut vals);
+        // Testing the parallel version:
+        let vals: Vec<_> = query_surf
+            .query_jacobian_block_par_iter(&grid_pos)
+            .filter_map(|x| x)
+            .collect();
 
         // This is the full jacobian (including all zeros).
         let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len() * 3];
         //let mut flat_jac = vec![0.0; grid_pos.len() * 3];
 
-        for (idx, &val) in query_surf.query_jacobian_indices_iter().zip(vals.iter()) {
-            jac[idx.1][idx.0] += val.value();
+        for (idx, &val) in query_surf.query_jacobian_block_indices_iter().zip(vals.iter()) {
+            for i in 0..3 {
+                jac[3 * idx.1 + i][idx.0] += val[i].value();
+            }
             //flat_jac[idx.1] = val.value();
         }
 

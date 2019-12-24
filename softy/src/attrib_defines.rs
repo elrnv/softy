@@ -32,6 +32,7 @@ pub type LambdaType = f32;
 pub type BendingStiffnessType = f32;
 pub(crate) type VelType = [f64; 3];
 pub type RefPosType = [f32; 3];
+pub(crate) type RigidRefPosType = [f64; 3];
 pub type RefAngleType = f32;
 pub(crate) type RefVolType = f64;
 pub(crate) type RefAreaType = f64;

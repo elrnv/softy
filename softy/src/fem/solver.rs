@@ -14,7 +14,9 @@ use utils::{soap::*, zip};
 
 use crate::inf_norm;
 
-use super::{MuStrategy, NonLinearProblem, ObjectData, SimParams, Solution, SourceIndex};
+use super::{
+    MuStrategy, NonLinearProblem, ObjectData, SimParams, Solution, SourceIndex, WorkspaceData,
+};
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 /// Result from one inner simulation step.
@@ -356,8 +358,7 @@ impl SolverBuilder {
             match data {
                 ShellData::Rigid { cm, .. } => {
                     let translation: [f64; 3] = *cm.as_data();
-                    let rotation = [0.0; 3];
-                    prev_x.push(vec![translation, rotation]);
+                    prev_x.push(vec![translation, [0.0; 3]]);
                     prev_v.push(vec![[0.0; 3], [0.0; 3]]);
 
                     pos.push(mesh.vertex_positions().to_vec());
@@ -398,14 +399,20 @@ impl SolverBuilder {
         Ok(ObjectData {
             prev_x: prev_x.clone(),
             prev_v: prev_v.clone(),
-            cur_x: RefCell::new(prev_x.clone()),
-            cur_v: RefCell::new(prev_v.clone()),
-            prev_prev_x: prev_x.into_flat(),
-            prev_prev_v: prev_v.into_flat(),
+            prev_prev_x: prev_x.clone().into_flat(),
+            prev_prev_v: prev_v.clone().into_flat(),
+            prev_pos: pos.clone(),
+            prev_vel: vel.clone(),
+            prev_prev_pos: pos.clone().into_flat(),
+            prev_prev_vel: vel.clone().into_flat(),
 
-            pos,
-            vel,
-            grad: RefCell::new(grad),
+            workspace: RefCell::new(WorkspaceData {
+                x: prev_x,
+                v: prev_v,
+                pos: pos,
+                vel: vel,
+                grad: grad,
+            }),
 
             solids,
             shells,
@@ -437,17 +444,17 @@ impl SolverBuilder {
         for (polymesh, material) in soft_shells.into_iter() {
             let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
-            out.push(TriMeshShell::soft(trimesh, material).with_fem_attributes()?)
+            out.push(TriMeshShell::soft(trimesh, material).with_simulation_attributes()?)
         }
         for (polymesh, material) in rigid_shells.into_iter() {
             let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
-            out.push(TriMeshShell::rigid(trimesh, material).with_fem_attributes()?)
+            out.push(TriMeshShell::rigid(trimesh, material).with_simulation_attributes()?)
         }
         for (polymesh, material) in fixed_shells.into_iter() {
             let trimesh = TriMesh::from(polymesh);
             // Prepare shell for simulation.
-            out.push(TriMeshShell::fixed(trimesh, material).with_fem_attributes()?)
+            out.push(TriMeshShell::fixed(trimesh, material).with_simulation_attributes()?)
         }
 
         Ok(out)

@@ -259,7 +259,7 @@ impl TriMeshShell {
     }
 
     /// Precompute attributes necessary for FEM simulation on the given mesh.
-    pub(crate) fn with_fem_attributes(mut self) -> Result<TriMeshShell, Error> {
+    pub(crate) fn with_simulation_attributes(mut self) -> Result<TriMeshShell, Error> {
         self.init_source_index_attribute()?;
 
         match &mut self.data {
@@ -267,8 +267,10 @@ impl TriMeshShell {
                 // Kinematic meshes don't have material properties.
                 self.init_kinematic_vertex_attributes()?;
             }
-            ShellData::Rigid { .. } => {
+            ShellData::Rigid { cm, .. } => {
+                let cm = *cm;
                 self.init_dynamic_vertex_attributes()?;
+                self.init_rest_pos_vertex_attribute(cm)?;
             }
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
@@ -297,6 +299,21 @@ impl TriMeshShell {
         };
 
         Ok(self)
+    }
+
+    pub(crate) fn init_rest_pos_vertex_attribute(&mut self, cm: Vector3<f64>) -> Result<(), Error> {
+        // Translate every vertex such that the object's center of mass is at the origin.
+        let ref_pos: Vec<_> = self
+            .trimesh
+            .vertex_position_iter()
+            .map(|&x| (x.into_tensor() - cm).into_data())
+            .collect();
+        self.trimesh
+            .set_attrib_data::<RigidRefPosType, VertexIndex>(
+                REFERENCE_VERTEX_POS_ATTRIB,
+                &ref_pos,
+            )?;
+        Ok(())
     }
 
     pub(crate) fn init_deformable_attributes(&mut self) -> Result<(), Error> {
@@ -426,7 +443,7 @@ impl TriMeshShell {
                 .iter()
                 .map(|e| {
                     let length = f64::from(e.ref_length(&ref_pos));
-                    // A triangle height measure used to normalize the length. This allows the energy
+                    // A triangle height measure used to normalize the length. This allo the energy
                     // model to correctly approximate mean curvature.
                     let h_e = f64::from(e.tile_span(&ref_pos));
                     let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));

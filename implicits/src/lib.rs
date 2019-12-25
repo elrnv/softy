@@ -509,7 +509,10 @@ mod tests {
         let mut jac = vec![vec![0.0; grid_pos.len()]; grid_pos.len() * 3];
         //let mut flat_jac = vec![0.0; grid_pos.len() * 3];
 
-        for (idx, &val) in query_surf.query_jacobian_block_indices_iter().zip(vals.iter()) {
+        for (idx, &val) in query_surf
+            .query_jacobian_block_indices_iter()
+            .zip(vals.iter())
+        {
             for i in 0..3 {
                 jac[3 * idx.1 + i][idx.0] += val[i].value();
             }
@@ -615,6 +618,7 @@ mod tests {
             }
         }
 
+        let mut success = true;
         for cur_pt_idx in 0..grid_pos.len() {
             // for each vertex
             for i in 0..3 {
@@ -640,20 +644,16 @@ mod tests {
                         max_relative = 1e-5,
                         epsilon = 1e-10
                     ) {
-                        println!(
+                        success = false;
+                        eprintln!(
                             "({:?}, {:?}) => {:?} vs {:?}",
                             row, col, hess[col][row], flat_jac_deriv[col]
                         );
                     }
-                    assert_relative_eq!(
-                        hess[col][row],
-                        flat_jac_deriv[col],
-                        max_relative = 1e-5,
-                        epsilon = 1e-10
-                    );
                 }
                 grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
             }
+            assert!(success);
         }
     }
 }

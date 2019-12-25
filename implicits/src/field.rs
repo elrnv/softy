@@ -10,10 +10,27 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use utils::soap::{IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
+use utils::soap::{Matrix, Matrix3, Real, Scalar, Vector3};
 use utils::zip;
 
 macro_rules! apply_kernel_query_fn_impl_iter {
+    ($surf:expr, $f:expr, ?) => {{
+        match *$surf {
+            QueryTopo::Local {
+                surf:
+                    LocalMLS {
+                        kernel,
+                        base_radius,
+                        ..
+                    },
+                ..
+            } => Either::Left(apply_as_spherical_impl_iter!(kernel, base_radius, $f, ?)),
+            QueryTopo::Global {
+                surf: GlobalMLS { kernel, .. },
+                ..
+            } => Either::Right(apply_as_spherical_impl_iter!(kernel, $f, ?)),
+        }
+    }};
     ($surf:expr, $f:expr) => {{
         match *$surf {
             QueryTopo::Local {

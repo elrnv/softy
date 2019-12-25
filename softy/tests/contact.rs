@@ -78,12 +78,12 @@ fn make_grids(i: usize) -> (PolyMesh, PolyMesh) {
 
 #[test]
 fn box_squish_full() -> Result<(), Error> {
+    init_logger();
     let contact_box = make_box(4).scaled([1.0, 0.8, 1.0]);
 
     let (top_grid, bottom_grid) = make_grids(10);
 
     let params = SimParams {
-        print_level: 2,
         time_step: Some(0.02),
         ..DYNAMIC_PARAMS
     };
@@ -116,6 +116,7 @@ fn box_squish_full() -> Result<(), Error> {
 
 #[test]
 fn box_squish_linearized() -> Result<(), Error> {
+    init_logger();
     let contact_box = make_box(4).scaled([1.0, 0.8, 1.0]);
 
     let (top_grid, bottom_grid) = make_grids(10);

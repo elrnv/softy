@@ -211,12 +211,6 @@ impl SolverBuilder {
     ) -> Vec<FrictionalContactConstraint> {
         let material_source = Self::build_material_sources(solids, shells);
 
-        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
-            object_index: m0,
-            collider_index: m1,
-            constraint,
-        };
-
         // Convert frictional contact parameters into frictional contact constraints.
         // This function creates a frictional contact for every pair of matching material ids.
         // In other words if two objects share the same material id for which a frictional contact
@@ -227,88 +221,57 @@ impl SolverBuilder {
             .flat_map(|(params, (obj_id, coll_id))| {
                 let material_source_obj = material_source.view().get(obj_id);
                 let material_source_coll = material_source.view().get(coll_id);
+                dbg!(material_source_obj);
+                dbg!(material_source_coll);
                 material_source_obj
                     .into_iter()
                     .flat_map(move |material_source_obj| {
                         material_source_coll
                             .into_iter()
                             .flat_map(move |material_source_coll| {
-                                material_source_obj.into_iter().flat_map(move |&m0| {
-                                    let (solid_iter, shell_iter) = match m0 {
-                                        SourceIndex::Solid(i) => (
-                                            Some(material_source_coll.into_iter().flat_map(
-                                                move |&m1| {
-                                                    match m1 {
-                                                        SourceIndex::Solid(j) => {
-                                                            build_contact_constraint(
-                                                                Var::Variable(
-                                                                    &solids[i].surface().trimesh,
-                                                                ),
-                                                                Var::Variable(
-                                                                    &solids[j].surface().trimesh,
-                                                                ),
-                                                                params,
-                                                            )
-                                                        }
-                                                        SourceIndex::Shell(j) => {
-                                                            build_contact_constraint(
-                                                                Var::Variable(
-                                                                    &solids[i].surface().trimesh,
-                                                                ),
-                                                                shells[j].tagged_mesh(),
-                                                                params,
-                                                            )
-                                                        }
-                                                    }
-                                                    .map(|c| {
-                                                        construct_friction_constraint(m0, m1, c)
-                                                    })
-                                                    .ok()
-                                                    .into_iter()
-                                                },
-                                            )),
-                                            None,
-                                        ),
-                                        SourceIndex::Shell(i) => (
-                                            None,
-                                            Some(material_source_coll.into_iter().flat_map(
-                                                move |&m1| {
-                                                    match m1 {
-                                                        SourceIndex::Solid(j) => {
-                                                            build_contact_constraint(
-                                                                shells[i].tagged_mesh(),
-                                                                Var::Variable(
-                                                                    &solids[j].surface().trimesh,
-                                                                ),
-                                                                params,
-                                                            )
-                                                        }
-                                                        SourceIndex::Shell(j) => {
-                                                            build_contact_constraint(
-                                                                shells[i].tagged_mesh(),
-                                                                shells[j].tagged_mesh(),
-                                                                params,
-                                                            )
-                                                        }
-                                                    }
-                                                    .map(|c| {
-                                                        construct_friction_constraint(m0, m1, c)
-                                                    })
-                                                    .ok()
-                                                    .into_iter()
-                                                },
-                                            )),
-                                        ),
-                                    };
-                                    solid_iter
-                                        .into_iter()
-                                        .flatten()
-                                        .chain(shell_iter.into_iter().flatten())
-                                })
+                                SolverBuilder::build_contact_constraint(
+                                    solids,
+                                    shells,
+                                    params,
+                                    material_source_coll,
+                                    material_source_obj,
+                                )
                             })
                     })
             })
             .collect()
+    }
+
+    fn build_contact_constraint<'a>(
+        solids: &'a [TetMeshSolid],
+        shells: &'a [TriMeshShell],
+        params: FrictionalContactParams,
+        material_source_coll: &'a [SourceIndex],
+        material_source_obj: &'a [SourceIndex],
+    ) -> impl Iterator<Item = FrictionalContactConstraint> + 'a {
+        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
+            object_index: m0,
+            collider_index: m1,
+            constraint,
+        };
+
+        material_source_obj.into_iter().flat_map(move |&m0| {
+            let object = match m0 {
+                SourceIndex::Solid(i) => Var::Variable(&solids[i].surface().trimesh),
+                SourceIndex::Shell(i) => shells[i].tagged_mesh(),
+            };
+
+            material_source_coll.into_iter().flat_map(move |&m1| {
+                let collider = match m1 {
+                    SourceIndex::Solid(j) => Var::Variable(&solids[j].surface().trimesh),
+                    SourceIndex::Shell(j) => shells[j].tagged_mesh(),
+                };
+                build_contact_constraint(object, collider, params)
+                    .ok()
+                    .map(|c| construct_friction_constraint(m0, m1, c))
+                    .into_iter()
+            })
+        })
     }
 
     /// Helper function to initialize volume constraints from a set of solids.
@@ -686,6 +649,8 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
+        dbg!(frictional_contacts.len());
+
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
         // The following scales have units of force (N).
@@ -710,8 +675,8 @@ impl SolverBuilder {
             .max(max_element_bending_scale);
 
         // max_scale is a denominator. Ensure that it is never zero.
-        debug_assert_ne!(max_scale, 0.0);
         if max_scale == 0.0 {
+            warn!("All scaling factors are zero");
             max_scale = 1.0;
         }
 
@@ -748,9 +713,10 @@ impl SolverBuilder {
         // Setup ipopt paramters using the input simulation params.
         let params = self.sim_params.clone();
 
+        info!("Simulation Parameters:\n{:#?}", params);
+
         let tol = params.tolerance as f64;
 
-        info!("Ipopt tolerance: {:.2e}", tol);
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);

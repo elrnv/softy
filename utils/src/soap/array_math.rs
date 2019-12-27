@@ -862,15 +862,11 @@ macro_rules! impl_array_matrices {
         impl<T: Scalar> Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
             #[inline]
             pub fn from_rows(rows: [Tensor<[Tensor<T>; $c]>; $r]) -> Self {
-                Tensor {
-                    data: rows
-                }
+                Tensor { data: rows }
             }
             #[inline]
             pub fn from_cols(rows: [Tensor<[Tensor<T>; $r]>; $c]) -> Self {
-                Tensor {
-                    data: rows
-                }.transpose()
+                Tensor { data: rows }.transpose()
             }
         }
 

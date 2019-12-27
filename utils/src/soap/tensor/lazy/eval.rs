@@ -569,9 +569,9 @@ use std::ops::{AddAssign, SubAssign};
 
 impl<T, I, A> AddAssign<I> for Tensor<[T]>
 where
-    T: AsMutTensor,
+    T: Scalar,
     I: Iterator<Item = A>,
-    Tensor<T::Inner>: AddAssign<A>,
+    Tensor<T>: AddAssign<A>,
 {
     #[inline]
     fn add_assign(&mut self, rhs: I) {
@@ -738,9 +738,9 @@ impl_bin_op_assign!(impl<'a, S> SubAssign for SubsetIterExpr<'a, S> { sub_assign
 
 impl<T, I, A> SubAssign<I> for Tensor<[T]>
 where
-    T: AsMutTensor,
+    T: Scalar,
     I: Iterator<Item = A>,
-    Tensor<T::Inner>: SubAssign<A>,
+    Tensor<T>: SubAssign<A>,
 {
     #[inline]
     fn sub_assign(&mut self, rhs: I) {

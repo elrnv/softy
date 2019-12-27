@@ -406,7 +406,7 @@ macro_rules! impl_array_vectors {
 
         impl<T: Copy + AddAssign<T>> AddAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
@@ -417,7 +417,7 @@ macro_rules! impl_array_vectors {
 
         impl<T: Copy + SubAssign<T>> SubAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
@@ -858,6 +858,21 @@ macro_rules! impl_array_matrices {
     ($mtxn:ident; $r:expr, $c:expr) => {
         // Row-major square matrix.
         pub type $mtxn<T> = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
+
+        impl<T: Scalar> Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
+            #[inline]
+            pub fn from_rows(rows: [Tensor<[Tensor<T>; $c]>; $r]) -> Self {
+                Tensor {
+                    data: rows
+                }
+            }
+            #[inline]
+            pub fn from_cols(rows: [Tensor<[Tensor<T>; $r]>; $c]) -> Self {
+                Tensor {
+                    data: rows
+                }.transpose()
+            }
+        }
 
         impl<T> AsSlice<T> for [[T; $c]; $r] {
             #[inline]

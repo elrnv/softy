@@ -94,9 +94,40 @@ pub fn approx_power_of_two32(f: f32) -> f32 {
     f32::from_bits(f.to_bits() & 0xff800000)
 }
 
+/// Given an iterator over integers, compute the mode and return it along with its
+/// frequency.
+/// If the iterator is empty just return 0.
+pub fn mode_u32<I: IntoIterator<Item = u32>>(data: I) -> (u32, usize) {
+    let data_iter = data.into_iter();
+    let mut bins = Vec::with_capacity(100);
+    for x in data_iter {
+        let i = x as usize;
+        if i >= bins.len() {
+            bins.resize(i + 1, 0usize);
+        }
+        bins[i] += 1;
+    }
+    bins.iter()
+        .cloned()
+        .enumerate()
+        .max_by_key(|&(_, f)| f)
+        .map(|(m, f)| (m as u32, f))
+        .unwrap_or((0u32, 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_u32_test() {
+        let v = vec![1u32, 1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1];
+        assert_eq!(mode_u32(v), (1, 6));
+        let v = vec![];
+        assert_eq!(mode_u32(v), (0, 0));
+        let v = vec![0u32, 0, 0, 1, 1, 1, 1, 2, 2, 2];
+        assert_eq!(mode_u32(v), (1, 4));
+    }
 
     #[test]
     fn approx_power_of_two64_test() {

@@ -12,12 +12,12 @@ use geo::ops::*;
 use geo::prim::Tetrahedron;
 use num_traits::FromPrimitive;
 use num_traits::Zero;
+use rayon::iter::Either;
 use rayon::prelude::*;
 use reinterpret::*;
 use unroll::unroll_for_loops;
 use utils::soap::*;
 use utils::zip;
-use rayon::iter::Either;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -347,10 +347,12 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
 
         // Transfer forces from cell-vertices to vertices themeselves
         for (density, &vol, &DX_inv, cell, &lambda, &mu) in zip!(
-            Either::from(tetmesh
-                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .map(|i| i.cloned())
-                .map_err(|_| std::iter::repeat(0.0f32))),
+            Either::from(
+                tetmesh
+                    .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                    .map(|i| i.cloned())
+                    .map_err(|_| std::iter::repeat(0.0f32))
+            ),
             tetmesh
                 .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                 .unwrap(),
@@ -390,7 +392,7 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
                 // Note: damping is already scaled by dt
                 let damp = DX_inv.transpose() * dF * vol * density * damping;
                 for i in 0..3 {
-                    gradient[cell[i]] += damp[i]; 
+                    gradient[cell[i]] += damp[i];
                     gradient[cell[3]] -= damp[i];
                 }
             }
@@ -503,10 +505,12 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
             let hess_chunks: &mut [[T; 78]] = reinterpret_mut_slice(values);
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
-                Either::from(tetmesh
-                    .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                    .map(|slice| slice.par_iter().cloned())
-                    .map_err(|_| rayon::iter::repeatn(0.0f32, tetmesh.num_cells()))),
+                Either::from(
+                    tetmesh
+                        .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                        .map(|slice| slice.par_iter().cloned())
+                        .map_err(|_| rayon::iter::repeatn(0.0f32, tetmesh.num_cells()))
+                ),
                 tetmesh
                     .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
                     .unwrap()
@@ -555,8 +559,8 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
 
                 Self::hessian_for_each(
                     |n, k| {
-                        (local_hessians[n][k] +
-                            id * if n == 3 && k == 3 {
+                        (local_hessians[n][k]
+                            + id * if n == 3 && k == 3 {
                                 ddF.sum_inner()
                             } else if k == 3 {
                                 -ddF[n].sum()
@@ -564,7 +568,8 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
                                 -ddF[k].sum() // ddF should be symmetric.
                             } else {
                                 ddF[n][k]
-                            }) * factor
+                            })
+                            * factor
                     },
                     |i, _, (row, col), h| tet_hess[i] = h[row][col],
                 );
@@ -583,13 +588,14 @@ mod tests {
     use geo::mesh::VertexPositions;
 
     fn material() -> SolidMaterial {
-        SolidMaterial::new(0).with_elasticity(ElasticityParameters {
-            lambda: 5.4,
-            mu: 263.1,
-            model: ElasticityModel::NeoHookean,
-        })
-        .with_density(10.0)
-        .with_damping(1.0, 0.01)
+        SolidMaterial::new(0)
+            .with_elasticity(ElasticityParameters {
+                lambda: 5.4,
+                mu: 263.1,
+                model: ElasticityModel::NeoHookean,
+            })
+            .with_density(10.0)
+            .with_damping(1.0, 0.01)
     }
 
     fn test_solids() -> Vec<TetMeshSolid> {

@@ -243,6 +243,7 @@ fn get_frictional_contacts<'a>(
                 radius_multiplier,
                 smoothness_tolerance,
                 contact_offset,
+                use_fixed,
                 smoothing_weight,
                 dynamic_cof,
                 friction_tolerance,
@@ -268,6 +269,7 @@ fn get_frictional_contacts<'a>(
                         EL_SoftyContactType::Point => softy::ContactType::Point,
                     },
                     contact_offset: f64::from(contact_offset),
+                    use_fixed,
                     friction_params: if dynamic_cof == 0.0 || friction_inner_iterations == 0 {
                         None
                     } else {

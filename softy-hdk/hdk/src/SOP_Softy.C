@@ -302,6 +302,13 @@ static const char *theDsFile = R"THEDSFILE(
             }
 
             parm {
+                name "usefixed#"
+                label "Use Fixed"
+                type toggle
+                default { "off" }
+            }
+
+            parm {
                 name "friction#"
                 label "Friction"
                 type toggle
@@ -640,6 +647,7 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         fc_params.contact_offset = sop_fc.contactoffset;
+        fc_params.use_fixed = sop_fc.usefixed;
         if (sop_fc.friction) {
             fc_params.smoothing_weight = sop_fc.smoothingweight;
             fc_params.dynamic_cof = sop_fc.dynamiccof;

@@ -33,6 +33,9 @@ pub trait LinearElementEnergy<T> {
         mu: T,
     ) -> Self;
 
+    /// Compute the deformation gradient differential `dF` for this element.
+    fn deformation_gradient_differential(&self, dx: &Self::Element) -> Self::ShapeMatrix;
+
     /// Elastic strain energy per element.
     /// This is a helper function that computes the strain energy given shape matrices, which can
     /// be obtained from a tet and its reference configuration.

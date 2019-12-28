@@ -32,15 +32,6 @@ impl<T: Real> StableNeoHookeanTetEnergy<T> {
         self.DX_inv * self.Dx
     }
 
-    /// Compute the deformation gradient differential `dF` for this tet.
-    #[allow(non_snake_case)]
-    #[inline]
-    fn deformation_gradient_differential(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
-        // Build differential dDx
-        let dDx = Matrix3::new(tet_dx.shape_matrix());
-        self.DX_inv * dDx
-    }
-
     /// Elasticity Hessian per element with respect to deformation gradient. This is a 3x3 matrix
     /// of 3x3 blocks.
     #[allow(non_snake_case)]
@@ -110,6 +101,15 @@ impl<T: Real> LinearElementEnergy<T> for StableNeoHookeanTetEnergy<T> {
             lambda,
             mu,
         }
+    }
+
+    /// Compute the deformation gradient differential `dF` for this tet.
+    #[allow(non_snake_case)]
+    #[inline]
+    fn deformation_gradient_differential(&self, tet_dx: &Tetrahedron<T>) -> Matrix3<T> {
+        // Build differential dDx
+        let dDx = Matrix3::new(tet_dx.shape_matrix());
+        self.DX_inv * dDx
     }
 
     /// Elastic strain energy per element.

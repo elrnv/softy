@@ -14,7 +14,7 @@ use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::Vector3;
 
-pub use self::linearized_point_contact::*;
+//pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
@@ -34,6 +34,8 @@ pub fn build_contact_constraint(
         collider,
         params.kernel,
         params.friction_params,
+        params.contact_offset,
+        params.use_fixed,
         params.contact_type == ContactType::LinearizedPoint,
     )?))
 }

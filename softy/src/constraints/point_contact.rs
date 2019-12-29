@@ -50,6 +50,11 @@ pub struct PointContactConstraint {
     /// to be deforming, and thus appropriate derivatives are computed.
     collider_is_fixed: bool,
 
+    /// The distance above which to constrain collider contact points.
+    ///
+    /// This helps prevent interpenetration artifacts in the result.
+    contact_offset: f64,
+
     /// The maximum distance between two points of the given geometry.
     ///
     /// This value is used to produce relative thresholds.
@@ -77,6 +82,8 @@ impl PointContactConstraint {
         collider: Var<&TriMesh>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
+        contact_offset: f64,
+        _use_fixed: bool,
         linearized: bool,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
@@ -84,6 +91,9 @@ impl PointContactConstraint {
         let collider_is_fixed = collider.is_fixed();
         let object = object.untag();
         let collider = collider.untag();
+
+        // TODO: use use_fixed paramter to prune fixed elements from the triangle mesh.
+
         surface_builder
             .trimesh(object)
             .kernel(kernel)
@@ -124,6 +134,7 @@ impl PointContactConstraint {
                 collider_mass_inv,
                 object_is_fixed,
                 collider_is_fixed,
+                contact_offset,
                 problem_diameter: bbox.diameter(),
                 constraint_value: vec![0.0; query_points.len()],
                 constraint_jacobian: LazyCell::new(),
@@ -1369,6 +1380,7 @@ impl ContactConstraint for PointContactConstraint {
         //if let Some(lap) = lap {
         //    self.constraint_value = (lap.expr() * c0.expr()).eval();
         //} else {
+        c0.iter_mut().for_each(|c| *c -= self.contact_offset);
         self.constraint_value = c0;
         //}
     }
@@ -1455,7 +1467,7 @@ impl PointContactConstraint {
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
             .zip(value.iter_mut())
         {
-            *v = *new_v;
+            *v = *new_v - self.contact_offset;
         }
     }
 

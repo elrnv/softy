@@ -67,6 +67,8 @@ fn sliding_tet_on_points() -> Result<(), Error> {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.2,
@@ -104,6 +106,8 @@ fn sliding_tet_on_implicit() -> Result<(), Error> {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.5,
@@ -140,6 +144,8 @@ fn sliding_box_on_implicit() -> Result<(), Error> {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.5,
@@ -177,6 +183,8 @@ fn self_contact() -> Result<(), Error> {
             radius_multiplier: 1.5,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.2,

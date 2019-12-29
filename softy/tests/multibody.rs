@@ -45,6 +45,8 @@ fn stacking_boxes() -> Result<(), Error> {
             radius_multiplier: 2.0,
             tolerance: 0.0001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.5,

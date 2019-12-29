@@ -94,6 +94,8 @@ fn box_squish_full() -> Result<(), Error> {
             radius_multiplier: 1.1,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -133,6 +135,8 @@ fn box_squish_linearized() -> Result<(), Error> {
             radius_multiplier: 1.1,
             tolerance: 0.001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -194,6 +198,8 @@ fn tet_push() -> Result<(), Error> {
             FrictionalContactParams {
                 contact_type: ContactType::Point,
                 kernel,
+                contact_offset: 0.0,
+                use_fixed: true,
                 friction_params: None,
             },
             (0, 1),
@@ -293,6 +299,8 @@ fn ball_tri_push_plain() -> Result<(), Error> {
             radius_multiplier: 1.812,
             tolerance: 0.07,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -310,6 +318,8 @@ fn ball_tri_push_volume_constraint() -> Result<(), Error> {
             radius_multiplier: 1.812,
             tolerance: 0.07,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -382,6 +392,8 @@ fn ball_bounce_on_points_plain() -> Result<(), Error> {
             radius_multiplier: 1.1,
             tolerance: 0.01,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -402,6 +414,8 @@ fn ball_bounce_on_points_volume_constraint() -> Result<(), Error> {
             radius_multiplier: 1.1,
             tolerance: 0.01,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -423,6 +437,8 @@ fn tet_bounce_on_implicit() -> Result<(), Error> {
             radius_multiplier: 20.0, // deliberately large radius
             tolerance: 0.0001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -443,6 +459,8 @@ fn ball_bounce_on_implicit_plain() -> Result<(), Error> {
             radius_multiplier: 2.0,
             tolerance: 0.0001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -464,6 +482,8 @@ fn ball_bounce_on_implicit_volume_constraint() -> Result<(), Error> {
             radius_multiplier: 2.0,
             tolerance: 0.0001,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: None,
     };
 
@@ -507,6 +527,8 @@ fn two_tets_in_contact() -> Result<(), Error> {
             FrictionalContactParams {
                 contact_type: ContactType::Point,
                 kernel,
+                contact_offset: 0.0,
+                use_fixed: true,
                 friction_params: None,
             },
             (0, 1),

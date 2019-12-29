@@ -2057,7 +2057,8 @@ where
 ///
 /// Rodrigues' formula is used for this computation.
 #[inline]
-pub fn rotation<T: Real>(v: Vector3<T>) -> Matrix3<T> {
+pub fn rotation<T: Real,V: Into<[T;3]>>(v: V) -> Matrix3<T> {
+    let v = v.into().into_tensor();
     let angle = v.norm();
     let mut res = Matrix3::identity();
     if angle > T::zero() {
@@ -2073,7 +2074,9 @@ pub fn rotation<T: Real>(v: Vector3<T>) -> Matrix3<T> {
 ///
 /// Rodrigues' formula is used for this computation.
 #[inline]
-pub fn rotate<T: Real>(r: Vector3<T>, v: Vector3<T>) -> Vector3<T> {
+pub fn rotate<T: Real, R: Into<[T; 3]>, V: Into<[T; 3]>>(r: R, v: V) -> Vector3<T> {
+    let r = r.into().into_tensor();
+    let v = v.into().into_tensor();
     let angle = v.norm();
     if angle > T::zero() {
         let cos = angle.cos();

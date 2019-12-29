@@ -10,7 +10,7 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use utils::soap::{Matrix, Matrix3, Real, Scalar, Vector3};
+use utils::soap::{Matrix, Matrix3, Real, Scalar, Vector3, IntoData};
 use utils::zip;
 
 macro_rules! apply_kernel_query_fn_impl_iter {

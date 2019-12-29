@@ -1465,10 +1465,22 @@ impl Solver {
         let mut friction_steps =
             vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
         let total_friction_steps = friction_steps.iter().sum::<u32>();
-        for _ in 0..self.sim_params.max_outer_iterations {
+        let mut iteration_count = 0;
+        loop {
+            if iteration_count >= self.sim_params.max_outer_iterations {
+                warn!(
+                    "Reached max outer iterations: {:?}",
+                    self.sim_params.max_outer_iterations
+                );
+                break;
+            }
+            iteration_count += 1;
+
+            // Clamp time step to what we actually need.
             if self.problem().time_step > self.time_step_remaining {
                 self.problem_mut().time_step = self.time_step_remaining;
             }
+
             self.minimum_time_step = self.minimum_time_step.min(self.problem().time_step);
 
             // Remap warm start from the initial constraint reset above, or if the constraints were
@@ -1477,6 +1489,8 @@ impl Solver {
             self.save_current_active_constraint_set();
 
             let step_result = self.inner_step();
+
+            let min_time_step = 1e-8;
 
             // The following block determines if after the inner step there were any changes
             // in the constraints where new points may have violated the constraint. If so we
@@ -1511,12 +1525,8 @@ impl Solver {
                         self.commit_solution(true, !all_contacts_linear);
                         self.time_step_remaining -= self.problem().time_step;
                         info!("Time step remaining: {}", self.time_step_remaining);
-                        if !recovery && self.problem().time_step < self.max_time_step {
-                            // Gradually restore time_step if its lower than max_step
-                            self.problem_mut().time_step *= 2.0;
-                        }
                         recovery = false; // We have recovered.
-                        if approx::relative_eq!(self.time_step_remaining, 0.0) {
+                        if self.time_step_remaining < min_time_step {
                             // Reset time step progress
                             self.time_step_remaining = self.max_time_step;
                             break;
@@ -1533,16 +1543,22 @@ impl Solver {
                     objective_value,
                 }) => {
                     // Something went wrong, revert one step, reduce the time step and try again.
-                    if self.problem().time_step < 1e-7
+
+                    // Don't bother if there are no more max_outer_iterations left, the time step
+                    // is too small or the user requested a stop.
+                    if self.problem().time_step < min_time_step
+                        || iteration_count + 1 >= self.sim_params.max_outer_iterations
                         || status == ipopt::SolveStatus::UserRequestedStop
                     {
-                        // Time step getting too small, return with an error
+                        warn!("Failed to recover");
+                        // Can't recover, return with an error
                         result = result.combine_inner_step_data(iterations, objective_value);
                         self.commit_solution(true, !all_contacts_linear);
                         return Err(Error::SolveError { status, result });
                     }
                     if !recovery {
                         info!("Recovering: Revert previous step");
+
                         self.revert_solution();
                         self.problem_mut().reset_constraint_set();
                         // reset friction iterations.
@@ -1553,6 +1569,12 @@ impl Solver {
                         // remaining.
                         self.time_step_remaining += self.problem().time_step;
                     }
+
+                    // Decrement iteration count since we reverted one iteration.
+                    // Since we check for minimal time step we know this loop will eventually
+                    // break even if the problem is not recoverable.
+                    iteration_count -= 1;
+
                     recovery = true;
                     self.problem_mut().time_step *= 0.5;
                     info!("Reduce time step to {}", self.problem().time_step);
@@ -1565,15 +1587,17 @@ impl Solver {
             }
         }
 
-        if !all_contacts_linear {
-            // Remap warm start since after committing the solution, the constraint set may have
-            // changed if we relaxed max_step.
-            // We use warm start data to update the mesh
-            self.remap_warm_start();
+        // Gradually restore time_step if its lower than max_step
+        if self.problem().time_step < self.max_time_step {
+            self.problem_mut().time_step *= 2.0;
         }
 
-        if result.iterations > self.sim_params.max_outer_iterations {
-            warn!("Reached max outer iterations: {:?}", result.iterations);
+        if !all_contacts_linear || recovery {
+            // Remap warm start since after committing the solution, the constraint set may have
+            // changed if we relaxed max_step.
+            // (Or we existed while still in recovery for some reason).
+            // We use warm start data to update the mesh
+            self.remap_warm_start();
         }
 
         //self.output_meshes(self.step_count as u32);

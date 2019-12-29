@@ -382,33 +382,33 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
                 // Make tet displacement.
                 let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
 
-            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
-            let vol = T::from(vol).unwrap();
-            let lambda = T::from(lambda).unwrap();
-            let mu = T::from(mu).unwrap();
+                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+                let vol = T::from(vol).unwrap();
+                let lambda = T::from(lambda).unwrap();
+                let mu = T::from(mu).unwrap();
 
                 let tet_energy =
                     E::new(Matrix3::new(tet_x1.shape_matrix()), DX_inv, vol, lambda, mu);
 
-            let grad = tet_energy.energy_gradient();
+                let grad = tet_energy.energy_gradient();
 
-            for i in 0..4 {
-                gradient[cell[i]] += grad[i];
-            }
-
-            // Damping
-            if density != 0.0 {
-                let density = T::from(density).unwrap();
-                let damping = T::from(damping).unwrap();
-                let dF = tet_energy.deformation_gradient_differential(&tet_dx);
-
-                // Note: damping is already scaled by dt
-                let damp = DX_inv.transpose() * dF * vol * density * damping;
-                for i in 0..3 {
-                    gradient[cell[i]] += damp[i];
-                    gradient[cell[3]] -= damp[i];
+                for i in 0..4 {
+                    gradient[cell[i]] += grad[i];
                 }
-            }
+
+                // Damping
+                if density != 0.0 {
+                    let density = T::from(density).unwrap();
+                    let damping = T::from(damping).unwrap();
+                    let dF = tet_energy.deformation_gradient_differential(&tet_dx);
+
+                    // Note: damping is already scaled by dt
+                    let damp = DX_inv.transpose() * dF * vol * density * damping;
+                    for i in 0..3 {
+                        gradient[cell[i]] += damp[i];
+                        gradient[cell[3]] -= damp[i];
+                    }
+                }
 
                 //let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
                 //for i in 0..3 {
@@ -558,26 +558,26 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
                         // Make deformed tet.
                         let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
 
-                let Dx = Matrix3::new(tet_x1.shape_matrix());
+                        let Dx = Matrix3::new(tet_x1.shape_matrix());
 
-                let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
-                let vol = T::from(vol).unwrap();
-                let lambda = T::from(lambda).unwrap();
-                let mu = T::from(mu).unwrap();
+                        let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+                        let vol = T::from(vol).unwrap();
+                        let lambda = T::from(lambda).unwrap();
+                        let mu = T::from(mu).unwrap();
 
-                let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
+                        let tet_energy = E::new(Dx, DX_inv, vol, lambda, mu);
 
-                //let factor = T::from(1.0 + damping).unwrap() * scale;
-                let factor = scale;
+                        //let factor = T::from(1.0 + damping).unwrap() * scale;
+                        let factor = scale;
 
-                let local_hessians = tet_energy.energy_hessian();
+                        let local_hessians = tet_energy.energy_hessian();
 
-                // Damping
-                let damping = T::from(damping).unwrap();
-                let density = T::from(density).unwrap();
-                // Note: damping is already scaled by dt
-                let ddF = DX_inv.transpose() * DX_inv * (vol * density * damping);
-                let id = Matrix3::identity();
+                        // Damping
+                        let damping = T::from(damping).unwrap();
+                        let density = T::from(density).unwrap();
+                        // Note: damping is already scaled by dt
+                        let ddF = DX_inv.transpose() * DX_inv * (vol * density * damping);
+                        let id = Matrix3::identity();
 
                         Self::hessian_for_each(
                             |n, k| {

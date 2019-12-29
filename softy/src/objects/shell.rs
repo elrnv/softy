@@ -275,6 +275,8 @@ impl TriMeshShell {
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
 
+                self.init_fixed_element_attribute()?;
+
                 self.init_deformable_attributes()?;
 
                 {
@@ -299,6 +301,24 @@ impl TriMeshShell {
         };
 
         Ok(self)
+    }
+
+    /// A helper function to flag all elements with all vertices fixed as fixed.
+    pub(crate) fn init_fixed_element_attribute(&mut self) -> Result<(), Error> {
+        let fixed_verts = self
+            .mesh()
+            .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+
+        let fixed_elements: Vec<_> = self
+            .mesh()
+            .face_iter()
+            .map(|face| face.iter().map(|&vi| fixed_verts[vi]).sum::<i8>() / 3)
+            .collect();
+
+        self.mesh_mut()
+            .set_attrib_data::<FixedIntType, FaceIndex>(FIXED_ATTRIB, &fixed_elements)?;
+
+        Ok(())
     }
 
     pub(crate) fn init_rest_pos_vertex_attribute(&mut self, cm: Vector3<f64>) -> Result<(), Error> {

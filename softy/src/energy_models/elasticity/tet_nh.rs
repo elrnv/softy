@@ -280,24 +280,29 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetMeshElasticity<'_, E> {
         let pos0: &[Vector3<T>] = reinterpret_slice(x0);
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 
-        zip!(
-            Either::from(tetmesh
-                .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                .map(|i| i.cloned())
-                .map_err(|_| std::iter::repeat(0.0f32))),
-            tetmesh
-                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                .unwrap(),
-            tetmesh
-                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
-                .unwrap(),
-            tetmesh.cell_iter(),
-            tetmesh
-                .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                .unwrap(),
-            tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap()
+        tetmesh
+            .attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+            .unwrap().zip(
+                zip!(
+                    Either::from(tetmesh
+                        .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                        .map(|i| i.cloned())
+                        .map_err(|_| std::iter::repeat(0.0f32))),
+                    tetmesh
+                        .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                        .unwrap(),
+                    tetmesh
+                        .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                        .unwrap(),
+                    tetmesh.cell_iter(),
+                    tetmesh
+                        .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                        .unwrap(),
+                    tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap()
+                )
         )
-        .map(|(density, &vol, &DX_inv, cell, &lambda, &mu)| {
+        .filter(|(&fixed, _)| fixed == 0)
+        .map(|(_, (density, &vol, &DX_inv, cell, &lambda, &mu))| {
             let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
             let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
             let Dx = Matrix3::new(tet_x1.shape_matrix());
@@ -346,36 +351,44 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
         let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
-        for (density, &vol, &DX_inv, cell, &lambda, &mu) in zip!(
-            Either::from(
+        tetmesh
+            .attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+            .unwrap()
+            .zip(zip!(
+                Either::from(
+                    tetmesh
+                        .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                        .map(|i| i.cloned())
+                        .map_err(|_| std::iter::repeat(0.0f32))
+                ),
                 tetmesh
-                    .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                    .map(|i| i.cloned())
-                    .map_err(|_| std::iter::repeat(0.0f32))
-            ),
-            tetmesh
-                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                .unwrap(),
-            tetmesh
-                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
-                .unwrap(),
-            tetmesh.cell_iter(),
-            tetmesh
-                .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
-                .unwrap(),
-            tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap()
-        ) {
-            // Make deformed tet.
-            let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
-            // Make tet displacement.
-            let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .unwrap(),
+                tetmesh
+                    .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(
+                        REFERENCE_SHAPE_MATRIX_INV_ATTRIB
+                    )
+                    .unwrap(),
+                tetmesh.cell_iter(),
+                tetmesh
+                    .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                    .unwrap(),
+                tetmesh.attrib_iter::<MuType, CellIndex>(MU_ATTRIB).unwrap()
+            ))
+            .filter(|(&fixed, _)| fixed == 0)
+            .for_each(|(_, (density, &vol, &DX_inv, cell, &lambda, &mu))| {
+                // Make deformed tet.
+                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+                // Make tet displacement.
+                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
 
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
             let vol = T::from(vol).unwrap();
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
 
-            let tet_energy = E::new(Matrix3::new(tet_x1.shape_matrix()), DX_inv, vol, lambda, mu);
+                let tet_energy =
+                    E::new(Matrix3::new(tet_x1.shape_matrix()), DX_inv, vol, lambda, mu);
 
             let grad = tet_energy.energy_gradient();
 
@@ -397,12 +410,12 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
                 }
             }
 
-            //let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
-            //for i in 0..3 {
-            //    gradient[cell[i]] += dH[i] * damping;
-            //    gradient[cell[3]] -= dH[i] * damping;
-            //}
-        }
+                //let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
+                //for i in 0..3 {
+                //    gradient[cell[i]] += dH[i] * damping;
+                //    gradient[cell[3]] -= dH[i] * damping;
+                //}
+            });
     }
 }
 
@@ -504,37 +517,46 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
             // Break up the hessian triplets into chunks of elements for each tet.
             let hess_chunks: &mut [[T; 78]] = reinterpret_mut_slice(values);
 
-            let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
-                Either::from(
+            hess_chunks
+                .par_iter_mut()
+                .zip(
                     tetmesh
-                        .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
-                        .map(|slice| slice.par_iter().cloned())
-                        .map_err(|_| rayon::iter::repeatn(0.0f32, tetmesh.num_cells()))
-                ),
-                tetmesh
-                    .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
-                    .unwrap()
-                    .par_iter(),
-                tetmesh
-                    .attrib_as_slice::<RefTetShapeMtxInvType, CellIndex>(
-                        REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-                    )
-                    .unwrap()
-                    .par_iter(),
-                tetmesh.cells().par_iter(),
-                tetmesh
-                    .attrib_as_slice::<LambdaType, CellIndex>(LAMBDA_ATTRIB,)
-                    .unwrap()
-                    .par_iter(),
-                tetmesh
-                    .attrib_as_slice::<MuType, CellIndex>(MU_ATTRIB,)
-                    .unwrap()
-                    .par_iter(),
-            ));
-
-            hess_iter.for_each(|(tet_hess, (density, &vol, &DX_inv, cell, &lambda, &mu))| {
-                // Make deformed tet.
-                let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+                        .attrib_as_slice::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+                        .unwrap()
+                        .par_iter()
+                        .zip(zip!(
+                            Either::from(
+                                tetmesh
+                                    .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                                    .map(|slice| slice.par_iter().cloned())
+                                    .map_err(|_| rayon::iter::repeatn(0.0f32, tetmesh.num_cells()))
+                            ),
+                            tetmesh
+                                .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                                .unwrap()
+                                .par_iter(),
+                            tetmesh
+                                .attrib_as_slice::<RefTetShapeMtxInvType, CellIndex>(
+                                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                                )
+                                .unwrap()
+                                .par_iter(),
+                            tetmesh.cells().par_iter(),
+                            tetmesh
+                                .attrib_as_slice::<LambdaType, CellIndex>(LAMBDA_ATTRIB,)
+                                .unwrap()
+                                .par_iter(),
+                            tetmesh
+                                .attrib_as_slice::<MuType, CellIndex>(MU_ATTRIB,)
+                                .unwrap()
+                                .par_iter(),
+                        )),
+                )
+                .filter(|(_, (&fixed, _))| fixed == 0)
+                .for_each(
+                    |(tet_hess, (_, (density, &vol, &DX_inv, cell, &lambda, &mu)))| {
+                        // Make deformed tet.
+                        let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
 
                 let Dx = Matrix3::new(tet_x1.shape_matrix());
 
@@ -557,23 +579,24 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
                 let ddF = DX_inv.transpose() * DX_inv * (vol * density * damping);
                 let id = Matrix3::identity();
 
-                Self::hessian_for_each(
-                    |n, k| {
-                        (local_hessians[n][k]
-                            + id * if n == 3 && k == 3 {
-                                ddF.sum_inner()
-                            } else if k == 3 {
-                                -ddF[n].sum()
-                            } else if n == 3 {
-                                -ddF[k].sum() // ddF should be symmetric.
-                            } else {
-                                ddF[n][k]
-                            })
-                            * factor
+                        Self::hessian_for_each(
+                            |n, k| {
+                                (local_hessians[n][k]
+                                    + id * if n == 3 && k == 3 {
+                                        ddF.sum_inner()
+                                    } else if k == 3 {
+                                        -ddF[n].sum()
+                                    } else if n == 3 {
+                                        -ddF[k].sum() // ddF should be symmetric.
+                                    } else {
+                                        ddF[n][k]
+                                    })
+                                    * factor
+                            },
+                            |i, _, (row, col), h| tet_hess[i] = h[row][col],
+                        );
                     },
-                    |i, _, (row, col), h| tet_hess[i] = h[row][col],
                 );
-            });
         }
     }
 }
@@ -610,6 +633,7 @@ mod tests {
                 SolverBuilder::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh).unwrap();
                 solid.init_elasticity_attributes().unwrap();
                 solid.init_density_attribute().unwrap();
+                solid.init_fixed_element_attribute().unwrap();
                 solid
             })
             .collect()

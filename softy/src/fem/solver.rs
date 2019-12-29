@@ -779,6 +779,7 @@ impl SolverBuilder {
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
+        use rayon::iter::Either;
         let ref_pos =
             mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
@@ -787,8 +788,20 @@ impl SolverBuilder {
             .collect();
         let inverted: Vec<_> = ref_volumes
             .iter()
+            // Ignore fixed elements, since they will not be part of the simulation anyways.
+            .zip(Either::from(
+                mesh.attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+                    .map(|i| i.cloned())
+                    .map_err(|_| std::iter::repeat(0)),
+            ))
             .enumerate()
-            .filter_map(|(i, &v)| if v <= 0.0 { Some(i) } else { None })
+            .filter_map(|(i, (&v, fixed))| {
+                if v <= 0.0 && fixed == 0 {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect();
         if !inverted.is_empty() {
             return Err(Error::InvertedReferenceElement { inverted });
@@ -897,6 +910,8 @@ impl SolverBuilder {
         solid.init_source_index_attribute()?;
 
         solid.init_deformable_vertex_attributes()?;
+
+        solid.init_fixed_element_attribute()?;
 
         Self::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh)?;
 

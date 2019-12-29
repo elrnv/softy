@@ -40,6 +40,28 @@ impl Object for TetMeshSolid {
     }
 }
 
+impl TetMeshSolid {
+    /// A helper function to flag all elements with all vertices fixed as fixed.
+    pub(crate) fn init_fixed_element_attribute(&mut self) -> Result<(), Error> {
+        let fixed_verts = self
+            .mesh()
+            .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+
+        dbg!(&fixed_verts);
+        let fixed_elements: Vec<_> = self
+            .mesh()
+            .cell_iter()
+            .map(|cell| cell.iter().map(|&vi| fixed_verts[vi]).sum::<i8>() / 4)
+            .collect();
+        dbg!(&fixed_elements);
+
+        self.mesh_mut()
+            .set_attrib_data::<FixedIntType, CellIndex>(FIXED_ATTRIB, &fixed_elements)?;
+
+        Ok(())
+    }
+}
+
 impl DynamicObject for TetMeshSolid {
     fn scaled_density(&self) -> Option<f32> {
         self.material.scaled_density()

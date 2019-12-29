@@ -66,7 +66,8 @@ fn rigid_box_rotate() {
                 .into_data()
         })
         .collect();
-    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel);
+    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
+        .unwrap();
 
     let mut solver = SolverBuilder::new(params)
         .add_shell(mesh.clone(), rigid_material)
@@ -102,12 +103,13 @@ fn rigid_box_rotate() {
 fn rigid_box_perturbed_rotate() {
     init_logger();
 
+    let dt = 0.1_f32;
+
     use geo::mesh::VertexPositions;
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
-        time_step: Some(0.1),
-        derivative_test: 0,
         print_level: 5,
+        time_step: Some(dt),
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
         ..DYNAMIC_PARAMS
     };
@@ -115,35 +117,50 @@ fn rigid_box_perturbed_rotate() {
     let rigid_material = RigidMaterial::new(0, 1.0);
 
     let mut mesh = PolyMesh::from(make_box(4).surface_trimesh());
+    let mut exp_mesh = mesh.clone();
     let ref_pos = mesh.vertex_positions().to_vec();
     // Non-trivial translation and rotation
-    mesh.rotate_by_vector([0.1, 0.2, 0.3]);
-    mesh.translate([0.1, 0.2, 0.3]);
-
-    let orig_pos = mesh.vertex_positions().to_vec();
+    let pi = std::f64::consts::PI;
+    mesh.rotate_by_vector([pi / 4.0, 0.0, 0.0]);
+    mesh.translate([0.1, 2.2, 0.3]);
 
     // Initialize the box to rotate about the y-axis
     let init_vel: Vec<_> = ref_pos
         .iter()
         .map(|&p| {
-            Vector3::new([0.0, 1.0, 0.0])
-                .cross(p.into_tensor())
-                .into_data()
+            (rotate(
+                [0.0, 1.0, 0.0].into_tensor().cross(p.into_tensor()),
+                [pi / 4.0, 0.0, 0.0],
+            ) + Vector3::new([0.1, 0.2, 0.3]))
+            .into_data()
         })
         .collect();
-    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel);
+    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
+        .unwrap();
 
     let mut solver = SolverBuilder::new(params)
-        .add_shell(mesh.clone(), rigid_material)
+        .add_shell(mesh, rigid_material)
         .build()
         .unwrap();
 
-    for i in 0..1 {
+    exp_mesh.rotate_by_vector([pi / 4.0, 0.0, 0.0]);
+    let axis = [0.0, 1.0 / 2.0_f64.sqrt(), 1.0 / 2.0_f64.sqrt()].into_tensor();
+    exp_mesh.rotate_by_vector((axis * dt as f64 * 30.0).into());
+    exp_mesh.translate([0.1, 2.2, 0.3]);
+    let dir = [0.1, 0.2, 0.3].into_tensor();
+    exp_mesh.translate((dir * dt as f64 * 30.0).into());
+
+    for i in 0..30 {
         assert!(solver.step().is_ok());
-        geo::io::save_polymesh(
-            &PolyMesh::from(solver.shell(0).trimesh.clone()),
-            &format!("./out/rigid_rotate_{}.vtk", i),
-        );
+    }
+
+    for (p, exp_p) in solver
+        .shell(0)
+        .trimesh
+        .vertex_position_iter()
+        .zip(exp_mesh.vertex_position_iter())
+    {
+        assert_relative_eq!(p.into_tensor(), exp_p.into_tensor(), max_relative = 1e-7);
     }
 }
 
@@ -235,8 +252,11 @@ fn rigid_torque_contact() {
 
     let rigid_material = RigidMaterial::new(1, 1.0);
 
-    let mesh = PolyMesh::from(make_box(2).surface_trimesh());
+    let mut mesh = PolyMesh::from(make_box(2).surface_trimesh());
+    let pi = std::f64::consts::PI;
+    mesh.rotate_by_vector([0.0, pi / 4.0, 0.0]);
     let mut collider = PolyMesh::from(make_box(2).surface_trimesh());
+    collider.rotate_by_vector([0.0, pi / 4.0, 0.0]);
     collider.scale([1.0, 1.0, 1.2]);
     collider.translate([0.7, -1.4, 0.0]);
     geo::io::save_polymesh(&collider, "./out/rigid_torque_collider.vtk");
@@ -261,7 +281,7 @@ fn rigid_torque_contact() {
 
     // The box should hit the grid at frame 19.
     // Here we check that nothing happens afterwards.
-    for i in 0..20 {
+    for i in 0..100 {
         assert!(solver.step().is_ok());
         geo::io::save_polymesh(
             &PolyMesh::from(solver.shell(0).trimesh.clone()),

@@ -322,17 +322,47 @@ impl SolverBuilder {
                     let mesh_vel =
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
 
+                    let mesh_pos = mesh.vertex_positions();
+
                     let translation: [f64; 3] = *cm.as_data();
                     prev_x.push(vec![translation, [0.0; 3]]);
 
+                    // Average linear velocity.
                     let mut linear = Vector3::zero();
-                    let mut angular = Vector3::zero();
-                    for (&v, &p) in mesh_vel.iter().zip(mesh.vertex_position_iter()) {
-                        let v = v.into_tensor();
-                        linear += v / mesh_vel.len() as f64;
-                        let r = p.into_tensor() - translation.into_tensor();
-                        angular += r.cross(v) / (r.norm_squared() * mesh_vel.len() as f64);
+                    for &v in mesh_vel.iter() {
+                        linear += v.into_tensor();
                     }
+                    linear /= mesh_vel.len() as f64;
+
+                    // Compute least squares angular velocity.
+                    // Compute r^T matrix. The matrix of rigid body positions.
+                    let rt = na::DMatrix::from_iterator(
+                        3,
+                        3 * mesh_pos.len(),
+                        mesh_pos.iter().cloned().flat_map(|p| {
+                            let pskew = (p.into_tensor() - *cm).skew().into_data();
+                            (0..3).flat_map(move |r| (0..3).map(move |c| pskew[r][c]))
+                        }),
+                    );
+
+                    // Collect all velocities
+                    let v = na::DVector::from_iterator(
+                        3 * mesh_vel.len(),
+                        mesh_vel.iter().cloned().flat_map(|v| {
+                            // Subtract linear part
+                            let w = v.into_tensor() - linear;
+                            (0..3).map(move |i| w[i])
+                        }),
+                    );
+
+                    // Solve normal equations:
+                    let rtv = -&rt * v;
+                    let rtr = &rt * rt.transpose();
+                    let angular = rtr
+                        .qr()
+                        .solve(&rtv)
+                        .unwrap_or_else(|| na::DVector::zeros(3));
+                    let angular = Vector3::new([angular[0], angular[1], angular[2]]);
 
                     prev_v.push(vec![linear.into_data(), angular.into_data()]);
 

@@ -44,39 +44,6 @@ fn equilibrium() {
 }
 
 #[test]
-fn rigid() {
-    init_logger();
-
-    use geo::mesh::VertexPositions;
-    let params = SimParams {
-        gravity: [0.0f32, -9.81, 0.0],
-        outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
-    };
-
-    let rigid_material = RigidMaterial::new(0, 1000.0);
-
-    let mesh = PolyMesh::from(make_box(4).surface_trimesh());
-
-    let mut solver = SolverBuilder::new(params)
-        .add_shell(mesh.clone(), rigid_material)
-        .build()
-        .expect("Failed to create solver for soft box equilibrium test");
-    assert!(solver.step().is_ok());
-
-    // Expect the box to remain in original configuration
-    let solution = &solver.shell(0).trimesh;
-    for (new, old) in solution
-        .vertex_position_iter()
-        .zip(mesh.vertex_position_iter())
-    {
-        // Check that the box is falling.
-        dbg!(new, old);
-        assert!(new[1] < old[1]);
-    }
-}
-
-#[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(4);

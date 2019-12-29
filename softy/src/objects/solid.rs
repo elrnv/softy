@@ -47,13 +47,11 @@ impl TetMeshSolid {
             .mesh()
             .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
 
-        dbg!(&fixed_verts);
         let fixed_elements: Vec<_> = self
             .mesh()
             .cell_iter()
             .map(|cell| cell.iter().map(|&vi| fixed_verts[vi]).sum::<i8>() / 4)
             .collect();
-        dbg!(&fixed_elements);
 
         self.mesh_mut()
             .set_attrib_data::<FixedIntType, CellIndex>(FIXED_ATTRIB, &fixed_elements)?;

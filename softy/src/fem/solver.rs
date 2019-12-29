@@ -689,8 +689,6 @@ impl SolverBuilder {
             frictional_contacts,
         );
 
-        dbg!(frictional_contacts.len());
-
         let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
 
         // The following scales have units of force (N).

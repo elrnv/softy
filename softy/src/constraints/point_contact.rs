@@ -186,7 +186,7 @@ impl PointContactConstraint {
         //}
 
         let surf = &self.implicit_surface;
-        let neighbourhood_indices = nonempty_neighbourhood_indices(&surf);
+        let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(&surf);
         let row_correction = |((row, col), val)| {
             let idx: Index = neighbourhood_indices[row];
             assert!(idx.is_valid());
@@ -321,7 +321,7 @@ impl PointContactConstraint {
             // Don't need to sort or compress.
             DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
         } else {
-            let neighbourhood_indices = nonempty_neighbourhood_indices(&surf);
+            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(&surf);
             let size = surf.num_neighbourhoods();
             let triplets = self
                 .collider_vertex_topo
@@ -598,7 +598,7 @@ impl PointContactConstraint {
 }
 
 /// Enumerate non-empty neighbourhoods in place.
-fn nonempty_neighbourhood_indices(surf: &QueryTopo) -> Vec<Index> {
+fn enumerate_nonempty_neighbourhoods_inplace(surf: &QueryTopo) -> Vec<Index> {
     neighbourhood_indices_with(surf, |_, s| s != 0)
 }
 
@@ -1514,6 +1514,26 @@ impl PointContactConstraint {
             })
     }
 
+    /// Remap jacobian row indices to coincide with surface trimesh indices.
+    pub(crate) fn jacobian_index_row_adapter(
+        &self,
+        iter: impl Iterator<Item = (usize, usize)>,
+        is_fixed: bool,
+    ) -> impl Iterator<Item = MatrixElementIndex> {
+        let neighbourhood_indices =
+            enumerate_nonempty_neighbourhoods_inplace(&self.implicit_surface);
+        if is_fixed { None } else { Some(iter) }
+            .into_iter()
+            .flatten()
+            .map(move |(row, col)| {
+                assert!(neighbourhood_indices[row].is_valid());
+                MatrixElementIndex {
+                    row: neighbourhood_indices[row].unwrap(),
+                    col,
+                }
+            })
+    }
+
     pub(crate) fn object_constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
@@ -1527,23 +1547,10 @@ impl PointContactConstraint {
             )
         } else {
             let surf = &self.implicit_surface;
-            let neighbourhood_indices = nonempty_neighbourhood_indices(surf);
-            Either::Right(
-                if !self.object_is_fixed {
-                    Some(surf.surface_jacobian_indices_iter())
-                } else {
-                    None
-                }
-                .into_iter()
-                .flatten()
-                .map(move |(row, col)| {
-                    assert!(neighbourhood_indices[row].is_valid());
-                    MatrixElementIndex {
-                        row: neighbourhood_indices[row].unwrap(),
-                        col,
-                    }
-                }),
-            )
+            Either::Right(self.jacobian_index_row_adapter(
+                surf.surface_jacobian_indices_iter(),
+                self.object_is_fixed,
+            ))
         }
     }
 
@@ -1560,26 +1567,96 @@ impl PointContactConstraint {
             )
         } else {
             let surf = &self.implicit_surface;
-            let neighbourhood_indices = nonempty_neighbourhood_indices(surf);
+            Either::Right(self.jacobian_index_row_adapter(
+                surf.query_jacobian_indices_iter(),
+                self.collider_is_fixed,
+            ))
+        }
+    }
+
+    pub(crate) fn object_constraint_jacobian_blocks_iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (usize, usize, [f64; 3])> + 'a {
+        if let Some(jac) = self.constraint_jacobian.borrow() {
+            Either::Left(
+                jac[0]
+                    .as_ref()
+                    .map(|jac| {
+                        jac.view().as_data().into_iter().enumerate().flat_map(
+                            move |(row_idx, row)| {
+                                row.into_iter().map(move |(block_col_idx, block)| {
+                                    (row_idx, block_col_idx, block.into_arrays()[0])
+                                })
+                            },
+                        )
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+        } else {
+            let surf = &self.implicit_surface;
+            let iter = surf
+                .surface_jacobian_block_indices_iter()
+                .zip(surf.surface_jacobian_block_iter(self.contact_points.view().into()));
+            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(surf);
             Either::Right(
-                if !self.collider_is_fixed {
-                    Some(surf.query_jacobian_indices_iter())
-                } else {
+                if self.object_is_fixed {
                     None
+                } else {
+                    Some(iter)
                 }
                 .into_iter()
                 .flatten()
-                .map(move |(row, col)| {
+                .map(move |((row, col), block)| {
                     assert!(neighbourhood_indices[row].is_valid());
-                    MatrixElementIndex {
-                        row: neighbourhood_indices[row].unwrap(),
-                        col,
-                    }
+                    (neighbourhood_indices[row].unwrap(), col, block)
                 }),
             )
         }
     }
 
+    pub(crate) fn collider_constraint_jacobian_blocks_iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (usize, usize, [f64; 3])> + 'a {
+        if let Some(jac) = self.constraint_jacobian.borrow() {
+            Either::Left(
+                jac[1]
+                    .as_ref()
+                    .map(|jac| {
+                        jac.view().as_data().into_iter().enumerate().flat_map(
+                            move |(row_idx, row)| {
+                                row.into_iter().map(move |(block_col_idx, block)| {
+                                    (row_idx, block_col_idx, block.into_arrays()[0])
+                                })
+                            },
+                        )
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+        } else {
+            let surf = &self.implicit_surface;
+            let iter = surf
+                .query_jacobian_block_indices_iter()
+                .zip(surf.query_jacobian_block_iter(self.contact_points.view().into()));
+            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(surf);
+            Either::Right(
+                if self.object_is_fixed {
+                    None
+                } else {
+                    Some(iter)
+                }
+                .into_iter()
+                .flatten()
+                .map(move |((row, col), block)| {
+                    assert!(neighbourhood_indices[row].is_valid());
+                    (neighbourhood_indices[row].unwrap(), col, block)
+                }),
+            )
+        }
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn constraint_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'a {
@@ -1664,11 +1741,12 @@ impl PointContactConstraint {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn constraint_jacobian_values_iter<'a>(
         &'a mut self,
         x: Input,
     ) -> impl Iterator<Item = f64> + 'a {
-        if !self.constraint_jacobian.filled() {
+        if !self.is_linear() {
             // Must not update the surface if constraint is linearized.
             self.update_surface_with_mesh_pos(x[0]);
             self.update_contact_points(x[1]);
@@ -1728,6 +1806,7 @@ impl PointContactConstraint {
         .map(MatrixElementIndex::from)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> impl Iterator<Item = MatrixElementIndex> + 'b {
@@ -1773,7 +1852,7 @@ impl PointContactConstraint {
         x: Input,
         lambda: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        if !self.constraint_jacobian.filled() {
+        if !self.is_linear() {
             // Must not update the surface if constraint is linearized.
             self.update_surface_with_mesh_pos(x[0]);
             self.update_contact_points(x[1]);
@@ -1892,7 +1971,8 @@ impl ContactConstraintJacobian<'_, f64> for PointContactConstraint {
             )
         };
 
-        let neighbourhood_indices = nonempty_neighbourhood_indices(&self.implicit_surface);
+        let neighbourhood_indices =
+            enumerate_nonempty_neighbourhoods_inplace(&self.implicit_surface);
         Box::new(idx_iter.map(move |(row, col)| {
             assert!(neighbourhood_indices[row].is_valid());
             MatrixElementIndex {

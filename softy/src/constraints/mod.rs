@@ -1,4 +1,4 @@
-pub mod linearized_point_contact;
+//pub mod linearized_point_contact;
 pub mod point_contact;
 pub mod volume;
 

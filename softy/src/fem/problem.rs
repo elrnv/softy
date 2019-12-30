@@ -5,12 +5,13 @@ use log::{debug, error, trace};
 
 use crate::TriMesh;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
-use utils::soap::Vector3;
 use utils::{soap::*, zip};
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
-use crate::constraints::{volume::VolumeConstraint, ContactConstraint};
+use crate::constraints::{
+    point_contact::PointContactConstraint, volume::VolumeConstraint, ContactConstraint,
+};
 use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
@@ -51,6 +52,15 @@ impl<'a> From<ipopt::Solution<'a>> for Solution {
         mysol.update(sol);
         mysol
     }
+}
+
+/// Integrate rotation axis-angle.
+/// `k0` is previous axis-angle vector.
+///
+/// The idea here is taken from https://arxiv.org/pdf/1604.08139.pdf
+#[inline]
+fn integrate_rotation<T: Real>(k0: Vector3<T>, dw: Vector3<T>) -> Vector3<T> {
+    (Quaternion::from_vector(k0) * Quaternion::from_vector(dw)).into_vector()
 }
 
 impl Solution {
@@ -128,7 +138,7 @@ impl SourceIndex {
 pub struct FrictionalContactConstraint {
     pub object_index: SourceIndex,
     pub collider_index: SourceIndex,
-    pub constraint: Box<RefCell<dyn ContactConstraint>>,
+    pub constraint: RefCell<PointContactConstraint>,
 }
 
 /// A `Vertex` is a single element of the `VertexSet`.
@@ -161,7 +171,7 @@ impl<T> Var<T> {
     pub fn is_fixed(&self) -> bool {
         match self {
             Var::Fixed(_) => true,
-            Var::Variable(_) => false,
+            _ => false,
         }
     }
 
@@ -354,16 +364,18 @@ impl ObjectData {
         let mut ws = self.workspace.borrow_mut();
         match source {
             SourceIndex::Shell(i) => {
-                if let ShellData::Rigid { cm, .. } = self.shells[i].data {
+                if let ShellData::Rigid { .. } = self.shells[i].data {
                     let mut grad_dofs = grad_x.isolate(1).isolate(i);
                     debug_assert_eq!(grad_dofs.len(), 2);
-                    let WorkspaceData { pos, grad, .. } = &mut *ws;
-                    let pos = pos.view().isolate(1).isolate(i);
-                    let mut grad_vtx = grad.view_mut().isolate(1).isolate(i);
-                    for (g_vtx, &p) in grad_vtx.iter_mut().zip(pos.iter()) {
+                    let r_iter = self.shells[i]
+                        .trimesh
+                        .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
+                        .expect("Missing rigid body reference positions");
+                    let mut grad_vtx = ws.grad.view_mut().isolate(1).isolate(i);
+                    for (g_vtx, &r) in grad_vtx.iter_mut().zip(r_iter) {
                         // Transfer gradient from vertices to degrees of freedom.
                         *grad_dofs[0].as_mut_tensor() += *g_vtx.as_tensor();
-                        let r = p.into_tensor() - cm;
+                        let r = r.into_tensor();
                         *grad_dofs[1].as_mut_tensor() += r.cross((*g_vtx).into_tensor());
                         *g_vtx = [0.0; 3]; // Value moved over, reset it.
                     }
@@ -569,64 +581,80 @@ impl ObjectData {
         }
     }
 
-    /// Translate a surface mesh coordinate index into the corresponding
-    /// simulation coordinate index in our global array.
-    pub fn source_coordinates(
-        &self,
-        object_index: SourceIndex,
-        collider_index: SourceIndex,
-        coord: usize,
-    ) -> usize {
+    /// A utility function to find the coordinates of the given solid surface vertex index inside the
+    /// global array of variables.
+    fn tetmesh_solid_vertex_coordinates(&self, mesh_index: usize, coord: usize) -> usize {
         let surf_vtx_idx = coord / 3;
+        let offset = self.prev_v.view().at(0).offset_value(mesh_index);
+        3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
+    }
 
-        // Retrieve tetmesh coordinates when it's determined that the source is a solid tetmesh.
-        let tetmesh_coordinates = |mesh_index, surf_vtx_idx| {
-            let offset = self.prev_v.view().at(0).offset_value(mesh_index);
-            3 * (offset + self.solids[mesh_index].surface().indices[surf_vtx_idx]) + coord % 3
-        };
+    /// A utility function to find the coordinates of the given soft shell surface vertex index inside the
+    /// global array of variables.
+    fn soft_trimesh_shell_vertex_coordinates(&self, mesh_index: usize, coord: usize) -> usize {
+        let surf_vtx_idx = coord / 3;
+        let prev_v = self.prev_v.view().at(1);
+        assert!(!prev_v.is_empty()); // Must be at least one shell.
+        assert!(!prev_v.at(mesh_index).is_empty()); // Verts should be coincident with dofs.
+        let offset = prev_v.offset_value(mesh_index);
+        3 * (offset + surf_vtx_idx) + coord % 3
+    }
 
-        // Retrieve trimesh coordinates when it's determined that the source is a shell trimesh.
-        let trimesh_coordinates = |mesh_index, surf_vtx_idx| {
-            let prev_v = self.prev_v.view().at(1);
-            assert!(!prev_v.is_empty()); // The trimesh should be coincident with degrees of freedom.
-            let offset = prev_v.offset_value(mesh_index);
-            3 * (offset + surf_vtx_idx) + coord % 3
-        };
-
-        let num_object_surface_indices: usize;
-
-        match object_index {
-            SourceIndex::Solid(obj_i) => {
-                num_object_surface_indices = self.solids[obj_i].surface().indices.len();
-                if surf_vtx_idx < num_object_surface_indices {
-                    return tetmesh_coordinates(obj_i, surf_vtx_idx);
+    /// Translate a surface mesh coordinate index into the corresponding
+    /// simulation coordinate index in our global array of generalized coordinates.
+    ///
+    /// If `None` is returned, it means the coordinate belongs to a rigid object vertex.
+    pub fn source_coordinate(&self, index: SourceIndex, coord: usize) -> Option<usize> {
+        match index {
+            SourceIndex::Solid(i) => Some(self.tetmesh_solid_vertex_coordinates(i, coord)),
+            SourceIndex::Shell(i) => {
+                if let ShellData::Rigid { .. } = self.shells[i].data {
+                    return None;
                 }
-            }
-            SourceIndex::Shell(obj_i) => {
-                num_object_surface_indices = self.shells[obj_i].trimesh.num_vertices();
-                if surf_vtx_idx < num_object_surface_indices {
-                    return trimesh_coordinates(obj_i, surf_vtx_idx);
-                }
-            }
-        }
-
-        // If we haven't returned yet, this means that surf_vtx_idx corresponds
-        // to collider surface.
-
-        // Adjust surf_vtx_idx to be in the right range:
-        let surf_vtx_idx = surf_vtx_idx - num_object_surface_indices;
-
-        match collider_index {
-            SourceIndex::Solid(coll_i) => {
-                assert!(surf_vtx_idx < self.solids[coll_i].surface().indices.len());
-                tetmesh_coordinates(coll_i, surf_vtx_idx)
-            }
-            SourceIndex::Shell(coll_i) => {
-                assert!(surf_vtx_idx < self.shells[coll_i].trimesh.num_vertices());
-                trimesh_coordinates(coll_i, surf_vtx_idx)
+                Some(self.soft_trimesh_shell_vertex_coordinates(i, coord))
             }
         }
     }
+
+    ///// Translate a surface mesh coordinate index into the corresponding
+    ///// simulation coordinate index in our global array of generalized coordinates.
+    /////
+    ///// If `None` is returned, it means the coordinate belongs to a rigid object vertex.
+    //pub fn source_coordinates(
+    //    &self,
+    //    object_index: SourceIndex,
+    //    collider_index: SourceIndex,
+    //    mut coord: usize,
+    //) -> Option<usize> {
+    //    if let SourceCoord::Index(idx) = self.source_coordinate(object_index, coord) {
+    //        Some(idx)
+    //    }
+
+    //    // If we haven't returned yet, this means that surf_vtx_idx corresponds
+    //    // to collider surface.
+
+    //    let num_object_surface_indices = match index {
+    //        SourceIndex::Solid(i) => self.solids[i].surface().indices.len(),
+    //        SourceIndex::Shell(i) => self.shells[i].trimesh.num_vertices(),
+    //    };
+
+    //    // Adjust surf_vtx_idx to be in the right range:
+    //    coord -= 3 * num_object_surface_indices;
+
+    //    match collider_index {
+    //        SourceIndex::Solid(coll_i) => {
+    //            assert!(coord < 3 * self.solids[coll_i].surface().indices.len());
+    //            Some(self.tetmesh_solid_vertex_coordinates(coll_i, coord))
+    //        }
+    //        SourceIndex::Shell(coll_i) => {
+    //            if let ShellData::Rigid { .. } = self.shells[coll_i].data {
+    //                return None;
+    //            }
+    //            assert!(coord < 3 * self.shells[coll_i].trimesh.num_vertices());
+    //            Some(self.soft_trimesh_shell_vertex_coordinates(coll_i, coord))
+    //        }
+    //    }
+    //}
 
     /// Produce an iterator over the given slice of scaled variables.
     pub(crate) fn scaled_variables_iter<'a>(
@@ -671,17 +699,7 @@ impl ObjectData {
                         .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
                         .expect("Missing rigid body reference positions"),
                 ) {
-                    let angle = rotation.norm();
-                    let r = r.into_tensor();
-                    let r_rotated = if angle > 0.0 {
-                        let cos = angle.cos();
-                        let sin = angle.sin();
-                        let k = rotation / angle;
-                        r * cos + k.cross(r) * sin + k * (k.dot(r) * (1.0 - cos))
-                    } else {
-                        r
-                    };
-                    *out_p.as_mut_tensor() = r_rotated + translation;
+                    *out_p.as_mut_tensor() = rotate(r.into_tensor(), rotation) + translation;
                 }
             }
         }
@@ -712,15 +730,41 @@ impl ObjectData {
         debug_assert!(dt > 0.0);
         let mut ws = self.workspace.borrow_mut();
         let WorkspaceData { x, v, .. } = &mut *ws;
-        let x = x.view_mut().into_flat();
-        let v = v.view().into_flat();
-        let prev_x = self.prev_x.view().into_flat();
-        // In static simulations, velocity is simply displacement.
-        debug_assert_eq!(v.len(), x.len());
-        debug_assert_eq!(prev_x.len(), x.len());
-        x.iter_mut()
-            .zip(prev_x.iter().zip(v.iter()))
-            .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
+        {
+            let x = x.view_mut().into_flat();
+            let v = v.view().into_flat();
+            let prev_x = self.prev_x.view().into_flat();
+            debug_assert_eq!(v.len(), x.len());
+            debug_assert_eq!(prev_x.len(), x.len());
+
+            // In static simulations, velocity is simply displacement.
+
+            // Integrate all (positional) degrees of freedom using standard implicit euler.
+            // Note this involves rigid rotations, but we will overwrite those below.
+            x.iter_mut()
+                .zip(prev_x.iter().zip(v.iter()))
+                .for_each(|(x1, (&x0, &v))| *x1 = x0 + v * dt);
+        }
+
+        let mut x = x.view_mut().isolate(1);
+        let prev_x = self.prev_x.view().isolate(1);
+        let v = v.view().isolate(1);
+
+        for (shell, prev_x, v, mut x) in
+            zip!(self.shells.iter(), prev_x.iter(), v.iter(), x.iter_mut())
+        {
+            match shell.data {
+                ShellData::Rigid { .. } => {
+                    // We are only interested in rigid rotations.
+                    assert_eq!(x.len(), 2);
+                    assert_eq!(prev_x.len(), 2);
+                    assert_eq!(v.len(), 2);
+                    x[1] = integrate_rotation(prev_x[1].into_tensor(), v[1].into_tensor() * dt)
+                        .into_data();
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Update the solid meshes with the given global array of vertex positions
@@ -804,18 +848,18 @@ impl ObjectData {
 
         let mut prev_x = prev_x.view_mut().isolate(1);
         let mut prev_v = prev_v.view_mut().isolate(1);
-        let mut pos = prev_pos.view_mut().isolate(1);
-        let mut vel = prev_vel.view_mut().isolate(1);
+        let mut prev_pos = prev_pos.view_mut().isolate(1);
+        let mut prev_vel = prev_vel.view_mut().isolate(1);
 
         debug_assert!(time_step > 0.0);
         let dt_inv = 1.0 / time_step;
 
         // Get the trimesh and prev_x/pos so we can update the fixed vertices.
-        for ((shell, (mut prev_pos, mut prev_vel)), (mut pos, mut vel)) in self
+        for ((shell, (mut prev_x, mut prev_v)), (mut prev_pos, mut prev_vel)) in self
             .shells
             .iter()
             .zip(prev_x.iter_mut().zip(prev_v.iter_mut()))
-            .zip(pos.iter_mut().zip(vel.iter_mut()))
+            .zip(prev_pos.iter_mut().zip(prev_vel.iter_mut()))
         {
             // Get the vertex index of the original vertex (point in given point cloud).
             // This is done because meshes can be reordered when building the
@@ -833,9 +877,9 @@ impl ObjectData {
                     let fixed_iter = shell
                         .trimesh
                         .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
-                    prev_pos
+                    prev_x
                         .iter_mut()
-                        .zip(prev_vel.iter_mut())
+                        .zip(prev_v.iter_mut())
                         .zip(new_pos_iter)
                         .zip(fixed_iter)
                         .filter_map(|(data, &fixed)| if fixed != 0i8 { Some(data) } else { None })
@@ -864,8 +908,8 @@ impl ObjectData {
                         FixedVerts::One(vtx) => {
                             // For 1 fixed vertex, assign the appropriate velocity to that vertex.
                             if let Some(&new_pos) = new_pos.get(source_indices[vtx] as usize) {
-                                *(&mut vel[vtx]).as_mut_tensor() =
-                                    (new_pos.into_tensor() - pos[vtx].into_tensor()) * dt_inv;
+                                *(&mut prev_vel[vtx]).as_mut_tensor() =
+                                    (new_pos.into_tensor() - prev_pos[vtx].into_tensor()) * dt_inv;
                                 // Position will by updated by the solve automatically.
                             }
                         }
@@ -875,10 +919,12 @@ impl ObjectData {
                             //       quite easily. Rsolve this.
                             if let Some(&p0) = new_pos.get(source_indices[verts[0]] as usize) {
                                 if let Some(&p1) = new_pos.get(source_indices[verts[1]] as usize) {
-                                    *(&mut vel[verts[0]]).as_mut_tensor() =
-                                        (p0.into_tensor() - pos[verts[0]].into_tensor()) * dt_inv;
-                                    *(&mut vel[verts[1]]).as_mut_tensor() =
-                                        (p1.into_tensor() - pos[verts[1]].into_tensor()) * dt_inv;
+                                    *(&mut prev_vel[verts[0]]).as_mut_tensor() = (p0.into_tensor()
+                                        - prev_pos[verts[0]].into_tensor())
+                                        * dt_inv;
+                                    *(&mut prev_vel[verts[1]]).as_mut_tensor() = (p1.into_tensor()
+                                        - prev_pos[verts[1]].into_tensor())
+                                        * dt_inv;
                                 }
                             }
                         }
@@ -887,8 +933,9 @@ impl ObjectData {
                 ShellData::Fixed { .. } => {
                     // This mesh is fixed and doesn't obey any physics. Simply
                     // copy the positions and velocities over.
-                    pos.iter_mut()
-                        .zip(vel.iter_mut())
+                    prev_pos
+                        .iter_mut()
+                        .zip(prev_vel.iter_mut())
                         .zip(new_pos_iter)
                         .for_each(|((pos, vel), new_pos)| {
                             if let Some(&new_pos) = new_pos {
@@ -900,6 +947,21 @@ impl ObjectData {
                 }
             }
         }
+
+        // Update current pos and vel as well
+        self.workspace
+            .borrow_mut()
+            .pos
+            .view_mut()
+            .into_flat()
+            .copy_from_slice(prev_pos.view().into_flat());
+        self.workspace
+            .borrow_mut()
+            .vel
+            .view_mut()
+            .into_flat()
+            .copy_from_slice(prev_vel.view().into_flat());
+
         Ok(())
     }
 
@@ -1238,20 +1300,27 @@ impl NonLinearProblem {
     }
 
     /// Save an intermediate state of the solve. This is used for debugging.
-    //#[allow(dead_code)]
-    //pub fn save_intermediate(&mut self, uv: &[f64], step: usize) {
-    //    let v = self.update_current_velocity(uv);
-    //    let x = self.compute_step(v.view());
-    //    let mut solids = self.object_data.solids.clone();
-    //    let mut shells = self.object_data.shells.clone();
-    //    ObjectData::update_simulated_meshes_with(
-    //        &mut solids, &mut shells, x.view(), v.view());
-    //    geo::io::save_tetmesh(
-    //        &solids[0].tetmesh,
-    //        &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
-    //    )
-    //    .unwrap();
-    //}
+    #[allow(dead_code)]
+    pub fn save_intermediate(&mut self, uv: &[f64], step: usize) {
+        self.update_current_velocity(uv);
+        self.compute_step();
+        let ws = self.object_data.workspace.borrow();
+        let mut solids = self.object_data.solids.clone();
+        let mut shells = self.object_data.shells.clone();
+        ObjectData::update_simulated_meshes_with(
+            &mut solids,
+            &mut shells,
+            ws.x.view(),
+            ws.v.view(),
+            ws.pos.view(),
+            ws.vel.view(),
+        );
+        geo::io::save_tetmesh(
+            &solids[0].tetmesh,
+            &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
+        )
+        .unwrap();
+    }
 
     /// Update the solid meshes with the given points.
     pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
@@ -1825,10 +1894,8 @@ impl NonLinearProblem {
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let obj_prev_pos = object_data.prev_pos(fc.object_index);
             let col_prev_pos = object_data.prev_pos(fc.collider_index);
-            let obj_vel = object_data
-                .cur_vel(v.view(), vel.view(), fc.object_index);
-            let col_vel = object_data
-                .cur_vel(v.view(), vel.view(), fc.collider_index);
+            let obj_vel = object_data.cur_vel(v.view(), vel.view(), fc.object_index);
+            let col_vel = object_data.cur_vel(v.view(), vel.view(), fc.collider_index);
 
             let n = fc.constraint.borrow().constraint_size();
             let contact_impulse = Self::contact_impulse_magnitudes(
@@ -2068,7 +2135,6 @@ impl NonLinearProblem {
             workspace_pot.resize(active_constraint_indices.len(), 0.0);
 
             fc.constraint.borrow_mut().constraint(
-                [obj_x0.view(), coll_x0.view()],
                 [obj_x0.view(), coll_x0.view()],
                 workspace_pot.as_mut_slice(),
             );
@@ -2721,7 +2787,6 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
     fn initial_point(&self, uv: &mut [Number]) -> bool {
         uv.copy_from_slice(self.warm_start.primal_variables.as_slice());
-
         debug_assert!(uv.iter().all(|&uv| uv.is_finite()));
         true
     }
@@ -2888,7 +2953,26 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             num += vc.borrow().constraint_jacobian_size();
         }
         for fc in self.frictional_contacts.iter() {
-            num += fc.constraint.borrow().constraint_jacobian_size();
+            let constraint = fc.constraint.borrow();
+            let is_rigid = |src_idx| {
+                if let SourceIndex::Shell(idx) = src_idx {
+                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                        return true;
+                    }
+                }
+                false
+            };
+            if is_rigid(fc.object_index) {
+                num += constraint.constraint_size() * 6;
+            } else {
+                num += constraint.object_constraint_jacobian_size();
+            }
+
+            if is_rigid(fc.collider_index) {
+                num += constraint.constraint_size() * 6;
+            } else {
+                num += constraint.collider_constraint_jacobian_size();
+            }
         }
         num
     }
@@ -2943,18 +3027,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let n = fc.constraint.borrow().constraint_size();
-            let obj_x0 = self.object_data.prev_pos(fc.object_index);
-            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x, pos.view(), fc.object_index);
-            let coll_x = self
-                .object_data
-                .cur_pos(x, pos.view(), fc.collider_index);
+            let coll_x = self.object_data.cur_pos(x, pos.view(), fc.collider_index);
 
-            fc.constraint.borrow_mut().constraint(
-                [obj_x0.view(), coll_x0.view()],
-                [obj_x.view(), coll_x.view()],
-                &mut g[count..count + n],
-            );
+            fc.constraint
+                .borrow_mut()
+                .constraint([obj_x.view(), coll_x.view()], &mut g[count..count + n]);
 
             let scale = self.contact_constraint_scale();
             g[count..count + n].iter_mut().for_each(|x| *x *= scale);
@@ -3030,25 +3108,84 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             row_offset += 1;
         }
 
+        // Contact constraints
+
+        // Special handling for rigid Jacobians since these are dense.
+        let process_rigid = |src_idx,
+                             nrows,
+                             row_offset,
+                             rows: &mut [ipopt::Index],
+                             cols: &mut [ipopt::Index]|
+         -> usize {
+            let mut count = 0;
+            if let SourceIndex::Shell(idx) = src_idx {
+                if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                    let prev_v = self.object_data.prev_v.view().at(1);
+                    assert_eq!(prev_v.at(idx).len(), 2); // The trimesh should have 6 degrees of freedom
+                    let offset = prev_v.offset_value(idx);
+
+                    for row in 0..nrows {
+                        for i in 0..6 {
+                            rows[count] = (row + row_offset) as ipopt::Index;
+                            cols[count] = (3 * offset + i) as ipopt::Index;
+                            count += 1;
+                        }
+                    }
+                    assert_eq!(count, 6 * nrows);
+                }
+            }
+            count
+        };
+
         for fc in self.frictional_contacts.iter() {
             //use ipopt::BasicProblem;
             let nrows = fc.constraint.borrow().constraint_size();
             //let ncols = self.num_variables();
             //let mut jac = vec![vec![0; nrows]; ncols]; // col major
 
+            count += process_rigid(
+                fc.object_index,
+                nrows,
+                row_offset,
+                &mut rows[count..],
+                &mut cols[count..],
+            );
+
             let constraint = fc.constraint.borrow();
-            let iter = constraint.constraint_jacobian_indices_iter().unwrap();
-            for MatrixElementIndex { row, col } in iter {
-                debug_assert!(row < nrows);
-                rows[count] = (row + row_offset) as ipopt::Index;
-                cols[count] =
-                    self.object_data
-                        .source_coordinates(fc.object_index, fc.collider_index, col)
-                        as ipopt::Index;
-                debug_assert!(cols[count] < ipopt::BasicProblem::num_variables(self) as i32);
-                //jac[col][row] = 1;
-                count += 1;
+            for MatrixElementIndex { row, col } in
+                constraint.object_constraint_jacobian_indices_iter()
+            {
+                if let Some(coord) = self.object_data.source_coordinate(fc.object_index, col) {
+                    debug_assert!(row < nrows);
+                    rows[count] = (row + row_offset) as ipopt::Index;
+                    cols[count] = coord as ipopt::Index;
+                    debug_assert!(cols[count] < ipopt::BasicProblem::num_variables(self) as i32);
+                    //jac[col][row] = 1;
+                    count += 1;
+                }
             }
+
+            count += process_rigid(
+                fc.collider_index,
+                nrows,
+                row_offset,
+                &mut rows[count..],
+                &mut cols[count..],
+            );
+
+            for MatrixElementIndex { row, col } in
+                constraint.collider_constraint_jacobian_indices_iter()
+            {
+                if let Some(coord) = self.object_data.source_coordinate(fc.collider_index, col) {
+                    debug_assert!(row < nrows);
+                    rows[count] = (row + row_offset) as ipopt::Index;
+                    cols[count] = coord as ipopt::Index;
+                    debug_assert!(cols[count] < ipopt::BasicProblem::num_variables(self) as i32);
+                    //jac[col][row] = 1;
+                    count += 1;
+                }
+            }
+
             row_offset += nrows;
 
             //println!("jac = ");
@@ -3075,12 +3212,15 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         self.update_current_velocity(uv);
         self.compute_step();
 
+        let dt = self.time_step();
+
         let mut count = 0; // Constraint counter
 
         let mut ws = self.object_data.workspace.borrow_mut();
-        let WorkspaceData { x, pos, .. } = &mut *ws;
+        let WorkspaceData { x, pos, v, .. } = &mut *ws;
         ObjectData::sync_pos(&self.object_data.shells, x.view(), pos.view_mut());
         let x = x.view();
+        let v = v.view();
         let x0 = self.object_data.prev_x.view();
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
@@ -3097,28 +3237,154 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             count += n;
         }
 
-        for fc in self.frictional_contacts.iter() {
-            let n = fc.constraint.borrow().constraint_jacobian_size();
-            let obj_x0 = self.object_data.prev_pos(fc.object_index);
-            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
-            let obj_x = self.object_data.cur_pos(x, pos.view(), fc.object_index);
-            let coll_x = self
-                .object_data
-                .cur_pos(x, pos.view(), fc.collider_index);
+        // TODO: Refactor rigid handling:
+        //       Either put it all into the constraint itself (probably not good)
+        //       Or refactor rigid handling as a remapping of the constraint jacobian to generalized
+        //       coordinates.
+        //       Because constraints can be linearized it makes sense to bake this in to the constraint
+        //       so that jacobians don't need to be recomputed every time.
+        // Special handling for rigid Jacobians since these are dense.
+        let process_rigid_object = |constraint: &PointContactConstraint,
+                                    pos: MeshVertexView3<&[f64]>,
+                                    x: VertexView3<&[f64]>,
+                                    src_idx,
+                                    nrows,
+                                    scale,
+                                    vals: &mut [Number]|
+         -> usize {
+            let mut count = 0;
+            if let SourceIndex::Shell(idx) = src_idx {
+                if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                    vals[..6 * nrows].iter_mut().for_each(|v| *v = 0.0); // initialize vals, since will be adding to it.
+                    let cm = x.at(1).at(idx)[0].into_tensor();
+                    for (row, col, block) in constraint.object_constraint_jacobian_blocks_iter() {
+                        let scaled_block = block.into_tensor() * scale;
+                        let linear = &mut vals[6 * row..6 * row + 3];
+                        *linear.as_mut_tensor() += scaled_block;
 
-            fc.constraint
-                .borrow_mut()
-                .constraint_jacobian_values(
-                    [obj_x0.view(), coll_x0.view()],
-                    [obj_x.view(), coll_x.view()],
-                    &mut vals[count..count + n],
-                )
-                .ok();
+                        let r = pos[col].into_tensor() - cm;
+                        //let r = pos[col].into_tensor();
+                        let angular = &mut vals[6 * row + 3..6 * (row + 1)];
+                        *angular.as_mut_tensor() += r.skew() * scaled_block;
+                    }
+                    count += 6 * nrows;
+                }
+            }
+            count
+        };
+        let process_rigid_collider = |constraint: &PointContactConstraint,
+                                      x0: VertexView3<&[f64]>,
+                                      v: VertexView3<&[f64]>,
+                                      src_idx,
+                                      nrows,
+                                      scale,
+                                      vals: &mut [Number]|
+         -> usize {
+            let mut count = 0;
+            if let SourceIndex::Shell(idx) = src_idx {
+                if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                    vals[..6 * nrows].iter_mut().for_each(|v| *v = 0.0); // initialize vals, since will be adding to it.
+
+                    let pos = self.object_data.shells[idx]
+                        .trimesh
+                        .attrib_as_slice::<RigidRefPosType, VertexIndex>(
+                            REFERENCE_VERTEX_POS_ATTRIB,
+                        )
+                        .unwrap();
+                    for (row, col, block) in constraint.collider_constraint_jacobian_blocks_iter() {
+                        let scaled_block = block.into_tensor() * scale;
+                        let linear = &mut vals[6 * row..6 * row + 3];
+                        *linear.as_mut_tensor() += scaled_block;
+
+                        let r = pos[col].into_tensor();
+                        //debug!("r x v = {:?}", r.cross(scaled_block).into_data());
+                        //let r = pos[col].into_tensor();
+                        let angular = &mut vals[6 * row + 3..6 * (row + 1)];
+                        let x0 = x0.view().at(1).at(idx)[1].into_tensor();
+                        let w_new = v.view().at(1).at(idx)[1].into_tensor();
+                        let r = rotate(r, x0);
+                        // Compute dR(w)r/dw as per https://arxiv.org/pdf/1312.0788.pdf
+                        let dw = w_new * dt;
+                        let rot = rotation(-dw);
+                        let dw2 = dw.norm_squared();
+                        let dpdw = if dw2 > 0.0 {
+                            ((dw * dw.transpose()
+                                - dw.skew() * (rot.transpose() - Matrix3::identity()))
+                                * (r / dw2).skew()
+                                * rot)
+                        } else {
+                            r.skew()
+                        };
+                        *angular.as_mut_tensor() += dpdw * scaled_block;
+                    }
+                    count += 6 * nrows;
+                }
+            }
+            count
+        };
+
+        for fc in self.frictional_contacts.iter() {
+            let nrows = fc.constraint.borrow().constraint_size();
             let scale = self.contact_constraint_scale();
-            vals[count..count + n].iter_mut().for_each(|v| *v *= scale);
-            count += n;
+
+            let obj_pos = self.object_data.cur_pos(x, pos.view(), fc.object_index);
+            let coll_pos = self.object_data.cur_pos(x, pos.view(), fc.collider_index);
+
+            let mut constraint = fc.constraint.borrow_mut();
+            if !constraint.is_linear() {
+                constraint.update_surface_with_mesh_pos(obj_pos.view());
+                constraint.update_contact_points(coll_pos.view());
+            }
+
+            let obj_rigid_count = process_rigid_object(
+                &*constraint,
+                obj_pos.view(),
+                x,
+                fc.object_index,
+                nrows,
+                scale,
+                &mut vals[count..],
+            );
+
+            if obj_rigid_count > 0 {
+                count += obj_rigid_count;
+            } else {
+                let n = constraint.object_constraint_jacobian_size();
+                for (v, out_v) in constraint
+                    .object_constraint_jacobian_values_iter()
+                    .zip(vals[count..count + n].iter_mut())
+                {
+                    *out_v = v * scale;
+                }
+                count += n;
+            }
+
+            let coll_rigid_count = process_rigid_collider(
+                &*constraint,
+                x0,
+                v,
+                fc.collider_index,
+                nrows,
+                scale,
+                &mut vals[count..],
+            );
+
+            if coll_rigid_count > 0 {
+                count += coll_rigid_count;
+            } else {
+                let n = constraint.collider_constraint_jacobian_size();
+                for (v, out_v) in constraint
+                    .collider_constraint_jacobian_values_iter()
+                    .zip(vals[count..count + n].iter_mut())
+                {
+                    *out_v = v * scale;
+                }
+                count += n;
+            }
         }
+
         assert_eq!(count, vals.len());
+
         let scale = self.time_step() * self.variable_scale();
         vals.iter_mut().for_each(|v| *v *= scale);
 
@@ -3227,16 +3493,31 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let constraint = fc.constraint.borrow();
-            let iter = constraint.constraint_hessian_indices_iter().unwrap();
-            for MatrixElementIndex { row, col } in iter {
-                rows[count] =
-                    self.object_data
-                        .source_coordinates(fc.object_index, fc.collider_index, row)
-                        as ipopt::Index;
-                cols[count] =
-                    self.object_data
-                        .source_coordinates(fc.object_index, fc.collider_index, col)
-                        as ipopt::Index;
+            for MatrixElementIndex { row, col } in
+                constraint.object_constraint_hessian_indices_iter()
+            {
+                rows[count] = self
+                    .object_data
+                    .source_coordinate(fc.object_index, row)
+                    .unwrap() as ipopt::Index;
+                cols[count] = self
+                    .object_data
+                    .source_coordinate(fc.object_index, col)
+                    .unwrap() as ipopt::Index;
+                count += 1;
+            }
+
+            for MatrixElementIndex { row, col } in
+                constraint.collider_constraint_hessian_indices_iter()
+            {
+                rows[count] = self
+                    .object_data
+                    .source_coordinate(fc.collider_index, row)
+                    .unwrap() as ipopt::Index;
+                cols[count] = self
+                    .object_data
+                    .source_coordinate(fc.collider_index, col)
+                    .unwrap() as ipopt::Index;
                 count += 1;
             }
         }
@@ -3349,24 +3630,18 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let obj_x0 = self.object_data.prev_pos(fc.object_index);
-            let coll_x0 = self.object_data.prev_pos(fc.collider_index);
             let obj_x = self.object_data.cur_pos(x1, pos.view(), fc.object_index);
-            let coll_x = self
-                .object_data
-                .cur_pos(x1, pos.view(), fc.collider_index);
+            let coll_x = self.object_data.cur_pos(x1, pos.view(), fc.collider_index);
             let nc = fc.constraint.borrow().constraint_size();
             let nh = fc.constraint.borrow().constraint_hessian_size();
             fc.constraint
                 .borrow_mut()
-                .constraint_hessian_values(
-                    [obj_x0.view(), coll_x0.view()],
+                .constraint_hessian_values_iter(
                     [obj_x.view(), coll_x.view()],
                     &lambda[coff..coff + nc],
-                    c_scale * self.contact_constraint_scale(),
-                    &mut vals[count..count + nh],
                 )
-                .unwrap();
+                .zip(vals[count..count + nh].iter_mut())
+                .for_each(|(v, out_v)| *out_v = v * c_scale * self.contact_constraint_scale());
 
             count += nh;
             coff += nc;

@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 geo = { path = "../geo" }
+utils = { path = "../utils" }
 softy = { path = "../softy" }
 libc = "*"
 hdkrs = { path = "../hdkrs" }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::Error;
+use rayon::iter::Either;
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
 pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
@@ -116,8 +117,17 @@ impl<T: Real> QueryTopo<T> {
             .enumerate()
             .filter(move |(_, nbrs)| nbrs.len() != 0)
             .flat_map(move |(i, _)| {
-                (0..3).flat_map(move |c| (c..3).map(move |r| (3 * i + r, 3 * i + c)))
+                (0..3).flat_map(move |r| (0..=r).map(move |c| (3 * i + r, 3 * i + c)))
             })
+    }
+
+    pub fn query_hessian_product_values_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+    ) -> impl Iterator<Item = T> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| self
+            .query_hessian_product_values_iter_impl(query_points, multipliers, kernel))
     }
 
     pub fn query_hessian_product_values(
@@ -147,6 +157,37 @@ impl<T: Real> QueryTopo<T> {
         ))
     }
 
+    /// This function returns an iterator over the values of the hessian product matrix with 6 (lower triangular)
+    /// entries per diagonal 3x3 block of the hessian product.
+    pub(crate) fn query_hessian_product_values_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+        kernel: K,
+    ) -> impl Iterator<Item = T> + 'a
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighbourhood_seq();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            bg_field_params,
+            ..
+        } = *self.base();
+
+        // For each row (query point)
+        zip!(query_points.iter(), neigh_points)
+            .filter(|(_, nbrs)| !nbrs.is_empty())
+            .zip(multipliers.iter())
+            .flat_map(move |((q, nbr_points), &mult)| {
+                let view = SamplesView::new(nbr_points, samples);
+                let mtx = query_hessian_at(Vector3::new(*q), view, kernel, bg_field_params) * mult;
+                (0..3).flat_map(move |r| (0..=r).map(move |c| mtx[r][c]))
+            })
+    }
+
     /// This function populates the values of the hessian product matrix with 6 (lower triangular)
     /// entries per diagonal 3x3 block of the hessian product.
     pub(crate) fn query_hessian_product_values_impl<K>(
@@ -160,42 +201,17 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
-
-        let ImplicitSurfaceBase {
-            ref samples,
-            bg_field_params,
-            ..
-        } = *self.base();
-
-        // For each row (query point)
-        let hess_iter = zip!(query_points.iter(), neigh_points)
-            .filter(|(_, nbrs)| !nbrs.is_empty())
-            .zip(multipliers.iter())
-            .map(move |((q, nbr_points), &mult)| {
-                let view = SamplesView::new(nbr_points, samples);
-                query_hessian_at(Vector3::new(*q), view, kernel, bg_field_params) * mult
-            });
-
-        let value_mtxs: &mut [[T; 6]] = reinterpret::reinterpret_mut_slice(values);
-
         let mut count = 0;
-        value_mtxs
+        values
             .iter_mut()
-            .zip(hess_iter)
-            .for_each(|(mtx, new_mtx)| {
-                let mut i = 0;
-                for (c, new_col) in new_mtx.into_data().iter().enumerate() {
-                    for &new_val in new_col.iter().skip(c) {
-                        mtx[i] = new_val * scale;
-                        i += 1;
-                    }
-                }
+            .zip(self.query_hessian_product_values_iter_impl(query_points, multipliers, kernel))
+            .for_each(|(v, new_v)| {
+                *v = new_v * scale;
                 count += 1;
             });
 
         // Ensure that all values are filled
-        debug_assert_eq!(value_mtxs.len(), count);
+        debug_assert_eq!(values.len(), count);
     }
 
     /*
@@ -218,6 +234,16 @@ impl<T: Real> QueryTopo<T> {
         values: &mut [T],
     ) -> Result<(), Error> {
         self.surface_hessian_product_scaled_values(query_points, multipliers, T::one(), values)
+    }
+
+    pub fn surface_hessian_product_values_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+    ) -> Result<impl Iterator<Item = T> + 'a, Error> {
+        Ok(apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.surface_hessian_product_values_iter_impl(query_points, multipliers, kernel)
+        }, ?))
     }
 
     /// Compute the Hessian of this implicit surface function with respect to surface
@@ -295,6 +321,26 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
+        Ok(values
+            .iter_mut()
+            .zip(self.surface_hessian_product_values_iter_impl(
+                query_points,
+                multipliers,
+                kernel,
+            )?)
+            .for_each(|(val, new_val)| *val = new_val * scale))
+    }
+
+    pub(crate) fn surface_hessian_product_values_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        multipliers: &'a [T],
+        kernel: K,
+    ) -> Result<impl Iterator<Item = T> + 'a, Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
         let neigh_points = self.trivial_neighbourhood_seq();
 
         let ImplicitSurfaceBase {
@@ -325,19 +371,13 @@ impl<T: Real> QueryTopo<T> {
                         )
                     });
 
-                values
-                    .iter_mut()
-                    .zip(face_hess.flat_map(move |(row, col, mtx)| {
-                        (0..3).flat_map(move |r| {
-                            (0..3)
-                                .filter(move |c| 3 * row + r >= 3 * col + c)
-                                .map(move |c| mtx[r][c])
-                        })
-                    }))
-                    .for_each(|(val, new_val)| {
-                        *val = new_val * scale;
-                    });
-                Ok(())
+                Ok(face_hess.flat_map(move |(row, col, mtx)| {
+                    (0..3).flat_map(move |r| {
+                        (0..3)
+                            .filter(move |c| 3 * row + r >= 3 * col + c)
+                            .map(move |c| mtx[r][c])
+                    })
+                }))
             }
         }
     }

@@ -31,24 +31,29 @@ impl<T: Real> QueryTopo<T> {
     pub fn query_jacobian_block_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-    ) -> Box<dyn Iterator<Item = [T; 3]> + 'a> {
-        apply_kernel_query_fn!(self, |kernel| {
-            let iter: Box<dyn Iterator<Item = [T; 3]>> =
-                Box::new(self.query_jacobian_iter_impl(query_points, kernel, false));
-            iter
+    ) -> impl Iterator<Item = [T; 3]> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.query_jacobian_iter_impl(query_points, kernel, false)
+        })
+    }
+
+    /// Values for which the query neighbourhood is empty are set to `None`.
+    pub fn query_jacobian_block_par_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+    ) -> impl IndexedParallelIterator<Item = Option<[T; 3]>> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.query_jacobian_par_iter_impl(query_points, kernel, false)
         })
     }
 
     pub fn query_jacobian_values_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-    ) -> Box<dyn Iterator<Item = T> + 'a> {
-        apply_kernel_query_fn!(self, |kernel| {
-            let iter: Box<dyn Iterator<Item = T>> = Box::new(
-                self.query_jacobian_iter_impl(query_points, kernel, false)
-                    .flat_map(move |v| ArrayVec::from(v).into_iter()),
-            );
-            iter
+    ) -> impl Iterator<Item = T> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.query_jacobian_iter_impl(query_points, kernel, false)
+                .flat_map(move |v| ArrayVec::from(v).into_iter())
         })
     }
 
@@ -74,6 +79,17 @@ impl<T: Real> QueryTopo<T> {
             .enumerate()
             .filter(move |(_, nbrs)| nbrs.len() != 0)
             .map(move |(i, _)| (i, i))
+    }
+
+    /// A parallel version of `query_jacobian_block_indices_iter`, however it includes an
+    /// additional integeer indicating the number of neighbours in a given query point
+    /// neighbourhood.
+    pub fn query_jacobian_block_indices_par_iter<'a>(
+        &'a self,
+    ) -> impl IndexedParallelIterator<Item = (usize, usize, usize)> + 'a {
+        self.trivial_neighbourhood_par()
+            .enumerate()
+            .map(move |(i, nbrs)| (i, i, nbrs.len()))
     }
 
     pub fn query_jacobian_indices_iter<'a>(&'a self) -> impl Iterator<Item = (usize, usize)> + 'a {
@@ -113,6 +129,49 @@ impl<T: Real> QueryTopo<T> {
                 )
                 .into()
             })
+    }
+
+    /// Parallel version of `query_jacobian_iter_impl`. When `full` is set to `false`, this
+    /// iterator returns `None` for query points without neighbourhoods. This allows it to be an
+    /// `IndexedParallelIterator`.
+    pub(crate) fn query_jacobian_par_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        kernel: K,
+        full: bool,
+    ) -> impl IndexedParallelIterator<Item = Option<[T; 3]>> + 'a
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighbourhood_par();
+        let closest_points = self.closest_samples_par();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            bg_field_params,
+            ..
+        } = *self.base();
+
+        // For each row (query point)
+        zip!(query_points.par_iter(), neigh_points, closest_points).map(
+            move |(q, nbr_points, closest)| {
+                if full || !nbr_points.is_empty() {
+                    let view = SamplesView::new(nbr_points, samples);
+                    Some(
+                        query_jacobian_at(
+                            Vector3::new(*q),
+                            view,
+                            Some(closest),
+                            kernel,
+                            bg_field_params,
+                        )
+                        .into(),
+                    )
+                } else {
+                    None
+                }
+            },
+        )
     }
 
     pub(crate) fn query_jacobian_impl<K>(
@@ -168,24 +227,28 @@ impl<T: Real> QueryTopo<T> {
     pub fn surface_jacobian_block_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-    ) -> Box<dyn Iterator<Item = [T; 3]> + 'a> {
-        apply_kernel_query_fn!(self, |kernel| {
-            let iter: Box<dyn Iterator<Item = [T; 3]>> =
-                Box::new(self.surface_jacobian_iter_impl(query_points, kernel));
-            iter
+    ) -> impl Iterator<Item = [T; 3]> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.surface_jacobian_iter_impl(query_points, kernel)
+        })
+    }
+
+    pub fn surface_jacobian_block_par_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+    ) -> impl ParallelIterator<Item = [T; 3]> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.surface_jacobian_par_iter_impl(query_points, kernel)
         })
     }
 
     pub fn surface_jacobian_values_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-    ) -> Box<dyn Iterator<Item = T> + 'a> {
-        apply_kernel_query_fn!(self, |kernel| {
-            let iter: Box<dyn Iterator<Item = T>> = Box::new(
-                self.surface_jacobian_iter_impl(query_points, kernel)
-                    .flat_map(move |v| ArrayVec::from(v).into_iter()),
-            );
-            iter
+    ) -> impl Iterator<Item = T> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| {
+            self.surface_jacobian_iter_impl(query_points, kernel)
+                .flat_map(move |v| ArrayVec::from(v).into_iter())
         })
     }
 
@@ -375,6 +438,61 @@ impl<T: Real> QueryTopo<T> {
                         }),
                 )
             }
+        }
+    }
+
+    pub(crate) fn surface_jacobian_par_iter_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        kernel: K,
+    ) -> impl ParallelIterator<Item = [T; 3]> + 'a
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            ref dual_topo,
+            ref surface_vertex_positions,
+            bg_field_params,
+            sample_type,
+            ..
+        } = *self.base();
+
+        match sample_type {
+            SampleType::Vertex => {
+                // For each row (query point)
+                Either::Left(
+                    zip!(query_points.par_iter(), self.extended_neighbourhood_par())
+                        .filter(|(_, nbrs)| nbrs.len() != 0)
+                        .flat_map(move |(q, nbr_points)| {
+                            let view = SamplesView::new(nbr_points, samples);
+                            vertex_jacobian_par_at(
+                                Vector3::new(*q),
+                                view,
+                                kernel,
+                                surface_topo,
+                                dual_topo,
+                                bg_field_params,
+                            )
+                        }),
+                )
+            }
+            SampleType::Face => Either::Right(
+                zip!(query_points.par_iter(), self.trivial_neighbourhood_par())
+                    .filter(|(_, nbrs)| nbrs.len() != 0)
+                    .flat_map(move |(q, nbr_points)| {
+                        let view = SamplesView::new(nbr_points, samples);
+                        face_jacobian_par_at(
+                            Vector3::new(*q),
+                            view,
+                            kernel,
+                            surface_topo,
+                            surface_vertex_positions,
+                            bg_field_params,
+                        )
+                    }),
+            ),
         }
     }
 
@@ -688,8 +806,39 @@ where
     // For each surface vertex contribution
     let main_jac = sample_jacobian_at(q, view, kernel, bg);
 
+    let dx = move |Sample { pos, .. }| {
+        let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+        (q - pos) * (w * weight_sum_inv)
+    };
     // Add in the normal gradient multiplied by a vector of given Vector3 values.
-    let nml_jac = compute_vertex_unit_normals_gradient_products(
+    let nml_jac =
+        compute_vertex_unit_normals_gradient_products(view, &surface_topo, &dual_topo, dx);
+
+    zip!(main_jac, nml_jac).map(|(m, n)| (m + n).into())
+}
+
+pub(crate) fn vertex_jacobian_par_at<'a, T, K: 'a>(
+    q: Vector3<T>,
+    view: SamplesView<'a, 'a, T>,
+    kernel: K,
+    surface_topo: &'a [[usize; 3]],
+    dual_topo: &'a [Vec<usize>],
+    bg_field_params: BackgroundFieldParams,
+) -> impl IndexedParallelIterator<Item = [T; 3]> + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+
+    let closest_d = bg.closest_sample_dist();
+    let weight_sum_inv = bg.weight_sum_inv();
+
+    // For each surface vertex contribution
+    let main_jac = sample_jacobian_par_at(q, view, kernel, bg);
+
+    // Add in the normal gradient multiplied by a vector of given Vector3 values.
+    let nml_jac = compute_vertex_unit_normals_gradient_products_par(
         view,
         &surface_topo,
         &dual_topo,
@@ -699,7 +848,7 @@ where
         },
     );
 
-    zip!(main_jac, nml_jac).map(|(m, n)| (m + n).into())
+    main_jac.zip(nml_jac).map(|(m, n)| (m + n).into())
 }
 
 /// Jacobian of the face based local potential with respect to surface vertex positions.
@@ -742,6 +891,44 @@ where
         .map(move |(m, n)| (m * third + n).into())
 }
 
+/// Jacobian of the face based local potential with respect to surface vertex positions.
+pub(crate) fn face_jacobian_par_at<'a, T, K: 'a>(
+    q: Vector3<T>,
+    view: SamplesView<'a, 'a, T>,
+    kernel: K,
+    surface_topo: &'a [[usize; 3]],
+    surface_vertex_positions: &'a [Vector3<T>],
+    bg_field_params: BackgroundFieldParams,
+) -> impl IndexedParallelIterator<Item = [T; 3]> + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
+
+    let closest_d = bg.closest_sample_dist();
+    let weight_sum_inv = bg.weight_sum_inv();
+
+    // For each surface vertex contribution
+    let main_jac = sample_jacobian_par_at(q, view, kernel, bg);
+
+    // Add in the normal gradient multiplied by a vector of given Vector3 values.
+    let nml_jac = compute_face_unit_normals_gradient_products_par(
+        view,
+        surface_vertex_positions,
+        &surface_topo,
+        move |Sample { pos, .. }| {
+            let wk = kernel.with_closest_dist(closest_d).eval(q, pos);
+            (q - pos) * (wk * weight_sum_inv)
+        },
+    );
+
+    use utils::soap::SumOp;
+
+    // There are 3 contributions from each sample to each vertex.
+    nml_jac.zip(main_jac).map(|(n, m)| (m + n.sum_op()).into())
+}
+
 /// Compute the Jacobian for the implicit surface potential given by the samples with the
 /// specified kernel assuming constant normals. This Jacobian is with respect to sample points.
 pub(crate) fn sample_jacobian_at<'a, T, K: 'a>(
@@ -763,35 +950,91 @@ where
     // sum from there.
     let weight_sum_inv = bg.weight_sum_inv();
 
-    let local_pot = compute_local_potential_at(q, samples, kernel, weight_sum_inv, closest_d);
+    let local_pot =
+        compute_local_potential_at(q, samples, kernel, weight_sum_inv, bg.closest_sample_dist());
 
-    let main_jac = samples.into_iter().map(
-        move |Sample {
-                  index,
-                  pos,
-                  nml,
-                  value,
-                  ..
-              }| {
-            let diff = q - pos;
+    let main_jac = samples.into_iter().map(move |s| {
+        local_sample_jacobian_at(
+            q,
+            s,
+            kernel,
+            bg.background_weight_gradient(Some(s.index)),
+            closest_d,
+            local_pot,
+            weight_sum_inv,
+        )
+    });
+    bg_jac.zip(main_jac).map(|(b, m)| b + m)
+}
 
-            let norm_inv = T::one() / nml.norm();
-            let unit_nml = nml * norm_inv;
+/// Parallel version of `sample_jacobian_at`
+pub(crate) fn sample_jacobian_par_at<'a, T, K: 'a>(
+    q: Vector3<T>,
+    samples: SamplesView<'a, 'a, T>,
+    kernel: K,
+    bg: BackgroundField<'a, T, T, K>,
+) -> impl IndexedParallelIterator<Item = Vector3<T>> + 'a
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    // Background potential Jacobian.
+    let bg_jac = bg.compute_jacobian_par();
 
-            let dw = kernel.with_closest_dist(closest_d).grad(q, pos);
-            // Contribution from the background potential
-            let dwb = bg.background_weight_gradient(Some(index));
-            let mut dwdp = (dw - dwb) * (local_pot * weight_sum_inv);
+    // Background potential adds to the total weight sum, so we should get the updated weight
+    // sum from there.
+    let weight_sum_inv = bg.weight_sum_inv();
 
-            dwdp -= dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
+    let local_pot =
+        compute_local_potential_at(q, samples, kernel, weight_sum_inv, bg.closest_sample_dist());
 
-            // Compute the normal component of the derivative
-            let w = kernel.with_closest_dist(closest_d).eval(q, pos);
-            let nml_deriv = unit_nml * (w * weight_sum_inv);
-            dwdp - nml_deriv
-        },
-    );
-    zip!(bg_jac, main_jac).map(|(b, m)| b + m)
+    let main_jac = samples.into_par_iter().map(move |s| {
+        local_sample_jacobian_at(
+            q,
+            s,
+            kernel,
+            bg.background_weight_gradient(Some(s.index)),
+            bg.closest_sample_dist(),
+            local_pot,
+            weight_sum_inv,
+        )
+    });
+    bg_jac.zip(main_jac).map(|(b, m)| b + m)
+}
+
+/// Compute the local Jacobian for the implicit surface potential given by a sample with the
+/// specified kernel assuming a constant normal. This Jacobian is with respect to sample points.
+pub(crate) fn local_sample_jacobian_at<'a, T, K: 'a>(
+    q: Vector3<T>,
+    sample: Sample<T>,
+    kernel: K,
+    // Contribution from the background potential
+    dwb: Vector3<T>,
+    closest_d: T,
+    local_pot: T,
+    weight_sum_inv: T,
+) -> Vector3<T>
+where
+    T: Real,
+    K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+{
+    let Sample {
+        pos, nml, value, ..
+    } = sample;
+    let diff = q - pos;
+
+    let norm_inv = T::one() / nml.norm();
+    let unit_nml = nml * norm_inv;
+
+    let dw = kernel.with_closest_dist(closest_d).grad(q, pos);
+    let mut dwdp = (dw - dwb) * (local_pot * weight_sum_inv);
+
+    dwdp -= dw * (weight_sum_inv * (T::from(value).unwrap() + unit_nml.dot(diff)));
+
+    // Compute the normal component of the derivative
+    let w = kernel.with_closest_dist(closest_d).eval(q, pos);
+    let nml_deriv = unit_nml * (w * weight_sum_inv);
+    dwdp - nml_deriv
 }
 
 /*
@@ -1396,13 +1639,10 @@ mod tests {
         let view = SamplesView::new(indices.as_ref(), &samples);
 
         let grad: Vec<_> = match sample_type {
-            SampleType::Vertex => compute_vertex_unit_normals_gradient_products(
-                view,
-                &tet_faces,
-                &dual_topo,
-                dx.clone(),
-            )
-            .collect(),
+            SampleType::Vertex => {
+                compute_vertex_unit_normals_gradient_products(view, &tet_faces, &dual_topo, &dx)
+                    .collect()
+            }
             SampleType::Face => {
                 compute_face_unit_normal_derivative(&tet_verts, &tet_faces, view, dx.clone())
             }

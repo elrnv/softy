@@ -178,7 +178,7 @@ macro_rules! impl_array_vectors {
         {
             /// Normalize vector in place. Return its norm.
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             pub fn normalize(&mut self) -> S {
                 let norm = self.norm();
                 if norm.is_zero() {
@@ -406,7 +406,7 @@ macro_rules! impl_array_vectors {
 
         impl<T: Copy + AddAssign<T>> AddAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             fn add_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
@@ -417,7 +417,7 @@ macro_rules! impl_array_vectors {
 
         impl<T: Copy + SubAssign<T>> SubAssign<Tensor<[Tensor<T>; $n]>> for Tensor<[T]> {
             #[inline]
-            //#[unroll_for_loops]
+            #[unroll_for_loops]
             fn sub_assign(&mut self, rhs: Tensor<[Tensor<T>; $n]>) {
                 debug_assert!(self.len() >= rhs.len());
                 for i in 0..$n {
@@ -858,6 +858,17 @@ macro_rules! impl_array_matrices {
     ($mtxn:ident; $r:expr, $c:expr) => {
         // Row-major square matrix.
         pub type $mtxn<T> = Tensor<[Tensor<[Tensor<T>; $c]>; $r]>;
+
+        impl<T: Scalar> Tensor<[Tensor<[Tensor<T>; $c]>; $r]> {
+            #[inline]
+            pub fn from_rows(rows: [Tensor<[Tensor<T>; $c]>; $r]) -> Self {
+                Tensor { data: rows }
+            }
+            #[inline]
+            pub fn from_cols(rows: [Tensor<[Tensor<T>; $r]>; $c]) -> Self {
+                Tensor { data: rows }.transpose()
+            }
+        }
 
         impl<T> AsSlice<T> for [[T; $c]; $r] {
             #[inline]
@@ -1782,9 +1793,400 @@ impl<S: Scalar + Float> Matrix3<S> {
     }
 }
 
+/* Quaternions */
+
+/// A quaternion type.
+///
+/// The scalar of the quaternion is stored first, followed by the vector part.
+#[derive(Copy, Clone, Debug)]
+pub struct Quaternion<T>(pub T, pub Vector3<T>);
+
+impl<T: PartialEq<U>, U> PartialEq<Quaternion<U>> for Quaternion<T> {
+    fn eq(&self, other: &Quaternion<U>) -> bool {
+        self.0.eq(&other.0) && self.1.eq(&other.1)
+    }
+}
+
+impl<T: Real> Quaternion<T> {
+    /// Construct a new quaternion from the given scalar and vector parts.
+    #[inline]
+    pub fn new<V: Into<[T; 3]>>(s: T, v: V) -> Self {
+        Quaternion(s, v.into().into_tensor())
+    }
+
+    /// Construct a unit quaternion given only the vector part.
+    ///
+    /// Note that the norm of `v` is clamped to be at most 1.
+    #[inline]
+    pub fn unit<V: Into<[T; 3]>>(v: V) -> Self {
+        let v = v.into().into_tensor();
+        let norm = v.norm();
+        if norm > T::one() {
+            Quaternion(T::zero(), v / norm)
+        } else {
+            Quaternion(T::one() - norm, v)
+        }
+    }
+
+    /// Construct a `Quaternion` from an axis-angle vector.
+    #[inline]
+    pub fn from_vector<V: Into<[T; 3]>>(k: V) -> Self {
+        let k = k.into().into_tensor();
+        let angle = k.norm();
+        let half_angle = angle * T::from(0.5).unwrap();
+        let s = half_angle.cos();
+        let v = k * if angle == T::zero() {
+            T::zero()
+        } else {
+            half_angle.sin() / angle
+        };
+        Quaternion(s, v)
+    }
+
+    /// Convert to an axis-angle vector.
+    #[inline]
+    pub fn into_vector(self) -> Vector3<T> {
+        let norm = self.1.norm();
+        if norm > T::zero() {
+            self.1 * (T::from(2.0).unwrap() * norm.atan2(self.0) / norm)
+        } else {
+            Vector3::zero()
+        }
+    }
+
+    /// Construct the conjugate quaternion.
+    #[inline]
+    pub fn conj(self) -> Quaternion<T> {
+        Quaternion(self.0, -self.1)
+    }
+
+    /// Construct the inverse quaternion.
+    ///
+    /// Note that if this quaternion is zero, then this function may generate `NaN`s.
+    #[inline]
+    pub fn inv(self) -> Quaternion<T> {
+        debug_assert!(self.norm() > T::zero());
+        Quaternion(self.0, -self.1 / self.norm())
+    }
+
+    /// Compute the squared norm of the quaternion.
+    ///
+    /// This is just the sum of squares of all 4 of the elements.
+    #[inline]
+    pub fn norm_squared(&self) -> T {
+        self.0 * self.0 + self.1.norm_squared()
+    }
+
+    /// Compute the norm of the quaternion.
+    ///
+    /// This is just the square root of the sum of squares of all 4 of the elements.
+    #[inline]
+    pub fn norm(&self) -> T {
+        self.norm_squared().sqrt()
+    }
+
+    /// Normalize the quaternion in place. Return its norm.
+    #[inline]
+    pub fn normalize(&mut self) -> T {
+        let norm = self.norm();
+        if norm.is_zero() {
+            return norm;
+        }
+        let norm_inv = T::one() / norm;
+        self.0 *= norm_inv;
+        self.1 *= norm_inv;
+        norm
+    }
+
+    /// Return a normalized version of this quaternion.
+    #[inline]
+    pub fn normalized(mut self) -> Self {
+        self.normalize();
+        self
+    }
+
+    /// Rotate a given vector by the quaternion.
+    #[inline]
+    pub fn rotate<V: Into<[T; 3]> + From<[T; 3]>>(&self, v: V) -> V {
+        (*self * v.into().into() * self.inv()).1.into_data().into()
+    }
+
+    /// Construct a rotation matrix corresponding to this quaternion.
+    #[inline]
+    pub fn rotation(&self) -> Matrix3<T> {
+        let (a, [b, c, d]) = (self.0, self.1.into_data());
+        let (aa, bb, cc, dd) = (a * a, b * b, c * c, d * d);
+        let _2 = T::from(2.0).unwrap();
+        let (ab, bc, ad, bd, ac, cd) = (a * b, b * c, a * d, b * d, a * c, c * d);
+        Matrix3::new([
+            [aa + bb - cc - dd, _2 * bc - _2 * ad, _2 * bd + _2 * ac],
+            [_2 * bc + _2 * ad, aa - bb + cc - dd, _2 * cd - _2 * ab],
+            [_2 * bd - _2 * ac, _2 * cd + _2 * ab, aa - bb - cc + dd],
+        ])
+    }
+}
+
+impl<T: Real> From<[T; 3]> for Quaternion<T> {
+    fn from(v: [T; 3]) -> Quaternion<T> {
+        Quaternion::new(T::zero(), v)
+    }
+}
+
+impl<T: Real> Mul for Quaternion<T> {
+    type Output = Self;
+    #[inline]
+    fn mul(self, other: Quaternion<T>) -> Quaternion<T> {
+        let s = self.0 * other.0 - self.1.dot(other.1);
+        let v = other.1 * self.0 + self.1 * other.0 + self.1.cross(other.1);
+        Quaternion(s, v)
+    }
+}
+
+impl<T: Real> MulAssign for Quaternion<T>
+where
+    Self: Mul<Output = Self>,
+{
+    #[inline]
+    fn mul_assign(&mut self, other: Quaternion<T>) {
+        *self = *self * other;
+    }
+}
+
+impl<T: Real> Div for Quaternion<T> {
+    type Output = Self;
+    #[inline]
+    fn div(self, other: Quaternion<T>) -> Quaternion<T> {
+        self * other.inv()
+    }
+}
+
+impl<T: Real> DivAssign for Quaternion<T> {
+    #[inline]
+    fn div_assign(&mut self, other: Quaternion<T>) {
+        *self *= other.inv();
+    }
+}
+
+impl<T: Scalar> Add for Quaternion<T> {
+    type Output = Self;
+    #[inline]
+    fn add(self, other: Quaternion<T>) -> Quaternion<T> {
+        Quaternion(self.0 + other.0, self.1 + other.1)
+    }
+}
+
+impl<T: Scalar> AddAssign for Quaternion<T> {
+    #[inline]
+    fn add_assign(&mut self, other: Quaternion<T>) {
+        self.0 += other.0;
+        self.1 += other.1;
+    }
+}
+
+impl<T: Scalar> Sub for Quaternion<T> {
+    type Output = Self;
+    #[inline]
+    fn sub(mut self, other: Quaternion<T>) -> Quaternion<T> {
+        self.0 -= other.0;
+        self.1 -= other.1;
+        self
+    }
+}
+
+impl<T: Scalar> SubAssign for Quaternion<T> {
+    #[inline]
+    fn sub_assign(&mut self, other: Quaternion<T>) {
+        self.0 -= other.0;
+        self.1 -= other.1;
+    }
+}
+
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::AbsDiffEq<U>> approx::AbsDiffEq<Quaternion<U>> for Quaternion<T>
+where
+    T::Epsilon: Copy,
+{
+    type Epsilon = T::Epsilon;
+    #[inline]
+    fn default_epsilon() -> Self::Epsilon {
+        T::default_epsilon()
+    }
+    #[inline]
+    fn abs_diff_eq(&self, other: &Quaternion<U>, epsilon: Self::Epsilon) -> bool {
+        self.0.abs_diff_eq(&other.0, epsilon) && self.1.abs_diff_eq(&other.1, epsilon)
+    }
+}
+
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::RelativeEq<U>> approx::RelativeEq<Quaternion<U>>
+    for Quaternion<T>
+where
+    T::Epsilon: Copy,
+{
+    #[inline]
+    fn default_max_relative() -> Self::Epsilon {
+        T::default_max_relative()
+    }
+    #[inline]
+    fn relative_eq(
+        &self,
+        other: &Quaternion<U>,
+        epsilon: Self::Epsilon,
+        max_relative: Self::Epsilon,
+    ) -> bool {
+        self.0.relative_eq(&other.0, epsilon, max_relative)
+            && self.1.relative_eq(&other.1, epsilon, max_relative)
+    }
+}
+#[cfg(feature = "approx")]
+impl<U: Scalar, T: Scalar + approx::UlpsEq<U>> approx::UlpsEq<Quaternion<U>> for Quaternion<T>
+where
+    T::Epsilon: Copy,
+{
+    #[inline]
+    fn default_max_ulps() -> u32 {
+        T::default_max_ulps()
+    }
+    #[inline]
+    fn ulps_eq(&self, other: &Quaternion<U>, epsilon: Self::Epsilon, max_ulps: u32) -> bool {
+        self.0.ulps_eq(&other.0, epsilon, max_ulps) && self.1.ulps_eq(&other.1, epsilon, max_ulps)
+    }
+}
+
+/// Produce a rotation matrix given a 3D vector.
+///
+/// Rodrigues' formula is used for this computation.
+#[inline]
+pub fn rotation<T: Real,V: Into<[T;3]>>(v: V) -> Matrix3<T> {
+    let v = v.into().into_tensor();
+    let angle = v.norm();
+    let mut res = Matrix3::identity();
+    if angle > T::zero() {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let k = (v / angle).skew();
+        res += k * sin + k * k * (T::one() - cos);
+    }
+    res
+}
+
+/// Rotate the vector `r` by the axis-angle vector `v`.
+///
+/// Rodrigues' formula is used for this computation.
+#[inline]
+pub fn rotate<T: Real, R: Into<[T; 3]>, V: Into<[T; 3]>>(r: R, v: V) -> Vector3<T> {
+    let r = r.into().into_tensor();
+    let v = v.into().into_tensor();
+    let angle = v.norm();
+    if angle > T::zero() {
+        let cos = angle.cos();
+        let sin = angle.sin();
+        let k = v / angle;
+        r * cos + k.cross(r) * sin + k * (k.dot(r) * (T::one() - cos))
+    } else {
+        r
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::*;
+
+    #[test]
+    fn skew() {
+        let a = Vector3::new([1.0, 2.0, 3.1]);
+        let b = Vector3::new([4.0, 5.1, 6.0]);
+
+        // Test that the result of calling `skew` on a vector produces a skew symmetric matrix.
+        assert_eq!(a.skew(), -a.skew().transpose());
+
+        // Test that the skew symmetric matrix acts as a cross product.
+        let exp = a.cross(b);
+        assert_relative_eq!(a.skew() * b, exp);
+    }
+
+    #[test]
+    fn quaternions() {
+        let a = Vector3::new([1.0, 2.0, 3.1]);
+        let b = Vector3::new([0.4, 0.51, 0.6]);
+
+        // Test axis angle quaternion round trip
+        assert_relative_eq!(a, Quaternion::from_vector(a).into_vector());
+        assert_relative_eq!(b, Quaternion::from_vector(b).into_vector());
+
+        // Test that the quaternion produces the same rotation as a rotation matrix.
+        assert_relative_eq!(
+            rotate(b, a),
+            Quaternion::from_vector(a).rotate(b),
+            max_relative = 1e-7
+        );
+
+        // Test the inverse of a quaternion.
+        let unit = Quaternion::unit(a);
+        assert_relative_eq!(
+            unit * unit.inv(),
+            Quaternion::unit([0.0; 3]),
+            max_relative = 1e-7
+        );
+        assert_relative_eq!(
+            unit.inv() * unit,
+            Quaternion::unit([0.0; 3]),
+            max_relative = 1e-7
+        );
+
+        // Test that the unit quaternion constructor produces a unit quaternion.
+        assert_relative_eq!(unit.norm(), 1.0);
+
+        // Test composition of quaternions is the same as composition of rotation matrices.
+        let qab = Quaternion::from_vector(a) * Quaternion::from_vector(b);
+        assert_relative_eq!(
+            qab.rotation(),
+            rotation(a) * rotation(b),
+            max_relative = 1e-7
+        );
+    }
+
+    #[test]
+    fn rotations() {
+        let a = Vector3::new([1.0, 2.0, 3.1]);
+        let b = Vector3::new([0.4, 0.51, 0.6]);
+
+        // Test that the transpose is equal to the inverse.
+        let rot = rotation(a);
+        assert_relative_eq!(
+            rot * rot.transpose(),
+            Matrix3::identity(),
+            max_relative = 1e-7,
+            epsilon = 1e-10
+        );
+        assert_relative_eq!(
+            rot.transpose() * rot,
+            Matrix3::identity(),
+            max_relative = 1e-7
+        );
+
+        let rot = rotation(b);
+        assert_relative_eq!(
+            rot * rot.transpose(),
+            Matrix3::identity(),
+            max_relative = 1e-7
+        );
+        assert_relative_eq!(
+            rot.transpose() * rot,
+            Matrix3::identity(),
+            max_relative = 1e-7
+        );
+
+        // Test that a negative vector will produce the inverse rotation.
+        let rot_inv = rotation(-b);
+        assert_relative_eq!(rot * rot_inv, Matrix3::identity(), max_relative = 1e-7);
+        assert_relative_eq!(rot_inv * rot, Matrix3::identity(), max_relative = 1e-7);
+
+        // Test that multiplying tby the rotation matrix is the same as rotating a vector with
+        // `rotate`.
+        assert_relative_eq!(rot * a, rotate(a, b), max_relative = 1e-7);
+    }
 
     #[test]
     fn vector_scalar_mul() {

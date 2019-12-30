@@ -64,6 +64,8 @@ fn pinch_against_implicit() -> Result<(), Error> {
         kernel: KernelType::Cubic {
             radius_multiplier: 1.5,
         },
+        contact_offset: 0.0,
+        use_fixed: true,
         friction_params: Some(FrictionParams {
             smoothing_weight: 0.0,
             dynamic_friction: 0.4,

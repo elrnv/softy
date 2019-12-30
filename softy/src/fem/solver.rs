@@ -8,6 +8,7 @@ use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use log::*;
+use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::{Matrix3, Vector3};
 use utils::{soap::*, zip};
@@ -211,12 +212,6 @@ impl SolverBuilder {
     ) -> Vec<FrictionalContactConstraint> {
         let material_source = Self::build_material_sources(solids, shells);
 
-        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
-            object_index: m0,
-            collider_index: m1,
-            constraint,
-        };
-
         // Convert frictional contact parameters into frictional contact constraints.
         // This function creates a frictional contact for every pair of matching material ids.
         // In other words if two objects share the same material id for which a frictional contact
@@ -233,82 +228,49 @@ impl SolverBuilder {
                         material_source_coll
                             .into_iter()
                             .flat_map(move |material_source_coll| {
-                                material_source_obj.into_iter().flat_map(move |&m0| {
-                                    let (solid_iter, shell_iter) = match m0 {
-                                        SourceIndex::Solid(i) => (
-                                            Some(material_source_coll.into_iter().flat_map(
-                                                move |&m1| {
-                                                    match m1 {
-                                                        SourceIndex::Solid(j) => {
-                                                            build_contact_constraint(
-                                                                Var::Variable(
-                                                                    &solids[i].surface().trimesh,
-                                                                ),
-                                                                Var::Variable(
-                                                                    &solids[j].surface().trimesh,
-                                                                ),
-                                                                params,
-                                                            )
-                                                        }
-                                                        SourceIndex::Shell(j) => {
-                                                            build_contact_constraint(
-                                                                Var::Variable(
-                                                                    &solids[i].surface().trimesh,
-                                                                ),
-                                                                shells[j].tagged_mesh(),
-                                                                params,
-                                                            )
-                                                        }
-                                                    }
-                                                    .map(|c| {
-                                                        construct_friction_constraint(m0, m1, c)
-                                                    })
-                                                    .ok()
-                                                    .into_iter()
-                                                },
-                                            )),
-                                            None,
-                                        ),
-                                        SourceIndex::Shell(i) => (
-                                            None,
-                                            Some(material_source_coll.into_iter().flat_map(
-                                                move |&m1| {
-                                                    match m1 {
-                                                        SourceIndex::Solid(j) => {
-                                                            build_contact_constraint(
-                                                                shells[i].tagged_mesh(),
-                                                                Var::Variable(
-                                                                    &solids[j].surface().trimesh,
-                                                                ),
-                                                                params,
-                                                            )
-                                                        }
-                                                        SourceIndex::Shell(j) => {
-                                                            build_contact_constraint(
-                                                                shells[i].tagged_mesh(),
-                                                                shells[j].tagged_mesh(),
-                                                                params,
-                                                            )
-                                                        }
-                                                    }
-                                                    .map(|c| {
-                                                        construct_friction_constraint(m0, m1, c)
-                                                    })
-                                                    .ok()
-                                                    .into_iter()
-                                                },
-                                            )),
-                                        ),
-                                    };
-                                    solid_iter
-                                        .into_iter()
-                                        .flatten()
-                                        .chain(shell_iter.into_iter().flatten())
-                                })
+                                SolverBuilder::build_contact_constraint(
+                                    solids,
+                                    shells,
+                                    params,
+                                    material_source_coll,
+                                    material_source_obj,
+                                )
                             })
                     })
             })
             .collect()
+    }
+
+    fn build_contact_constraint<'a>(
+        solids: &'a [TetMeshSolid],
+        shells: &'a [TriMeshShell],
+        params: FrictionalContactParams,
+        material_source_coll: &'a [SourceIndex],
+        material_source_obj: &'a [SourceIndex],
+    ) -> impl Iterator<Item = FrictionalContactConstraint> + 'a {
+        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
+            object_index: m0,
+            collider_index: m1,
+            constraint,
+        };
+
+        material_source_obj.into_iter().flat_map(move |&m0| {
+            let object = match m0 {
+                SourceIndex::Solid(i) => Var::Variable(&solids[i].surface().trimesh),
+                SourceIndex::Shell(i) => shells[i].tagged_mesh(),
+            };
+
+            material_source_coll.into_iter().flat_map(move |&m1| {
+                let collider = match m1 {
+                    SourceIndex::Solid(j) => Var::Variable(&solids[j].surface().trimesh),
+                    SourceIndex::Shell(j) => shells[j].tagged_mesh(),
+                };
+                build_contact_constraint(object, collider, params)
+                    .ok()
+                    .map(|c| construct_friction_constraint(m0, m1, c))
+                    .into_iter()
+            })
+        })
     }
 
     /// Helper function to initialize volume constraints from a set of solids.
@@ -357,13 +319,54 @@ impl SolverBuilder {
         {
             match data {
                 ShellData::Rigid { cm, .. } => {
-                    let translation: [f64; 3] = *cm.as_data();
-                    prev_x.push(vec![translation, [0.0; 3]]);
-                    prev_v.push(vec![[0.0; 3], [0.0; 3]]);
-
-                    pos.push(mesh.vertex_positions().to_vec());
                     let mesh_vel =
                         mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+
+                    let mesh_pos = mesh.vertex_positions();
+
+                    let translation: [f64; 3] = *cm.as_data();
+                    prev_x.push(vec![translation, [0.0; 3]]);
+
+                    // Average linear velocity.
+                    let mut linear = Vector3::zero();
+                    for &v in mesh_vel.iter() {
+                        linear += v.into_tensor();
+                    }
+                    linear /= mesh_vel.len() as f64;
+
+                    // Compute least squares angular velocity.
+                    // Compute r^T matrix. The matrix of rigid body positions.
+                    let rt = na::DMatrix::from_iterator(
+                        3,
+                        3 * mesh_pos.len(),
+                        mesh_pos.iter().cloned().flat_map(|p| {
+                            let pskew = (p.into_tensor() - *cm).skew().into_data();
+                            (0..3).flat_map(move |r| (0..3).map(move |c| pskew[r][c]))
+                        }),
+                    );
+
+                    // Collect all velocities
+                    let v = na::DVector::from_iterator(
+                        3 * mesh_vel.len(),
+                        mesh_vel.iter().cloned().flat_map(|v| {
+                            // Subtract linear part
+                            let w = v.into_tensor() - linear;
+                            (0..3).map(move |i| w[i])
+                        }),
+                    );
+
+                    // Solve normal equations:
+                    let rtv = -&rt * v;
+                    let rtr = &rt * rt.transpose();
+                    let angular = rtr
+                        .qr()
+                        .solve(&rtv)
+                        .unwrap_or_else(|| na::DVector::zeros(3));
+                    let angular = Vector3::new([angular[0], angular[1], angular[2]]);
+
+                    prev_v.push(vec![linear.into_data(), angular.into_data()]);
+
+                    pos.push(mesh.vertex_positions().to_vec());
                     vel.push(mesh_vel);
                 }
                 ShellData::Soft { .. } => {
@@ -710,8 +713,8 @@ impl SolverBuilder {
             .max(max_element_bending_scale);
 
         // max_scale is a denominator. Ensure that it is never zero.
-        debug_assert_ne!(max_scale, 0.0);
         if max_scale == 0.0 {
+            warn!("All scaling factors are zero");
             max_scale = 1.0;
         }
 
@@ -748,9 +751,10 @@ impl SolverBuilder {
         // Setup ipopt paramters using the input simulation params.
         let params = self.sim_params.clone();
 
+        info!("Simulation Parameters:\n{:#?}", params);
+
         let tol = params.tolerance as f64;
 
-        info!("Ipopt tolerance: {:.2e}", tol);
         ipopt.set_option("tol", tol);
         ipopt.set_option("acceptable_tol", tol);
         ipopt.set_option("max_iter", params.max_iterations as i32);
@@ -813,6 +817,7 @@ impl SolverBuilder {
 
     /// Compute signed volume for reference elements in the given `TetMesh`.
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
+        use rayon::iter::Either;
         let ref_pos =
             mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
         let ref_volumes: Vec<f64> = mesh
@@ -821,8 +826,20 @@ impl SolverBuilder {
             .collect();
         let inverted: Vec<_> = ref_volumes
             .iter()
+            // Ignore fixed elements, since they will not be part of the simulation anyways.
+            .zip(Either::from(
+                mesh.attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+                    .map(|i| i.cloned())
+                    .map_err(|_| std::iter::repeat(0)),
+            ))
             .enumerate()
-            .filter_map(|(i, &v)| if v <= 0.0 { Some(i) } else { None })
+            .filter_map(|(i, (&v, fixed))| {
+                if v <= 0.0 && fixed == 0 {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect();
         if !inverted.is_empty() {
             return Err(Error::InvertedReferenceElement { inverted });
@@ -931,6 +948,8 @@ impl SolverBuilder {
         solid.init_source_index_attribute()?;
 
         solid.init_deformable_vertex_attributes()?;
+
+        solid.init_fixed_element_attribute()?;
 
         Self::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh)?;
 
@@ -1484,10 +1503,22 @@ impl Solver {
         let mut friction_steps =
             vec![self.sim_params.friction_iterations; self.problem().num_frictional_contacts()];
         let total_friction_steps = friction_steps.iter().sum::<u32>();
-        for _ in 0..self.sim_params.max_outer_iterations {
+        let mut iteration_count = 0;
+        loop {
+            if iteration_count >= self.sim_params.max_outer_iterations {
+                warn!(
+                    "Reached max outer iterations: {:?}",
+                    self.sim_params.max_outer_iterations
+                );
+                break;
+            }
+            iteration_count += 1;
+
+            // Clamp time step to what we actually need.
             if self.problem().time_step > self.time_step_remaining {
                 self.problem_mut().time_step = self.time_step_remaining;
             }
+
             self.minimum_time_step = self.minimum_time_step.min(self.problem().time_step);
 
             // Remap warm start from the initial constraint reset above, or if the constraints were
@@ -1496,6 +1527,8 @@ impl Solver {
             self.save_current_active_constraint_set();
 
             let step_result = self.inner_step();
+
+            let min_time_step = 1e-8;
 
             // The following block determines if after the inner step there were any changes
             // in the constraints where new points may have violated the constraint. If so we
@@ -1530,12 +1563,8 @@ impl Solver {
                         self.commit_solution(true, !all_contacts_linear);
                         self.time_step_remaining -= self.problem().time_step;
                         info!("Time step remaining: {}", self.time_step_remaining);
-                        if !recovery && self.problem().time_step < self.max_time_step {
-                            // Gradually restore time_step if its lower than max_step
-                            self.problem_mut().time_step *= 2.0;
-                        }
                         recovery = false; // We have recovered.
-                        if approx::relative_eq!(self.time_step_remaining, 0.0) {
+                        if self.time_step_remaining < min_time_step {
                             // Reset time step progress
                             self.time_step_remaining = self.max_time_step;
                             break;
@@ -1552,16 +1581,22 @@ impl Solver {
                     objective_value,
                 }) => {
                     // Something went wrong, revert one step, reduce the time step and try again.
-                    if self.problem().time_step < 1e-7
+
+                    // Don't bother if there are no more max_outer_iterations left, the time step
+                    // is too small or the user requested a stop.
+                    if self.problem().time_step < min_time_step
+                        || iteration_count + 1 >= self.sim_params.max_outer_iterations
                         || status == ipopt::SolveStatus::UserRequestedStop
                     {
-                        // Time step getting too small, return with an error
+                        warn!("Failed to recover");
+                        // Can't recover, return with an error
                         result = result.combine_inner_step_data(iterations, objective_value);
                         self.commit_solution(true, !all_contacts_linear);
                         return Err(Error::SolveError { status, result });
                     }
                     if !recovery {
                         info!("Recovering: Revert previous step");
+
                         self.revert_solution();
                         self.problem_mut().reset_constraint_set();
                         // reset friction iterations.
@@ -1572,6 +1607,12 @@ impl Solver {
                         // remaining.
                         self.time_step_remaining += self.problem().time_step;
                     }
+
+                    // Decrement iteration count since we reverted one iteration.
+                    // Since we check for minimal time step we know this loop will eventually
+                    // break even if the problem is not recoverable.
+                    iteration_count -= 1;
+
                     recovery = true;
                     self.problem_mut().time_step *= 0.5;
                     info!("Reduce time step to {}", self.problem().time_step);
@@ -1584,15 +1625,17 @@ impl Solver {
             }
         }
 
-        if !all_contacts_linear {
-            // Remap warm start since after committing the solution, the constraint set may have
-            // changed if we relaxed max_step.
-            // We use warm start data to update the mesh
-            self.remap_warm_start();
+        // Gradually restore time_step if its lower than max_step
+        if self.problem().time_step < self.max_time_step {
+            self.problem_mut().time_step *= 2.0;
         }
 
-        if result.iterations > self.sim_params.max_outer_iterations {
-            warn!("Reached max outer iterations: {:?}", result.iterations);
+        if !all_contacts_linear || recovery {
+            // Remap warm start since after committing the solution, the constraint set may have
+            // changed if we relaxed max_step.
+            // (Or we existed while still in recovery for some reason).
+            // We use warm start data to update the mesh
+            self.remap_warm_start();
         }
 
         //self.output_meshes(self.step_count as u32);

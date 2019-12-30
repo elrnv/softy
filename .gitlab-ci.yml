@@ -7,6 +7,7 @@ rust-latest:
   before_script:
       - apt-get update --yes
       - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
+      - rustc --version
   script:
     - cargo build --verbose
     - cargo test --verbose
@@ -17,6 +18,7 @@ rust-nightly:
   before_script:
       - apt-get update --yes
       - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
+      - rustc --version
   script:
     - cargo build --verbose
     - cargo test --verbose

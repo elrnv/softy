@@ -396,7 +396,7 @@ impl<'i, 'd: 'i, T: Scalar + Send + Sync> SamplesView<'i, 'd, T> {
         self.indices.par_iter().map(move |&i| self.at_index(i))
     }
 
-    /// Consuming iterator.
+    /// Consuming parallel iterator.
     #[inline]
     pub fn into_par_iter(self) -> impl IndexedParallelIterator<Item = Sample<T>> + 'i {
         self.indices.into_par_iter().map(move |&i| self.at_index(i))

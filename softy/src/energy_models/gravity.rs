@@ -215,7 +215,7 @@ impl<T: Real> Energy<T> for RigidShellGravity {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos = Vector3::new([x1[0], x1[1], x1[2]]);
-        T::from(self.mass).unwrap() * self.g.cast::<T>().dot(pos)
+        T::from(-self.mass).unwrap() * self.g.cast::<T>().dot(pos)
     }
 }
 
@@ -225,7 +225,7 @@ impl<T: Real> EnergyGradient<T> for RigidShellGravity {
         use utils::soap::AsMutTensor;
         debug_assert_eq!(grad.len(), _x0.len());
 
-        *grad[0..3].as_mut_tensor() += self.g.cast::<T>() * T::from(self.mass).unwrap();
+        *grad[0..3].as_mut_tensor() -= self.g.cast::<T>() * T::from(self.mass).unwrap();
     }
 }
 

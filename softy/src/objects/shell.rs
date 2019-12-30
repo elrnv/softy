@@ -211,7 +211,7 @@ impl TriMeshShell {
             let f1 = t0 + v[2];
             let t1 = v[0].cwise_mul(v[0]);
             let t2 = t1 + v[1].cwise_mul(t0);
-            let f2 = t2 + v[0].cwise_mul(f1);
+            let f2 = t2 + v[2].cwise_mul(f1);
             let f3 = v[0].cwise_mul(t1) + v[1].cwise_mul(t2) + v[2].cwise_mul(f2);
             let g = Tensor {
                 data: [
@@ -275,6 +275,8 @@ impl TriMeshShell {
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
 
+                self.init_fixed_element_attribute()?;
+
                 self.init_deformable_attributes()?;
 
                 {
@@ -299,6 +301,24 @@ impl TriMeshShell {
         };
 
         Ok(self)
+    }
+
+    /// A helper function to flag all elements with all vertices fixed as fixed.
+    pub(crate) fn init_fixed_element_attribute(&mut self) -> Result<(), Error> {
+        let fixed_verts = self
+            .mesh()
+            .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
+
+        let fixed_elements: Vec<_> = self
+            .mesh()
+            .face_iter()
+            .map(|face| face.iter().map(|&vi| fixed_verts[vi]).sum::<i8>() / 3)
+            .collect();
+
+        self.mesh_mut()
+            .set_attrib_data::<FixedIntType, FaceIndex>(FIXED_ATTRIB, &fixed_elements)?;
+
+        Ok(())
     }
 
     pub(crate) fn init_rest_pos_vertex_attribute(&mut self, cm: Vector3<f64>) -> Result<(), Error> {
@@ -617,5 +637,99 @@ impl<'a> Gravity<'a, Option<Either<SoftShellGravity<'a>, RigidShellGravity>>> fo
             ShellData::Rigid { mass, .. } => Some(Either::Right(RigidShellGravity::new(g, mass))),
             ShellData::Soft { .. } => Some(Either::Left(SoftShellGravity::new(self, g))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::*;
+    use approx::*;
+
+    /// This test verifies that the correct implementation of integrating rigid properties like
+    /// tensor of inertia, center of mass and mass of a rigid body.
+    #[test]
+    fn rigid_properties() {
+        // We can compute these properties by hand of a few meshes with known symmetries.
+        // We assume a density of 1.0 in the following.
+
+        // Useful consts:
+        let pi = std::f64::consts::PI;
+        let sin45 = 1.0 / 2.0_f64.sqrt(); // same as cos(45)
+
+        // Off-center Axis aligned cube
+        let mut mesh = make_box(4).surface_trimesh();
+        mesh.translate([0.1, 0.2, 0.3]);
+
+        // Expected values
+        let exp_mass = 1.0;
+        let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
+        let moment_of_inertia = 1.0 / 6.0;
+        let exp_inertia = Matrix3::identity() * moment_of_inertia;
+
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
+        assert_relative_eq!(inertia, exp_inertia);
+
+        // Rotated cube at the origin
+        let mut mesh = make_box(4).surface_trimesh();
+        mesh.rotate_by_vector([pi / 4.0, 0.0, 0.0]);
+        mesh.rotate_by_vector([0.0, pi / 3.0, 0.0]);
+
+        // Expected values
+        let moment_of_inertia_y = (2.0 * sin45 * sin45 + 1.0) / 12.0;
+        let exp_cm = Vector3::new([0.0; 3]);
+
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
+        assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
+
+        // Rotated cube off center
+        let mut mesh = make_box(4).surface_trimesh();
+        mesh.rotate_by_vector([pi / 4.0, 0.0, 0.0]);
+        mesh.rotate_by_vector([0.0, pi / 3.0, 0.0]);
+        mesh.translate([0.1, 0.2, 0.3]);
+
+        let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
+
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
+        assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
+
+        // Torus off center
+        let inner_radius = 0.25;
+        let outer_radius = 0.5;
+        let mut torus = TriMesh::from(
+            geo::mesh::builder::TorusBuilder {
+                outer_radius,
+                inner_radius,
+                outer_divs: 300,
+                inner_divs: 150,
+            }
+            .build(),
+        );
+
+        torus.translate([0.1, 0.2, 0.3]);
+
+        let a2 = inner_radius as f64 * inner_radius as f64;
+        let b = outer_radius as f64;
+        let b2 = b * b;
+        let exp_mass = 2.0 * pi * pi * b * a2;
+        let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
+        let inertia_y = 0.25 * exp_mass * (4.0 * b2 + 3.0 * a2);
+        let inertia_xz = 0.125 * exp_mass * (4.0 * b2 + 5.0 * a2);
+        let mut exp_inertia = Matrix3::identity();
+        exp_inertia[0][0] = inertia_xz;
+        exp_inertia[1][1] = inertia_y;
+        exp_inertia[2][2] = inertia_xz;
+
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&torus, 1.0);
+        assert!(mass < exp_mass); // discretized torus is smaller
+        assert_relative_eq!(mass, exp_mass, max_relative = 1e-3);
+        assert_relative_eq!(cm, exp_cm, max_relative = 1e-3);
+        assert_relative_eq!(inertia, exp_inertia, max_relative = 1e-3, epsilon = 1e-10);
     }
 }

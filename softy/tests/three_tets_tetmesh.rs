@@ -122,3 +122,63 @@ fn animation_volume_constraint() -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Check that an inverted reference element with all vertices fixed doesn't break the simulation.
+#[test]
+fn inverted_fixed_reference_element_test() -> Result<(), Error> {
+    use geo::mesh::attrib::*;
+    use geo::mesh::topology::*;
+    let mut mesh = make_three_tet_mesh();
+
+    // Invert the first tet.
+    mesh.indices[0].swap(0, 1);
+
+    // Fix all verts of the first tet.
+    let mut fixed = vec![0i8; mesh.num_vertices()];
+    fixed[mesh.cell(0)[0]] = 1;
+    fixed[mesh.cell(0)[1]] = 1;
+    fixed[mesh.cell(0)[2]] = 1;
+    fixed[mesh.cell(0)[3]] = 1;
+    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
+
+    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+        .add_solid(mesh, default_solid())
+        .build()?;
+    solver.step()?;
+
+    Ok(())
+}
+
+/// Check that an inverted element with all vertices fixed doesn't break the simulation.
+#[test]
+fn inverted_fixed_element_test() -> Result<(), Error> {
+    use geo::mesh::attrib::*;
+    use geo::mesh::topology::*;
+    use geo::mesh::VertexPositions;
+    let mut mesh = make_three_tet_mesh();
+
+    // Construct univerted reference positions
+    let pos: Vec<_> = mesh
+        .vertex_position_iter()
+        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+        .collect();
+    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, pos);
+
+    // Invert the first tet.
+    mesh.vertex_positions_mut()[4] = mesh.vertex_positions_mut()[3];
+
+    // Fix all verts of the first tet.
+    let mut fixed = vec![0i8; mesh.num_vertices()];
+    fixed[mesh.cell(0)[0]] = 1;
+    fixed[mesh.cell(0)[1]] = 1;
+    fixed[mesh.cell(0)[2]] = 1;
+    fixed[mesh.cell(0)[3]] = 1;
+    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
+
+    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+        .add_solid(mesh, default_solid())
+        .build()?;
+    solver.step()?;
+
+    Ok(())
+}

@@ -82,6 +82,7 @@ impl<'a> FrictionSolver<'a> {
         ipopt.set_option("tol", params.tolerance);
         ipopt.set_option("sb", "yes");
         ipopt.set_option("nlp_scaling_max_gradient", 1.0);
+        ipopt.set_option("bound_relax_factor", 0.0);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
         //ipopt.set_option("derivative_test", "second-order");
         ipopt.set_option("mu_strategy", "adaptive");

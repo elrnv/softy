@@ -566,7 +566,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         )
     }
 
-    fn collider_contact_normals(&self, mut out_normals: Chunked3<&mut [f64]>) {
+    fn collider_contact_normals(&mut self, mut out_normals: Chunked3<&mut [f64]>) {
         if self.frictional_contact.is_none() {
             return;
         }
@@ -1297,7 +1297,7 @@ impl<'a> Constraint<'a, f64> for LinearizedPointContactConstraint {
     }
 }
 
-impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
+impl ContactConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
     fn constraint_jacobian_size(&self) -> usize {
         let jac = self
             .constraint_jacobian
@@ -1310,7 +1310,7 @@ impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
 
     fn constraint_jacobian_indices_iter<'a>(
         &'a self,
-    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'a>, Error> {
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'a> {
         let col_offset = self.implicit_surface.surface_vertex_positions().len() * 3;
         let jac = self
             .constraint_jacobian
@@ -1329,7 +1329,7 @@ impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
                     })
                 })
         };
-        Ok(Box::new(
+        Box::new(
             jac[0]
                 .as_ref()
                 .map(|jac| jac_indices(jac.view()))
@@ -1346,7 +1346,7 @@ impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
                             col: col + col_offset,
                         }),
                 ),
-        ))
+        )
     }
 
     fn constraint_jacobian_values(
@@ -1393,7 +1393,7 @@ impl ConstraintJacobian<'_, f64> for LinearizedPointContactConstraint {
     }
 }
 
-impl<'a> ConstraintHessian<'a, f64> for LinearizedPointContactConstraint {
+impl<'a> ContactConstraintHessian<'a, f64> for LinearizedPointContactConstraint {
     type InputDual = &'a [f64];
     fn constraint_hessian_size(&self) -> usize {
         0
@@ -1409,7 +1409,7 @@ impl<'a> ConstraintHessian<'a, f64> for LinearizedPointContactConstraint {
         &mut self,
         _x0: Self::Input,
         _x1: Self::Input,
-        _lambda: Self::InputDual,
+        _lambda: &[f64],
         _scale: f64,
         _values: &mut [f64],
     ) -> Result<(), Error> {

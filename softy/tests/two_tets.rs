@@ -20,7 +20,6 @@ fn two_tet_solver() -> Solver {
         .expect("Failed to build a solver for a two tet test.")
 }
 
-/// Ball with constant volume bouncing on an implicit surface.
 #[test]
 fn two_deformed_tets_test() {
     let mut solver = two_tet_solver();

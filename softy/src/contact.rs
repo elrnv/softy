@@ -17,6 +17,9 @@ pub enum ContactType {
 pub struct FrictionalContactParams {
     pub kernel: implicits::KernelType,
     pub contact_type: ContactType,
+    pub contact_offset: f64,
+    /// Use fixed elements when building the contact surface.
+    pub use_fixed: bool,
     pub friction_params: Option<FrictionParams>,
 }
 

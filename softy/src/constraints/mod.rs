@@ -1,4 +1,4 @@
-pub mod linearized_point_contact;
+//pub mod linearized_point_contact;
 pub mod point_contact;
 pub mod volume;
 
@@ -7,12 +7,14 @@ use crate::constraint::*;
 use crate::contact::*;
 use crate::fem::problem::Var;
 use crate::friction::FrictionalContact;
+use crate::matrix::MatrixElementIndex;
+use crate::Error;
 use crate::TriMesh;
 use num_traits::Zero;
 use std::cell::RefCell;
 use utils::soap::Vector3;
 
-pub use self::linearized_point_contact::*;
+//pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
@@ -26,23 +28,16 @@ pub fn build_contact_constraint(
     object: Var<&TriMesh>,
     collider: Var<&TriMesh>,
     params: FrictionalContactParams,
-) -> Result<Box<RefCell<dyn ContactConstraint>>, crate::Error> {
-    Ok(match params.contact_type {
-        ContactType::LinearizedPoint => {
-            Box::new(RefCell::new(LinearizedPointContactConstraint::new(
-                object,
-                collider,
-                params.kernel,
-                params.friction_params,
-            )?))
-        }
-        ContactType::Point => Box::new(RefCell::new(PointContactConstraint::new(
-            object,
-            collider,
-            params.kernel,
-            params.friction_params,
-        )?)),
-    })
+) -> Result<RefCell<PointContactConstraint>, crate::Error> {
+    Ok(RefCell::new(PointContactConstraint::new(
+        object,
+        collider,
+        params.kernel,
+        params.friction_params,
+        params.contact_offset,
+        params.use_fixed,
+        params.contact_type == ContactType::LinearizedPoint,
+    )?))
 }
 
 /// A common pattern occurring with contact constraints becoming active and inactive is remapping
@@ -163,8 +158,8 @@ fn remap_values_complex_test() {
 
 pub trait ContactConstraint:
     for<'a> Constraint<'a, f64, Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
-    + for<'a> ConstraintJacobian<'a, f64>
-    + for<'a> ConstraintHessian<'a, f64, InputDual = &'a [f64]>
+    + for<'a> ContactConstraintJacobian<'a, f64>
+    + for<'a> ContactConstraintHessian<'a, f64, InputDual = &'a [f64]>
     + std::fmt::Debug
 {
     /// Total number of contacts that could occur.
@@ -215,7 +210,7 @@ pub trait ContactConstraint:
     /// Add the friction corrector impulse to the given vector.
     fn add_friction_corrector_impulse(&self, _: [SubsetView<Chunked3<&mut [f64]>>; 2], _: f64) {}
 
-    fn collider_contact_normals(&self, _: Chunked3<&mut [f64]>) {}
+    fn collider_contact_normals(&mut self, _: Chunked3<&mut [f64]>) {}
 
     /// Add the frictional impulse to the given gradient vector.
     fn add_friction_impulse(
@@ -340,4 +335,54 @@ pub trait ContactConstraint:
     fn is_linear(&self) -> bool {
         false
     }
+}
+
+pub trait ContactConstraintJacobian<'a, T: Scalar>: Constraint<'a, T> {
+    /// The number of non-zeros in the Jacobian matrix of the constraint provided by the
+    /// `constraint_jacobian_indices` and `constraint_jacobian_values` functions.
+    fn constraint_jacobian_size(&self) -> usize;
+
+    fn constraint_jacobian_indices_iter<'b>(
+        &'b self,
+    ) -> Box<dyn Iterator<Item = MatrixElementIndex> + 'b>;
+
+    /// Compute the values of the constraint Jacobian.
+    ///
+    ///   - `x` is the variable expected by the specific constraint for the previous configuration.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    ///     differential of `x` but it often is.
+    fn constraint_jacobian_values(
+        &mut self,
+        x: Self::Input,
+        dx: Self::Input,
+        values: &mut [T],
+    ) -> Result<(), Error>;
+}
+
+pub trait ContactConstraintHessian<'a, T: Scalar>: Constraint<'a, T> {
+    type InputDual;
+    /// The number of non-zeros in the Hessian matrix of the constraint.
+    fn constraint_hessian_size(&self) -> usize;
+    /// Compute the Hessian matrix values (multiplied by `lambda`) corresponding to their positions
+    /// in the matrix returned by `constraint_hessian_indices`. This means that the vector returned
+    /// from this function must have the same length as the vector returned by
+    /// `constraint_hessian_indices`.
+    ///
+    ///   - `x` is the variable expected by the specific constraint for the previous configuration.
+    ///   - `dx` is the independent variable being optimized over, it is not necessarily the
+    ///     differential of `x` but it often is.
+    fn constraint_hessian_values(
+        &mut self,
+        x: Self::Input,
+        dx: Self::Input,
+        lambda: Self::InputDual,
+        scale: T,
+        values: &mut [T],
+    ) -> Result<(), Error>;
+
+    /// Compute the Hessian row and column indices of the matrix resulting from the constraint
+    /// Hessian multiplied by the Lagrange multiplier vector.
+    fn constraint_hessian_indices_iter<'b>(
+        &'b self,
+    ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error>;
 }

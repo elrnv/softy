@@ -705,11 +705,13 @@ impl ObjectData {
         }
     }
 
-    fn sync_vel(shells: &[TriMeshShell], v: VertexView3<&[f64]>, mut vel: VertexView3<&mut [f64]>) {
+    fn sync_vel(shells: &[TriMeshShell], v: VertexView3<&[f64]>, x: VertexView3<&[f64]>, mut vel: VertexView3<&mut [f64]>) {
         for (i, shell) in shells.iter().enumerate() {
             if let ShellData::Rigid { .. } = shell.data {
                 let v = v.view().isolate(1).isolate(i);
+                let x = x.view().isolate(1).isolate(i);
                 debug_assert_eq!(v.len(), 2);
+                let rotation = Vector3::new(x[1]);
                 let linear = Vector3::new(v[0]);
                 let angular = Vector3::new(v[1]);
                 let mut vel = vel.view_mut().isolate(1).isolate(i);
@@ -719,7 +721,7 @@ impl ObjectData {
                         .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
                         .expect("Missing rigid body reference positions"),
                 ) {
-                    *out_vel.as_mut_tensor() = angular.cross(r.into_tensor()) + linear;
+                    *out_vel.as_mut_tensor() = rotate(angular.cross(r.into_tensor()), rotation) + linear;
                 }
             }
         }
@@ -985,7 +987,7 @@ impl ObjectData {
 
         let mut ws = workspace.borrow_mut();
         let WorkspaceData { x, v, vel, pos, .. } = &mut *ws;
-        Self::sync_vel(&shells, v.view(), vel.view_mut());
+        Self::sync_vel(&shells, v.view(), x.view(), vel.view_mut());
         Self::sync_pos(&shells, x.view(), pos.view_mut());
 
         {
@@ -1876,8 +1878,8 @@ impl NonLinearProblem {
 
         self.update_current_velocity(solution.primal_variables);
         let mut ws = self.object_data.workspace.borrow_mut();
-        let WorkspaceData { v, vel, .. } = &mut *ws;
-        ObjectData::sync_vel(&self.object_data.shells, v.view(), vel.view_mut());
+        let WorkspaceData { v, vel, x, .. } = &mut *ws;
+        ObjectData::sync_vel(&self.object_data.shells, v.view(), x.view(), vel.view_mut());
 
         let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
         let NonLinearProblem {
@@ -1890,6 +1892,11 @@ impl NonLinearProblem {
         let mut is_finished = true;
 
         let mut constraint_offset = volume_constraints.len();
+
+        // TODO: This is not the right way to compute friction forces since it decouples each pair
+        //       of colliding objects. We should construct a global jacobian matrix instead to
+        //       resolve all friction forces simultaneously. We may use the block nature of
+        //       contacts to construct a blockwise sparse matrix here.
 
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let obj_prev_pos = object_data.prev_pos(fc.object_index);

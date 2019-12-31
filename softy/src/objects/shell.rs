@@ -610,9 +610,6 @@ impl TriMeshShell {
             _ => Var::Variable(&self.trimesh),
         }
     }
-
-    pub(crate) fn rigid_contact_jacobian(&self) {
-    }
 }
 
 impl<'a> Elasticity<'a, Option<TriMeshNeoHookean<'a, f64>>> for TriMeshShell {

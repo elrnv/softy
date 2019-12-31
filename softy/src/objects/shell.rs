@@ -611,7 +611,7 @@ impl TriMeshShell {
         }
     }
 
-    pub(crate) fn rigid_contact_jacobian(&self) -> {
+    pub(crate) fn rigid_contact_jacobian(&self) {
     }
 }
 

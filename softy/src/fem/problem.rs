@@ -1376,6 +1376,24 @@ impl NonLinearProblem {
             .all(|contact_constraint| contact_constraint.constraint.borrow().is_linear())
     }
 
+    pub(crate) fn is_rigid(&self, src_idx: SourceIndex) -> bool {
+        if let SourceIndex::Shell(idx) = src_idx {
+            if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn has_rigid(&self) -> bool {
+        for fc in self.frictional_contacts.iter() {
+            if self.is_rigid(fc.collider_index) | self.is_rigid(fc.object_index) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Get the set of currently active constraints.
     pub fn active_constraint_set(&self) -> Chunked<Vec<usize>> {
         let mut active_set = Chunked::new();
@@ -2961,21 +2979,13 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
         for fc in self.frictional_contacts.iter() {
             let constraint = fc.constraint.borrow();
-            let is_rigid = |src_idx| {
-                if let SourceIndex::Shell(idx) = src_idx {
-                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
-                        return true;
-                    }
-                }
-                false
-            };
-            if is_rigid(fc.object_index) {
+            if self.is_rigid(fc.object_index) {
                 num += constraint.constraint_size() * 6;
             } else {
                 num += constraint.object_constraint_jacobian_size();
             }
 
-            if is_rigid(fc.collider_index) {
+            if self.is_rigid(fc.collider_index) {
                 num += constraint.constraint_size() * 6;
             } else {
                 num += constraint.collider_constraint_jacobian_size();
@@ -3298,31 +3308,28 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                             REFERENCE_VERTEX_POS_ATTRIB,
                         )
                         .unwrap();
+                    let x0 = x0.view().at(1).at(idx)[1].into_tensor();
+                    let w_new = v.view().at(1).at(idx)[1].into_tensor();
+                    let dw = w_new * dt;
                     for (row, col, block) in constraint.collider_constraint_jacobian_blocks_iter() {
                         let scaled_block = block.into_tensor() * scale;
                         let linear = &mut vals[6 * row..6 * row + 3];
                         *linear.as_mut_tensor() += scaled_block;
 
                         let r = pos[col].into_tensor();
-                        //debug!("r x v = {:?}", r.cross(scaled_block).into_data());
-                        //let r = pos[col].into_tensor();
                         let angular = &mut vals[6 * row + 3..6 * (row + 1)];
-                        let x0 = x0.view().at(1).at(idx)[1].into_tensor();
-                        let w_new = v.view().at(1).at(idx)[1].into_tensor();
-                        let r = rotate(r, x0);
                         // Compute dR(w)r/dw as per https://arxiv.org/pdf/1312.0788.pdf
-                        let dw = w_new * dt;
-                        let rot = rotation(-dw);
+                        let rotdw = rotation(dw);
                         let dw2 = dw.norm_squared();
                         let dpdw = if dw2 > 0.0 {
                             ((dw * dw.transpose()
-                                - dw.skew() * (rot.transpose() - Matrix3::identity()))
-                                * (r / dw2).skew()
-                                * rot)
+                                        - dw.skew() * (rotdw - Matrix3::identity()))
+                                    * (r / dw2).skew()
+                                    * rotdw.transpose())
                         } else {
-                            r.skew()
+                           r.skew()
                         };
-                        *angular.as_mut_tensor() += dpdw * scaled_block;
+                        *angular.as_mut_tensor() += dpdw * rotate(scaled_block, -x0);
                     }
                     count += 6 * nrows;
                 }
@@ -3428,7 +3435,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             num += vc.borrow().constraint_hessian_size();
         }
         for fc in self.frictional_contacts.iter() {
-            num += fc.constraint.borrow().constraint_hessian_size();
+            if !self.is_rigid(fc.object_index) {
+                num += fc.constraint.borrow().object_constraint_hessian_size();
+            }
+            if !self.is_rigid(fc.collider_index) {
+                num += fc.constraint.borrow().collider_constraint_hessian_size();
+            }
         }
         num
     }
@@ -3503,29 +3515,25 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             for MatrixElementIndex { row, col } in
                 constraint.object_constraint_hessian_indices_iter()
             {
-                rows[count] = self
-                    .object_data
-                    .source_coordinate(fc.object_index, row)
-                    .unwrap() as ipopt::Index;
-                cols[count] = self
-                    .object_data
-                    .source_coordinate(fc.object_index, col)
-                    .unwrap() as ipopt::Index;
-                count += 1;
+                if let Some(row_coord) = self.object_data.source_coordinate(fc.object_index, row) {
+                    if let Some(col_coord) = self.object_data.source_coordinate(fc.object_index, col) {
+                        rows[count] = row_coord as ipopt::Index;
+                        cols[count] = col_coord as ipopt::Index;
+                        count += 1;
+                    }
+                }
             }
 
             for MatrixElementIndex { row, col } in
                 constraint.collider_constraint_hessian_indices_iter()
             {
-                rows[count] = self
-                    .object_data
-                    .source_coordinate(fc.collider_index, row)
-                    .unwrap() as ipopt::Index;
-                cols[count] = self
-                    .object_data
-                    .source_coordinate(fc.collider_index, col)
-                    .unwrap() as ipopt::Index;
-                count += 1;
+                if let Some(row_coord) = self.object_data.source_coordinate(fc.collider_index, row) {
+                    if let Some(col_coord) = self.object_data.source_coordinate(fc.collider_index, col) {
+                        rows[count] = row_coord as ipopt::Index;
+                        cols[count] = col_coord as ipopt::Index;
+                        count += 1;
+                    }
+                }
             }
         }
         assert_eq!(count, rows.len());
@@ -3637,20 +3645,34 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for fc in self.frictional_contacts.iter() {
-            let obj_x = self.object_data.cur_pos(x1, pos.view(), fc.object_index);
-            let coll_x = self.object_data.cur_pos(x1, pos.view(), fc.collider_index);
+            let obj_pos = self.object_data.cur_pos(x1, pos.view(), fc.object_index);
+            let coll_pos = self.object_data.cur_pos(x1, pos.view(), fc.collider_index);
             let nc = fc.constraint.borrow().constraint_size();
-            let nh = fc.constraint.borrow().constraint_hessian_size();
-            fc.constraint
-                .borrow_mut()
-                .constraint_hessian_values_iter(
-                    [obj_x.view(), coll_x.view()],
-                    &lambda[coff..coff + nc],
-                )
-                .zip(vals[count..count + nh].iter_mut())
-                .for_each(|(v, out_v)| *out_v = v * c_scale * self.contact_constraint_scale());
 
-            count += nh;
+            let mut constraint = fc.constraint.borrow_mut();
+            if !constraint.is_linear() {
+                constraint.update_surface_with_mesh_pos(obj_pos.view());
+                constraint.update_contact_points(coll_pos.view());
+            }
+
+            if !self.is_rigid(fc.object_index) {
+                let noh = constraint.object_constraint_hessian_size();
+                constraint
+                    .object_constraint_hessian_values_iter(&lambda[coff..coff + nc])
+                    .zip(vals[count..count + noh].iter_mut())
+                    .for_each(|(v, out_v)| *out_v = v * c_scale * self.contact_constraint_scale());
+                count += noh;
+            }
+
+            if !self.is_rigid(fc.collider_index) {
+                let nch = constraint.collider_constraint_hessian_size();
+                constraint
+                    .collider_constraint_hessian_values_iter(&lambda[coff..coff + nc])
+                    .zip(vals[count..count + nch].iter_mut())
+                    .for_each(|(v, out_v)| *out_v = v * c_scale * self.contact_constraint_scale());
+                count += nch;
+            }
+
             coff += nc;
         }
 

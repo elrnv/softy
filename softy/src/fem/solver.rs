@@ -744,6 +744,7 @@ impl SolverBuilder {
         problem.reset_warm_start();
 
         let all_contacts_linear = problem.all_contacts_linear();
+        let has_rigid = problem.has_rigid();
 
         // Construct the Ipopt solver.
         let mut ipopt = Ipopt::new(problem)?;
@@ -769,7 +770,7 @@ impl SolverBuilder {
         ipopt.set_option("print_level", params.print_level as i32);
         //ipopt.set_option("nlp_scaling_method", "user-scaling");
         ipopt.set_option("warm_start_init_point", "yes");
-        if all_contacts_linear {
+        if all_contacts_linear && !has_rigid {
             ipopt.set_option("jac_d_constant", "yes");
         }
         ipopt.set_option(

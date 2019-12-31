@@ -21,7 +21,9 @@ pub use interior_edge::*;
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum FixedVerts {
     Zero,
+    #[allow(dead_code)]
     One(usize),
+    #[allow(dead_code)]
     Two([usize; 2]),
 }
 
@@ -186,7 +188,7 @@ impl TriMeshShell {
         let zz = x2y2z2[0] + x2y2z2[1] - mass * (cm2[0] + cm2[1]);
         let yz = mass * cm[1] * cm[2] - xy_xz_yz[1];
         let xz = mass * cm[2] * cm[0] - xy_xz_yz[2];
-        let inertia = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]].into_tensor();
+        let inertia = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]].into_tensor() * density;
         (mass, cm, inertia)
     }
 
@@ -262,15 +264,16 @@ impl TriMeshShell {
     pub(crate) fn with_simulation_attributes(mut self) -> Result<TriMeshShell, Error> {
         self.init_source_index_attribute()?;
 
-        match &mut self.data {
+        match self.data {
             ShellData::Fixed { .. } => {
                 // Kinematic meshes don't have material properties.
                 self.init_kinematic_vertex_attributes()?;
             }
-            ShellData::Rigid { cm, .. } => {
-                let cm = *cm;
+            ShellData::Rigid { cm, mass, .. } => {
                 self.init_dynamic_vertex_attributes()?;
                 self.init_rest_pos_vertex_attribute(cm)?;
+                // Vertex masses are needed for the friction solve.
+                self.trimesh.set_attrib::<MassType, VertexIndex>(MASS_ATTRIB, mass)?;
             }
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
@@ -606,6 +609,9 @@ impl TriMeshShell {
             ShellData::Fixed { .. } => Var::Fixed(&self.trimesh),
             _ => Var::Variable(&self.trimesh),
         }
+    }
+
+    pub(crate) fn rigid_contact_jacobian(&self) -> {
     }
 }
 

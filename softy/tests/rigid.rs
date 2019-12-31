@@ -7,6 +7,7 @@ use geo::ops::*;
 use softy::*;
 pub use test_utils::*;
 use utils::soap::*;
+use geo::mesh::VertexPositions;
 
 #[test]
 fn rigid_box_under_gravity_one_step() {
@@ -108,7 +109,6 @@ fn rigid_box_perturbed_rotate() {
     use geo::mesh::VertexPositions;
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
-        print_level: 5,
         time_step: Some(dt),
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
         ..DYNAMIC_PARAMS
@@ -150,7 +150,7 @@ fn rigid_box_perturbed_rotate() {
     let dir = [0.1, 0.2, 0.3].into_tensor();
     exp_mesh.translate((dir * dt as f64 * 30.0).into());
 
-    for i in 0..30 {
+    for _ in 0..30 {
         assert!(solver.step().is_ok());
     }
 
@@ -171,8 +171,6 @@ fn rigid_simple_contact() {
 
     use geo::mesh::VertexPositions;
     let params = SimParams {
-        //print_level: 5,
-        //derivative_test: 1,
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
         ..DYNAMIC_PARAMS
@@ -243,8 +241,6 @@ fn rigid_torque_contact() {
     init_logger();
 
     let params = SimParams {
-        print_level: 5,
-        derivative_test: 2,
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
         ..DYNAMIC_PARAMS
@@ -252,14 +248,10 @@ fn rigid_torque_contact() {
 
     let rigid_material = RigidMaterial::new(1, 1.0);
 
-    let mut mesh = PolyMesh::from(make_box(2).surface_trimesh());
-    let pi = std::f64::consts::PI;
-    mesh.rotate_by_vector([0.0, pi / 4.0, 0.0]);
-    let mut collider = PolyMesh::from(make_box(2).surface_trimesh());
-    collider.rotate_by_vector([0.0, pi / 4.0, 0.0]);
+    let mesh = PolyMesh::from(make_box(2).surface_trimesh());
+    let mut collider = PolyMesh::from(make_box(5).surface_trimesh());
     collider.scale([1.0, 1.0, 1.2]);
-    collider.translate([0.7, -1.4, 0.0]);
-    geo::io::save_polymesh(&collider, "./out/rigid_torque_collider.vtk");
+    collider.translate([0.7, -1.1, 0.0]);
 
     let fc = FrictionalContactParams {
         contact_type: ContactType::LinearizedPoint,
@@ -279,19 +271,14 @@ fn rigid_torque_contact() {
         .build()
         .unwrap();
 
-    // The box should hit the grid at frame 19.
-    // Here we check that nothing happens afterwards.
-    for i in 0..100 {
+    for _ in 0..30 {
         assert!(solver.step().is_ok());
-        geo::io::save_polymesh(
-            &PolyMesh::from(solver.shell(0).trimesh.clone()),
-            &format!("./out/rigid_torque_{}.vtk", i),
-        );
-        // Check that points are still within the original z coorinate bounds.
-        //for p in solver.shell(0).trimesh.vertex_position_iter() {
-        //    assert!(p[2] >= -0.51);
-        //    assert!(p[2] <= 0.51);
-        //}
+        // Check that points are still within the original z coorinate bounds since the problem is
+        // symmetric.
+        for p in solver.shell(0).trimesh.vertex_position_iter() {
+            assert!(p[2] >= -0.51);
+            assert!(p[2] <= 0.51);
+        }
     }
 }
 
@@ -301,8 +288,6 @@ fn rigid_torque_complex_contact() {
     init_logger();
 
     let params = SimParams {
-        print_level: 5,
-        derivative_test: 1,
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
         ..DYNAMIC_PARAMS
@@ -315,8 +300,7 @@ fn rigid_torque_complex_contact() {
     mesh.rotate_by_vector([0.01, 0.02, 0.03]);
     let mut collider = PolyMesh::from(make_box(2).surface_trimesh());
     collider.scale([1.0, 1.0, 1.2]);
-    collider.translate([0.7, -1.4, 0.0]);
-    geo::io::save_polymesh(&collider, "./out/rigid_torque_collider.vtk");
+    collider.translate([0.7, -1.1, 0.0]);
 
     let fc = FrictionalContactParams {
         contact_type: ContactType::LinearizedPoint,
@@ -336,18 +320,17 @@ fn rigid_torque_complex_contact() {
         .build()
         .unwrap();
 
-    // The box should hit the grid at frame 19.
-    // Here we check that nothing happens afterwards.
-    for i in 0..100 {
+    for _ in 0..60 {
         assert!(solver.step().is_ok());
-        geo::io::save_polymesh(
-            &PolyMesh::from(solver.shell(0).trimesh.clone()),
-            &format!("./out/rigid_torque_{}.vtk", i),
-        );
-        // Check that points are still within the original z coorinate bounds.
-        //for p in solver.shell(0).trimesh.vertex_position_iter() {
-        //    assert!(p[2] >= -0.51);
-        //    assert!(p[2] <= 0.51);
-        //}
+    }
+
+    // Check expected box bounds.
+    for p in solver.shell(0).trimesh.vertex_position_iter() {
+        assert!(p[0] >= -0.9);
+        assert!(p[0] <= 0.2);
+        assert!(p[1] >= -1.6);
+        assert!(p[1] <= -0.5);
+        assert!(p[2] >= -0.5);
+        assert!(p[2] <= 0.7);
     }
 }

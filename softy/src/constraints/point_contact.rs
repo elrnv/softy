@@ -35,11 +35,11 @@ pub struct PointContactConstraint {
     /// Friction impulses applied during contact.
     pub frictional_contact: Option<FrictionalContact>,
     /// A mass inverse for each vertex in the object mesh.
-    /// If the object is fixed, masses are effectively zero and this field
+    /// If the object is fixed, masses are effectively infinite and this field
     /// will be `None`.
     pub object_mass_inv: Option<Chunked3<Vec<f64>>>,
     /// A mass inverse for each vertex in the collider mesh.
-    /// If the collider is fixed, masses are effectively zero and this field
+    /// If the collider is fixed, masses are effectively infinite and this field
     /// will be `None`.
     pub collider_mass_inv: Option<Chunked3<Vec<f64>>>,
 
@@ -115,6 +115,8 @@ impl PointContactConstraint {
             let object_mass_inv = Self::mass_inv_attribute(&object)?;
 
             let collider_mass_inv = Self::mass_inv_attribute(&collider)?;
+
+            assert!(object_mass_inv.is_some() || collider_mass_inv.is_some());
 
             let mut bbox = BBox::empty();
             bbox.absorb(object.bounding_box());
@@ -1641,7 +1643,7 @@ impl PointContactConstraint {
                 .zip(surf.query_jacobian_block_iter(self.contact_points.view().into()));
             let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(surf);
             Either::Right(
-                if self.object_is_fixed {
+                if self.collider_is_fixed {
                     None
                 } else {
                     Some(iter)
@@ -1774,6 +1776,7 @@ impl PointContactConstraint {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn constraint_hessian_size(&self) -> usize {
         self.object_constraint_hessian_size() + self.collider_constraint_hessian_size()
     }
@@ -1847,6 +1850,7 @@ impl PointContactConstraint {
         .flatten()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn constraint_hessian_values_iter<'a>(
         &'a mut self,
         x: Input,

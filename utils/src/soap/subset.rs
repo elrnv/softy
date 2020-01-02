@@ -51,7 +51,7 @@ use std::convert::AsRef;
 // to the rest of the indices, making the entire index array translation
 // independent.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Subset<S, I = Vec<usize>> {
+pub struct Subset<S, I = Box<[usize]>> {
     /// An optional set of indices. When this is `None`, the subset is
     /// considered to be entire. Empty subsets are represented by a zero length
     /// array of indices: either `Some(&[])` or `Some(Vec::new())`.
@@ -66,7 +66,7 @@ pub struct Subset<S, I = Vec<usize>> {
 /// A borrowed subset.
 pub type SubsetView<'a, S> = Subset<S, &'a [usize]>;
 
-impl<S: Set + RemovePrefix> Subset<S> {
+impl<S: Set + RemovePrefix> Subset<S, Vec<usize>> {
     /// Create a subset of elements from the original set given at the specified indices.
     ///
     /// # Example
@@ -138,7 +138,7 @@ impl<S: Set + RemovePrefix, I: AsRef<[usize]>> Subset<S, I> {
     }
 }
 
-impl<S, O> Subset<S, O> {
+impl<S, I> Subset<S, I> {
     /// Create a subset with all elements from the original set.
     ///
     /// # Example
@@ -910,6 +910,8 @@ impl<S: NonTensor, I> From<S> for Subset<S, I> {
         Subset::all(set)
     }
 }
+
+// TODO: Add conversions for other subsets.
 
 /// Pass through the conversion for structure type `Subset`.
 impl<S: StorageInto<T>, I, T> StorageInto<T> for Subset<S, I> {

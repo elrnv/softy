@@ -111,14 +111,14 @@ where
 
 /// Row-major dense matrix of row-major NxM blocks where N is the number of rows an M number of
 /// columns.
-pub type DBlockMatrixBase<T, N, M> = DMatrixBase<UniChunked<Tensor<UniChunked<T, M>>, N>>;
+pub type DBlockMatrixBase<T, N, M> = DMatrixBase<Tensor<UniChunked<Tensor<UniChunked<T, M>>, N>>>;
 pub type DBlockMatrix<T = f64, N = usize, M = usize> = DBlockMatrixBase<Tensor<Vec<T>>, N, M>;
 pub type DBlockMatrixView<'a, T = f64, N = usize, M = usize> =
     DBlockMatrixBase<&'a Tensor<[T]>, N, M>;
 
 /// Row-major dense matrix of row-major 3x3 blocks.
-pub type DBlockMatrix3<T = f64> = DBlockMatrix<Tensor<Vec<T>>, U3, U3>;
-pub type DBlockMatrix3View<'a, T = f64> = DBlockMatrix<&'a Tensor<[T]>, U3, U3>;
+pub type DBlockMatrix3<T = f64> = DBlockMatrix<T, U3, U3>;
+pub type DBlockMatrix3View<'a, T = f64> = DBlockMatrixView<'a, T, U3, U3>;
 
 /// Dense-row sparse-column row-major matrix. AKA CSR matrix.
 pub type DSMatrixBase<T, I> = Tensor<Chunked<Tensor<Sparse<T, Dim, I>>, Offsets<I>>>;
@@ -368,8 +368,11 @@ impl<'a, S: Set + ViewMut<'a, Type = &'a mut [f64]>, I: AsRef<[usize]>> ViewMut<
 /// A diagonal matrix of `N` sized chunks. this is not to be confused with block diagonal matrix,
 /// which may contain off-diagonal elements in each block. This is a purely diagonal matrix, whose
 /// diagonal elements are grouped into `N` sized chunks.
+//
+// TODO: Unify specialized matrix types like DiagonalBlockMatrixBase to have a similar api to
+// Tensors.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct DiagonalBlockMatrixBase<S, I = Box<[usize]>, N = usize>(Subset<UniChunked<S, N>, I>);
+pub struct DiagonalBlockMatrixBase<S, I = Box<[usize]>, N = usize>(pub Subset<UniChunked<S, N>, I>);
 pub type DiagonalBlockMatrix<T = f64, I = Box<[usize]>, N = usize> =
     DiagonalBlockMatrixBase<Vec<T>, I, N>;
 pub type DiagonalBlockMatrixView<'a, T = f64, N = usize> =
@@ -380,7 +383,7 @@ pub type DiagonalBlockMatrixViewMut<'a, T = f64, N = usize> =
 pub type DiagonalBlockMatrix3<T = f64, I = Box<[usize]>> = DiagonalBlockMatrix<T, I, U3>;
 pub type DiagonalBlockMatrix3View<'a, T = f64> = DiagonalBlockMatrixView<'a, T, U3>;
 
-impl<S, I, N: Dimension> DiagonalBlockMatrixBase<S, I, N>
+impl<S, N: Dimension> DiagonalBlockMatrixBase<S, Box<[usize]>, N>
 where
     UniChunked<S, N>: Set,
 {
@@ -388,7 +391,16 @@ where
     /// sometimes requires additional generic parameters to be explicitly specified.
     /// This function assumes `Box<[usize]>` as a placeholder for indices where the subset is
     /// entire.
-    pub fn new<T: Into<Subset<UniChunked<S, N>, I>>>(chunks: T) -> Self {
+    pub fn new<T: Into<Subset<UniChunked<S, N>>>>(chunks: T) -> Self {
+        DiagonalBlockMatrixBase(chunks.into())
+    }
+}
+
+impl<'a, S, N: Dimension> DiagonalBlockMatrixBase<S, &'a [usize], N>
+where
+    UniChunked<S, N>: Set,
+{
+    pub fn view<T: Into<SubsetView<'a, UniChunked<S, N>>>>(chunks: T) -> Self {
         DiagonalBlockMatrixBase(chunks.into())
     }
 }
@@ -1265,8 +1277,24 @@ impl<'a, T: Scalar, I: Set + AsRef<[usize]>> DSBlockMatrix3<T, I> {
     }
 }
 
-impl From<DiagonalBlockMatrix3> for DSBlockMatrix3 {
-    fn from(diag: DiagonalBlockMatrix3) -> DSBlockMatrix3 {
+impl From<DBlockMatrix3> for DSBlockMatrix3 {
+    fn from(dense: DBlockMatrix3) -> DSBlockMatrix3 {
+        let num_rows = dense.num_rows();
+        let num_cols = dense.num_cols();
+        Chunked::from_sizes(
+            vec![num_cols; num_rows], // num_cols blocks for every row
+            Sparse::from_dim(
+                (0..num_cols).cycle().take(num_cols*num_rows).collect(), // No sparsity
+                num_cols,
+                dense.into_data().data,
+            ),
+        )
+        .into_tensor()
+    }
+}
+
+impl<I: AsRef<[usize]>> From<DiagonalBlockMatrix3<f64, I>> for DSBlockMatrix3 {
+    fn from(diag: DiagonalBlockMatrix3<f64, I>) -> DSBlockMatrix3 {
         // Need to convert each triplet in diag into a diagonal 3x3 matrix.
         // Each block is essentially [x, 0, 0, 0, y, 0, 0, 0, z].
         let data: Chunked3<Vec<_>> = diag
@@ -1324,6 +1352,8 @@ impl From<BlockDiagonalMatrix2> for DSBlockMatrix2 {
         .into_tensor()
     }
 }
+
+
 
 /*
  * The following is an attempt at generic implementation of the function below

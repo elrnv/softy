@@ -3,7 +3,7 @@ use crate::constraints::*;
 use crate::contact::*;
 use crate::fem::problem::{FrictionalContactConstraint, Var};
 use crate::objects::*;
-use geo::mesh::{attrib::VertexAttrib, topology::*, Attrib, VertexPositions};
+use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
@@ -77,12 +77,12 @@ impl std::fmt::Display for SolveResult {
 }
 /// Get reference tetrahedron.
 /// This routine assumes that there is a vertex attribute called `ref` of type `[f32;3]`.
-pub fn ref_tet(ref_pos: &[RefPosType], indices: &[usize; 4]) -> Tetrahedron<f64> {
+pub fn ref_tet(ref_pos: &[RefPosType]) -> Tetrahedron<f64> {
     Tetrahedron::new([
-        Vector3::new(ref_pos[indices[0]]).cast::<f64>().into(),
-        Vector3::new(ref_pos[indices[1]]).cast::<f64>().into(),
-        Vector3::new(ref_pos[indices[2]]).cast::<f64>().into(),
-        Vector3::new(ref_pos[indices[3]]).cast::<f64>().into(),
+        Vector3::new(ref_pos[0]).cast::<f64>().into(),
+        Vector3::new(ref_pos[1]).cast::<f64>().into(),
+        Vector3::new(ref_pos[2]).cast::<f64>().into(),
+        Vector3::new(ref_pos[3]).cast::<f64>().into(),
     ])
 }
 
@@ -325,6 +325,8 @@ impl SolverBuilder {
                     let mesh_pos = mesh.vertex_positions();
 
                     let translation: [f64; 3] = *cm.as_data();
+                    // NOTE: if rotation is not [0.0; 3], then we must unrotate when computing rt
+                    // below.
                     prev_x.push(vec![translation, [0.0; 3]]);
 
                     // Average linear velocity.
@@ -820,10 +822,10 @@ impl SolverBuilder {
     fn compute_ref_tet_signed_volumes(mesh: &mut TetMesh) -> Result<Vec<f64>, Error> {
         use rayon::iter::Either;
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
-        let ref_volumes: Vec<f64> = mesh
-            .cell_iter()
-            .map(|cell| ref_tet(ref_pos, cell).signed_volume())
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
+        let ref_volumes: Vec<f64> = ref_pos
+            .chunks_exact(4)
+            .map(|tet| ref_tet(tet).signed_volume())
             .collect();
         let inverted: Vec<_> = ref_volumes
             .iter()
@@ -853,31 +855,46 @@ impl SolverBuilder {
         mesh: &mut TetMesh,
     ) -> Result<Vec<Matrix3<f64>>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
-        Ok(mesh
-            .cell_iter()
-            .map(|cell| {
-                let ref_shape_matrix = ref_tet(ref_pos, cell).shape_matrix();
+        Ok(ref_pos
+            .chunks_exact(4)
+            .map(|tet| {
+                let ref_shape_matrix = ref_tet(tet).shape_matrix();
                 // We assume that ref_shape_matrices are non-singular.
+                // This should have been checked in `compute_ref_tet_signed_volumes`.
                 Matrix3::new(ref_shape_matrix).inverse().unwrap()
             })
             .collect())
     }
 
     /// A helper function to populate the vertex reference position attribute.
-    pub(crate) fn prepare_vertex_ref_pos_attribute<M>(mesh: &mut M) -> Result<(), Error>
-    where
-        M: NumVertices + VertexPositions<Element = [f64; 3]> + VertexAttrib + Attrib,
-    {
-        let verts: Vec<RefPosType> = mesh
-            .vertex_position_iter()
-            .map(|&x| Vector3::new(x).cast::<f32>().into())
-            .collect();
+    pub(crate) fn prepare_cell_vertex_ref_pos_attribute(mesh: &mut TetMesh) -> Result<(), Error> {
+        let mut ref_pos = vec![[0.0; 3]; mesh.num_cell_vertices()];
+        let pos = if let Ok(vtx_ref_pos) =
+            mesh.attrib_as_slice::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
+        {
+            // There is a reference attribute on the vertices themselves, just transfer these
+            // to cell vertices instead of using mesh position.
+            vtx_ref_pos.to_vec()
+        } else {
+            mesh.vertex_position_iter()
+                .map(|&x| Vector3::new(x).cast::<f32>().into())
+                .collect()
+        };
 
-        mesh.attrib_or_add_data::<RefPosType, VertexIndex>(
-            REFERENCE_VERTEX_POS_ATTRIB,
-            verts.as_slice(),
+        for (cell_idx, cell) in mesh.cell_iter().enumerate() {
+            for i in 0..4 {
+                let cell_vtx_idx: usize = mesh.cell_vertex(cell_idx, i).unwrap().into();
+                for j in 0..3 {
+                    ref_pos[cell_vtx_idx][j] = pos[cell[i]][j];
+                }
+            }
+        }
+
+        mesh.attrib_or_add_data::<RefPosType, CellVertexIndex>(
+            REFERENCE_CELL_VERTEX_POS_ATTRIB,
+            ref_pos.as_slice(),
         )?;
         Ok(())
     }
@@ -929,7 +946,7 @@ impl SolverBuilder {
     }
 
     pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
-        Self::prepare_vertex_ref_pos_attribute(mesh)?;
+        Self::prepare_cell_vertex_ref_pos_attribute(mesh)?;
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
         mesh.set_attrib_data::<RefVolType, CellIndex>(
             REFERENCE_VOLUME_ATTRIB,

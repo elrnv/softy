@@ -3,11 +3,11 @@ mod test_utils;
 use approx::*;
 use geo::mesh::attrib::*;
 use geo::mesh::topology::*;
+use geo::mesh::VertexPositions;
 use geo::ops::*;
 use softy::*;
 pub use test_utils::*;
 use utils::soap::*;
-use geo::mesh::VertexPositions;
 
 #[test]
 fn rigid_box_under_gravity_one_step() {

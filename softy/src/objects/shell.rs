@@ -180,14 +180,14 @@ impl TriMeshShell {
     ) -> (f64, Vector3<f64>, Matrix3<f64>) {
         let (one, xyz, x2y2z2, xy_xz_yz) = Self::integrate_polynomial_basis(mesh);
         let mass = one * density;
-        let cm = xyz / mass;
+        let cm = xyz / one;
         let cm2 = cm.cwise_mul(cm);
-        let xx = x2y2z2[1] + x2y2z2[2] - mass * (cm2[1] + cm2[2]);
-        let yy = x2y2z2[0] + x2y2z2[2] - mass * (cm2[2] + cm2[0]);
-        let xy = mass * cm[0] * cm[1] - xy_xz_yz[0];
-        let zz = x2y2z2[0] + x2y2z2[1] - mass * (cm2[0] + cm2[1]);
-        let yz = mass * cm[1] * cm[2] - xy_xz_yz[1];
-        let xz = mass * cm[2] * cm[0] - xy_xz_yz[2];
+        let xx = x2y2z2[1] + x2y2z2[2] - one * (cm2[1] + cm2[2]);
+        let yy = x2y2z2[0] + x2y2z2[2] - one * (cm2[2] + cm2[0]);
+        let xy = one * cm[0] * cm[1] - xy_xz_yz[0];
+        let zz = x2y2z2[0] + x2y2z2[1] - one * (cm2[0] + cm2[1]);
+        let yz = one * cm[1] * cm[2] - xy_xz_yz[1];
+        let xz = one * cm[2] * cm[0] - xy_xz_yz[2];
         let inertia = [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]].into_tensor() * density;
         (mass, cm, inertia)
     }
@@ -273,7 +273,8 @@ impl TriMeshShell {
                 self.init_dynamic_vertex_attributes()?;
                 self.init_rest_pos_vertex_attribute(cm)?;
                 // Vertex masses are needed for the friction solve.
-                self.trimesh.set_attrib::<MassType, VertexIndex>(MASS_ATTRIB, mass)?;
+                self.trimesh
+                    .set_attrib::<MassType, VertexIndex>(MASS_ATTRIB, mass)?;
             }
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
@@ -326,6 +327,7 @@ impl TriMeshShell {
 
     pub(crate) fn init_rest_pos_vertex_attribute(&mut self, cm: Vector3<f64>) -> Result<(), Error> {
         // Translate every vertex such that the object's center of mass is at the origin.
+        // This is done for rigid bodies.
         let ref_pos: Vec<_> = self
             .trimesh
             .vertex_position_iter()
@@ -604,11 +606,40 @@ impl TriMeshShell {
         Ok(())
     }
 
-    pub fn tagged_mesh(&self) -> Var<&TriMesh> {
+    pub fn tagged_mesh(&self) -> Var<&TriMesh, f64> {
         match self.data {
             ShellData::Fixed { .. } => Var::Fixed(&self.trimesh),
+            ShellData::Rigid { mass, inertia, .. } => Var::Rigid(&self.trimesh, mass, inertia),
             _ => Var::Variable(&self.trimesh),
         }
+    }
+
+    pub fn rigid_effective_mass_inv(
+        mass: f64,
+        translation: Vector3<f64>,
+        rot: Vector3<f64>,
+        inertia: Matrix3<f64>,
+        contact_points: SubsetView<Chunked3<&[f64]>>,
+        ) -> DBlockMatrix3<f64> {
+        let n = contact_points.len();
+        debug_assert!(n > 0);
+        let mut out = UniChunked::from_flat_with_stride(
+            UniChunked::from_flat(UniChunked::from_flat(vec![0.0; n*n*9])), n);
+
+        let inertia_inv = inertia.inverse().expect("Failed to invert inertia matrix");
+
+        for (&row_p, mut out_row) in contact_points.iter().zip(out.iter_mut()) {
+            for (&col_p, out_block) in contact_points.iter().zip(out_row.iter_mut()) {
+                let block: Matrix3<f64> = Matrix3::identity() / mass
+                    -rotate(row_p.into_tensor() - translation, -rot).skew()
+                    * inertia_inv
+                    * rotate(col_p.into_tensor() - translation, -rot).skew();
+                let out_arrays: &mut [[f64; 3]; 3] = out_block.into_arrays();
+                *out_arrays = block.into_data();
+            }
+        }
+
+        out.into_tensor()
     }
 }
 
@@ -654,7 +685,6 @@ mod tests {
     #[test]
     fn rigid_properties() {
         // We can compute these properties by hand of a few meshes with known symmetries.
-        // We assume a density of 1.0 in the following.
 
         // Useful consts:
         let pi = std::f64::consts::PI;
@@ -665,12 +695,12 @@ mod tests {
         mesh.translate([0.1, 0.2, 0.3]);
 
         // Expected values
-        let exp_mass = 1.0;
+        let exp_mass = 2.0;
         let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
-        let moment_of_inertia = 1.0 / 6.0;
+        let moment_of_inertia = 1.0 / 3.0;
         let exp_inertia = Matrix3::identity() * moment_of_inertia;
 
-        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
         assert_relative_eq!(mass, exp_mass);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia, exp_inertia);
@@ -681,10 +711,10 @@ mod tests {
         mesh.rotate_by_vector([0.0, pi / 3.0, 0.0]);
 
         // Expected values
-        let moment_of_inertia_y = (2.0 * sin45 * sin45 + 1.0) / 12.0;
+        let moment_of_inertia_y = 2.0 * (2.0 * sin45 * sin45 + 1.0) / 12.0;
         let exp_cm = Vector3::new([0.0; 3]);
 
-        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
         assert_relative_eq!(mass, exp_mass);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
@@ -697,7 +727,7 @@ mod tests {
 
         let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
 
-        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 1.0);
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
         assert_relative_eq!(mass, exp_mass);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
@@ -720,7 +750,7 @@ mod tests {
         let a2 = inner_radius as f64 * inner_radius as f64;
         let b = outer_radius as f64;
         let b2 = b * b;
-        let exp_mass = 2.0 * pi * pi * b * a2;
+        let exp_mass = 2.0 * 2.0 * pi * pi * b * a2;
         let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
         let inertia_y = 0.25 * exp_mass * (4.0 * b2 + 3.0 * a2);
         let inertia_xz = 0.125 * exp_mass * (4.0 * b2 + 5.0 * a2);
@@ -729,10 +759,43 @@ mod tests {
         exp_inertia[1][1] = inertia_y;
         exp_inertia[2][2] = inertia_xz;
 
-        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&torus, 1.0);
+        let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&torus, 2.0);
         assert!(mass < exp_mass); // discretized torus is smaller
         assert_relative_eq!(mass, exp_mass, max_relative = 1e-3);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-3);
         assert_relative_eq!(inertia, exp_inertia, max_relative = 1e-3, epsilon = 1e-10);
+    }
+
+    /// Test generation of rigid effective mass.
+    #[test]
+    fn rigid_effective_mass_inv() {
+        let mesh = make_box(2).surface_trimesh();
+        let material = RigidMaterial::new(0, 1.0);
+        let shell = TriMeshShell::rigid(mesh, material);
+        let (inertia, mass) = match shell.data {
+            ShellData::Rigid { inertia, mass, .. } => (inertia, mass),
+            _ => panic!("Looking for a rigid mesh here."),
+        };
+
+        let contact_points: Subset<_> = Subset::all(Chunked3::from_array_vec(vec![
+            [0.0, 0.5, 0.0], // top
+            [-0.5, 0.0, 0.0], // side
+            [0.5, 0.5, 0.0], // corner coincident with vertex
+        ]));
+
+        let effective_mass_inv = TriMeshShell::rigid_effective_mass_inv(
+            mass, [0.0; 3].into_tensor(), [0.0; 3].into_tensor(), inertia, contact_points.view()).into_data();
+
+        for row in 0..3 {
+            let rrow = contact_points[row].into_tensor().skew();
+            for col in 0..3 {
+                let rcol = contact_points[col].into_tensor().skew();
+                let exp_block = Matrix3::identity()/mass - rrow*inertia.inverse().unwrap()*rcol;
+                let actual_block = effective_mass_inv.view().at(row).at(col);
+                for i in 0..3 {
+                    assert_relative_eq!(actual_block[i].into_tensor(), exp_block[i]);
+                }
+            }
+        }
     }
 }

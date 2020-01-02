@@ -290,7 +290,6 @@ mod tests {
                 // Prepare attributes relevant for elasticity computations.
                 let mut solid = TetMeshSolid::new(tetmesh, material);
                 solid.init_deformable_vertex_attributes().unwrap();
-                SolverBuilder::prepare_vertex_ref_pos_attribute(&mut solid.tetmesh).unwrap();
                 SolverBuilder::prepare_deformable_tetmesh_attributes(&mut solid.tetmesh).unwrap();
                 solid.init_elasticity_attributes().unwrap();
                 solid.init_fixed_element_attribute().unwrap();

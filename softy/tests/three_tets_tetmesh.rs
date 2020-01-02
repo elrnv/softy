@@ -157,13 +157,6 @@ fn inverted_fixed_element_test() -> Result<(), Error> {
     use geo::mesh::VertexPositions;
     let mut mesh = make_three_tet_mesh();
 
-    // Construct univerted reference positions
-    let pos: Vec<_> = mesh
-        .vertex_position_iter()
-        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
-        .collect();
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, pos);
-
     // Invert the first tet.
     mesh.vertex_positions_mut()[4] = mesh.vertex_positions_mut()[3];
 

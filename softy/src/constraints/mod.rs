@@ -25,8 +25,8 @@ use utils::soap::*;
 /// one type of contact constraint, which is resolved using dynamic dispatch.
 /// This approach reduces a lot of boiler plate code compared to using enums.
 pub fn build_contact_constraint(
-    object: Var<&TriMesh>,
-    collider: Var<&TriMesh>,
+    object: Var<&TriMesh, f64>,
+    collider: Var<&TriMesh, f64>,
     params: FrictionalContactParams,
 ) -> Result<RefCell<PointContactConstraint>, crate::Error> {
     Ok(RefCell::new(PointContactConstraint::new(
@@ -196,6 +196,7 @@ pub trait ContactConstraint:
         contact_impulse: &[f64],
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         dx: [SubsetView<Chunked3<&[f64]>>; 2],
+        rigid_motion: [Option<[Vector3<f64>; 2]>; 2],
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;

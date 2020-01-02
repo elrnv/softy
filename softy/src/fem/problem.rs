@@ -153,33 +153,48 @@ pub struct Vertex {
 /// An enum that tags data as static (Fixed) or changing (Variable).
 /// `Var` is short for "variability".
 #[derive(Copy, Clone, Debug)]
-pub enum Var<T> {
-    Fixed(T),
-    Variable(T),
+pub enum Var<M, T> {
+    Fixed(M),
+    Rigid(M, T, Matrix3<T>),
+    Variable(M),
 }
 
-impl<T> Var<T> {
+/// Object/Collider type.
+///
+/// Same as above but without the mesh.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Tag<T> {
+    Fixed,
+    Rigid(T, Matrix3<T>),
+    Variable,
+}
+
+impl<M, T> Var<M, T> {
     #[inline]
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Var<U> {
+    pub fn map<U, F: FnOnce(M) -> U>(self, f: F) -> Var<U, T> {
         match self {
             Var::Fixed(x) => Var::Fixed(f(x)),
+            Var::Rigid(x, m, i) => Var::Rigid(f(x), m, i),
             Var::Variable(x) => Var::Variable(f(x)),
-        }
-    }
-
-    #[inline]
-    pub fn is_fixed(&self) -> bool {
-        match self {
-            Var::Fixed(_) => true,
-            _ => false,
         }
     }
 
     /// Effectively untag the underlying data by converting into the inner type.
     #[inline]
-    pub fn untag(self) -> T {
+    pub fn untag(self) -> M {
         match self {
-            Var::Fixed(t) | Var::Variable(t) => t,
+            Var::Fixed(t) | Var::Variable(t) | Var::Rigid(t, _, _) => t,
+        }
+    }
+}
+
+impl<M, T: Clone> Var<M, T> {
+    #[inline]
+    pub fn tag(&self) -> Tag<T> {
+        match self {
+            Var::Fixed(_) => Tag::Fixed,
+            Var::Rigid(_, mass, inertia) => Tag::Rigid(mass.clone(), inertia.clone()),
+            Var::Variable(_) => Tag::Variable,
         }
     }
 }
@@ -705,7 +720,12 @@ impl ObjectData {
         }
     }
 
-    fn sync_vel(shells: &[TriMeshShell], v: VertexView3<&[f64]>, x: VertexView3<&[f64]>, mut vel: VertexView3<&mut [f64]>) {
+    fn sync_vel(
+        shells: &[TriMeshShell],
+        v: VertexView3<&[f64]>,
+        x: VertexView3<&[f64]>,
+        mut vel: VertexView3<&mut [f64]>,
+    ) {
         for (i, shell) in shells.iter().enumerate() {
             if let ShellData::Rigid { .. } = shell.data {
                 let v = v.view().isolate(1).isolate(i);
@@ -721,7 +741,8 @@ impl ObjectData {
                         .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
                         .expect("Missing rigid body reference positions"),
                 ) {
-                    *out_vel.as_mut_tensor() = rotate(angular.cross(r.into_tensor()), rotation) + linear;
+                    *out_vel.as_mut_tensor() =
+                        rotate(angular.cross(r.into_tensor()), rotation) + linear;
                 }
             }
         }
@@ -987,7 +1008,7 @@ impl ObjectData {
 
         let mut ws = workspace.borrow_mut();
         let WorkspaceData { x, v, vel, pos, .. } = &mut *ws;
-        Self::sync_vel(&shells, v.view(), x.view(), vel.view_mut());
+        Self::sync_vel(&shells, v.view(), prev_x.view(), vel.view_mut());
         Self::sync_pos(&shells, x.view(), pos.view_mut());
 
         {
@@ -1895,9 +1916,10 @@ impl NonLinearProblem {
         }
 
         self.update_current_velocity(solution.primal_variables);
+        let prev_x = self.object_data.prev_x.view();
         let mut ws = self.object_data.workspace.borrow_mut();
-        let WorkspaceData { v, vel, x, .. } = &mut *ws;
-        ObjectData::sync_vel(&self.object_data.shells, v.view(), x.view(), vel.view_mut());
+        let WorkspaceData { v, vel, .. } = &mut *ws;
+        ObjectData::sync_vel(&self.object_data.shells, v.view(), prev_x, vel.view_mut());
 
         let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
         let NonLinearProblem {
@@ -1933,6 +1955,25 @@ impl NonLinearProblem {
                 crate::inf_norm(contact_impulse.iter().cloned())
             );
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
+
+            // TODO: Refactor this low level code out. There needes to be a mechanism to pass rigid
+            // motion data to the constraints since rigid bodies have a special effective mass.
+            let rigid_motion = [
+                if let SourceIndex::Shell(idx) = fc.object_index {
+                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                        Some([prev_x.at(1).at(idx)[0].into_tensor(), prev_x.at(1).at(idx)[1].into_tensor()])
+                    } else { None }
+                } else {
+                    None
+                },
+                if let SourceIndex::Shell(idx) = fc.collider_index {
+                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
+                        Some([prev_x.at(1).at(idx)[0].into_tensor(), prev_x.at(1).at(idx)[1].into_tensor()])
+                    } else { None }
+                } else {
+                    None
+                }
+            ];
             friction_steps[fc_idx] = fc
                 .constraint
                 .borrow_mut()
@@ -1940,6 +1981,7 @@ impl NonLinearProblem {
                     &contact_impulse,
                     [obj_prev_pos.view(), col_prev_pos.view()],
                     [obj_vel.view(), col_vel.view()],
+                    rigid_motion,
                     potential_values,
                     friction_steps[fc_idx],
                 );
@@ -3322,12 +3364,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                         let rotdw = rotation(dw);
                         let dw2 = dw.norm_squared();
                         let dpdw = if dw2 > 0.0 {
-                            ((dw * dw.transpose()
-                                        - dw.skew() * (rotdw - Matrix3::identity()))
-                                    * (r / dw2).skew()
-                                    * rotdw.transpose())
+                            ((dw * dw.transpose() - dw.skew() * (rotdw - Matrix3::identity()))
+                                * (r / dw2).skew()
+                                * rotdw.transpose())
                         } else {
-                           r.skew()
+                            r.skew()
                         };
                         *angular.as_mut_tensor() += dpdw * rotate(scaled_block, -x0);
                     }
@@ -3516,7 +3557,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 constraint.object_constraint_hessian_indices_iter()
             {
                 if let Some(row_coord) = self.object_data.source_coordinate(fc.object_index, row) {
-                    if let Some(col_coord) = self.object_data.source_coordinate(fc.object_index, col) {
+                    if let Some(col_coord) =
+                        self.object_data.source_coordinate(fc.object_index, col)
+                    {
                         rows[count] = row_coord as ipopt::Index;
                         cols[count] = col_coord as ipopt::Index;
                         count += 1;
@@ -3527,8 +3570,11 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             for MatrixElementIndex { row, col } in
                 constraint.collider_constraint_hessian_indices_iter()
             {
-                if let Some(row_coord) = self.object_data.source_coordinate(fc.collider_index, row) {
-                    if let Some(col_coord) = self.object_data.source_coordinate(fc.collider_index, col) {
+                if let Some(row_coord) = self.object_data.source_coordinate(fc.collider_index, row)
+                {
+                    if let Some(col_coord) =
+                        self.object_data.source_coordinate(fc.collider_index, col)
+                    {
                         rows[count] = row_coord as ipopt::Index;
                         cols[count] = col_coord as ipopt::Index;
                         count += 1;

@@ -10,6 +10,7 @@ pub const LAMBDA_ATTRIB: &str = "lambda";
 pub const BENDING_STIFFNESS_ATTRIB: &str = "bend";
 pub const VELOCITY_ATTRIB: &str = "vel";
 pub const REFERENCE_VERTEX_POS_ATTRIB: &str = "ref";
+pub const REFERENCE_CELL_VERTEX_POS_ATTRIB: &str = "ref_cv";
 pub const REFERENCE_FACE_VERTEX_POS_ATTRIB: &str = "ref_fv";
 pub const REFERENCE_ANGLE_ATTRIB: &str = "ref_angle";
 pub(crate) const REFERENCE_VOLUME_ATTRIB: &str = "ref_volume";

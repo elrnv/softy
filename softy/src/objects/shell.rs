@@ -369,7 +369,9 @@ impl TriMeshShell {
             mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
         let areas: Vec<_> = ref_pos
             .chunks_exact(3)
-            .map(|tri| ref_tri(tri).area())
+            .map(|tri| {
+                ref_tri(tri).area()
+            })
             .collect();
         let degens: Vec<_> = areas
             .iter()
@@ -388,14 +390,12 @@ impl TriMeshShell {
     /// Assume that reference triangles are non-degenerate.
     pub fn isotropic_tri_shape_matrix<T: Real>(m: Matrix2x3<T>) -> Matrix2<T> {
         // Project (orthogonally) second row onto the first.
-        let scale = m[0].dot(m[1]) / m[0].norm_squared();
-        let r1_proj = m[0] * scale;
+        let m0_norm = m[0].norm();
+        let e0 = m[0] / m0_norm;
+        let m1_e0 = e0.dot(m[1]);
+        let m1_e1 = (m[1] - e0 * m1_e0).norm();
 
-        let q = Matrix2x3 {
-            data: [m[0].normalized(), (m[1] - r1_proj).normalized()],
-        };
-
-        m * q.transpose()
+        Matrix2::new([[m0_norm, T::zero()], [m1_e0, m1_e1]])
     }
 
     /// Compute shape matrix inverses for reference elements in the given `TriMesh`.
@@ -468,7 +468,7 @@ impl TriMeshShell {
                 .iter()
                 .map(|e| {
                     let length = f64::from(e.ref_length(&ref_pos));
-                    // A triangle height measure used to normalize the length. This allo the energy
+                    // A triangle height measure used to normalize the length. This allows the energy
                     // model to correctly approximate mean curvature.
                     let h_e = f64::from(e.tile_span(&ref_pos));
                     let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));
@@ -481,6 +481,7 @@ impl TriMeshShell {
         // configuration to have a non-zero reference angle.
         if let Ok(ref_angles) =
             mesh.attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB)
+                .or_else(|_| mesh.attrib_as_slice::<RefAngleType, FaceVertexIndex>(REFERENCE_ANGLE_ATTRIB))
         {
             let ref_angles = Chunked3::from_flat(ref_angles).into_arrays();
             interior_edges

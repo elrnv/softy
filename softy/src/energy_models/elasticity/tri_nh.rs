@@ -488,8 +488,10 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
             let lambda = T::from(lambda).unwrap();
             let mu = T::from(mu).unwrap();
 
+            let Dx = Matrix2x3::new(tri_x1.shape_matrix());
+
             let tri_energy = E::new(
-                Matrix2x3::new(tri_x1.shape_matrix()),
+                Dx,
                 DX_inv,
                 area,
                 lambda,

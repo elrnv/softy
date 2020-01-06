@@ -736,19 +736,19 @@ impl_bin_op_assign!(impl<S, N> SubAssign for UniChunkedIterExpr<S, N> { sub_assi
 impl_bin_op_assign!(impl<'a, S> SubAssign for ChunkedIterExpr<'a, S> { sub_assign });
 impl_bin_op_assign!(impl<'a, S> SubAssign for SubsetIterExpr<'a, S> { sub_assign });
 
-impl<T, I, A> SubAssign<I> for Tensor<[T]>
-where
-    T: Scalar,
-    I: Iterator<Item = A>,
-    Tensor<T>: SubAssign<A>,
-{
-    #[inline]
-    fn sub_assign(&mut self, rhs: I) {
-        for (l, r) in self.data.iter_mut().zip(rhs) {
-            l.as_mut_tensor().sub_assign(r);
-        }
-    }
-}
+//impl<T, I, A> SubAssign<I> for Tensor<[T]>
+//where
+//    T: Scalar,
+//    I: Iterator<Item = A>,
+//    Tensor<T>: SubAssign<A>,
+//{
+//    #[inline]
+//    fn sub_assign(&mut self, rhs: I) {
+//        for (l, r) in self.data.iter_mut().zip(rhs) {
+//            l.as_mut_tensor().sub_assign(r);
+//        }
+//    }
+//}
 
 //impl<T, I> SubAssign<I> for Tensor<Vec<T>>
 //where

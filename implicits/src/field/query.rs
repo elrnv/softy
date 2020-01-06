@@ -1,5 +1,6 @@
 use super::*;
 use rayon::iter::Either;
+use log::debug;
 
 /// A data structure to store precomputed query information about an implicit surface. For example
 /// precomputed sample neighbours to each query point are stored here for local potential fields.
@@ -73,6 +74,7 @@ impl<T: Real> QueryTopo<T> {
                     },
             } => {
                 let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
+                debug!("Kernel radius: {}", radius);
                 let radius_ext = radius + num_traits::cast::<_, f64>(max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neighbourhood_query = |q| {

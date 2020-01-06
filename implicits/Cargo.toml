@@ -18,6 +18,7 @@ utils = { path = "../utils", features = ["autodiff"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 snafu = "0.5"
 arrayvec = "0.5"
+log = "0.4"
 
 [dev-dependencies]
 approx = "0.3"

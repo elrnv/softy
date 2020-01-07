@@ -30,6 +30,23 @@ pub struct Polar2<T> {
     pub angle: T,
 }
 
+impl<T: Real> Polar2<T> {
+    pub fn from_euclidean<V2: Into<[T; 2]>>(v: V2) -> Polar2<T> {
+        let v = v.into();
+        Polar2 {
+            radius: Vector2::new([v[0], v[1]]).norm(),
+            angle: T::atan2(v[1], v[0]),
+        }
+    }
+
+    pub fn to_euclidean(self) -> [T; 2] {
+        let Polar2 {
+            radius, angle,
+        } = self;
+        [radius * angle.cos(), radius * angle.sin()]
+    }
+}
+
 /// An annotated set of Cylindrical coordinates. The standard Vector3 struct is not applicable here
 /// because arithmetic is different in cylindrical coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]

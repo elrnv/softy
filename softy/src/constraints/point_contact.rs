@@ -728,7 +728,8 @@ impl ContactConstraint for PointContactConstraint {
 
     fn smooth_collider_values(&self, mut values: SubsetView<&mut [f64]>) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            let lap = self.build_contact_laplacian(0.5, None);
+            let weight = frictional_contact.params.smoothing_weight;
+            let lap = self.build_contact_laplacian(weight, None);
             let mut contacts = vec![0.0; frictional_contact.collider_impulse.len()];
             let indices = frictional_contact.collider_impulse.indices();
             assert_eq!(indices.len(), contacts.len());
@@ -903,10 +904,12 @@ impl ContactConstraint for PointContactConstraint {
             .smoothing_weight;
         let smoothed_contact_impulse_n = if smoothing_weight > 0.0 {
             let lap = self.build_contact_laplacian(smoothing_weight, Some(&active_contact_indices));
+
             let smoothed_contact_impulse_n: Vec<f64> =
                 (lap.expr() * orig_contact_impulse_n.expr()).eval();
             let smoothed_contact_impulse_n: Vec<f64> =
                 (lap.expr() * smoothed_contact_impulse_n.expr()).eval();
+
             assert_eq!(
                 orig_contact_impulse_n.len(),
                 smoothed_contact_impulse_n.len()
@@ -929,20 +932,21 @@ impl ContactConstraint for PointContactConstraint {
 
         // A new set of contacts have been determined. We should remap the previous friction
         // impulses to match new impulses.
-        let mut prev_friction_impulse: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
-            collider_impulse.source_iter().map(|x| *x.1),
-            [0.0; 3], // Previous impulse for unmatched contacts.
-            collider_impulse.selection().index_iter().cloned(),
-            active_contact_indices.iter().cloned(),
-        )
-        .collect();
+        let mut prev_friction_impulse: Chunked3<Vec<f64>> = if params.friction_forwarding > 0.0 {
+            crate::constraints::remap_values_iter(
+                collider_impulse.source_iter().map(|x| *x.1),
+                [0.0; 3], // Previous impulse for unmatched contacts.
+                collider_impulse.selection().index_iter().cloned(),
+                active_contact_indices.iter().cloned(),
+                )
+                .collect()
+        } else {
+            Chunked3::from_array_vec(vec![[0.0; 3]; active_contact_indices.len()])
+        };
 
         // Initialize the new friction impulse in physical space at active contacts.
         let mut friction_impulse =
             Chunked3::from_array_vec(vec![[0.0; 3]; active_contact_indices.len()]);
-
-        // TODO: REMOVE this
-        //let mut prev_friction_impulse = friction_impulse.clone();
 
         if active_contact_indices.is_empty() {
             // If there are no active contacts, there is nothing to update.
@@ -957,9 +961,9 @@ impl ContactConstraint for PointContactConstraint {
         let effective_mass_inv = effective_mass_inv.unwrap();
 
         let mut contact_impulse: Chunked3<Vec<f64>> = contact_basis
-            //.from_normal_space(&orig_contact_impulse_n)
             .from_normal_space(&smoothed_contact_impulse_n)
             .collect();
+
         // Prepare true predictor for the friction solve.
         let mut predictor_impulse = Self::compute_predictor_impulse(
             v,
@@ -985,54 +989,18 @@ impl ContactConstraint for PointContactConstraint {
                     let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
                     r.tangent
                 })
-                .collect();
-            if true {
-                // switch between implicit solver and explicit solver here.
-                match FrictionPolarSolver::new(
-                    &predictor_impulse_t,
-                    &orig_contact_impulse_n,
-                    &contact_basis,
-                    effective_mass_inv.view(),
-                    *params,
-                    jac.view(),
-                ) {
-                    Ok(mut solver) => {
-                        debug!("Solving Friction");
-                        if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                            for ((aqi, &r), r_out) in
-                                r_t.iter().enumerate().zip(friction_impulse.iter_mut())
-                            {
-                                let r_polar = Polar2 {
-                                    radius: r[0],
-                                    angle: r[1],
-                                };
-                                *r_out = contact_basis
-                                    .from_cylindrical_contact_coordinates(r_polar.into(), aqi)
-                                    .into();
-                            }
-                            true
-                        } else {
-                            error!("Failed friction solve");
-                            false
-                        }
-                    }
-                    Err(err) => {
-                        error!("Failed to create friction solver: {}", err);
-                        false
-                    }
-                }
-            } else {
-                for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
-                    predictor_impulse_t.iter(),
-                    orig_contact_impulse_n.iter(),
-                    friction_impulse.iter_mut()
-                )
+            .collect();
+            for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
+                predictor_impulse_t.iter(),
+                orig_contact_impulse_n.iter(),
+                friction_impulse.iter_mut()
+            )
                 .enumerate()
                 {
                     let r_t = if pred_r_t.radius > 0.0 {
                         Polar2 {
                             radius: params.dynamic_friction * cr.abs(),
-                            angle: negate_angle(pred_r_t.angle),
+                            angle: crate::friction::polar_solver::negate_angle(pred_r_t.angle),
                         }
                     } else {
                         Polar2 {
@@ -1044,15 +1012,9 @@ impl ContactConstraint for PointContactConstraint {
                         .from_cylindrical_contact_coordinates(r_t.into(), aqi)
                         .into();
                 }
-                true
-            }
+            true
         } else {
-            let mut contact_impulse_n = orig_contact_impulse_n.clone();
-            let prev_friction_impulse_t: Vec<_> = contact_basis
-                .to_tangent_space(&prev_friction_impulse.view().into_arrays())
-                .collect();
-
-            let prev_friction_impulse_t = vec![[0.0; 2]; prev_friction_impulse_t.len()];
+            let mut contact_impulse_n = smoothed_contact_impulse_n.clone();
 
             // Euclidean coords
             if true {
@@ -1062,9 +1024,8 @@ impl ContactConstraint for PointContactConstraint {
                     let friction_predictor: Chunked3<Vec<f64>> =
                         (predictor_impulse.expr() - contact_impulse.expr()).eval();
                     //println!("f_predictor: {:?}", friction_predictor.view());
-                    match crate::friction::solver::FrictionSolver::new(
+                    match crate::friction::polar_solver::FrictionPolarSolver::new(
                         friction_predictor.view().into(),
-                        &prev_friction_impulse_t,
                         &contact_impulse_n,
                         &contact_basis,
                         effective_mass_inv.view(),
@@ -1073,11 +1034,15 @@ impl ContactConstraint for PointContactConstraint {
                         Ok(mut solver) => {
                             debug!("Solving Friction");
 
-                            if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
-                                friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
-                            } else {
-                                error!("Failed friction solve");
-                                break false;
+                            match solver.step() {
+                                Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
+                                    info!("Friction iteration count: {}", iterations);
+                                    friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
+                                }
+                                Err(err) => {
+                                    error!("{}", err);
+                                    break false;
+                                }
                             }
                         }
                         Err(err) => {
@@ -1085,6 +1050,44 @@ impl ContactConstraint for PointContactConstraint {
                             break false;
                         }
                     }
+
+
+                    //match crate::friction::solver::FrictionSolver::new(
+                    //    friction_predictor.view().into(),
+                    //    &contact_impulse_n,
+                    //    &contact_basis,
+                    //    effective_mass_inv.view(),
+                    //    *params,
+                    //) {
+                    //    Ok(mut solver) => {
+                    //        debug!("Solving Friction2");
+
+                    //        match solver.step() {
+                    //            Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
+                    //                info!("Friction iteration count: {}", iterations);
+                    //                let friction_impulse2: Chunked3<Vec<_>> = contact_basis.from_tangent_space(&r_t).collect();
+                    //                for (j, (f1, f2)) in friction_impulse.iter().zip(friction_impulse2.iter()).enumerate() {
+                    //                    for i in 0..3 {
+                    //                        if !approx::relative_eq!(f1[i], f2[i], max_relative = 1e-8, epsilon = 1e-6) {
+                    //                            warn!("Friction at {}: {} vs. {}", j, f1[i], f2[i]);
+                    //                        }
+                    //                    }
+                    //                }
+                    //            }
+                    //            Err(err) => {
+                    //                error!("{}", err);
+                    //                break false;
+                    //            }
+                    //        }
+                    //    }
+                    //    Err(err) => {
+                    //        error!("Failed to create friction solver: {}", err);
+                    //        break false;
+                    //    }
+                    //}
+
+
+
 
                     //println!("c_before: {:?}", contact_impulse_n);
                     let contact_predictor: Chunked3<Vec<f64>> =
@@ -1102,14 +1105,17 @@ impl ContactConstraint for PointContactConstraint {
                         Ok(mut solver) => {
                             debug!("Solving Contact");
 
-                            if let Ok(r_n) = solver.step() {
-                                contact_impulse_n.copy_from_slice(&r_n);
-                                contact_impulse.clear();
-                                contact_impulse
-                                    .extend(contact_basis.from_normal_space(&contact_impulse_n));
-                            } else {
-                                error!("Failed contact solve");
-                                break false;
+                            match solver.step() {
+                                Ok(r_n) => {
+                                    contact_impulse_n.copy_from_slice(&r_n);
+                                    contact_impulse.clear();
+                                    contact_impulse
+                                        .extend(contact_basis.from_normal_space(&contact_impulse_n));
+                                }
+                                Err(err) => {
+                                    error!("Failed contact solve: {}", err);
+                                    break false;
+                                }
                             }
                         }
                         Err(err) => {
@@ -1138,7 +1144,7 @@ impl ContactConstraint for PointContactConstraint {
                         let rel_err = rel_err_numerator / rel_err_denominator;
 
                         debug!("Friction relative error: {}", rel_err);
-                        if rel_err < 1e-3 {
+                        if rel_err < 1e-4 {
                             friction_steps = 0;
                             break true;
                         }
@@ -1146,10 +1152,12 @@ impl ContactConstraint for PointContactConstraint {
                         warn!("Friction relative error is NaN: num = {:?}, denom = {:?}", rel_err_numerator, rel_err_denominator);
                         friction_steps = 0;
                         break true;
+                    } else {
+                        debug!("Friction relative error is infinite");
                     }
 
                     // Update prev_friction_impulse for computing error subsequent iterations.
-                    // Note that this should not and does not affect the "prev_friction_impulse_t"
+                    // Note that this should not and does not affect the "prev_step_friction_impulse"
                     // variable which is used in friciton forwarding and set outside the loop.
                     prev_friction_impulse = friction_impulse.clone();
 
@@ -1196,10 +1204,14 @@ impl ContactConstraint for PointContactConstraint {
         // vertices, but this is applied when the friction impulses are actually used.
         // Compute transpose product J^T*f
         //let prev_contact_impulse: Chunked3<Vec<f64>> = contact_basis
-        //    .from_normal_space(&orig_contact_impulse_n)
+        //    .from_normal_space(&smoothed_contact_impulse_n)
         //    .collect();
-        //let impulse: Chunked3<Vec<f64>> =
-        //    (friction_impulse.expr()).eval();
+        //let impulse: Chunked3<Vec<f64>> = (
+        //    friction_impulse.expr()
+        //    + contact_impulse.expr()
+        //    - prev_contact_impulse.expr()
+        //    ).eval();
+        let forwarded_impulse: Chunked3<Vec<f64>> = (friction_impulse.expr() * params.friction_forwarding).eval();
         // Correct friction_impulse by subtracting previous friction impulse
         let impulse_corrector: Chunked3<Vec<f64>> = (friction_impulse.expr()
             //+ contact_impulse.expr()
@@ -1207,7 +1219,7 @@ impl ContactConstraint for PointContactConstraint {
             - prev_step_friction_impulse.expr())
         .eval();
         let mut object_friction_impulse_tensor =
-            jac.view().transpose() * friction_impulse.view().into_tensor();
+            jac.view().transpose() * forwarded_impulse.view().into_tensor();
         object_friction_impulse_tensor.negate();
 
         let mut object_impulse_corrector_tensor =
@@ -1222,7 +1234,7 @@ impl ContactConstraint for PointContactConstraint {
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.len(),
-            Chunked3::from_flat((impulse_corrector.into_flat(), friction_impulse.into_flat())),
+            Chunked3::from_flat((impulse_corrector.into_flat(), forwarded_impulse.into_flat())),
         );
 
         if friction_steps > 0 {

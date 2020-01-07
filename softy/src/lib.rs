@@ -77,6 +77,7 @@ pub enum Error {
         objective_value: f64,
         iterations: u32,
     },
+    #[snafu(display("Friction solve error: {:?}", status))]
     FrictionSolveError {
         status: ipopt::SolveStatus,
     },

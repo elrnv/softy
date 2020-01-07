@@ -19,8 +19,6 @@ use crate::objects::*;
 use crate::PointCloud;
 use std::cell::Ref;
 
-const FORWARD_FRICTION: bool = true;
-
 #[derive(Clone)]
 pub struct Solution {
     /// This is the solution of the solve.
@@ -1876,16 +1874,19 @@ impl NonLinearProblem {
         // If time_step is 0.0, this is a pure static solve, which means that
         // there cannot be friction.
         if !self.is_static() {
-            if FORWARD_FRICTION {
-                for fc in self.frictional_contacts.iter() {
-                    let obj_v = self.object_data.cur_vel(v, ws.vel.view(), fc.object_index);
-                    let col_v = self
-                        .object_data
-                        .cur_vel(v, ws.vel.view(), fc.collider_index);
-                    obj -= fc
-                        .constraint
-                        .borrow()
-                        .frictional_dissipation([obj_v.view(), col_v.view()]);
+            for fc in self.frictional_contacts.iter() {
+                let fc_constraint = fc.constraint.borrow();
+                if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
+                    if fc_contact.params.friction_forwarding > 0.0 {
+                        let obj_v = self.object_data.cur_vel(v, ws.vel.view(), fc.object_index);
+                        let col_v = self
+                            .object_data
+                            .cur_vel(v, ws.vel.view(), fc.collider_index);
+                        obj -= fc
+                            .constraint
+                            .borrow()
+                            .frictional_dissipation([obj_v.view(), col_v.view()]);
+                    }
                 }
             }
         }
@@ -2495,10 +2496,13 @@ impl NonLinearProblem {
         //// DEBUG CODE:
         //if self.frictional_contacts.len() == 1 {
         //    let fc = &self.frictional_contacts[0];
-        //    let [_, mut coll_p] = self.object_data.mesh_vertex_subset_split_mut(
+        //    let ObjectData { solids, shells, .. } = &self.object_data;
+        //    let [_, mut coll_p] = ObjectData::mesh_vertex_subset_split_mut_impl(
         //        pressure.view_mut(),
         //        None,
         //        [fc.object_index, fc.collider_index],
+        //        solids,
+        //        shells
         //    );
 
         //    fc.constraint
@@ -2972,10 +2976,12 @@ impl ipopt::BasicProblem for NonLinearProblem {
                         grad.view_mut(),
                     );
 
-                    if FORWARD_FRICTION {
-                        fc.constraint
-                            .borrow()
-                            .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+                    let fc_constraint = fc.constraint.borrow();
+                    if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
+                        if fc_contact.params.friction_forwarding > 0.0 {
+                            fc_constraint
+                                .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
+                        }
                     }
                 }
 

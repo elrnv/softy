@@ -1,13 +1,13 @@
 //mod elastic_solver;
 pub mod contact_solver;
-mod polar_solver;
+pub mod polar_solver;
 pub mod proj_solver;
 pub mod solver;
 
 use crate::contact::ContactBasis;
 use utils::soap::{Chunked3, Sparse};
 //pub use elastic_solver::*;
-pub use polar_solver::*;
+//pub use polar_solver::*;
 
 /// Result from one inner friction step.
 #[derive(Clone, Debug, PartialEq)]
@@ -16,11 +16,14 @@ pub struct FrictionSolveResult {
     pub objective_value: f64,
     /// Resultant friction impulse in contact space.
     pub solution: Vec<[f64; 2]>,
+    /// Iteration count for the resulting solve.
+    pub iterations: u32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FrictionParams {
     pub smoothing_weight: f64,
+    pub friction_forwarding: f64,
     pub dynamic_friction: f64,
     pub inner_iterations: usize,
     pub tolerance: f64,

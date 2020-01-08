@@ -106,6 +106,7 @@ pub struct EL_SoftyFrictionalContactParams {
     pub contact_offset: f32,
     pub use_fixed: bool,
     pub smoothing_weight: f32,
+    pub friction_forwarding: f32,
     pub dynamic_cof: f32,
     pub friction_tolerance: f32,
     pub friction_inner_iterations: u32,

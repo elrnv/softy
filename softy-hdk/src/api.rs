@@ -245,6 +245,7 @@ fn get_frictional_contacts<'a>(
                 contact_offset,
                 use_fixed,
                 smoothing_weight,
+                friction_forwarding,
                 dynamic_cof,
                 friction_tolerance,
                 friction_inner_iterations,
@@ -275,6 +276,7 @@ fn get_frictional_contacts<'a>(
                     } else {
                         Some(softy::FrictionParams {
                             smoothing_weight: f64::from(smoothing_weight),
+                            friction_forwarding: f64::from(friction_forwarding),
                             dynamic_friction: f64::from(dynamic_cof),
                             inner_iterations: friction_inner_iterations as usize,
                             tolerance: f64::from(friction_tolerance),

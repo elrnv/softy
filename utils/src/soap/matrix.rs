@@ -574,7 +574,7 @@ where
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BlockDiagonalMatrixBase<S, I = Box<[usize]>, N = usize, M = usize>(
-    Subset<UniChunked<UniChunked<S, M>, N>, I>,
+    pub Subset<UniChunked<UniChunked<S, M>, N>, I>,
 );
 pub type BlockDiagonalMatrix<T = f64, I = Box<[usize]>, N = usize, M = usize> =
     BlockDiagonalMatrixBase<Vec<T>, I, N, M>;

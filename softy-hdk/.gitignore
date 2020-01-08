@@ -2,9 +2,16 @@
 **/*.rs.bk
 Cargo.lock
 /hdk/build
-/backup
+/out
 /scene
 /render
 /hip/backup
+/hip/stats
+/hip/proto
+/hda/backup
+/backup
+/video
 **/*.exr
+**/*.glb
+**/*.log
 .vscode

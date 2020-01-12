@@ -14,10 +14,10 @@ use crate::TriMesh;
 /// ```verbatim
 ///     x3
 ///     /\
-///    /  \e2
+///    /f1\e2
 /// x1/_e0_\x0
 ///   \    /
-///    \  /e1
+///    \f0/e1
 ///     \/
 ///     x2
 /// ```
@@ -56,16 +56,22 @@ impl InteriorEdge {
     /// [[Grinspun et al. 2003]](http://www.cs.columbia.edu/cg/pdfs/10_ds.pdf).
     #[inline]
     pub fn tile_span<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
-        let [x0, x1, x2, x3] = [
+        let [f0x0, f0x1, f0x2] = [
             ref_pos[self.faces[0]][self.edge_start[0] as usize].into_tensor(),
             ref_pos[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize].into_tensor(),
             ref_pos[self.faces[0]][((self.edge_start[0] + 2) % 3) as usize].into_tensor(),
-            ref_pos[self.faces[1]][((self.edge_start[1] + 2) % 3) as usize].into_tensor(),
         ];
-        debug_assert_ne!((x1 - x0).norm_squared(), T::zero());
-        let e0 = (x1 - x0).normalized();
-        let h0 = (x2 - x0).cross(e0).norm();
-        let h1 = (x3 - x0).cross(e0).norm();
+        let [f1x1, f1x0, f1x3] = [
+            ref_pos[self.faces[1]][self.edge_start[0] as usize].into_tensor(),
+            ref_pos[self.faces[1]][((self.edge_start[0] + 1) % 3) as usize].into_tensor(),
+            ref_pos[self.faces[1]][((self.edge_start[0] + 2) % 3) as usize].into_tensor(),
+        ];
+        debug_assert_ne!((f0x1 - f0x0).norm_squared(), T::zero());
+        debug_assert_ne!((f1x1 - f1x0).norm_squared(), T::zero());
+        let f0e0 = (f0x1 - f0x0).normalized();
+        let f1e0 = (f1x1 - f1x0).normalized();
+        let h0 = (f0x2 - f0x0).cross(f0e0).norm();
+        let h1 = (f1x3 - f1x0).cross(f1e0).norm();
         (h0 + h1) / T::from(6.0).unwrap()
     }
 

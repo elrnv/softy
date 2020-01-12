@@ -5,6 +5,7 @@ use geo::ops::*;
 use num_traits::Zero;
 use utils::soap::*;
 use utils::zip;
+use log::debug;
 
 use crate::attrib_defines::*;
 use crate::energy_models::elasticity::*;
@@ -524,6 +525,7 @@ impl TriMeshShell {
         let mut bs_iter = interior_edge_bending_stiffness.iter().cloned();
         interior_edge_ref_length.retain(|_| bs_iter.next().unwrap() != 0.0);
         interior_edge_bending_stiffness.retain(|&bs| bs != 0.0);
+        debug!("Number of interior edges: {}", interior_edges.len());
 
         // Ensure that whatever pruning algorithm used above produces same sized vectors.
         assert_eq!(interior_edges.len(), interior_edge_bending_stiffness.len());

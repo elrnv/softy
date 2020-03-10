@@ -18,6 +18,7 @@ rayon = "1.2"
 autodiff = { version = "0.1", optional = true }
 packed_simd = { version = "0.3", optional = true }
 approx = { version = "0.3", optional = true }
+tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
 
 [dev-dependencies]
 cgmath = "0.17"

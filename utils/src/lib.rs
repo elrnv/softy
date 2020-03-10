@@ -1,11 +1,12 @@
 pub mod aref;
 pub mod index;
-pub mod soap;
+//pub mod soap;
 pub mod zip;
 
 /**
  * This crate provides various convenience functions and utilities.
  */
+
 pub use crate::zip::*;
 
 #[macro_export]
@@ -28,9 +29,9 @@ macro_rules! iter_vals {
 
 /// Build a matrix that smoothes values at mesh vertices with their neighbours by the given
 /// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
-pub fn build_mesh_laplacian(mesh: &geo::mesh::TriMesh<f64>, weight: f64) -> soap::DSMatrix {
+pub fn build_mesh_laplacian(mesh: &geo::mesh::TriMesh<f64>, weight: f64) -> tensr::DSMatrix {
+    use tensr::*;
     use geo::mesh::topology::*;
-    use soap::*;
     let size = mesh.num_vertices();
     let iter = mesh
         .face_iter()

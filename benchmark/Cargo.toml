@@ -14,5 +14,5 @@ path = "src/matrix_vector_mul.rs"
 
 [dependencies]
 packed_simd = { version = "0.3", optional = true }
-utils = { path = "../utils" }
+tensr = { git = "https://github.com/elrnv/tensr.git" }
 rand = "0.5"

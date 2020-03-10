@@ -1,5 +1,5 @@
 use benchmark::*;
-use utils::soap::*;
+use tensr::*;
 
 fn main() {
     let n = 2000;

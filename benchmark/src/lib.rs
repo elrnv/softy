@@ -1,6 +1,6 @@
 #[cfg(features = "packed_simd")]
 use packed_simd::*;
-use utils::soap::*;
+use tensr::*;
 
 /// Generate a random vector of float values between -1 and 1.
 pub fn random_vec(n: usize) -> Vec<f64> {

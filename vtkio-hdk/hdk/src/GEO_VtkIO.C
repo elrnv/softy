@@ -105,6 +105,14 @@ GEO_VtkIO::fileSave(const GEO_Detail *detail, std::ostream &os)
         return GA_Detail::IOStatus(true);
     }
 
+    // If no polygons are found we try to save the pointcloud
+    OwnedPtr<HR_PointCloud> pointcloud = mesh::build_pointcloud(static_cast<const GU_Detail*>(detail));
+    if (pointcloud) {
+        auto buf = io::ByteBuffer::write_vtk_mesh(std::move(pointcloud));
+        os.write(buf.data(), buf.size());
+        return GA_Detail::IOStatus(true);
+    }
+
     return GA_Detail::IOStatus(false);
 }
 

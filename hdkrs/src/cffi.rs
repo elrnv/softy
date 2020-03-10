@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 use gut::io::{
+convert_pointcloud_to_vtk_format,
     convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
     convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
@@ -1283,6 +1284,34 @@ pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -
     assert!(!mesh.is_null());
 
     match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
+        Ok(vtk) => {
+            let mut vec_data = Vec::<u8>::new();
+            vec_data
+                .write_vtk_be(vtk)
+                .expect("Failed to write Vtk data to byte buffer");
+            let boxed_data = vec_data.into_boxed_slice();
+            let size = boxed_data.len();
+
+            HR_ByteBuffer {
+                data: Box::into_raw(boxed_data) as *const c_char,
+                size,
+            }
+        }
+        Err(_) => HR_ByteBuffer {
+            data: ::std::ptr::null(),
+            size: 0,
+        },
+    }
+}
+
+/// Write the given HR_PointCloud into a binary VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_pointcloud_vtk_buffer(mesh: *const HR_PointCloud) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    match convert_pointcloud_to_vtk_format(&(*mesh).mesh) {
         Ok(vtk) => {
             let mut vec_data = Vec::<u8>::new();
             vec_data

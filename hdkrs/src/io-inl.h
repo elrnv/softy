@@ -13,6 +13,10 @@ inline ByteBuffer ByteBuffer::write_vtk_mesh(OwnedPtr<HR_TetMesh> tetmesh) {
     return hr_make_tetmesh_vtk_buffer(tetmesh.get());
 }
 
+inline ByteBuffer ByteBuffer::write_vtk_mesh(OwnedPtr<HR_PointCloud> ptcloud) {
+    return hr_make_pointcloud_vtk_buffer(ptcloud.get());
+}
+
 MeshVariant parse_vtk_mesh(const char * data, std::size_t size) {
     MeshVariant ret((boost::blank()));
     HR_Mesh mesh = hr_parse_vtk_mesh(data, size);

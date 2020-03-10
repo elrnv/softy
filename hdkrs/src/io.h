@@ -44,6 +44,7 @@ public:
      */
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PolyMesh> polymesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_TetMesh> tetmesh);
+    static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PointCloud> ptcloud);
 
 private:
     ByteBuffer(const ByteBuffer&) = delete; // Byte buffer is move only

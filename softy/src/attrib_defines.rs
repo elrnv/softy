@@ -1,4 +1,4 @@
-use utils::soap::{Matrix2, Matrix3};
+use tensr::{Matrix2, Matrix3};
 
 pub const SOURCE_INDEX_ATTRIB: &str = "src_idx";
 pub const FIXED_ATTRIB: &str = "fixed";

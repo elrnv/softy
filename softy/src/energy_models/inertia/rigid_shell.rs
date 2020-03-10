@@ -2,7 +2,7 @@ use num_traits::FromPrimitive;
 use reinterpret::*;
 use unroll::unroll_for_loops;
 
-use utils::soap::{Chunked3, IntoData, Matrix2x3, Matrix3, Real, Vector3};
+use tensr::{Chunked3, IntoData, Matrix2x3, Matrix3, Real, Vector3};
 
 use crate::energy::*;
 use crate::matrix::*;

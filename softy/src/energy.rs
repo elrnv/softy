@@ -8,7 +8,7 @@
 
 use crate::matrix::{MatrixElementIndex, MatrixElementTriplet};
 use num_traits::FromPrimitive;
-use utils::soap::Real;
+use tensr::Real;
 
 /// Energy trait. This trait provides the energy value that, for instance, may be used in the
 /// objective function for an optimization algorithm.

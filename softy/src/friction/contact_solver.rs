@@ -1,7 +1,7 @@
 use super::FrictionParams;
 use crate::contact::*;
 use ipopt::{self, Index, Ipopt, Number};
-use utils::soap::*;
+use tensr::*;
 
 use crate::Error;
 

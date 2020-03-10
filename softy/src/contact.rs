@@ -4,7 +4,7 @@ use crate::friction::FrictionParams;
 use implicits::QueryTopo;
 use reinterpret::*;
 pub use solver::ContactSolver;
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -415,7 +415,7 @@ impl ContactBasis {
 /// convert to other sparse representations.
 pub(crate) struct TripletContactJacobian<I> {
     pub iter: I,
-    pub blocks: Vec<utils::soap::Matrix3<f64>>,
+    pub blocks: Vec<tensr::Matrix3<f64>>,
     pub num_rows: usize,
     pub num_cols: usize,
 }
@@ -426,7 +426,7 @@ pub(crate) fn build_triplet_contact_jacobian<'a>(
     query_points: Chunked3<&'a [f64]>,
 ) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
     let mut orig_cj_matrices =
-        vec![utils::soap::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
+        vec![tensr::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
     surf.contact_jacobian_matrices(
         query_points.into(),
         reinterpret_mut_slice(&mut orig_cj_matrices),
@@ -550,7 +550,7 @@ mod tests {
     /// We pass a contact basis here by mutable reference. This tests that a basis can be reused
     /// safely.
     fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>, basis: &mut ContactBasis) {
-        use utils::soap::*;
+        use tensr::*;
         let mut normals = vec![[0.0; 3]; trimesh.num_vertices()];
         geo::algo::compute_vertex_area_weighted_normals(
             trimesh.vertex_positions(),
@@ -570,7 +570,7 @@ mod tests {
     // vectors.
     #[test]
     fn contact_physical_space_conversion_test() -> Result<(), crate::Error> {
-        // TODO: upon migrating from nalgebra to soap. The relative comparisons below required a
+        // TODO: upon migrating from nalgebra to tensr. The relative comparisons below required a
         //       larger max_relative tolerance.
         //       Investigate why this is so.
         let mut basis = ContactBasis::new();

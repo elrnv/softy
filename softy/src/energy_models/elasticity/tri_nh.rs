@@ -11,7 +11,7 @@ use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::Triangle;
 use rayon::iter::Either;
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 use crate::attrib_defines::*;

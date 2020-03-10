@@ -13,7 +13,7 @@ use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
 use std::{cell::RefCell, rc::Rc};
-use utils::soap::{Matrix3, Real, Vector3};
+use tensr::{Matrix3, Real, Vector3};
 
 /// Per-tetrahedron Invertible Neo-Hookean energy model. This struct stores conveniently
 /// precomputed values for tet energy computation. It encapsulates tet specific energy computation.

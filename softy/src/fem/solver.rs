@@ -10,8 +10,8 @@ use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use log::*;
 use num_traits::Zero;
 use std::cell::RefCell;
-use utils::soap::{Matrix3, Vector3};
-use utils::{soap::*, zip};
+use tensr::*;
+use utils::zip;
 
 use crate::inf_norm;
 

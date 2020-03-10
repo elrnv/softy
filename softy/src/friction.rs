@@ -5,7 +5,7 @@ pub mod proj_solver;
 pub mod solver;
 
 use crate::contact::ContactBasis;
-use utils::soap::{Chunked3, Sparse};
+use tensr::{Chunked3, Sparse};
 //pub use elastic_solver::*;
 //pub use polar_solver::*;
 

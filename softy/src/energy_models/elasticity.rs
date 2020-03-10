@@ -1,5 +1,5 @@
 use geo::prim::{Tetrahedron, Triangle};
-use utils::soap::{Matrix2, Matrix2x3, Matrix3, Vector3};
+use tensr::{Matrix2, Matrix2x3, Matrix3, Vector3};
 
 //mod tet_inv_nh;
 mod tet_nh;

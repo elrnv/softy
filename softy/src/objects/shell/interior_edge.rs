@@ -2,7 +2,7 @@ use unroll::unroll_for_loops;
 
 use geo::mesh::topology::*;
 use geo::prim::Triangle;
-use utils::soap::*;
+use tensr::*;
 
 use crate::attrib_defines::*;
 use crate::TriMesh;

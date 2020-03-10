@@ -12,14 +12,14 @@ use crate::Error;
 use crate::TriMesh;
 use num_traits::Zero;
 use std::cell::RefCell;
-use utils::soap::Vector3;
+use tensr::Vector3;
 
 //pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
 use utils::aref::*;
-use utils::soap::*;
+use tensr::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.

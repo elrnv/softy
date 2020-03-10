@@ -5,7 +5,7 @@ use ipopt::{self, Ipopt, Index, Number};
 use reinterpret::*;
 use num_traits::Zero;
 
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 use crate::contact::*;

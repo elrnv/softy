@@ -6,7 +6,7 @@ use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
 use reinterpret::*;
-use utils::soap::{Real, Vector3};
+use tensr::{Real, Vector3};
 use utils::zip;
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
@@ -222,7 +222,7 @@ impl<T: Real> Energy<T> for RigidShellGravity {
 impl<T: Real> EnergyGradient<T> for RigidShellGravity {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
-        use utils::soap::AsMutTensor;
+        use tensr::AsMutTensor;
         debug_assert_eq!(grad.len(), _x0.len());
 
         *grad[0..3].as_mut_tensor() -= self.g.cast::<T>() * T::from(self.mass).unwrap();

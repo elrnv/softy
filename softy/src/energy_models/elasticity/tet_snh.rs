@@ -6,7 +6,7 @@ use unroll::unroll_for_loops;
 
 use geo::ops::*;
 use geo::prim::Tetrahedron;
-use utils::soap::*;
+use tensr::*;
 
 use super::LinearElementEnergy;
 //use std::path::Path;

@@ -18,8 +18,7 @@ use num_traits::Zero;
 use rayon::iter::Either;
 #[cfg(feature = "af")]
 use reinterpret::*;
-use utils::soap::*;
-use utils::soap::{Matrix3, Vector2, Vector3};
+use tensr::*;
 use utils::zip;
 use crate::objects::TriMeshShell;
 
@@ -170,8 +169,8 @@ impl PointContactConstraint {
 
             if linearized {
                 constraint.linearize_constraint(
-                    Chunked3::from_array_slice(object.vertex_positions()).into(),
-                    Chunked3::from_array_slice(query_points).into(),
+                    Subset::all(Chunked3::from_array_slice(object.vertex_positions())),
+                    Subset::all(Chunked3::from_array_slice(query_points)),
                 );
             }
 

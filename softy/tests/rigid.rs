@@ -7,7 +7,7 @@ use geo::mesh::VertexPositions;
 use geo::ops::*;
 use softy::*;
 pub use test_utils::*;
-use utils::soap::*;
+use tensr::*;
 
 #[test]
 fn rigid_box_under_gravity_one_step() {

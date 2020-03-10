@@ -7,7 +7,7 @@ use geo::mesh::builder::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
 use geo::ops::*;
-use utils::soap::{IntoData, Vector3};
+use tensr::{IntoData, Vector3};
 
 pub const STATIC_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, -9.81, 0.0],

@@ -5,7 +5,8 @@ use log::{debug, error, trace};
 
 use crate::TriMesh;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
-use utils::{soap::*, zip};
+use tensr::*;
+use utils::zip;
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
@@ -2251,7 +2252,7 @@ impl NonLinearProblem {
             let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
             fc.constraint.borrow().add_friction_corrector_impulse(
-                [obj_imp.view_mut().into(), coll_imp.view_mut().into()],
+                [Subset::all(obj_imp.view_mut()), Subset::all(coll_imp.view_mut())],
                 1.0,
             );
 
@@ -2304,7 +2305,7 @@ impl NonLinearProblem {
 
             fc.constraint
                 .borrow()
-                .add_friction_impulse([obj_imp.view_mut().into(), coll_imp.view_mut().into()], 1.0);
+                .add_friction_impulse([Subset::all(obj_imp.view_mut()), Subset::all(coll_imp.view_mut())], 1.0);
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {
@@ -2708,7 +2709,7 @@ impl NonLinearProblem {
         writeln!(&mut f).ok();
 
         let svd = na::SVD::new(jac, false, false);
-        let s: &[Number] = svd.singular_values.data.as_slice();
+        let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         debug!("Condition number of jacobian is: {}", cond);
@@ -2756,7 +2757,7 @@ impl NonLinearProblem {
         }
 
         let svd = na::SVD::new(hess, false, false);
-        let s: &[Number] = svd.singular_values.data.as_slice();
+        let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
         let cond_hess = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         debug!("Condition number of hessian is {}", cond_hess);

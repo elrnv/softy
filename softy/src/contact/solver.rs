@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::contact::*;
 use reinterpret::*;
-use utils::soap::{Matrix3, Vector2};
+use tensr::{Matrix3, Vector2};
 
 use utils::zip;
 

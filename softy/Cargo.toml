@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 na = { package = "nalgebra", version = "0.18" }
+tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
 ipopt = "0.5"
 geo = { path = "../geo" }
 rayon = "1.3"

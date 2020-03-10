@@ -18,7 +18,7 @@ use num_traits::Zero;
 #[cfg(feature = "af")]
 use reinterpret::*;
 use std::cell::RefCell;
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents

@@ -8,7 +8,7 @@ use geo::{
     ops::Volume,
 };
 use reinterpret::*;
-use utils::soap::{Matrix3, Vector3};
+use tensr::{Matrix3, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {

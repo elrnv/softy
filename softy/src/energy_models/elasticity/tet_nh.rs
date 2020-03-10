@@ -16,7 +16,7 @@ use rayon::iter::Either;
 use rayon::prelude::*;
 use reinterpret::*;
 use unroll::unroll_for_loops;
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values

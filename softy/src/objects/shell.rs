@@ -3,8 +3,8 @@ use unroll::unroll_for_loops;
 use geo::mesh::{attrib, topology::*, VertexPositions};
 use geo::ops::*;
 use num_traits::Zero;
-use utils::soap::*;
-use utils::zip;
+use tensr::*;
+use utils::*;
 use log::debug;
 
 use crate::attrib_defines::*;

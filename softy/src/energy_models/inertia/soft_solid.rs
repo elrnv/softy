@@ -4,7 +4,7 @@ use reinterpret::*;
 
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
-use utils::soap::{Real, Vector3};
+use tensr::{Real, Vector3};
 use utils::zip;
 
 use crate::attrib_defines::*;

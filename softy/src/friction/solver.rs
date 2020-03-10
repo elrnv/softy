@@ -5,7 +5,7 @@ use ipopt::{self, Index, Ipopt, Number};
 
 use super::FrictionSolveResult;
 use unroll::unroll_for_loops;
-use utils::soap::*;
+use tensr::*;
 use utils::zip;
 
 use crate::Error;
@@ -446,7 +446,7 @@ impl ipopt::ConstrainedProblem for SemiImplicitFrictionProblem<'_> {
 mod tests {
     use super::*;
     use approx::*;
-    use utils::soap::Vector2;
+    use tensr::Vector2;
 
     /// A point mass slides across a 2D surface in the positive x direction.
     #[test]

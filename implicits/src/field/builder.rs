@@ -1,7 +1,7 @@
 use super::*;
 use geo::mesh::{topology::*, PointCloud, TriMesh, VertexMesh};
 use num_traits::Zero;
-use utils::soap::{Scalar, Vector3};
+use tensr::{Scalar, Vector3};
 
 /// A mesh type to represent the samples for the implicit surface. This enum is used solely for
 /// building the implicit surface.

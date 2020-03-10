@@ -15,7 +15,7 @@ pub mod field;
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
 use snafu::Snafu;
-use utils::soap::Real;
+use tensr::Real;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn surface_jacobian_test() {
         use autodiff::F;
-        use utils::soap::Vector3;
+        use tensr::Vector3;
 
         let grid = make_grid(22, 22);
         let grid_pos: Vec<_> = grid
@@ -474,7 +474,7 @@ mod tests {
     fn complex_query_jacobian_test() {
         use autodiff::F;
         use rayon::prelude::*;
-        use utils::soap::Vector3;
+        use tensr::Vector3;
 
         let grid = make_grid(23, 23);
         let mut grid_pos: Vec<_> = grid
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn complex_query_hessian_test() {
         use autodiff::F;
-        use utils::soap::Vector3;
+        use tensr::Vector3;
 
         let grid = make_grid(11, 11);
         let mut grid_pos: Vec<_> = grid

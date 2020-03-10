@@ -15,6 +15,7 @@ autodiff = "0.1"
 reinterpret = "0.1"
 num-traits = "0.2"
 utils = { path = "../utils", features = ["autodiff"] }
+tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 snafu = "0.5"
 arrayvec = "0.5"

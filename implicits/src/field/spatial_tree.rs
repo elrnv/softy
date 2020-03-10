@@ -1,6 +1,6 @@
 use super::samples::*;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
-use utils::soap::{Scalar, Vector3};
+use tensr::{Scalar, Vector3};
 
 /// Implement the trait required for `Sample` to live inside an `RTree`.
 impl<T: Scalar> RTreeObject for Sample<T> {

@@ -3,7 +3,7 @@
 use super::Error;
 use num_traits::{Float, Zero};
 use std::ops::Neg;
-use utils::soap::{Matrix, Matrix3, Scalar, Vector3};
+use tensr::{Matrix, Matrix3, Scalar, Vector3};
 
 /// Enumerate all implemented kernels. This is useful for switching between kernels dynamically.
 #[derive(Copy, Clone, Debug, PartialEq)]

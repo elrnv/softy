@@ -923,7 +923,7 @@ where
         },
     );
 
-    use utils::soap::SumOp;
+    use tensr::SumOp;
 
     // There are 3 contributions from each sample to each vertex.
     nml_jac.zip(main_jac).map(|(n, m)| (m + n.sum_op()).into())

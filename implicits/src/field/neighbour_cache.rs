@@ -1,7 +1,7 @@
 use super::{samples::Sample, SampleType};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
-use utils::soap::Real;
+use tensr::Real;
 
 pub(crate) fn compute_closest_set<'a, T, C>(
     query_points: &[[T; 3]],

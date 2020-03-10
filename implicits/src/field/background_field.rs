@@ -2,7 +2,7 @@ use crate::field::samples::{Sample, SamplesView};
 use crate::kernel::SphericalKernel;
 use num_traits::{Float, Zero};
 use rayon::prelude::*;
-use utils::soap::{Matrix, Matrix3, Scalar, Vector3};
+use tensr::{Matrix, Matrix3, Scalar, Vector3};
 
 /// Different types of background fields supported.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -782,7 +782,7 @@ mod tests {
     use geo::mesh::builder::*;
     use geo::mesh::VertexPositions;
     use geo::ops::transform::*;
-    use utils::soap::IntoData;
+    use tensr::IntoData;
 
     #[test]
     fn constant_unweighted_bg() -> Result<(), Error> {

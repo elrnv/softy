@@ -2,7 +2,7 @@ use geo::ops::*;
 use num_traits::Zero;
 use rayon::prelude::IndexedParallelIterator;
 use std::ops::Neg;
-use utils::soap::{Scalar, Vector3};
+use tensr::{Scalar, Vector3};
 
 pub use super::*;
 

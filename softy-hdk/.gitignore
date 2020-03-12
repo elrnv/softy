@@ -1,16 +1,10 @@
 /target
 **/*.rs.bk
 Cargo.lock
-/hdk/build
+/hdk/build*
 /out
-/scene
-/render
-/hip/backup
-/hip/stats
-/hip/proto
 /hda/backup
 /backup
-/video
 **/*.exr
 **/*.glb
 **/*.log

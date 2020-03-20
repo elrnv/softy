@@ -1,3 +1,4 @@
+#![allow(clippy::just_underscores_and_digits)]
 //! Neo-Hookean energy model for triangle meshes.
 
 use num_traits::FromPrimitive;
@@ -859,9 +860,9 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
 
                     Self::edge_hessian_for_each(
                         |vtx| {
-                            ((dth_dx[vtx] * (dth_dx[vtx].transpose() * d2w_dth2))
+                            (dth_dx[vtx] * (dth_dx[vtx].transpose() * d2w_dth2))
                                 .lower_triangular_vec()
-                                + d2th_dx2.0[vtx].into_tensor() * dw_dth)
+                                + d2th_dx2.0[vtx].into_tensor() * dw_dth
                         },
                         |(row_vtx, col_vtx), vtx| {
                             let mut out =

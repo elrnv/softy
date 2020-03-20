@@ -3371,9 +3371,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                         let rotdw = rotation(dw);
                         let dw2 = dw.norm_squared();
                         let dpdw = if dw2 > 0.0 {
-                            ((dw * dw.transpose() - dw.skew() * (rotdw - Matrix3::identity()))
+                            (dw * dw.transpose() - dw.skew() * (rotdw - Matrix3::identity()))
                                 * (r / dw2).skew()
-                                * rotdw.transpose())
+                                * rotdw.transpose()
                         } else {
                             r.skew()
                         };

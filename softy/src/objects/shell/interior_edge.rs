@@ -129,7 +129,7 @@ impl InteriorEdge {
     #[inline]
     pub fn edge_vector<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
         let [v0, v1] = self.edge_verts(faces);
-        (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
+        Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
 
     /// Produce a vector that is tangent to faces[0] (so orthogonal to its normal), but not colinear
@@ -140,7 +140,7 @@ impl InteriorEdge {
             faces[self.faces[0]][self.edge_start[0] as usize],
             self.tangent_verts(faces)[0],
         ];
-        (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
+        Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
 
     /// Produce a vector that is tangent to faces[1] (so orthogonal to its normal), but not colinear
@@ -155,7 +155,7 @@ impl InteriorEdge {
             v0 == faces[self.faces[1]][((self.edge_start[1] + 1) % 3) as usize]
                 || v0 == faces[self.faces[1]][self.edge_start[1] as usize]
         );
-        (Vector3::new(pos[v1]) - Vector3::new(pos[v0]))
+        Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
 
     /// Return `true` if the adjacent faces have the same orientation.

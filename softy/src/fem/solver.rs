@@ -414,9 +414,9 @@ impl SolverBuilder {
             workspace: RefCell::new(WorkspaceData {
                 x: prev_x,
                 v: prev_v,
-                pos: pos,
-                vel: vel,
-                grad: grad,
+                pos,
+                vel,
+                grad,
             }),
 
             solids,

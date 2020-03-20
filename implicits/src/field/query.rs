@@ -1,6 +1,6 @@
 use super::*;
-use rayon::iter::Either;
 use log::debug;
+use rayon::iter::Either;
 
 /// A data structure to store precomputed query information about an implicit surface. For example
 /// precomputed sample neighbours to each query point are stored here for local potential fields.
@@ -240,14 +240,12 @@ impl<T: Real> QueryTopo<T> {
     }
 
     pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
-        match self {
-            QueryTopo::Local {
-                surf: LocalMLS { kernel, .. },
-                ..
-            } => {
-                *kernel = kernel.with_radius_multiplier(new_radius_multiplier);
-            }
-            _ => {}
+        if let QueryTopo::Local {
+            surf: LocalMLS { kernel, .. },
+            ..
+        } = self
+        {
+            *kernel = kernel.with_radius_multiplier(new_radius_multiplier);
         }
     }
 
@@ -380,11 +378,7 @@ impl<T: Real> QueryTopo<T> {
                 closest_samples,
                 sample_indices,
                 ..
-            } => Box::new(
-                (0..closest_samples.len())
-                    .into_iter()
-                    .map(move |_| sample_indices.as_slice()),
-            ),
+            } => Box::new((0..closest_samples.len()).map(move |_| sample_indices.as_slice())),
         }
     }
 

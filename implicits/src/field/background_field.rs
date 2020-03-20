@@ -196,8 +196,7 @@ where
             local_samples_view.is_empty()
                 || local_samples_view
                     .iter()
-                    .find(|&sample| sample.index == global_closest)
-                    .is_some()
+                    .any(|sample| sample.index == global_closest)
         );
         let closest_sample_index = {
             if let Some(index) = Self::closest_sample(q, local_samples_view) {

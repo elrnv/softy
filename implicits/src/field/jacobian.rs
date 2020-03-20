@@ -77,7 +77,7 @@ impl<T: Real> QueryTopo<T> {
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
         self.trivial_neighbourhood_seq()
             .enumerate()
-            .filter(move |(_, nbrs)| nbrs.len() != 0)
+            .filter(move |(_, nbrs)| !nbrs.is_empty())
             .map(move |(i, _)| (i, i))
     }
 
@@ -117,7 +117,7 @@ impl<T: Real> QueryTopo<T> {
 
         // For each row (query point)
         zip!(query_points.iter(), neigh_points, closest_points)
-            .filter(move |(_, nbrs, _)| full || nbrs.len() != 0)
+            .filter(move |(_, nbrs, _)| full || !nbrs.is_empty())
             .map(move |(q, nbr_points, closest)| {
                 let view = SamplesView::new(nbr_points, samples);
                 query_jacobian_at(
@@ -261,7 +261,7 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Vertex => Either::Left(
                 self.extended_neighbourhood_par()
                     .enumerate()
-                    .filter(|(_, nbr_points)| nbr_points.len() != 0)
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
                         nbr_points.par_iter().flat_map(move |col| {
                             (0usize..3).into_par_iter().map(move |i| (row, 3 * col + i))
@@ -271,7 +271,7 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Face => Either::Right(
                 self.trivial_neighbourhood_par()
                     .enumerate()
-                    .filter(|(_, nbr_points)| nbr_points.len() != 0)
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
                         nbr_points.par_iter().flat_map(move |&pidx| {
                             self.base().surface_topo[pidx]
@@ -294,15 +294,15 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Vertex => Either::Left(
                 self.extended_neighbourhood_seq()
                     .enumerate()
-                    .filter(|(_, nbr_points)| nbr_points.len() != 0)
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
-                        nbr_points.into_iter().map(move |&col| (row, col))
+                        nbr_points.iter().map(move |&col| (row, col))
                     }),
             ),
             SampleType::Face => Either::Right(
                 self.trivial_neighbourhood_seq()
                     .enumerate()
-                    .filter(|(_, nbr_points)| nbr_points.len() != 0)
+                    .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
                         nbr_points.iter().flat_map(move |&pidx| {
                             self.base().surface_topo[pidx]
@@ -406,7 +406,7 @@ impl<T: Real> QueryTopo<T> {
                 // For each row (query point)
                 Either::Left(
                     zip!(query_points.iter(), neigh_points)
-                        .filter(|(_, nbrs)| nbrs.len() != 0)
+                        .filter(|(_, nbrs)| !nbrs.is_empty())
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
                             vertex_jacobian_at(
@@ -424,7 +424,7 @@ impl<T: Real> QueryTopo<T> {
                 let neigh_points = self.trivial_neighbourhood_seq();
                 Either::Right(
                     zip!(query_points.iter(), neigh_points)
-                        .filter(|(_, nbrs)| nbrs.len() != 0)
+                        .filter(|(_, nbrs)| !nbrs.is_empty())
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
                             face_jacobian_at(
@@ -464,7 +464,7 @@ impl<T: Real> QueryTopo<T> {
                 // For each row (query point)
                 Either::Left(
                     zip!(query_points.par_iter(), self.extended_neighbourhood_par())
-                        .filter(|(_, nbrs)| nbrs.len() != 0)
+                        .filter(|(_, nbrs)| !nbrs.is_empty())
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
                             vertex_jacobian_par_at(
@@ -480,7 +480,7 @@ impl<T: Real> QueryTopo<T> {
             }
             SampleType::Face => Either::Right(
                 zip!(query_points.par_iter(), self.trivial_neighbourhood_par())
-                    .filter(|(_, nbrs)| nbrs.len() != 0)
+                    .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         face_jacobian_par_at(
@@ -566,7 +566,7 @@ impl<T: Real> QueryTopo<T> {
 
         let indices = neigh_points
             .enumerate()
-            .filter(move |(_, nbrs)| nbrs.len() != 0)
+            .filter(move |(_, nbrs)| !nbrs.is_empty())
             .flat_map(move |(row, nbr_points)| nbr_points.iter().map(move |&col| (row, col)));
 
         match sample_type {
@@ -604,7 +604,7 @@ impl<T: Real> QueryTopo<T> {
 
         // For each row (query point),
         let jac = zip!(query_points.iter(), neigh_points)
-            .filter(|(_, nbrs)| nbrs.len() != 0)
+            .filter(|(_, nbrs)| !nbrs.is_empty())
             .flat_map(move |(q, nbr_points)| {
                 let view = SamplesView::new(nbr_points, samples);
                 contact_jacobian_at(Vector3::new(*q), view, kernel, bg_field_params).0
@@ -651,7 +651,7 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Vertex => {
                 // For each row (query point)
                 let vtx_jac = zip!(query_points.iter(), neigh_points)
-                    .filter(|(_, nbrs)| nbrs.len() != 0)
+                    .filter(|(_, nbrs)| !nbrs.is_empty())
                     .map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         vertex_contact_jacobian_product_at(
@@ -672,7 +672,7 @@ impl<T: Real> QueryTopo<T> {
             }
             SampleType::Face => {
                 let face_jac = zip!(query_points.iter(), neigh_points)
-                    .filter(|(_, nbrs)| nbrs.len() != 0)
+                    .filter(|(_, nbrs)| !nbrs.is_empty())
                     .map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
                         face_contact_jacobian_product_at(

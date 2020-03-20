@@ -105,7 +105,7 @@ impl<T: Scalar + Neg<Output = T>> Samples<T> {
         if let Some(nmls) = new_normals {
             assert_eq!(nmls.len(), new_vertices.len());
             for (nml, new_nml) in normals.iter_mut().zip(nmls.iter()) {
-                *nml = new_nml.clone();
+                *nml = *new_nml;
             }
         } else {
             geo::algo::compute_vertex_area_weighted_normals(new_vertices, triangles, normals);

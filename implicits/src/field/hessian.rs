@@ -1,6 +1,7 @@
 use super::*;
 use crate::Error;
 use rayon::iter::Either;
+use std::cmp::Ordering;
 
 /// Symmetric outer product of two vectors: a*b' + b*a'
 pub(crate) fn sym_outer<T: Scalar>(a: Vector3<T>, b: Vector3<T>) -> Matrix3<T> {
@@ -115,7 +116,7 @@ impl<T: Real> QueryTopo<T> {
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
         self.trivial_neighbourhood_seq()
             .enumerate()
-            .filter(move |(_, nbrs)| nbrs.len() != 0)
+            .filter(move |(_, nbrs)| !nbrs.is_empty())
             .flat_map(move |(i, _)| {
                 (0..3).flat_map(move |r| (0..=r).map(move |c| (3 * i + r, 3 * i + c)))
             })
@@ -321,14 +322,15 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        Ok(values
+        values
             .iter_mut()
             .zip(self.surface_hessian_product_values_iter_impl(
                 query_points,
                 multipliers,
                 kernel,
             )?)
-            .for_each(|(val, new_val)| *val = new_val * scale))
+            .for_each(|(val, new_val)| *val = new_val * scale);
+        Ok(())
     }
 
     pub(crate) fn surface_hessian_product_values_iter_impl<'a, K: 'a>(
@@ -688,12 +690,10 @@ where
 
                     let mtx = (dn_li * (q - pos_l) * dw_l.transpose()) * (ws_inv * third);
 
-                    if row_vtx > col_vtx {
-                        (row_vtx, col_vtx, mtx)
-                    } else if row_vtx < col_vtx {
-                        (col_vtx, row_vtx, mtx.transpose())
-                    } else {
-                        (row_vtx, col_vtx, mtx + mtx.transpose())
+                    match row_vtx.cmp(&col_vtx) {
+                        Ordering::Greater => (row_vtx, col_vtx, mtx),
+                        Ordering::Less => (col_vtx, row_vtx, mtx.transpose()),
+                        Ordering::Equal => (row_vtx, col_vtx, mtx + mtx.transpose()),
                     }
                 })
             })
@@ -716,12 +716,10 @@ where
                                 * dws_l.transpose()
                                 * (wk * ws_inv * ws_inv * third);
 
-                            if row_vtx > col_vtx {
-                                (row_vtx, col_vtx, mtx)
-                            } else if row_vtx < col_vtx {
-                                (col_vtx, row_vtx, mtx.transpose())
-                            } else {
-                                (row_vtx, col_vtx, mtx + mtx.transpose())
+                            match row_vtx.cmp(&col_vtx) {
+                                Ordering::Greater => (row_vtx, col_vtx, mtx),
+                                Ordering::Less => (col_vtx, row_vtx, mtx.transpose()),
+                                Ordering::Equal => (row_vtx, col_vtx, mtx + mtx.transpose()),
                             }
                         })
                     })

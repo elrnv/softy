@@ -10,7 +10,7 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use tensr::{Matrix, Matrix3, Real, Scalar, Vector3, IntoData};
+use tensr::{IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
 use utils::zip;
 
 macro_rules! apply_kernel_query_fn_impl_iter {
@@ -72,7 +72,7 @@ macro_rules! apply_kernel_query_fn {
 
 macro_rules! apply_kernel_fn {
     ($surf:expr, $f:expr) => {
-        match *$surf {
+        match $surf {
             MLS::Local(LocalMLS {
                 kernel,
                 base_radius,
@@ -352,11 +352,8 @@ impl<T: Real> MLS<T> {
     }
 
     pub fn update_radius_multiplier(&mut self, new_radius_multiplier: f64) {
-        match self {
-            MLS::Local(LocalMLS { kernel, .. }) => {
-                *kernel = kernel.with_radius_multiplier(new_radius_multiplier);
-            }
-            _ => {}
+        if let MLS::Local(LocalMLS { kernel, .. }) = self {
+            *kernel = kernel.with_radius_multiplier(new_radius_multiplier);
         }
     }
 
@@ -660,7 +657,7 @@ impl<T: Real> ImplicitSurface<T> {
     {
         match self {
             ImplicitSurface::MLS(mls) => {
-                apply_kernel_fn!(&mls, |kernel| mls.compute_on_mesh(mesh, kernel, interrupt))
+                apply_kernel_fn!(mls, |kernel| mls.compute_on_mesh(mesh, kernel, interrupt))
             }
             ImplicitSurface::Hrbf(HrbfSurface { surf_base }) => {
                 Self::compute_hrbf_on_mesh(mesh, &surf_base.samples, interrupt)
@@ -894,7 +891,7 @@ where
     h.svd(true, true)
         .solve(&rhs, T::from(1e-9).unwrap())
         .map(|c| c[0] + q[0] * c[1] + q[1] * c[2] + q[2] * c[3])
-        .unwrap_or(T::from(std::f64::NAN).unwrap())
+        .unwrap_or_else(|_| T::from(std::f64::NAN).unwrap())
 }
 
 pub(crate) fn compute_local_vector_at<T, K>(
@@ -1153,6 +1150,18 @@ mod tests {
     use crate::*;
     use geo::mesh::{builder::PlatonicSolidBuilder, *};
     use geo::ops::transform::*;
+
+    #[test]
+    fn size_test() -> Result<(), crate::Error> {
+        use std::mem::size_of;
+        eprintln!("MLS: {}", size_of::<MLS>());
+        eprintln!("LocalMLS: {}", size_of::<LocalMLS>());
+        eprintln!("GlobalMLS: {}", size_of::<GlobalMLS>());
+        eprintln!("HrbfSurface: {}", size_of::<HrbfSurface>());
+        eprintln!("ImplicitSurface: {}", size_of::<ImplicitSurface>());
+        eprintln!("QueryTopo: {}", size_of::<QueryTopo>());
+        Ok(())
+    }
 
     // Helper function for testing. This is an implicit surface and grid mesh pair where each
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.

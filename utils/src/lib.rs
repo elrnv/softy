@@ -92,7 +92,7 @@ pub fn approx_power_of_two64(f: f64) -> f64 {
 /// The returned value is essentially the approximate max (in absolute value) power of two
 /// (including negative powers) below the given number. This works for all normal floats.
 pub fn approx_power_of_two32(f: f32) -> f32 {
-    f32::from_bits(f.to_bits() & 0xff800000)
+    f32::from_bits(f.to_bits() & 0xff80_0000)
 }
 
 /// Given an iterator over integers, compute the mode and return it along with its

@@ -425,6 +425,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
             let prev_theta = T::from(prev_theta).unwrap();
             let theta = e.incremental_angle(prev_theta, pos1, trimesh.faces());
             let theta_strain = theta - T::from(ref_theta).unwrap();
+            log::debug!("shape = {}", ref_length);
             T::from(0.5 * ref_length * k).unwrap() * theta_strain * theta_strain
         })
         .sum();

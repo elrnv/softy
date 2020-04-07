@@ -121,7 +121,7 @@ impl<'a> FrictionSolver<'a> {
             ipopt::SolveStatus::SolveSucceeded
             | ipopt::SolveStatus::SolvedToAcceptableLevel
             | ipopt::SolveStatus::MaximumIterationsExceeded => Ok(result),
-            e => Err(Error::FrictionSolveError { status: e }),
+            e => Err(Error::FrictionSolveError { status: e, result }),
         }
     }
 }

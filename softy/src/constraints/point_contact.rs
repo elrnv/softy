@@ -13,7 +13,6 @@ use geo::mesh::{Attrib, VertexPositions};
 use geo::ops::*;
 use implicits::*;
 use lazycell::LazyCell;
-use log::*;
 use num_traits::Zero;
 use rayon::iter::Either;
 #[cfg(feature = "af")]
@@ -1031,21 +1030,33 @@ impl ContactConstraint for PointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            debug!("Solving Friction");
+                            log::debug!("Solving Friction");
 
                             match solver.step() {
                                 Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
-                                    info!("Friction iteration count: {}", iterations);
+                                    log::info!("Friction iteration count: {}", iterations);
+                                    friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
+                                }
+                                Err(Error::FrictionSolveError {
+                                    status: ipopt::SolveStatus::MaximumIterationsExceeded,
+                                    result: FrictionSolveResult {
+                                        solution: r_t,
+                                        iterations,
+                                        ..
+                                    }
+                                }) => {
+                                    // This is not ideal, but the next outer iteration will hopefully fix this.
+                                    log::warn!("Friction iterations exceeded: {}", iterations);
                                     friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
                                 }
                                 Err(err) => {
-                                    error!("{}", err);
+                                    log::error!("{}", err);
                                     break false;
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("Failed to create friction solver: {}", err);
+                            log::error!("Failed to create friction solver: {}", err);
                             break false;
                         }
                     }
@@ -1059,28 +1070,28 @@ impl ContactConstraint for PointContactConstraint {
                     //    *params,
                     //) {
                     //    Ok(mut solver) => {
-                    //        debug!("Solving Friction2");
+                    //        log::debug!("Solving Friction2");
 
                     //        match solver.step() {
                     //            Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
-                    //                info!("Friction iteration count: {}", iterations);
+                    //                log::info!("Friction iteration count: {}", iterations);
                     //                let friction_impulse2: Chunked3<Vec<_>> = contact_basis.from_tangent_space(&r_t).collect();
                     //                for (j, (f1, f2)) in friction_impulse.iter().zip(friction_impulse2.iter()).enumerate() {
                     //                    for i in 0..3 {
                     //                        if !approx::relative_eq!(f1[i], f2[i], max_relative = 1e-8, epsilon = 1e-6) {
-                    //                            warn!("Friction at {}: {} vs. {}", j, f1[i], f2[i]);
+                    //                            log::warn!("Friction at {}: {} vs. {}", j, f1[i], f2[i]);
                     //                        }
                     //                    }
                     //                }
                     //            }
                     //            Err(err) => {
-                    //                error!("{}", err);
+                    //                log::error!("{}", err);
                     //                break false;
                     //            }
                     //        }
                     //    }
                     //    Err(err) => {
-                    //        error!("Failed to create friction solver: {}", err);
+                    //        log::error!("Failed to create friction solver: {}", err);
                     //        break false;
                     //    }
                     //}
@@ -1102,7 +1113,7 @@ impl ContactConstraint for PointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            debug!("Solving Contact");
+                            log::debug!("Solving Contact");
 
                             match solver.step() {
                                 Ok(r_n) => {
@@ -1112,13 +1123,13 @@ impl ContactConstraint for PointContactConstraint {
                                         .extend(contact_basis.from_normal_space(&contact_impulse_n));
                                 }
                                 Err(err) => {
-                                    error!("Failed contact solve: {}", err);
+                                    log::error!("Failed contact solve: {}", err);
                                     break false;
                                 }
                             }
                         }
                         Err(err) => {
-                            error!("Failed to create contact solver: {}", err);
+                            log::error!("Failed to create contact solver: {}", err);
                             break false;
                         }
                     }
@@ -1142,17 +1153,17 @@ impl ContactConstraint for PointContactConstraint {
                     if rel_err_denominator > 0.0 {
                         let rel_err = rel_err_numerator / rel_err_denominator;
 
-                        debug!("Friction relative error: {}", rel_err);
+                        log::debug!("Friction relative error: {}", rel_err);
                         if rel_err < 1e-4 {
                             friction_steps = 0;
                             break true;
                         }
                     } else if rel_err_numerator <= 0.0 {
-                        warn!("Friction relative error is NaN: num = {:?}, denom = {:?}", rel_err_numerator, rel_err_denominator);
+                        log::warn!("Friction relative error is NaN: num = {:?}, denom = {:?}", rel_err_numerator, rel_err_denominator);
                         friction_steps = 0;
                         break true;
                     } else {
-                        debug!("Friction relative error is infinite");
+                        log::debug!("Friction relative error is infinite");
                     }
 
                     // Update prev_friction_impulse for computing error subsequent iterations.

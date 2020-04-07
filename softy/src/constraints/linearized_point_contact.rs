@@ -13,7 +13,6 @@ use geo::mesh::{Attrib, VertexPositions};
 use geo::ops::*;
 use implicits::*;
 use lazycell::LazyCell;
-use log::{debug, error};
 use num_traits::Zero;
 #[cfg(feature = "af")]
 use reinterpret::*;
@@ -777,7 +776,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                     jac.view(),
                 ) {
                     Ok(mut solver) => {
-                        debug!("Solving Friction");
+                        log::debug!("Solving Friction");
                         if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
                             for ((aqi, &r), r_out) in
                                 r_t.iter().enumerate().zip(friction_impulse.iter_mut())
@@ -792,12 +791,12 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                             }
                             true
                         } else {
-                            error!("Failed friction solve");
+                            log::error!("Failed friction solve");
                             false
                         }
                     }
                     Err(err) => {
-                        error!("Failed to create friction solver: {}", err);
+                        log::error!("Failed to create friction solver: {}", err);
                         false
                     }
                 }
@@ -851,17 +850,17 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            debug!("Solving Friction");
+                            log::debug!("Solving Friction");
 
                             if let Ok(FrictionSolveResult { solution: r_t, .. }) = solver.step() {
                                 friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
                             } else {
-                                error!("Failed friction solve");
+                                log::error!("Failed friction solve");
                                 break false;
                             }
                         }
                         Err(err) => {
-                            error!("Failed to create friction solver: {}", err);
+                            log::error!("Failed to create friction solver: {}", err);
                             break false;
                         }
                     }
@@ -880,7 +879,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                         *params,
                     ) {
                         Ok(mut solver) => {
-                            debug!("Solving Contact");
+                            log::debug!("Solving Contact");
 
                             if let Ok(r_n) = solver.step() {
                                 contact_impulse_n.copy_from_slice(&r_n);
@@ -888,12 +887,12 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                                 contact_impulse
                                     .extend(contact_basis.from_normal_space(&contact_impulse_n));
                             } else {
-                                error!("Failed contact solve");
+                                log::error!("Failed contact solve");
                                 break false;
                             }
                         }
                         Err(err) => {
-                            error!("Failed to create contact solver: {}", err);
+                            log::error!("Failed to create contact solver: {}", err);
                             break false;
                         }
                     }
@@ -915,7 +914,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
                             .expr()
                             .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
 
-                    debug!("Friction relative error: {}", rel_err);
+                    log::debug!("Friction relative error: {}", rel_err);
                     if rel_err < 1e-3 {
                         friction_steps = 0;
                         break true;

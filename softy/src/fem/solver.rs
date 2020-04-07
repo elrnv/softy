@@ -7,7 +7,6 @@ use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use geo::prim::Tetrahedron;
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
-use log::*;
 use num_traits::Zero;
 use std::cell::RefCell;
 use tensr::*;
@@ -716,7 +715,7 @@ impl SolverBuilder {
 
         // max_scale is a denominator. Ensure that it is never zero.
         if max_scale == 0.0 {
-            warn!("All scaling factors are zero");
+            log::warn!("All scaling factors are zero");
             max_scale = 1.0;
         }
 
@@ -754,7 +753,7 @@ impl SolverBuilder {
         // Setup ipopt paramters using the input simulation params.
         let params = self.sim_params.clone();
 
-        info!("Simulation Parameters:\n{:#?}", params);
+        log::info!("Simulation Parameters:\n{:#?}", params);
 
         let tol = params.tolerance as f64;
 
@@ -1288,7 +1287,7 @@ impl Solver {
                     * if dt > 0.0 { dt } else { 1.0 };
                 let new_max_step = (step - radius).max(self.max_step * 0.5);
                 if self.max_step != new_max_step {
-                    info!(
+                    log::info!(
                         "Relaxing max step from {} to {}",
                         self.max_step, new_max_step
                     );
@@ -1420,8 +1419,8 @@ impl Solver {
 
             let initial_error = self.initial_residual_error();
             let relative_tolerance = f64::from(self.sim_params.tolerance) / initial_error;
-            debug!("Checking constraint violation: {}", constraint_violation);
-            debug!(
+            log::debug!("Checking constraint violation: {}", constraint_violation);
+            log::debug!(
                 "Relative threshold for constraint violation: {}",
                 relative_tolerance
             );
@@ -1432,7 +1431,7 @@ impl Solver {
                 if self.max_step < step {
                     // Increase the max_step to be slightly bigger than the current step to avoid
                     // floating point issues.
-                    debug!("Increasing max step to {:e}", 1.1 * step);
+                    log::debug!("Increasing max step to {:e}", 1.1 * step);
                     self.update_max_step(1.1 * step);
 
                     // We don't commit the solution here because it may be far from the
@@ -1440,7 +1439,7 @@ impl Solver {
                     // neighbourhood information.
                     false
                 } else {
-                    debug!("Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
+                    log::debug!("Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
                     // The step is smaller than max_step and the constraint is still violated.
                     // Nothing else we can do, just accept the solution and move on.
                     true
@@ -1449,7 +1448,7 @@ impl Solver {
                 // The solution is good, reset the max_step, and continue.
                 // TODO: There is room for optimization here. It may be better to reduce the max
                 // step but not to zero to prevent extra steps in the future.
-                debug!("Solution accepted");
+                log::debug!("Solution accepted");
                 true
             }
         } else {
@@ -1510,7 +1509,7 @@ impl Solver {
         self.save_current_active_constraint_set();
         self.problem_mut().reset_constraint_set();
 
-        info!(
+        log::info!(
             "Start step with time step remaining: {}",
             self.time_step_remaining
         );
@@ -1524,7 +1523,7 @@ impl Solver {
         let mut iteration_count = 0;
         loop {
             if iteration_count >= self.sim_params.max_outer_iterations {
-                warn!(
+                log::warn!(
                     "Reached max outer iterations: {:?}",
                     self.sim_params.max_outer_iterations
                 );
@@ -1580,7 +1579,7 @@ impl Solver {
                         }
                         self.commit_solution(true, !all_contacts_linear);
                         self.time_step_remaining -= self.problem().time_step;
-                        info!("Time step remaining: {}", self.time_step_remaining);
+                        log::info!("Time step remaining: {}", self.time_step_remaining);
                         recovery = false; // We have recovered.
                         if self.time_step_remaining < min_time_step {
                             // Reset time step progress
@@ -1606,14 +1605,14 @@ impl Solver {
                         || iteration_count + 1 >= self.sim_params.max_outer_iterations
                         || status == ipopt::SolveStatus::UserRequestedStop
                     {
-                        warn!("Failed to recover");
+                        log::warn!("Failed to recover");
                         // Can't recover, return with an error
                         result = result.combine_inner_step_data(iterations, objective_value);
                         self.commit_solution(true, !all_contacts_linear);
                         return Err(Error::SolveError { status, result });
                     }
                     if !recovery {
-                        info!("Recovering: Revert previous step");
+                        log::info!("Recovering: Revert previous step");
 
                         self.revert_solution();
                         self.problem_mut().reset_constraint_set();
@@ -1633,7 +1632,7 @@ impl Solver {
 
                     recovery = true;
                     self.problem_mut().time_step *= 0.5;
-                    info!("Reduce time step to {}", self.problem().time_step);
+                    log::info!("Reduce time step to {}", self.problem().time_step);
                 }
                 Err(e) => {
                     // Unknown error: Clear warm start and return.
@@ -1661,8 +1660,8 @@ impl Solver {
         self.inner_iterations += result.inner_iterations as usize;
         self.step_count += 1;
 
-        debug!("Inner iterations: {}", self.inner_iterations);
-        info!("Minimum time step so far: {}", self.minimum_time_step);
+        log::debug!("Inner iterations: {}", self.inner_iterations);
+        log::info!("Minimum time step so far: {}", self.minimum_time_step);
 
         // On success, update the mesh with useful metrics.
         self.problem_mut().update_mesh_data();

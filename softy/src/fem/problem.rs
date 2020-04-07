@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 
 use ipopt::{self, Number};
-use log::{debug, error, trace};
 
 use crate::TriMesh;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
@@ -1952,7 +1951,7 @@ impl NonLinearProblem {
                 multiplier_impulse_scale,
             );
 
-            debug!(
+            log::debug!(
                 "Maximum contact impulse: {}",
                 crate::inf_norm(contact_impulse.iter().cloned())
             );
@@ -2712,7 +2711,7 @@ impl NonLinearProblem {
         let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        debug!("Condition number of jacobian is: {}", cond);
+        log::debug!("Condition number of jacobian is: {}", cond);
     }
 
     #[allow(dead_code)]
@@ -2733,7 +2732,7 @@ impl NonLinearProblem {
                 &mesh,
                 &std::path::PathBuf::from(format!("./out/{}_{}.vtk", name, *iter_counter)),
             )?;
-            trace!("Iter counter: {}", *iter_counter);
+            log::trace!("Iter counter: {}", *iter_counter);
         }
         Ok(())
     }
@@ -2760,7 +2759,7 @@ impl NonLinearProblem {
         let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
         let cond_hess = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        debug!("Condition number of hessian is {}", cond_hess);
+        log::debug!("Condition number of hessian is {}", cond_hess);
     }
 
     /*
@@ -2873,12 +2872,12 @@ impl ipopt::BasicProblem for NonLinearProblem {
     fn objective(&self, uv: &[Number], obj: &mut Number) -> bool {
         *obj = self.objective_value(uv) * self.impulse_inv_scale();
         //debug_assert!(obj.is_finite());
-        trace!("Objective value = {}", *obj);
+        log::trace!("Objective value = {}", *obj);
         obj.is_finite()
     }
 
     fn objective_grad(&self, uv: &[Number], grad_f: &mut [Number]) -> bool {
-        trace!(
+        log::trace!(
             "Unscaled variable norm: {}",
             crate::inf_norm(uv.iter().cloned())
         );
@@ -2998,7 +2997,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         let scale = self.variable_scale() * self.impulse_inv_scale();
         grad_f.iter_mut().for_each(|g| *g *= scale);
-        trace!(
+        log::trace!(
             "Objective gradient norm: {}",
             crate::inf_norm(grad_f.iter().cloned())
         );
@@ -3051,7 +3050,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             // The constrained points may change between updating the warm start and using it here.
             if lambda.len() != self.warm_start.constraint_multipliers.len() {
                 // This is sometimes not caught for some reason, so we ouput an explicit error.
-                error!(
+                log::error!(
                     "Number of multipliers ({}) does not match warm start ({})",
                     lambda.len(),
                     self.warm_start.constraint_multipliers.len()
@@ -3107,7 +3106,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         assert_eq!(count, g.len());
-        trace!("Constraint norm: {}", crate::inf_norm(g.iter().cloned()));
+        log::trace!("Constraint norm: {}", crate::inf_norm(g.iter().cloned()));
 
         debug_assert!(g.iter().all(|g| g.is_finite()));
         true
@@ -3452,7 +3451,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         //self.output_mesh(x, dx, "mesh").unwrap_or_else(|err| println!("WARNING: failed to output mesh: {:?}", err));
         //self.print_jacobian_svd(vals);
-        trace!(
+        log::trace!(
             "Constraint Jacobian norm: {}",
             crate::inf_norm(vals.iter().cloned())
         );

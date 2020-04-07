@@ -80,6 +80,7 @@ pub enum Error {
     #[snafu(display("Friction solve error: {:?}", status))]
     FrictionSolveError {
         status: ipopt::SolveStatus,
+        result: FrictionSolveResult,
     },
     ContactSolveError {
         status: ipopt::SolveStatus,
@@ -169,7 +170,7 @@ impl From<Error> for SimResult {
                 "Inner Solve failed: {:?}\nobjective value: {:?}\niterations: {:?}",
                 status, objective_value, iterations
             )),
-            Error::FrictionSolveError { status } => {
+            Error::FrictionSolveError { status, .. } => {
                 SimResult::Error(format!("Friction Solve failed: {:?}", status))
             }
             Error::ContactSolveError { status } => {

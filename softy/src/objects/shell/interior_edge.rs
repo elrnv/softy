@@ -34,6 +34,28 @@ pub(crate) struct InteriorEdge {
 }
 
 impl InteriorEdge {
+    /// Index a slice of face data (e.g. reference positions) with a face index (0 or 1) and a
+    /// vertex index within the face counting from the `edge_start` vertex.
+    ///
+    /// For example if `ref_pos: Vec<[[f32; 3]; 3]>` is a collection of reference positions per
+    /// triangle face, then getting the reference position of `x3` from edge `e` can be done with:
+    ///
+    /// ```ignore
+    /// e.face_vert(&ref_pos, 1, 2);
+    /// ```
+    ///
+    /// We could get the reference position of `x0` and `x1` either from face 0 or face 1, which
+    /// implies the following identities when the two faces have the same orientation:
+    ///
+    /// ```ignore
+    /// assert_eq!(e.face_vert(&ref_pos, 0, 0), e.face_vert(&ref_pos, 1, 1)); // x0
+    /// assert_eq!(e.face_vert(&ref_pos, 0, 1), e.face_vert(&ref_pos, 1, 0)); // x1
+    /// ```
+    #[inline]
+    pub fn face_vert<T: Copy>(&self, data: &[[T; 3]], face: usize, vert: u8) -> T {
+        data[self.faces[face]][((self.edge_start[face] + vert) % 3) as usize]
+    }
+
     #[inline]
     pub fn new(faces: [usize; 2], edge_start: [u8; 2]) -> Self {
         InteriorEdge { faces, edge_start }
@@ -57,30 +79,31 @@ impl InteriorEdge {
     #[inline]
     pub fn tile_span<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> T {
         let [f0x0, f0x1, f0x2] = [
-            ref_pos[self.faces[0]][self.edge_start[0] as usize].into_tensor(),
-            ref_pos[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize].into_tensor(),
-            ref_pos[self.faces[0]][((self.edge_start[0] + 2) % 3) as usize].into_tensor(),
+            self.face_vert(ref_pos, 0, 0).into_tensor(),
+            self.face_vert(ref_pos, 0, 1).into_tensor(),
+            self.face_vert(ref_pos, 0, 2).into_tensor(),
         ];
         let [f1x1, f1x0, f1x3] = [
-            ref_pos[self.faces[1]][self.edge_start[0] as usize].into_tensor(),
-            ref_pos[self.faces[1]][((self.edge_start[0] + 1) % 3) as usize].into_tensor(),
-            ref_pos[self.faces[1]][((self.edge_start[0] + 2) % 3) as usize].into_tensor(),
+            self.face_vert(ref_pos, 1, 0).into_tensor(),
+            self.face_vert(ref_pos, 1, 1).into_tensor(),
+            self.face_vert(ref_pos, 1, 2).into_tensor(),
         ];
         debug_assert_ne!((f0x1 - f0x0).norm_squared(), T::zero());
         debug_assert_ne!((f1x1 - f1x0).norm_squared(), T::zero());
         let f0e0 = (f0x1 - f0x0).normalized();
         let f1e0 = (f1x1 - f1x0).normalized();
+
         let h0 = (f0x2 - f0x0).cross(f0e0).norm();
         let h1 = (f1x3 - f1x0).cross(f1e0).norm();
-        (h0 + h1) / T::from(6.0).unwrap()
+        (h0 + h1) / T::from(3.0).unwrap()
     }
 
     /// Get the vertex indices of the edge endpoints.
     #[inline]
     pub fn edge_verts(&self, faces: &[[usize; 3]]) -> [usize; 2] {
         [
-            faces[self.faces[0]][self.edge_start[0] as usize],
-            faces[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize],
+            self.face_vert(faces, 0, 0),
+            self.face_vert(faces, 0, 1),
         ]
     }
 
@@ -89,12 +112,12 @@ impl InteriorEdge {
     pub fn ref_edge_verts<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> [[[T; 3]; 2]; 2] {
         [
             [
-                ref_pos[self.faces[0]][self.edge_start[0] as usize],
-                ref_pos[self.faces[0]][((self.edge_start[0] + 1) % 3) as usize],
+                self.face_vert(ref_pos, 0, 0),
+                self.face_vert(ref_pos, 0, 1),
             ],
             [
-                ref_pos[self.faces[1]][self.edge_start[1] as usize],
-                ref_pos[self.faces[1]][((self.edge_start[1] + 1) % 3) as usize],
+                self.face_vert(ref_pos, 1, 0),
+                self.face_vert(ref_pos, 1, 1),
             ],
         ]
     }
@@ -105,8 +128,8 @@ impl InteriorEdge {
     #[inline]
     pub fn tangent_verts<U: Copy>(&self, faces: &[[U; 3]]) -> [U; 2] {
         [
-            faces[self.faces[0]][((self.edge_start[0] + 2) % 3) as usize],
-            faces[self.faces[1]][((self.edge_start[1] + 2) % 3) as usize],
+            self.face_vert(faces, 0, 2),
+            self.face_vert(faces, 1, 2),
         ]
     }
 
@@ -148,12 +171,11 @@ impl InteriorEdge {
     #[inline]
     pub fn face1_tangent<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
         let [v0, v1] = [
-            faces[self.faces[0]][(self.edge_start[0]) as usize],
+            self.face_vert(faces, 0, 0),
             self.tangent_verts(faces)[1],
         ];
         debug_assert!(
-            v0 == faces[self.faces[1]][((self.edge_start[1] + 1) % 3) as usize]
-                || v0 == faces[self.faces[1]][self.edge_start[1] as usize]
+            v0 == self.face_vert(faces, 1, 1) || v0 == self.face_vert(faces, 1, 0)
         );
         Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
@@ -161,8 +183,7 @@ impl InteriorEdge {
     /// Return `true` if the adjacent faces have the same orientation.
     #[inline]
     pub fn is_oriented(&self, faces: &[[usize; 3]]) -> bool {
-        faces[self.faces[0]][(self.edge_start[0]) as usize]
-            != faces[self.faces[1]][self.edge_start[1] as usize]
+        self.face_vert(faces, 0, 0) != self.face_vert(faces, 1, 0)
     }
 
     /// Compute the area weighted normals of adjacent faces.
@@ -486,31 +507,32 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
     let find_triangle_edge_start = |verts: [usize; 2], &[v0, v1, v2]: &[usize; 3]| {
         if v0 == verts[0] {
             if v1 == verts[1] {
-                0
+                Some(0)
             } else if v2 == verts[1] {
-                2
+                Some(2)
             } else {
-                unreachable!("Corrupt edge adjacency detected");
+                None
             }
         } else if v1 == verts[0] {
             if v2 == verts[1] {
-                1
+                Some(1)
             } else if v0 == verts[1] {
-                0
+                Some(0)
             } else {
-                unreachable!("Corrupt edge adjacency detected");
+                None
             }
         } else if v2 == verts[0] {
             if v0 == verts[1] {
-                2
+                Some(2)
             } else if v1 == verts[1] {
-                1
+                Some(1)
             } else {
-                unreachable!("Corrupt edge adjacency detected");
+                None
             }
         } else {
-            unreachable!("Corrupt edge adjacency detected");
+            None
         }
+        .unwrap_or_else(|| unreachable!("Corrupt edge adjacency detected"))
     };
 
     for edge in edges.values() {
@@ -518,6 +540,12 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
         // Boundary edges are ignored as are non-manifold edges.
         if let Some((verts, faces)) = edge.into_manifold_edge() {
             // Determine the source vertex for this edge in faces[0].
+            eprintln!("f0: {:?}; f1: {:?}", faces[0], faces[1]);
+            eprintln!(
+                "f0: {:?}; f1: {:?}",
+                trimesh.face(faces[0]),
+                trimesh.face(faces[1])
+            );
 
             let edge_start = [
                 find_triangle_edge_start(verts, trimesh.face(faces[0])),
@@ -795,5 +823,190 @@ mod tests {
         eprintln!("");
 
         assert!(success);
+    }
+
+    #[test]
+    fn compute_interior_edge_topology_small_test() {
+        // Make a test mesh.
+
+        let pos = vec![
+            [-2.0, -0.795, 0.0],
+            [0.0, -0.795, 0.0],
+            [2.0, -0.795, 0.0],
+            [-2.0, 1.205, 0.0],
+            [0.0, 1.205, 0.0],
+            [2.0, 1.205, 0.0],
+            [-2.0, 3.205, 0.0],
+            [0.0, 3.205, 0.0],
+            [2.0, 3.205, 0.0],
+        ];
+
+        let verts = vec![
+            0, 1, 4, 0, 4, 3, 1, 2, 4, 2, 5, 4, 3, 4, 6, 4, 7, 6, 4, 5, 8, 4, 8, 7,
+        ];
+
+        let trimesh = TriMesh::new(pos, verts);
+
+        let interior_edges = compute_interior_edge_topology(&trimesh);
+
+        let expected_interior_edges = vec![
+            InteriorEdge {
+                faces: [1, 4],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [2, 3],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [0, 2],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [0, 1],
+                edge_start: [2, 0],
+            },
+            InteriorEdge {
+                faces: [3, 6],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [4, 5],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [5, 7],
+                edge_start: [0, 2],
+            },
+            InteriorEdge {
+                faces: [6, 7],
+                edge_start: [2, 0],
+            },
+        ];
+
+        assert_eq!(interior_edges, expected_interior_edges);
+    }
+
+    #[test]
+    fn compute_interior_edge_topology_large_test() {
+        // Make a test mesh.
+
+        let pos = vec![
+            [-2.0, -0.795, -0.513003],
+            [-0.666667, -0.795, -0.513003],
+            [0.666667, -0.795, -0.513003],
+            [2.0, -0.795, -0.513003],
+            [-2.0, 0.538333, -0.513003],
+            [-0.666667, 0.538333, -0.513003],
+            [0.666667, 0.538333, -0.513003],
+            [2.0, 0.538333, -0.513003],
+            [-2.0, 1.87167, -0.513003],
+            [-0.666667, 1.87167, -0.513003],
+            [0.666667, 1.87167, -0.513003],
+            [2.0, 1.87167, -0.513003],
+            [-2.0, 3.205, -0.513003],
+            [-0.666667, 3.205, -0.513003],
+            [0.666667, 3.205, -0.513003],
+            [2.0, 3.205, -0.513003],
+        ];
+
+        let verts = vec![
+            0, 1, 5, 0, 5, 4, 1, 2, 5, 2, 6, 5, 2, 3, 7, 2, 7, 6, 4, 5, 8, 5, 9, 8, 5, 6, 10, 5,
+            10, 9, 6, 7, 10, 7, 11, 10, 8, 9, 13, 8, 13, 12, 9, 10, 13, 10, 14, 13, 10, 11, 15, 10,
+            15, 14,
+        ];
+
+        let trimesh = TriMesh::new(pos, verts);
+
+        let interior_edges = compute_interior_edge_topology(&trimesh);
+
+        let expected_interior_edges = vec![
+            InteriorEdge {
+                faces: [3, 5],
+                edge_start: [0, 2],
+            },
+            InteriorEdge {
+                faces: [3, 8],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [9, 14],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [8, 9],
+                edge_start: [2, 0],
+            },
+            InteriorEdge {
+                faces: [6, 7],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [8, 10],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [10, 11],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [15, 17],
+                edge_start: [0, 2],
+            },
+            InteriorEdge {
+                faces: [2, 3],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [14, 15],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [0, 1],
+                edge_start: [2, 0],
+            },
+            InteriorEdge {
+                faces: [0, 2],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [4, 5],
+                edge_start: [2, 0],
+            },
+            InteriorEdge {
+                faces: [1, 6],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [5, 10],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [7, 12],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [7, 9],
+                edge_start: [0, 2],
+            },
+            InteriorEdge {
+                faces: [11, 16],
+                edge_start: [1, 0],
+            },
+            InteriorEdge {
+                faces: [12, 14],
+                edge_start: [1, 2],
+            },
+            InteriorEdge {
+                faces: [12, 13],
+                edge_start: [2, 0],
+            },
+            InteriorEdge {
+                faces: [16, 17],
+                edge_start: [2, 0],
+            },
+        ];
+
+        assert_eq!(interior_edges, expected_interior_edges);
     }
 }

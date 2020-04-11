@@ -540,13 +540,6 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
         // Boundary edges are ignored as are non-manifold edges.
         if let Some((verts, faces)) = edge.into_manifold_edge() {
             // Determine the source vertex for this edge in faces[0].
-            eprintln!("f0: {:?}; f1: {:?}", faces[0], faces[1]);
-            eprintln!(
-                "f0: {:?}; f1: {:?}",
-                trimesh.face(faces[0]),
-                trimesh.face(faces[1])
-            );
-
             let edge_start = [
                 find_triangle_edge_start(verts, trimesh.face(faces[0])),
                 find_triangle_edge_start(verts, trimesh.face(faces[1])),

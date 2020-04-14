@@ -223,8 +223,8 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "FrictionIterations"
             label "Friction Iterations"
             type integer
-            default { "1" }
-            range { 0 10 }
+            default { "10" }
+            range { 0 50 }
         }
 
         multiparm {
@@ -325,35 +325,35 @@ static const char *theDsFile = R"THEDSFILE(
                     name "frictionforwarding#"
                     label "Friction Forwarding"
                     type float
-                    default { "0.0" }
+                    default { "1.0" }
                     range { 0! 1 }
                 }
                 parm {
                     name "smoothingweight#"
                     label "Smoothing Weight"
                     type float
-                    default { "0.5" }
+                    default { "0.0" }
                     range { 0! 1 }
                 }
                 parm {
                     name "dynamiccof#"
                     label "Dynamic Coefficient"
                     type float
-                    default { "0.5" }
+                    default { "0.2" }
                     range { 0 2 }
                 }
                 parm {
                     name "frictiontolerance#"
                     label "Tolerance"
                     type log
-                    default { "1e-8" }
+                    default { "1e-10" }
                     range { 0.0 1.0 }
                 }
                 parm {
                     name "frictioninneriterations#"
                     label "Inner Iterations"
                     type integer
-                    default { "40" }
+                    default { "50" }
                     range { 0 10 }
                 }
             }
@@ -385,7 +385,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "MaxInnerIterations"
             label "Max Inner Iterations"
             type integer
-            default { "500" }
+            default { "200" }
             range { 0 1000 }
         }
         parm {
@@ -401,7 +401,7 @@ static const char *theDsFile = R"THEDSFILE(
             cppname "MaxOuterIterations"
             label "Max Outer Iterations"
             type integer
-            default { "10" }
+            default { "50" }
             range { 0 1000 }
         }
 
@@ -427,7 +427,7 @@ static const char *theDsFile = R"THEDSFILE(
                 cppname "MaxGradientScaling"
                 label "Max Gradient Scaling"
                 type log
-                default { "100.0" }
+                default { "1.0" }
                 range { 0.0 100.0 }
             }
 

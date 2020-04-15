@@ -23,6 +23,18 @@ pub struct FrictionalContactParams {
     pub friction_params: Option<FrictionParams>,
 }
 
+impl Default for FrictionalContactParams {
+    fn default() -> Self {
+        FrictionalContactParams {
+            kernel: implicits::KernelType::Approximate { radius_multiplier: 1.0, tolerance: 1.0e-5 },
+            contact_type: ContactType::LinearizedPoint,
+            contact_offset: 0.0,
+            use_fixed: true,
+            friction_params: None, // Frictionless by default
+        }
+    }
+}
+
 /// A two dimensional vector in polar coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Polar2<T> {

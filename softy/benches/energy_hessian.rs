@@ -3,7 +3,7 @@ use geo::ops::*;
 use geo::prim::Tetrahedron;
 use num_traits::Zero;
 use softy::energy_models::elasticity::{NeoHookeanTetEnergy, StableNeoHookeanTetEnergy, TetEnergy};
-use utils::soap::*;
+use tensr::*;
 
 /// Compute the energy hessian directly using the energy_hessian implementation.
 #[allow(non_snake_case)]

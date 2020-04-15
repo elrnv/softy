@@ -37,6 +37,7 @@ fn box_squish(c: &mut Criterion) {
                 tolerance: 0.001,
             },
             friction_params: None,
+            ..Default::default()
         };
 
         let fc_lin_point = FrictionalContactParams {

@@ -14,7 +14,7 @@ pub mod fem;
 mod friction;
 pub mod mask_iter;
 mod matrix;
-mod objects;
+pub mod objects;
 
 // TODO: This should be feature gated. Unfortunately this makes it tedious to
 // run tests without passing the feature explicitly via the `--features` flag.

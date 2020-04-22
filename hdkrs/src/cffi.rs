@@ -3,9 +3,9 @@
 #![allow(non_snake_case)]
 
 use gut::io::{
-convert_pointcloud_to_vtk_format,
-    convert_polymesh_to_vtk_format, convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
-    convert_vtk_dataset_to_tetmesh, vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
+    convert_pointcloud_to_vtk_format, convert_polymesh_to_vtk_format,
+    convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh, convert_vtk_dataset_to_tetmesh,
+    vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
 };
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
 use gut::{self, NumCells, NumFaces};
@@ -1307,7 +1307,9 @@ pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -
 /// Write the given HR_PointCloud into a binary VTK format returned through an appropriately sized
 /// `HR_ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn hr_make_pointcloud_vtk_buffer(mesh: *const HR_PointCloud) -> HR_ByteBuffer {
+pub unsafe extern "C" fn hr_make_pointcloud_vtk_buffer(
+    mesh: *const HR_PointCloud,
+) -> HR_ByteBuffer {
     // check invariants
     assert!(!mesh.is_null());
 

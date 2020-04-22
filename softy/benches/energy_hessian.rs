@@ -2,7 +2,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
 use num_traits::Zero;
-use softy::energy_models::elasticity::{NeoHookeanTetEnergy, StableNeoHookeanTetEnergy, NeoHookeanTriEnergy, TetEnergy, TriEnergy};
+use softy::energy_models::elasticity::{
+    NeoHookeanTetEnergy, NeoHookeanTriEnergy, StableNeoHookeanTetEnergy, TetEnergy, TriEnergy,
+};
 use softy::objects::TriMeshShell;
 use tensr::*;
 
@@ -77,7 +79,8 @@ pub(crate) fn tri_energy_hessian_direct<E: TriEnergy<f64>>() -> [[Matrix3<f64>; 
     let tri_x0 = Triangle::from_indexed_slice(&tri, &verts);
 
     let shape = Matrix2x3::new(tri_x0.clone().shape_matrix());
-    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape).inverse()
+    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape)
+        .inverse()
         .unwrap();
     let Dx = Matrix2x3::new(tri_x0.clone().shape_matrix());
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);
@@ -93,7 +96,8 @@ pub(crate) fn tri_energy_hessian_product<E: TriEnergy<f64>>() -> [[Matrix3<f64>;
     let tri_x0 = Triangle::from_indexed_slice(&tri, &verts);
 
     let shape = Matrix2x3::new(tri_x0.clone().shape_matrix());
-    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape).inverse()
+    let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(shape)
+        .inverse()
         .unwrap();
     let Dx = Matrix2x3::new(tri_x0.clone().shape_matrix());
     let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);

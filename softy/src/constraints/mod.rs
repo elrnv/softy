@@ -18,8 +18,8 @@ use tensr::Vector3;
 pub use self::point_contact::*;
 pub use self::point_contact::*;
 pub use self::volume::*;
-use utils::aref::*;
 use tensr::*;
+use utils::aref::*;
 
 /// Construct a new contact constraint based on the given parameters. There are more than
 /// one type of contact constraint, which is resolved using dynamic dispatch.

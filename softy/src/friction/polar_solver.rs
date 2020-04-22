@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 use super::FrictionParams;
 use super::FrictionSolveResult;
-use ipopt::{self, Ipopt, Index, Number};
-use reinterpret::*;
+use ipopt::{self, Index, Ipopt, Number};
 use num_traits::Zero;
+use reinterpret::*;
 
 use tensr::*;
 use utils::zip;
@@ -30,16 +30,21 @@ impl<'a> FrictionPolarSolver<'a> {
         params: FrictionParams,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         let basis_mtx = contact_basis.tangent_basis_matrix();
-        let hessian = mass_inv_mtx.clone()
+        let hessian = mass_inv_mtx
+            .clone()
             .diagonal_congruence_transform(basis_mtx.view());
 
         let mu = params.dynamic_friction;
 
-        let scale = predictor_impulse.iter().map(|&p| Vector3::new(p).norm_squared()).max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less)).unwrap_or(1.0);
+        let scale = predictor_impulse
+            .iter()
+            .map(|&p| Vector3::new(p).norm_squared())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            .unwrap_or(1.0);
         let scale = 1.0 / scale.sqrt();
 
-        let predictor_impulse: Chunked3<Vec<f64>> = 
-            predictor_impulse.iter()
+        let predictor_impulse: Chunked3<Vec<f64>> = predictor_impulse
+            .iter()
             .map(|&p| (Vector3::new(p) * scale).into_data())
             .collect();
 
@@ -51,7 +56,7 @@ impl<'a> FrictionPolarSolver<'a> {
             mass_inv_mtx,
             hessian,
             iterations: 0,
-            scale, 
+            scale,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -80,17 +85,21 @@ impl<'a> FrictionPolarSolver<'a> {
             ..
         } = self.solver.solve();
 
-        let polar_solution: &[Polar2<f64>] = reinterpret_slice(solver_data.solution.primal_variables);
-        let tangent_sol: Vec<[f64; 2]> = polar_solution.iter().map(|&p| {
-            let mut scaled_p = p;
-            scaled_p.radius /= solver_data.problem.0.scale;
-            scaled_p.to_euclidean()
-        }).collect();
+        let polar_solution: &[Polar2<f64>] =
+            reinterpret_slice(solver_data.solution.primal_variables);
+        let tangent_sol: Vec<[f64; 2]> = polar_solution
+            .iter()
+            .map(|&p| {
+                let mut scaled_p = p;
+                scaled_p.radius /= solver_data.problem.0.scale;
+                scaled_p.to_euclidean()
+            })
+            .collect();
 
         let result = FrictionSolveResult {
             objective_value,
             solution: tangent_sol,
-            iterations: solver_data.problem.0.iterations
+            iterations: solver_data.problem.0.iterations,
         };
 
         match status {
@@ -104,18 +113,22 @@ impl<'a> FrictionPolarSolver<'a> {
 
 #[inline]
 pub(crate) fn polar_gradient(p: Polar2<f64>) -> Matrix2<f64> {
-    Matrix2::new([[p.angle.cos(), p.angle.sin()],
-                 [-p.radius * p.angle.sin(), p.radius * p.angle.cos()]])
+    Matrix2::new([
+        [p.angle.cos(), p.angle.sin()],
+        [-p.radius * p.angle.sin(), p.radius * p.angle.cos()],
+    ])
 }
 
 #[inline]
 pub(crate) fn polar_hessian_product(p: Polar2<f64>, mult: Vector2<f64>) -> Matrix2<f64> {
-    Matrix2::new(
-        [[0.0, mult[1] * p.angle.cos() - mult[0] * p.angle.sin()],
-        [mult[1] * p.angle.cos() - mult[0] * p.angle.sin(),
-        -mult[0] * p.radius * p.angle.cos() - mult[1] * p.radius * p.angle.sin()]])
+    Matrix2::new([
+        [0.0, mult[1] * p.angle.cos() - mult[0] * p.angle.sin()],
+        [
+            mult[1] * p.angle.cos() - mult[0] * p.angle.sin(),
+            -mult[0] * p.radius * p.angle.cos() - mult[1] * p.radius * p.angle.sin(),
+        ],
+    ])
 }
-
 
 pub(crate) struct FrictionPolarProblem<'a> {
     predictor_impulse: Chunked3<Vec<f64>>,
@@ -167,7 +180,9 @@ impl FrictionPolarProblem<'_> {
             impulses.iter_mut(),
             self.contact_impulse.iter(),
             self.predictor_impulse.iter()
-        ).enumerate() {
+        )
+        .enumerate()
+        {
             let p = self.contact_basis.to_cylindrical_contact_coordinates(p, i);
             let rad = self.mu * cr.abs() * self.scale;
             if rad > 0.0 {
@@ -228,7 +243,11 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
         let polar_impulses: &[Polar2<f64>] = reinterpret_slice(r_p);
         assert_eq!(self.0.predictor_impulse.len(), polar_impulses.len());
 
-        let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(self.0.contact_basis.from_polar_tangent_space(polar_impulses));
+        let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(
+            self.0
+                .contact_basis
+                .from_polar_tangent_space(polar_impulses),
+        );
         *&mut r.expr_mut() -= self.0.predictor_impulse.expr();
 
         let rhs = self.0.mass_inv_mtx.view() * *r.view().as_tensor();
@@ -243,18 +262,23 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
         let polar_grad: &mut [[Number; 2]] = reinterpret_mut_slice(grad_f);
         assert_eq!(self.0.predictor_impulse.len(), polar_grad.len());
 
-        let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(self.0.contact_basis.from_polar_tangent_space(polar_impulses));
+        let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(
+            self.0
+                .contact_basis
+                .from_polar_tangent_space(polar_impulses),
+        );
         *&mut r.expr_mut() -= self.0.predictor_impulse.expr();
 
         let grad = self.0.mass_inv_mtx.view() * *r.view().as_tensor();
-        self.0.contact_basis
+        self.0
+            .contact_basis
             .to_tangent_space(grad.view().into_data().into())
             .zip(polar_impulses.iter())
             .zip(polar_grad.iter_mut())
             .for_each(|((g, &r_p), out_g)| {
                 let g = Vector2::new(g);
                 let d = polar_gradient(r_p);
-                *out_g = (d*g).into();
+                *out_g = (d * g).into();
             });
 
         true
@@ -310,12 +334,16 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
     fn hessian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
         let r_p: &[Polar2<Number>] = reinterpret_slice(r);
 
-        let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(self.0.contact_basis.from_polar_tangent_space(r_p));
+        let mut r: Chunked3<Vec<f64>> =
+            Chunked3::from_array_vec(self.0.contact_basis.from_polar_tangent_space(r_p));
         *&mut r.expr_mut() -= self.0.predictor_impulse.expr();
 
         let grad = (self.0.mass_inv_mtx.view() * *r.view().as_tensor()).into_data();
-        let grad_t: Vec<[f64; 2]> = self.0.contact_basis
-            .to_tangent_space(grad.view().into_data().into()).collect();
+        let grad_t: Vec<[f64; 2]> = self
+            .0
+            .contact_basis
+            .to_tangent_space(grad.view().into_data().into())
+            .collect();
 
         let mut idx = 0;
         for (row_idx, row) in self.0.hessian.as_data().iter().enumerate() {
@@ -333,8 +361,7 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
                 };
 
                 let hess_block =
-                    (row_g * *block.into_arrays().as_tensor() * col_g_tr + polar_hess)
-                        .into_data();
+                    (row_g * *block.into_arrays().as_tensor() * col_g_tr + polar_hess).into_data();
 
                 vals[idx] = hess_block[0][0];
                 idx += 1;
@@ -365,7 +392,7 @@ mod tests {
     //use crate::test_utils::*;
     //use crate::*;
     //use std::path::PathBuf;
-    
+
     #[test]
     fn sliding_point() -> Result<(), Error> {
         let (velocity, impulse) = sliding_point_tester(0.000001)?;
@@ -414,10 +441,7 @@ mod tests {
             params,
         )?;
         let result = solver.step()?;
-        let FrictionSolveResult {
-            solution,
-            ..
-        } = result;
+        let FrictionSolveResult { solution, .. } = result;
 
         let impulse = Vector2::new(solution[0]);
         let new_vel = impulse / mass;

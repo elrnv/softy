@@ -33,8 +33,9 @@ impl VolumeConstraint {
         let ref_pos = tetmesh
             .attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
             .unwrap();
-        
-        ref_pos.chunks_exact(4)
+
+        ref_pos
+            .chunks_exact(4)
             .map(|tet| crate::fem::ref_tet(tet).volume())
             .sum()
     }

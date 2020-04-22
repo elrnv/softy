@@ -26,7 +26,10 @@ pub struct FrictionalContactParams {
 impl Default for FrictionalContactParams {
     fn default() -> Self {
         FrictionalContactParams {
-            kernel: implicits::KernelType::Approximate { radius_multiplier: 1.0, tolerance: 1.0e-5 },
+            kernel: implicits::KernelType::Approximate {
+                radius_multiplier: 1.0,
+                tolerance: 1.0e-5,
+            },
             contact_type: ContactType::LinearizedPoint,
             contact_offset: 0.0,
             use_fixed: true,
@@ -52,9 +55,7 @@ impl<T: Real> Polar2<T> {
     }
 
     pub fn to_euclidean(self) -> [T; 2] {
-        let Polar2 {
-            radius, angle,
-        } = self;
+        let Polar2 { radius, angle } = self;
         [radius * angle.cos(), radius * angle.sin()]
     }
 }
@@ -437,8 +438,7 @@ pub(crate) fn build_triplet_contact_jacobian<'a>(
     active_contact_points: SubsetView<'a, Chunked3<&'a [f64]>>,
     query_points: Chunked3<&'a [f64]>,
 ) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
-    let mut orig_cj_matrices =
-        vec![tensr::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
+    let mut orig_cj_matrices = vec![tensr::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
     surf.contact_jacobian_matrices(
         query_points.into(),
         reinterpret_mut_slice(&mut orig_cj_matrices),

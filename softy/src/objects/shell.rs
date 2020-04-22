@@ -369,9 +369,7 @@ impl TriMeshShell {
             mesh.attrib_as_slice::<RefPosType, FaceVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
         let areas: Vec<_> = ref_pos
             .chunks_exact(3)
-            .map(|tri| {
-                ref_tri(tri).area()
-            })
+            .map(|tri| ref_tri(tri).area())
             .collect();
         let degens: Vec<_> = areas
             .iter()
@@ -480,9 +478,11 @@ impl TriMeshShell {
         // Check if there are any additional reference angle attributes in the mesh, and ADD them
         // to the computed reference angles. This allows for non-coincident edges in reference
         // configuration to have a non-zero reference angle.
-        if let Ok(ref_angles) =
-            mesh.attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB)
-                .or_else(|_| mesh.attrib_as_slice::<RefAngleType, FaceVertexIndex>(REFERENCE_ANGLE_ATTRIB))
+        if let Ok(ref_angles) = mesh
+            .attrib_as_slice::<RefAngleType, FaceEdgeIndex>(REFERENCE_ANGLE_ATTRIB)
+            .or_else(|_| {
+                mesh.attrib_as_slice::<RefAngleType, FaceVertexIndex>(REFERENCE_ANGLE_ATTRIB)
+            })
         {
             let ref_angles = Chunked3::from_flat(ref_angles).into_arrays();
             interior_edges
@@ -623,20 +623,22 @@ impl TriMeshShell {
         rot: Vector3<f64>,
         inertia: Matrix3<f64>,
         contact_points: SubsetView<Chunked3<&[f64]>>,
-        ) -> DBlockMatrix3<f64> {
+    ) -> DBlockMatrix3<f64> {
         let n = contact_points.len();
         debug_assert!(n > 0);
         let mut out = UniChunked::from_flat_with_stride(
-            UniChunked::from_flat(UniChunked::from_flat(vec![0.0; n*n*9])), n);
+            UniChunked::from_flat(UniChunked::from_flat(vec![0.0; n * n * 9])),
+            n,
+        );
 
         let inertia_inv = inertia.inverse().expect("Failed to invert inertia matrix");
 
         for (&row_p, mut out_row) in contact_points.iter().zip(out.iter_mut()) {
             for (&col_p, out_block) in contact_points.iter().zip(out_row.iter_mut()) {
                 let block: Matrix3<f64> = Matrix3::identity() / mass
-                    -rotate(row_p.into_tensor() - translation, -rot).skew()
-                    * inertia_inv
-                    * rotate(col_p.into_tensor() - translation, -rot).skew();
+                    - rotate(row_p.into_tensor() - translation, -rot).skew()
+                        * inertia_inv
+                        * rotate(col_p.into_tensor() - translation, -rot).skew();
                 let out_arrays: &mut [[f64; 3]; 3] = out_block.into_arrays();
                 *out_arrays = block.into_data();
             }
@@ -781,19 +783,26 @@ mod tests {
         };
 
         let contact_points: Subset<_> = Subset::all(Chunked3::from_array_vec(vec![
-            [0.0, 0.5, 0.0], // top
+            [0.0, 0.5, 0.0],  // top
             [-0.5, 0.0, 0.0], // side
-            [0.5, 0.5, 0.0], // corner coincident with vertex
+            [0.5, 0.5, 0.0],  // corner coincident with vertex
         ]));
 
         let effective_mass_inv = TriMeshShell::rigid_effective_mass_inv(
-            mass, [0.0; 3].into_tensor(), [0.0; 3].into_tensor(), inertia, contact_points.view()).into_data();
+            mass,
+            [0.0; 3].into_tensor(),
+            [0.0; 3].into_tensor(),
+            inertia,
+            contact_points.view(),
+        )
+        .into_data();
 
         for row in 0..3 {
             let rrow = contact_points[row].into_tensor().skew();
             for col in 0..3 {
                 let rcol = contact_points[col].into_tensor().skew();
-                let exp_block = Matrix3::identity()/mass - rrow*inertia.inverse().unwrap()*rcol;
+                let exp_block =
+                    Matrix3::identity() / mass - rrow * inertia.inverse().unwrap() * rcol;
                 let actual_block = effective_mass_inv.view().at(row).at(col);
                 for i in 0..3 {
                     assert_relative_eq!(actual_block[i].into_tensor(), exp_block[i]);

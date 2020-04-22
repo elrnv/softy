@@ -4,8 +4,8 @@ use crate::contact::*;
 use ipopt::{self, Index, Ipopt, Number};
 
 use super::FrictionSolveResult;
-use unroll::unroll_for_loops;
 use tensr::*;
+use unroll::unroll_for_loops;
 use utils::zip;
 
 use crate::Error;
@@ -190,12 +190,11 @@ impl<'a> FrictionProblem<'a> {
 pub(crate) struct SemiImplicitFrictionProblem<'a>(FrictionProblem<'a>);
 
 impl SemiImplicitFrictionProblem<'_> {
-     pub fn intermediate_cb(&mut self, _: ipopt::IntermediateCallbackData) -> bool {
-         self.0.iterations += 1;
-         true
-     }
- }
-
+    pub fn intermediate_cb(&mut self, _: ipopt::IntermediateCallbackData) -> bool {
+        self.0.iterations += 1;
+        true
+    }
+}
 
 /// Prepare the problem for Newton iterations.
 impl ipopt::BasicProblem for SemiImplicitFrictionProblem<'_> {

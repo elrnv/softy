@@ -1962,18 +1962,28 @@ impl NonLinearProblem {
             let rigid_motion = [
                 if let SourceIndex::Shell(idx) = fc.object_index {
                     if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
-                        Some([prev_x.at(1).at(idx)[0].into_tensor(), prev_x.at(1).at(idx)[1].into_tensor()])
-                    } else { None }
+                        Some([
+                            prev_x.at(1).at(idx)[0].into_tensor(),
+                            prev_x.at(1).at(idx)[1].into_tensor(),
+                        ])
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 },
                 if let SourceIndex::Shell(idx) = fc.collider_index {
                     if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
-                        Some([prev_x.at(1).at(idx)[0].into_tensor(), prev_x.at(1).at(idx)[1].into_tensor()])
-                    } else { None }
+                        Some([
+                            prev_x.at(1).at(idx)[0].into_tensor(),
+                            prev_x.at(1).at(idx)[1].into_tensor(),
+                        ])
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
+                },
             ];
             friction_steps[fc_idx] = fc
                 .constraint
@@ -2251,7 +2261,10 @@ impl NonLinearProblem {
             let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
             fc.constraint.borrow().add_friction_corrector_impulse(
-                [Subset::all(obj_imp.view_mut()), Subset::all(coll_imp.view_mut())],
+                [
+                    Subset::all(obj_imp.view_mut()),
+                    Subset::all(coll_imp.view_mut()),
+                ],
                 1.0,
             );
 
@@ -2302,9 +2315,13 @@ impl NonLinearProblem {
             let mut obj_imp = Chunked3::from_array_slice_mut(obj_imp.as_mut_slice());
             let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
 
-            fc.constraint
-                .borrow()
-                .add_friction_impulse([Subset::all(obj_imp.view_mut()), Subset::all(coll_imp.view_mut())], 1.0);
+            fc.constraint.borrow().add_friction_impulse(
+                [
+                    Subset::all(obj_imp.view_mut()),
+                    Subset::all(coll_imp.view_mut()),
+                ],
+                1.0,
+            );
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {

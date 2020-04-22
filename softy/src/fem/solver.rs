@@ -1289,7 +1289,8 @@ impl Solver {
                 if self.max_step != new_max_step {
                     log::info!(
                         "Relaxing max step from {} to {}",
-                        self.max_step, new_max_step
+                        self.max_step,
+                        new_max_step
                     );
                     self.max_step = new_max_step;
                     problem.update_max_step(new_max_step);

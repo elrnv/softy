@@ -101,24 +101,15 @@ impl InteriorEdge {
     /// Get the vertex indices of the edge endpoints.
     #[inline]
     pub fn edge_verts(&self, faces: &[[usize; 3]]) -> [usize; 2] {
-        [
-            self.face_vert(faces, 0, 0),
-            self.face_vert(faces, 0, 1),
-        ]
+        [self.face_vert(faces, 0, 0), self.face_vert(faces, 0, 1)]
     }
 
     /// Get the vertex positions of the edge vertices in reference configuration for each face.
     #[inline]
     pub fn ref_edge_verts<T: Real>(&self, ref_pos: &[[[T; 3]; 3]]) -> [[[T; 3]; 2]; 2] {
         [
-            [
-                self.face_vert(ref_pos, 0, 0),
-                self.face_vert(ref_pos, 0, 1),
-            ],
-            [
-                self.face_vert(ref_pos, 1, 0),
-                self.face_vert(ref_pos, 1, 1),
-            ],
+            [self.face_vert(ref_pos, 0, 0), self.face_vert(ref_pos, 0, 1)],
+            [self.face_vert(ref_pos, 1, 0), self.face_vert(ref_pos, 1, 1)],
         ]
     }
 
@@ -127,10 +118,7 @@ impl InteriorEdge {
     /// `faces` can be either triplets of vertex indices or reference positions.
     #[inline]
     pub fn tangent_verts<U: Copy>(&self, faces: &[[U; 3]]) -> [U; 2] {
-        [
-            self.face_vert(faces, 0, 2),
-            self.face_vert(faces, 1, 2),
-        ]
+        [self.face_vert(faces, 0, 2), self.face_vert(faces, 1, 2)]
     }
 
     /// Compute the reference edge length.
@@ -170,13 +158,8 @@ impl InteriorEdge {
     /// to the edge itself.
     #[inline]
     pub fn face1_tangent<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> Vector3<T> {
-        let [v0, v1] = [
-            self.face_vert(faces, 0, 0),
-            self.tangent_verts(faces)[1],
-        ];
-        debug_assert!(
-            v0 == self.face_vert(faces, 1, 1) || v0 == self.face_vert(faces, 1, 0)
-        );
+        let [v0, v1] = [self.face_vert(faces, 0, 0), self.tangent_verts(faces)[1]];
+        debug_assert!(v0 == self.face_vert(faces, 1, 1) || v0 == self.face_vert(faces, 1, 0));
         Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
 

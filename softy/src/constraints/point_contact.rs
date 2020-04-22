@@ -1,9 +1,10 @@
 use super::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::fem::problem::{Var, Tag};
+use crate::fem::problem::{Tag, Var};
 use crate::friction::*;
 use crate::matrix::*;
+use crate::objects::TriMeshShell;
 use crate::Error;
 use crate::Index;
 use crate::TriMesh;
@@ -19,14 +20,13 @@ use rayon::iter::Either;
 use reinterpret::*;
 use tensr::*;
 use utils::zip;
-use crate::objects::TriMeshShell;
 
 /// Data needed to build a mass matrxi
 #[derive(Clone, Debug, PartialEq)]
 pub enum MassData {
-    Dense(f64, Matrix3<f64>), // Rigid body data
+    Dense(f64, Matrix3<f64>),   // Rigid body data
     Sparse(Chunked3<Vec<f64>>), // Vertex masses
-    Zero, // Infinite mass
+    Zero,                       // Infinite mass
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,14 +35,14 @@ enum MassMatrixInv<S, D, I> {
     // The additional chunked vec is temporarily there for faking rigid-rigid friction.
     Dense(DBlockMatrix3<D>, Chunked3<Vec<f64>>),
     Sparse(DiagonalBlockMatrixBase<S, I, U3>), // Selected vertex masses
-    Zero, // Infinite mass
+    Zero,                                      // Infinite mass
 }
 
 impl MassData {
     fn is_some(&self) -> bool {
         match self {
             MassData::Zero => false,
-            _ => true
+            _ => true,
         }
     }
 }
@@ -188,14 +188,14 @@ impl PointContactConstraint {
 
     fn mass_matrix_data(mesh: Var<&TriMesh, f64>) -> Result<MassData, Error> {
         match mesh {
-            Var::Rigid(_, mass, inertia) => {
-                Ok(MassData::Dense(mass, inertia))
-            }
+            Var::Rigid(_, mass, inertia) => Ok(MassData::Dense(mass, inertia)),
             Var::Fixed(_) => Ok(MassData::Zero),
-            Var::Variable(mesh) => {
-                mesh.attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB).map_err(|_| {
-                    Error::InvalidParameter { name: "Missing mass attribute or parameter".to_string(), }
-                }).and_then(|attrib| {
+            Var::Variable(mesh) => mesh
+                .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
+                .map_err(|_| Error::InvalidParameter {
+                    name: "Missing mass attribute or parameter".to_string(),
+                })
+                .and_then(|attrib| {
                     if !attrib.iter().all(|&x| x > 0.0) {
                         Err(Error::InvalidParameter {
                             name: "Zero mass".to_string(),
@@ -204,8 +204,7 @@ impl PointContactConstraint {
                         let data: Chunked3<Vec<_>> = attrib.iter().map(|&x| [1.0 / x; 3]).collect();
                         Ok(MassData::Sparse(data))
                     }
-                })
-            }
+                }),
         }
     }
 
@@ -585,8 +584,8 @@ impl PointContactConstraint {
                 //
                 // TODO: Taking a Subset of a Subset should be a function within `Subset`.
                 MassMatrixInv::Sparse(DiagonalBlockMatrixBase::from_subset(
-                    Subset::from_unique_ordered_indices(
-                        active_contact_indices, mass_data.view())))
+                    Subset::from_unique_ordered_indices(active_contact_indices, mass_data.view()),
+                ))
             }
             MassData::Dense(mass, inertia) => {
                 if active_contact_indices.is_empty() {
@@ -596,13 +595,20 @@ impl PointContactConstraint {
                     let translation = rigid_motion[1].unwrap()[0];
                     let rotation = rigid_motion[1].unwrap()[1];
                     MassMatrixInv::Dense(
-                        TriMeshShell::rigid_effective_mass_inv(*mass,
-                                            translation, rotation, *inertia,
-                        Subset::from_unique_ordered_indices(active_contact_indices, query_points.view())),
-                        Chunked3::from_flat(vec![*mass; active_contact_indices.len()*3])
-                        )
+                        TriMeshShell::rigid_effective_mass_inv(
+                            *mass,
+                            translation,
+                            rotation,
+                            *inertia,
+                            Subset::from_unique_ordered_indices(
+                                active_contact_indices,
+                                query_points.view(),
+                            ),
+                        ),
+                        Chunked3::from_flat(vec![*mass; active_contact_indices.len() * 3]),
+                    )
                 }
-            },
+            }
             MassData::Zero => MassMatrixInv::Zero,
         };
 
@@ -610,20 +616,22 @@ impl PointContactConstraint {
 
         match &self.object_mass_data {
             MassData::Sparse(object_mass_data) => {
-                let object_mass_inv = DiagonalBlockMatrixBase::from_uniform(object_mass_data.view());
+                let object_mass_inv =
+                    DiagonalBlockMatrixBase::from_uniform(object_mass_data.view());
                 jac_mass *= object_mass_inv.view();
             }
-            MassData::Dense(mass,_) => {
+            MassData::Dense(mass, _) => {
                 // TODO: Implement jac_mass *= object_mass_data.view();
-                jac_mass *= DiagonalBlockMatrixBase::from_subset(
-                    Subset::all(Chunked3::from_flat(vec![*mass; active_contact_indices.len()*3])));
+                jac_mass *= DiagonalBlockMatrixBase::from_subset(Subset::all(Chunked3::from_flat(
+                    vec![*mass; active_contact_indices.len() * 3],
+                )));
             }
             MassData::Zero => {
                 match collider_mass_inv {
                     MassMatrixInv::Sparse(mass_inv) => {
                         let data = DiagonalBlockMatrixBase::from_subset(mass_inv.0.into_owned());
                         return Some(data.into());
-                    },
+                    }
                     MassMatrixInv::Dense(_, mass_data) => {
                         // For now we will use the decoupled jacobian. This is needed here until rigid
                         // to rigid can be solved properly. Currently The singularity in the
@@ -631,7 +639,7 @@ impl PointContactConstraint {
                         // different solver.
                         return Some(DiagonalBlockMatrixBase::from_uniform(mass_data).into());
                         //return Some(mass_inv.into());
-                    },
+                    }
                     MassMatrixInv::Zero => return None,
                 }
             }
@@ -640,17 +648,18 @@ impl PointContactConstraint {
         let object_mass_inv = jac_mass.view() * jac.view().transpose();
 
         Some(match collider_mass_inv {
-            MassMatrixInv::Sparse(collider_mass_inv) =>
-                object_mass_inv.view() + collider_mass_inv,
+            MassMatrixInv::Sparse(collider_mass_inv) => object_mass_inv.view() + collider_mass_inv,
             MassMatrixInv::Dense(_collider_mass_inv, mass_data) => {
                 // TODO: implement addition collider_mass_inv + object_mass_inv.view(),
-                object_mass_inv.view() +
-                        DiagonalBlockMatrixBase::from_uniform(mass_data).view()
+                object_mass_inv.view() + DiagonalBlockMatrixBase::from_uniform(mass_data).view()
             }
-            MassMatrixInv::Zero =>
-                object_mass_inv.view() +
-                DiagonalBlockMatrixBase::from_uniform(
-                    Chunked3::from_flat(vec![0.0; 3*object_mass_inv.num_rows()])).view()
+            MassMatrixInv::Zero => {
+                object_mass_inv.view()
+                    + DiagonalBlockMatrixBase::from_uniform(Chunked3::from_flat(
+                        vec![0.0; 3 * object_mass_inv.num_rows()],
+                    ))
+                    .view()
+            }
         })
     }
 
@@ -936,8 +945,8 @@ impl ContactConstraint for PointContactConstraint {
                 [0.0; 3], // Previous impulse for unmatched contacts.
                 collider_impulse.selection().index_iter().cloned(),
                 active_contact_indices.iter().cloned(),
-                )
-                .collect()
+            )
+            .collect()
         } else {
             Chunked3::from_array_vec(vec![[0.0; 3]; active_contact_indices.len()])
         };
@@ -987,29 +996,29 @@ impl ContactConstraint for PointContactConstraint {
                     let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
                     r.tangent
                 })
-            .collect();
+                .collect();
             for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
                 predictor_impulse_t.iter(),
                 orig_contact_impulse_n.iter(),
                 friction_impulse.iter_mut()
             )
-                .enumerate()
-                {
-                    let r_t = if pred_r_t.radius > 0.0 {
-                        Polar2 {
-                            radius: params.dynamic_friction * cr.abs(),
-                            angle: crate::friction::polar_solver::negate_angle(pred_r_t.angle),
-                        }
-                    } else {
-                        Polar2 {
-                            radius: 0.0,
-                            angle: 0.0,
-                        }
-                    };
-                    *r_out = contact_basis
-                        .from_cylindrical_contact_coordinates(r_t.into(), aqi)
-                        .into();
-                }
+            .enumerate()
+            {
+                let r_t = if pred_r_t.radius > 0.0 {
+                    Polar2 {
+                        radius: params.dynamic_friction * cr.abs(),
+                        angle: crate::friction::polar_solver::negate_angle(pred_r_t.angle),
+                    }
+                } else {
+                    Polar2 {
+                        radius: 0.0,
+                        angle: 0.0,
+                    }
+                };
+                *r_out = contact_basis
+                    .from_cylindrical_contact_coordinates(r_t.into(), aqi)
+                    .into();
+            }
             true
         } else {
             let mut contact_impulse_n = smoothed_contact_impulse_n.clone();
@@ -1033,21 +1042,28 @@ impl ContactConstraint for PointContactConstraint {
                             log::debug!("Solving Friction");
 
                             match solver.step() {
-                                Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
+                                Ok(FrictionSolveResult {
+                                    solution: r_t,
+                                    iterations,
+                                    ..
+                                }) => {
                                     log::info!("Friction iteration count: {}", iterations);
-                                    friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
+                                    friction_impulse =
+                                        contact_basis.from_tangent_space(&r_t).collect();
                                 }
                                 Err(Error::FrictionSolveError {
                                     status: ipopt::SolveStatus::MaximumIterationsExceeded,
-                                    result: FrictionSolveResult {
-                                        solution: r_t,
-                                        iterations,
-                                        ..
-                                    }
+                                    result:
+                                        FrictionSolveResult {
+                                            solution: r_t,
+                                            iterations,
+                                            ..
+                                        },
                                 }) => {
                                     // This is not ideal, but the next outer iteration will hopefully fix this.
                                     log::warn!("Friction iterations exceeded: {}", iterations);
-                                    friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
+                                    friction_impulse =
+                                        contact_basis.from_tangent_space(&r_t).collect();
                                 }
                                 Err(err) => {
                                     log::error!("{}", err);
@@ -1060,7 +1076,6 @@ impl ContactConstraint for PointContactConstraint {
                             break false;
                         }
                     }
-
 
                     //match crate::friction::solver::FrictionSolver::new(
                     //    friction_predictor.view().into(),
@@ -1096,9 +1111,6 @@ impl ContactConstraint for PointContactConstraint {
                     //    }
                     //}
 
-
-
-
                     //println!("c_before: {:?}", contact_impulse_n);
                     let contact_predictor: Chunked3<Vec<f64>> =
                         (predictor_impulse.expr() - friction_impulse.expr()).eval();
@@ -1119,8 +1131,9 @@ impl ContactConstraint for PointContactConstraint {
                                 Ok(r_n) => {
                                     contact_impulse_n.copy_from_slice(&r_n);
                                     contact_impulse.clear();
-                                    contact_impulse
-                                        .extend(contact_basis.from_normal_space(&contact_impulse_n));
+                                    contact_impulse.extend(
+                                        contact_basis.from_normal_space(&contact_impulse_n),
+                                    );
                                 }
                                 Err(err) => {
                                     log::error!("Failed contact solve: {}", err);
@@ -1147,8 +1160,8 @@ impl ContactConstraint for PointContactConstraint {
                         .expr()
                         .dot((effective_mass_inv.view() * f_delta.view().into_tensor()).expr());
                     let rel_err_denominator: f64 = f_prev
-                            .expr()
-                            .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
+                        .expr()
+                        .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
 
                     if rel_err_denominator > 0.0 {
                         let rel_err = rel_err_numerator / rel_err_denominator;
@@ -1159,7 +1172,11 @@ impl ContactConstraint for PointContactConstraint {
                             break true;
                         }
                     } else if rel_err_numerator <= 0.0 {
-                        log::warn!("Friction relative error is NaN: num = {:?}, denom = {:?}", rel_err_numerator, rel_err_denominator);
+                        log::warn!(
+                            "Friction relative error is NaN: num = {:?}, denom = {:?}",
+                            rel_err_numerator,
+                            rel_err_denominator
+                        );
                         friction_steps = 0;
                         break true;
                     } else {
@@ -1221,7 +1238,8 @@ impl ContactConstraint for PointContactConstraint {
         //    + contact_impulse.expr()
         //    - prev_contact_impulse.expr()
         //    ).eval();
-        let forwarded_impulse: Chunked3<Vec<f64>> = (friction_impulse.expr() * params.friction_forwarding).eval();
+        let forwarded_impulse: Chunked3<Vec<f64>> =
+            (friction_impulse.expr() * params.friction_forwarding).eval();
         // Correct friction_impulse by subtracting previous friction impulse
         let impulse_corrector: Chunked3<Vec<f64>> = (friction_impulse.expr()
             //+ contact_impulse.expr()
@@ -1263,14 +1281,16 @@ impl ContactConstraint for PointContactConstraint {
                 match &self.object_mass_data {
                     MassData::Sparse(masses) => {
                         let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
-                        let corrector =
-                            Chunked3::from_flat(frictional_contact.object_impulse.view().into_flat().0);
+                        let corrector = Chunked3::from_flat(
+                            frictional_contact.object_impulse.view().into_flat().0,
+                        );
                         let add_vel = mass_mtx.view() * corrector.into_tensor();
                         *&mut object_vel.expr_mut() += add_vel.expr();
                     }
                     MassData::Dense(mass, _) => {
-                        let corrector =
-                            Chunked3::from_flat(frictional_contact.object_impulse.view().into_flat().0);
+                        let corrector = Chunked3::from_flat(
+                            frictional_contact.object_impulse.view().into_flat().0,
+                        );
                         //*&mut corrector.expr_mut() *= *mass;
                         //corrector.into_tensor()
                         *&mut object_vel.expr_mut() += corrector.expr() * *mass;
@@ -1287,28 +1307,27 @@ impl ContactConstraint for PointContactConstraint {
 
             let corrector = Chunked3::from_flat(
                 frictional_contact
-                .collider_impulse
-                .source()
-                .view()
-                .into_flat()
-                .0,
+                    .collider_impulse
+                    .source()
+                    .view()
+                    .into_flat()
+                    .0,
             );
 
             let mut out_vel = Subset::from_unique_ordered_indices(indices.as_slice(), collider_vel);
 
             match &self.collider_mass_data {
                 MassData::Sparse(masses) => {
-                    let collider_mass_inv =
-                        DiagonalBlockMatrixView::from_subset(Subset::from_unique_ordered_indices(
-                                indices.as_slice(),
-                                masses.view()));
+                    let collider_mass_inv = DiagonalBlockMatrixView::from_subset(
+                        Subset::from_unique_ordered_indices(indices.as_slice(), masses.view()),
+                    );
                     let add_vel = collider_mass_inv * corrector.into_tensor();
                     *&mut out_vel.expr_mut() += add_vel.expr();
                 }
                 MassData::Dense(mass, _) => {
                     *&mut out_vel.expr_mut() += corrector.expr() * *mass;
                 }
-                _ => {},
+                _ => {}
             }
         }
     }

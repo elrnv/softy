@@ -52,17 +52,15 @@ impl<T: Real> NeoHookeanTriEnergy<T> {
         n: Vector3<T>,
         mu: T,
         lambda: T,
-        alpha: T
+        alpha: T,
     ) -> [[Matrix2x3<T>; 3]; 3] {
         let F_inv: Matrix3x2<_> = F_inv_tr.transpose();
         let DX_inv_tr = self.DX_inv.transpose();
-        let dF = Matrix3x2::from_rows(
-            [
-                [T::one(), T::zero()].into(),
-                [T::zero(), T::one()].into(),
-                [-T::one(), -T::one()].into()
-            ]
-        ) * DX_inv_tr;
+        let dF = Matrix3x2::from_rows([
+            [T::one(), T::zero()].into(),
+            [T::zero(), T::one()].into(),
+            [-T::one(), -T::one()].into(),
+        ]) * DX_inv_tr;
 
         let FinvT_dFT: [[Matrix2<_>; 3]; 3] = [
             [
@@ -79,12 +77,11 @@ impl<T: Real> NeoHookeanTriEnergy<T> {
                 F_inv[0] * dF[2].transpose(),
                 F_inv[1] * dF[2].transpose(),
                 F_inv[2] * dF[2].transpose(),
-            ]
+            ],
         ];
 
         let dP = |x: usize, i: usize| {
-            let mut out =
-                FinvT_dFT[i][x] * F_inv_tr * alpha
+            let mut out = FinvT_dFT[i][x] * F_inv_tr * alpha
                 + F_inv_tr * (FinvT_dFT[i][x].trace() * lambda)
                 - ((C_inv_tr * dF[i] * n[x]) * alpha) * n.transpose();
 
@@ -94,21 +91,9 @@ impl<T: Real> NeoHookeanTriEnergy<T> {
         };
 
         [
-            [
-                dP(0,0),
-                dP(1,0),
-                dP(2,0),
-            ],
-            [
-                dP(0,1),
-                dP(1,1),
-                dP(2,1),
-            ],
-            [
-                dP(0,2),
-                dP(1,2),
-                dP(2,2),
-            ],
+            [dP(0, 0), dP(1, 0), dP(2, 0)],
+            [dP(0, 1), dP(1, 1), dP(2, 1)],
+            [dP(0, 2), dP(1, 2), dP(2, 2)],
         ]
     }
 }
@@ -583,13 +568,7 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
 
             let Dx = Matrix2x3::new(tri_x1.shape_matrix());
 
-            let tri_energy = E::new(
-                Dx,
-                DX_inv,
-                area,
-                lambda,
-                mu,
-            );
+            let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
 
             let grad = tri_energy.energy_gradient();
 

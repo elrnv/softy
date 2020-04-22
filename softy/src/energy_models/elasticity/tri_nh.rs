@@ -40,6 +40,77 @@ impl<T: Real> NeoHookeanTriEnergy<T> {
     fn deformation_gradient(&self) -> Matrix2x3<T> {
         self.DX_inv * self.Dx
     }
+
+    /// A helper function to compute the energy Hessian in the context of a single Hessian product
+    /// or the entire Hessian block.
+    #[allow(non_snake_case)]
+    #[inline]
+    fn stiffness_product_tensor(
+        &self,
+        F_inv_tr: Matrix2x3<T>,
+        C_inv_tr: Matrix2<T>,
+        n: Vector3<T>,
+        mu: T,
+        lambda: T,
+        alpha: T
+    ) -> [[Matrix2x3<T>; 3]; 3] {
+        let F_inv: Matrix3x2<_> = F_inv_tr.transpose();
+        let DX_inv_tr = self.DX_inv.transpose();
+        let dF = Matrix3x2::from_rows(
+            [
+                [T::one(), T::zero()].into(),
+                [T::zero(), T::one()].into(),
+                [-T::one(), -T::one()].into()
+            ]
+        ) * DX_inv_tr;
+
+        let FinvT_dFT: [[Matrix2<_>; 3]; 3] = [
+            [
+                F_inv[0] * dF[0].transpose(),
+                F_inv[1] * dF[0].transpose(),
+                F_inv[2] * dF[0].transpose(),
+            ],
+            [
+                F_inv[0] * dF[1].transpose(),
+                F_inv[1] * dF[1].transpose(),
+                F_inv[2] * dF[1].transpose(),
+            ],
+            [
+                F_inv[0] * dF[2].transpose(),
+                F_inv[1] * dF[2].transpose(),
+                F_inv[2] * dF[2].transpose(),
+            ]
+        ];
+
+        let dP = |x: usize, i: usize| {
+            let mut out =
+                FinvT_dFT[i][x] * F_inv_tr * alpha
+                + F_inv_tr * (FinvT_dFT[i][x].trace() * lambda)
+                - ((C_inv_tr * dF[i] * n[x]) * alpha) * n.transpose();
+
+            out[0][x] += dF[i][0] * mu;
+            out[1][x] += dF[i][1] * mu;
+            out
+        };
+
+        [
+            [
+                dP(0,0),
+                dP(1,0),
+                dP(2,0),
+            ],
+            [
+                dP(0,1),
+                dP(1,1),
+                dP(2,1),
+            ],
+            [
+                dP(0,2),
+                dP(1,2),
+                dP(2,2),
+            ],
+        ]
+    }
 }
 
 impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
@@ -130,31 +201,52 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     fn energy_hessian(&self) -> [[Matrix3<T>; 3]; 3] {
         let mut hess = [[Matrix3::zeros(); 3]; 3];
 
-        let mut tri_dx = Triangle(
-            [T::zero(); 3].into(),
-            [T::zero(); 3].into(),
-            [T::zero(); 3].into(),
-        );
+        let NeoHookeanTriEnergy {
+            DX_inv,
+            area,
+            lambda,
+            mu,
+            ..
+        } = *self;
+        let F = self.deformation_gradient();
+        let C = F * F.transpose();
+        let C_det = C.determinant();
+        if C_det > T::zero() {
+            let alpha = mu - lambda * T::from(0.5).unwrap() * C_det.ln();
 
-        for i in 0..3 {
-            // vertex
-            for row in 0..3 {
-                // component
-                tri_dx[i][row] = T::one();
-                let h = self.energy_hessian_product_transpose(&tri_dx);
-                for j in 0..2 {
-                    // vertex
-                    for col in 0..3 {
-                        // component
-                        if i > j || (i == j && row >= col) {
-                            hess[i][j][row][col] += h[j][col];
-                            if i == 2 {
-                                hess[i][2][row][col] -= h[j][col];
+            let C_inv_tr = C.inverse_transpose().unwrap();
+            let F_inv_tr: Matrix2x3<_> = C_inv_tr.transpose() * F;
+            let n = F[0].cross(F[1]).normalized();
+
+            let dP = self.stiffness_product_tensor(F_inv_tr, C_inv_tr, n, mu, lambda, alpha);
+
+            //let mut tri_dx = Triangle(
+            //    [T::zero(); 3].into(),
+            //    [T::zero(); 3].into(),
+            //    [T::zero(); 3].into(),
+            //);
+
+            for i in 0..3 {
+                // vertex
+                for row in 0..3 {
+                    //tri_dx[i][row] = T::one();
+                    let h = DX_inv.transpose() * dP[i][row] * area;
+                    //let h = self.energy_hessian_product_transpose(&tri_dx);
+                    for j in 0..2 {
+                        // vertex
+                        for col in 0..3 {
+                            // component
+                            if i > j || (i == j && row >= col) {
+                                hess[i][j][row][col] += h[j][col];
+                                if i == 2 {
+                                    hess[i][2][row][col] -= h[j][col];
+                                }
                             }
                         }
                     }
+
+                    //tri_dx[i][row] = T::zero();
                 }
-                tri_dx[i][row] = T::zero();
             }
         }
 
@@ -425,7 +517,6 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
             let prev_theta = T::from(prev_theta).unwrap();
             let theta = e.incremental_angle(prev_theta, pos1, trimesh.faces());
             let theta_strain = theta - T::from(ref_theta).unwrap();
-            log::debug!("shape = {}", ref_length);
             T::from(0.5 * ref_length * k).unwrap() * theta_strain * theta_strain
         })
         .sum();

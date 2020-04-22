@@ -2,7 +2,6 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
 use geo::mesh::builder::*;
 use implicits::{surface_from_polymesh, KernelType, Params, SampleType};
-use utils::*;
 
 fn potential_benchmark(c: &mut Criterion) {
     let params = Params {

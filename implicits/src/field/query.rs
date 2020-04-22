@@ -62,17 +62,18 @@ impl<T: Real> QueryTopo<T> {
                         base_radius,
                         kernel,
                         max_step,
-                        surf_base:
-                            ImplicitSurfaceBase {
-                                ref spatial_tree,
-                                ref surface_topo,
-                                ref dual_topo,
-                                sample_type,
-                                ..
-                            },
+                        ref surf_base,
                         ..
                     },
             } => {
+                let ImplicitSurfaceBase {
+                    spatial_tree,
+                    surface_topo,
+                    dual_topo,
+                    sample_type,
+                    ..
+                } = &**surf_base;
+
                 let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
                 debug!("Kernel radius: {}", radius);
                 let radius_ext = radius + num_traits::cast::<_, f64>(max_step).unwrap();
@@ -92,24 +93,17 @@ impl<T: Real> QueryTopo<T> {
                     closest_sample_query,
                     surface_topo,
                     dual_topo,
-                    sample_type,
+                    *sample_type,
                 )
             }
             QueryTopo::Global {
                 ref mut closest_samples,
-                surf:
-                    GlobalMLS {
-                        surf_base:
-                            ImplicitSurfaceBase {
-                                ref spatial_tree, ..
-                            },
-                        ..
-                    },
+                surf: GlobalMLS { ref surf_base, ..  },
                 ..
             } => neighbour_cache::compute_closest_set(
                 query_points,
                 |q| {
-                    spatial_tree
+                    surf_base.spatial_tree
                         .nearest_neighbor(&Vector3::new(q).cast::<f64>().into())
                         .expect("Empty spatial tree")
                 },

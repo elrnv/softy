@@ -334,7 +334,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         Sample<T>: rstar::RTreeObject,
     {
         if let KernelType::Hrbf = self.kernel {
-            let surf_base = self.build_base()?;
+            let surf_base = Box::new(self.build_base()?);
             return Some(ImplicitSurface::Hrbf(HrbfSurface { surf_base }));
         }
 
@@ -364,7 +364,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             }
         }
 
-        let surf_base = self.build_base()?;
+        let surf_base = Box::new(self.build_base()?);
         let base_radius = self.build_base_radius()?;
 
         match self.kernel {
@@ -392,7 +392,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         }
 
         if let KernelType::Global { .. } = self.kernel {
-            let surf_base = self.build_base()?;
+            let surf_base = Box::new(self.build_base()?);
             return Some(MLS::Global(GlobalMLS {
                 kernel: self.kernel.into(),
                 surf_base,

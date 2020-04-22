@@ -179,7 +179,7 @@ where
     /// 0.0.
     max_step: T,
 
-    surf_base: ImplicitSurfaceBase<T>,
+    surf_base: Box<ImplicitSurfaceBase<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -189,7 +189,7 @@ where
     T: Scalar,
 {
     kernel: GlobalKernel,
-    surf_base: ImplicitSurfaceBase<T>,
+    surf_base: Box<ImplicitSurfaceBase<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -198,7 +198,7 @@ pub struct HrbfSurface<T = f64>
 where
     T: Scalar,
 {
-    surf_base: ImplicitSurfaceBase<T>,
+    surf_base: Box<ImplicitSurfaceBase<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1154,12 +1154,15 @@ mod tests {
     #[test]
     fn size_test() -> Result<(), crate::Error> {
         use std::mem::size_of;
+        eprintln!("Vec<usize>: {}", size_of::<Vec<usize>>());
         eprintln!("MLS: {}", size_of::<MLS>());
         eprintln!("LocalMLS: {}", size_of::<LocalMLS>());
         eprintln!("GlobalMLS: {}", size_of::<GlobalMLS>());
         eprintln!("HrbfSurface: {}", size_of::<HrbfSurface>());
         eprintln!("ImplicitSurface: {}", size_of::<ImplicitSurface>());
+        eprintln!("ImplicitSurfaceBase: {}", size_of::<ImplicitSurfaceBase>());
         eprintln!("QueryTopo: {}", size_of::<QueryTopo>());
+        eprintln!("Neighbourhood: {}", size_of::<Neighbourhood>());
         Ok(())
     }
 
@@ -1445,7 +1448,7 @@ mod tests {
                 kernel: kernel.into(),
                 base_radius,
                 max_step,
-                surf_base: ImplicitSurfaceBase {
+                surf_base: Box::new(ImplicitSurfaceBase {
                     bg_field_params,
                     surface_topo,
                     surface_vertex_positions,
@@ -1453,7 +1456,7 @@ mod tests {
                     dual_topo,
                     sample_type,
                     spatial_tree,
-                },
+                }),
             })
         };
 

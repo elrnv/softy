@@ -98,12 +98,13 @@ impl<T: Real> QueryTopo<T> {
             }
             QueryTopo::Global {
                 ref mut closest_samples,
-                surf: GlobalMLS { ref surf_base, ..  },
+                surf: GlobalMLS { ref surf_base, .. },
                 ..
             } => neighbour_cache::compute_closest_set(
                 query_points,
                 |q| {
-                    surf_base.spatial_tree
+                    surf_base
+                        .spatial_tree
                         .nearest_neighbor(&Vector3::new(q).cast::<f64>().into())
                         .expect("Empty spatial tree")
                 },

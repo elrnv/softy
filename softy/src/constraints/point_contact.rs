@@ -564,9 +564,7 @@ impl PointContactConstraint {
         let jac_triplets =
             build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
         let jac: ContactJacobian = jac_triplets.into();
-        let jac = jac.pruned(|_, _, block| !block.is_zero());
-        //jac.write_img("./out/jac.png");
-        jac
+        jac.pruned(|_, _, block| !block.is_zero())
     }
 
     fn compute_effective_mass_inv(

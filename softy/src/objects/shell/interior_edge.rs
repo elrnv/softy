@@ -338,11 +338,11 @@ impl InteriorEdge {
         // Compute normals per unit area
         let an0nn = an0 / a0_squared;
         let an1nn = an1 / a1_squared;
-        let _2 = T::from(2.0).unwrap();
+        let two = T::from(2.0).unwrap();
         let dan0nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a0_squared))
-            - an0nn * an0nn.transpose() * _2;
+            - an0nn * an0nn.transpose() * two;
         let dan1nn = Matrix3::from_diag_iter(std::iter::repeat(T::one() / a1_squared))
-            - an1nn * an1nn.transpose() * _2;
+            - an1nn * an1nn.transpose() * two;
 
         let dn0de0 = (-e1).skew();
         let dn0de1 = (e0).skew();

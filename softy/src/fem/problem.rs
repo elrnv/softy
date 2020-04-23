@@ -442,144 +442,100 @@ impl ObjectData {
         }
     }
 
-    /// Split a given array into a pair of mutable views.
+    /// Split a given `VertexView` into a pair of views.
+    ///
     /// This works when contacts happen on two different objects, however
     /// if/when we implement self contact, this needs to be inspected carefully.
-    // TODO: Refactor this monstrosity
-    fn mesh_vertex_subset_split_mut_impl<'x, D: 'x, Alt>(
-        x: VertexView<'x, D>,
+    ///
+    /// `alt` is a source of vertex data for objects whose degrees of freedom do not lie on the
+    /// vertices of the mesh. For these objects, the values stored in `q` may not represent vertex
+    /// data.
+    //#[allow(clippy::many_single_char_names)]
+    fn mesh_vertex_subset_split_mut_impl<'q, D: 'q, Alt>(
+        q: VertexView<'q, D>,
         alt: Alt,
         source: [SourceIndex; 2],
-        solids: &'x [TetMeshSolid],
+        solids: &'q [TetMeshSolid],
         shells: &[TriMeshShell],
-    ) -> [MeshVertexView<'x, D>; 2]
+    ) -> [MeshVertexView<'q, D>; 2]
     where
         D: Set + RemovePrefix + SplitAt + std::fmt::Debug,
         std::ops::Range<usize>: IsolateIndex<D, Output = D>,
-        Alt: Into<Option<VertexView<'x, D>>>,
+        Alt: Into<Option<VertexView<'q, D>>>,
     {
-        match source[0] {
-            SourceIndex::Solid(i) => match source[1] {
-                SourceIndex::Solid(j) => {
+        // Closure to get data subview on the solid vertices.
+        let get_solid = |subview: ChunkedView<'q, D>, subview_idx: usize, solid_idx: usize| {
+            Subset::from_unique_ordered_indices(
+                solids[solid_idx].surface().indices.as_slice(),
+                subview.isolate(subview_idx),
+            )
+        };
+
+        let get_shell = |subview: ChunkedView<'q, D>, subview_idx: usize| {
+            Subset::all(subview.isolate(subview_idx))
+        };
+
+        match source {
+            [SourceIndex::Solid(i), SourceIndex::Solid(j)] => {
+                if i < j {
+                    let (q_l, q_r) = q.isolate(0).split_at(j);
+                    [get_solid(q_l, i, i), get_solid(q_r, 0, j)]
+                } else {
+                    assert_ne!(i, j); // This needs special handling for self contact.
+                    let (q_l, q_r) = q.isolate(0).split_at(i);
+                    [get_solid(q_r, 0, i), get_solid(q_l, j, j)]
+                }
+            }
+            [SourceIndex::Solid(i), SourceIndex::Shell(j)] => {
+                let alt = alt.into();
+                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
+                    let (q_l, q_r) = q.split_at(1);
+                    [
+                        get_solid(q_l.isolate(0), i, i),
+                        get_shell(q_r.isolate(0), j),
+                    ]
+                } else {
+                    let alt = alt.unwrap(); // Checked i nthe if statement.
+                    [get_solid(q.isolate(0), i, i), get_shell(alt.isolate(1), j)]
+                }
+            }
+            [SourceIndex::Shell(i), SourceIndex::Solid(j)] => {
+                let alt = alt.into();
+                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
+                    let (q_l, q_r) = q.split_at(1);
+                    [
+                        get_shell(q_r.isolate(0), i),
+                        get_solid(q_l.isolate(0), j, j),
+                    ]
+                } else {
+                    let alt = alt.unwrap(); // Checked i nthe if statement.
+                    [get_shell(alt.isolate(1), i), get_solid(q.isolate(0), j, j)]
+                }
+            }
+            [SourceIndex::Shell(i), SourceIndex::Shell(j)] => {
+                let alt = alt.into();
+                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
                     if i < j {
-                        let (l, r) = x.isolate(0).split_at(j);
-                        [
-                            Subset::from_unique_ordered_indices(
-                                &solids[i].surface().indices,
-                                l.isolate(i),
-                            ),
-                            Subset::from_unique_ordered_indices(
-                                &solids[j].surface().indices,
-                                r.isolate(0),
-                            ),
-                        ]
+                        let (q_l, q_r) = q.isolate(1).split_at(j);
+                        [get_shell(q_l, i), get_shell(q_r, 0)]
                     } else {
                         assert_ne!(i, j); // This needs special handling for self contact.
-                        let (l, r) = x.isolate(0).split_at(i);
-                        [
-                            Subset::from_unique_ordered_indices(
-                                &solids[i].surface().indices,
-                                r.isolate(0),
-                            ),
-                            Subset::from_unique_ordered_indices(
-                                &solids[j].surface().indices,
-                                l.isolate(j),
-                            ),
-                        ]
+                        let (q_l, q_r) = q.isolate(1).split_at(i);
+                        [get_shell(q_r, 0), get_shell(q_l, j)]
                     }
-                }
-                SourceIndex::Shell(j) => {
-                    // Determine source data.
-                    let x = match shells[j].data {
-                        ShellData::Soft { .. } => x,
-                        _ => match alt.into() {
-                            Some(alt) => {
-                                return [
-                                    Subset::from_unique_ordered_indices(
-                                        &solids[i].surface().indices,
-                                        x.isolate(0).isolate(i),
-                                    ),
-                                    Subset::all(alt.isolate(1).isolate(j)),
-                                ];
-                            }
-                            None => x,
-                        },
-                    };
-
-                    let (l, r) = x.split_at(1);
-                    [
-                        Subset::from_unique_ordered_indices(
-                            &solids[i].surface().indices,
-                            l.isolate(0).isolate(i),
-                        ),
-                        Subset::all(r.isolate(0).isolate(j)),
-                    ]
-                }
-            },
-            SourceIndex::Shell(i) => {
-                // Determine source data.
-                let x = match shells[i].data {
-                    ShellData::Soft { .. } => x,
-                    _ => match alt.into() {
-                        Some(alt) => {
-                            return match source[1] {
-                                SourceIndex::Solid(j) => [
-                                    Subset::all(alt.isolate(1).isolate(i)),
-                                    Subset::from_unique_ordered_indices(
-                                        &solids[j].surface().indices,
-                                        x.isolate(0).isolate(j),
-                                    ),
-                                ],
-                                SourceIndex::Shell(j) => {
-                                    return match shells[j].data {
-                                        ShellData::Soft { .. } => [
-                                            Subset::all(alt.isolate(1).isolate(i)),
-                                            Subset::all(x.isolate(1).isolate(j)),
-                                        ],
-                                        _ => {
-                                            // Both non-deformable shells.
-                                            if i < j {
-                                                let (l, r) = alt.isolate(1).split_at(j);
-                                                [
-                                                    Subset::all(l.isolate(i)),
-                                                    Subset::all(r.isolate(0)),
-                                                ]
-                                            } else {
-                                                assert_ne!(i, j); // This needs special handling for self contact.
-                                                let (l, r) = alt.isolate(1).split_at(i);
-                                                [
-                                                    Subset::all(r.isolate(0)),
-                                                    Subset::all(l.isolate(j)),
-                                                ]
-                                            }
-                                        }
-                                    };
-                                }
-                            };
-                        }
-                        None => x,
-                    },
-                };
-
-                match source[1] {
-                    SourceIndex::Solid(j) => {
-                        let (l, r) = x.split_at(1);
-                        [
-                            Subset::all(r.isolate(0).isolate(i)),
-                            Subset::from_unique_ordered_indices(
-                                &solids[j].surface().indices,
-                                l.isolate(0).isolate(j),
-                            ),
-                        ]
-                    }
-                    SourceIndex::Shell(j) => {
+                } else {
+                    let alt = alt.unwrap(); // Checked in the if statement.
+                    if matches!(shells[j].data, ShellData::Soft { .. }) {
+                        [get_shell(alt.isolate(1), i), get_shell(q.isolate(1), j)]
+                    } else {
+                        // Both non-deformable shells.
                         if i < j {
-                            let (l, r) = x.isolate(1).split_at(j);
-                            [Subset::all(l.isolate(i)), Subset::all(r.isolate(0))]
+                            let (alt_l, alt_r) = alt.isolate(1).split_at(j);
+                            [get_shell(alt_l, i), get_shell(alt_r, 0)]
                         } else {
                             assert_ne!(i, j); // This needs special handling for self contact.
-                            let (l, r) = x.isolate(1).split_at(i);
-                            [Subset::all(r.isolate(0)), Subset::all(l.isolate(j))]
+                            let (alt_l, alt_r) = alt.isolate(1).split_at(i);
+                            [get_shell(alt_r, 0), get_shell(alt_l, j)]
                         }
                     }
                 }

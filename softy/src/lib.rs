@@ -45,104 +45,87 @@ pub use attrib_defines::*;
 
 pub use implicits::KernelType;
 
-use snafu::Snafu;
+use thiserror::Error;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Error)]
 pub enum Error {
-    /// Size mismatch error
+    #[error("Size mismatch error")]
     SizeMismatch,
-    #[snafu(display("Attribute error: {:?}", source))]
+    #[error("Attribute error: {source:?}")]
     AttribError {
+        #[from]
         source: attrib::Error,
     },
-    #[snafu(display("Degenerate reference element detected: {:?}", degens[0]))]
+    #[error("Degenerate reference element detected: {:?}", .degens[0])]
     DegenerateReferenceElement {
         // Degens from Upcountry.
         // Look, keep it at the end of the laneway. No degens on the property.
         degens: Vec<usize>,
     },
-    /// Inverted reference element detected
-    InvertedReferenceElement {
-        inverted: Vec<usize>,
-    },
-    /// Error during main solve step. This reports iterations, objective value and max inner
-    /// iterations.
+    #[error("Inverted reference element detected")]
+    InvertedReferenceElement { inverted: Vec<usize> },
+    #[error("Error during main solve step")]
+    /// This reports iterations, objective value and max inner iterations.
     SolveError {
         status: ipopt::SolveStatus,
         result: SolveResult,
     },
-    /// Error during an inner solve step. This reports iterations and objective value.
+    #[error("Error during an inner solve step")]
+    /// This reports iterations and objective value.
     InnerSolveError {
         status: ipopt::SolveStatus,
         objective_value: f64,
         iterations: u32,
     },
-    #[snafu(display("Friction solve error: {:?}", status))]
+    #[error("Friction solve error: {:?}", .status)]
     FrictionSolveError {
         status: ipopt::SolveStatus,
         result: FrictionSolveResult,
     },
-    ContactSolveError {
-        status: ipopt::SolveStatus,
-    },
+    #[error("Contact solve error: {:?}", .status)]
+    ContactSolveError { status: ipopt::SolveStatus },
+    #[error("Solver create error")]
     SolverCreateError {
+        #[from]
         source: ipopt::CreateError,
     },
-    InvalidParameter {
-        name: String,
-    },
+    #[error("Invalid parameter: {name:?}")]
+    InvalidParameter { name: String },
+    #[error("Missing source index")]
     MissingSourceIndex,
+    #[error("Missing elasticity parameters")]
     MissingElasticityParams,
+    #[error("Missing contact parameters")]
     MissingContactParams,
+    #[error("Missing contact constraint")]
     MissingContactConstraint,
+    #[error("No simulation mesh found")]
     NoSimulationMesh,
+    #[error("No kinematic mesh found")]
     NoKinematicMesh,
-    /// Incorrect object is used for the given material. This may be an internal error.
+    #[error("Incorrect object is used for the given material")]
+    /// This may be an internal error.
     ObjectMaterialMismatch,
-    /// Error during mesh IO. Typically during debugging.
+    #[error("Error during mesh IO")]
+    /// Typically happens during debugging
     MeshIOError {
+        #[from]
         source: geo::io::Error,
     },
+    #[error("File I/O Error")]
     FileIOError {
+        #[from]
         source: std::io::Error,
     },
+    #[error("File I/O Error")]
     InvalidImplicitSurface,
+    #[error("Eror generating the implicit field")]
     ImplicitsError {
+        #[from]
         source: implicits::Error,
     },
-    UnimplementedFeature {
-        description: String,
-    },
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Error {
-        Error::FileIOError { source: err }
-    }
-}
-
-impl From<geo::io::Error> for Error {
-    fn from(err: geo::io::Error) -> Error {
-        Error::MeshIOError { source: err }
-    }
-}
-
-impl From<ipopt::CreateError> for Error {
-    fn from(err: ipopt::CreateError) -> Error {
-        Error::SolverCreateError { source: err }
-    }
-}
-
-impl From<attrib::Error> for Error {
-    fn from(err: attrib::Error) -> Error {
-        Error::AttribError { source: err }
-    }
-}
-
-impl From<implicits::Error> for Error {
-    fn from(err: implicits::Error) -> Error {
-        Error::ImplicitsError { source: err }
-    }
+    #[error("Unimplemented feature: {description:?}")]
+    UnimplementedFeature { description: String },
 }
 
 pub enum SimResult {

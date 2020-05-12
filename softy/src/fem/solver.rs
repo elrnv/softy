@@ -306,7 +306,8 @@ impl SolverBuilder {
         {
             // Get previous position vector from the tetmesh.
             prev_x.push(mesh.vertex_positions().to_vec());
-            prev_v.push(mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
+            prev_v
+                .push(mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
             pos.push(vec![]);
             vel.push(vec![]);
         }
@@ -319,7 +320,7 @@ impl SolverBuilder {
             match data {
                 ShellData::Rigid { cm, .. } => {
                     let mesh_vel =
-                        mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                        mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
 
                     let mesh_pos = mesh.vertex_positions();
 
@@ -373,7 +374,7 @@ impl SolverBuilder {
                 ShellData::Soft { .. } => {
                     prev_x.push(mesh.vertex_positions().to_vec());
                     let mesh_prev_vel =
-                        mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                        mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
                     prev_v.push(mesh_prev_vel);
                     pos.push(vec![]);
                     vel.push(vec![]);
@@ -383,7 +384,7 @@ impl SolverBuilder {
                     prev_v.push(vec![]);
                     pos.push(mesh.vertex_positions().to_vec());
                     let mesh_vel =
-                        mesh.attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
+                        mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
                     vel.push(mesh_vel);
                 }
             }

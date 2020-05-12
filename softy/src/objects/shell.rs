@@ -449,7 +449,7 @@ impl TriMeshShell {
             let attrib = self
                 .mesh_mut()
                 .attrib_or_add::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB, 0.0)?;
-            crate::objects::scale_param(scale, attrib.iter_mut::<BendingStiffnessType>()?);
+            crate::objects::scale_param(scale, attrib.direct_iter_mut::<BendingStiffnessType>()?);
         }
 
         let mesh = self.mesh();

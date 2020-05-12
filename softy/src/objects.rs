@@ -108,15 +108,16 @@ pub trait DynamicObject: Object {
             let fixed_buf = mesh
                 .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
                 .unwrap_or_else(|_| {
-                    Attribute::from_vec(vec![0 as FixedIntType; mesh.num_vertices()])
+                    Attribute::direct_from_vec(vec![0 as FixedIntType; mesh.num_vertices()])
                 })
-                .into_buffer();
-            let mut fixed = fixed_buf.cast_into_vec::<FixedIntType>();
-            if fixed.is_empty() {
-                // If non-numeric type detected, just fill it with zeros.
-                fixed.resize(mesh.num_vertices(), 0);
-            }
-            mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::from_vec(fixed))?;
+                .into_data();
+            let fixed = fixed_buf
+                .cast_into_vec::<FixedIntType>()
+                .unwrap_or_else(|| {
+                    // If non-numeric type detected, just fill it with zeros.
+                    vec![0; mesh.num_vertices()]
+                });
+            mesh.insert_attrib::<VertexIndex>(FIXED_ATTRIB, Attribute::direct_from_vec(fixed))?;
         }
 
         Ok(())

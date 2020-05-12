@@ -43,7 +43,7 @@ fn compute_contact_constraint(
         .expect("Failed to compute constraint value");
 
     let pot_attrib = trimesh_copy
-        .attrib_clone_into_vec::<f32, VertexIndex>("potential")
+        .direct_attrib_clone_into_vec::<f32, VertexIndex>("potential")
         .expect("Potential attribute doesn't exist");
 
     {

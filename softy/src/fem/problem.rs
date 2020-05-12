@@ -1968,7 +1968,7 @@ impl NonLinearProblem {
             .remove_attrib::<FaceIndex>(STRAIN_ENERGY_ATTRIB)
             .unwrap();
         strain
-            .iter_mut::<f64>()
+            .direct_iter_mut::<f64>()
             .unwrap()
             .zip(zip!(
                 mesh.attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
@@ -2055,7 +2055,7 @@ impl NonLinearProblem {
             .remove_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB)
             .unwrap();
         strain
-            .iter_mut::<f64>()
+            .direct_iter_mut::<f64>()
             .unwrap()
             .zip(zip!(
                 solid

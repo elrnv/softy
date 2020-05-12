@@ -133,7 +133,7 @@ impl From<&TetMesh> for TetMeshSurface {
         let mut indices = trimesh
             .remove_attrib::<VertexIndex>(TETMESH_VERTEX_INDEX_ATTRIB)
             .expect("Failed to map indices.")
-            .into_buffer()
+            .into_data()
             .into_vec::<TetMeshVertexIndexType>()
             .expect("Incorrect index type: not usize");
 

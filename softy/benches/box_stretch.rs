@@ -15,7 +15,7 @@ fn box_stretch(c: &mut Criterion) {
 
     let const_volume_stretch_material = stretch_material().with_volume_preservation(true);
 
-    for i in (2..20).step_by(4) {
+    for i in (2..18).step_by(4) {
         let box_mesh = make_stretched_box(i);
 
         group.bench_function(BenchmarkId::new("Simple", i), |b| {

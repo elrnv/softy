@@ -2,7 +2,6 @@
 #include <UT/UT_DSOVersion.h>
 
 #include <GU/GU_Detail.h>
-#include <GU/GU_PrimVolume.h>
 #include <GEO/GEO_AttributeHandle.h>
 #include <GEO/GEO_IOTranslator.h>
 #include <UT/UT_IStream.h>
@@ -13,6 +12,7 @@
 #include <hdkrs/mesh.h>
 #include <iostream>
 
+#include "add_mesh_visitor.h"
 #include "GEO_VtkIO.h"
 
 using namespace hdkrs;
@@ -44,31 +44,9 @@ GEO_VtkIO::checkMagicNumber(unsigned magic)
     return 0;
 }
 
-struct AddMesh : public boost::static_visitor<bool>
-{
-    AddMesh(GEO_Detail* detail) : detail(static_cast<GU_Detail*>(detail)) {}
-    bool operator()( OwnedPtr<HR_TetMesh> tetmesh ) const
-    {
-        mesh::add_tetmesh(detail, std::move(tetmesh));
-        return true;
-    }
-    bool operator()( OwnedPtr<HR_PolyMesh> polymesh ) const
-    {
-        mesh::add_polymesh(detail, std::move(polymesh));
-        return true;
-    }
-    bool operator()( boost::blank nothing ) const
-    {
-        return false;
-    }
-
-    GU_Detail* detail;
-};
-
 GA_Detail::IOStatus
 GEO_VtkIO::fileLoad(GEO_Detail *detail, UT_IStream &is, bool)
 {
-    using namespace hdkrs;
     if (!detail) // nothing to do
         return GA_Detail::IOStatus(true);
 
@@ -116,7 +94,8 @@ GEO_VtkIO::fileSave(const GEO_Detail *detail, std::ostream &os)
     return GA_Detail::IOStatus(false);
 }
 
-void newGeometryIO(void *)
+void
+newGeometryIO(void *)
 {
     GU_Detail::registerIOTranslator(new GEO_VtkIO());
     UT_ExtensionList *geoextension;

@@ -45,6 +45,7 @@ set( library_name vtkio )
 add_library( ${library_name} SHARED
   src/GEO_VtkIO.C
   src/GEO_VtkIO.h
+  src/add_mesh_visitor.h
 )
 
 # Link against the Houdini libraries, and add required include directories and

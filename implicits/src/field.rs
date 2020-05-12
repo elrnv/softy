@@ -386,27 +386,31 @@ impl<T: Real> MLS<T> {
         let potential_attrib = mesh
             .remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+            .unwrap_or_else(|| Attribute::direct_from_vec(vec![0.0f32; mesh.num_vertices()]));
 
-        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
-        if potential.is_empty() {
-            // Couldn't cast, which means potential is of some non-numeric type.
-            // We overwrite it because we need that attribute spot.
-            potential = vec![0.0f32; mesh.num_vertices()];
-        }
+        let mut potential = potential_attrib
+            .into_data()
+            .cast_into_vec::<f32>()
+            .unwrap_or_else(|| {
+                // Couldn't cast, which means potential is of some non-numeric type.
+                // We overwrite it because we need that attribute spot.
+                vec![0.0f32; mesh.num_vertices()]
+            });
 
         // Alternative potential for prototyping
         let alt_potential_attrib = mesh
             .remove_attrib::<VertexIndex>("alt_potential")
             .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+            .unwrap_or_else(|| Attribute::direct_from_vec(vec![0.0f32; mesh.num_vertices()]));
 
-        let mut alt_potential = alt_potential_attrib.into_buffer().cast_into_vec::<f32>();
-        if alt_potential.is_empty() {
-            // Couldn't cast, which means potential is of some non-numeric type.
-            // We overwrite it because we need that attribute spot.
-            alt_potential = vec![0.0f32; mesh.num_vertices()];
-        }
+        let mut alt_potential = alt_potential_attrib
+            .into_data()
+            .cast_into_vec::<f32>()
+            .unwrap_or_else(|| {
+                // Couldn't cast, which means potential is of some non-numeric type.
+                // We overwrite it because we need that attribute spot.
+                vec![0.0f32; mesh.num_vertices()]
+            });
 
         // Overwrite these attributes.
         mesh.remove_attrib::<VertexIndex>("normals").ok();
@@ -728,14 +732,16 @@ impl<T: Real> ImplicitSurface<T> {
         let potential_attrib = mesh
             .remove_attrib::<VertexIndex>("potential")
             .ok() // convert to option (None when it doesn't exist)
-            .unwrap_or_else(|| Attribute::from_vec(vec![0.0f32; mesh.num_vertices()]));
+            .unwrap_or_else(|| Attribute::direct_from_vec(vec![0.0f32; mesh.num_vertices()]));
 
-        let mut potential = potential_attrib.into_buffer().cast_into_vec::<f32>();
-        if potential.is_empty() {
-            // Couldn't cast, which means potential is of some non-numeric type.
-            // We overwrite it because we need that attribute spot.
-            potential = vec![0.0f32; mesh.num_vertices()];
-        }
+        let mut potential = potential_attrib
+            .into_data()
+            .cast_into_vec::<f32>()
+            .unwrap_or_else(|| {
+                // Couldn't cast, which means potential is of some non-numeric type.
+                // We overwrite it because we need that attribute spot.
+                vec![0.0f32; mesh.num_vertices()]
+            });
 
         let Samples {
             ref points,

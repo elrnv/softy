@@ -14,8 +14,8 @@ pub mod field;
 
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
-use snafu::Snafu;
 use tensr::Real;
+use thiserror::Error;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {
@@ -116,23 +116,25 @@ pub fn mls_from_polymesh<T: Real>(
     mls_from_trimesh::<T>(&surf_trimesh, params)
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Error)]
 pub enum Error {
-    /// Computation was interrupted.
+    #[error("computation was interrupted")]
     Interrupted,
-    /// Normals are either missing or have the wrong type.
+    #[error("normals are either missing or have the wrong type")]
     MissingNormals,
-    /// Unsupported kernel is specified.
+    #[error("unsupported kernel is specified")]
     UnsupportedKernel,
-    /// Unsupported sample type is specified.
+    #[error("unsupported sample type is specified")]
     UnsupportedSampleType,
-    /// Missing neighbour data.
+    #[error("missing neighbour data")]
     MissingNeighbourData,
-    /// Invalid background field construction.
+    #[error("invalid background field construction")]
     InvalidBackgroundConstruction,
-    /// Failed to compute implicit surface.
+    #[error("failed to compute implicit surface")]
     Failure,
+    #[error("IO error")]
     IO {
+        #[from]
         source: geo::io::Error,
     },
 }
@@ -143,12 +145,6 @@ impl From<attrib::Error> for Error {
             attrib::Error::TypeMismatch { .. } => Error::MissingNormals,
             _ => Error::Failure,
         }
-    }
-}
-
-impl From<geo::io::Error> for Error {
-    fn from(err: geo::io::Error) -> Self {
-        Error::IO { source: err }
     }
 }
 

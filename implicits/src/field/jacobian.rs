@@ -2117,7 +2117,7 @@ mod tests {
         ImplicitSurface::MLS(query_surf.into_surf())
             .compute_potential_on_mesh(&mut ptcld, || false)?;
         let result_attrib = ptcld.remove_attrib::<VertexIndex>("tangents")?;
-        let tangents_vec = result_attrib.clone_into_vec()?;
+        let tangents_vec = result_attrib.into_data().clone_into_vec().unwrap();
         let result2: [f32; 3] = tangents_vec[0];
 
         for i in 0usize..3 {

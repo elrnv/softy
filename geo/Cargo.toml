@@ -5,4 +5,4 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-gut = { version = "0.5", features = ["io", "serde_all"] }
+gut = { version = "0.5", features = ["io", "serde_all", "async-attribs"] }

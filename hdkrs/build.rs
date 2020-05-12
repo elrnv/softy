@@ -22,6 +22,8 @@ fn main() {
     config.include_guard = Some(String::from("HDKRS_CAPI_H"));
     config.line_length = 80;
     config.tab_width = 4;
+    config.cpp_compat = true;
+    config.namespace = Some(String::from("hdkrs"));
     config.language = cbindgen::Language::Cxx;
 
     cbindgen::generate_with_config(&crate_dir, config)
@@ -35,7 +37,8 @@ fn main() {
                 let header = src.file_name().unwrap();
                 let dst = target_dir.join(Path::new(&header));
                 println!("copying {:?} to {:?}", src, dst);
-                fs::copy(&src, &dst).expect(&format!("Failed to copy header {:?}", header));
+                fs::copy(&src, &dst)
+                    .unwrap_or_else(|_| panic!("Failed to copy header {:?}", header));
             }
             Err(e) => println!("{:?}", e),
         }
@@ -45,20 +48,20 @@ fn main() {
 
     let cmake_target = target_dir.parent().unwrap().join("cmake");
     if !cmake_target.is_dir() {
-        fs::create_dir(&cmake_target).expect(&format!(
-            "Failed to create target directory for cmake config files: {:?}",
-            cmake_target
-        ));
+        fs::create_dir(&cmake_target).unwrap_or_else(|_| {
+            panic!(
+                "Failed to create target directory for cmake config files: {:?}",
+                cmake_target
+            )
+        });
     }
 
     let cmake_config_file = PathBuf::from("hdkrsConfig.cmake");
     let dst = cmake_target.join(&cmake_config_file);
     let src = PathBuf::from(crate_dir).join(&cmake_config_file);
     println!("copying {:?} to {:?}", src, dst);
-    fs::copy(&src, &dst).expect(&format!(
-        "Failed to copy cmake config {:?}",
-        cmake_config_file
-    ));
+    fs::copy(&src, &dst)
+        .unwrap_or_else(|_| panic!("Failed to copy cmake config {:?}", cmake_config_file));
 }
 
 fn target_dir(package_name: &str) -> PathBuf {
@@ -70,10 +73,8 @@ fn target_dir(package_name: &str) -> PathBuf {
     }
     let target_dir = target_dir.join(package_name.to_string());
     if !target_dir.is_dir() {
-        fs::create_dir(&target_dir).expect(&format!(
-            "Failed to create target directory: {:?}",
-            target_dir
-        ));
+        fs::create_dir(&target_dir)
+            .unwrap_or_else(|_| panic!("Failed to create target directory: {:?}", target_dir));
     }
 
     target_dir

@@ -3,9 +3,13 @@
 #![allow(non_snake_case)]
 
 use gut::io::{
-    convert_pointcloud_to_vtk_format, convert_polymesh_to_vtk_format,
-    convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh, convert_vtk_dataset_to_tetmesh,
-    vtk::parser::parse_be as parse_vtk, vtk::writer::WriteVtk,
+    obj::*,
+    vtk::{
+        convert_pointcloud_to_vtk_format, convert_polymesh_to_vtk_format,
+        convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
+        convert_vtk_dataset_to_tetmesh, model::Vtk, parser::parse_be as parse_vtk,
+        writer::WriteVtk,
+    },
 };
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
 use gut::{self, NumCells, NumFaces};
@@ -367,11 +371,13 @@ macro_rules! impl_supported_sizes {
 
 macro_rules! cast_to_vec {
     ($type:ident, $data:ident) => {
-        (*$data).clone_into_vec::<$type>().unwrap_or(Vec::new())
+        (*$data)
+            .direct_clone_into_vec::<$type>()
+            .unwrap_or(Vec::new())
     };
     ($type:ident, $data:ident, $tuple_size:expr) => {
         (*$data)
-            .clone_into_vec::<[$type; $tuple_size]>()
+            .direct_clone_into_vec::<[$type; $tuple_size]>()
             .unwrap_or(Vec::new())
             .iter()
             .flat_map(|x| x.iter().cloned())
@@ -380,7 +386,7 @@ macro_rules! cast_to_vec {
 }
 
 fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> HRDataType {
-    match attrib.element_type_id() {
+    match attrib.data.element_type_id() {
         x if impl_supported_types!(
             x, i8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         ) =>
@@ -422,7 +428,7 @@ fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> HRDataType {
 }
 
 fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
-    let tuple_size = match attrib.element_type_id() {
+    let tuple_size = match attrib.data.element_type_id() {
         x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, String) => 1,
         x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64, String) => 1,
         x if impl_supported_sizes!(x, 2, i8, i32, i64, f32, f64, String) => 2,
@@ -1240,6 +1246,46 @@ pub struct HR_ByteBuffer {
     size: usize,
 }
 
+impl Default for HR_ByteBuffer {
+    fn default() -> Self {
+        HR_ByteBuffer {
+            data: std::ptr::null(),
+            size: 0,
+        }
+    }
+}
+
+impl From<Vec<u8>> for HR_ByteBuffer {
+    fn from(v: Vec<u8>) -> Self {
+        let boxed_data = v.into_boxed_slice();
+        let size = boxed_data.len();
+
+        HR_ByteBuffer {
+            data: Box::into_raw(boxed_data) as *const c_char,
+            size,
+        }
+    }
+}
+
+impl From<Vtk> for HR_ByteBuffer {
+    fn from(vtk: Vtk) -> Self {
+        let mut vec_data = Vec::<u8>::new();
+        vec_data
+            .write_vtk_be(vtk)
+            .expect("Failed to write Vtk data to byte buffer");
+        vec_data.into()
+    }
+}
+
+impl From<ObjData> for HR_ByteBuffer {
+    fn from(obj: ObjData) -> Self {
+        let mut vec_data = Vec::<u8>::new();
+        obj.write_to_buf(&mut vec_data)
+            .expect("Failed to write Obj data to byte buffer");
+        vec_data.into()
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn hr_free_byte_buffer(buf: HR_ByteBuffer) {
     if !buf.data.is_null() && buf.size > 0 {
@@ -1255,25 +1301,9 @@ pub unsafe extern "C" fn hr_make_tetmesh_vtk_buffer(mesh: *const HR_TetMesh) -> 
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_tetmesh_to_vtk_format(&(*mesh).mesh) {
-        Ok(vtk) => {
-            let mut vec_data = Vec::<u8>::new();
-            vec_data
-                .write_vtk_be(vtk)
-                .expect("Failed to write Vtk data to byte buffer");
-            let boxed_data = vec_data.into_boxed_slice();
-            let size = boxed_data.len();
-
-            HR_ByteBuffer {
-                data: Box::into_raw(boxed_data) as *const c_char,
-                size,
-            }
-        }
-        Err(_) => HR_ByteBuffer {
-            data: ::std::ptr::null(),
-            size: 0,
-        },
-    }
+    convert_tetmesh_to_vtk_format(&(*mesh).mesh)
+        .map(From::from)
+        .unwrap_or_else(|_| Default::default())
 }
 
 /// Write the given HR_PolyMesh into a binary VTK format returned through an appropriately sized
@@ -1283,25 +1313,9 @@ pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_polymesh_to_vtk_format(&(*mesh).mesh) {
-        Ok(vtk) => {
-            let mut vec_data = Vec::<u8>::new();
-            vec_data
-                .write_vtk_be(vtk)
-                .expect("Failed to write Vtk data to byte buffer");
-            let boxed_data = vec_data.into_boxed_slice();
-            let size = boxed_data.len();
-
-            HR_ByteBuffer {
-                data: Box::into_raw(boxed_data) as *const c_char,
-                size,
-            }
-        }
-        Err(_) => HR_ByteBuffer {
-            data: ::std::ptr::null(),
-            size: 0,
-        },
-    }
+    convert_polymesh_to_vtk_format(&(*mesh).mesh)
+        .map(From::from)
+        .unwrap_or_else(|_| Default::default())
 }
 
 /// Write the given HR_PointCloud into a binary VTK format returned through an appropriately sized
@@ -1313,25 +1327,35 @@ pub unsafe extern "C" fn hr_make_pointcloud_vtk_buffer(
     // check invariants
     assert!(!mesh.is_null());
 
-    match convert_pointcloud_to_vtk_format(&(*mesh).mesh) {
-        Ok(vtk) => {
-            let mut vec_data = Vec::<u8>::new();
-            vec_data
-                .write_vtk_be(vtk)
-                .expect("Failed to write Vtk data to byte buffer");
-            let boxed_data = vec_data.into_boxed_slice();
-            let size = boxed_data.len();
+    convert_pointcloud_to_vtk_format(&(*mesh).mesh)
+        .map(From::from)
+        .unwrap_or_else(|_| Default::default())
+}
 
-            HR_ByteBuffer {
-                data: Box::into_raw(boxed_data) as *const c_char,
-                size,
-            }
-        }
-        Err(_) => HR_ByteBuffer {
-            data: ::std::ptr::null(),
-            size: 0,
-        },
-    }
+/// Write the given `HR_PolyMesh` into the Obj format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_polymesh_obj_buffer(mesh: *const HR_PolyMesh) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_polymesh_to_obj_format(&(*mesh).mesh)
+        .map(From::from)
+        .unwrap_or_else(|_| Default::default())
+}
+
+/// Write the given `HR_PointCloud` into the Obj format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_pointcloud_obj_buffer(
+    mesh: *const HR_PointCloud,
+) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_pointcloud_to_obj_format(&(*mesh).mesh)
+        .map(From::from)
+        .unwrap_or_else(|_| Default::default())
 }
 
 #[derive(Debug)]
@@ -1385,6 +1409,30 @@ pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) ->
         }
 
         if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
+            if mesh.num_faces() > 0 {
+                let polymesh = Box::new(HR_PolyMesh { mesh });
+                return HR_Mesh {
+                    tag: HRMeshType::HR_POLYMESH,
+                    polymesh: Box::into_raw(polymesh),
+                    ..HR_Mesh::default()
+                };
+            }
+        }
+    }
+    HR_Mesh::default()
+}
+
+/// Parse a given byte array into a HR_PolyMesh assuming obj format.
+#[no_mangle]
+pub unsafe extern "C" fn hr_parse_obj_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
+    if data.is_null() || size == 0 {
+        return HR_Mesh::default();
+    }
+
+    let slice = slice::from_raw_parts_mut(data as *mut u8, size);
+
+    if let Ok(obj_data) = ObjData::load_buf(&*slice) {
+        if let Ok(mesh) = convert_obj_to_polymesh(obj_data) {
             if mesh.num_faces() > 0 {
                 let polymesh = Box::new(HR_PolyMesh { mesh });
                 return HR_Mesh {

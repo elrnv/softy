@@ -45,6 +45,8 @@ public:
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PolyMesh> polymesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_TetMesh> tetmesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PointCloud> ptcloud);
+    static ByteBuffer write_obj_mesh(OwnedPtr<HR_PolyMesh> polymesh);
+    static ByteBuffer write_obj_mesh(OwnedPtr<HR_PointCloud> ptcloud);
 
 private:
     ByteBuffer(const ByteBuffer&) = delete; // Byte buffer is move only
@@ -56,6 +58,7 @@ private:
 using MeshVariant = boost::variant<boost::blank, OwnedPtr<HR_PolyMesh>, OwnedPtr<HR_TetMesh>>;
 
 MeshVariant parse_vtk_mesh(const char * data, std::size_t size);
+MeshVariant parse_obj_mesh(const char * data, std::size_t size);
 
 } // namespace io
 } // namespace hdkrs

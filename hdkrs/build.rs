@@ -23,7 +23,6 @@ fn main() {
     config.line_length = 80;
     config.tab_width = 4;
     config.cpp_compat = true;
-    config.namespace = Some(String::from("hdkrs"));
     config.language = cbindgen::Language::Cxx;
 
     cbindgen::generate_with_config(&crate_dir, config)

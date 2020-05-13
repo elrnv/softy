@@ -14,4 +14,4 @@ implicits = { path = "../implicits" }
 reinterpret = "0.2"
 
 [build-dependencies]
-cbindgen = "0.6"
+cbindgen = "0.14.2"

@@ -12,4 +12,4 @@ crate-type = ["staticlib", "rlib"]
 hdkrs = { path = "../hdkrs" }
 
 [build-dependencies]
-cbindgen = "0.6"
+cbindgen = "0.14.2"

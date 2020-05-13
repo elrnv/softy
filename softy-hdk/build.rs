@@ -16,6 +16,7 @@ fn main() {
     config.include_guard = Some(String::from("SOFTY_CAPI_H"));
     config.line_length = 80;
     config.tab_width = 4;
+    config.cpp_compat = true;
     config.language = cbindgen::Language::Cxx;
 
     cbindgen::generate_with_config(&crate_dir, config)

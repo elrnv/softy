@@ -37,7 +37,6 @@ fn rigid_box_under_gravity_one_step() {
         .zip(mesh.vertex_position_iter())
     {
         // Check that the box is falling.
-        dbg!(new, old);
         assert!(new[1] < old[1]);
     }
 }

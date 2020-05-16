@@ -488,33 +488,33 @@ impl ObjectData {
             }
             [SourceIndex::Solid(i), SourceIndex::Shell(j)] => {
                 let alt = alt.into();
-                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
+                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
                     let (q_l, q_r) = q.split_at(1);
                     [
                         get_solid(q_l.isolate(0), i, i),
                         get_shell(q_r.isolate(0), j),
                     ]
                 } else {
-                    let alt = alt.unwrap(); // Checked i nthe if statement.
+                    let alt = alt.unwrap(); // Checked in the if statement.
                     [get_solid(q.isolate(0), i, i), get_shell(alt.isolate(1), j)]
                 }
             }
             [SourceIndex::Shell(i), SourceIndex::Solid(j)] => {
                 let alt = alt.into();
-                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
+                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
                     let (q_l, q_r) = q.split_at(1);
                     [
                         get_shell(q_r.isolate(0), i),
                         get_solid(q_l.isolate(0), j, j),
                     ]
                 } else {
-                    let alt = alt.unwrap(); // Checked i nthe if statement.
+                    let alt = alt.unwrap(); // Checked in the if statement.
                     [get_shell(alt.isolate(1), i), get_solid(q.isolate(0), j, j)]
                 }
             }
             [SourceIndex::Shell(i), SourceIndex::Shell(j)] => {
                 let alt = alt.into();
-                if !matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
+                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
                     if i < j {
                         let (q_l, q_r) = q.isolate(1).split_at(j);
                         [get_shell(q_l, i), get_shell(q_r, 0)]

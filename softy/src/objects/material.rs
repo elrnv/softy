@@ -3,10 +3,7 @@
 //! is defined on the mesh itself. This allows us to define variable material
 //! properties.
 
-pub trait Material {
-    /// Scale used to adjust internal material properties to be closer to 1.0.
-    fn scale(&self) -> f32;
-}
+pub trait Material {}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MaterialBase<P> {
@@ -32,8 +29,6 @@ pub struct DeformableProperties {
     /// passing the time step around to elastic energy models which are otherwise independent of
     /// time step.
     pub damping: f32,
-    /// Scaling factor used to adjust the magnitudes of the parameters to be closer to 1.0.
-    pub scale: f32,
 }
 
 impl Default for DeformableProperties {
@@ -42,7 +37,6 @@ impl Default for DeformableProperties {
             elasticity: None, // Assuming variable elasticity
             density: None,    // Assuming variable density
             damping: 0.0,
-            scale: 1.0,
         }
     }
 }
@@ -105,10 +99,7 @@ pub struct SolidProperties {
 
 /// A trait for materials that can can be moved by external forces.
 pub trait DynamicMaterial: Material {
-    /// The exact density parameter used by solver. This is typically scaled to
-    /// be closer to 1.0.
-    fn scaled_density(&self) -> Option<f32>;
-    /// The density parameter provided in the input.
+    /// The density parameter.
     fn density(&self) -> Option<f32>;
 }
 
@@ -117,15 +108,9 @@ pub trait DynamicMaterial: Material {
 /// material set. If it is set to be some default value the option should not be
 /// `None`. This helps distinguish between variable and uniform material properties.
 pub trait DeformableMaterial: DynamicMaterial {
-    /// The exact elasticity parameters used by solver. These are typically
-    /// scaled to be closer to 1.0.
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
-    /// The exact damping parameter used by solver. This is typically scaled to
-    /// be closer to 1.0.
-    fn scaled_damping(&self) -> f32;
-    /// The elasticity parameters provided in the input.
+    /// The elasticity parameters.
     fn elasticity(&self) -> Option<ElasticityParameters>;
-    /// The damping parameter provided in the input.
+    /// The damping parameter.
     fn damping(&self) -> f32;
 }
 
@@ -381,35 +366,9 @@ impl SoftShellMaterial {
         self
     }
 
-    /// Normalize the parameters stored in this material.
-    ///
-    /// This may be used to improve solver performance.
-    /// Note that all materials must be scaled uniformly, otherwise their interaction
-    /// will produce unpredictable results.
-    pub fn normalized(mut self) -> SoftShellMaterial {
-        let SoftShellProperties {
-            deformable,
-            bending_stiffness,
-        } = &mut self.properties;
-        *deformable = deformable.normalized();
-        bending_stiffness.as_mut().map(|s| *s *= deformable.scale());
-        self
-    }
-
-    /// Get the scaled bending stiffness parameter stored in this material.
-    ///
-    /// Note that this may not be the same parameter that this material was created with.
-    /// For the original parameter, use the `bending_stiffness` getter.
-    pub fn scaled_bending_stiffness(&self) -> Option<f32> {
-        self.properties.bending_stiffness
-    }
-
-    /// Get the unscaled bending stiffness parameter. This is the quantity that this material was
-    /// created with.
+    /// Get the bending stiffness parameter.
     pub fn bending_stiffness(&self) -> Option<f32> {
-        self.properties
-            .bending_stiffness
-            .map(|s| s / self.properties.deformable.scale())
+        self.properties.bending_stiffness
     }
 }
 
@@ -428,10 +387,6 @@ impl SolidMaterial {
     }
     pub fn with_volume_preservation(mut self, volume_preservation: bool) -> SolidMaterial {
         self.properties.volume_preservation = volume_preservation;
-        self
-    }
-    pub fn normalized(mut self) -> SolidMaterial {
-        self.properties.deformable = self.properties.deformable.normalized();
         self
     }
     pub fn volume_preservation(&self) -> bool {
@@ -468,92 +423,14 @@ impl DeformableProperties {
         DeformableProperties { damping, ..self }
     }
 
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity(&self) -> Option<ElasticityParameters> {
         self.elasticity
     }
-    fn scaled_damping(&self) -> f32 {
+    fn damping(&self) -> f32 {
         self.damping
     }
-    fn scaled_density(&self) -> Option<f32> {
-        self.density
-    }
-    fn elasticity(&self) -> Option<ElasticityParameters> {
-        self.unnormalized().elasticity
-    }
-    fn damping(&self) -> f32 {
-        self.unnormalized().damping
-    }
     fn density(&self) -> Option<f32> {
-        self.unnormalized().density
-    }
-
-    pub fn scale(&self) -> f32 {
-        self.scale
-    }
-
-    /// Rescale parameters uniformly to be closer to 1.0.
-    pub fn normalized(self) -> DeformableProperties {
-        let DeformableProperties {
-            mut elasticity,
-            mut density,
-            mut damping,
-            ..
-        } = self.unnormalized();
-
-        let scale;
-
-        if let Some(ref mut elasticity) = elasticity {
-            scale = elasticity.normalize();
-            density = density.map(|d| d * scale);
-            damping *= scale;
-        } else if let Some(ref mut density) = density {
-            scale = utils::approx_power_of_two32(if *density > 0.0 {
-                1.0 / *density
-            } else if damping > 0.0 {
-                1.0 / damping
-            } else {
-                1.0
-            });
-            *density *= scale;
-            damping *= scale;
-        } else {
-            scale = utils::approx_power_of_two32(if damping > 0.0 { 1.0 / damping } else { 1.0 });
-            damping *= scale;
-        }
-
-        DeformableProperties {
-            elasticity,
-            density,
-            damping,
-            scale,
-        }
-    }
-
-    /// Undo normalization.
-    pub fn unnormalized(self) -> DeformableProperties {
-        let DeformableProperties {
-            mut elasticity,
-            mut density,
-            mut damping,
-            scale,
-        } = self;
-
-        if let Some(ref mut elasticity) = elasticity {
-            *elasticity = elasticity.scaled(1.0 / scale);
-        }
-
-        if let Some(ref mut density) = density {
-            *density /= scale;
-        }
-
-        damping /= scale;
-
-        DeformableProperties {
-            elasticity,
-            density,
-            damping,
-            scale: 1.0,
-        }
+        self.density
     }
 }
 
@@ -577,27 +454,6 @@ pub struct ElasticityParameters {
 }
 
 impl ElasticityParameters {
-    pub fn scaled(self, scale: f32) -> ElasticityParameters {
-        ElasticityParameters {
-            lambda: self.lambda * scale,
-            mu: self.mu * scale,
-            model: self.model,
-        }
-    }
-
-    /// Rescale parameters uniformly to be closer to 1.0.
-    pub fn normalize(&mut self) -> f32 {
-        let scale = utils::approx_power_of_two32(if self.mu > 0.0 {
-            1.0 / self.mu
-        } else if self.lambda > 0.0 {
-            1.0 / self.lambda
-        } else {
-            1.0
-        });
-        *self = self.scaled(scale);
-        scale
-    }
-
     /// Construct elasticity parameters from standard Lame parameters.
     pub fn from_lame(lambda: f32, mu: f32, model: ElasticityModel) -> Self {
         match model {
@@ -639,64 +495,33 @@ impl ElasticityParameters {
  * Material implementations
  */
 
-impl Material for FixedMaterial {
-    fn scale(&self) -> f32 {
-        1.0
-    }
-}
+impl Material for FixedMaterial {}
 
-impl Material for RigidMaterial {
-    fn scale(&self) -> f32 {
-        1.0
-    }
-}
+impl Material for RigidMaterial {}
 
-impl Material for SoftShellMaterial {
-    fn scale(&self) -> f32 {
-        self.properties.deformable.scale()
-    }
-}
+impl Material for SoftShellMaterial {}
 
-impl Material for SolidMaterial {
-    fn scale(&self) -> f32 {
-        self.properties.deformable.scale()
-    }
-}
+impl Material for SolidMaterial {}
 
 impl DynamicMaterial for RigidMaterial {
-    fn scaled_density(&self) -> Option<f32> {
-        Some(self.properties.density)
-    }
     fn density(&self) -> Option<f32> {
         Some(self.properties.density)
     }
 }
 
 impl DynamicMaterial for SoftShellMaterial {
-    fn scaled_density(&self) -> Option<f32> {
-        self.properties.deformable.scaled_density()
-    }
     fn density(&self) -> Option<f32> {
         self.properties.deformable.density()
     }
 }
 
 impl DynamicMaterial for SolidMaterial {
-    fn scaled_density(&self) -> Option<f32> {
-        self.properties.deformable.scaled_density()
-    }
     fn density(&self) -> Option<f32> {
         self.properties.deformable.density()
     }
 }
 
 impl DeformableMaterial for SoftShellMaterial {
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.properties.deformable.scaled_elasticity()
-    }
-    fn scaled_damping(&self) -> f32 {
-        self.properties.deformable.scaled_damping()
-    }
     fn elasticity(&self) -> Option<ElasticityParameters> {
         self.properties.deformable.elasticity()
     }
@@ -706,44 +531,10 @@ impl DeformableMaterial for SoftShellMaterial {
 }
 
 impl DeformableMaterial for SolidMaterial {
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.properties.deformable.scaled_elasticity()
-    }
-    fn scaled_damping(&self) -> f32 {
-        self.properties.deformable.scaled_damping()
-    }
     fn elasticity(&self) -> Option<ElasticityParameters> {
         self.properties.deformable.elasticity()
     }
     fn damping(&self) -> f32 {
         self.properties.deformable.damping()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    /// Verify that that a normalized material can be unnormalized into its
-    /// original state. In other words verify that `unnormalized` is the inverse
-    /// of `normalized`.
-    #[test]
-    fn deformable_material_normalization() {
-        let mat = DeformableProperties::default()
-            .with_elasticity(ElasticityParameters {
-                lambda: 123.0,
-                mu: 0.01,
-                model: ElasticityModel::NeoHookean,
-            })
-            .with_density(100.0)
-            .with_damping(0.125, 0.0725);
-
-        let normalized_mat = mat.normalized();
-        let unnormalized_mat = normalized_mat.unnormalized();
-
-        assert_eq!(unnormalized_mat, mat);
-
-        let renormalized_mat = unnormalized_mat.normalized();
-
-        assert_eq!(renormalized_mat, normalized_mat);
     }
 }

@@ -315,7 +315,7 @@ impl<'a, E> TriMeshElasticity<'a, E> {
                 interior_edge_bending_stiffness,
             } => Some(TriMeshElasticity {
                 trimesh: &shell.trimesh,
-                damping: material.scaled_damping(),
+                damping: material.damping(),
                 interior_edges: interior_edges.as_slice(),
                 interior_edge_ref_angles: interior_edge_ref_angles.as_slice(),
                 interior_edge_angles: interior_edge_angles.as_slice(),

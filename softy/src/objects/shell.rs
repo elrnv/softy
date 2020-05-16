@@ -79,13 +79,6 @@ impl Object for TriMeshShell {
     fn mesh_mut(&mut self) -> &mut TriMesh {
         &mut self.trimesh
     }
-    fn material_scale(&self) -> f32 {
-        match self.data {
-            ShellData::Soft { material, .. } => material.scale(),
-            ShellData::Rigid { material, .. } => material.scale(),
-            ShellData::Fixed { material, .. } => material.scale(),
-        }
-    }
     fn material_id(&self) -> usize {
         match self.data {
             ShellData::Soft { material, .. } => material.id,
@@ -96,10 +89,10 @@ impl Object for TriMeshShell {
 }
 
 impl DynamicObject for TriMeshShell {
-    fn scaled_density(&self) -> Option<f32> {
+    fn density(&self) -> Option<f32> {
         match self.data {
-            ShellData::Soft { material, .. } => material.scaled_density(),
-            ShellData::Rigid { material, .. } => material.scaled_density(),
+            ShellData::Soft { material, .. } => material.density(),
+            ShellData::Rigid { material, .. } => material.density(),
             ShellData::Fixed { .. } => None,
         }
     }
@@ -108,9 +101,9 @@ impl DynamicObject for TriMeshShell {
 impl DeformableObject for TriMeshShell {}
 
 impl ElasticObject for TriMeshShell {
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
+    fn elasticity_parameters(&self) -> Option<ElasticityParameters> {
         match self.data {
-            ShellData::Soft { material, .. } => material.scaled_elasticity(),
+            ShellData::Soft { material, .. } => material.elasticity(),
             _ => None,
         }
     }
@@ -421,35 +414,23 @@ impl TriMeshShell {
         };
         // Initialize bending stiffness face attribute
         let num_elements = self.num_elements();
-        if let Some(bending_stiffness) = material.scaled_bending_stiffness() {
+        if let Some(bending_stiffness) = material.bending_stiffness() {
             match self
                 .mesh_mut()
                 .add_attrib_data::<BendingStiffnessType, FaceIndex>(
                     BENDING_STIFFNESS_ATTRIB,
                     vec![bending_stiffness; num_elements],
                 ) {
-                Err(attrib::Error::AlreadyExists(_)) => {
-                    crate::objects::scale_param(
-                        material.scale(),
-                        self.mesh_mut()
-                            .attrib_iter_mut::<BendingStiffnessType, FaceIndex>(
-                                BENDING_STIFFNESS_ATTRIB,
-                            )
-                            .expect("Internal error: Missing bending stiffness"),
-                    );
-                }
+                Err(attrib::Error::AlreadyExists(_)) => {}
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
         } else {
-            // If no bending stiffness was provided, simply scale what is already there. If there
+            // If no bending stiffness was provided use what is already there. If there
             // is nothing on the mesh, simply initialize bending stiffness to zero. This is
             // a reasonable default.
-            let scale = material.scale();
-            let attrib = self
-                .mesh_mut()
+            self.mesh_mut()
                 .attrib_or_add::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB, 0.0)?;
-            crate::objects::scale_param(scale, attrib.direct_iter_mut::<BendingStiffnessType>()?);
         }
 
         let mesh = self.mesh();

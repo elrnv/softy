@@ -14,14 +14,6 @@ pub mod material;
 pub mod shell;
 pub mod solid;
 
-/// A utility function to scale the mesh parameters so that they are consistent with the
-/// rest of the material.
-pub(crate) fn scale_param<'a, I: Iterator<Item = &'a mut f32>>(scale: f32, iter_mut: I) {
-    for val in iter_mut {
-        *val *= scale;
-    }
-}
-
 /// A utility for initializing the source index attribute to use for updating mesh vertices.
 ///
 /// This can be used explicitly by the user on the mesh before building the solver. For
@@ -71,7 +63,6 @@ pub trait Object {
     type Mesh: NumVertices + Attrib + VertexAttrib;
     type ElementIndex: AttribIndex<Self::Mesh>;
 
-    fn material_scale(&self) -> f32;
     fn num_elements(&self) -> usize;
     fn mesh(&self) -> &Self::Mesh;
     fn mesh_mut(&mut self) -> &mut Self::Mesh;
@@ -94,7 +85,7 @@ pub trait Object {
 }
 
 pub trait DynamicObject: Object {
-    fn scaled_density(&self) -> Option<f32>;
+    fn density(&self) -> Option<f32>;
 
     /// A helper function to populate vertex attributes for simulation on a dynamic mesh.
     fn init_dynamic_vertex_attributes(&mut self) -> Result<(), Error> {
@@ -124,7 +115,7 @@ pub trait DynamicObject: Object {
     }
     fn init_density_attribute(&mut self) -> Result<(), Error> {
         // Prepare density parameter
-        if let Some(density) = self.scaled_density() {
+        if let Some(density) = self.density() {
             let num_elements = self.num_elements();
             match self
                 .mesh_mut()
@@ -133,24 +124,14 @@ pub trait DynamicObject: Object {
                     vec![density as f32; num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => scale_param(
-                    self.material_scale(),
-                    self.mesh_mut()
-                        .attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)
-                        .expect("Internal error: Missing density param"),
-                ),
+                Err(attrib::Error::AlreadyExists(_)) => {}
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
         } else {
-            // Scale the mesh parameter so that it is consistent with the rest
-            // of the material.
-            // This also ensures that there is a density parameter defined on the mesh.
-            scale_param(
-                self.material_scale(),
-                self.mesh_mut()
-                    .attrib_iter_mut::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)?,
-            )
+            // Ensure that there is a density parameter defined on the mesh.
+            self.mesh()
+                .attrib_check::<DensityType, Self::ElementIndex>(DENSITY_ATTRIB)?;
         }
         Ok(())
     }
@@ -177,12 +158,12 @@ pub trait DeformableObject: DynamicObject {
 }
 
 pub trait ElasticObject: DeformableObject {
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters>;
+    fn elasticity_parameters(&self) -> Option<ElasticityParameters>;
 
     /// Transfer parameters `lambda` and `mu` from the object material to the
     /// mesh if it hasn't already been populated on the input.
     fn init_elasticity_attributes(&mut self) -> Result<(), Error> {
-        if let Some(elasticity) = self.scaled_elasticity() {
+        if let Some(elasticity) = self.elasticity_parameters() {
             let num_elements = self.num_elements();
             match self
                 .mesh_mut()
@@ -191,12 +172,7 @@ pub trait ElasticObject: DeformableObject {
                     vec![elasticity.lambda; num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => scale_param(
-                    self.material_scale(),
-                    self.mesh_mut()
-                        .attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
-                        .expect("Internal error: Missing lambda param"),
-                ),
+                Err(attrib::Error::AlreadyExists(_)) => {}
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
@@ -207,12 +183,7 @@ pub trait ElasticObject: DeformableObject {
                     vec![elasticity.mu; num_elements],
                 ) {
                 // if ok or already exists, everything is ok.
-                Err(attrib::Error::AlreadyExists(_)) => scale_param(
-                    self.material_scale(),
-                    self.mesh_mut()
-                        .attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
-                        .expect("Internal error: Missing mu param"),
-                ),
+                Err(attrib::Error::AlreadyExists(_)) => {}
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
@@ -230,18 +201,6 @@ pub trait ElasticObject: DeformableObject {
             {
                 return Err(Error::MissingElasticityParams);
             }
-            scale_param(
-                self.material_scale(),
-                self.mesh_mut()
-                    .attrib_iter_mut::<LambdaType, Self::ElementIndex>(LAMBDA_ATTRIB)
-                    .expect("Internal error: Missing lambda param"),
-            );
-            scale_param(
-                self.material_scale(),
-                self.mesh_mut()
-                    .attrib_iter_mut::<MuType, Self::ElementIndex>(MU_ATTRIB)
-                    .expect("Internal error: Missing mu param"),
-            );
         }
         Ok(())
     }

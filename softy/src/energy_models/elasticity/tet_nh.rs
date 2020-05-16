@@ -275,7 +275,7 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetMeshElasticity<'_, E> {
             ..
         } = *self.0;
 
-        let damping = material.scaled_damping();
+        let damping = material.damping();
 
         let pos0: &[Vector3<T>] = reinterpret_slice(x0);
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
@@ -340,7 +340,7 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
             ..
         } = *self.0;
 
-        let damping = material.scaled_damping();
+        let damping = material.damping();
 
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
@@ -509,7 +509,7 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
             ..
         } = *self.0;
 
-        let damping = material.scaled_damping();
+        let damping = material.damping();
 
         let pos1: &[Vector3<T>] = reinterpret_slice(x1);
 

@@ -32,9 +32,6 @@ impl Object for TetMeshSolid {
     fn mesh_mut(&mut self) -> &mut TetMesh {
         &mut self.tetmesh
     }
-    fn material_scale(&self) -> f32 {
-        self.material.scale()
-    }
     fn material_id(&self) -> usize {
         self.material.id
     }
@@ -61,15 +58,15 @@ impl TetMeshSolid {
 }
 
 impl DynamicObject for TetMeshSolid {
-    fn scaled_density(&self) -> Option<f32> {
-        self.material.scaled_density()
+    fn density(&self) -> Option<f32> {
+        self.material.density()
     }
 }
 
 impl DeformableObject for TetMeshSolid {}
 impl ElasticObject for TetMeshSolid {
-    fn scaled_elasticity(&self) -> Option<ElasticityParameters> {
-        self.material.scaled_elasticity()
+    fn elasticity_parameters(&self) -> Option<ElasticityParameters> {
+        self.material.elasticity()
     }
 }
 

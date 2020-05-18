@@ -1,6 +1,7 @@
 use unroll::unroll_for_loops;
 
 use geo::mesh::topology::*;
+use geo::ops::Area;
 use geo::prim::Triangle;
 use tensr::*;
 
@@ -95,7 +96,8 @@ impl InteriorEdge {
 
         let h0 = (f0x2 - f0x0).cross(f0e0).norm();
         let h1 = (f1x3 - f1x0).cross(f1e0).norm();
-        (h0 + h1) / T::from(3.0).unwrap()
+        // 6 = 3 (third of the triangle) * 2 (to make h0 and h1 triangle areas)
+        (h0 + h1) / T::from(6.0).unwrap()
     }
 
     /// Get the vertex indices of the edge endpoints.
@@ -189,6 +191,14 @@ impl InteriorEdge {
             .area_normal()
             .into_tensor();
         [an0, an1]
+    }
+
+    /// Compute the areas of adjacent faces.
+    #[inline]
+    pub fn face_areas<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [T; 2] {
+        let a0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area();
+        let a1 = Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area();
+        [a0, a1]
     }
 
     /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge.

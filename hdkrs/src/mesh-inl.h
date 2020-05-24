@@ -685,7 +685,7 @@ void add_polymesh(GU_Detail* detail, OwnedPtr<HR_PolyMesh> polymesh_ptr) {
             for (std::size_t i = 0; i < test_indices.size; ) {
                 auto n = test_indices.array[i++];
                 if (n != prev_n) {
-                    polycounts.append(n, num_polys_with_same_shape);
+                    polycounts.append(prev_n, num_polys_with_same_shape);
                     num_polys_with_same_shape = 0;
                     prev_n = n;
                 }

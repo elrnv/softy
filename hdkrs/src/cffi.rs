@@ -19,6 +19,7 @@ use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
+use std::sync::Arc;
 
 /// A Rust polygon mesh struct.
 pub struct HR_PolyMesh {
@@ -354,6 +355,9 @@ pub enum HRDataType {
 }
 
 macro_rules! impl_supported_types {
+    ($var:ident, $type:ty) => {
+        $var == TypeId::of::<$type>()
+    };
     ($var:ident, $type:ty, $($array_sizes:expr),*) => {
         $var == TypeId::of::<$type>() ||
             $($var == TypeId::of::<[$type;$array_sizes]>())||*
@@ -417,37 +421,51 @@ fn attrib_type_id<I>(attrib: &attrib::Attribute<I>) -> HRDataType {
         {
             HRDataType::HR_F64
         }
-        x if impl_supported_types!(
-            x, String, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-        ) =>
-        {
-            HRDataType::HR_STR
-        }
+        // Currently we only support a single string, supporting tuples would require a refactor of
+        // the gut attribute system.
+        x if impl_supported_types!(x, Arc<String>) => HRDataType::HR_STR,
         _ => HRDataType::HR_UNSUPPORTED,
     }
 }
 
 fn attrib_flat_array<I, T: 'static + Clone>(attrib: &attrib::Attribute<I>) -> (Vec<T>, usize) {
     let tuple_size = match attrib.data.element_type_id() {
-        x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, String) => 1,
-        x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64, String) => 1,
-        x if impl_supported_sizes!(x, 2, i8, i32, i64, f32, f64, String) => 2,
-        x if impl_supported_sizes!(x, 3, i8, i32, i64, f32, f64, String) => 3,
-        x if impl_supported_sizes!(x, 4, i8, i32, i64, f32, f64, String) => 4,
-        x if impl_supported_sizes!(x, 5, i8, i32, i64, f32, f64, String) => 5,
-        x if impl_supported_sizes!(x, 6, i8, i32, i64, f32, f64, String) => 6,
-        x if impl_supported_sizes!(x, 7, i8, i32, i64, f32, f64, String) => 7,
-        x if impl_supported_sizes!(x, 8, i8, i32, i64, f32, f64, String) => 8,
-        x if impl_supported_sizes!(x, 9, i8, i32, i64, f32, f64, String) => 9,
-        x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64, String) => 10,
-        x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64, String) => 11,
-        x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64, String) => 12,
-        x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64, String) => 13,
-        x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64, String) => 14,
-        x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64, String) => 15,
-        x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64, String) => 16,
+        x if impl_supported_sizes!(x, i8, i32, i64, f32, f64, Arc<String>) => 1,
+        x if impl_supported_sizes!(x, 1, i8, i32, i64, f32, f64) => 1,
+        x if impl_supported_sizes!(x, 2, i8, i32, i64, f32, f64) => 2,
+        x if impl_supported_sizes!(x, 3, i8, i32, i64, f32, f64) => 3,
+        x if impl_supported_sizes!(x, 4, i8, i32, i64, f32, f64) => 4,
+        x if impl_supported_sizes!(x, 5, i8, i32, i64, f32, f64) => 5,
+        x if impl_supported_sizes!(x, 6, i8, i32, i64, f32, f64) => 6,
+        x if impl_supported_sizes!(x, 7, i8, i32, i64, f32, f64) => 7,
+        x if impl_supported_sizes!(x, 8, i8, i32, i64, f32, f64) => 8,
+        x if impl_supported_sizes!(x, 9, i8, i32, i64, f32, f64) => 9,
+        x if impl_supported_sizes!(x, 10, i8, i32, i64, f32, f64) => 10,
+        x if impl_supported_sizes!(x, 11, i8, i32, i64, f32, f64) => 11,
+        x if impl_supported_sizes!(x, 12, i8, i32, i64, f32, f64) => 12,
+        x if impl_supported_sizes!(x, 13, i8, i32, i64, f32, f64) => 13,
+        x if impl_supported_sizes!(x, 14, i8, i32, i64, f32, f64) => 14,
+        x if impl_supported_sizes!(x, 15, i8, i32, i64, f32, f64) => 15,
+        x if impl_supported_sizes!(x, 16, i8, i32, i64, f32, f64) => 16,
         _ => 0,
     };
+    // Strings are stored in indirect attributes and cannot be directly cast
+    if let Ok(indirect_str_iter) = attrib.indirect_iter::<String>() {
+        if TypeId::of::<T>() == TypeId::of::<*mut i8>() {
+            assert_eq!(std::mem::size_of::<T>(), std::mem::size_of::<*mut i8>());
+            // The following is safe because we check that T is indeed *mut i8 so there is no
+            // ambiguity here. This can probably be refactored at the cost of some code verbosity.
+            return (
+                indirect_str_iter
+                    .map(|s| unsafe {
+                        std::mem::transmute_copy(&CString::new(s.as_str()).unwrap().into_raw())
+                    })
+                    .collect(),
+                tuple_size,
+            );
+        }
+    }
+
     let flat_vec = match tuple_size {
         1 => cast_to_vec!(T, attrib),
         2 => cast_to_vec!(T, attrib, 2),
@@ -530,24 +548,8 @@ pub struct HR_AttribArrayStr {
     tuple_size: size_t,
     array: *mut *mut c_char,
 }
+
 macro_rules! impl_get_attrib_data {
-    (_impl_make_array HR_AttribArrayStr, $vec:ident, $tuple_size:ident) => {{
-        let mut vec: Vec<*mut c_char> = $vec
-            .iter()
-            .map(|x: &String| CString::new(x.as_str()).unwrap().into_raw())
-            .collect();
-
-        let arr = HR_AttribArrayStr {
-            capacity: vec.capacity(),
-            size: vec.len(),
-            tuple_size: $tuple_size,
-            array: vec.as_mut_ptr(),
-        };
-
-        ::std::mem::forget(vec);
-
-        arr
-    }};
     (_impl_make_array $array_name:ident, $vec:ident, $tuple_size:ident) => {{
         let arr = $array_name {
             capacity: $vec.capacity(),
@@ -561,7 +563,6 @@ macro_rules! impl_get_attrib_data {
         arr
     }};
     ($array_name:ident, $attrib_data:ident) => {{
-        #[allow(unused_mut)] // compiler gets confused here, suppress the warning.
         let (mut vec, tuple_size) = if $attrib_data.is_null() {
             (Vec::new(), 0)
         } else {
@@ -769,6 +770,18 @@ macro_rules! ptr_to_vec_of_arrays {
     }};
 }
 
+#[derive(Debug, PartialEq)]
+enum Error {
+    Attrib(attrib::Error),
+    Internal,
+}
+
+impl From<attrib::Error> for Error {
+    fn from(a: attrib::Error) -> Self {
+        Error::Attrib(a)
+    }
+}
+
 macro_rules! impl_add_attrib {
     (_impl HR_PointCloud, $data_type:ty, $mesh:ident,
      $len:ident, $data:ident, $name:ident, $loc:ident) => {
@@ -885,15 +898,75 @@ macro_rules! impl_add_attrib {
             }
         }
     };
+    // *** String Attributes ***
+    // Points only attributes
+    (_impl_str_points $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        {
+            if let HRAttribLocation::HR_VERTEX = $loc {
+                (*$mesh).mesh.add_indirect_attrib::<_, topo::VertexIndex>($name, String::new())
+                    .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                    .map_err(Error::from)
+            } else {
+                Err(Error::Internal)
+            }
+        }
+    };
+    // Surface type meshes like tri- or quad-meshes typically have face attributes but no
+    // cell attributes.
+    (_impl_str_surface $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        {
+            match $loc {
+                HRAttribLocation::HR_VERTEX => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::VertexIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                HRAttribLocation::HR_FACE => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::FaceIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                HRAttribLocation::HR_FACEVERTEX => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::FaceVertexIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                _ => Err(Error::Internal),
+            }
+        }
+    };
+    // Volume type meshes like tet and hex meshes have cell attributes.
+    (_impl_str_volume $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        {
+            match $loc {
+                HRAttribLocation::HR_VERTEX => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::VertexIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                HRAttribLocation::HR_CELL => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::CellIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                HRAttribLocation::HR_CELLVERTEX => {
+                    (*$mesh).mesh.add_indirect_attrib::<_, topo::CellVertexIndex>($name, String::new())
+                        .and_then(|(attrib, cache)| { attrib.indirect_update_with($update_fn, cache)?; Ok(()) })
+                        .map_err(Error::from)
+                },
+                _ => Err(Error::Internal),
+            }
+        }
+    };
     // Helpers for the implementation for string attributes below.
-    (_impl_str HR_PointCloud, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
-        impl_add_attrib!(_impl_points $mesh, $loc, $name, $vec);
+    (_impl_str HR_PointCloud, $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        impl_add_attrib!(_impl_str_points $mesh, $loc, $name, $update_fn)
     };
-    (_impl_str HR_PolyMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
-        impl_add_attrib!(_impl_surface $mesh, $loc, $name, $vec);
+    (_impl_str HR_PolyMesh, $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        impl_add_attrib!(_impl_str_surface $mesh, $loc, $name, $update_fn)
     };
-    (_impl_str HR_TetMesh, $mesh:ident, $loc:ident, $name:ident, $vec:ident) => {
-        impl_add_attrib!(_impl_volume $mesh, $loc, $name, $vec);
+    (_impl_str HR_TetMesh, $mesh:ident, $loc:ident, $name:ident, $update_fn:expr) => {
+        impl_add_attrib!(_impl_str_volume $mesh, $loc, $name, $update_fn)
     };
     // Implementation for string attributes
     ($mesh_type:ident, $mesh:ident,
@@ -907,25 +980,24 @@ macro_rules! impl_add_attrib {
 
         if let Ok(name_str) = CStr::from_ptr($name).to_str() {
             let indices = slice::from_raw_parts($data, $len);
-
-            // TODO: Storing owned srings is expensive for large meshes when strings are shared.
-            // This should be refactored to store shared strings, which may need a refactor of the
-            // attribute system.
-
-            let mut vec = Vec::new();
-            for &i in indices {
-                if i >= 0 {
-                    assert!(i < $nstrings as i64);
-                    let cstr = *$strings.offset(i as isize);
+            let update = |i: usize, _: &Arc<_>| {
+                let idx = indices[i];
+                if idx >= 0 {
+                    assert!(idx < $nstrings as i64);
+                    let cstr = *$strings.offset(idx as isize);
                     if let Ok(s) = CStr::from_ptr(cstr).to_str() {
-                        vec.push(String::from(s))
+                        return Some(std::sync::Arc::new(String::from(s)));
                     }
-                } else {
-                    vec.push(String::from(""))
                 }
-            }
+                None
+            };
 
-            impl_add_attrib!(_impl_str $mesh_type, $mesh, $loc, name_str, vec);
+            let res = impl_add_attrib!(_impl_str $mesh_type, $mesh, $loc, name_str, update);
+            match res {
+                Err(error) =>
+                    println!("Warning: failed to add string attribute \"{}\" at {:?}, with error: {:?}", name_str, $loc, error),
+                _ => {}
+            }
         }
     }
 }
@@ -1431,7 +1503,7 @@ pub unsafe extern "C" fn hr_parse_obj_mesh(data: *const c_char, size: size_t) ->
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
 
-    if let Ok(obj_data) = ObjData::load_buf(&*slice) {
+    if let Ok(obj_data) = ObjData::load_buf_with_config(&*slice, LoadConfig { strict: false }) {
         if let Ok(mesh) = convert_obj_to_polymesh(obj_data) {
             if mesh.num_faces() > 0 {
                 let polymesh = Box::new(HR_PolyMesh { mesh });

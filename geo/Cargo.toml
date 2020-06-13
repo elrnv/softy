@@ -7,4 +7,4 @@ edition = "2018"
 [dependencies]
 #gut = { version = "0.5", features = ["io", "serde_all", "async-attribs"] }
 #gut = { path = "../../gut", version = "0.5", features = ["io", "serde_all", "async-attribs"] }
-gut = { git = "https://github.com/elrnv/gut.git", features = ["io", "serde_all", "async-attribs"] }
+gut = { git = "https://gitlab.com/elrnv/gut.git", features = ["io", "serde_all", "async-attribs"] }

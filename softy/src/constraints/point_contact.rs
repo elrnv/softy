@@ -1260,7 +1260,10 @@ impl ContactConstraint for PointContactConstraint {
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.len(),
-            Chunked3::from_flat((impulse_corrector.into_storage(), forwarded_impulse.into_storage())),
+            Chunked3::from_flat((
+                impulse_corrector.into_storage(),
+                forwarded_impulse.into_storage(),
+            )),
         );
 
         if friction_steps > 0 {

@@ -96,7 +96,7 @@ impl InteriorEdge {
 
         let h0 = (f0x2 - f0x0).cross(f0e0).norm();
         let h1 = (f1x3 - f1x0).cross(f1e0).norm();
-        // 6 = 3 (third of the triangle) * 2 (to make h0 and h1 triangle areas)
+        // 6 = 3 (third of the triangle) * 2 (to make h0 and h1 *triangle* areas)
         (h0 + h1) / T::from(6.0).unwrap()
     }
 
@@ -230,10 +230,15 @@ impl InteriorEdge {
         }
     }
 
+    /// Compute the equivalent angle in the range `[-π, π)`.
+    ///
+    /// Note that `π` is not exactly representable with floats, so one should really not rely on
+    /// the inclusion/exclusion of `π` and `-π` at the boundaries.
     #[inline]
     pub(crate) fn project_angle<T: Real>(angle: T) -> T {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+
         let mut out = (angle + pi) % two_pi - pi;
         if out < -pi {
             out += two_pi;
@@ -241,24 +246,28 @@ impl InteriorEdge {
         out
     }
 
-    /// Compute an edge angle that is no more than π radians away from `prev_angle`.
+    /// Compute the edge angle to be at most `π` away from `ref_angle`.
+    ///
+    /// Note that `ref_angle` is not necessarily the rest shape angle. It is simply the closest
+    /// angle --- the best guess for the current angle.
     #[inline]
     pub(crate) fn incremental_angle<T: Real>(
         &self,
-        prev_angle: T,
+        ref_angle: T,
         pos: &[[T; 3]],
         faces: &[[usize; 3]],
     ) -> T {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
-        let prev_angle_proj = Self::project_angle(prev_angle);
-        let mut angle_diff = self.edge_angle(pos, faces) - prev_angle_proj;
+
+        let ref_angle_proj = Self::project_angle(ref_angle);
+        let mut angle_diff = self.edge_angle(pos, faces) - ref_angle_proj;
         if angle_diff < -pi {
             angle_diff += two_pi;
         } else if angle_diff > pi {
             angle_diff -= two_pi;
         }
-        prev_angle + angle_diff
+        ref_angle + angle_diff
     }
 
     /// Compute the gradient of the reflex angle given by `edge_angle` for the four significant
@@ -620,7 +629,8 @@ mod tests {
         assert_eq!(InteriorEdge::project_angle(-pi / 2.0), -pi / 2.0);
         assert_eq!(InteriorEdge::project_angle(3.0 * pi / 2.0), -pi / 2.0);
         assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
-        assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(pi + 0.01), -pi + 0.01);
+        assert_eq!(InteriorEdge::project_angle(pi - 0.01), pi - 0.01);
         assert_eq!(InteriorEdge::project_angle(2.0 * pi), 0.0);
         assert_relative_eq!(
             InteriorEdge::project_angle(7.0 * pi + 0.01),

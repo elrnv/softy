@@ -994,7 +994,10 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.borrow().len(),
-            Chunked3::from_flat((impulse_corrector.into_storage(), friction_impulse.into_storage())),
+            Chunked3::from_flat((
+                impulse_corrector.into_storage(),
+                friction_impulse.into_storage(),
+            )),
         );
 
         if friction_steps > 0 {
@@ -1012,8 +1015,9 @@ impl ContactConstraint for LinearizedPointContactConstraint {
             if !frictional_contact.object_impulse.is_empty() {
                 if let Some(masses) = self.object_mass_inv.as_ref() {
                     let mass_mtx = DiagonalBlockMatrixView::new(masses.view());
-                    let corrector =
-                        Chunked3::from_flat(frictional_contact.object_impulse.view().into_storage().0);
+                    let corrector = Chunked3::from_flat(
+                        frictional_contact.object_impulse.view().into_storage().0,
+                    );
                     let add_vel = mass_mtx.view() * corrector.into_tensor();
                     *&mut object_vel.expr_mut() += add_vel.expr();
                 }

@@ -450,7 +450,6 @@ impl ObjectData {
     /// `alt` is a source of vertex data for objects whose degrees of freedom do not lie on the
     /// vertices of the mesh. For these objects, the values stored in `q` may not represent vertex
     /// data.
-    //#[allow(clippy::many_single_char_names)]
     fn mesh_vertex_subset_split_mut_impl<'q, D: 'q, Alt>(
         q: VertexView<'q, D>,
         alt: Alt,
@@ -640,7 +639,7 @@ impl ObjectData {
     ) -> Ref<'_, VertexData3<Vec<f64>>> {
         {
             let mut ws = self.workspace.borrow_mut();
-            let sv = ws.v.view_mut().into_flat();
+            let sv = ws.v.view_mut().into_storage();
             for (output, input) in sv.iter_mut().zip(Self::scaled_variables_iter(uv, scale)) {
                 *output = input;
             }
@@ -708,9 +707,9 @@ impl ObjectData {
         let mut ws = self.workspace.borrow_mut();
         let WorkspaceData { x, v, .. } = &mut *ws;
         {
-            let x = x.view_mut().into_flat();
-            let v = v.view().into_flat();
-            let prev_x = self.prev_x.view().into_flat();
+            let x = x.view_mut().into_storage();
+            let v = v.view().into_storage();
+            let prev_x = self.prev_x.view().into_storage();
             debug_assert_eq!(v.len(), x.len());
             debug_assert_eq!(prev_x.len(), x.len());
 
@@ -930,14 +929,14 @@ impl ObjectData {
             .borrow_mut()
             .pos
             .view_mut()
-            .into_flat()
-            .copy_from_slice(prev_pos.view().into_flat());
+            .into_storage()
+            .copy_from_slice(prev_pos.view().into_storage());
         self.workspace
             .borrow_mut()
             .vel
             .view_mut()
-            .into_flat()
-            .copy_from_slice(prev_vel.view().into_flat());
+            .into_storage()
+            .copy_from_slice(prev_vel.view().into_storage());
 
         Ok(())
     }
@@ -969,13 +968,13 @@ impl ObjectData {
             // Update x and pos
             zip!(
                 prev_prev_x.iter_mut(),
-                prev_x.view_mut().into_flat().iter_mut(),
-                x.view().into_flat().iter()
+                prev_x.view_mut().into_storage().iter_mut(),
+                x.view().into_storage().iter()
             )
             .chain(zip!(
                 prev_prev_pos.iter_mut(),
-                prev_pos.view_mut().into_flat().iter_mut(),
-                pos.view().into_flat().iter()
+                prev_pos.view_mut().into_storage().iter_mut(),
+                pos.view().into_storage().iter()
             ))
             .for_each(|(prev_prev, prev, &cur)| {
                 *prev_prev = *prev;
@@ -986,13 +985,13 @@ impl ObjectData {
             if and_velocity {
                 zip!(
                     prev_prev_v.iter_mut(),
-                    prev_v.view_mut().into_flat().iter_mut(),
-                    v.view().into_flat().iter()
+                    prev_v.view_mut().into_storage().iter_mut(),
+                    v.view().into_storage().iter()
                 )
                 .chain(zip!(
                     prev_prev_vel.iter_mut(),
-                    prev_vel.view_mut().into_flat().iter_mut(),
-                    vel.view().into_flat().iter()
+                    prev_vel.view_mut().into_storage().iter_mut(),
+                    vel.view().into_storage().iter()
                 ))
                 .for_each(|(prev_prev, prev, &cur)| {
                     *prev_prev = *prev;
@@ -1003,11 +1002,11 @@ impl ObjectData {
                 // for subsequent steps.
                 prev_prev_v
                     .iter_mut()
-                    .zip(prev_v.view_mut().into_flat().iter_mut())
+                    .zip(prev_v.view_mut().into_storage().iter_mut())
                     .chain(
                         prev_prev_vel
                             .iter_mut()
-                            .zip(prev_vel.view_mut().into_flat().iter_mut()),
+                            .zip(prev_vel.view_mut().into_storage().iter_mut()),
                     )
                     .for_each(|(prev, v)| {
                         *prev = *v;
@@ -1044,21 +1043,21 @@ impl ObjectData {
         {
             prev_prev_x
                 .iter()
-                .zip(prev_x.view_mut().into_flat().iter_mut())
+                .zip(prev_x.view_mut().into_storage().iter_mut())
                 .chain(
                     prev_prev_pos
                         .iter()
-                        .zip(prev_pos.view_mut().into_flat().iter_mut()),
+                        .zip(prev_pos.view_mut().into_storage().iter_mut()),
                 )
                 .chain(
                     prev_prev_v
                         .iter()
-                        .zip(prev_v.view_mut().into_flat().iter_mut()),
+                        .zip(prev_v.view_mut().into_storage().iter_mut()),
                 )
                 .chain(
                     prev_prev_vel
                         .iter()
-                        .zip(prev_vel.view_mut().into_flat().iter_mut()),
+                        .zip(prev_vel.view_mut().into_storage().iter_mut()),
                 )
                 .for_each(|(prev, cur)| *cur = *prev);
         }
@@ -1415,8 +1414,8 @@ impl NonLinearProblem {
 
     /// Check if the given constraint set is the same as the current one.
     pub fn is_same_as_constraint_set(&self, other_set: ChunkedView<&[usize]>) -> bool {
-        let cur_set = self.active_constraint_set().into_flat();
-        let other_set = other_set.into_flat();
+        let cur_set = self.active_constraint_set().into_storage();
+        let other_set = other_set.into_storage();
         cur_set.len() == other_set.len()
             && cur_set
                 .into_iter()
@@ -1806,10 +1805,10 @@ impl NonLinearProblem {
         let v0 = self.object_data.prev_v.view();
 
         for (i, solid) in self.object_data.solids.iter().enumerate() {
-            let x0 = x0.at(0).at(i).into_flat();
-            let x1 = x1.at(0).at(i).into_flat();
-            let v0 = v0.at(0).at(i).into_flat();
-            let v = v.at(0).at(i).into_flat();
+            let x0 = x0.at(0).at(i).into_storage();
+            let x1 = x1.at(0).at(i).into_storage();
+            let v0 = v0.at(0).at(i).into_storage();
+            let v = v.at(0).at(i).into_storage();
             obj += solid.elasticity().energy(x0, x1);
             obj += solid.gravity(self.gravity).energy(x0, x1);
             if !self.is_static() {
@@ -1818,10 +1817,10 @@ impl NonLinearProblem {
         }
 
         for (i, shell) in self.object_data.shells.iter().enumerate() {
-            let x0 = x0.at(1).at(i).into_flat();
-            let x1 = x1.at(1).at(i).into_flat();
-            let v0 = v0.at(1).at(i).into_flat();
-            let v = v.at(1).at(i).into_flat();
+            let x0 = x0.at(1).at(i).into_storage();
+            let x1 = x1.at(1).at(i).into_storage();
+            let v0 = v0.at(1).at(i).into_storage();
+            let v = v.at(1).at(i).into_storage();
             obj += shell.elasticity().energy(x0, x1);
             obj += shell.gravity(self.gravity).energy(x0, x1);
             obj += shell.inertia().energy(v0, v);
@@ -2743,7 +2742,7 @@ impl NonLinearProblem {
 /// Prepare the problem for Newton iterations.
 impl ipopt::BasicProblem for NonLinearProblem {
     fn num_variables(&self) -> usize {
-        self.object_data.prev_v.view().into_flat().len()
+        self.object_data.prev_v.view().into_storage().len()
     }
 
     fn bounds(&self, uv_l: &mut [Number], uv_u: &mut [Number]) -> bool {
@@ -2755,7 +2754,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         // Fixed vertices have a predetermined velocity which is specified in the prev_v variable.
         // Unscale velocities so we can set the unscaled bounds properly.
-        let uv_flat_view = self.object_data.prev_v.view().into_flat();
+        let uv_flat_view = self.object_data.prev_v.view().into_storage();
         let unscaled_vel = self
             .object_data
             .update_current_velocity(uv_flat_view, 1.0 / self.variable_scale());
@@ -2823,8 +2822,8 @@ impl ipopt::BasicProblem for NonLinearProblem {
                     });
             }
         }
-        let uv_l = uv_l.into_flat();
-        let uv_u = uv_u.into_flat();
+        let uv_l = uv_l.into_storage();
+        let uv_u = uv_u.into_storage();
         debug_assert!(uv_l.iter().all(|&x| x.is_finite()) && uv_u.iter().all(|&x| x.is_finite()));
         true
     }
@@ -2874,17 +2873,17 @@ impl ipopt::BasicProblem for NonLinearProblem {
             let x1 = ws.x.view();
 
             for (i, solid) in self.object_data.solids.iter().enumerate() {
-                let x0 = x0.at(0).at(i).into_flat();
-                let x1 = x1.at(0).at(i).into_flat();
-                let g = grad.view_mut().isolate(0).isolate(i).into_flat();
+                let x0 = x0.at(0).at(i).into_storage();
+                let x1 = x1.at(0).at(i).into_storage();
+                let g = grad.view_mut().isolate(0).isolate(i).into_storage();
                 solid.elasticity().add_energy_gradient(x0, x1, g);
                 solid.gravity(self.gravity).add_energy_gradient(x0, x1, g);
             }
 
             for (i, shell) in self.object_data.shells.iter().enumerate() {
-                let x0 = x0.at(1).at(i).into_flat();
-                let x1 = x1.at(1).at(i).into_flat();
-                let g = grad.view_mut().isolate(1).isolate(i).into_flat();
+                let x0 = x0.at(1).at(i).into_storage();
+                let x1 = x1.at(1).at(i).into_storage();
+                let g = grad.view_mut().isolate(1).isolate(i).into_storage();
                 shell.elasticity().add_energy_gradient(x0, x1, g);
                 shell.gravity(self.gravity).add_energy_gradient(x0, x1, g);
             }
@@ -2895,7 +2894,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 let ws = self.object_data.workspace.borrow();
                 let v = ws.v.view();
                 {
-                    let grad_flat = grad.view_mut().into_flat();
+                    let grad_flat = grad.view_mut().into_storage();
                     // This is a correction to transform the above energy derivatives to
                     // velocity gradients from position gradients.
                     grad_flat.iter_mut().for_each(|g| *g *= self.time_step);
@@ -2903,16 +2902,16 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
                 // Finally add inertia terms
                 for (i, solid) in self.object_data.solids.iter().enumerate() {
-                    let v0 = v0.at(0).at(i).into_flat();
-                    let v = v.at(0).at(i).into_flat();
-                    let g = grad.view_mut().isolate(0).isolate(i).into_flat();
+                    let v0 = v0.at(0).at(i).into_storage();
+                    let v = v.at(0).at(i).into_storage();
+                    let g = grad.view_mut().isolate(0).isolate(i).into_storage();
                     solid.inertia().add_energy_gradient(v0, v, g);
                 }
 
                 for (i, shell) in self.object_data.shells.iter().enumerate() {
-                    let v0 = v0.at(1).at(i).into_flat();
-                    let v = v.at(1).at(i).into_flat();
-                    let g = grad.view_mut().isolate(1).isolate(i).into_flat();
+                    let v0 = v0.at(1).at(i).into_storage();
+                    let v = v.at(1).at(i).into_storage();
+                    let g = grad.view_mut().isolate(1).isolate(i).into_storage();
                     shell.inertia().add_energy_gradient(v0, v, g);
                 }
             } // Drop object_data.workspace borrow
@@ -2966,7 +2965,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             }
         }
 
-        let grad_f = grad.into_flat();
+        let grad_f = grad.into_storage();
 
         let scale = self.variable_scale() * self.impulse_inv_scale();
         grad_f.iter_mut().for_each(|g| *g *= scale);
@@ -3052,8 +3051,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let n = vc.borrow().constraint_size();
             vc.borrow_mut().constraint(
-                x0.at(0).at(*solid_idx).into_flat(),
-                x.at(0).at(*solid_idx).into_flat(),
+                x0.at(0).at(*solid_idx).into_storage(),
+                x.at(0).at(*solid_idx).into_storage(),
                 &mut g[count..count + n],
             );
 
@@ -3265,8 +3264,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = vc.borrow().constraint_jacobian_size();
             vc.borrow_mut()
                 .constraint_jacobian_values(
-                    x0.at(0).at(*solid_idx).into_flat(),
-                    x.at(0).at(*solid_idx).into_flat(),
+                    x0.at(0).at(*solid_idx).into_storage(),
+                    x.at(0).at(*solid_idx).into_storage(),
                     &mut vals[count..count + n],
                 )
                 .ok();
@@ -3605,10 +3604,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         obj_factor *= self.variable_scale() * self.variable_scale() * self.impulse_inv_scale();
 
         for (solid_idx, solid) in self.object_data.solids.iter().enumerate() {
-            let x0 = x0.at(0).at(solid_idx).into_flat();
-            let x1 = x1.at(0).at(solid_idx).into_flat();
-            let v0 = v0.at(0).at(solid_idx).into_flat();
-            let v = v.at(0).at(solid_idx).into_flat();
+            let x0 = x0.at(0).at(solid_idx).into_storage();
+            let x1 = x1.at(0).at(solid_idx).into_storage();
+            let v0 = v0.at(0).at(solid_idx).into_storage();
+            let v = v.at(0).at(solid_idx).into_storage();
             let elasticity = solid.elasticity();
             let n = elasticity.energy_hessian_size();
             elasticity.energy_hessian_values(
@@ -3628,10 +3627,10 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for (shell_idx, shell) in self.object_data.shells.iter().enumerate() {
-            let x0 = x0.at(1).at(shell_idx).into_flat();
-            let x1 = x1.at(1).at(shell_idx).into_flat();
-            let v0 = v0.at(1).at(shell_idx).into_flat();
-            let v = v.at(1).at(shell_idx).into_flat();
+            let x0 = x0.at(1).at(shell_idx).into_storage();
+            let x1 = x1.at(1).at(shell_idx).into_storage();
+            let v0 = v0.at(1).at(shell_idx).into_storage();
+            let v = v.at(1).at(shell_idx).into_storage();
             let elasticity = shell.elasticity();
             let n = elasticity.energy_hessian_size();
             elasticity.energy_hessian_values(
@@ -3651,8 +3650,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         }
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let x0 = x0.at(0).at(*solid_idx).into_flat();
-            let x1 = x1.at(0).at(*solid_idx).into_flat();
+            let x0 = x0.at(0).at(*solid_idx).into_storage();
+            let x1 = x1.at(0).at(*solid_idx).into_storage();
             let nc = vc.borrow().constraint_size();
             let nh = vc.borrow().constraint_hessian_size();
             vc.borrow_mut()

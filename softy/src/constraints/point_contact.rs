@@ -1253,14 +1253,14 @@ impl ContactConstraint for PointContactConstraint {
         object_impulse_corrector_tensor.negate();
 
         *object_impulse = Chunked3::from_flat((
-            object_impulse_corrector_tensor.into_data().into_flat(),
-            object_friction_impulse_tensor.into_data().into_flat(),
+            object_impulse_corrector_tensor.into_data().into_storage(),
+            object_friction_impulse_tensor.into_data().into_storage(),
         ));
 
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.len(),
-            Chunked3::from_flat((impulse_corrector.into_flat(), forwarded_impulse.into_flat())),
+            Chunked3::from_flat((impulse_corrector.into_storage(), forwarded_impulse.into_storage())),
         );
 
         if friction_steps > 0 {
@@ -1280,14 +1280,14 @@ impl ContactConstraint for PointContactConstraint {
                     MassData::Sparse(masses) => {
                         let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
                         let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_flat().0,
+                            frictional_contact.object_impulse.view().into_storage().0,
                         );
                         let add_vel = mass_mtx.view() * corrector.into_tensor();
                         *&mut object_vel.expr_mut() += add_vel.expr();
                     }
                     MassData::Dense(mass, _) => {
                         let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_flat().0,
+                            frictional_contact.object_impulse.view().into_storage().0,
                         );
                         //*&mut corrector.expr_mut() *= *mass;
                         //corrector.into_tensor()
@@ -1308,7 +1308,7 @@ impl ContactConstraint for PointContactConstraint {
                     .collider_impulse
                     .source()
                     .view()
-                    .into_flat()
+                    .into_storage()
                     .0,
             );
 

@@ -397,19 +397,19 @@ impl SolverBuilder {
         let vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vel);
         let mut grad = vel.clone();
         grad.view_mut()
-            .into_flat()
+            .into_storage()
             .iter_mut()
             .for_each(|v| *v = 0.0); // Zero out gradient.
 
         Ok(ObjectData {
             prev_x: prev_x.clone(),
             prev_v: prev_v.clone(),
-            prev_prev_x: prev_x.clone().into_flat(),
-            prev_prev_v: prev_v.clone().into_flat(),
+            prev_prev_x: prev_x.clone().into_storage(),
+            prev_prev_v: prev_v.clone().into_storage(),
             prev_pos: pos.clone(),
             prev_vel: vel.clone(),
-            prev_prev_pos: pos.clone().into_flat(),
-            prev_prev_vel: vel.clone().into_flat(),
+            prev_prev_pos: pos.clone().into_storage(),
+            prev_prev_vel: vel.clone().into_storage(),
 
             workspace: RefCell::new(WorkspaceData {
                 x: prev_x,

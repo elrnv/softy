@@ -344,7 +344,7 @@ impl ContactBasis {
             .collect();
 
         BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked1::from_array_vec(
-            bases.into_flat(),
+            bases.into_storage(),
         )))
     }
 
@@ -365,7 +365,7 @@ impl ContactBasis {
             .collect();
 
         BlockDiagonalMatrix::new(Chunked3::from_flat(Chunked2::from_array_vec(
-            bases.into_flat(),
+            bases.into_storage(),
         )))
     }
 

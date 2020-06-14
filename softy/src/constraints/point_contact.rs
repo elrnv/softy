@@ -1273,33 +1273,41 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(
+    fn add_mass_weighted_frictional_contact_impulse_to_object(
         &self,
-        [mut object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        mut object_vel: SubsetView<Chunked3<&mut [f64]>>,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
-            if !frictional_contact.object_impulse.is_empty() {
-                match &self.object_mass_data {
-                    MassData::Sparse(masses) => {
-                        let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
-                        let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_storage().0,
-                        );
-                        let add_vel = mass_mtx.view() * corrector.into_tensor();
-                        *&mut object_vel.expr_mut() += add_vel.expr();
-                    }
-                    MassData::Dense(mass, _) => {
-                        let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_storage().0,
-                        );
-                        //*&mut corrector.expr_mut() *= *mass;
-                        //corrector.into_tensor()
-                        *&mut object_vel.expr_mut() += corrector.expr() * *mass;
-                    }
-                    _ => {}
-                };
+            if frictional_contact.object_impulse.is_empty() {
+                return;
             }
+            match &self.object_mass_data {
+                MassData::Sparse(masses) => {
+                    let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
+                    let corrector = Chunked3::from_flat(
+                        frictional_contact.object_impulse.view().into_storage().0,
+                    );
+                    let add_vel = mass_mtx.view() * corrector.into_tensor();
+                    *&mut object_vel.expr_mut() += add_vel.expr();
+                }
+                MassData::Dense(mass, _) => {
+                    let corrector = Chunked3::from_flat(
+                        frictional_contact.object_impulse.view().into_storage().0,
+                    );
+                    //*&mut corrector.expr_mut() *= *mass;
+                    //corrector.into_tensor()
+                    *&mut object_vel.expr_mut() += corrector.expr() * *mass;
+                }
+                _ => {}
+            };
+        }
+    }
 
+    fn add_mass_weighted_frictional_contact_impulse_to_collider(
+        &self,
+        collider_vel: SubsetView<Chunked3<&mut [f64]>>,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.collider_impulse.is_empty() {
                 return;
             }
@@ -1355,24 +1363,30 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_friction_impulse(
+    fn add_friction_impulse_to_object(
         &self,
-        mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        mut grad: SubsetView<Chunked3<&mut [f64]>>,
         multiplier: f64,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if !frictional_contact.object_impulse.is_empty() && !grad[0].is_empty() {
+            if !frictional_contact.object_impulse.is_empty() && !grad.is_empty() {
                 for (i, (_, &r)) in frictional_contact.object_impulse.iter().enumerate() {
-                    grad[0][i] = (Vector3::new(grad[0][i]) + Vector3::new(r) * multiplier).into();
+                    grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
                 }
             }
+        }
+    }
 
-            if frictional_contact.collider_impulse.is_empty() || grad[1].is_empty() {
-                return;
-            }
-
-            for (i, (_, &r)) in frictional_contact.collider_impulse.indexed_source_iter() {
-                grad[1][i] = (Vector3::new(grad[1][i]) + Vector3::new(r) * multiplier).into();
+    fn add_friction_impulse_to_collider(
+        &self,
+        mut grad: SubsetView<Chunked3<&mut [f64]>>,
+        multiplier: f64,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if !frictional_contact.collider_impulse.is_empty() && !grad.is_empty() {
+                for (i, (_, &r)) in frictional_contact.collider_impulse.indexed_source_iter() {
+                    grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
+                }
             }
         }
     }

@@ -322,19 +322,14 @@ impl ObjectData {
         // Determine which variable set to use for the current pos.
         // E.g. rigid meshes use the `pos` set, while deformable meshes use the
         // `cur_x` field.
-        let ObjectData { solids, shells, .. } = self;
-        Self::mesh_vertex_subset_impl(x, pos, src_idx, solids, shells)
+        self.mesh_vertex_subset(x, pos, src_idx)
     }
 
     pub fn prev_pos(&self, src_idx: SourceIndex) -> MeshVertexView3<&[f64]> {
         let ObjectData {
-            prev_x,
-            prev_pos,
-            solids,
-            shells,
-            ..
+            prev_x, prev_pos, ..
         } = self;
-        Self::mesh_vertex_subset_impl(prev_x.view(), prev_pos.view(), src_idx, solids, shells)
+        self.mesh_vertex_subset(prev_x.view(), prev_pos.view(), src_idx)
     }
 
     pub fn cur_vel<'x>(
@@ -346,33 +341,18 @@ impl ObjectData {
         // First determine which variable set to use for the current pos.
         // E.g. rigid meshes use the `pos` set, while deformable meshes use the
         // `cur_x` field.
-        let ObjectData { solids, shells, .. } = self;
-        Self::mesh_vertex_subset_impl(v, vel, src_idx, solids, shells)
+        self.mesh_vertex_subset(v, vel, src_idx)
     }
 
     pub fn prev_vel(&self, src_idx: SourceIndex) -> MeshVertexView3<&[f64]> {
         let ObjectData {
-            prev_v,
-            prev_vel,
-            solids,
-            shells,
-            ..
+            prev_v, prev_vel, ..
         } = self;
-        Self::mesh_vertex_subset_impl(prev_v.view(), prev_vel.view(), src_idx, solids, shells)
-    }
-
-    pub fn grad_mut<'a>(
-        &'a self,
-        src_idx: [SourceIndex; 2],
-        grad_vtx: VertexView3<'a, &'a mut [f64]>,
-        grad_dof: VertexView3<'a, &'a mut [f64]>,
-    ) -> [MeshVertexView3<'a, &'a mut [f64]>; 2] {
-        let ObjectData { solids, shells, .. } = self;
-        Self::mesh_vertex_subset_split_mut_impl(grad_dof, grad_vtx, src_idx, solids, shells)
+        self.mesh_vertex_subset(prev_v.view(), prev_vel.view(), src_idx)
     }
 
     /// Transfer internally stored workspace gradient to the given array of degrees of freedom.
-    /// This is a noop when degrees of freedom coinside with vertex velocities.
+    /// This is a noop when degrees of freedom coincide with vertex velocities.
     pub fn sync_grad(&self, source: SourceIndex, grad_x: VertexView3<&mut [f64]>) {
         let mut ws = self.workspace.borrow_mut();
         match source {
@@ -409,135 +389,19 @@ impl ObjectData {
         std::ops::Range<usize>: IsolateIndex<D, Output = D>,
         Alt: Into<Option<VertexView<'x, D>>>,
     {
-        Self::mesh_vertex_subset_impl(x, alt, source, &self.solids, &self.shells)
-    }
-
-    // TODO: refactor this function together with the function above.
-    fn mesh_vertex_subset_impl<'x, D: 'x, Alt>(
-        x: VertexView<'x, D>,
-        alt: Alt,
-        source: SourceIndex,
-        solids: &'x [TetMeshSolid],
-        shells: &[TriMeshShell],
-    ) -> MeshVertexView<'x, D>
-    where
-        D: Set + RemovePrefix,
-        std::ops::Range<usize>: IsolateIndex<D, Output = D>,
-        Alt: Into<Option<VertexView<'x, D>>>,
-    {
         match source {
             SourceIndex::Solid(i) => Subset::from_unique_ordered_indices(
-                &solids[i].surface().indices,
+                &self.solids[i].surface().indices,
                 x.isolate(0).isolate(i),
             ),
             SourceIndex::Shell(i) => {
                 // Determine source data.
-                let x = match shells[i].data {
+                let x = match self.shells[i].data {
                     ShellData::Soft { .. } => x,
                     _ => alt.into().unwrap_or(x),
                 };
 
                 Subset::all(x.isolate(1).isolate(i))
-            }
-        }
-    }
-
-    /// Split a given `VertexView` into a pair of views.
-    ///
-    /// This works when contacts happen on two different objects, however
-    /// if/when we implement self contact, this needs to be inspected carefully.
-    ///
-    /// `alt` is a source of vertex data for objects whose degrees of freedom do not lie on the
-    /// vertices of the mesh. For these objects, the values stored in `q` may not represent vertex
-    /// data.
-    fn mesh_vertex_subset_split_mut_impl<'q, D: 'q, Alt>(
-        q: VertexView<'q, D>,
-        alt: Alt,
-        source: [SourceIndex; 2],
-        solids: &'q [TetMeshSolid],
-        shells: &[TriMeshShell],
-    ) -> [MeshVertexView<'q, D>; 2]
-    where
-        D: Set + RemovePrefix + SplitAt + std::fmt::Debug,
-        std::ops::Range<usize>: IsolateIndex<D, Output = D>,
-        Alt: Into<Option<VertexView<'q, D>>>,
-    {
-        // Closure to get data subview on the solid vertices.
-        let get_solid = |subview: ChunkedView<'q, D>, subview_idx: usize, solid_idx: usize| {
-            Subset::from_unique_ordered_indices(
-                solids[solid_idx].surface().indices.as_slice(),
-                subview.isolate(subview_idx),
-            )
-        };
-
-        let get_shell = |subview: ChunkedView<'q, D>, subview_idx: usize| {
-            Subset::all(subview.isolate(subview_idx))
-        };
-
-        match source {
-            [SourceIndex::Solid(i), SourceIndex::Solid(j)] => {
-                if i < j {
-                    let (q_l, q_r) = q.isolate(0).split_at(j);
-                    [get_solid(q_l, i, i), get_solid(q_r, 0, j)]
-                } else {
-                    assert_ne!(i, j); // This needs special handling for self contact.
-                    let (q_l, q_r) = q.isolate(0).split_at(i);
-                    [get_solid(q_r, 0, i), get_solid(q_l, j, j)]
-                }
-            }
-            [SourceIndex::Solid(i), SourceIndex::Shell(j)] => {
-                let alt = alt.into();
-                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
-                    let (q_l, q_r) = q.split_at(1);
-                    [
-                        get_solid(q_l.isolate(0), i, i),
-                        get_shell(q_r.isolate(0), j),
-                    ]
-                } else {
-                    let alt = alt.unwrap(); // Checked in the if statement.
-                    [get_solid(q.isolate(0), i, i), get_shell(alt.isolate(1), j)]
-                }
-            }
-            [SourceIndex::Shell(i), SourceIndex::Solid(j)] => {
-                let alt = alt.into();
-                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
-                    let (q_l, q_r) = q.split_at(1);
-                    [
-                        get_shell(q_r.isolate(0), i),
-                        get_solid(q_l.isolate(0), j, j),
-                    ]
-                } else {
-                    let alt = alt.unwrap(); // Checked in the if statement.
-                    [get_shell(alt.isolate(1), i), get_solid(q.isolate(0), j, j)]
-                }
-            }
-            [SourceIndex::Shell(i), SourceIndex::Shell(j)] => {
-                let alt = alt.into();
-                if matches!(shells[i].data, ShellData::Soft { .. }) || alt.is_none() {
-                    if i < j {
-                        let (q_l, q_r) = q.isolate(1).split_at(j);
-                        [get_shell(q_l, i), get_shell(q_r, 0)]
-                    } else {
-                        assert_ne!(i, j); // This needs special handling for self contact.
-                        let (q_l, q_r) = q.isolate(1).split_at(i);
-                        [get_shell(q_r, 0), get_shell(q_l, j)]
-                    }
-                } else {
-                    let alt = alt.unwrap(); // Checked in the if statement.
-                    if matches!(shells[j].data, ShellData::Soft { .. }) {
-                        [get_shell(alt.isolate(1), i), get_shell(q.isolate(1), j)]
-                    } else {
-                        // Both non-deformable shells.
-                        if i < j {
-                            let (alt_l, alt_r) = alt.isolate(1).split_at(j);
-                            [get_shell(alt_l, i), get_shell(alt_r, 0)]
-                        } else {
-                            assert_ne!(i, j); // This needs special handling for self contact.
-                            let (alt_l, alt_r) = alt.isolate(1).split_at(i);
-                            [get_shell(alt_r, 0), get_shell(alt_l, j)]
-                        }
-                    }
-                }
             }
         }
     }
@@ -1531,37 +1395,23 @@ impl NonLinearProblem {
     pub fn apply_frictional_contact_impulse(&mut self) {
         let NonLinearProblem {
             frictional_contacts,
-            object_data:
-                ObjectData {
-                    workspace,
-                    solids,
-                    shells,
-                    ..
-                },
+            object_data,
             ..
         } = self;
 
-        let mut ws = workspace.borrow_mut();
+        let mut ws = object_data.workspace.borrow_mut();
         let WorkspaceData { v, vel, .. } = &mut *ws;
 
         for fc in frictional_contacts.iter() {
-            // TODO: It is unfortunate that we have to leak abstraction here.
-            //       Possibly we have to hide object_data behind a RefCell and use
-            //       borrow splitting.
-            let [mut obj_vel, mut coll_vel] = ObjectData::mesh_vertex_subset_split_mut_impl(
-                v.view_mut(),
-                vel.view_mut(),
-                [fc.object_index, fc.collider_index],
-                solids,
-                shells,
-            );
+            let [obj_idx, coll_idx] = [fc.object_index, fc.collider_index];
+            let fc = fc.constraint.borrow();
 
-            fc.constraint
-                .borrow()
-                .add_mass_weighted_frictional_contact_impulse([
-                    obj_vel.view_mut(),
-                    coll_vel.view_mut(),
-                ]);
+            let mut obj_vel = object_data.mesh_vertex_subset(v.view_mut(), vel.view_mut(), obj_idx);
+            fc.add_mass_weighted_frictional_contact_impulse_to_object(obj_vel.view_mut());
+
+            let mut coll_vel =
+                object_data.mesh_vertex_subset(v.view_mut(), vel.view_mut(), coll_idx);
+            fc.add_mass_weighted_frictional_contact_impulse_to_collider(coll_vel.view_mut());
         }
     }
 
@@ -2268,15 +2118,14 @@ impl NonLinearProblem {
             );
 
             let mut obj_imp = Chunked3::from_array_slice_mut(obj_imp.as_mut_slice());
-            let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
+            fc.constraint
+                .borrow()
+                .add_friction_impulse_to_object(Subset::all(obj_imp.view_mut()), 1.0);
 
-            fc.constraint.borrow().add_friction_impulse(
-                [
-                    Subset::all(obj_imp.view_mut()),
-                    Subset::all(coll_imp.view_mut()),
-                ],
-                1.0,
-            );
+            let mut coll_imp = Chunked3::from_array_slice_mut(coll_imp.as_mut_slice());
+            fc.constraint
+                .borrow()
+                .add_friction_impulse_to_collider(Subset::all(coll_imp.view_mut()), 1.0);
 
             let mut imp = object_data.mesh_vertex_subset(impulse.view_mut(), None, fc.object_index);
             for (imp, obj_imp) in imp.iter_mut().zip(obj_imp.iter()) {
@@ -2937,23 +2786,26 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 //    },
                 //});
 
-                // Get a zero initialized memory slice to which we can write the gradient to.
-                // This may be different than `grad.view_mut()` if the object is rigid and has
-                // different degrees of freedom.
-                {
+                let fc_constraint = fc.constraint.borrow();
+                if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
+                    // ws.grad is a zero initialized memory slice to which we can write the gradient to.
+                    // This may be different than `grad.view_mut()` if the object is rigid and has
+                    // different degrees of freedom.
                     let mut ws = self.object_data.workspace.borrow_mut();
-                    let [mut obj_g, mut coll_g] = self.object_data.grad_mut(
-                        [fc.object_index, fc.collider_index],
-                        ws.grad.view_mut(),
-                        grad.view_mut(),
-                    );
+                    if fc_contact.params.friction_forwarding > 0.0 {
+                        let mut obj_g = self.object_data.mesh_vertex_subset(
+                            grad.view_mut(),
+                            ws.grad.view_mut(),
+                            fc.object_index,
+                        );
+                        fc_constraint.add_friction_impulse_to_object(obj_g.view_mut(), -1.0);
 
-                    let fc_constraint = fc.constraint.borrow();
-                    if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
-                        if fc_contact.params.friction_forwarding > 0.0 {
-                            fc_constraint
-                                .add_friction_impulse([obj_g.view_mut(), coll_g.view_mut()], -1.0);
-                        }
+                        let mut coll_g = self.object_data.mesh_vertex_subset(
+                            grad.view_mut(),
+                            ws.grad.view_mut(),
+                            fc.collider_index,
+                        );
+                        fc_constraint.add_friction_impulse_to_collider(coll_g.view_mut(), -1.0);
                     }
                 }
 

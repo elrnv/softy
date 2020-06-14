@@ -318,10 +318,7 @@ impl<T: Real> DiscreteShellBendingEnergy<'_, T> {
             cur_pos,
             faces,
             edge,
-            prev_theta,
-            ref_theta,
-            ref_shape,
-            stiffness,
+            ..
         } = *self;
 
         // Theta derivative with respect to x.
@@ -339,10 +336,9 @@ impl<T: Real> DiscreteShellBendingEnergy<'_, T> {
             cur_pos,
             faces,
             edge,
-            prev_theta,
-            ref_theta,
             ref_shape,
             stiffness,
+            ..
         } = *self;
 
         // ∂θ/∂x ∂²W/∂θ² ∂θ/∂xᵀ + ∂W/∂θ ∂²θ/∂x²
@@ -356,6 +352,7 @@ impl<T: Real> DiscreteShellBendingEnergy<'_, T> {
 }
 
 /// In contrast to `DiscreteShellBendingEnergy`, this energy prevents inversions altogether.
+#[allow(dead_code)]
 struct DiscreteShellTanBendingEnergy<'a, T> {
     cur_pos: &'a [[T; 3]],
     faces: &'a [[usize; 3]],
@@ -366,6 +363,7 @@ struct DiscreteShellTanBendingEnergy<'a, T> {
     stiffness: T,
 }
 
+#[allow(dead_code)]
 impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
     /// Compute the bending energy.
     #[inline]
@@ -403,10 +401,7 @@ impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
             cur_pos,
             faces,
             edge,
-            prev_theta,
-            ref_theta,
-            ref_shape,
-            stiffness,
+            ..
         } = *self;
 
         // Theta derivative with respect to x.

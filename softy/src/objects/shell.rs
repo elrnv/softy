@@ -786,7 +786,7 @@ mod tests {
                     Matrix3::identity() / mass - rrow * inertia.inverse().unwrap() * rcol;
                 let actual_block = effective_mass_inv.view().at(row).at(col);
                 for i in 0..3 {
-                    assert_relative_eq!(actual_block[i].into_tensor(), exp_block[i]);
+                    assert_relative_eq!(*actual_block.at(i).as_tensor(), exp_block[i]);
                 }
             }
         }

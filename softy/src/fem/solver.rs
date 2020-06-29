@@ -15,7 +15,8 @@ use utils::zip;
 use crate::inf_norm;
 
 use super::{
-    MuStrategy, NonLinearProblem, ObjectData, SimParams, Solution, SourceIndex, WorkspaceData,
+    GeneralizedCoords, GeneralizedState, MuStrategy, NonLinearProblem, ObjectData, SimParams,
+    Solution, SourceIndex, Vertex, VertexState, VertexWorkspace, WorkspaceData,
 };
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
@@ -293,23 +294,28 @@ impl SolverBuilder {
         shells: Vec<TriMeshShell>,
     ) -> Result<ObjectData, Error> {
         // Generalized coordinates and their derivatives.
-        let mut prev_x = Chunked::<Chunked3<Vec<f64>>>::new();
-        let mut prev_v = Chunked::<Chunked3<Vec<f64>>>::new();
+        let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<f64>, Vec<f64>>>>::default();
 
         // Vertex position and velocities.
-        let mut pos = Chunked::<Chunked3<Vec<f64>>>::new();
-        let mut vel = Chunked::<Chunked3<Vec<f64>>>::new();
+        let mut vtx = Chunked::<Chunked3<VertexState<Vec<f64>, Vec<f64>>>>::default();
 
         for TetMeshSolid {
             tetmesh: ref mesh, ..
         } in solids.iter()
         {
             // Get previous position vector from the tetmesh.
-            prev_x.push(mesh.vertex_positions().to_vec());
-            prev_v
-                .push(mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?);
-            pos.push(vec![]);
-            vel.push(vec![]);
+            dof.push_iter(
+                GeneralizedState {
+                    q: mesh.vertex_positions(),
+                    dq: mesh.attrib_as_slice::<VelType, VertexIndex>(VELOCITY_ATTRIB)?,
+                }
+                .iter()
+                .map(|dof| GeneralizedState {
+                    q: *dof.q,
+                    dq: *dof.dq,
+                }),
+            );
+            vtx.push_iter(std::iter::empty());
         }
 
         for TriMeshShell {
@@ -327,7 +333,7 @@ impl SolverBuilder {
                     let translation: [f64; 3] = *cm.as_data();
                     // NOTE: if rotation is not [0.0; 3], then we must unrotate when computing rt
                     // below.
-                    prev_x.push(vec![translation, [0.0; 3]]);
+                    let q = [translation, [0.0; 3]];
 
                     // Average linear velocity.
                     let mut linear = Vector3::zero();
@@ -366,57 +372,69 @@ impl SolverBuilder {
                         .unwrap_or_else(|| na::DVector::zeros(3));
                     let angular = Vector3::new([angular[0], angular[1], angular[2]]);
 
-                    prev_v.push(vec![linear.into_data(), angular.into_data()]);
+                    let dq = [linear.into_data(), angular.into_data()];
+                    dof.push_iter(
+                        q.iter()
+                            .zip(dq.iter())
+                            .map(|(&q, &dq)| GeneralizedState { q, dq }),
+                    );
 
-                    pos.push(mesh.vertex_positions().to_vec());
-                    vel.push(mesh_vel);
+                    vtx.push_iter(
+                        mesh.vertex_position_iter()
+                            .zip(mesh_vel.iter())
+                            .map(|(&pos, &vel)| VertexState { pos, vel }),
+                    );
                 }
                 ShellData::Soft { .. } => {
-                    prev_x.push(mesh.vertex_positions().to_vec());
                     let mesh_prev_vel =
                         mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-                    prev_v.push(mesh_prev_vel);
-                    pos.push(vec![]);
-                    vel.push(vec![]);
+                    dof.push_iter(
+                        mesh.vertex_position_iter()
+                            .zip(mesh_prev_vel.iter())
+                            .map(|(&pos, &vel)| GeneralizedState { q: pos, dq: vel }),
+                    );
+                    vtx.push_iter(std::iter::empty());
                 }
                 ShellData::Fixed { .. } => {
-                    prev_x.push(vec![]);
-                    prev_v.push(vec![]);
-                    pos.push(mesh.vertex_positions().to_vec());
+                    dof.push_iter(std::iter::empty());
                     let mesh_vel =
                         mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-                    vel.push(mesh_vel);
+                    vtx.push_iter(
+                        mesh.vertex_position_iter()
+                            .zip(mesh_vel.iter())
+                            .map(|(&pos, &vel)| VertexState { pos, vel }),
+                    );
                 }
             }
         }
 
         let num_meshes = solids.len() + shells.len();
-        let prev_x = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_x);
-        let prev_v = Chunked::from_offsets(vec![0, solids.len(), num_meshes], prev_v);
-        let pos = Chunked::from_offsets(vec![0, solids.len(), num_meshes], pos);
-        let vel = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vel);
-        let mut grad = vel.clone();
-        grad.view_mut()
-            .into_storage()
-            .iter_mut()
-            .for_each(|v| *v = 0.0); // Zero out gradient.
+        let dof_state = Chunked::from_offsets(vec![0, solids.len(), num_meshes], dof);
+        let vtx_state = Chunked::from_offsets(vec![0, solids.len(), num_meshes], vtx);
+
+        let dof = dof_state.clone().map_storage(|dof| GeneralizedCoords {
+            prev: dof.clone(),
+            cur: dof,
+        });
+        let vtx = vtx_state.clone().map_storage(|vtx| Vertex {
+            prev: vtx.clone(),
+            cur: vtx,
+        });
+        let vtx_ws_next = vtx_state.clone().map_storage(|vtx| {
+            let n = vtx.len();
+            VertexWorkspace {
+                state: vtx,
+                grad: vec![0.0; n],
+            }
+        });
 
         Ok(ObjectData {
-            prev_x: prev_x.clone(),
-            prev_v: prev_v.clone(),
-            prev_prev_x: prev_x.clone().into_storage(),
-            prev_prev_v: prev_v.clone().into_storage(),
-            prev_pos: pos.clone(),
-            prev_vel: vel.clone(),
-            prev_prev_pos: pos.clone().into_storage(),
-            prev_prev_vel: vel.clone().into_storage(),
+            dof: dof.clone(),
+            vtx,
 
             workspace: RefCell::new(WorkspaceData {
-                x: prev_x,
-                v: prev_v,
-                pos,
-                vel,
-                grad,
+                dof: dof_state,
+                vtx: vtx_ws_next,
             }),
 
             solids,

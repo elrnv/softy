@@ -5,7 +5,7 @@ use std::os::raw::{c_double, c_int};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub enum SampleType {
+pub enum ISO_SampleType {
     /// Samples are located at mesh vertices and normals are computed using an area weighted
     /// normals of adjacent triangles.
     Vertex,
@@ -18,7 +18,7 @@ pub enum SampleType {
 /// The style of background potential to be used alongside a local potential field.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub enum BackgroundFieldType {
+pub enum ISO_BackgroundFieldType {
     /// Background field is set to be zero.
     Zero,
     /// When computing the potential field, the input values will be used as the background
@@ -32,7 +32,7 @@ pub enum BackgroundFieldType {
 /// samples.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub enum KernelType {
+pub enum ISO_KernelType {
     /// Local Interpolating kernel. This kernel will generate an implicit surface that passes
     /// through each sample point exactly, however it can produce singularities for large radii
     /// and is generally not suitable for simulation.
@@ -63,21 +63,25 @@ pub enum KernelType {
 /// field.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct EL_IsoParams {
+pub struct ISO_Params {
     /// Used by a selection of kernels like the Approximate and Global, this value determines how
     /// cloesely the surface approximates a given triangle mesh. Lower values result in more
     /// accurate surfaces, while larger values produce smoother surfaces.
     pub tolerance: f32,
-    /// The value by which the internal kernel radius is multiplied. The internal radius is
-    /// determined to be the maximum of the smallest radius around each triangle centroid which
-    /// contains all of the triangles vertices.
+    /// The value by which the internal kernel radius is multiplied.
     pub radius_multiplier: f32,
+    /// The base kernel support radius.
+    ///
+    /// This value multiplied by the `radius_multiplier` gives the true kernel radius.
+    /// If set to `0`, the base radius will be determined to be the maximum of the smallest radius
+    /// around each triangle centroid which contains all of the triangles vertices.
+    pub base_radius: f32,
     /// The type of interpolation kernel to use for interpolating local potentials around each
     /// triangle.
-    pub kernel: KernelType,
+    pub kernel: ISO_KernelType,
     /// Option for a type of background potential to use outside the radius of influence of all
     /// samples of the triangle mesh.
-    pub background_field: BackgroundFieldType,
+    pub background_field: ISO_BackgroundFieldType,
     /// `false` -> Do NOT mix the background potential with the local potential field.
     /// `true` -> Mix the background potential with the local potential field.
     /// Note: when using the Distance based potential field, it is recommended to leave this at 0
@@ -85,21 +89,22 @@ pub struct EL_IsoParams {
     /// field if mixed in.
     pub weighted: bool,
     /// The positions of sample point used to define the implicit surface.
-    pub sample_type: SampleType,
+    pub sample_type: ISO_SampleType,
     /// The max_step parameter determines the additional distance (beyond the radius of influence)
     /// to consider when computing the set of neighbourhood samples for a given set of query
     /// points. This is typically used for simulation, where the set of neighbourhoods is expected
     /// to stay constant when the positions of the samples for the implicit surface or the
     /// positions of the query points may be perturbed. If positions are unperturbed between calls
-    /// to `el_iso_cache_neighbours`, then this can be set to 0.0.
+    /// to `iso_cache_neighbours`, then this can be set to 0.0.
     pub max_step: f32,
 }
 
-impl Into<implicits::Params> for EL_IsoParams {
+impl Into<implicits::Params> for ISO_Params {
     fn into(self) -> implicits::Params {
-        let EL_IsoParams {
+        let ISO_Params {
             tolerance,
             radius_multiplier,
+            base_radius,
             kernel,
             background_field,
             weighted,
@@ -108,60 +113,65 @@ impl Into<implicits::Params> for EL_IsoParams {
         } = self;
         implicits::Params {
             kernel: match kernel {
-                KernelType::LocalInterpolating => implicits::KernelType::Interpolating {
+                ISO_KernelType::LocalInterpolating => implicits::KernelType::Interpolating {
                     radius_multiplier: radius_multiplier as f64,
                 },
-                KernelType::LocalApproximate => implicits::KernelType::Approximate {
+                ISO_KernelType::LocalApproximate => implicits::KernelType::Approximate {
                     radius_multiplier: radius_multiplier as f64,
                     tolerance: tolerance as f64,
                 },
-                KernelType::LocalCubic => implicits::KernelType::Cubic {
+                ISO_KernelType::LocalCubic => implicits::KernelType::Cubic {
                     radius_multiplier: radius_multiplier as f64,
                 },
-                KernelType::GlobalInvDist => implicits::KernelType::Global {
+                ISO_KernelType::GlobalInvDist => implicits::KernelType::Global {
                     tolerance: tolerance as f64,
                 },
-                KernelType::GlobalHrbf => implicits::KernelType::Hrbf,
+                ISO_KernelType::GlobalHrbf => implicits::KernelType::Hrbf,
             },
             background_field: implicits::BackgroundFieldParams {
                 field_type: match background_field {
-                    BackgroundFieldType::Zero => implicits::BackgroundFieldType::Zero,
-                    BackgroundFieldType::FromInput => implicits::BackgroundFieldType::FromInput,
-                    BackgroundFieldType::DistanceBased => {
+                    ISO_BackgroundFieldType::Zero => implicits::BackgroundFieldType::Zero,
+                    ISO_BackgroundFieldType::FromInput => implicits::BackgroundFieldType::FromInput,
+                    ISO_BackgroundFieldType::DistanceBased => {
                         implicits::BackgroundFieldType::DistanceBased
                     }
                 },
                 weighted,
             },
             sample_type: match sample_type {
-                SampleType::Vertex => implicits::SampleType::Vertex,
-                SampleType::Face => implicits::SampleType::Face,
+                ISO_SampleType::Vertex => implicits::SampleType::Vertex,
+                ISO_SampleType::Face => implicits::SampleType::Face,
             },
             max_step: max_step as f64,
+            base_radius: if base_radius == 0.0f32 {
+                None
+            } else {
+                Some(base_radius as f64)
+            },
         }
     }
 }
 
 /// Opaque TriMesh type.
 #[allow(non_camel_case_types)]
-pub struct EL_IsoTriMesh;
+pub struct ISO_TriMesh;
 
 /// Opaque iso-surface type.
 #[allow(non_camel_case_types)]
-pub struct EL_IsoSurface;
+pub struct ISO_Surface;
 
 /// Opaque query topology for an iso-surface.
 #[allow(non_camel_case_types)]
-pub struct EL_IsoQueryTopo;
+pub struct ISO_QueryTopo;
 
 /// Create a triangle mesh from the given arrays of data.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_create_trimesh(
+pub unsafe extern "C" fn iso_create_trimesh(
     num_coords: c_int,
     coords: *const c_double,
     num_indices: c_int,
     indices: *const c_int,
-) -> *mut EL_IsoTriMesh {
+) -> *mut ISO_TriMesh {
     assert_eq!(
         num_coords % 3,
         0,
@@ -175,12 +185,12 @@ pub unsafe extern "C" fn el_iso_create_trimesh(
         .collect();
 
     let mesh = Box::new(geo::mesh::TriMesh::new(positions, indices));
-    Box::into_raw(mesh) as *mut EL_IsoTriMesh
+    Box::into_raw(mesh) as *mut ISO_TriMesh
 }
 
 /// Free memory allocated for the trimesh.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_free_trimesh(trimesh: *mut EL_IsoTriMesh) {
+pub unsafe extern "C" fn iso_free_trimesh(trimesh: *mut ISO_TriMesh) {
     if !trimesh.is_null() {
         let _ = Box::from_raw(trimesh as *mut geo::mesh::TriMesh<f64>);
     }
@@ -188,22 +198,22 @@ pub unsafe extern "C" fn el_iso_free_trimesh(trimesh: *mut EL_IsoTriMesh) {
 
 /// Create a new implicit surface. If creation fails, a null pointer is returned.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_create_implicit_surface(
-    trimesh: *const EL_IsoTriMesh,
-    params: EL_IsoParams,
-) -> *mut EL_IsoSurface {
+pub unsafe extern "C" fn iso_create_implicit_surface(
+    trimesh: *const ISO_TriMesh,
+    params: ISO_Params,
+) -> *mut ISO_Surface {
     match implicits::mls_from_trimesh::<f64>(
         &*(trimesh as *const geo::mesh::TriMesh<f64>),
         params.into(),
     ) {
-        Ok(surf) => Box::into_raw(Box::new(surf)) as *mut EL_IsoSurface,
+        Ok(surf) => Box::into_raw(Box::new(surf)) as *mut ISO_Surface,
         Err(_) => std::ptr::null_mut(),
     }
 }
 
 /// Free memory allocated for the implicit surface.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_free_implicit_surface(implicit_surface: *mut EL_IsoSurface) {
+pub unsafe extern "C" fn iso_free_implicit_surface(implicit_surface: *mut ISO_Surface) {
     if !implicit_surface.is_null() {
         let _ = Box::from_raw(implicit_surface as *mut implicits::MLS<f64>);
     }
@@ -212,18 +222,18 @@ pub unsafe extern "C" fn el_iso_free_implicit_surface(implicit_surface: *mut EL_
 /// Create a topology data structure connecting the given query points with the implicit surface.
 /// If creation fails, a null pointer is returned.
 /// This function consumes the given `implicit_surface`, so it is an error to call
-/// `el_iso_free_implicit_surface` on it after calling this function.
+/// `iso_free_implicit_surface` on it after calling this function.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_query_topology(
-    implicit_surface: *mut EL_IsoSurface,
+pub unsafe extern "C" fn iso_query_topology(
+    implicit_surface: *mut ISO_Surface,
     num_query_points: c_int,
     query_point_coords: *const f64,
-) -> *mut EL_IsoQueryTopo {
+) -> *mut ISO_QueryTopo {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
     let query_points: &[[f64; 3]] = reinterpret_slice(coords);
     if !implicit_surface.is_null() {
         let surf = Box::from_raw(implicit_surface as *mut implicits::MLS<f64>);
-        Box::into_raw(Box::new((*surf).query_topo(query_points))) as *mut EL_IsoQueryTopo
+        Box::into_raw(Box::new((*surf).query_topo(query_points))) as *mut ISO_QueryTopo
     } else {
         std::ptr::null_mut()
     }
@@ -231,7 +241,7 @@ pub unsafe extern "C" fn el_iso_query_topology(
 
 /// Free memory allocated for the query topology.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_free_query_topology(query_topo: *mut EL_IsoQueryTopo) {
+pub unsafe extern "C" fn iso_free_query_topology(query_topo: *mut ISO_QueryTopo) {
     if !query_topo.is_null() {
         let _ = Box::from_raw(query_topo as *mut implicits::QueryTopo<f64>);
     }
@@ -239,8 +249,8 @@ pub unsafe extern "C" fn el_iso_free_query_topology(query_topo: *mut EL_IsoQuery
 
 /// Compute potential. Return 0 on success.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_compute_potential(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_compute_potential(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     out_potential: *mut f64,
@@ -262,8 +272,8 @@ pub unsafe extern "C" fn el_iso_compute_potential(
 /// this surface's radius are considered for projection. Those projected will be within a
 /// `tolerance` of the given `iso_value` but strictly below the `iso_value`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_project_to_below(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_project_to_below(
+    query_topo: *const ISO_QueryTopo,
     iso_value: f64,
     tolerance: f64,
     num_query_points: c_int,
@@ -288,8 +298,8 @@ pub unsafe extern "C" fn el_iso_project_to_below(
 /// this surface's radius are considered for projection. Those projected will be within a
 /// `tolerance` of the given `iso_value` but strictly above the `iso_value`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_project_to_above(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_project_to_above(
+    query_topo: *const ISO_QueryTopo,
     iso_value: f64,
     tolerance: f64,
     num_query_points: c_int,
@@ -350,10 +360,10 @@ macro_rules! impl_jac_values {
 /// in which case the corresponding values will be summed.
 ///
 /// This function determines the sizes of the mutable arrays expected in
-/// `el_iso_surface_jacobian_indices` and `el_iso_surface_jacobian_values` functions.
+/// `iso_surface_jacobian_indices` and `iso_surface_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_num_surface_jacobian_entries(
+    query_topo: *const ISO_QueryTopo,
 ) -> c_int {
     impl_num_jac_entries! {
         query_topo.num_surface_jacobian_entries()
@@ -363,8 +373,8 @@ pub unsafe extern "C" fn el_iso_num_surface_jacobian_entries(
 /// Compute the index structure of the sparse surface Jacobian for the given implicit function.
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_surface_jacobian_indices(
+    query_topo: *const ISO_QueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
@@ -375,10 +385,10 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_indices(
 }
 
 /// Compute surface Jacobian values for the given implicit function. The values correspond to the
-/// indices provided by `el_iso_surface_jacobian_indices`.
+/// indices provided by `iso_surface_jacobian_indices`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_surface_jacobian_values(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_surface_jacobian_values(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
@@ -393,11 +403,9 @@ pub unsafe extern "C" fn el_iso_surface_jacobian_values(
 /// query points.
 ///
 /// This function determines the sizes of the mutable arrays expected in
-/// `el_iso_query_jacobian_indices` and `el_iso_query_jacobian_values` functions.
+/// `iso_query_jacobian_indices` and `iso_query_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(
-    query_topo: *const EL_IsoQueryTopo,
-) -> c_int {
+pub unsafe extern "C" fn iso_num_query_jacobian_entries(query_topo: *const ISO_QueryTopo) -> c_int {
     impl_num_jac_entries! {
         query_topo.num_query_jacobian_entries()
     }
@@ -406,8 +414,8 @@ pub unsafe extern "C" fn el_iso_num_query_jacobian_entries(
 /// Compute the index structure of the sparse query Jacobian for the given implicit function.
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_query_jacobian_indices(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_query_jacobian_indices(
+    query_topo: *const ISO_QueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
@@ -419,8 +427,8 @@ pub unsafe extern "C" fn el_iso_query_jacobian_indices(
 
 /// Compute query Jacobian for the given implicit function.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_query_jacobian_values(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_query_jacobian_values(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
@@ -435,10 +443,10 @@ pub unsafe extern "C" fn el_iso_query_jacobian_values(
 /// sample points.
 ///
 /// This function determines the sizes of the mutable arrays expected in
-/// `el_iso_contact_jacobian_indices` and `el_iso_contact_jacobian_values` functions.
+/// `iso_contact_jacobian_indices` and `iso_contact_jacobian_values` functions.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_num_contact_jacobian_entries(
+    query_topo: *const ISO_QueryTopo,
 ) -> c_int {
     impl_num_jac_entries! {
         query_topo.num_contact_jacobian_entries()
@@ -448,8 +456,8 @@ pub unsafe extern "C" fn el_iso_num_contact_jacobian_entries(
 /// Compute the index structure of the sparse contact Jacobian for the given implicit function.
 /// Each computed row-column index pair corresponds to an entry in the sparse Jacobian.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_contact_jacobian_indices(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_contact_jacobian_indices(
+    query_topo: *const ISO_QueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
@@ -461,8 +469,8 @@ pub unsafe extern "C" fn el_iso_contact_jacobian_indices(
 
 /// Compute contact Jacobian for the given implicit function.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_contact_jacobian_values(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_contact_jacobian_values(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     num_entries: c_int,
@@ -483,8 +491,8 @@ pub unsafe extern "C" fn el_iso_contact_jacobian_values(
 /// function contracted against a vector multipliers in the number of query points. Thus this
 /// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_num_surface_hessian_product_entries(
+    query_topo: *const ISO_QueryTopo,
 ) -> c_int {
     let surf = &*(query_topo as *const implicits::QueryTopo);
     surf.num_surface_hessian_product_entries().unwrap_or(0) as c_int
@@ -496,8 +504,8 @@ pub unsafe extern "C" fn el_iso_num_surface_hessian_product_entries(
 /// function contracted against a vector multipliers in the number of query points. Thus this
 /// Hessian product is an 3n-by-3n matrix, where n is the number of surface vertices.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_surface_hessian_product_indices(
+    query_topo: *const ISO_QueryTopo,
     num_entries: c_int,
     rows: *mut c_int,
     cols: *mut c_int,
@@ -530,12 +538,12 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_indices(
 /// `multipliers` - vector of multiplers of size equal to `num_query_points` that is to be
 ///                 multiplied by the full Hessian to get the Hessian product.
 /// `num_entries` - size of the `values` array, which should be equal to
-///                 `el_iso_num_surface_hessian_product_entries`.
+///                 `iso_num_surface_hessian_product_entries`.
 /// `values` - matrix entries corresponding to the indices provided by
-///            `el_iso_surface_hessian_product_indices`.
+///            `iso_surface_hessian_product_indices`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_surface_hessian_product_values(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
     multipliers: *const f64,
@@ -556,7 +564,7 @@ pub unsafe extern "C" fn el_iso_surface_hessian_product_values(
 
 /// Return the number of query points.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_num_query_points(query_topo: *const EL_IsoQueryTopo) -> c_int {
+pub unsafe extern "C" fn iso_num_query_points(query_topo: *const ISO_QueryTopo) -> c_int {
     let surf = &*(query_topo as *const implicits::QueryTopo);
     surf.num_query_points() as c_int
 }
@@ -566,8 +574,8 @@ pub unsafe extern "C" fn el_iso_num_query_points(query_topo: *const EL_IsoQueryT
 /// This function is convenient for mapping from query point indices to constraint indices.
 /// The `neighbourhood_indices` array is expected be the same size as the number of query points.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_neighbourhood_indices(
-    query_topo: *const EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_neighbourhood_indices(
+    query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
     neighbourhood_indices: *mut c_int,
 ) {
@@ -599,8 +607,8 @@ pub unsafe extern "C" fn el_iso_neighbourhood_indices(
 /// sparsity pattern because query points are not typically passed when requesting Jacobian
 /// indices.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_reset(
-    query_topo: *mut EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_reset(
+    query_topo: *mut ISO_QueryTopo,
     num_query_points: c_int,
     query_point_coords: *const f64,
 ) {
@@ -614,8 +622,8 @@ pub unsafe extern "C" fn el_iso_reset(
 /// Update the implicit surface with new vertex positions for the underlying mesh.
 /// The `position_coords` array is expected to have size of 3 times `num_positions`.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_update_surface(
-    query_topo: *mut EL_IsoQueryTopo,
+pub unsafe extern "C" fn iso_update_surface(
+    query_topo: *mut ISO_QueryTopo,
     num_positions: c_int,
     position_coords: *const f64,
 ) -> c_int {
@@ -631,14 +639,14 @@ pub unsafe extern "C" fn el_iso_update_surface(
 /// expects the surface mesh and query points to move, while still maintaining validity of all
 /// Jacobians.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_update_max_step(query_topo: *mut EL_IsoQueryTopo, max_step: f32) {
+pub unsafe extern "C" fn iso_update_max_step(query_topo: *mut ISO_QueryTopo, max_step: f32) {
     let surf = &mut *(query_topo as *mut implicits::QueryTopo);
     surf.update_max_step(f64::from(max_step));
 }
 
 /// Get the current MLS radius.
 #[no_mangle]
-pub unsafe extern "C" fn el_iso_get_radius(query_topo: *mut EL_IsoQueryTopo) -> f32 {
+pub unsafe extern "C" fn iso_get_radius(query_topo: *mut ISO_QueryTopo) -> f32 {
     let surf = &mut *(query_topo as *mut implicits::QueryTopo);
     surf.radius() as f32
 }
@@ -654,33 +662,32 @@ mod tests {
 
         let t = vec![0, 1, 2];
 
-        let trimesh = unsafe {
-            el_iso_create_trimesh(v.len() as i32, v.as_ptr(), t.len() as i32, t.as_ptr())
-        };
+        let trimesh =
+            unsafe { iso_create_trimesh(v.len() as i32, v.as_ptr(), t.len() as i32, t.as_ptr()) };
 
-        let params = EL_IsoParams {
+        let params = ISO_Params {
             tolerance: 1e-5,
             radius_multiplier: 2.0,
-            kernel: KernelType::LocalApproximate,
-            background_field: BackgroundFieldType::DistanceBased,
+            kernel: ISO_KernelType::LocalApproximate,
+            background_field: ISO_BackgroundFieldType::DistanceBased,
             weighted: false,
-            sample_type: SampleType::Face,
+            sample_type: ISO_SampleType::Face,
             max_step: 0.0,
         };
 
-        let surf = unsafe { el_iso_create_implicit_surface(trimesh, params) };
+        let surf = unsafe { iso_create_implicit_surface(trimesh, params) };
 
         let q = vec![0.5; 3];
 
         let mut p = vec![0.0];
 
-        let query_topo = unsafe { el_iso_query_topology(surf, 1, q.as_ptr()) };
+        let query_topo = unsafe { iso_query_topology(surf, 1, q.as_ptr()) };
 
-        let error = unsafe { el_iso_compute_potential(query_topo, 1, q.as_ptr(), p.as_mut_ptr()) };
+        let error = unsafe { iso_compute_potential(query_topo, 1, q.as_ptr(), p.as_mut_ptr()) };
 
         unsafe {
-            el_iso_free_trimesh(trimesh);
-            el_iso_free_query_topology(query_topo);
+            iso_free_trimesh(trimesh);
+            iso_free_query_topology(query_topo);
         }
 
         assert_eq!(error, 0);

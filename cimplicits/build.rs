@@ -15,7 +15,8 @@ fn main() {
     config.include_guard = Some(String::from("CIMPLICITS_H"));
     config.line_length = 80;
     config.tab_width = 4;
-    config.language = cbindgen::Language::Cxx;
+    config.language = cbindgen::Language::C;
+    config.cpp_compat = true;
 
     cbindgen::generate_with_config(&crate_dir, config)
         .expect("Unable to generate bindings")

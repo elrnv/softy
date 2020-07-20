@@ -1,6 +1,6 @@
 [package]
 name = "implicits-hdk"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
@@ -11,6 +11,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 geo = { path = "../geo" }
 implicits = { path = "../implicits" }
+cimplicits = { path = "../cimplicits" }
 hdkrs = { path = "../hdkrs" }
 
 [build-dependencies]

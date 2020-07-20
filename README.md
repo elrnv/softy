@@ -13,9 +13,9 @@ Rust code with a C public API. Private symbols in Rust code need not be prefixed
    to C structs, in which case their prefix should be `PFX_`.
  * Enum variants should be in `SCREAMING_SNAKE_CASE` and prefixed with `PFX_`.
 
-Note that we must set the language for cbindgen to be `Cxx`. Otherwise, without proper `extern`
-annotations in the generated C headers, the exported function symbols will be mangled by the C++
-compiler and effectively lost.
+Note that we must set the language for cbindgen to be `Cxx` or set `cpp_compat=true`. Otherwise,
+without proper `extern` annotations in the generated C headers, the exported function symbols will
+be mangled by the C++ compiler and effectively lost.
 
 Ideally we would want to wrap any raw C calls in safer C++ wrappers.
 

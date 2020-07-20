@@ -99,6 +99,30 @@ pub struct ISO_Params {
     pub max_step: f32,
 }
 
+impl Default for ISO_Params {
+    fn default() -> ISO_Params {
+        ISO_Params {
+            tolerance: 1e-5,
+            radius_multiplier: 1.0,
+            base_radius: 0.0,
+            kernel: ISO_KernelType::LocalApproximate,
+            background_field: ISO_BackgroundFieldType::Zero,
+            weighted: false,
+            sample_type: ISO_SampleType::Face,
+            max_step: 0.0,
+        }
+    }
+}
+
+/// Create a default set of parameters.
+///
+/// It is better to create parameters using this function to avoid uninitialized fields when
+/// the `ISO_Params` definition changes.
+#[no_mangle]
+pub unsafe extern "C" fn iso_default_params() -> ISO_Params {
+    ISO_Params::default()
+}
+
 impl Into<implicits::Params> for ISO_Params {
     fn into(self) -> implicits::Params {
         let ISO_Params {
@@ -672,7 +696,7 @@ mod tests {
             background_field: ISO_BackgroundFieldType::DistanceBased,
             weighted: false,
             sample_type: ISO_SampleType::Face,
-            max_step: 0.0,
+            ..Default::default()
         };
 
         let surf = unsafe { iso_create_implicit_surface(trimesh, params) };

@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, PolyMesh, TriMesh};
+use geo::mesh::{attrib, PointCloud, PolyMesh, TriMesh};
 
 #[macro_use]
 mod kernel;
@@ -23,6 +23,7 @@ pub struct Params {
     pub background_field: BackgroundFieldParams,
     pub sample_type: SampleType,
     pub max_step: f64,
+    pub base_radius: Option<f64>,
 }
 
 impl Default for Params {
@@ -39,6 +40,7 @@ impl Default for Params {
             },
             sample_type: SampleType::Face,
             max_step: 0.0,
+            base_radius: None,
         }
     }
 }
@@ -65,13 +67,19 @@ pub fn surface_from_trimesh<T: Real>(
     surface: &TriMesh<f64>,
     params: Params,
 ) -> Result<ImplicitSurface<T>, Error> {
-    let surf = ImplicitSurfaceBuilder::new()
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
         .kernel(params.kernel)
         .max_step(params.max_step)
         .background_field(params.background_field)
         .sample_type(params.sample_type)
-        .trimesh(surface)
-        .build_generic();
+        .trimesh(surface);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_generic();
 
     match surf {
         Some(s) => Ok(s),
@@ -92,13 +100,19 @@ pub fn surface_from_polymesh<T: Real>(
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
 pub fn mls_from_trimesh<T: Real>(surface: &TriMesh<f64>, params: Params) -> Result<MLS<T>, Error> {
-    let surf = ImplicitSurfaceBuilder::new()
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
         .kernel(params.kernel)
         .max_step(params.max_step)
         .background_field(params.background_field)
         .sample_type(params.sample_type)
-        .trimesh(surface)
-        .build_mls();
+        .trimesh(surface);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_mls();
 
     match surf {
         Some(s) => Ok(s),
@@ -114,6 +128,32 @@ pub fn mls_from_polymesh<T: Real>(
 ) -> Result<MLS<T>, Error> {
     let surf_trimesh = TriMesh::from(surface.clone());
     mls_from_trimesh::<T>(&surf_trimesh, params)
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `PointCloud`.
+pub fn mls_from_pointcloud<T: Real>(
+    ptcloud: &PointCloud<f64>,
+    params: Params,
+) -> Result<MLS<T>, Error> {
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
+        .kernel(params.kernel)
+        .max_step(params.max_step)
+        .background_field(params.background_field)
+        .sample_type(params.sample_type)
+        .vertex_mesh(ptcloud);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_mls();
+
+    match surf {
+        Some(s) => Ok(s),
+        None => Err(Error::Failure),
+    }
 }
 
 #[derive(Debug, Error)]
@@ -438,7 +478,7 @@ mod tests {
                     .cloned()
                     .enumerate()
                     .map(|(j, mut v)| {
-                        v = v.mapd(|x| F::cst(x)); // reset variables to constants
+                        v = Vector3::new(v).mapd(|x| F::cst(x)).into(); // reset variables to constants
                         if j == cur_pt_idx {
                             v[i] = F::var(v[i]); // set the current tested variable
                         }

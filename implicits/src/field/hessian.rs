@@ -479,7 +479,7 @@ pub(crate) fn face_hessian_at<'a, T, K: 'a>(
     view: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg_field_params: BackgroundFieldParams,
     multiplier: T,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -635,7 +635,7 @@ fn normal_hessian_at<'a, T, K: 'a>(
     samples: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg: BackgroundField<'a, T, T, K>,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
@@ -741,7 +741,7 @@ where
 /// lower triangular part.
 pub(crate) fn face_unit_normals_symmetric_jacobian<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -776,7 +776,7 @@ where
 /// Block lower triangular part of the unit normal Hessian multiplied by the given multiplier.
 pub(crate) fn compute_face_unit_normals_hessian_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -868,6 +868,7 @@ mod tests {
             background_field: bg_field_params,
             sample_type: SampleType::Face,
             max_step,
+            base_radius: None,
         };
 
         let surf = crate::mls_from_trimesh::<F>(&surf_mesh, params)
@@ -890,7 +891,7 @@ mod tests {
             .expect("Uncached query points.");
         let num_jac_entries = query_surf.num_surface_jacobian_entries();
 
-        // Compute the complete hessian.
+        // Compute the complete Hessian.
         let mut hess_rows = vec![0; num_hess_entries];
         let mut hess_cols = vec![0; num_hess_entries];
         let mut hess_values = vec![F::cst(0.0); num_hess_entries];
@@ -1117,7 +1118,7 @@ mod tests {
         let q = q.mapd(|x| F::cst(x)); // convert to autodiff
         let mut tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)).into())
             .collect();
         let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
         let num_verts = tri_verts.len();
@@ -1177,7 +1178,7 @@ mod tests {
                 // We need to update samples to make sure the normals and centroids are recomputed
                 // using the correct wrt autodiff variable.
                 let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
-                //for (p, tri_indices) in samples.points.iter_mut().zip(tri_faces.iter()) {
+                //for (p, tri_indices) in samples.positions.iter_mut().zip(tri_faces.iter()) {
                 //    use geo::ops::Centroid;
                 //    let tri = Triangle::from_indexed_slice(tri_indices, &tri_verts);
                 //    *p = tri.centroid();
@@ -1395,7 +1396,7 @@ mod tests {
         for sample_idx in 0..num_samples {
             for i in 0..3 {
                 // Set a variable to take the derivative with respect to, using autodiff.
-                samples.points[sample_idx][i] = F::var(samples.points[sample_idx][i]);
+                samples.positions[sample_idx][i] = F::var(samples.positions[sample_idx][i]);
                 //println!("row = {}; i = {}", sample_idx, i);
 
                 let view = SamplesView::new(neighbours.as_ref(), &samples);
@@ -1482,7 +1483,7 @@ mod tests {
                 }
 
                 // Reset the variable back to being a constant.
-                samples.points[sample_idx][i] = F::cst(samples.points[sample_idx][i]);
+                samples.positions[sample_idx][i] = F::cst(samples.positions[sample_idx][i]);
             }
         }
 
@@ -1565,7 +1566,7 @@ mod tests {
         face_normal_hessian_tester(&tet_verts, &tet_faces);
     }
 
-    fn face_normal_hessian_tester(verts: &[Vector3<f64>], faces: &[[usize; 3]]) {
+    fn face_normal_hessian_tester(verts: &[[f64; 3]], faces: &[[usize; 3]]) {
         let samples = Samples::new_triangle_samples(faces, verts, vec![0.0; faces.len()]);
 
         let neighbours: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
@@ -1610,10 +1611,10 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_verts: Vec<Vector3<F>> = verts
+        let mut ad_verts: Vec<[F; 3]> = verts
             .iter()
             .cloned()
-            .map(|v| v.mapd(|x| F::cst(x)))
+            .map(|v| Vector3::new(v).mapd(|x| F::cst(x)).into())
             .collect();
 
         let mut success = true;

@@ -46,21 +46,27 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         }
     }
 
+    /// Set the kernel type for this implicit surface.
     pub fn kernel(&mut self, kernel: KernelType) -> &mut Self {
         self.kernel = kernel;
         self
     }
 
+    /// Set the base kernel radius.
+    ///
+    /// The true radius will be this value multiplied by the radius multiplier.
     pub fn base_radius(&mut self, base_radius: f64) -> &mut Self {
         self.base_radius = Some(base_radius);
         self
     }
 
     /// Initialize fit data using a vertex mesh which can include positions, normals and offsets
-    /// as attributes on the mesh struct.  The normals attribute is expected to be named "N" and
-    /// have type `[f32;3]`.  The offsets attribute is expected to be named "offsets" and have type
-    /// `f32`.  This function initializes the `vertices`, `vertex_normals`, `sample_values`
-    /// and sets `sample_type` to `SampleType::Vertex`.
+    /// as attributes on the mesh struct.
+    ///
+    /// The normals attribute is expected to be named "N" and have type `[f32;3]`.  The offsets
+    /// attribute is expected to be named "offsets" and have type `f32`.  This function initializes
+    /// the `vertices`, `vertex_normals`, `sample_values` and sets `sample_type` to
+    /// `SampleType::Vertex`.
     ///
     /// Note that this initializer can create only a static implicit surface because the topology
     /// of the mesh is unknown so the normals cannot be recomputed.
@@ -105,9 +111,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     }
 
     /// A helper function to extract a `Vec` of vertex positions from a `VertexMesh`.
-    fn vertex_positions_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<Vector3<T>> {
+    fn vertex_positions_from_mesh<T: Scalar, M: VertexMesh<f64>>(mesh: &M) -> Vec<[T; 3]> {
         mesh.vertex_position_iter()
-            .map(|&x| Vector3::new(x).cast::<T>())
+            .map(|&x| Vector3::new(x).cast::<T>().into())
             .collect()
     }
     /// A helper function to extract an offset vector from the mesh.
@@ -186,9 +192,10 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
     }
 
     /// Base radius can be determined automatically from the mesh with topology data.
-    /// Point clouds do not, and hence require an explicit one to be specified.
-    /// This function computes the radius if needed, or otherwise reproduces the given one.
-    /// If no mesh is given, no radius is valid so we return `None`.
+    ///
+    /// Point clouds do not, and hence require an explicit one to be specified.  This function
+    /// computes the radius if needed, or otherwise reproduces the given one.  If no mesh is given,
+    /// no radius is valid so we return `None`.
     fn build_base_radius(&self) -> Option<f64> {
         match &self.mesh {
             SamplesMesh::PointCloud(_) => {
@@ -206,9 +213,10 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         }
     }
 
-    /// Builds the base for any implicit surface. This function returns `None` when there is not
-    /// enough data to make a valid implict surface. For example if base radius is 0.0 or points is
-    /// empty, this function will return `None`.
+    /// Builds the base for any implicit surface.
+    ///
+    /// This function returns `None` when there is not enough data to make a valid implict surface.
+    /// For example if base radius is 0.0 or points is empty, this function will return `None`.
     fn build_base<T: Real>(&self) -> Option<ImplicitSurfaceBase<T>> {
         let ImplicitSurfaceBuilder {
             bg_field,
@@ -237,7 +245,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
 
                 assert_eq!(vertices.len(), vertex_normals.len());
                 let samples = Samples {
-                    points: vertices.clone(),
+                    positions: vertices.clone(),
                     normals: vertex_normals,
                     velocities,
                     values: sample_values,

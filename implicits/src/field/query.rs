@@ -57,14 +57,7 @@ impl<T: Real> QueryTopo<T> {
         match *self {
             QueryTopo::Local {
                 ref mut neighbourhood,
-                surf:
-                    LocalMLS {
-                        base_radius,
-                        kernel,
-                        max_step,
-                        ref surf_base,
-                        ..
-                    },
+                surf: ref local_mls,
             } => {
                 let ImplicitSurfaceBase {
                     spatial_tree,
@@ -72,11 +65,11 @@ impl<T: Real> QueryTopo<T> {
                     dual_topo,
                     sample_type,
                     ..
-                } = &**surf_base;
+                } = &*local_mls.surf_base;
 
-                let radius = base_radius * kernel.radius_multiplier(); // TODO: refactor with self.radius() fn
+                let radius = local_mls.radius();
                 debug!("Kernel radius: {}", radius);
-                let radius_ext = radius + num_traits::cast::<_, f64>(max_step).unwrap();
+                let radius_ext = radius + num_traits::cast::<_, f64>(local_mls.max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
                 let neighbourhood_query = |q| {
                     let q_pos = Vector3::new(q).cast::<f64>().into();
@@ -144,13 +137,13 @@ impl<T: Real> QueryTopo<T> {
     /// Radius of influence ( kernel radius ) for this implicit surface.
     pub fn radius(&self) -> f64 {
         match self {
-            QueryTopo::Local { surf, .. } => surf.kernel.radius_multiplier() * surf.base_radius,
+            QueryTopo::Local { surf, .. } => surf.radius(),
             QueryTopo::Global { .. } => std::f64::INFINITY,
         }
     }
 
     /// Return the surface vertex positions used by this implicit surface.
-    pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
+    pub fn surface_vertex_positions(&self) -> &[[T; 3]] {
         &self.base().surface_vertex_positions
     }
 
@@ -564,11 +557,150 @@ impl<T: Real> QueryTopo<T> {
         convergence
     }
 
+    /// Parallel version of `project_to_below`.
+    pub fn project_to_below_par(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> bool {
+        self.project_par(Side::Below, iso_value, epsilon, query_points)
+    }
+
+    /// Parallel version of `project_to_above`.
+    pub fn project_to_above_par(
+        &self,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> bool {
+        self.project_par(Side::Above, iso_value, epsilon, query_points)
+    }
+
+    /// Parallel version of `project`.
+    pub fn project_par(
+        &self,
+        side: Side,
+        iso_value: T,
+        epsilon: T,
+        query_points: &mut [[T; 3]],
+    ) -> bool {
+        let multiplier = match side {
+            Side::Above => T::one(),
+            Side::Below => -T::one(),
+        };
+        let iso_value = iso_value * multiplier;
+
+        let mut candidate_points = query_points.to_vec();
+        let mut potential = vec![T::zero(); query_points.len()];
+        let mut candidate_potential = vec![T::zero(); query_points.len()];
+        let mut steps = vec![[T::zero(); 3]; query_points.len()];
+        let mut nml_sizes = vec![T::zero(); query_points.len()];
+
+        let max_steps = 20;
+        let max_binary_search_iters = 10;
+
+        let mut convergence = true;
+
+        for i in 0..max_steps {
+            self.potential_par(query_points, &mut potential);
+            potential.par_iter_mut().for_each(|x| *x *= multiplier);
+
+            // The transpose of the potential gradient at each of the query points.
+            self.query_jacobian_full_par(query_points, &mut steps);
+
+            nml_sizes
+                .par_iter_mut()
+                .zip(steps.par_iter())
+                .for_each(|(norm, step)| {
+                    *norm = Vector3::new(*step).norm();
+                });
+
+            // Count the number of points with values less than iso_value.
+            let count_violations = potential
+                .par_iter()
+                .zip(nml_sizes.par_iter())
+                .filter(|&(&x, &norm)| x < iso_value && norm != T::zero())
+                .count();
+
+            if count_violations == 0 {
+                break;
+            }
+
+            // Compute initial step directions
+            zip!(
+                steps.par_iter_mut(),
+                nml_sizes.par_iter(),
+                potential.par_iter()
+            )
+            .filter(|(_, &norm, &pot)| pot < iso_value && norm != T::zero())
+            .for_each(|(step, &norm, &value)| {
+                let nml = Vector3::new(*step);
+                let offset = (epsilon * T::from(0.5).unwrap() + (iso_value - value)) / norm;
+                *step = (nml * (multiplier * offset)).into();
+            });
+
+            for j in 0..max_binary_search_iters {
+                // Try this step
+                zip!(
+                    candidate_points.par_iter_mut(),
+                    query_points.par_iter(),
+                    steps.par_iter(),
+                    nml_sizes.par_iter(),
+                    potential.par_iter()
+                )
+                .filter(|(_, _, _, &norm, &pot)| pot < iso_value && norm != T::zero())
+                .for_each(|(p, q, &step, _, _)| {
+                    *p = (Vector3::new(*q) + Vector3::new(step)).into();
+                });
+
+                self.potential_par(&candidate_points, &mut candidate_potential);
+                candidate_potential
+                    .par_iter_mut()
+                    .for_each(|x| *x *= multiplier);
+
+                let count_overshoots = zip!(
+                    steps.par_iter_mut(),
+                    nml_sizes.par_iter(),
+                    potential.par_iter(),
+                    candidate_potential.par_iter()
+                )
+                .filter(|(_, &norm, &old, &new)| {
+                    old < iso_value && new > iso_value + epsilon && norm != T::zero()
+                })
+                .map(|(step, _, _, _)| {
+                    *step = (Vector3::new(*step) * T::from(0.5).unwrap()).into();
+                })
+                .count();
+
+                if count_overshoots == 0 {
+                    break;
+                }
+
+                if j == max_binary_search_iters - 1 {
+                    convergence = false;
+                }
+            }
+
+            // Update query points
+            query_points
+                .par_iter_mut()
+                .zip(candidate_points.par_iter())
+                .for_each(|(q, p)| *q = *p);
+
+            if i == max_steps - 1 {
+                convergence = false;
+            }
+        }
+
+        convergence
+    }
+
     /*
      * Main potential computation
      */
 
-    /// Compute the mls potential.
+    /// Compute the MLS potential.
     pub fn potential(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
         debug_assert!(
             query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
@@ -578,11 +710,50 @@ impl<T: Real> QueryTopo<T> {
         apply_kernel_query_fn!(self, |kernel| self.compute_potential(
             query_points,
             kernel,
-            out_field
+            out_field,
         ))
     }
 
-    /// Compute the mls potential on query points with non-empty neighbourhoods.
+    /// Compute the MLS potential in parallel over the query points.
+    pub fn potential_par(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
+        debug_assert!(
+            query_points
+                .par_iter()
+                .all(|&q| q.par_iter().all(|&x| !x.is_nan())),
+            "Detected NaNs in query points. Please report this bug."
+        );
+
+        apply_kernel_query_fn!(self, |kernel| self
+            .compute_potential_par(query_points, kernel, out_field, || false)
+            .ok());
+    }
+
+    /// Compute the MLS potential in parallel over the query points.
+    ///
+    /// This version enables interruptability via the provided interrupt function.
+    /// If `interrupt` returns true, then the potential computation will halt.
+    pub fn potential_par_interrupt(
+        &self,
+        query_points: &[[T; 3]],
+        out_field: &mut [T],
+        interrupt: impl Fn() -> bool + Sync + Send,
+    ) -> Result<(), Error> {
+        debug_assert!(
+            query_points
+                .par_iter()
+                .all(|&q| q.par_iter().all(|&x| !x.is_nan())),
+            "Detected NaNs in query points. Please report this bug."
+        );
+
+        apply_kernel_query_fn!(self, |kernel| self.compute_potential_par(
+            query_points,
+            kernel,
+            out_field,
+            interrupt
+        ))
+    }
+
+    /// Compute the MLS potential on query points with non-empty neighbourhoods.
     pub fn local_potential(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
         debug_assert!(
             query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
@@ -623,6 +794,50 @@ impl<T: Real> QueryTopo<T> {
                     field,
                 );
             });
+    }
+
+    /// The parallel and interruptable version of `compute_potential`.
+    fn compute_potential_par<'a, K>(
+        &self,
+        query_points: &[[T; 3]],
+        kernel: K,
+        out_field: &'a mut [T],
+        interrupt: impl Fn() -> bool + Sync + Send,
+    ) -> Result<(), Error>
+    where
+        T: Real,
+        K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighbourhood_par();
+
+        assert_eq!(neigh_points.len(), out_field.len());
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            bg_field_params,
+            ..
+        } = *self.base();
+
+        zip!(
+            query_points.par_iter(),
+            neigh_points,
+            out_field.par_iter_mut()
+        )
+        //.filter(|(_, nbrs, _)| !nbrs.is_empty())
+        .map(move |(q, neighbours, field)| {
+            if interrupt() {
+                return Err(Error::Interrupted);
+            }
+            compute_potential_at(
+                Vector3::new(*q),
+                SamplesView::new(neighbours, samples),
+                kernel,
+                bg_field_params,
+                field,
+            );
+            Ok(())
+        })
+        .reduce(|| Ok(()), |acc, result| acc.and(result))
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface on

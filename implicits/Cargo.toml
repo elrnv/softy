@@ -10,9 +10,9 @@ rayon = "1.2"
 na = { package = "nalgebra", version = "0.18" }
 hrbf = "0.2"
 geo = { path = "../geo" }
+flatk = { git = "https://github.com/elrnv/flatk.git", features = ["rayon"] }
 rstar = { version = "0.5" }
 autodiff = "0.1"
-reinterpret = "0.1"
 num-traits = "0.2"
 utils = { path = "../utils", features = ["autodiff"] }
 tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
@@ -20,6 +20,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 thiserror = "1.0.16"
 arrayvec = "0.5"
 log = "0.4"
+reinterpret = "0.1"
 
 [dev-dependencies]
 approx = "0.3"

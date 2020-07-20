@@ -58,6 +58,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
+    ///
     /// This version of the query Jacobian returns all diagonal values of the Jacobian, including
     /// values for points with empty neighbourhoods. This is especially valuable for projection
     /// where the background potential can help. The other Jacobian functions ignore these values
@@ -65,6 +66,19 @@ impl<T: Real> QueryTopo<T> {
     /// always be the same as the size of `query_points`.
     pub fn query_jacobian_full(&self, query_points: &[[T; 3]], values: &mut [[T; 3]]) {
         apply_kernel_query_fn!(self, |kernel| self.query_jacobian_impl(
+            query_points,
+            kernel,
+            values,
+            true
+        ))
+    }
+
+    /// Compute the Jacobian of this implicit surface function with respect to query points.
+    ///
+    /// This is the parallel version of `query_jacobian_full`. The parallelization is over
+    /// `query_points`.
+    pub fn query_jacobian_full_par(&self, query_points: &[[T; 3]], values: &mut [[T; 3]]) {
+        apply_kernel_query_fn!(self, |kernel| self.query_jacobian_impl_par(
             query_points,
             kernel,
             values,
@@ -131,9 +145,10 @@ impl<T: Real> QueryTopo<T> {
             })
     }
 
-    /// Parallel version of `query_jacobian_iter_impl`. When `full` is set to `false`, this
-    /// iterator returns `None` for query points without neighbourhoods. This allows it to be an
-    /// `IndexedParallelIterator`.
+    /// Parallel version of `query_jacobian_iter_impl`.
+    ///
+    /// When `full` is set to `false`, this iterator returns `None` for query points without
+    /// neighbourhoods. This allows it to be an `IndexedParallelIterator`.
     pub(crate) fn query_jacobian_par_iter_impl<'a, K: 'a>(
         &'a self,
         query_points: &'a [[T; 3]],
@@ -185,6 +200,23 @@ impl<T: Real> QueryTopo<T> {
     {
         self.query_jacobian_iter_impl(query_points, kernel, full)
             .zip(value_vecs.iter_mut())
+            .for_each(move |(jac, out_vec)| {
+                *out_vec = jac;
+            });
+    }
+
+    pub(crate) fn query_jacobian_impl_par<K>(
+        &self,
+        query_points: &[[T; 3]],
+        kernel: K,
+        value_vecs: &mut [[T; 3]],
+        full: bool,
+    ) where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        self.query_jacobian_par_iter_impl(query_points, kernel, full)
+            .zip(value_vecs.par_iter_mut())
+            .filter_map(|(jac, out_vec)| jac.map(|jac| (jac, out_vec)))
             .for_each(move |(jac, out_vec)| {
                 *out_vec = jac;
             });
@@ -857,7 +889,7 @@ pub(crate) fn face_jacobian_at<'a, T, K: 'a>(
     view: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg_field_params: BackgroundFieldParams,
 ) -> impl Iterator<Item = [T; 3]> + 'a
 where
@@ -897,7 +929,7 @@ pub(crate) fn face_jacobian_par_at<'a, T, K: 'a>(
     view: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg_field_params: BackgroundFieldParams,
 ) -> impl IndexedParallelIterator<Item = [T; 3]> + 'a
 where
@@ -1282,7 +1314,7 @@ where
 /// Compute the face normal derivative with respect to tet vertices.
 #[cfg(test)]
 pub(crate) fn compute_face_unit_normal_derivative<T: Real>(
-    tet_verts: &[Vector3<T>],
+    tet_verts: &[[T; 3]],
     tet_faces: &[[usize; 3]],
     view: SamplesView<'_, '_, T>,
     multiplier: impl FnMut(Sample<T>) -> Vector3<T>,
@@ -1306,11 +1338,11 @@ pub(crate) fn compute_face_unit_normal_derivative<T: Real>(
 pub(crate) fn make_test_triangle(
     h: f64,
     perturb: &mut impl FnMut() -> Vector3<f64>,
-) -> Vec<Vector3<f64>> {
+) -> Vec<[f64; 3]> {
     vec![
-        Vector3::new([0.5, h, 0.0]) + perturb(),
-        Vector3::new([-0.25, h, 0.433013]) + perturb(),
-        Vector3::new([-0.25, h, -0.433013]) + perturb(),
+        (Vector3::new([0.5, h, 0.0]) + perturb()).into(),
+        (Vector3::new([-0.25, h, 0.433013]) + perturb()).into(),
+        (Vector3::new([-0.25, h, -0.433013]) + perturb()).into(),
     ]
 }
 
@@ -1319,13 +1351,13 @@ pub(crate) fn make_test_triangle(
 pub(crate) fn make_two_test_triangles(
     h: f64,
     perturb: &mut impl FnMut() -> Vector3<f64>,
-) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+) -> (Vec<[f64; 3]>, Vec<[usize; 3]>) {
     (
         vec![
-            Vector3::new([0.0, h, 0.0]) + perturb(),
-            Vector3::new([0.0, h, 1.0]) + perturb(),
-            Vector3::new([1.0, h, 0.0]) + perturb(),
-            Vector3::new([1.0, h, 1.0]) + perturb(),
+            (Vector3::new([0.0, h, 0.0]) + perturb()).into(),
+            (Vector3::new([0.0, h, 1.0]) + perturb()).into(),
+            (Vector3::new([1.0, h, 0.0]) + perturb()).into(),
+            (Vector3::new([1.0, h, 1.0]) + perturb()).into(),
         ],
         vec![[0, 1, 2], [1, 3, 2]],
     )
@@ -1336,14 +1368,14 @@ pub(crate) fn make_two_test_triangles(
 pub(crate) fn make_three_test_triangles(
     h: f64,
     perturb: &mut impl FnMut() -> Vector3<f64>,
-) -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+) -> (Vec<[f64; 3]>, Vec<[usize; 3]>) {
     (
         vec![
-            Vector3::new([0.0, h, 0.0]) + perturb(),
-            Vector3::new([0.0, h, 1.0]) + perturb(),
-            Vector3::new([1.0, h, 0.0]) + perturb(),
-            Vector3::new([1.0, h + 0.5, 1.0]) + perturb(),
-            Vector3::new([2.0, h, 0.0]) + perturb(),
+            (Vector3::new([0.0, h, 0.0]) + perturb()).into(),
+            (Vector3::new([0.0, h, 1.0]) + perturb()).into(),
+            (Vector3::new([1.0, h, 0.0]) + perturb()).into(),
+            (Vector3::new([1.0, h + 0.5, 1.0]) + perturb()).into(),
+            (Vector3::new([2.0, h, 0.0]) + perturb()).into(),
         ],
         vec![[0, 1, 2], [1, 3, 2], [2, 3, 4]],
     )
@@ -1423,7 +1455,7 @@ mod tests {
         // The set of samples is just one point. These are initialized using a forward
         // differentiator.
         let mut samples = Samples {
-            points: vec![Vector3::new([0.2, 0.1, 0.0]).mapd(|x| F::cst(x))],
+            positions: vec![Vector3::new([0.2, 0.1, 0.0]).mapd(|x| F::cst(x)).into()],
             normals: vec![Vector3::new([0.3, 1.0, 0.1]).mapd(|x| F::cst(x)).into()],
             velocities: vec![Vector3::new([2.3, 3.0, 0.2]).mapd(|x| F::cst(x))],
             values: vec![F::cst(0.0)],
@@ -1454,7 +1486,7 @@ mod tests {
         // derivative.
         for i in 0..3 {
             // Set a variable to take the derivative with respect to, using autodiff.
-            samples.points[0][i] = F::var(samples.points[0][i]);
+            samples.positions[0][i] = F::var(samples.positions[0][i]);
 
             // Create a view of the samples for the potential function.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
@@ -1476,7 +1508,7 @@ mod tests {
             );
 
             // Reset the variable back to being a constant.
-            samples.points[0][i] = F::cst(samples.points[0][i]);
+            samples.positions[0][i] = F::cst(samples.positions[0][i]);
         }
     }
 
@@ -1527,10 +1559,14 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> =
-            tet_verts.iter().map(|&v| v.mapd(|x| F::cst(x))).collect();
+        let mut ad_tet_verts: Vec<[F; 3]> = tet_verts
+            .iter()
+            .map(|&v| Vector3::new(v).mapd(|x| F::cst(x)).into())
+            .collect();
 
         for &q in tri_verts.iter() {
+            let q = Vector3::new(q);
+
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
@@ -1650,8 +1686,10 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_tet_verts: Vec<Vector3<F>> =
-            tet_verts.iter().map(|&v| v.mapd(|x| F::cst(x))).collect();
+        let mut ad_tet_verts: Vec<[F; 3]> = tet_verts
+            .iter()
+            .map(|&v| Vector3::new(v).mapd(|x| F::cst(x)).into())
+            .collect();
 
         for (vtx, g) in grad.iter().enumerate() {
             for i in 0..3 {
@@ -1694,11 +1732,7 @@ mod tests {
     fn dynamic_background_potential_derivative_test() {
         // Prepare data
         let q = Vector3::new([0.1, 0.3, 0.2]);
-        let points = vec![
-            Vector3::new([0.3, 0.2, 0.1]),
-            Vector3::new([0.4, 0.2, 0.1]),
-            Vector3::new([0.2, 0.1, 0.3]),
-        ];
+        let points = vec![[0.3, 0.2, 0.1], [0.4, 0.2, 0.1], [0.2, 0.1, 0.3]];
 
         let samples = Samples::new_point_samples(points.clone());
 
@@ -1729,15 +1763,19 @@ mod tests {
         let jac: Vec<_> = bg.compute_jacobian().collect();
 
         // Prepare autodiff variables.
-        let mut ad_samples =
-            Samples::new_point_samples(points.iter().map(|&pos| pos.mapd(|x| F::cst(x))).collect());
+        let mut ad_samples = Samples::new_point_samples(
+            points
+                .iter()
+                .map(|&pos| Vector3::new(pos).mapd(|x| F::cst(x)).into())
+                .collect(),
+        );
 
         let q = q.mapd(|x| F::cst(x));
 
         // Perform the derivative test on each of the variables.
         for i in 0..points.len() {
             for j in 0..3 {
-                ad_samples.points[i][j] = F::var(ad_samples.points[i][j]);
+                ad_samples.positions[i][j] = F::var(ad_samples.positions[i][j]);
 
                 // Initialize an autodiff version of the potential.
                 // This should be done outside the inner loop over samples, but here we make an
@@ -1758,7 +1796,7 @@ mod tests {
                 let p = ad_bg.compute_unnormalized_weighted_scalar_field() * ad_bg.weight_sum_inv();
 
                 assert_relative_eq!(jac[i][j], p.deriv());
-                ad_samples.points[i][j] = F::cst(ad_samples.points[i][j]);
+                ad_samples.positions[i][j] = F::cst(ad_samples.positions[i][j]);
             }
         }
     }
@@ -1772,9 +1810,7 @@ mod tests {
         radius_multiplier: f64,
         perturb: &mut P,
     ) {
-        let tri_vert_vecs = make_test_triangle(1.18032, perturb);
-
-        let tri_verts: Vec<[f64; 3]> = tri_vert_vecs.iter().map(|&v| v.into()).collect();
+        let tri_verts = make_test_triangle(1.18032, perturb);
 
         let params = crate::Params {
             kernel: KernelType::Approximate {
@@ -1797,14 +1833,14 @@ mod tests {
         let mut ad_tet_verts: Vec<[F; 3]> = tet_verts
             .iter()
             .cloned()
-            .map(|v| v.mapd(|x| F::cst(x)).into())
+            .map(|v| Vector3::new(v).mapd(|x| F::cst(x)).into())
             .collect();
 
         let ad_surf = crate::mls_from_trimesh::<F>(&tet, params)
             .expect("Failed to create a surface for a autodiff tet.");
-        let ad_tri_verts: Vec<[F; 3]> = tri_vert_vecs
+        let ad_tri_verts: Vec<[F; 3]> = tri_verts
             .iter()
-            .map(|&v| v.mapd(|x| F::cst(x)).into())
+            .map(|&v| Vector3::new(v).mapd(|x| F::cst(x)).into())
             .collect();
 
         let query_surf = surf.query_topo(&tri_verts);
@@ -1920,13 +1956,15 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let ad_tet_verts: Vec<Vector3<F>> = tet_verts
+        let ad_tet_verts: Vec<[F; 3]> = tet_verts
             .iter()
             .cloned()
-            .map(|v| v.mapd(|x| F::cst(x)))
+            .map(|v| Vector3::new(v).mapd(|x| F::cst(x)).into())
             .collect();
 
         for &q in tri_verts.iter() {
+            let q = Vector3::new(q);
+
             // Compute the Jacobian.
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
@@ -2034,8 +2072,7 @@ mod tests {
                 field_type: BackgroundFieldType::DistanceBased,
                 weighted: false,
             },
-            sample_type: SampleType::Vertex,
-            max_step: 0.0,
+            ..Default::default()
         };
 
         let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
@@ -2085,8 +2122,7 @@ mod tests {
                 field_type: BackgroundFieldType::DistanceBased,
                 weighted: false,
             },
-            sample_type: SampleType::Vertex,
-            max_step: 0.0,
+            ..Default::default()
         };
 
         let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
@@ -2171,6 +2207,7 @@ mod tests {
             background_field: bg_field_params,
             sample_type: SampleType::Face,
             max_step: 100.0 * radius_multiplier, // essentially unlimited
+            ..Default::default()
         };
 
         let trimesh = geo::mesh::TriMesh::from(tet);

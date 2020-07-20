@@ -806,6 +806,7 @@ mod tests {
                 },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
+                ..Default::default()
             },
         )?;
 
@@ -847,6 +848,7 @@ mod tests {
                 },
                 sample_type: SampleType::Face,
                 max_step: 100.0,
+                ..Default::default()
             },
         )?;
 
@@ -893,7 +895,7 @@ mod tests {
                 kernel: kernel_type,
                 background_field: bg_field_params,
                 sample_type: SampleType::Face,
-                max_step: 0.0,
+                ..Default::default()
             },
         )?;
 
@@ -949,7 +951,7 @@ mod tests {
 
             for wrt_sample in 0..samples.len() {
                 for wrt in 0..3 {
-                    samples.points[wrt_sample][wrt] = F::var(samples.points[wrt_sample][wrt]);
+                    samples.positions[wrt_sample][wrt] = F::var(samples.positions[wrt_sample][wrt]);
                     let jac: Vec<_> = {
                         let view = SamplesView::new(n, &samples);
                         let bg = BackgroundField::local(
@@ -983,7 +985,7 @@ mod tests {
                             ad_hess[3 * sample + k][3 * wrt_sample + wrt] += jac[sample][k].deriv();
                         }
                     }
-                    samples.points[wrt_sample][wrt] = F::cst(samples.points[wrt_sample][wrt]);
+                    samples.positions[wrt_sample][wrt] = F::cst(samples.positions[wrt_sample][wrt]);
                 }
             }
 
@@ -1024,7 +1026,7 @@ mod tests {
                 kernel: kernel_type,
                 background_field: bg_field_params,
                 sample_type: SampleType::Face,
-                max_step: 0.0,
+                ..Default::default()
             },
         )?;
 

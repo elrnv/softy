@@ -14,7 +14,6 @@ use gut::io::{
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
 use gut::{self, NumCells, NumFaces};
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
-use reinterpret::reinterpret_slice;
 use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
@@ -720,7 +719,7 @@ pub unsafe extern "C" fn hr_make_tetmesh(
         TetMesh,
         ncoords,
         coords,
-        slice::from_raw_parts(indices, nindices).to_vec()
+        bytemuck::cast_slice(slice::from_raw_parts(indices, nindices)).to_vec()
     )
 }
 
@@ -754,7 +753,7 @@ macro_rules! ptr_to_vec_of_arrays {
         slice::from_raw_parts($data, $size).to_vec()
     }};
     ($size:ident, $data:ident, $ty:ty, $tuple_size:expr) => {{
-        reinterpret_slice::<_, [$ty; $tuple_size]>(slice::from_raw_parts($data, $size)).to_vec()
+        bytemuck::cast_slice::<_, [$ty; $tuple_size]>(slice::from_raw_parts($data, $size)).to_vec()
         //assert!($size % $tuple_size == 0, "Wrong tuple size for array.");
         //let nelem = $size / $tuple_size;
         //let mut data = Vec::with_capacity(nelem);

@@ -11,7 +11,7 @@ edition = "2018"
 [dependencies]
 gut = { package = "geo", path = "../geo" }
 libc = "*"
-reinterpret = "0.2"
+bytemuck = "1.2"
 
 [build-dependencies]
 cbindgen = "0.14"

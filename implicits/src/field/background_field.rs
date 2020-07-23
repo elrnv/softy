@@ -777,11 +777,45 @@ where
 mod tests {
     use super::*;
     use crate::hessian::print_full_hessian;
+    use crate::samples::SamplesView;
     use crate::{make_grid, mls_from_polymesh, Error, KernelType, Params, SampleType};
     use geo::mesh::builder::*;
     use geo::mesh::VertexPositions;
     use geo::ops::transform::*;
     use tensr::IntoData;
+
+    #[test]
+    fn background_weight_derivative() {
+        use crate::kernel::LocalApproximate;
+        use crate::samples::Samples;
+        use autodiff::F1;
+        let tet = PlatonicSolidBuilder::build_tetrahedron().surface_trimesh();
+        let pos: Vec<[F1; 3]> = tet
+            .vertex_position_iter()
+            .map(|&p| Vector3::from(p).mapd(F1::cst).into())
+            .collect();
+        let samples =
+            Samples::new_triangle_samples(tet.faces(), pos.as_slice(), vec![F1::zero(); 4]);
+        let bg = BackgroundField::local(
+            [F1::var(3.7), F1::cst(0.0), F1::cst(0.0)].into(),
+            SamplesView::new(&[0, 1, 2, 3][..], &samples),
+            LocalApproximate {
+                radius: 3.4,
+                tolerance: 0.00001,
+            },
+            BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            },
+            Option::<F1>::None,
+        )
+        .unwrap();
+
+        let bg_weight = bg.background_weight();
+        let bg_weight_d = bg.background_weight_gradient(None);
+        let bg_weight_d1 = bg.background_weight_gradient(Some(1));
+        dbg!(bg_weight, bg_weight_d, bg_weight_d1);
+    }
 
     #[test]
     fn constant_unweighted_bg() -> Result<(), Error> {
@@ -872,7 +906,7 @@ mod tests {
         mesh: &geo::mesh::TriMesh<f64>,
         qs: &[Vector3<f64>],
     ) -> Result<(), Error> {
-        use autodiff::F;
+        use autodiff::F1;
 
         // Create a surface sample mesh.
         let sphere = geo::mesh::PolyMesh::from(mesh.clone());
@@ -889,7 +923,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let surface = mls_from_polymesh::<F>(
+        let surface = mls_from_polymesh::<F1>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -901,7 +935,7 @@ mod tests {
 
         let query_points: Vec<_> = qs
             .iter()
-            .map(|&q| q.mapd(|x| F::cst(x)).into_data())
+            .map(|&q| q.mapd(|x| F1::cst(x)).into_data())
             .collect();
 
         let query_topo = surface.query_topo(&query_points);
@@ -921,7 +955,7 @@ mod tests {
                 if view.is_empty() {
                     continue;
                 }
-                let bg = BackgroundField::<F, F, _>::local(
+                let bg = BackgroundField::<F1, F1, _>::local(
                     Vector3::new(q),
                     view,
                     kernel,
@@ -951,7 +985,8 @@ mod tests {
 
             for wrt_sample in 0..samples.len() {
                 for wrt in 0..3 {
-                    samples.positions[wrt_sample][wrt] = F::var(samples.positions[wrt_sample][wrt]);
+                    samples.positions[wrt_sample][wrt] =
+                        F1::var(samples.positions[wrt_sample][wrt]);
                     let jac: Vec<_> = {
                         let view = SamplesView::new(n, &samples);
                         let bg = BackgroundField::local(
@@ -985,7 +1020,8 @@ mod tests {
                             ad_hess[3 * sample + k][3 * wrt_sample + wrt] += jac[sample][k].deriv();
                         }
                     }
-                    samples.positions[wrt_sample][wrt] = F::cst(samples.positions[wrt_sample][wrt]);
+                    samples.positions[wrt_sample][wrt] =
+                        F1::cst(samples.positions[wrt_sample][wrt]);
                 }
             }
 
@@ -1003,7 +1039,7 @@ mod tests {
         mesh: &geo::mesh::TriMesh<f64>,
         qs: &[Vector3<f64>],
     ) -> Result<(), Error> {
-        use autodiff::F;
+        use autodiff::F1;
 
         // Create a surface sample mesh.
         let sphere = geo::mesh::PolyMesh::from(mesh.clone());
@@ -1020,7 +1056,7 @@ mod tests {
         };
 
         // Construct the implicit surface.
-        let surface = mls_from_polymesh::<F>(
+        let surface = mls_from_polymesh::<F1>(
             &sphere,
             Params {
                 kernel: kernel_type,
@@ -1032,7 +1068,7 @@ mod tests {
 
         let mut query_points: Vec<_> = qs
             .iter()
-            .map(|&q| q.mapd(|x| F::cst(x)).into_data())
+            .map(|&q| q.mapd(|x| F1::cst(x)).into_data())
             .collect();
 
         let query_topo = surface.query_topo(&query_points);
@@ -1051,7 +1087,7 @@ mod tests {
             }
 
             let hess = {
-                let bg = BackgroundField::<F, F, _>::local(
+                let bg = BackgroundField::<F1, F1, _>::local(
                     Vector3::new(*q),
                     view,
                     kernel,
@@ -1065,7 +1101,7 @@ mod tests {
             let mut success = true;
 
             for wrt in 0..3 {
-                q[wrt] = F::var(q[wrt]);
+                q[wrt] = F1::var(q[wrt]);
                 let jac = {
                     let bg = BackgroundField::local(
                         Vector3::new(*q),
@@ -1084,7 +1120,7 @@ mod tests {
                         success = false;
                     }
                 }
-                q[wrt] = F::cst(q[wrt]);
+                q[wrt] = F1::cst(q[wrt]);
             }
 
             assert!(success);
@@ -1094,12 +1130,10 @@ mod tests {
 
     #[test]
     fn two_triangles_distance_based_bg() -> Result<(), Error> {
+        use flatk::*;
         let (verts, indices) =
             crate::jacobian::make_two_test_triangles(0.0, &mut || Vector3::zero());
-        let mesh = geo::mesh::TriMesh::new(
-            reinterpret::reinterpret_vec(verts),
-            reinterpret::reinterpret_vec(indices),
-        );
+        let mesh = geo::mesh::TriMesh::new(verts, Chunked3::from_array_vec(indices).into_storage());
 
         let query_points = vec![
             Vector3::new([0.0, 0.2, 0.0]),

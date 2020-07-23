@@ -255,7 +255,7 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
             }
             SamplesMesh::TriMesh(mesh) => {
                 let vertices = Self::vertex_positions_from_mesh(mesh);
-                let triangles = reinterpret::reinterpret_slice(mesh.faces()).to_vec();
+                let triangles = mesh.faces().to_vec();
 
                 // Build the samples.
                 let samples = match sample_type {

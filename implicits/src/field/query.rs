@@ -200,8 +200,7 @@ impl<T: Real> QueryTopo<T> {
     /// resulting vectors.
     pub fn surface_vertex_normals(&self) -> Vec<[T; 3]> {
         let mut normals = vec![[T::zero(); 3]; self.surface_vertex_positions().len()];
-        let pos = reinterpret::reinterpret_slice(self.surface_vertex_positions());
-        self.query_jacobian_full(pos, &mut normals);
+        self.query_jacobian_full(self.surface_vertex_positions(), &mut normals);
         for n in normals.iter_mut() {
             let nml = Vector3::new(*n);
             let len = nml.norm();

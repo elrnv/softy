@@ -145,20 +145,18 @@ impl ContactBasis {
     /// Remap values in the contact basis when the set of contacts change.
     pub fn remap(&mut self, old_set: &[usize], new_set: &[usize]) {
         // TODO: In addition to remapping this basis, we should just rebuild the missing parts.
-        let new_normals = crate::constraints::remap_values(
+        self.normals = crate::constraints::remap_values(
             self.normals.iter().cloned(),
             [0.0; 3],
             old_set.iter().cloned(),
             new_set.iter().cloned(),
         );
-        let new_tangents = crate::constraints::remap_values(
+        self.tangents = crate::constraints::remap_values(
             self.tangents.iter().cloned(),
             [0.0; 3],
             old_set.iter().cloned(),
             new_set.iter().cloned(),
         );
-        std::mem::replace(&mut self.normals, new_normals);
-        std::mem::replace(&mut self.tangents, new_tangents);
     }
 
     pub fn to_cylindrical_contact_coordinates<V3>(

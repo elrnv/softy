@@ -1442,7 +1442,7 @@ impl NonLinearProblem {
             old_values.iter().cloned(),
             new_values.iter().cloned(),
         );
-        std::mem::replace(&mut self.warm_start.constraint_multipliers, new_multipliers);
+        self.warm_start.constraint_multipliers = new_multipliers;
     }
 
     ///// Update all stateful constraints with the most recent data. This also involves remapping any

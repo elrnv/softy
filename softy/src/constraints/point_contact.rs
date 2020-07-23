@@ -805,17 +805,16 @@ impl ContactConstraint for PointContactConstraint {
         assert_eq!(query_indices.len(), normals.len());
 
         // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
             normals.into_iter(),
             [0.0; 3], // Default normal (there should not be any).
             query_indices.into_iter(),
             collider_impulse.selection().index_iter().cloned(),
-        )
-        .collect();
+        );
 
-        for (&aci, &nml) in zip!(
+        for (&aci, nml) in zip!(
             collider_impulse.selection().index_iter(),
-            remapped_normals.iter(),
+            remapped_normals_iter,
         ) {
             out_normals[aci] = nml;
         }
@@ -837,21 +836,20 @@ impl ContactConstraint for PointContactConstraint {
         } = self.frictional_contact.as_mut().unwrap();
 
         // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
             normals.into_iter(),
             [0.0; 3], // Default normal (there should not be many).
             query_indices.into_iter(),
-            collider_impulse.selection().index_iter().cloned(),
-        )
-        .collect();
+            collider_impulse.selection().indices.clone().into_iter(),
+        );
 
-        if remapped_normals.is_empty() {
+        if remapped_normals_iter.len() == 0 {
             return;
         }
 
         // Project contact impulse
         ContactBasis::project_out_normal_component(
-            remapped_normals.into_iter(),
+            remapped_normals_iter,
             collider_impulse.source_iter_mut().map(|(_, imp)| imp),
         );
 
@@ -1455,14 +1453,14 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn contact_normals(&self) -> Chunked3<Vec<f64>> {
+    fn contact_normals(&self) -> Vec<[f64; 3]> {
         // Contacts occur at the vertex positions of the colliding mesh.
         let surf = &self.implicit_surface;
         let contact_points = &self.contact_points;
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords);
-        let mut normals = Chunked3::from_flat(normal_coords);
+        let mut normals = Chunked3::from_flat(normal_coords).into_arrays();
 
         // Normalize normals
         // Contact normals point away from the surface being collided against.

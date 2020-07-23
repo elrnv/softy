@@ -54,7 +54,7 @@ pub fn remap_values<T: Copy>(
     values: impl Iterator<Item = T>,
     default: T,
     old_indices: impl Iterator<Item = usize> + Clone,
-    new_indices: impl Iterator<Item = usize> + Clone,
+    new_indices: impl ExactSizeIterator<Item = usize> + Clone,
 ) -> Vec<T> {
     remap_values_iter(values, default, old_indices, new_indices).collect()
 }
@@ -64,8 +64,8 @@ pub fn remap_values_iter<T: Copy>(
     values: impl Iterator<Item = T>,
     default: T,
     old_indices: impl Iterator<Item = usize> + Clone,
-    new_indices: impl Iterator<Item = usize> + Clone,
-) -> impl Iterator<Item = T> {
+    new_indices: impl ExactSizeIterator<Item = usize> + Clone,
+) -> impl ExactSizeIterator<Item = T> {
     // Check that both input slices are sorted.
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut old_indices.clone()));
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
@@ -282,7 +282,7 @@ pub trait ContactConstraint:
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self) -> Chunked3<Vec<f64>>;
+    fn contact_normals(&self) -> Vec<[f64; 3]>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.

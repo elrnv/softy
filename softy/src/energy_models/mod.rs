@@ -135,7 +135,7 @@ pub(crate) mod test_utils {
     use crate::test_utils::*;
     use crate::{TetMesh, TriMesh};
     use approx::*;
-    use autodiff::F;
+    use autodiff::F1 as F;
     use num_traits::Zero;
     use reinterpret::*;
 
@@ -163,7 +163,8 @@ pub(crate) mod test_utils {
     }
 
     fn random_displacement(n: usize) -> Vec<F> {
-        use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+        use rand::distributions::Uniform;
+        use rand::prelude::*;
         let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
         let range = Uniform::new(-0.1, 0.1);
         (0..n).map(move |_| F::cst(rng.sample(range))).collect()

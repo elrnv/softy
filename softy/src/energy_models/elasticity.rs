@@ -113,7 +113,7 @@ mod test_utils {
     use super::*;
     use crate::objects::shell::TriMeshShell;
     use approx::*;
-    use autodiff::F;
+    use autodiff::F1 as F;
     use geo::ops::*;
 
     #[allow(non_snake_case)]

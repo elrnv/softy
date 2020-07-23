@@ -641,7 +641,7 @@ mod tests {
 
     fn build_energies(
         solids: &[TetMeshSolid],
-    ) -> Vec<(TetMeshNeoHookean<autodiff::F>, Vec<[f64; 3]>)> {
+    ) -> Vec<(TetMeshNeoHookean<autodiff::F1>, Vec<[f64; 3]>)> {
         solids
             .iter()
             .map(|solid| {
@@ -655,12 +655,12 @@ mod tests {
 
     #[test]
     fn tet_energy_gradient() {
-        tet_energy_gradient_tester::<NeoHookeanTetEnergy<autodiff::F>>();
+        tet_energy_gradient_tester::<NeoHookeanTetEnergy<autodiff::F1>>();
     }
 
     #[test]
     fn tet_energy_hessian() {
-        tet_energy_hessian_tester::<NeoHookeanTetEnergy<autodiff::F>>();
+        tet_energy_hessian_tester::<NeoHookeanTetEnergy<autodiff::F1>>();
     }
 
     #[test]

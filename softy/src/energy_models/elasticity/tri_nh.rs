@@ -1197,7 +1197,7 @@ mod tests {
 
     fn build_energies(
         shells: &[TriMeshShell],
-    ) -> Vec<(TriMeshNeoHookean<autodiff::F>, Vec<[f64; 3]>)> {
+    ) -> Vec<(TriMeshNeoHookean<autodiff::F1>, Vec<[f64; 3]>)> {
         shells
             .iter()
             .map(|shell| {
@@ -1211,12 +1211,12 @@ mod tests {
 
     #[test]
     fn tri_energy_gradient() {
-        tri_energy_gradient_tester::<NeoHookeanTriEnergy<autodiff::F>>();
+        tri_energy_gradient_tester::<NeoHookeanTriEnergy<autodiff::F1>>();
     }
 
     #[test]
     fn tri_energy_hessian() {
-        tri_energy_hessian_tester::<NeoHookeanTriEnergy<autodiff::F>>();
+        tri_energy_hessian_tester::<NeoHookeanTriEnergy<autodiff::F1>>();
     }
 
     #[test]

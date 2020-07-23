@@ -1,7 +1,6 @@
 use unroll::unroll_for_loops;
 
 use geo::mesh::topology::*;
-use geo::ops::Area;
 use geo::prim::Triangle;
 use tensr::*;
 
@@ -193,13 +192,14 @@ impl InteriorEdge {
         [an0, an1]
     }
 
-    /// Compute the areas of adjacent faces.
-    #[inline]
-    pub fn face_areas<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [T; 2] {
-        let a0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area();
-        let a1 = Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area();
-        [a0, a1]
-    }
+    ///// Compute the areas of adjacent faces.
+    //#[inline]
+    //pub fn face_areas<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [T; 2] {
+    //    use geo::ops::Area;
+    //    let a0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area();
+    //    let a1 = Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area();
+    //    [a0, a1]
+    //}
 
     /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge.
     #[inline]
@@ -557,7 +557,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 #[cfg(test)]
 mod tests {
     use approx::*;
-    use autodiff::F;
+    use autodiff::F1;
 
     use super::*;
 
@@ -670,10 +670,10 @@ mod tests {
 
     fn edge_angle_gradient_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
-            Vector3::new(x[0]).cast::<F>().into_data(),
-            Vector3::new(x[1]).cast::<F>().into_data(),
-            Vector3::new(x[2]).cast::<F>().into_data(),
-            Vector3::new(x[3]).cast::<F>().into_data(),
+            Vector3::new(x[0]).cast::<F1>().into_data(),
+            Vector3::new(x[1]).cast::<F1>().into_data(),
+            Vector3::new(x[2]).cast::<F1>().into_data(),
+            Vector3::new(x[3]).cast::<F1>().into_data(),
         ];
 
         let verts = e.verts(&faces[..]);
@@ -684,7 +684,7 @@ mod tests {
         let mut success = true;
         for vtx in 0..4 {
             for i in 0..3 {
-                x_ad[verts[vtx]][i] = F::var(x_ad[verts[vtx]][i]);
+                x_ad[verts[vtx]][i] = F1::var(x_ad[verts[vtx]][i]);
                 let a = e.edge_angle(&x_ad[..], &faces[..]);
                 grad_ad[vtx][i] = a.deriv();
                 let ret = relative_eq!(grad[vtx][i], a.deriv(), max_relative = 1e-8);
@@ -692,7 +692,7 @@ mod tests {
                     success = false;
                     eprintln!("{:?} vs. {:?}", grad[vtx][i], a.deriv());
                 }
-                x_ad[verts[vtx]][i] = F::cst(x_ad[verts[vtx]][i]);
+                x_ad[verts[vtx]][i] = F1::cst(x_ad[verts[vtx]][i]);
             }
         }
 
@@ -726,10 +726,10 @@ mod tests {
 
     fn edge_angle_hessian_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
-            Vector3::new(x[0]).cast::<F>().into_data(),
-            Vector3::new(x[1]).cast::<F>().into_data(),
-            Vector3::new(x[2]).cast::<F>().into_data(),
-            Vector3::new(x[3]).cast::<F>().into_data(),
+            Vector3::new(x[0]).cast::<F1>().into_data(),
+            Vector3::new(x[1]).cast::<F1>().into_data(),
+            Vector3::new(x[2]).cast::<F1>().into_data(),
+            Vector3::new(x[3]).cast::<F1>().into_data(),
         ];
 
         let verts = e.verts(&faces[..]);
@@ -742,7 +742,7 @@ mod tests {
         let mut success = true;
         for col_vtx in 0..4 {
             for col in 0..3 {
-                x_ad[verts[col_vtx]][col] = F::var(x_ad[verts[col_vtx]][col]);
+                x_ad[verts[col_vtx]][col] = F1::var(x_ad[verts[col_vtx]][col]);
                 let g = e.edge_angle_gradient(&x_ad[..], &faces[..]);
                 for row_vtx in col_vtx..4 {
                     if (row_vtx == 2 && col_vtx == 3) || (row_vtx == 3 && col_vtx == 2) {
@@ -765,7 +765,7 @@ mod tests {
                         }
                     }
                 }
-                x_ad[verts[col_vtx]][col] = F::cst(x_ad[verts[col_vtx]][col]);
+                x_ad[verts[col_vtx]][col] = F1::cst(x_ad[verts[col_vtx]][col]);
             }
         }
 

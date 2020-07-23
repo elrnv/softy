@@ -58,7 +58,7 @@ pub fn default_solid() -> SolidMaterial {
 /// triangle is simulated under gravity.
 pub fn make_one_tri_mesh() -> TriMesh {
     let verts = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
-    let indices = vec![0, 2, 1];
+    let indices = vec![[0, 2, 1]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0])
         .unwrap();
@@ -88,7 +88,7 @@ pub fn make_two_tri_mesh() -> TriMesh {
         [1.0, 1.0, 0.0],
     ];
 
-    let indices = vec![2, 0, 1, 0, 3, 1];
+    let indices = vec![[2, 0, 1], [0, 3, 1]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
 
     // Top two vertices are fixed to remove the nullspace in shell sims.
@@ -117,7 +117,7 @@ pub fn make_three_tri_mesh() -> TriMesh {
         [1.0, 1.0, 0.0],
     ];
 
-    let indices = vec![0, 1, 2, 0, 3, 1, 1, 4, 2];
+    let indices = vec![[0, 1, 2], [0, 3, 1], [1, 4, 2]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
 
     // Top two vertices are fixed to remove the nullspace in shell sims.
@@ -146,7 +146,7 @@ pub fn make_four_tri_mesh() -> TriMesh {
         [0.0, 0.0, 2.0],
         [1.0, 0.1, 2.0], // slight bend
     ];
-    let indices = vec![0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5];
+    let indices = vec![[0, 1, 2], [2, 1, 3], [2, 3, 4], [4, 3, 5]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
         .unwrap();
@@ -174,7 +174,7 @@ pub fn make_four_tri_mesh_unoriented() -> TriMesh {
         [0.0, 0.0, 2.0],
         [1.0, 0.0, 2.0],
     ];
-    let indices = vec![0, 2, 1, 2, 3, 1, 2, 3, 4, 4, 3, 5];
+    let indices = vec![[0, 2, 1], [2, 3, 1], [2, 3, 4], [4, 3, 5]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
         .unwrap();
@@ -195,7 +195,7 @@ pub fn make_one_tet_trimesh() -> TriMesh {
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
     ];
-    let indices = vec![0, 2, 1, 0, 3, 2, 0, 1, 3, 1, 2, 3];
+    let indices = vec![[0, 2, 1], [0, 3, 2], [0, 1, 3], [1, 2, 3]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
         .unwrap();
@@ -216,7 +216,7 @@ pub fn make_one_tet_mesh() -> TetMesh {
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
     ];
-    let indices = vec![0, 2, 1, 3];
+    let indices = vec![[0, 2, 1, 3]];
     let mut mesh = TetMesh::new(verts.clone(), indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
         .unwrap();
@@ -237,7 +237,7 @@ pub fn make_one_deformed_tet_mesh() -> TetMesh {
 }
 
 pub fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
-    let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+    let indices = vec![[5, 2, 4, 0], [3, 2, 5, 0], [1, 0, 3, 5]];
     let mut mesh = TetMesh::new(verts, indices);
     mesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
         .unwrap();

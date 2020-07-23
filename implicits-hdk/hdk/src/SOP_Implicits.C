@@ -105,12 +105,41 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     parm {
+        name "usebaseradius"
+        cppname "UseBaseRadius"
+        type toggle 
+        nolabel
+        joinnext
+        default { "off" }
+        hidewhen "{ kernel == global } { kernel == hrbf }"
+    }
+
+    parm {
+        name "baseradius"
+        cppname "BaseRadius"
+        label "Base Radius"
+        type float
+        default { "0.0" }
+        range { 0.0 10.0 }
+        hidewhen "{ kernel == global } { kernel == hrbf }"
+        disablewhen "{ usebaseradius == 0 }"
+    }
+
+    parm {
         name "tolerance"
         label "Tolerance"
         type log
         default { "1e-5" }
         range { 0.0 1.0 }
         hidewhen "{ kernel == cubic } { kernel == hrbf } { kernel == interpolating }"
+    }
+
+    parm {
+        name "debug"
+        label "Debug"
+        type toggle
+        default { "off" }
+        disablewhen "{ action == project }"
     }
 
     groupsimple {
@@ -199,18 +228,25 @@ SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     InterruptChecker interrupt_checker("Solving MLS");
 
     // Gather parameters
-    Params params;
-    params.action = static_cast<int>(sopparms.getAction());
+    ISO_Params iso_params = iso_default_params();
+    iso_params.tolerance = sopparms.getTolerance();
+    iso_params.radius_multiplier = sopparms.getRadiusMultiplier();
+    if (sopparms.getUseBaseRadius()) {
+        iso_params.base_radius = sopparms.getBaseRadius();
+    }
+    iso_params.kernel = static_cast<ISO_KernelType>(sopparms.getKernel());
+    iso_params.background_field = static_cast<ISO_BackgroundFieldType>(sopparms.getBgPotential());
+    iso_params.weighted = sopparms.getBgWeighted();
+    iso_params.sample_type = static_cast<ISO_SampleType>(sopparms.getSampleType());
+
+    HISO_Params params = hiso_default_params();
+    params.action = static_cast<HISO_Action>(sopparms.getAction());
     params.iso_value = sopparms.getIsoValue();
     params.project_below = sopparms.getProjectBelow();
-    params.tolerance = sopparms.getTolerance();
-    params.radius_multiplier = sopparms.getRadiusMultiplier();
-    params.kernel = static_cast<int>(sopparms.getKernel());
-    params.background_potential = static_cast<int>(sopparms.getBgPotential());
-    params.background_potential_weighted = sopparms.getBgWeighted();
-    params.sample_type = static_cast<int>(sopparms.getSampleType());
+    params.debug = sopparms.getDebug();
+    params.iso_params = iso_params;
 
-    HR_CookResult res = el_iso_cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
+    HR_CookResult res = hiso_cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
 
     switch (res.tag) {
         case HRCookResultTag::HR_SUCCESS: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;

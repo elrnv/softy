@@ -18,6 +18,9 @@ fn main() {
     config.line_length = 80;
     config.tab_width = 4;
     config.language = cbindgen::Language::Cxx;
+    config.parse.parse_deps = true;
+    config.parse.include = Some(vec!["cimplicits".to_string()]);
+    config.parse.extra_bindings = vec!["cimplicits".to_string()];
 
     cbindgen::generate_with_config(&crate_dir, config)
         .expect("Unable to generate bindings")

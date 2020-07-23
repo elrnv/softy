@@ -1,124 +1,104 @@
+use crate::{HISO_Action, HISO_Params};
 /**
  * Application specific code goes here.
  * The Rust cook entry point is defined here.
  * This file is intended to be completely free from C FFI except for POD types, which must be
  * designated as `#[repr(C)]`.
  */
-use geo;
+use geo::{
+    self,
+    mesh::{attrib::*, topology::*, VertexPositions},
+};
 use hdkrs::interop::CookResult;
-use implicits;
-
-/// A C interface for passing parameters from SOP parameters to the Rust code.
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct Params {
-    pub action: i32,
-    pub iso_value: f32,      // Only used for projection
-    pub project_below: bool, // Only used for projection
-    pub tolerance: f32,
-    pub radius_multiplier: f32,
-    pub kernel: i32,
-    pub background_potential: i32,
-    pub background_potential_weighted: bool,
-    pub sample_type: i32,
-}
-
-impl Into<implicits::Params> for Params {
-    fn into(self) -> implicits::Params {
-        let Params {
-            tolerance,
-            radius_multiplier,
-            kernel,
-            background_potential,
-            background_potential_weighted,
-            sample_type,
-            ..
-        } = self;
-        implicits::Params {
-            kernel: match kernel {
-                0 => implicits::KernelType::Interpolating {
-                    radius_multiplier: radius_multiplier as f64,
-                },
-                1 => implicits::KernelType::Approximate {
-                    radius_multiplier: radius_multiplier as f64,
-                    tolerance: tolerance as f64,
-                },
-                2 => implicits::KernelType::Cubic {
-                    radius_multiplier: radius_multiplier as f64,
-                },
-                3 => implicits::KernelType::Global {
-                    tolerance: tolerance as f64,
-                },
-                _ => implicits::KernelType::Hrbf,
-            },
-            background_field: implicits::BackgroundFieldParams {
-                field_type: match background_potential {
-                    0 => implicits::BackgroundFieldType::Zero,
-                    1 => implicits::BackgroundFieldType::FromInput,
-                    _ => implicits::BackgroundFieldType::DistanceBased,
-                },
-                weighted: background_potential_weighted,
-            },
-            sample_type: match sample_type {
-                0 => implicits::SampleType::Vertex,
-                _ => implicits::SampleType::Face,
-            },
-            ..Default::default()
-        }
-    }
-}
+use implicits::{self, ImplicitSurface};
 
 fn project_vertices(
-    samplemesh: &mut geo::mesh::PolyMesh<f64>,
+    query_mesh: &mut geo::mesh::PolyMesh<f64>,
     surface: &mut geo::mesh::PolyMesh<f64>,
-    params: Params,
+    params: HISO_Params,
 ) -> Result<bool, implicits::Error> {
-    use geo::mesh::VertexPositions;
+    let mut surf = implicits::mls_from_polymesh(surface, params.into())?;
+    surf.reverse_par(); // Reverse normals for compatibility with HDK
+    let query_surf = surf.query_topo(query_mesh.vertex_positions());
 
-    surface.reverse(); // reverse polygons for compatibility with hdk
-    let surf = implicits::mls_from_polymesh(surface, params.into())?;
-    let query_surf = surf.query_topo(samplemesh.vertex_positions());
-
-    let pos = samplemesh.vertex_positions_mut();
+    let pos = query_mesh.vertex_positions_mut();
     let converged = if params.project_below {
-        query_surf.project_to_below(f64::from(params.iso_value), 1e-4, pos)
+        query_surf.project_to_below_par(f64::from(params.iso_value), 1e-4, pos)
     } else {
-        query_surf.project_to_above(f64::from(params.iso_value), 1e-4, pos)
+        query_surf.project_to_above_par(f64::from(params.iso_value), 1e-4, pos)
     };
-
-    surface.reverse(); // reverse back
 
     Ok(converged)
 }
 
 /// Main entry point to Rust code.
 pub fn cook<F>(
-    samplemesh: Option<&mut geo::mesh::PolyMesh<f64>>,
+    query_mesh: Option<&mut geo::mesh::PolyMesh<f64>>,
     polymesh: Option<&mut geo::mesh::PolyMesh<f64>>,
-    params: Params,
+    params: HISO_Params,
     check_interrupt: F,
 ) -> CookResult
 where
     F: Fn() -> bool + Sync + Send + Clone,
 {
-    if let Some(samples) = samplemesh {
+    if let Some(query_mesh) = query_mesh {
         if let Some(surface) = polymesh {
             match params.action {
-                0 => {
-                    // Compute potential
-                    surface.reverse(); // reverse polygons for compatibility with hdk
-                    let res = implicits::compute_potential_debug(
-                        samples,
-                        surface,
-                        params.into(),
-                        check_interrupt,
-                    );
-                    surface.reverse(); // reverse back
-                    convert_to_cookresult(res.map(|_| true))
+                HISO_Action::ComputePotential => {
+                    if params.debug {
+                        let res = implicits::surface_from_polymesh(surface, params.into())
+                            .and_then(|mut surf| {
+                                surf.reverse_par(); // reverse polygons for compatibility with hdk
+                                surf.compute_potential_on_mesh(query_mesh, check_interrupt)
+                            });
+                        convert_to_cookresult(res.map(|_| true))
+                    } else {
+                        let res = implicits::surface_from_polymesh(surface, params.into())
+                            .and_then(|mut surf| {
+                                surf.reverse_par(); // reverse polygons for compatibility with hdk
+                                                    // Get or create a new potential attribute.
+                                let potential_attrib = query_mesh
+                                    .remove_attrib::<VertexIndex>("potential")
+                                    .ok()
+                                    .unwrap_or_else(|| {
+                                        Attribute::direct_from_vec(vec![
+                                            0.0f32;
+                                            query_mesh.num_vertices()
+                                        ])
+                                    });
+
+                                let mut potential = potential_attrib
+                                    .into_data()
+                                    .cast_into_vec::<f64>()
+                                    .unwrap_or_else(|| vec![0.0f64; query_mesh.num_vertices()]);
+
+                                match surf {
+                                    ImplicitSurface::MLS(mls) => mls
+                                        .query_topo(query_mesh.vertex_positions())
+                                        .potential_par_interrupt(
+                                            query_mesh.vertex_positions(),
+                                            &mut potential,
+                                            check_interrupt,
+                                        ),
+                                    ImplicitSurface::Hrbf(hrbf) => {
+                                        ImplicitSurface::compute_hrbf_on_mesh(
+                                            query_mesh,
+                                            &hrbf.surf_base.samples,
+                                            check_interrupt,
+                                        )
+                                    }
+                                }
+                                .ok();
+
+                                query_mesh
+                                    .add_attrib_data::<_, VertexIndex>("potential", potential)?;
+                                Ok(())
+                            });
+                        convert_to_cookresult(res.map(|_| true))
+                    }
                 }
-                _ => {
-                    // Project vertices
-                    let res = project_vertices(samples, surface, params);
+                HISO_Action::Project => {
+                    let res = project_vertices(query_mesh, surface, params);
                     convert_to_cookresult(res)
                 }
             }

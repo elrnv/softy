@@ -1,6 +1,6 @@
 [package]
 name = "cimplicits"
-version = "0.2.4"
+version = "0.3.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 geo = { path = "../geo" }
 implicits = { path = "../implicits" }
-reinterpret = "0.2"
+bytemuck = "1.2"
 
 [build-dependencies]
-cbindgen = "0.14.2"
+cbindgen = "0.14.3"

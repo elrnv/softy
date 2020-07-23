@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, PolyMesh, TriMesh};
+use geo::mesh::{attrib, PointCloud, PolyMesh, TriMesh};
 
 #[macro_use]
 mod kernel;
@@ -23,6 +23,7 @@ pub struct Params {
     pub background_field: BackgroundFieldParams,
     pub sample_type: SampleType,
     pub max_step: f64,
+    pub base_radius: Option<f64>,
 }
 
 impl Default for Params {
@@ -39,6 +40,7 @@ impl Default for Params {
             },
             sample_type: SampleType::Face,
             max_step: 0.0,
+            base_radius: None,
         }
     }
 }
@@ -65,13 +67,19 @@ pub fn surface_from_trimesh<T: Real>(
     surface: &TriMesh<f64>,
     params: Params,
 ) -> Result<ImplicitSurface<T>, Error> {
-    let surf = ImplicitSurfaceBuilder::new()
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
         .kernel(params.kernel)
         .max_step(params.max_step)
         .background_field(params.background_field)
         .sample_type(params.sample_type)
-        .trimesh(surface)
-        .build_generic();
+        .trimesh(surface);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_generic();
 
     match surf {
         Some(s) => Ok(s),
@@ -92,13 +100,19 @@ pub fn surface_from_polymesh<T: Real>(
 /// A convenience routine for building an implicit surface from a given set of parameters and a
 /// given `TriMesh`.
 pub fn mls_from_trimesh<T: Real>(surface: &TriMesh<f64>, params: Params) -> Result<MLS<T>, Error> {
-    let surf = ImplicitSurfaceBuilder::new()
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
         .kernel(params.kernel)
         .max_step(params.max_step)
         .background_field(params.background_field)
         .sample_type(params.sample_type)
-        .trimesh(surface)
-        .build_mls();
+        .trimesh(surface);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_mls();
 
     match surf {
         Some(s) => Ok(s),
@@ -114,6 +128,32 @@ pub fn mls_from_polymesh<T: Real>(
 ) -> Result<MLS<T>, Error> {
     let surf_trimesh = TriMesh::from(surface.clone());
     mls_from_trimesh::<T>(&surf_trimesh, params)
+}
+
+/// A convenience routine for building an implicit surface from a given set of parameters and a
+/// given `PointCloud`.
+pub fn mls_from_pointcloud<T: Real>(
+    ptcloud: &PointCloud<f64>,
+    params: Params,
+) -> Result<MLS<T>, Error> {
+    let mut surf_builder = ImplicitSurfaceBuilder::new();
+    surf_builder
+        .kernel(params.kernel)
+        .max_step(params.max_step)
+        .background_field(params.background_field)
+        .sample_type(params.sample_type)
+        .vertex_mesh(ptcloud);
+
+    if let Some(base_radius) = params.base_radius {
+        surf_builder.base_radius(base_radius);
+    }
+
+    let surf = surf_builder.build_mls();
+
+    match surf {
+        Some(s) => Ok(s),
+        None => Err(Error::Failure),
+    }
 }
 
 #[derive(Debug, Error)]
@@ -390,13 +430,13 @@ mod tests {
     /// Test the surface jacobian of the implicit surface.
     #[test]
     fn surface_jacobian_test() {
-        use autodiff::F;
+        use autodiff::F1;
         use tensr::Vector3;
 
         let grid = make_grid(22, 22);
         let grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();
@@ -412,12 +452,12 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build_mls::<F>()
+            .build_mls::<F1>()
             .expect("Failed to create implicit surface.");
 
         let mut query_surf = implicit_surface.query_topo(&grid_pos);
         let nnz = query_surf.num_surface_jacobian_entries();
-        let mut vals = vec![F::cst(0.0); nnz];
+        let mut vals = vec![F1::cst(0.0); nnz];
         query_surf.surface_jacobian_values(&grid_pos, &mut vals);
 
         // This is the full jacobian (including all zeros).
@@ -438,9 +478,9 @@ mod tests {
                     .cloned()
                     .enumerate()
                     .map(|(j, mut v)| {
-                        v = v.mapd(|x| F::cst(x)); // reset variables to constants
+                        v = Vector3::new(v).mapd(|x| F1::cst(x)).into(); // reset variables to constants
                         if j == cur_pt_idx {
-                            v[i] = F::var(v[i]); // set the current tested variable
+                            v[i] = F1::var(v[i]); // set the current tested variable
                         }
                         v.into()
                     })
@@ -448,18 +488,26 @@ mod tests {
 
                 query_surf.update_surface(verts.into_iter());
 
-                let mut potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
+                let mut potential: Vec<F1> = vec![F1::cst(0); grid.num_vertices()];
 
                 query_surf.potential(&grid_pos, &mut potential);
 
                 let col = 3 * cur_pt_idx + i;
                 for row in 0..grid_pos.len() {
-                    assert_relative_eq!(
+                    if !relative_eq!(
                         jac[col][row],
                         potential[row].deriv(),
                         max_relative = 1e-5,
-                        epsilon = 1e-10
-                    );
+                        epsilon = 1e-10,
+                    ) {
+                        panic!(
+                            "({}, {}) jac = {} vs ad_jac = {}",
+                            row,
+                            col,
+                            jac[col][row],
+                            potential[row].deriv()
+                        );
+                    }
                 }
             }
         }
@@ -468,14 +516,14 @@ mod tests {
     /// Test the query jacobian of the implicit surface.
     #[test]
     fn complex_query_jacobian_test() {
-        use autodiff::F;
+        use autodiff::F1;
         use rayon::prelude::*;
         use tensr::Vector3;
 
         let grid = make_grid(23, 23);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();
@@ -491,7 +539,7 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build_mls::<F>()
+            .build_mls::<F1>()
             .expect("Failed to create implicit surface.");
 
         let query_surf = implicit_surface.query_topo(&grid_pos);
@@ -515,20 +563,15 @@ mod tests {
             //flat_jac[idx.1] = val.value();
         }
 
-        //grid.set_attrib_data::<[f64; 3], VertexIndex>(
-        //    "gradient",
-        //    reinterpret::reinterpret_slice(&flat_jac),
-        //)?;
-
         //let mut exp_flat_jac = vec![0.0; grid_pos.len() * 3];
 
         for cur_pt_idx in 0..grid_pos.len() {
             // for each vertex
             for i in 0..3 {
                 // for each component
-                grid_pos[cur_pt_idx][i] = F::var(grid_pos[cur_pt_idx][i]);
+                grid_pos[cur_pt_idx][i] = F1::var(grid_pos[cur_pt_idx][i]);
 
-                let mut potential: Vec<F> = vec![F::cst(0); grid.num_vertices()];
+                let mut potential: Vec<F1> = vec![F1::cst(0); grid.num_vertices()];
                 query_surf.potential(&grid_pos, &mut potential);
 
                 let col = 3 * cur_pt_idx + i;
@@ -555,14 +598,9 @@ mod tests {
                     );
                 }
                 //exp_flat_jac[col] = potential[cur_pt_idx].deriv();
-                grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
+                grid_pos[cur_pt_idx][i] = F1::cst(grid_pos[cur_pt_idx][i]);
             }
         }
-
-        //grid.set_attrib_data::<[f64; 3], VertexIndex>(
-        //    "exp_gradient",
-        //    reinterpret::reinterpret_slice(&exp_flat_jac),
-        //)?;
 
         //geo::io::save_polymesh(&grid, &PathBuf::from("out/gradient.vtk"))?;
     }
@@ -570,13 +608,13 @@ mod tests {
     /// Test the query Hessian of the implicit surface.
     #[test]
     fn complex_query_hessian_test() {
-        use autodiff::F;
+        use autodiff::F1;
         use tensr::Vector3;
 
         let grid = make_grid(11, 11);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F::cst(x)).into())
+            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();
@@ -592,13 +630,13 @@ mod tests {
             })
             .sample_type(SampleType::Face)
             .trimesh(&trimesh)
-            .build_mls::<F>()
+            .build_mls::<F1>()
             .expect("Failed to create implicit surface.");
 
         let query_surf = implicit_surface.query_topo(&grid_pos);
         let nnz = query_surf.num_query_hessian_product_entries();
-        let mut vals = vec![F::cst(0.0); nnz];
-        let multipliers = vec![F::cst(1.0); nnz]; // all at once
+        let mut vals = vec![F1::cst(0.0); nnz];
+        let multipliers = vec![F1::cst(1.0); nnz]; // all at once
         query_surf.query_hessian_product_values(&grid_pos, &multipliers, &mut vals);
 
         // This is the full jacobian (including all zeros).
@@ -619,10 +657,10 @@ mod tests {
             // for each vertex
             for i in 0..3 {
                 // for each component
-                grid_pos[cur_pt_idx][i] = F::var(grid_pos[cur_pt_idx][i]);
+                grid_pos[cur_pt_idx][i] = F1::var(grid_pos[cur_pt_idx][i]);
 
                 let nnz = query_surf.num_query_jacobian_entries();
-                let mut vals = vec![F::cst(0.0); nnz];
+                let mut vals = vec![F1::cst(0.0); nnz];
                 query_surf.query_jacobian_values(&grid_pos, &mut vals);
 
                 // This is the full jacobian (including all zeros).
@@ -647,7 +685,7 @@ mod tests {
                         );
                     }
                 }
-                grid_pos[cur_pt_idx][i] = F::cst(grid_pos[cur_pt_idx][i]);
+                grid_pos[cur_pt_idx][i] = F1::cst(grid_pos[cur_pt_idx][i]);
             }
             assert!(success);
         }

@@ -54,7 +54,7 @@ pub fn remap_values<T: Copy>(
     values: impl Iterator<Item = T>,
     default: T,
     old_indices: impl Iterator<Item = usize> + Clone,
-    new_indices: impl Iterator<Item = usize> + Clone,
+    new_indices: impl ExactSizeIterator<Item = usize> + Clone,
 ) -> Vec<T> {
     remap_values_iter(values, default, old_indices, new_indices).collect()
 }
@@ -64,8 +64,8 @@ pub fn remap_values_iter<T: Copy>(
     values: impl Iterator<Item = T>,
     default: T,
     old_indices: impl Iterator<Item = usize> + Clone,
-    new_indices: impl Iterator<Item = usize> + Clone,
-) -> impl Iterator<Item = T> {
+    new_indices: impl ExactSizeIterator<Item = usize> + Clone,
+) -> impl ExactSizeIterator<Item = T> {
     // Check that both input slices are sorted.
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut old_indices.clone()));
     debug_assert!(is_sorted::IsSorted::is_sorted(&mut new_indices.clone()));
@@ -201,9 +201,14 @@ pub trait ContactConstraint:
         friction_steps: u32,
     ) -> u32;
 
-    fn add_mass_weighted_frictional_contact_impulse(
+    fn add_mass_weighted_frictional_contact_impulse_to_object(
         &self,
-        x: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        x: SubsetView<Chunked3<&mut [f64]>>,
+    );
+
+    fn add_mass_weighted_frictional_contact_impulse_to_collider(
+        &self,
+        x: SubsetView<Chunked3<&mut [f64]>>,
     );
 
     fn smooth_collider_values(&self, _: SubsetView<&mut [f64]>) {}
@@ -213,46 +218,19 @@ pub trait ContactConstraint:
 
     fn collider_contact_normals(&mut self, _: Chunked3<&mut [f64]>) {}
 
-    /// Add the frictional impulse to the given gradient vector.
-    fn add_friction_impulse(
+    /// Add the frictional impulse to the given gradient vector representing the object.
+    fn add_friction_impulse_to_object(
         &self,
-        mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        grad: SubsetView<Chunked3<&mut [f64]>>,
         multiplier: f64,
-    ) {
-        if let Some(ref frictional_contact) = self.frictional_contact() {
-            if frictional_contact.object_impulse.is_empty() {
-                return;
-            }
+    );
 
-            let indices = self.active_surface_vertex_indices();
-            if indices.is_empty() {
-                return;
-            }
-
-            assert_eq!(indices.len(), frictional_contact.object_impulse.len());
-            for (contact_idx, (&i, (_, &r))) in indices
-                .iter()
-                .zip(frictional_contact.object_impulse.iter())
-                .enumerate()
-            {
-                let r_t = if !frictional_contact.contact_basis.is_empty() {
-                    let f = frictional_contact
-                        .contact_basis
-                        .to_contact_coordinates(r, contact_idx);
-                    Vector3::new(
-                        frictional_contact
-                            .contact_basis
-                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
-                            .into(),
-                    )
-                } else {
-                    Vector3::zero()
-                };
-
-                grad[0][i] = (Vector3::new(grad[0][i]) + r_t * multiplier).into();
-            }
-        }
-    }
+    /// Add the frictional impulse to the given gradient vector representing the collider.
+    fn add_friction_impulse_to_collider(
+        &self,
+        grad: SubsetView<Chunked3<&mut [f64]>>,
+        multiplier: f64,
+    );
 
     /// Compute the frictional energy dissipation.
     fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
@@ -304,7 +282,7 @@ pub trait ContactConstraint:
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self) -> Chunked3<Vec<f64>>;
+    fn contact_normals(&self) -> Vec<[f64; 3]>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.

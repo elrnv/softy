@@ -106,6 +106,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     type Hessian = [[Matrix3<T>; 3]; 3];
 
     #[allow(non_snake_case)]
+    #[inline]
     fn new(Dx: Self::ShapeMatrix, DX_inv: Self::RefShapeMatrix, area: T, lambda: T, mu: T) -> Self {
         NeoHookeanTriEnergy {
             Dx,
@@ -275,6 +276,172 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
     }
 }
 
+struct DiscreteShellBendingEnergy<'a, T> {
+    cur_pos: &'a [[T; 3]],
+    faces: &'a [[usize; 3]],
+    edge: InteriorEdge,
+    prev_theta: T,
+    ref_theta: T,
+    ref_shape: T,
+    stiffness: T,
+}
+
+impl<T: Real> DiscreteShellBendingEnergy<'_, T> {
+    /// Compute the bending energy.
+    #[inline]
+    fn energy(&self) -> T {
+        let theta = self
+            .edge
+            .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
+        let theta_strain = theta - self.ref_theta;
+        T::from(0.5).unwrap() * self.ref_shape * self.stiffness * theta_strain * theta_strain
+    }
+
+    /// Compute energy derivative with respect to theta.
+    ///
+    /// If `W` is the energy then this value corresponds to `∂W/∂θ`.
+    #[inline]
+    fn energy_angle_derivative(&self) -> T {
+        let theta = self
+            .edge
+            .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
+        self.ref_shape * self.stiffness * (theta - self.ref_theta)
+    }
+
+    /// Compute the bending energy gradient.
+    #[inline]
+    fn energy_gradient(&self) -> Matrix4x3<T> {
+        // Compute energy derivative with respect to theta.
+        let dw_dth = self.energy_angle_derivative();
+
+        let DiscreteShellBendingEnergy {
+            cur_pos,
+            faces,
+            edge,
+            ..
+        } = *self;
+
+        // Theta derivative with respect to x.
+        let dth_dx = Matrix4x3::new(edge.edge_angle_gradient(cur_pos, faces));
+        dth_dx * dw_dth
+    }
+
+    /// Compute the bending energy Hessian terms.
+    #[inline]
+    fn energy_hessian(&self) -> (Matrix4x3<T>, T, T, ([[T; 6]; 4], [[[T; 3]; 3]; 5])) {
+        // Compute energy derivative with respect to theta.
+        let dw_dth = self.energy_angle_derivative(); // ∂W/∂θ
+
+        let DiscreteShellBendingEnergy {
+            cur_pos,
+            faces,
+            edge,
+            ref_shape,
+            stiffness,
+            ..
+        } = *self;
+
+        // ∂θ/∂x ∂²W/∂θ² ∂θ/∂xᵀ + ∂W/∂θ ∂²θ/∂x²
+        let dth_dx = edge.edge_angle_gradient(cur_pos, faces).into_tensor(); // ∂θ/∂x
+        let d2w_dth2 = stiffness * ref_shape; // ∂²W/∂θ²
+
+        let d2th_dx2 = edge.edge_angle_hessian(cur_pos, faces); // ∂²θ/∂x²
+
+        (dth_dx, d2w_dth2, dw_dth, d2th_dx2)
+    }
+}
+
+/// In contrast to `DiscreteShellBendingEnergy`, this energy prevents inversions altogether.
+#[allow(dead_code)]
+struct DiscreteShellTanBendingEnergy<'a, T> {
+    cur_pos: &'a [[T; 3]],
+    faces: &'a [[usize; 3]],
+    edge: InteriorEdge,
+    prev_theta: T,
+    ref_theta: T,
+    ref_shape: T,
+    stiffness: T,
+}
+
+#[allow(dead_code)]
+impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
+    /// Compute the bending energy.
+    #[inline]
+    fn energy(&self) -> T {
+        let theta = self
+            .edge
+            .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
+        let theta_strain = theta - self.ref_theta;
+        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
+        self.ref_shape * self.stiffness * tan_strain * tan_strain * 0.5
+    }
+
+    /// Compute energy derivative with respect to θ.
+    ///
+    /// If `W` is the energy then this value corresponds to `∂W/∂θ`.
+    #[inline]
+    fn energy_angle_derivative(&self) -> T {
+        let theta = self
+            .edge
+            .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
+        let theta_strain = theta - self.ref_theta;
+        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
+        let tan_strain_dth_sqrt = T::one() / (theta_strain * 0.5).cos();
+        let tan_strain_dth = tan_strain_dth_sqrt * tan_strain_dth_sqrt;
+        self.ref_shape * self.stiffness * tan_strain * tan_strain_dth
+    }
+
+    /// Compute the bending energy gradient.
+    #[inline]
+    fn energy_gradient(&self) -> Matrix4x3<T> {
+        // Compute energy derivative with respect to theta.
+        let dw_dth = self.energy_angle_derivative();
+
+        let DiscreteShellTanBendingEnergy {
+            cur_pos,
+            faces,
+            edge,
+            ..
+        } = *self;
+
+        // Theta derivative with respect to x.
+        let dth_dx = Matrix4x3::new(edge.edge_angle_gradient(cur_pos, faces));
+        dth_dx * dw_dth
+    }
+
+    /// Compute the bending energy Hessian terms.
+    #[inline]
+    fn energy_hessian(&self) -> (Matrix4x3<T>, T, T, ([[T; 6]; 4], [[[T; 3]; 3]; 5])) {
+        // Compute energy derivative with respect to theta.
+        let dw_dth = self.energy_angle_derivative(); // ∂W/∂θ
+
+        let DiscreteShellTanBendingEnergy {
+            cur_pos,
+            faces,
+            edge,
+            prev_theta,
+            ref_theta,
+            ref_shape,
+            stiffness,
+        } = *self;
+
+        // ∂θ/∂x ∂²W/∂θ² ∂θ/∂xᵀ + ∂W/∂θ ∂²θ/∂x²
+        let dth_dx = edge.edge_angle_gradient(cur_pos, faces).into_tensor(); // ∂θ/∂x
+
+        let theta = edge.incremental_angle(prev_theta, cur_pos, faces);
+        let theta_strain = theta - ref_theta;
+        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
+        let sec = T::one() / (theta_strain * 0.5).cos();
+        let tan_strain_dth = sec * sec;
+        let tan_strain_ddth = tan_strain_dth * (tan_strain_dth + tan_strain * tan_strain * 0.5);
+        let d2w_dth2 = stiffness * ref_shape * tan_strain_ddth; // ∂²W/∂θ²
+
+        let d2th_dx2 = edge.edge_angle_hessian(cur_pos, faces); // ∂²θ/∂x²
+
+        (dth_dx, d2w_dth2, dw_dth, d2th_dx2)
+    }
+}
+
 /// A possibly non-linear elastic energy for triangle meshes.
 ///
 /// This type wraps a `TriMeshShell` to provide an interfce for computing a membrane and bending
@@ -420,7 +587,7 @@ impl<'a, E> TriMeshElasticity<'a, E> {
 }
 
 /// Define a hyperelastic energy model for `TriMeshShell`s.
-impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
+impl<T: Real64, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     fn energy(&self, x0: &[T], x1: &[T]) -> T {
         let TriMeshElasticity {
@@ -473,7 +640,6 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
             let tri_energy = E::new(Dx, DX_inv, area, lambda, mu);
             let dF = tri_energy.deformation_gradient_differential(&tri_dx);
             let dFTdF_tr = dF[0].dot(dF[0]) + dF[1].dot(dF[1]); // trace
-                                                                // elasticity
             tri_energy.energy() + {
                 // damping (viscosity)
                 // Note: damping is already scaled by dt
@@ -498,11 +664,17 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
             interior_edge_ref_length.iter(),
             interior_edge_bending_stiffness.iter(),
         )
-        .map(|(e, &prev_theta, &ref_theta, &ref_length, &k)| {
-            let prev_theta = T::from(prev_theta).unwrap();
-            let theta = e.incremental_angle(prev_theta, pos1, trimesh.faces());
-            let theta_strain = theta - T::from(ref_theta).unwrap();
-            T::from(0.5 * ref_length * k).unwrap() * theta_strain * theta_strain
+        .map(|(&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness)| {
+            DiscreteShellBendingEnergy {
+                cur_pos: pos1,
+                faces: trimesh.faces(),
+                edge,
+                prev_theta: T::from(prev_theta).unwrap(),
+                ref_theta: T::from(ref_theta).unwrap(),
+                ref_shape: T::from(ref_shape).unwrap(),
+                stiffness: T::from(stiffness).unwrap(),
+            }
+            .energy()
         })
         .sum();
 
@@ -510,7 +682,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
+impl<T: Real64, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
     fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
@@ -598,24 +770,25 @@ impl<T: Real, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
         }
 
         // Gradient of bending energy.
-        for (e, &prev_theta, &ref_theta, &ref_length, &k) in zip!(
+        for (&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness) in zip!(
             interior_edges.iter(),
             interior_edge_angles.iter(),
             interior_edge_ref_angles.iter(),
             interior_edge_ref_length.iter(),
             interior_edge_bending_stiffness.iter(),
         ) {
-            // Compute energy derivative with respect to theta.
-            let prev_theta = T::from(prev_theta).unwrap();
-            let theta = e.incremental_angle(prev_theta, pos1, trimesh.faces());
-            let dW_dTh = T::from(ref_length * k).unwrap() * (theta - T::from(ref_theta).unwrap());
-
-            // Theta derivative with respect to x.
-            let dTh_dx = Matrix4x3::new(e.edge_angle_gradient(pos1, trimesh.faces()));
-            let dW_dx = dTh_dx * dW_dTh;
-
+            let dW_dx = DiscreteShellBendingEnergy {
+                cur_pos: pos1,
+                faces: trimesh.faces(),
+                edge,
+                prev_theta: T::from(prev_theta).unwrap(),
+                ref_theta: T::from(ref_theta).unwrap(),
+                ref_shape: T::from(ref_shape).unwrap(),
+                stiffness: T::from(stiffness).unwrap(),
+            }
+            .energy_gradient();
             // Distribute gradient.
-            let verts = e.verts(trimesh.faces());
+            let verts = edge.verts(trimesh.faces());
             for i in 0..4 {
                 gradient[verts[i]] += dW_dx[i];
             }
@@ -796,7 +969,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
+impl<T: Real64 + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
     for TriMeshElasticity<'_, E>
 {
     #[allow(non_snake_case)]
@@ -912,19 +1085,17 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
             ));
 
             hess_iter.for_each(
-                |(edge_hess, (e, &prev_theta, &ref_theta, &ref_length, &k))| {
-                    // ∂θ/∂x ∂²W/∂θ² ∂θ/∂xᵀ + ∂W/∂θ ∂²θ/∂x²
-                    let dth_dx = e.edge_angle_gradient(pos1, trimesh.faces()).into_tensor(); // ∂θ/∂x
-                    let d2w_dth2 = T::from(k * ref_length).unwrap() * scale; // ∂²W/∂θ² * scale
-
-                    let d2th_dx2 = e.edge_angle_hessian(pos1, trimesh.faces()); // ∂²θ/∂x²
-
-                    //TODO: Refactor the gradient of the energy to remove sensitive repeated code
-                    let prev_theta = T::from(prev_theta).unwrap();
-                    let theta = e.incremental_angle(prev_theta, pos1, trimesh.faces());
-                    let dw_dth = T::from(ref_length * k).unwrap()
-                        * (theta - T::from(ref_theta).unwrap())
-                        * scale; // ∂W/∂θ * scale
+                |(edge_hess, (&edge, &prev_theta, &ref_theta, &ref_shape, &stiffness))| {
+                    let (dth_dx, d2w_dth2, dw_dth, d2th_dx2) = DiscreteShellBendingEnergy {
+                        cur_pos: pos1,
+                        faces: trimesh.faces(),
+                        edge,
+                        prev_theta: T::from(prev_theta).unwrap(),
+                        ref_theta: T::from(ref_theta).unwrap(),
+                        ref_shape: T::from(ref_shape).unwrap(),
+                        stiffness: T::from(stiffness).unwrap(),
+                    }
+                    .energy_hessian();
 
                     let (diag_hess, lower_hess) =
                         edge_hess.split_at_mut(NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG);
@@ -945,10 +1116,10 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
                             out
                         },
                         |triplet_idx, _, _, i, h| {
-                            diag_hess[triplet_idx] = h[i];
+                            diag_hess[triplet_idx] = scale * h[i];
                         },
                         |triplet_idx, _, (row, col), h| {
-                            lower_hess[triplet_idx] = h[row][col];
+                            lower_hess[triplet_idx] = scale * h[row][col];
                         },
                     );
                 },
@@ -1026,7 +1197,7 @@ mod tests {
 
     fn build_energies(
         shells: &[TriMeshShell],
-    ) -> Vec<(TriMeshNeoHookean<autodiff::F>, Vec<[f64; 3]>)> {
+    ) -> Vec<(TriMeshNeoHookean<autodiff::F1>, Vec<[f64; 3]>)> {
         shells
             .iter()
             .map(|shell| {
@@ -1040,12 +1211,12 @@ mod tests {
 
     #[test]
     fn tri_energy_gradient() {
-        tri_energy_gradient_tester::<NeoHookeanTriEnergy<autodiff::F>>();
+        tri_energy_gradient_tester::<NeoHookeanTriEnergy<autodiff::F1>>();
     }
 
     #[test]
     fn tri_energy_hessian() {
-        tri_energy_hessian_tester::<NeoHookeanTriEnergy<autodiff::F>>();
+        tri_energy_hessian_tester::<NeoHookeanTriEnergy<autodiff::F1>>();
     }
 
     #[test]

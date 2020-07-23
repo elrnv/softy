@@ -805,17 +805,16 @@ impl ContactConstraint for PointContactConstraint {
         assert_eq!(query_indices.len(), normals.len());
 
         // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
             normals.into_iter(),
             [0.0; 3], // Default normal (there should not be any).
             query_indices.into_iter(),
             collider_impulse.selection().index_iter().cloned(),
-        )
-        .collect();
+        );
 
-        for (&aci, &nml) in zip!(
+        for (&aci, nml) in zip!(
             collider_impulse.selection().index_iter(),
-            remapped_normals.iter(),
+            remapped_normals_iter,
         ) {
             out_normals[aci] = nml;
         }
@@ -837,21 +836,20 @@ impl ContactConstraint for PointContactConstraint {
         } = self.frictional_contact.as_mut().unwrap();
 
         // Only interested in normals at contact points on the collider impulse.
-        let remapped_normals: Chunked3<Vec<f64>> = crate::constraints::remap_values_iter(
+        let remapped_normals_iter = crate::constraints::remap_values_iter(
             normals.into_iter(),
             [0.0; 3], // Default normal (there should not be many).
             query_indices.into_iter(),
-            collider_impulse.selection().index_iter().cloned(),
-        )
-        .collect();
+            collider_impulse.selection().indices.clone().into_iter(),
+        );
 
-        if remapped_normals.is_empty() {
+        if remapped_normals_iter.len() == 0 {
             return;
         }
 
         // Project contact impulse
         ContactBasis::project_out_normal_component(
-            remapped_normals.into_iter(),
+            remapped_normals_iter,
             collider_impulse.source_iter_mut().map(|(_, imp)| imp),
         );
 
@@ -1253,14 +1251,17 @@ impl ContactConstraint for PointContactConstraint {
         object_impulse_corrector_tensor.negate();
 
         *object_impulse = Chunked3::from_flat((
-            object_impulse_corrector_tensor.into_data().into_flat(),
-            object_friction_impulse_tensor.into_data().into_flat(),
+            object_impulse_corrector_tensor.into_data().into_storage(),
+            object_friction_impulse_tensor.into_data().into_storage(),
         ));
 
         *collider_impulse = Sparse::from_dim(
             active_contact_indices.clone(),
             self.contact_points.len(),
-            Chunked3::from_flat((impulse_corrector.into_flat(), forwarded_impulse.into_flat())),
+            Chunked3::from_flat((
+                impulse_corrector.into_storage(),
+                forwarded_impulse.into_storage(),
+            )),
         );
 
         if friction_steps > 0 {
@@ -1270,33 +1271,41 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_mass_weighted_frictional_contact_impulse(
+    fn add_mass_weighted_frictional_contact_impulse_to_object(
         &self,
-        [mut object_vel, collider_vel]: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        mut object_vel: SubsetView<Chunked3<&mut [f64]>>,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact {
-            if !frictional_contact.object_impulse.is_empty() {
-                match &self.object_mass_data {
-                    MassData::Sparse(masses) => {
-                        let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
-                        let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_flat().0,
-                        );
-                        let add_vel = mass_mtx.view() * corrector.into_tensor();
-                        *&mut object_vel.expr_mut() += add_vel.expr();
-                    }
-                    MassData::Dense(mass, _) => {
-                        let corrector = Chunked3::from_flat(
-                            frictional_contact.object_impulse.view().into_flat().0,
-                        );
-                        //*&mut corrector.expr_mut() *= *mass;
-                        //corrector.into_tensor()
-                        *&mut object_vel.expr_mut() += corrector.expr() * *mass;
-                    }
-                    _ => {}
-                };
+            if frictional_contact.object_impulse.is_empty() {
+                return;
             }
+            match &self.object_mass_data {
+                MassData::Sparse(masses) => {
+                    let mass_mtx = DiagonalBlockMatrixView::view(masses.view());
+                    let corrector = Chunked3::from_flat(
+                        frictional_contact.object_impulse.view().into_storage().0,
+                    );
+                    let add_vel = mass_mtx.view() * corrector.into_tensor();
+                    *&mut object_vel.expr_mut() += add_vel.expr();
+                }
+                MassData::Dense(mass, _) => {
+                    let corrector = Chunked3::from_flat(
+                        frictional_contact.object_impulse.view().into_storage().0,
+                    );
+                    //*&mut corrector.expr_mut() *= *mass;
+                    //corrector.into_tensor()
+                    *&mut object_vel.expr_mut() += corrector.expr() * *mass;
+                }
+                _ => {}
+            };
+        }
+    }
 
+    fn add_mass_weighted_frictional_contact_impulse_to_collider(
+        &self,
+        collider_vel: SubsetView<Chunked3<&mut [f64]>>,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact {
             if frictional_contact.collider_impulse.is_empty() {
                 return;
             }
@@ -1308,7 +1317,7 @@ impl ContactConstraint for PointContactConstraint {
                     .collider_impulse
                     .source()
                     .view()
-                    .into_flat()
+                    .into_storage()
                     .0,
             );
 
@@ -1352,24 +1361,30 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn add_friction_impulse(
+    fn add_friction_impulse_to_object(
         &self,
-        mut grad: [SubsetView<Chunked3<&mut [f64]>>; 2],
+        mut grad: SubsetView<Chunked3<&mut [f64]>>,
         multiplier: f64,
     ) {
         if let Some(ref frictional_contact) = self.frictional_contact() {
-            if !frictional_contact.object_impulse.is_empty() && !grad[0].is_empty() {
+            if !frictional_contact.object_impulse.is_empty() && !grad.is_empty() {
                 for (i, (_, &r)) in frictional_contact.object_impulse.iter().enumerate() {
-                    grad[0][i] = (Vector3::new(grad[0][i]) + Vector3::new(r) * multiplier).into();
+                    grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
                 }
             }
+        }
+    }
 
-            if frictional_contact.collider_impulse.is_empty() || grad[1].is_empty() {
-                return;
-            }
-
-            for (i, (_, &r)) in frictional_contact.collider_impulse.indexed_source_iter() {
-                grad[1][i] = (Vector3::new(grad[1][i]) + Vector3::new(r) * multiplier).into();
+    fn add_friction_impulse_to_collider(
+        &self,
+        mut grad: SubsetView<Chunked3<&mut [f64]>>,
+        multiplier: f64,
+    ) {
+        if let Some(ref frictional_contact) = self.frictional_contact() {
+            if !frictional_contact.collider_impulse.is_empty() && !grad.is_empty() {
+                for (i, (_, &r)) in frictional_contact.collider_impulse.indexed_source_iter() {
+                    grad[i] = (Vector3::new(grad[i]) + Vector3::new(r) * multiplier).into();
+                }
             }
         }
     }
@@ -1438,14 +1453,14 @@ impl ContactConstraint for PointContactConstraint {
         }
     }
 
-    fn contact_normals(&self) -> Chunked3<Vec<f64>> {
+    fn contact_normals(&self) -> Vec<[f64; 3]> {
         // Contacts occur at the vertex positions of the colliding mesh.
         let surf = &self.implicit_surface;
         let contact_points = &self.contact_points;
 
         let mut normal_coords = vec![0.0; surf.num_query_jacobian_entries()];
         surf.query_jacobian_values(contact_points.view().into(), &mut normal_coords);
-        let mut normals = Chunked3::from_flat(normal_coords);
+        let mut normals = Chunked3::from_flat(normal_coords).into_arrays();
 
         // Normalize normals
         // Contact normals point away from the surface being collided against.

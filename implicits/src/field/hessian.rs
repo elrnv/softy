@@ -479,7 +479,7 @@ pub(crate) fn face_hessian_at<'a, T, K: 'a>(
     view: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg_field_params: BackgroundFieldParams,
     multiplier: T,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -635,7 +635,7 @@ fn normal_hessian_at<'a, T, K: 'a>(
     samples: SamplesView<'a, 'a, T>,
     kernel: K,
     surface_topo: &'a [[usize; 3]],
-    surface_vertex_positions: &'a [Vector3<T>],
+    surface_vertex_positions: &'a [[T; 3]],
     bg: BackgroundField<'a, T, T, K>,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
 where
@@ -741,7 +741,7 @@ where
 /// lower triangular part.
 pub(crate) fn face_unit_normals_symmetric_jacobian<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -776,7 +776,7 @@ where
 /// Block lower triangular part of the unit normal Hessian multiplied by the given multiplier.
 pub(crate) fn compute_face_unit_normals_hessian_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     mut multiplier: F,
 ) -> impl Iterator<Item = (usize, usize, Matrix3<T>)> + 'a
@@ -847,7 +847,7 @@ pub(crate) fn print_full_hessian(hess: &[Vec<f64>], size: usize, name: &str) {
 mod tests {
     use super::*;
     use crate::kernel;
-    use autodiff::F;
+    use autodiff::F1;
     use geo::mesh::builder::*;
     use geo::mesh::{TriMesh, VertexPositions};
     use jacobian::{
@@ -868,19 +868,20 @@ mod tests {
             background_field: bg_field_params,
             sample_type: SampleType::Face,
             max_step,
+            base_radius: None,
         };
 
-        let surf = crate::mls_from_trimesh::<F>(&surf_mesh, params)
+        let surf = crate::mls_from_trimesh::<F1>(&surf_mesh, params)
             .expect("Failed to construct an implicit surface.");
 
         let mut ad_tri_verts: Vec<_> = surf_mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)).into_data())
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)).into_data())
             .collect();
         let num_verts = ad_tri_verts.len();
         let ad_query_points: Vec<_> = query_points
             .iter()
-            .map(|&a| Vector3::new(a).mapd(|x| F::cst(x)).into_data())
+            .map(|&a| Vector3::new(a).mapd(|x| F1::cst(x)).into_data())
             .collect();
         let num_query_points = query_points.len();
 
@@ -890,16 +891,16 @@ mod tests {
             .expect("Uncached query points.");
         let num_jac_entries = query_surf.num_surface_jacobian_entries();
 
-        // Compute the complete hessian.
+        // Compute the complete Hessian.
         let mut hess_rows = vec![0; num_hess_entries];
         let mut hess_cols = vec![0; num_hess_entries];
-        let mut hess_values = vec![F::cst(0.0); num_hess_entries];
+        let mut hess_values = vec![F1::cst(0.0); num_hess_entries];
         let mut jac_rows = vec![0; num_jac_entries];
         let mut jac_cols = vec![0; num_jac_entries];
-        let mut jac_values = vec![F::cst(0.0); num_jac_entries];
+        let mut jac_values = vec![F1::cst(0.0); num_jac_entries];
 
         let num_neighs = query_surf.num_neighbourhoods();
-        let mut multipliers = vec![F::cst(0.0); num_neighs];
+        let mut multipliers = vec![F1::cst(0.0); num_neighs];
         query_surf
             .surface_hessian_product_indices(&mut hess_rows, &mut hess_cols)
             .expect("Failed to compute hessian indices");
@@ -915,7 +916,7 @@ mod tests {
             .filter(|&q_idx| query_neighbourhood_sizes[q_idx] != 0)
             .enumerate()
         {
-            multipliers[mult_idx] = F::cst(1.0);
+            multipliers[mult_idx] = F1::cst(1.0);
 
             query_surf
                 .surface_hessian_product_values(&ad_query_points, &multipliers, &mut hess_values)
@@ -928,14 +929,14 @@ mod tests {
             for vtx in 0..num_verts {
                 for i in 0..3 {
                     // Set a variable to take the derivative with respect to, using autodiff.
-                    ad_tri_verts[vtx][i] = F::var(ad_tri_verts[vtx][i]);
+                    ad_tri_verts[vtx][i] = F1::var(ad_tri_verts[vtx][i]);
                     query_surf.update_surface(ad_tri_verts.iter().cloned());
 
                     query_surf.surface_jacobian_values(&ad_query_points, &mut jac_values);
                     query_surf.surface_jacobian_indices(&mut jac_rows, &mut jac_cols);
 
                     // Get the jacobian for the specific query point we are interested in.
-                    let mut jac_q = vec![F::cst(0.0); num_verts * 3];
+                    let mut jac_q = vec![F1::cst(0.0); num_verts * 3];
                     for (&r, &c, &jac) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter())
                     {
                         if r == q_idx {
@@ -945,7 +946,7 @@ mod tests {
 
                     // Consolidate the Hessian to the particular vertex and component we are
                     // interested in.
-                    let mut hess_vtx = vec![F::cst(0.0); num_verts * 3];
+                    let mut hess_vtx = vec![F1::cst(0.0); num_verts * 3];
                     for (&r, &c, &h) in zip!(hess_rows.iter(), hess_cols.iter(), hess_values.iter())
                     {
                         if r == 3 * vtx + i {
@@ -971,7 +972,7 @@ mod tests {
                     }
 
                     // Reset the variable back to being a constant.
-                    ad_tri_verts[vtx][i] = F::cst(ad_tri_verts[vtx][i]);
+                    ad_tri_verts[vtx][i] = F1::cst(ad_tri_verts[vtx][i]);
                 }
 
                 if !success {
@@ -980,7 +981,7 @@ mod tests {
                 }
                 assert!(success, "Hessian does not match its AutoDiff counterpart");
             }
-            multipliers[mult_idx] = F::cst(0.0); // reset multiplier
+            multipliers[mult_idx] = F1::cst(0.0); // reset multiplier
         }
         Ok(())
     }
@@ -1020,7 +1021,7 @@ mod tests {
             .into_iter()
             .map(|x| x.into_data())
             .collect();
-        let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
+        let tri = geo::mesh::TriMesh::new(tri_verts, vec![[0, 1, 2]]);
 
         for i in 1..50 {
             let radius_multiplier = 1.0 + 0.1 * (i as f64);
@@ -1064,8 +1065,6 @@ mod tests {
         perturb: &mut P,
     ) {
         let (tri_verts, tri_indices) = make_two_test_triangles(0.0, perturb);
-        let tri_verts: Vec<[f64; 3]> = reinterpret::reinterpret_vec(tri_verts);
-        let tri_indices: Vec<usize> = reinterpret::reinterpret_vec(tri_indices);
         let tri = TriMesh::new(tri_verts, tri_indices);
         let qs = vec![
             Vector3::new([0.0, 0.2, 0.0]),
@@ -1089,8 +1088,7 @@ mod tests {
             .into_iter()
             .map(|x| x.into_data())
             .collect();
-        let tri_indices = vec![0usize, 1, 2];
-        let tri = TriMesh::new(tri_verts, tri_indices);
+        let tri = TriMesh::new(tri_verts, vec![[0, 1, 2]]);
         let qs = vec![
             Vector3::new([0.0, 0.2, 0.0]),
             Vector3::new([0.0, 0.0001, 0.0]),
@@ -1114,19 +1112,19 @@ mod tests {
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) {
-        let q = q.mapd(|x| F::cst(x)); // convert to autodiff
+        let q = q.mapd(|x| F1::cst(x)); // convert to autodiff
         let mut tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)).into())
             .collect();
-        let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
+        let tri_faces = mesh.indices.as_slice();
         let num_verts = tri_verts.len();
 
         let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
         let neighbours: Vec<_> = samples
             .iter()
-            .filter(|s| (q - s.pos).norm() < F::cst(radius + max_step))
+            .filter(|s| (q - s.pos).norm() < F1::cst(radius + max_step))
             .map(|sample| sample.index)
             .collect();
 
@@ -1140,14 +1138,14 @@ mod tests {
         let view = SamplesView::new(neighbours.as_ref(), &samples);
 
         // Compute the complete hessian.
-        let hess: Vec<(usize, usize, Matrix3<F>)> = face_hessian_at(
+        let hess: Vec<(usize, usize, Matrix3<F1>)> = face_hessian_at(
             q,
             view,
             kernel,
             tri_faces,
             &tri_verts,
             bg_field_params,
-            F::cst(1.0),
+            F1::cst(1.0),
         )
         .collect();
 
@@ -1171,13 +1169,13 @@ mod tests {
         for vtx in 0..num_verts {
             for i in 0..3 {
                 // Set a variable to take the derivative with respect to, using autodiff.
-                tri_verts[vtx][i] = F::var(tri_verts[vtx][i]);
+                tri_verts[vtx][i] = F1::var(tri_verts[vtx][i]);
                 //println!("row_vtx = {}; i = {}", vtx, i);
 
                 // We need to update samples to make sure the normals and centroids are recomputed
                 // using the correct wrt autodiff variable.
                 let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
-                //for (p, tri_indices) in samples.points.iter_mut().zip(tri_faces.iter()) {
+                //for (p, tri_indices) in samples.positions.iter_mut().zip(tri_faces.iter()) {
                 //    use geo::ops::Centroid;
                 //    let tri = Triangle::from_indexed_slice(tri_indices, &tri_verts);
                 //    *p = tri.centroid();
@@ -1199,7 +1197,7 @@ mod tests {
                 let vert_jac = consolidate_face_jacobian(&jac, &neighbours, tri_faces, num_verts);
 
                 // Compute the potential and test the jacobian for good measure.
-                let mut p = F::cst(0.0);
+                let mut p = F1::cst(0.0);
                 compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                 // Test the surface Jacobian against autodiff on the potential computation.
@@ -1248,7 +1246,7 @@ mod tests {
                 }
 
                 // Reset the variable back to being a constant.
-                tri_verts[vtx][i] = F::cst(tri_verts[vtx][i]);
+                tri_verts[vtx][i] = F1::cst(tri_verts[vtx][i]);
             }
         }
 
@@ -1352,18 +1350,18 @@ mod tests {
         max_step: f64,
         bg_field_params: BackgroundFieldParams,
     ) {
-        let q = q.mapd(|x| F::cst(x)); // convert to autodiff
+        let q = q.mapd(|x| F1::cst(x)); // convert to autodiff
         let tri_verts: Vec<_> = mesh
             .vertex_position_iter()
-            .map(|&x| Vector3::new(x).mapd(|x| F::cst(x)))
+            .map(|&x| Vector3::new(x).mapd(|x| F1::cst(x)))
             .collect();
-        let tri_faces = reinterpret::reinterpret_slice(mesh.indices.as_slice());
+        let tri_faces = mesh.indices.as_slice();
 
         let mut samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
         let neighbours: Vec<_> = samples
             .iter()
-            .filter(|s| (q - s.pos).norm() < F::cst(radius + max_step))
+            .filter(|s| (q - s.pos).norm() < F1::cst(radius + max_step))
             .map(|sample| sample.index)
             .collect();
 
@@ -1377,7 +1375,7 @@ mod tests {
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
         // Compute the complete hessian.
-        let hess: Vec<(usize, usize, Matrix3<F>)> = {
+        let hess: Vec<(usize, usize, Matrix3<F1>)> = {
             let view = SamplesView::new(neighbours.as_ref(), &samples);
 
             let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
@@ -1395,7 +1393,7 @@ mod tests {
         for sample_idx in 0..num_samples {
             for i in 0..3 {
                 // Set a variable to take the derivative with respect to, using autodiff.
-                samples.points[sample_idx][i] = F::var(samples.points[sample_idx][i]);
+                samples.positions[sample_idx][i] = F1::var(samples.positions[sample_idx][i]);
                 //println!("row = {}; i = {}", sample_idx, i);
 
                 let view = SamplesView::new(neighbours.as_ref(), &samples);
@@ -1412,7 +1410,7 @@ mod tests {
                 }
 
                 // Compute the potential and test the jacobian for good measure.
-                let mut p = F::cst(0.0);
+                let mut p = F1::cst(0.0);
                 compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
                 // Test the surface Jacobian against autodiff on the potential computation.
@@ -1431,7 +1429,7 @@ mod tests {
                 //);
 
                 // Consolidate the hessian to this particular sample and component.
-                let mut hess_sample = vec![Vector3::<F>::zero(); num_samples];
+                let mut hess_sample = vec![Vector3::<F1>::zero(); num_samples];
                 for &(r, c, h) in hess.iter() {
                     // TODO: make hessian only lower triangular and check it here
                     //assert!(r >= c, "Hessian is not block lower triangular.");
@@ -1482,7 +1480,7 @@ mod tests {
                 }
 
                 // Reset the variable back to being a constant.
-                samples.points[sample_idx][i] = F::cst(samples.points[sample_idx][i]);
+                samples.positions[sample_idx][i] = F1::cst(samples.positions[sample_idx][i]);
             }
         }
 
@@ -1497,7 +1495,6 @@ mod tests {
     /// are constant )
     #[test]
     fn sample_hessian_test() {
-        use reinterpret::reinterpret_vec;
         let mut no_perturb = || Vector3::zero();
         let mut perturb = make_perturb_fn();
 
@@ -1530,7 +1527,7 @@ mod tests {
         };
 
         let build_mesh_and_run_test = |(tri_verts, tri_indices)| {
-            let tri = TriMesh::new(reinterpret_vec(tri_verts), reinterpret_vec(tri_indices));
+            let tri = TriMesh::new(tri_verts, tri_indices);
             run_tester_on_mesh(tri);
         };
 
@@ -1565,7 +1562,7 @@ mod tests {
         face_normal_hessian_tester(&tet_verts, &tet_faces);
     }
 
-    fn face_normal_hessian_tester(verts: &[Vector3<f64>], faces: &[[usize; 3]]) {
+    fn face_normal_hessian_tester(verts: &[[f64; 3]], faces: &[[usize; 3]]) {
         let samples = Samples::new_triangle_samples(faces, verts, vec![0.0; faces.len()]);
 
         let neighbours: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
@@ -1574,7 +1571,7 @@ mod tests {
         let multipliers = utils::random_vectors(faces.len());
         let ad_multipliers: Vec<_> = multipliers
             .iter()
-            .map(|&v| Vector3::new(v).mapd(|x| F::cst(x)))
+            .map(|&v| Vector3::new(v).mapd(|x| F1::cst(x)))
             .collect();
 
         let multiplier = move |Sample { index, .. }| Vector3::new(multipliers[index]);
@@ -1610,19 +1607,19 @@ mod tests {
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
-        let mut ad_verts: Vec<Vector3<F>> = verts
+        let mut ad_verts: Vec<[F1; 3]> = verts
             .iter()
             .cloned()
-            .map(|v| v.mapd(|x| F::cst(x)))
+            .map(|v| Vector3::new(v).mapd(|x| F1::cst(x)).into())
             .collect();
 
         let mut success = true;
         for r in 0..4 {
             for i in 0..3 {
-                ad_verts[r][i] = F::var(ad_verts[r][i]);
+                ad_verts[r][i] = F1::var(ad_verts[r][i]);
 
                 let ad_samples =
-                    Samples::new_triangle_samples(faces, &ad_verts, vec![F::cst(0.0); 4]);
+                    Samples::new_triangle_samples(faces, &ad_verts, vec![F1::cst(0.0); 4]);
                 let ad_view = SamplesView::new(neighbours.as_ref(), &ad_samples);
 
                 // Convert the samples to use autodiff constants.
@@ -1657,7 +1654,7 @@ mod tests {
                     }
                 }
 
-                ad_verts[r][i] = F::cst(ad_verts[r][i]);
+                ad_verts[r][i] = F1::cst(ad_verts[r][i]);
             }
         }
         if !success {

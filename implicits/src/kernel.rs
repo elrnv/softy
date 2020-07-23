@@ -229,11 +229,11 @@ impl<T: Scalar> Kernel<T> for GlobalInvDistance2 {
     }
 
     fn df(&self, x: T) -> T {
-        T::from(self.f(autodiff::F::var(x)).deriv()).unwrap()
+        T::from(self.f(autodiff::F1::var(x)).deriv()).unwrap()
     }
 
     fn ddf(&self, x: T) -> T {
-        T::from(self.df(autodiff::F::var(x)).deriv()).unwrap()
+        T::from(self.df(autodiff::F1::var(x)).deriv()).unwrap()
     }
 }
 
@@ -321,11 +321,11 @@ impl<T: Scalar> Kernel<T> for LocalInterpolating {
         envelope * sc * sc * (T::one() / (s * s) - T::one())
     }
     fn df(&self, x: T) -> T {
-        T::from(self.f(autodiff::F::var(x)).deriv()).unwrap()
+        T::from(self.f(autodiff::F1::var(x)).deriv()).unwrap()
     }
 
     fn ddf(&self, x: T) -> T {
-        T::from(self.df(autodiff::F::var(x)).deriv()).unwrap()
+        T::from(self.df(autodiff::F1::var(x)).deriv()).unwrap()
     }
 }
 
@@ -334,8 +334,8 @@ impl<T: Scalar> Kernel<T> for LocalInterpolating {
 /// `tolerance` parameter.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LocalApproximate {
-    radius: f64,
-    tolerance: f64,
+    pub radius: f64,
+    pub tolerance: f64,
 }
 
 impl LocalApproximate {
@@ -527,13 +527,13 @@ impl<T: Scalar + Float> SphericalKernel<T> for GlobalInvDistance2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use autodiff::F;
+    use autodiff::F1;
 
     /// Test derivatives.
-    fn test_derivatives<K: Kernel<F>>(kern: &K, start: usize) {
+    fn test_derivatives<K: Kernel<F1>>(kern: &K, start: usize) {
         for i in start..55 {
             // Autodiff test
-            let x = F::var(0.1 * i as f64);
+            let x = F1::var(0.1 * i as f64);
             let f = kern.f(x);
             let df = kern.df(x);
             let ddf = kern.ddf(x);
@@ -543,14 +543,14 @@ mod tests {
     }
 
     /// Test radial derivative.
-    fn test_radial_derivatives<K: RadialKernel<F>>(kern: &K, start: usize) {
+    fn test_radial_derivatives<K: RadialKernel<F1>>(kern: &K, start: usize) {
         for j in 0..3 {
             // for each component
             for i in start..55 {
                 // Autodiff test
-                let x = F::cst(0.1 * i as f64);
+                let x = F1::cst(0.1 * i as f64);
                 let mut q = Vector3::new([x, x, x]);
-                q[j] = F::var(x);
+                q[j] = F1::var(x);
                 let f = kern.eval(q, Vector3::zero());
                 let df = kern.grad(q, Vector3::zero());
                 let ddf = kern.hess(q, Vector3::zero());
@@ -628,7 +628,7 @@ mod bench {
     extern crate test;
     use self::test::Bencher;
     use super::*;
-    use autodiff::F;
+    use autodiff::F1;
 
     #[bench]
     fn autodiff_kernel_derivative(b: &mut Bencher) {
@@ -638,7 +638,7 @@ mod bench {
         b.iter(|| {
             let mut total = 0.0;
             for i in 0..9 {
-                let f = kern.f(F::var(0.1 * i as f64));
+                let f = kern.f(F1::var(0.1 * i as f64));
                 total += f.deriv()
             }
             total

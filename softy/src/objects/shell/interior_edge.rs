@@ -1,7 +1,6 @@
 use unroll::unroll_for_loops;
 
 use geo::mesh::topology::*;
-use geo::ops::Area;
 use geo::prim::Triangle;
 use tensr::*;
 
@@ -96,7 +95,7 @@ impl InteriorEdge {
 
         let h0 = (f0x2 - f0x0).cross(f0e0).norm();
         let h1 = (f1x3 - f1x0).cross(f1e0).norm();
-        // 6 = 3 (third of the triangle) * 2 (to make h0 and h1 triangle areas)
+        // 6 = 3 (third of the triangle) * 2 (to make h0 and h1 *triangle* areas)
         (h0 + h1) / T::from(6.0).unwrap()
     }
 
@@ -193,13 +192,14 @@ impl InteriorEdge {
         [an0, an1]
     }
 
-    /// Compute the areas of adjacent faces.
-    #[inline]
-    pub fn face_areas<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [T; 2] {
-        let a0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area();
-        let a1 = Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area();
-        [a0, a1]
-    }
+    ///// Compute the areas of adjacent faces.
+    //#[inline]
+    //pub fn face_areas<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> [T; 2] {
+    //    use geo::ops::Area;
+    //    let a0 = Triangle::from_indexed_slice(&faces[self.faces[0]], &pos).area();
+    //    let a1 = Triangle::from_indexed_slice(&faces[self.faces[1]], &pos).area();
+    //    [a0, a1]
+    //}
 
     /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge.
     #[inline]
@@ -230,10 +230,15 @@ impl InteriorEdge {
         }
     }
 
+    /// Compute the equivalent angle in the range `[-π, π)`.
+    ///
+    /// Note that `π` is not exactly representable with floats, so one should really not rely on
+    /// the inclusion/exclusion of `π` and `-π` at the boundaries.
     #[inline]
     pub(crate) fn project_angle<T: Real>(angle: T) -> T {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
+
         let mut out = (angle + pi) % two_pi - pi;
         if out < -pi {
             out += two_pi;
@@ -241,24 +246,28 @@ impl InteriorEdge {
         out
     }
 
-    /// Compute an edge angle that is no more than π radians away from `prev_angle`.
+    /// Compute the edge angle to be at most `π` away from `ref_angle`.
+    ///
+    /// Note that `ref_angle` is not necessarily the rest shape angle. It is simply the closest
+    /// angle --- the best guess for the current angle.
     #[inline]
     pub(crate) fn incremental_angle<T: Real>(
         &self,
-        prev_angle: T,
+        ref_angle: T,
         pos: &[[T; 3]],
         faces: &[[usize; 3]],
     ) -> T {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
-        let prev_angle_proj = Self::project_angle(prev_angle);
-        let mut angle_diff = self.edge_angle(pos, faces) - prev_angle_proj;
+
+        let ref_angle_proj = Self::project_angle(ref_angle);
+        let mut angle_diff = self.edge_angle(pos, faces) - ref_angle_proj;
         if angle_diff < -pi {
             angle_diff += two_pi;
         } else if angle_diff > pi {
             angle_diff -= two_pi;
         }
-        prev_angle + angle_diff
+        ref_angle + angle_diff
     }
 
     /// Compute the gradient of the reflex angle given by `edge_angle` for the four significant
@@ -548,7 +557,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 #[cfg(test)]
 mod tests {
     use approx::*;
-    use autodiff::F;
+    use autodiff::F1;
 
     use super::*;
 
@@ -620,7 +629,8 @@ mod tests {
         assert_eq!(InteriorEdge::project_angle(-pi / 2.0), -pi / 2.0);
         assert_eq!(InteriorEdge::project_angle(3.0 * pi / 2.0), -pi / 2.0);
         assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
-        assert_eq!(InteriorEdge::project_angle(-3.0 * pi / 2.0), pi / 2.0);
+        assert_eq!(InteriorEdge::project_angle(pi + 0.01), -pi + 0.01);
+        assert_eq!(InteriorEdge::project_angle(pi - 0.01), pi - 0.01);
         assert_eq!(InteriorEdge::project_angle(2.0 * pi), 0.0);
         assert_relative_eq!(
             InteriorEdge::project_angle(7.0 * pi + 0.01),
@@ -660,10 +670,10 @@ mod tests {
 
     fn edge_angle_gradient_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
-            Vector3::new(x[0]).cast::<F>().into_data(),
-            Vector3::new(x[1]).cast::<F>().into_data(),
-            Vector3::new(x[2]).cast::<F>().into_data(),
-            Vector3::new(x[3]).cast::<F>().into_data(),
+            Vector3::new(x[0]).cast::<F1>().into_data(),
+            Vector3::new(x[1]).cast::<F1>().into_data(),
+            Vector3::new(x[2]).cast::<F1>().into_data(),
+            Vector3::new(x[3]).cast::<F1>().into_data(),
         ];
 
         let verts = e.verts(&faces[..]);
@@ -674,7 +684,7 @@ mod tests {
         let mut success = true;
         for vtx in 0..4 {
             for i in 0..3 {
-                x_ad[verts[vtx]][i] = F::var(x_ad[verts[vtx]][i]);
+                x_ad[verts[vtx]][i] = F1::var(x_ad[verts[vtx]][i]);
                 let a = e.edge_angle(&x_ad[..], &faces[..]);
                 grad_ad[vtx][i] = a.deriv();
                 let ret = relative_eq!(grad[vtx][i], a.deriv(), max_relative = 1e-8);
@@ -682,7 +692,7 @@ mod tests {
                     success = false;
                     eprintln!("{:?} vs. {:?}", grad[vtx][i], a.deriv());
                 }
-                x_ad[verts[vtx]][i] = F::cst(x_ad[verts[vtx]][i]);
+                x_ad[verts[vtx]][i] = F1::cst(x_ad[verts[vtx]][i]);
             }
         }
 
@@ -716,10 +726,10 @@ mod tests {
 
     fn edge_angle_hessian_tester(e: InteriorEdge, x: &[[f64; 3]; 4], faces: &[[usize; 3]; 2]) {
         let mut x_ad = [
-            Vector3::new(x[0]).cast::<F>().into_data(),
-            Vector3::new(x[1]).cast::<F>().into_data(),
-            Vector3::new(x[2]).cast::<F>().into_data(),
-            Vector3::new(x[3]).cast::<F>().into_data(),
+            Vector3::new(x[0]).cast::<F1>().into_data(),
+            Vector3::new(x[1]).cast::<F1>().into_data(),
+            Vector3::new(x[2]).cast::<F1>().into_data(),
+            Vector3::new(x[3]).cast::<F1>().into_data(),
         ];
 
         let verts = e.verts(&faces[..]);
@@ -732,7 +742,7 @@ mod tests {
         let mut success = true;
         for col_vtx in 0..4 {
             for col in 0..3 {
-                x_ad[verts[col_vtx]][col] = F::var(x_ad[verts[col_vtx]][col]);
+                x_ad[verts[col_vtx]][col] = F1::var(x_ad[verts[col_vtx]][col]);
                 let g = e.edge_angle_gradient(&x_ad[..], &faces[..]);
                 for row_vtx in col_vtx..4 {
                     if (row_vtx == 2 && col_vtx == 3) || (row_vtx == 3 && col_vtx == 2) {
@@ -755,7 +765,7 @@ mod tests {
                         }
                     }
                 }
-                x_ad[verts[col_vtx]][col] = F::cst(x_ad[verts[col_vtx]][col]);
+                x_ad[verts[col_vtx]][col] = F1::cst(x_ad[verts[col_vtx]][col]);
             }
         }
 
@@ -828,7 +838,14 @@ mod tests {
         ];
 
         let verts = vec![
-            0, 1, 4, 0, 4, 3, 1, 2, 4, 2, 5, 4, 3, 4, 6, 4, 7, 6, 4, 5, 8, 4, 8, 7,
+            [0, 1, 4],
+            [0, 4, 3],
+            [1, 2, 4],
+            [2, 5, 4],
+            [3, 4, 6],
+            [4, 7, 6],
+            [4, 5, 8],
+            [4, 8, 7],
         ];
 
         let trimesh = TriMesh::new(pos, verts);
@@ -897,9 +914,24 @@ mod tests {
         ];
 
         let verts = vec![
-            0, 1, 5, 0, 5, 4, 1, 2, 5, 2, 6, 5, 2, 3, 7, 2, 7, 6, 4, 5, 8, 5, 9, 8, 5, 6, 10, 5,
-            10, 9, 6, 7, 10, 7, 11, 10, 8, 9, 13, 8, 13, 12, 9, 10, 13, 10, 14, 13, 10, 11, 15, 10,
-            15, 14,
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 5],
+            [2, 6, 5],
+            [2, 3, 7],
+            [2, 7, 6],
+            [4, 5, 8],
+            [5, 9, 8],
+            [5, 6, 10],
+            [5, 10, 9],
+            [6, 7, 10],
+            [7, 11, 10],
+            [8, 9, 13],
+            [8, 13, 12],
+            [9, 10, 13],
+            [10, 14, 13],
+            [10, 11, 15],
+            [10, 15, 14],
         ];
 
         let trimesh = TriMesh::new(pos, verts);

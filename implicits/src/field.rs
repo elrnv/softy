@@ -4,6 +4,7 @@
 //!
 
 use crate::kernel::*;
+use crate::Error;
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 use num_traits::ToPrimitive;
@@ -126,29 +127,29 @@ where
 {
     /// Enum for choosing how to compute a background potential field that may be mixed in with
     /// the local potentials.
-    bg_field_params: BackgroundFieldParams,
+    pub bg_field_params: BackgroundFieldParams,
 
     /// Surface triangles representing the surface discretization to be approximated.
     /// This topology also defines the normals to the surface.
-    surface_topo: Vec<[usize; 3]>,
+    pub surface_topo: Vec<[usize; 3]>,
 
     /// Save the vertex positions of the mesh because the samples may not coincide (e.g. face
     /// centered samples).
-    surface_vertex_positions: Vec<Vector3<T>>,
+    pub surface_vertex_positions: Vec<[T; 3]>,
 
     /// Sample points defining the entire implicit surface.
-    samples: Samples<T>,
+    pub samples: Samples<T>,
 
     /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
-    dual_topo: Vec<Vec<usize>>,
+    pub dual_topo: Vec<Vec<usize>>,
 
     /// The type of implicit surface. For example should the samples be centered at vertices or
     /// face centroids.
-    sample_type: SampleType,
+    pub sample_type: SampleType,
 
     /// Local search tree for fast proximity queries.
-    spatial_tree: RTree<Sample<T>>,
+    pub spatial_tree: RTree<Sample<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,19 +168,29 @@ pub struct LocalMLS<T = f64>
 where
     T: Scalar,
 {
-    kernel: LocalKernel,
+    pub kernel: LocalKernel,
 
-    base_radius: f64,
+    pub base_radius: f64,
 
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
-    /// the derivative sparsity pattern. If this is set too large, the derivative may be denser
-    /// than then needed, which typically results in slower performance.  If it is set too low,
-    /// there may be errors in the derivative. It is the callers responsibility to set this step
-    /// accurately using `update_max_step`. If the implicit surface is not changing, leave this at
+    /// the derivative sparsity pattern.
+    ///
+    /// If this is set too large, the derivative may be denser than then needed, which typically
+    /// results in slower performance.  If it is set too low, there may be errors in the
+    /// derivative. It is the callers responsibility to set this step accurately using
+    /// `update_max_step`. If the implicit surface is not changing, leave this at
     /// 0.0.
-    max_step: T,
+    pub max_step: T,
 
-    surf_base: Box<ImplicitSurfaceBase<T>>,
+    pub surf_base: Box<ImplicitSurfaceBase<T>>,
+}
+
+impl<T: Scalar> LocalMLS<T> {
+    /// Return the absolute radius of this kernel.
+    #[inline]
+    pub fn radius(&self) -> f64 {
+        self.base_radius * self.kernel.radius_multiplier()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -188,8 +199,8 @@ pub struct GlobalMLS<T = f64>
 where
     T: Scalar,
 {
-    kernel: GlobalKernel,
-    surf_base: Box<ImplicitSurfaceBase<T>>,
+    pub kernel: GlobalKernel,
+    pub surf_base: Box<ImplicitSurfaceBase<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -198,7 +209,7 @@ pub struct HrbfSurface<T = f64>
 where
     T: Scalar,
 {
-    surf_base: Box<ImplicitSurfaceBase<T>>,
+    pub surf_base: Box<ImplicitSurfaceBase<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -212,6 +223,36 @@ where
 }
 
 impl<T: Real> ImplicitSurfaceBase<T> {
+    /// Reverse the direction of the normals.
+    ///
+    /// This effectively swaps the sign of the implicit potential.
+    pub fn reverse(&mut self) -> &mut Self {
+        self.samples
+            .normals
+            .iter_mut()
+            .for_each(|[ref mut x, ref mut y, ref mut z]| {
+                *x = -*x;
+                *y = -*y;
+                *z = -*z
+            });
+        self
+    }
+
+    /// Reverse the direction of the normals in parallel.
+    ///
+    /// This can be beneficial for very large meshes.
+    pub fn reverse_par(&mut self) -> &mut Self {
+        self.samples
+            .normals
+            .par_iter_mut()
+            .for_each(|[ref mut x, ref mut y, ref mut z]| {
+                *x = -*x;
+                *y = -*y;
+                *z = -*z
+            });
+        self
+    }
+
     /// Update the stored samples. This assumes that vertex positions have been updated.
     fn update_samples(&mut self) {
         let ImplicitSurfaceBase {
@@ -225,20 +266,20 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         match sample_type {
             SampleType::Vertex => {
                 let Samples {
-                    ref mut points,
+                    ref mut positions,
                     ref mut normals,
                     // ref mut tangents
                     ..
                 } = samples;
 
                 for (vertex_pos, sample_pos) in
-                    surface_vertex_positions.iter().zip(points.iter_mut())
+                    surface_vertex_positions.iter().zip(positions.iter_mut())
                 {
                     *sample_pos = *vertex_pos;
                 }
 
                 // Compute unnormalized area weighted vertex normals given a triangle topology.
-                geo::algo::compute_vertex_area_weighted_normals(points, surface_topo, normals);
+                geo::algo::compute_vertex_area_weighted_normals(positions, surface_topo, normals);
             }
             SampleType::Face => {
                 samples.update_triangle_samples(surface_topo, &surface_vertex_positions);
@@ -292,13 +333,13 @@ impl<T: Real> MLS<T> {
     /// Radius of influence ( kernel radius ) for this implicit surface.
     pub fn radius(&self) -> f64 {
         match self {
-            MLS::Local(local) => local.kernel.radius_multiplier() * local.base_radius,
+            MLS::Local(local) => local.radius(),
             MLS::Global(_) => std::f64::INFINITY,
         }
     }
 
     /// Return the surface vertex positions used by this implicit surface.
-    pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
+    pub fn surface_vertex_positions(&self) -> &[[T; 3]] {
         &self.base().surface_vertex_positions
     }
 
@@ -328,11 +369,28 @@ impl<T: Real> MLS<T> {
         QueryTopo::new(query_points.as_ref(), self)
     }
 
-    /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
-    /// permissive `update` function, which will update as many positions as possible and recompute
-    /// the implicit surface data (like samples and spatial tree if needed) whether or not enough
-    /// positions were specified to cover all surface vertices. This function will return the
-    /// number of vertices that were indeed updated.
+    /// Reverse the direction of the normals.
+    ///
+    /// This effectively swaps the sign of the implicit potential.
+    pub fn reverse(&mut self) -> &mut Self {
+        self.base_mut().reverse();
+        self
+    }
+
+    /// Reverse the direction of the normals in parallel.
+    ///
+    /// This can be beneficial for very large meshes.
+    pub fn reverse_par(&mut self) -> &mut Self {
+        self.base_mut().reverse_par();
+        self
+    }
+
+    /// Update vertex positions and samples using an iterator over mesh vertices.
+    ///
+    /// This is a very permissive `update` function, which will update as many positions as
+    /// possible and recompute the implicit surface data (like samples and spatial tree if needed)
+    /// whether or not enough positions were specified to cover all surface vertices. This function
+    /// will return the number of vertices that were indeed updated.
     pub fn update<I>(&mut self, vertex_iter: I) -> usize
     where
         I: Iterator<Item = [T; 3]>,
@@ -362,12 +420,7 @@ impl<T: Real> MLS<T> {
      */
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface.
-    fn compute_on_mesh<K, F, M>(
-        self,
-        mesh: &mut M,
-        kernel: K,
-        interrupt: F,
-    ) -> Result<(), super::Error>
+    fn compute_on_mesh<K, F, M>(self, mesh: &mut M, kernel: K, interrupt: F) -> Result<(), Error>
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
         F: Fn() -> bool + Sync + Send,
@@ -456,7 +509,7 @@ impl<T: Real> MLS<T> {
                 tangent,
             )| {
                 if interrupt() {
-                    return Err(super::Error::Interrupted);
+                    return Err(Error::Interrupted);
                 }
 
                 let q = Vector3::new(*q);
@@ -596,7 +649,7 @@ impl<T: Real> ImplicitSurface<T> {
     }
 
     /// Return the surface vertex positions used by this implicit surface.
-    pub fn surface_vertex_positions(&self) -> &[Vector3<T>] {
+    pub fn surface_vertex_positions(&self) -> &[[T; 3]] {
         &self.base().surface_vertex_positions
     }
 
@@ -613,6 +666,22 @@ impl<T: Real> ImplicitSurface<T> {
     /// Return the number of samples used by this implicit surface.
     pub fn num_samples(&self) -> usize {
         self.base().samples.len()
+    }
+
+    /// Reverse the direction of the normals.
+    ///
+    /// This effectively swaps the sign of the implicit potential.
+    pub fn reverse(&mut self) -> &mut Self {
+        self.base_mut().reverse();
+        self
+    }
+
+    /// Reverse the direction of the normals in parallel.
+    ///
+    /// This can be beneficial for very large meshes.
+    pub fn reverse_par(&mut self) -> &mut Self {
+        self.base_mut().reverse_par();
+        self
     }
 
     /// Update vertex positions and samples using an iterator over mesh vertices. This is a very
@@ -649,11 +718,7 @@ impl<T: Real> ImplicitSurface<T> {
      */
 
     /// Compute the implicit surface potential on the given polygon mesh.
-    pub fn compute_potential_on_mesh<F, M>(
-        self,
-        mesh: &mut M,
-        interrupt: F,
-    ) -> Result<(), super::Error>
+    pub fn compute_potential_on_mesh<F, M>(self, mesh: &mut M, interrupt: F) -> Result<(), Error>
     where
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
@@ -673,23 +738,23 @@ impl<T: Real> ImplicitSurface<T> {
         query_points: &[[T; 3]],
         samples: &Samples<T>,
         out_potential: &mut [T],
-    ) -> Result<(), super::Error> {
+    ) -> Result<(), Error> {
         debug_assert!(
             query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
             "Detected NaNs in query points. Please report this bug."
         );
 
         let Samples {
-            ref points,
+            ref positions,
             ref normals,
             ref values,
             ..
         } = samples;
 
-        let pts: Vec<na::Point3<f64>> = points
+        let pts: Vec<na::Point3<f64>> = positions
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.cast::<f64>().into();
+                let pos: [f64; 3] = Vector3::new(p).cast::<f64>().into();
                 na::Point3::from(pos)
             })
             .collect();
@@ -718,11 +783,11 @@ impl<T: Real> ImplicitSurface<T> {
         Ok(())
     }
 
-    fn compute_hrbf_on_mesh<F, M>(
+    pub fn compute_hrbf_on_mesh<F, M>(
         mesh: &mut M,
         samples: &Samples<T>,
         interrupt: F,
-    ) -> Result<(), super::Error>
+    ) -> Result<(), Error>
     where
         T: geo::Real,
         F: Fn() -> bool + Sync + Send,
@@ -744,17 +809,17 @@ impl<T: Real> ImplicitSurface<T> {
             });
 
         let Samples {
-            ref points,
+            ref positions,
             ref normals,
             ref values,
             ..
         } = samples;
         let sample_pos = mesh.vertex_positions().to_vec();
 
-        let pts: Vec<na::Point3<f64>> = points
+        let pts: Vec<na::Point3<f64>> = positions
             .iter()
             .map(|&p| {
-                let pos: [f64; 3] = p.cast::<f64>().into();
+                let pos: [f64; 3] = Vector3::new(p).cast::<f64>().into();
                 na::Point3::from(pos)
             })
             .collect();
@@ -775,7 +840,7 @@ impl<T: Real> ImplicitSurface<T> {
             .zip(potential.par_iter_mut())
             .map(|(q, potential)| {
                 if interrupt() {
-                    return Err(super::Error::Interrupted);
+                    return Err(Error::Interrupted);
                 }
 
                 let pos: [f64; 3] = Vector3::new(*q).cast::<f64>().into();
@@ -963,7 +1028,7 @@ pub(crate) fn compute_local_vector_at<T, K>(
 /// neighbourhood of vertex at `index` will have non-zero gradients.
 pub(crate) fn compute_face_unit_normals_gradient_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     mut multiplier: F,
 ) -> impl Iterator<Item = Vector3<T>> + 'a
@@ -981,7 +1046,7 @@ where
 /// Parallel version of `compute_face_unit_normals_gradient_products`
 pub(crate) fn compute_face_unit_normals_gradient_products_par<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
-    surface_vertices: &'a [Vector3<T>],
+    surface_vertices: &'a [[T; 3]],
     surface_topo: &'a [[usize; 3]],
     multiplier: F,
 ) -> impl IndexedParallelIterator<Item = Matrix3<T>> + 'a
@@ -1001,7 +1066,7 @@ where
 /// `9x3` component-wise gradient.
 pub(crate) fn face_unit_normal_gradient_iter<T>(
     sample: Sample<T>,
-    surface_vertices: &[Vector3<T>],
+    surface_vertices: &[[T; 3]],
     surface_topo: &[[usize; 3]],
 ) -> impl Iterator<Item = Matrix3<T>>
 where
@@ -1017,7 +1082,7 @@ where
 /// Parallel version of `face_unit_normal_gradient_iter`.
 pub(crate) fn face_unit_normal_gradient_product<T>(
     sample: Sample<T>,
-    surface_vertices: &[Vector3<T>],
+    surface_vertices: &[[T; 3]],
     surface_topo: &[[usize; 3]],
     mult: Vector3<T>,
 ) -> Matrix3<T>
@@ -1133,7 +1198,7 @@ where
 
 /// Generate a tetrahedron with vertex positions and indices for the triangle faces.
 #[cfg(test)]
-pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
+pub(crate) fn make_tet() -> (Vec<[f64; 3]>, Vec<[usize; 3]>) {
     use geo::mesh::{builder, TriMesh};
     let tet = builder::PlatonicSolidBuilder::build_tetrahedron();
     let TriMesh {
@@ -1141,11 +1206,8 @@ pub(crate) fn make_tet() -> (Vec<Vector3<f64>>, Vec<[usize; 3]>) {
         indices,
         ..
     } = TriMesh::from(tet);
-    let tet_verts = vertex_positions
-        .into_iter()
-        .map(|x| Vector3::from(x))
-        .collect();
-    let tet_faces = reinterpret::reinterpret_vec(indices.into_vec());
+    let tet_verts = vertex_positions.into_vec();
+    let tet_faces = indices.into_vec();
 
     (tet_verts, tet_faces)
 }
@@ -1158,7 +1220,7 @@ mod tests {
     use geo::ops::transform::*;
 
     #[test]
-    fn size_test() -> Result<(), crate::Error> {
+    fn size_test() -> Result<(), Error> {
         use std::mem::size_of;
         eprintln!("Vec<usize>: {}", size_of::<Vec<usize>>());
         eprintln!("MLS: {}", size_of::<MLS>());
@@ -1176,7 +1238,7 @@ mod tests {
     // vertex of the grid mesh has a non-empty local neighbpourhood of the implicit surface.
     // The `reverse` option reverses each triangle in the sphere to create an inverted implicit
     // surface.
-    fn make_octahedron_and_grid_local(reverse: bool) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
+    fn make_octahedron_and_grid_local(reverse: bool) -> Result<(MLS, PolyMesh<f64>), Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1220,7 +1282,7 @@ mod tests {
     fn make_octahedron_and_grid(
         reverse: bool,
         radius_multiplier: f64,
-    ) -> Result<(MLS, PolyMesh<f64>), crate::Error> {
+    ) -> Result<(MLS, PolyMesh<f64>), Error> {
         // Create a surface sample mesh.
         let octahedron_trimesh = PlatonicSolidBuilder::build_octahedron();
         let mut sphere = PolyMesh::from(octahedron_trimesh);
@@ -1260,11 +1322,16 @@ mod tests {
         query_surf: &QueryTopo,
         mut grid: PolyMesh<f64>,
         side: Side,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         let epsilon = 1e-4;
+
+        // Make a copy of the grid for the parallel projection test.
+        let mut grid_par = grid.clone();
+
         let init_potential = {
             // Get grid node positions to be projected.
             let pos = grid.vertex_positions_mut();
+            let pos_par = grid_par.vertex_positions_mut();
 
             // Compute potential before projection.
             let mut init_potential = vec![0.0; pos.len()];
@@ -1272,12 +1339,19 @@ mod tests {
 
             // Project grid outside the implicit surface.
             assert!(query_surf.project(side, 0.0, epsilon, pos));
+            assert!(query_surf.project_par(side, 0.0, epsilon, pos_par));
             init_potential
         };
 
         // Compute potential after projection.
         let mut final_potential = vec![0.0; init_potential.len()];
         query_surf.potential(grid.vertex_positions(), &mut final_potential);
+
+        let mut final_potential_par = vec![0.0; init_potential.len()];
+        query_surf.potential(grid_par.vertex_positions(), &mut final_potential_par);
+        for (par, seq) in final_potential_par.iter().zip(final_potential.iter()) {
+            assert_eq!(par, seq);
+        }
 
         //use geo::mesh::topology::VertexIndex;
         //grid.set_attrib_data::<_, VertexIndex>("init_potential", &init_potential);
@@ -1312,7 +1386,7 @@ mod tests {
     /// Test projection where each projected vertex has a non-empty local neighbourhood of the
     /// implicit surface.
     #[test]
-    fn local_projection_test() -> Result<(), crate::Error> {
+    fn local_projection_test() -> Result<(), Error> {
         let (surface, grid) = make_octahedron_and_grid_local(false)?;
         let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         projection_tester(&query_surf, grid, Side::Above)?;
@@ -1325,7 +1399,7 @@ mod tests {
     /// Test projection where some projected vertices may not have a local neighbourhood at all.
     /// This is a more complex test than the local_projection_test
     #[test]
-    fn global_projection_test() -> Result<(), crate::Error> {
+    fn global_projection_test() -> Result<(), Error> {
         let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
         let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         projection_tester(&query_surf, grid, Side::Above)?;
@@ -1338,7 +1412,7 @@ mod tests {
     /// Test with a radius multiplier less than 1.0. Although not strictly useful, this should not
     /// crash.
     #[test]
-    fn narrow_projection_test() -> Result<(), crate::Error> {
+    fn narrow_projection_test() -> Result<(), Error> {
         // Make a mesh to be projected.
         use geo::mesh::attrib::*;
         use geo::mesh::builder::*;
@@ -1418,7 +1492,7 @@ mod tests {
     /// NaNs. This case must not crash.
     #[cfg(feature = "serde")]
     #[test]
-    fn zero_step_projection_test() -> Result<(), crate::Error> {
+    fn zero_step_projection_test() -> Result<(), Error> {
         use std::io::Read;
         let iso_value = 0.0;
         let epsilon = 0.0001;
@@ -1500,7 +1574,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbourhoods() -> Result<(), crate::Error> {
+    fn neighbourhoods() -> Result<(), Error> {
         // Local test
         let (surface, grid) = make_octahedron_and_grid_local(false)?;
         let query_surf = QueryTopo::new(grid.vertex_positions(), surface);

@@ -70,7 +70,8 @@ pub fn build_mesh_laplacian(mesh: &geo::mesh::TriMesh<f64>, weight: f64) -> tens
 
 /// Generate a random vector of triplets.
 pub fn random_vectors(n: usize) -> Vec<[f64; 3]> {
-    use rand::{distributions::Uniform, Rng, SeedableRng, StdRng};
+    use rand::distributions::Uniform;
+    use rand::prelude::*;
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     let range = Uniform::new(-1.0, 1.0);
     (0..n)

@@ -43,7 +43,7 @@ impl<T: Scalar> Sample<T> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Samples<T> {
     /// Sample point positions defining the implicit surface.
-    pub points: Vec<Vector3<T>>,
+    pub positions: Vec<[T; 3]>,
     /// Normals that define the field gradient at every sample point.
     pub normals: Vec<[T; 3]>,
     /// Velocities on the iso-surface at every sample point.
@@ -66,12 +66,12 @@ impl<T: Scalar + Neg<Output = T>> Samples<T> {
     where
         V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
-        let points = vec![Vector3::zero(); vertices.len()];
+        let positions = vec![[T::zero(); 3]; vertices.len()];
         let velocities = vec![Vector3::zero(); vertices.len()];
         let normals = vec![[T::zero(); 3]; vertices.len()];
 
         let mut samples = Samples {
-            points,
+            positions,
             normals,
             velocities,
             values,
@@ -92,13 +92,13 @@ impl<T: Scalar + Neg<Output = T>> Samples<T> {
         V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
         let Samples {
-            ref mut points,
+            ref mut positions,
             ref mut normals,
             ..
         } = self;
 
         // Update positons
-        for (pos, new_pos) in points.iter_mut().zip(new_vertices.iter()) {
+        for (pos, new_pos) in positions.iter_mut().zip(new_vertices.iter()) {
             *pos = new_pos.clone().into();
         }
 
@@ -117,10 +117,10 @@ impl<T: Real> Samples<T> {
     /// Utility function only used in tests for creating a dummy set of samples just from a set of
     /// points.
     #[cfg(test)]
-    pub(crate) fn new_point_samples(points: Vec<Vector3<T>>) -> Self {
-        let n = points.len();
+    pub(crate) fn new_point_samples(positions: Vec<[T; 3]>) -> Self {
+        let n = positions.len();
         Samples {
-            points,
+            positions,
             normals: vec![[T::zero(); 3]; n],
             velocities: vec![Vector3::zero(); n],
             values: vec![T::zero(); n],
@@ -135,12 +135,12 @@ impl<T: Real> Samples<T> {
     where
         V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
-        let points = vec![Vector3::zero(); triangles.len()];
+        let positions = vec![[T::zero(); 3]; triangles.len()];
         let normals = vec![[T::zero(); 3]; triangles.len()];
         let velocities = vec![Vector3::zero(); triangles.len()];
 
         let mut samples = Samples {
-            points,
+            positions,
             normals,
             velocities,
             values,
@@ -156,7 +156,7 @@ impl<T: Real> Samples<T> {
         V3: Into<[T; 3]> + Into<Vector3<T>> + Clone,
     {
         let Samples {
-            ref mut points,
+            ref mut positions,
             ref mut normals,
             ref mut velocities,
             ..
@@ -168,7 +168,7 @@ impl<T: Real> Samples<T> {
             (tri.centroid(), tri.area_normal(), v / v.norm())
         });
 
-        for (((pos, nml), vel), (new_pos, new_nml, new_vel)) in (points
+        for (((pos, nml), vel), (new_pos, new_nml, new_vel)) in (positions
             .iter_mut()
             .zip(normals.iter_mut())
             .zip(velocities.iter_mut()))
@@ -182,23 +182,23 @@ impl<T: Real> Samples<T> {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
+        self.positions.is_empty()
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.points.len()
+        self.positions.len()
     }
 
     #[inline]
     pub fn iter<'a>(&'a self) -> impl Iterator<Item = Sample<T>> + Clone + 'a {
         let Samples {
-            ref points,
+            ref positions,
             ref normals,
             ref velocities,
             ref values,
         } = *self;
-        points
+        positions
             .iter()
             .zip(normals.iter())
             .zip(velocities.iter())
@@ -206,7 +206,7 @@ impl<T: Real> Samples<T> {
             .enumerate()
             .map(move |(i, (((&pos, &nml), &vel), &value))| Sample {
                 index: i,
-                pos,
+                pos: pos.into(),
                 nml: nml.into(),
                 vel,
                 value,
@@ -218,12 +218,12 @@ impl<T: Real> Samples<T> {
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = Sample<T>> + Clone {
         let Samples {
-            points,
+            positions,
             normals,
             velocities,
             values,
         } = self;
-        points
+        positions
             .into_iter()
             .zip(normals.into_iter())
             .zip(velocities.into_iter())
@@ -231,7 +231,7 @@ impl<T: Real> Samples<T> {
             .enumerate()
             .map(move |(i, (((pos, nml), vel), value))| Sample {
                 index: i,
-                pos,
+                pos: pos.into(),
                 nml: nml.into(),
                 vel,
                 value,
@@ -243,12 +243,12 @@ impl<T: Scalar + Send + Sync> Samples<T> {
     #[inline]
     pub fn par_iter<'a>(&'a self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone + 'a {
         let Samples {
-            ref points,
+            ref positions,
             ref normals,
             ref velocities,
             ref values,
         } = *self;
-        points
+        positions
             .par_iter()
             .zip(normals.par_iter())
             .zip(velocities.par_iter())
@@ -256,7 +256,7 @@ impl<T: Scalar + Send + Sync> Samples<T> {
             .enumerate()
             .map(move |(i, (((&pos, &nml), &vel), &value))| Sample {
                 index: i,
-                pos,
+                pos: pos.into(),
                 nml: nml.into(),
                 vel,
                 value,
@@ -267,12 +267,12 @@ impl<T: Scalar + Send + Sync> Samples<T> {
     #[inline]
     pub fn into_par_iter(self) -> impl IndexedParallelIterator<Item = Sample<T>> + Clone {
         let Samples {
-            points,
+            positions,
             normals,
             velocities,
             values,
         } = self;
-        points
+        positions
             .into_par_iter()
             .zip(normals.into_par_iter())
             .zip(velocities.into_par_iter())
@@ -280,7 +280,7 @@ impl<T: Scalar + Send + Sync> Samples<T> {
             .enumerate()
             .map(move |(i, (((pos, nml), vel), value))| Sample {
                 index: i,
-                pos,
+                pos: pos.into(),
                 nml: nml.into(),
                 vel,
                 value,
@@ -295,7 +295,7 @@ pub struct SamplesView<'i, 'd: 'i, T> {
     /// Indices into the sample points.
     indices: &'i [usize],
     /// Sample point positions defining the implicit surface.
-    points: &'d [Vector3<T>],
+    positions: &'d [[T; 3]],
     /// Normals that define the potential field gradient at every sample point.
     normals: &'d [[T; 3]],
     /// Vectors that identify a tangent to the iso-surface at every sample point.
@@ -312,7 +312,7 @@ impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
     pub fn new(indices: &'i [usize], samples: &'d Samples<T>) -> Self {
         SamplesView {
             indices,
-            points: samples.points.as_slice(),
+            positions: samples.positions.as_slice(),
             normals: samples.normals.as_slice(),
             velocities: samples.velocities.as_slice(),
             values: samples.values.as_slice(),
@@ -341,7 +341,7 @@ impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
     #[inline]
     pub fn at_index(&self, idx: usize) -> Sample<T> {
         let SamplesView {
-            ref points,
+            ref positions,
             ref normals,
             ref velocities,
             ref values,
@@ -349,7 +349,7 @@ impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
         } = self;
         Sample {
             index: idx,
-            pos: points[idx],
+            pos: positions[idx].into(),
             nml: normals[idx].into(),
             vel: velocities[idx],
             value: values[idx],
@@ -374,8 +374,8 @@ impl<'i, 'd: 'i, T: Scalar> SamplesView<'i, 'd, T> {
         self.indices.iter().map(move |&i| self.at_index(i))
     }
     #[inline]
-    pub fn all_points(&'d self) -> &'d [Vector3<T>] {
-        self.points
+    pub fn all_points(&'d self) -> &'d [[T; 3]] {
+        self.positions
     }
 
     #[inline]

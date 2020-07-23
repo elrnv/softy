@@ -5,4 +5,5 @@ authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-gut = { version = "0.5", features = ["io", "serde_all", "async-attribs"] }
+#gut = { version = "0.5", features = ["io", "serde_all", "async-attribs"] }
+gut = { git = "https://gitlab.com/elrnv/gut.git", version = "0.6", features = ["io", "serde_all", "async-attribs"], branch = "pre-cgmath-0.18" }

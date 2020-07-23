@@ -848,7 +848,6 @@ mod tests {
     use super::*;
     use crate::kernel;
     use autodiff::F1;
-    use flatk::*;
     use geo::mesh::builder::*;
     use geo::mesh::{TriMesh, VertexPositions};
     use jacobian::{
@@ -1022,7 +1021,7 @@ mod tests {
             .into_iter()
             .map(|x| x.into_data())
             .collect();
-        let tri = geo::mesh::TriMesh::new(tri_verts, vec![0, 1, 2]);
+        let tri = geo::mesh::TriMesh::new(tri_verts, vec![[0, 1, 2]]);
 
         for i in 1..50 {
             let radius_multiplier = 1.0 + 0.1 * (i as f64);
@@ -1066,8 +1065,6 @@ mod tests {
         perturb: &mut P,
     ) {
         let (tri_verts, tri_indices) = make_two_test_triangles(0.0, perturb);
-        let tri_verts: Vec<[f64; 3]> = tri_verts;
-        let tri_indices: Vec<usize> = Chunked3::from_array_vec(tri_indices).into_storage();
         let tri = TriMesh::new(tri_verts, tri_indices);
         let qs = vec![
             Vector3::new([0.0, 0.2, 0.0]),
@@ -1091,8 +1088,7 @@ mod tests {
             .into_iter()
             .map(|x| x.into_data())
             .collect();
-        let tri_indices = vec![0usize, 1, 2];
-        let tri = TriMesh::new(tri_verts, tri_indices);
+        let tri = TriMesh::new(tri_verts, vec![[0, 1, 2]]);
         let qs = vec![
             Vector3::new([0.0, 0.2, 0.0]),
             Vector3::new([0.0, 0.0001, 0.0]),
@@ -1530,9 +1526,8 @@ mod tests {
             run_tester(tri.clone(), BackgroundFieldType::DistanceBased, true);
         };
 
-        let into_flat = |indices| Chunked3::from_array_vec(indices).into_storage();
         let build_mesh_and_run_test = |(tri_verts, tri_indices)| {
-            let tri = TriMesh::new(tri_verts, into_flat(tri_indices));
+            let tri = TriMesh::new(tri_verts, tri_indices);
             run_tester_on_mesh(tri);
         };
 

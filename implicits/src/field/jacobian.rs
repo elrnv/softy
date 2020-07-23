@@ -2081,7 +2081,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let trimesh = geo::mesh::TriMesh::new(tri_verts, vec![[0, 2, 1]]);
         let surf = mls_from_trimesh(&trimesh, surf_params).unwrap();
         let query_surf = surf.query_topo(&query_points);
 
@@ -2130,7 +2130,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![0, 2, 1]);
+        let mut trimesh = geo::mesh::TriMesh::new(tri_verts, vec![[0, 2, 1]]);
         let test_vector = Vector3::new([1.5, 0.3, 0.5]);
         trimesh.add_attrib_data::<[f32; 3], VertexIndex>(
             "V",

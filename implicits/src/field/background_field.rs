@@ -1130,10 +1130,9 @@ mod tests {
 
     #[test]
     fn two_triangles_distance_based_bg() -> Result<(), Error> {
-        use flatk::*;
         let (verts, indices) =
             crate::jacobian::make_two_test_triangles(0.0, &mut || Vector3::zero());
-        let mesh = geo::mesh::TriMesh::new(verts, Chunked3::from_array_vec(indices).into_storage());
+        let mesh = geo::mesh::TriMesh::new(verts, indices);
 
         let query_points = vec![
             Vector3::new([0.0, 0.2, 0.0]),

@@ -19,7 +19,7 @@ fn sim_test() {
         [0.0, 0.0, 2.0],
         [1.0, 0.0, 2.0],
     ];
-    let indices = vec![5, 2, 4, 0, 3, 2, 5, 0, 1, 0, 3, 5];
+    let indices = vec![[5, 2, 4, 0], [3, 2, 5, 0], [1, 0, 3, 5]];
     let mut mesh = TetMesh::new(verts, indices);
     mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
         .unwrap();

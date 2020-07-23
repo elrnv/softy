@@ -1,6 +1,5 @@
 #![type_length_limit = "10000000"]
 
-use reinterpret::*;
 use std::os::raw::{c_double, c_int};
 
 #[repr(C)]
@@ -202,13 +201,13 @@ pub unsafe extern "C" fn iso_create_trimesh(
         "Given coordinate array size is not a multiple of 3."
     );
     let coords = std::slice::from_raw_parts(coords, num_coords as usize);
-    let positions: Vec<[f64; 3]> = reinterpret_vec(coords.iter().map(|&x| f64::from(x)).collect());
-    let indices = std::slice::from_raw_parts(indices, num_indices as usize)
-        .iter()
-        .map(|&x| x as usize)
+    let positions: &[[f64; 3]] = bytemuck::cast_slice(coords);
+    let indices: Vec<[usize; 3]> = std::slice::from_raw_parts(indices, num_indices as usize)
+        .chunks_exact(3)
+        .map(|f| [f[0] as usize, f[1] as usize, f[2] as usize])
         .collect();
 
-    let mesh = Box::new(geo::mesh::TriMesh::new(positions, indices));
+    let mesh = Box::new(geo::mesh::TriMesh::new(positions.to_vec(), indices));
     Box::into_raw(mesh) as *mut ISO_TriMesh
 }
 
@@ -254,7 +253,7 @@ pub unsafe extern "C" fn iso_query_topology(
     query_point_coords: *const f64,
 ) -> *mut ISO_QueryTopo {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let query_points: &[[f64; 3]] = bytemuck::cast_slice(coords);
     if !implicit_surface.is_null() {
         let surf = Box::from_raw(implicit_surface as *mut implicits::MLS<f64>);
         Box::into_raw(Box::new((*surf).query_topo(query_points))) as *mut ISO_QueryTopo
@@ -280,7 +279,7 @@ pub unsafe extern "C" fn iso_compute_potential(
     out_potential: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let query_points: &[[f64; 3]] = bytemuck::cast_slice(coords);
     let out_potential = std::slice::from_raw_parts_mut(out_potential, num_query_points as usize);
 
     let surf = &*(query_topo as *const implicits::QueryTopo);
@@ -304,7 +303,7 @@ pub unsafe extern "C" fn iso_project_to_below(
     query_point_coords: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts_mut(query_point_coords, num_query_points as usize * 3);
-    let query_points: &mut [[f64; 3]] = reinterpret_mut_slice(coords);
+    let query_points: &mut [[f64; 3]] = bytemuck::cast_slice_mut(coords);
 
     let surf = &*(query_topo as *const implicits::QueryTopo);
 
@@ -330,7 +329,7 @@ pub unsafe extern "C" fn iso_project_to_above(
     query_point_coords: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts_mut(query_point_coords, num_query_points as usize * 3);
-    let query_points: &mut [[f64; 3]] = reinterpret_mut_slice(coords);
+    let query_points: &mut [[f64; 3]] = bytemuck::cast_slice_mut(coords);
 
     let surf = &*(query_topo as *const implicits::QueryTopo);
 
@@ -367,7 +366,7 @@ macro_rules! impl_jac_indices {
 macro_rules! impl_jac_values {
     ($vals:ident[$num_vals:ident] <- $iso:ident.$fn:ident ($coords:ident[$num_coords:expr])) => {
         let coords = std::slice::from_raw_parts($coords, $num_coords as usize);
-        let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+        let query_points: &[[f64; 3]] = bytemuck::cast_slice(coords);
         let vals = std::slice::from_raw_parts_mut($vals, $num_vals as usize);
         let surf = &*($iso as *const implicits::QueryTopo);
 
@@ -575,7 +574,7 @@ pub unsafe extern "C" fn iso_surface_hessian_product_values(
     values: *mut f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let query_points: &[[f64; 3]] = bytemuck::cast_slice(coords);
     let multipliers = std::slice::from_raw_parts(multipliers, num_query_points as usize);
     let vals = std::slice::from_raw_parts_mut(values, num_entries as usize);
     let surf = &*(query_topo as *const implicits::QueryTopo);
@@ -637,7 +636,7 @@ pub unsafe extern "C" fn iso_reset(
     query_point_coords: *const f64,
 ) {
     let coords = std::slice::from_raw_parts(query_point_coords, num_query_points as usize * 3);
-    let query_points: &[[f64; 3]] = reinterpret_slice(coords);
+    let query_points: &[[f64; 3]] = bytemuck::cast_slice(coords);
     let topo = &mut *(query_topo as *mut implicits::QueryTopo);
 
     topo.reset(query_points);
@@ -652,7 +651,7 @@ pub unsafe extern "C" fn iso_update_surface(
     position_coords: *const f64,
 ) -> c_int {
     let coords = std::slice::from_raw_parts(position_coords, num_positions as usize * 3);
-    let pos: &[[f64; 3]] = reinterpret_slice(coords);
+    let pos: &[[f64; 3]] = bytemuck::cast_slice(coords);
     let topo = &mut *(query_topo as *mut implicits::QueryTopo);
     topo.update_surface(pos.iter().cloned()) as c_int
 }

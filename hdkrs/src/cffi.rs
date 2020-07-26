@@ -13,9 +13,9 @@ use gut::io::{
 };
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
 use gut::{self, NumCells, NumFaces};
+use hashbrown::hash_map::Iter;
 pub use libc::{c_char, c_double, c_float, c_int, c_schar, c_void, size_t};
 use std::any::TypeId;
-use std::collections::hash_map::Iter;
 use std::ffi::{CStr, CString};
 use std::slice;
 use std::sync::Arc;

@@ -16,7 +16,7 @@ use crate::inf_norm;
 
 use super::{
     GeneralizedCoords, GeneralizedState, MuStrategy, NonLinearProblem, ObjectData, SimParams,
-    Solution, SourceIndex, Vertex, VertexState, VertexWorkspace, WorkspaceData,
+    Solution, Vertex, VertexState, VertexWorkspace, WorkspaceData,
 };
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
@@ -94,6 +94,33 @@ pub struct SolverBuilder {
     rigid_shells: Vec<(PolyMesh, RigidMaterial)>,
     fixed_shells: Vec<(PolyMesh, FixedMaterial)>,
     frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
+}
+
+/// The index of the object subject to the appropriate contact constraint.
+///
+/// This enum helps us map from the particular contact constraint to the
+/// originating simulation object (shell or solid).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum SourceIndex {
+    Solid(usize),
+    Shell(usize),
+}
+
+impl SourceIndex {
+    #[inline]
+    fn into_source(self, with_fixed: bool) -> super::SourceObject {
+        match self {
+            SourceIndex::Solid(i) => super::SourceObject::Solid(i, with_fixed),
+            SourceIndex::Shell(i) => super::SourceObject::Shell(i),
+        }
+    }
+
+    #[inline]
+    pub fn get(&self) -> usize {
+        match self {
+            SourceIndex::Solid(idx) | SourceIndex::Shell(idx) => *idx,
+        }
+    }
 }
 
 impl SolverBuilder {
@@ -248,21 +275,26 @@ impl SolverBuilder {
         material_source_coll: &'a [SourceIndex],
         material_source_obj: &'a [SourceIndex],
     ) -> impl Iterator<Item = FrictionalContactConstraint> + 'a {
-        let construct_friction_constraint = |m0, m1, constraint| FrictionalContactConstraint {
-            object_index: m0,
-            collider_index: m1,
-            constraint,
-        };
+        let construct_friction_constraint =
+            move |m0: SourceIndex, m1: SourceIndex, constraint| FrictionalContactConstraint {
+                object_index: m0.into_source(params.use_fixed),
+                collider_index: m1.into_source(params.use_fixed),
+                constraint,
+            };
 
         material_source_obj.into_iter().flat_map(move |&m0| {
             let object = match m0 {
-                SourceIndex::Solid(i) => Var::Variable(&solids[i].surface().trimesh),
+                SourceIndex::Solid(i) => {
+                    Var::Variable(&solids[i].surface(params.use_fixed).trimesh)
+                }
                 SourceIndex::Shell(i) => shells[i].tagged_mesh(),
             };
 
             material_source_coll.into_iter().flat_map(move |&m1| {
                 let collider = match m1 {
-                    SourceIndex::Solid(j) => Var::Variable(&solids[j].surface().trimesh),
+                    SourceIndex::Solid(j) => {
+                        Var::Variable(&solids[j].surface(params.use_fixed).trimesh)
+                    }
                     SourceIndex::Shell(j) => shells[j].tagged_mesh(),
                 };
                 build_contact_constraint(object, collider, params)

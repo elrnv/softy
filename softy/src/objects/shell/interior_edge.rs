@@ -25,7 +25,7 @@ use crate::TriMesh;
 /// Here `e0` is the interior edge itself; `e1` and `e2` are used to compute the derivatives of the
 /// angle between the adjacent faces. `x0` to `x3` are the vertices making up all the degrees of
 /// freedom that affect the edge reflex angle.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct InteriorEdge {
     pub faces: [usize; 2],
     /// Each `edge_start[i]` is a vertex in `faces[i]` that marks the start of the
@@ -475,8 +475,14 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
     // An edge is actually defined by a pair of vertices.
     // We iterate through all the faces and register each half edge (sorted by vertex index)
     // into a hashmap along with the originating face index.
-    let mut edges =
-        fnv::FnvHashMap::with_capacity_and_hasher(trimesh.num_faces(), Default::default());
+    #[cfg(test)]
+    let mut edges = {
+        // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
+        let hash_builder = hashbrown::hash_map::DefaultHashBuilder::with_seeds(7, 47);
+        hashbrown::HashMap::with_capacity_and_hasher(trimesh.num_faces(), hash_builder)
+    };
+    #[cfg(not(test))]
+    let mut edges = hashbrown::HashMap::with_capacity(trimesh.num_faces());
 
     let add_face_edges = |(face_idx, face): (usize, &[usize; 3])| {
         for i in 0..3 {
@@ -558,6 +564,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 mod tests {
     use approx::*;
     use autodiff::F1;
+    use hashbrown::HashSet;
 
     use super::*;
 
@@ -850,9 +857,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges = compute_interior_edge_topology(&trimesh);
+        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
+            .into_iter()
+            .collect();
 
-        let expected_interior_edges = vec![
+        let expected_interior_edges: HashSet<_> = vec![
             InteriorEdge {
                 faces: [1, 4],
                 edge_start: [1, 0],
@@ -885,7 +894,9 @@ mod tests {
                 faces: [6, 7],
                 edge_start: [2, 0],
             },
-        ];
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(interior_edges, expected_interior_edges);
     }
@@ -936,9 +947,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges = compute_interior_edge_topology(&trimesh);
+        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
+            .into_iter()
+            .collect();
 
-        let expected_interior_edges = vec![
+        let expected_interior_edges: HashSet<_> = vec![
             InteriorEdge {
                 faces: [3, 5],
                 edge_start: [0, 2],
@@ -1023,7 +1036,9 @@ mod tests {
                 faces: [16, 17],
                 edge_start: [2, 0],
             },
-        ];
+        ]
+        .into_iter()
+        .collect();
 
         assert_eq!(interior_edges, expected_interior_edges);
     }

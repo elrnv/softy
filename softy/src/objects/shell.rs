@@ -689,7 +689,7 @@ mod tests {
         let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
         assert_relative_eq!(mass, exp_mass);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
-        assert_relative_eq!(inertia, exp_inertia);
+        assert_relative_eq!(inertia, exp_inertia, max_relative = 1e-7);
 
         // Rotated cube at the origin
         let mut mesh = make_box(4).surface_trimesh();
@@ -701,7 +701,7 @@ mod tests {
         let exp_cm = Vector3::new([0.0; 3]);
 
         let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
-        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(mass, exp_mass, max_relative = 1e-7);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
 
@@ -714,7 +714,7 @@ mod tests {
         let exp_cm = Vector3::new([0.1, 0.2, 0.3]);
 
         let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
-        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(mass, exp_mass, max_relative = 1e-7);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia[1][1], moment_of_inertia_y, max_relative = 1e-7);
 

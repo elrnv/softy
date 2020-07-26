@@ -35,7 +35,6 @@ pub fn build_contact_constraint(
         params.kernel,
         params.friction_params,
         params.contact_offset,
-        params.use_fixed,
         params.contact_type == ContactType::LinearizedPoint,
     )?))
 }

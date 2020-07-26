@@ -53,8 +53,7 @@ impl MassData {
 pub struct PointContactConstraint {
     /// Implicit surface that represents the deforming object.
     pub implicit_surface: QueryTopo,
-    /// Points where collision and contact occurs. I.e. all surface vertex positions on the
-    /// collider mesh.
+    /// Vertex positions on the collider mesh where contact occurs.
     pub contact_points: Chunked3<Vec<f64>>,
 
     /// Friction impulses applied during contact.
@@ -105,14 +104,11 @@ impl PointContactConstraint {
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
         contact_offset: f64,
-        _use_fixed: bool,
         linearized: bool,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
         let object_tag = object.tag();
         let collider_tag = collider.tag();
-
-        // TODO: use use_fixed paramter to prune fixed elements from the triangle mesh.
 
         surface_builder
             .trimesh(object.untag())
@@ -201,7 +197,26 @@ impl PointContactConstraint {
                             name: "Zero mass".to_string(),
                         })
                     } else {
-                        let data: Chunked3<Vec<_>> = attrib.iter().map(|&x| [1.0 / x; 3]).collect();
+                        let data: Chunked3<Vec<_>> = if let Ok(fixed) =
+                            mesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+                        {
+                            // Fixed vertices have infinite mass, so zero inverse mass.
+                            attrib
+                                .iter()
+                                .zip(fixed)
+                                .map(
+                                    |(&x, &fixed)| {
+                                        if fixed != 0 {
+                                            [0.0; 3]
+                                        } else {
+                                            [1.0 / x; 3]
+                                        }
+                                    },
+                                )
+                                .collect()
+                        } else {
+                            attrib.iter().map(|&x| [1.0 / x; 3]).collect()
+                        };
                         Ok(MassData::Sparse(data))
                     }
                 }),

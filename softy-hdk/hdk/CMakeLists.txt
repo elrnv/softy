@@ -67,3 +67,8 @@ target_include_directories( ${library_name} PRIVATE
 
 # Sets several common target properties, such as the library's output directory.
 houdini_configure_target( ${library_name} )
+
+# Install documentation
+houdini_get_default_install_dir(INSTALLDIR)
+
+configure_file(src/hdk_softy.txt ${INSTALLDIR}/help/nodes/sop/hdk_softy.txt COPYONLY)

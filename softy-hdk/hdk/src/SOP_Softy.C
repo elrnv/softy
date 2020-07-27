@@ -94,9 +94,9 @@ static const char *theDsFile = R"THEDSFILE(
             parm {
                 name "materialid#"
                 cppname "MaterialId"
-                label "Material Id"
+                label "Material Id:  #"
                 type label
-                default { "#" }
+                default { "" }
             }
 
             parm {
@@ -187,7 +187,7 @@ static const char *theDsFile = R"THEDSFILE(
             parm {
                 name "youngmodulus#"
                 cppname "YoungModulus"
-                label "Young Modulus"
+                label "Young's Modulus"
                 type float
                 default { "3.24" }
                 range { 0 1000 }
@@ -303,7 +303,7 @@ static const char *theDsFile = R"THEDSFILE(
 
             parm {
                 name "usefixed#"
-                label "Use Fixed"
+                label "Use Fixed for Implicit"
                 type toggle
                 default { "off" }
             }

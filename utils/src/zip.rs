@@ -49,11 +49,7 @@ macro_rules! zip {
         zip!(@flatten |($in, x)| ( $($out)*, x ) $(,$rest)*)
     };
     // Main entry point
-    ($iter:expr $(, $rest:expr)*) => {
+    ($iter:expr $(, $rest:expr)* $(,)*) => {
         $iter $(.zip($rest))*.map(zip!(@flatten |x| (x) $(,$rest)*))
     };
-    // Same as the main entry point, but with a trailing comma
-    ($iter:expr $(, $rest:expr)* ,) => {
-        zip!($iter $(,$rest)*)
-    }
 }

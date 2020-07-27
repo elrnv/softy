@@ -1,0 +1,209 @@
+#type: node
+#context: sop
+#internal: softy
+#largeicon: /nodes/sop/SOP_hdk_softy.png
+
+#tags: solver
+
+= Softy =
+
+""" Takes one simulation step using the Softy FEM solver. """
+
+@parameters
+
+Clear Cache:
+    #channels: /clearcache
+    Remove all cached Softy solvers. Any ongoing simulations will be invalidated.
+    This can be useful for clearing up RAM during long work sessions.
+
+Time Step:
+    #channels: /timestep
+    The size of the time step in seconds
+
+Gravity:
+    #channels: /gravity
+    The magnitude of the force of gravity in the negative `y` direction.
+
+Log File:
+    #channels: /logfile
+    Path to the log file for writing internal solver output into.
+
+Material:
+    #channels: /material
+    Material parameters to be assigned to the input meshes indexed by the `mtl_id` primitive attribute.
+    The `mtl_id` must correspond to the 1-based index of the appropriate material in this list or 0.
+    The first (top-most) material is at index 1. The 0 `mtl_id` is reserved for static (fully fixed)
+    collision objects, which don't require material properties.
+
+    Material Id:
+        #channels: /materialid#
+        The ID of the material assigned to all primitives whose `mtl_id` is equal to this number.
+
+    Object Type:
+        #channels: /objtype#
+        The type of object represented by this material.
+
+        Solid:
+            an elastic deformable solid object represented by tetrahedra,
+        Shell:
+            an elastic deformable shell like cloth represented by triangles,
+        Rigid:
+            a non-deformable rigid solid.
+
+    Elasticity Model:
+        #channels: /elasticitymodel#
+        The elasticity material model used to describe the stress-strain relationship.
+
+        Neo-Hookean:
+            The standard compressible Neo-Hookean material model:
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\Psi_{\text{NH}}(F)&space;=&space;\frac{\mu}{2}(\mathrm{tr}(F^TF)&space;-&space;3)&space;-&space;\mu&space;\log&space;(\det&space;F)&space;&plus;&space;\frac{\lambda}{2}(\log&space;(\det&space;F))^2"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\Psi_{\text{NH}}(F)&space;=&space;\frac{\mu}{2}(\mathrm{tr}(F^TF)&space;-&space;3)&space;-&space;\mu&space;\log&space;(\det&space;F)&space;&plus;&space;\frac{\lambda}{2}(\log&space;(\det&space;F))^2"
+title="\Psi_{\text{NH}}(F) = \frac{\mu}{2}(\mathrm{tr}(F^TF) - 3) - \mu \log (\det F) +
+\frac{\lambda}{2}(\log (\det F))^2" /></a> 
+
+            where F is the deformation gradient and λ and μ are the First and Second Lamé parameters
+            respectively. Lamé parameters are the stiffness parameters set as described by the
+            __Stiffness Type__ parameter
+
+        Stable Neo-Hookean:
+            An extention to the Neo-Hookean material model for more stable handling of invertible
+            elements (tetrahedra). This model was first introduced in <a
+            href="http://graphics.pixar.com/library/StableElasticity/">Stable Neo-Hookean Flesh Simulation by
+            Breannan Smith, Fernando de Goes, and Theodore Kim</a>. This method is also implemented
+            in Houdini's own FEM system.
+
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\Psi_{\text{\tiny&space;SNH}}(F)&space;=&space;\frac{\mu_{\text{\tiny&space;SNH}}}{2}\left(\mathrm{tr}(F^TF)&space;-&space;3\right)&space;-&space;\frac{\mu_{\text{\tiny&space;SNH}}}{2}&space;\log&space;\left(\mathrm{tr}(F^TF)&space;&plus;&space;1\right)&space;&plus;&space;\frac{\lambda_{\text{\tiny&space;SNH}}}{2}(J&space;-&space;\alpha)^2"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\Psi_{\text{\tiny&space;SNH}}(F)&space;=&space;\frac{\mu_{\text{\tiny&space;SNH}}}{2}\left(\mathrm{tr}(F^TF)&space;-&space;3\right)&space;-&space;\frac{\mu_{\text{\tiny&space;SNH}}}{2}&space;\log&space;\left(\mathrm{tr}(F^TF)&space;&plus;&space;1\right)&space;&plus;&space;\frac{\lambda_{\text{\tiny&space;SNH}}}{2}(J&space;-&space;\alpha)^2"
+title="\Psi_{\text{\tiny SNH}}(F) = \frac{\mu_{\text{\tiny SNH}}}{2}\left(\mathrm{tr}(F^TF) -
+3\right) - \frac{\mu_{\text{\tiny SNH}}}{2} \log \left(\mathrm{tr}(F^TF) + 1\right) +
+\frac{\lambda_{\text{\tiny SNH}}}{2}(J - \alpha)^2" /></a>
+
+            where
+
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\alpha&space;=&space;1&space;&plus;&space;\frac{\mu_{\text{\tiny&space;SNH}}}{\lambda_{\text{\tiny&space;SNH}}}&space;-&space;\frac{\mu_{\text{\tiny&space;SNH}}\lambda_{\text{\tiny&space;SNH}}}{4}"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\alpha&space;=&space;1&space;&plus;&space;\frac{\mu_{\text{\tiny&space;SNH}}}{\lambda_{\text{\tiny&space;SNH}}}&space;-&space;\frac{\mu_{\text{\tiny&space;SNH}}\lambda_{\text{\tiny&space;SNH}}}{4}"
+title="\alpha = 1 + \frac{\mu_{\text{\tiny SNH}}}{\lambda_{\text{\tiny SNH}}} -
+\frac{\mu_{\text{\tiny SNH}}\lambda_{\text{\tiny SNH}}}{4}" /></a>
+
+            and the SNH specialized parameters can be written in terms of the standard Lamé parameters as
+
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\begin{align*}&space;\lambda_{\text{\tiny&space;SNH}}&space;&=&space;\lambda&space;&plus;&space;\tfrac{5}{6}\mu&space;\\&space;\mu_{\text{\tiny&space;SNH}}&space;&=&space;\tfrac{4}{3}\mu&space;\end{align*}"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\begin{align*}&space;\lambda_{\text{\tiny&space;SNH}}&space;&=&space;\lambda&space;&plus;&space;\tfrac{5}{6}\mu&space;\\&space;\mu_{\text{\tiny&space;SNH}}&space;&=&space;\tfrac{4}{3}\mu&space;\end{align*}"
+title="\begin{align*} \lambda_{\text{\tiny SNH}} &= \lambda + \tfrac{5}{6}\mu \\ \mu_{\text{\tiny
+SNH}} &= \tfrac{4}{3}\mu \end{align*}" /></a>
+
+    Bending Stiffness:
+        #channels: /bendingstiffness#
+        The resistance to bending for shell materials.
+
+        Larger values will make the corresponding shell to be harder to bend.
+
+        Care must be taken when setting this parameter. When this value is too large with respect to
+        membrane stiffnesses, the shell may produce unwanted artifacts (knots) during contact with
+        other objects.
+
+        This parameter is unitless.
+
+    Density:
+        #channels: /density#
+        Mass per unit volume for solids or mass per unit area for shells.
+
+        Density is set in kg/m^3 for solids and kg/m^2 for shells.
+
+    Damping:
+        #channels: /damping#
+        Damping controls the force that opposes the motion of the object.
+
+        Larger values of this parameter will limit elastic oscillations and generally will slow down
+        otherwise dynamic motion.
+
+    Stiffness Type:
+        #channels: /stiffnesstype#
+        The resistance to volume change shear due to deformation can be specified in various ways.
+
+        Two common parameterizations are provided.
+
+        Young's Modulus and Poisson's Ratio:
+            See __Young's Modulus__ and __Poisson's Ratio__ for details and definitions.
+
+            The Lamé parameters can be expressed in terms of Young's modulus and Poisson's ratio as
+
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\begin{align*}&space;\lambda&space;&=&space;\frac{E\nu}{(1&plus;\nu)(1-2\nu)}&space;\\&space;\mu&space;&=&space;\frac{E}{2(1&plus;\nu)}&space;\end{align*}"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\begin{align*}&space;\lambda&space;&=&space;\frac{E\nu}{(1&plus;\nu)(1-2\nu)}&space;\\&space;\mu&space;&=&space;\frac{E}{2(1&plus;\nu)}&space;\end{align*}"
+title="\begin{align*} \lambda &= \frac{E\nu}{(1+\nu)(1-2\nu)} \\ \mu &= \frac{E}{2(1+\nu)}
+\end{align*}" /></a>
+
+        Shear and Bulk Moduli:
+            See __Shape Stiffness__ and __Volume Stiffness__ (also known as Shear and Bulk modulii)
+            for details and definitions.
+
+            The First Lamé parameter can be expressed in terms of *Shear* and *Bulk Modulii* as
+
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\begin{align*}&space;\lambda&space;&=&space;K&space;-&space;\frac{2\mu}{3}&space;\end{align*}"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\begin{align*}&space;\lambda&space;&=&space;K&space;-&space;\frac{2\mu}{3}&space;\end{align*}"
+title="\begin{align*} \lambda &= K - \frac{2\mu}{3} \end{align*}" /></a>
+    
+
+        Young's Modulus:
+            Defines the stress over strain ratio for uniaxial deformation and given in KPa (Kilo-
+            Pascals).
+
+            In other words it is the object's resistance to stretch and compression in one
+            direction -- how hard it is to squish or stretch the object.
+
+            Young's modulus is often mathematically written as E.
+
+        Poisson's Ratio:
+            Defines the amount of expansion or contraction of a material in the directions
+            perpendicular to the loading direction.
+        
+            More simply, Poisson's ratio controls the local incompressibility of an elastic
+            material.
+
+            Poisson's ratio is often mathematically written as ν.
+
+        Shape Stiffness:
+            Material resistance to shearing and given in KPa (Kilo-Pascals).
+
+            This is precisely the Second Lamé parameter μ and is often called the *Shear Modulus*.
+
+        Volume Stiffness:
+            Resistance to compression given in KPa (Kilo-Pascals). This is often called *Bulk
+            Modulus*.
+
+            This parameter is often confused with the First Lamé parameter, but it is nevertheless
+            closely related. It is often mathematically written as K and can be expressed in terms
+            of the Lamé parameters as
+            
+            <a
+href="https://www.codecogs.com/eqnedit.php?latex=\begin{align*}&space;K&space;&=&space;\lambda&space;&plus;&space;\frac{2\mu}{3}&space;\end{align*}"
+target="_blank"><img
+src="https://latex.codecogs.com/gif.latex?\begin{align*}&space;K&space;&=&space;\lambda&space;&plus;&space;\frac{2\mu}{3}&space;\end{align*}"
+title="\begin{align*} K &= \lambda + \frac{2\mu}{3} \end{align*}" /></a>
+            
+
+    Use Fixed for Implicit:
+        #channels: /usefixed#
+        Use fixed vertices when constructing the implicit surface.
+
+        It is common for simulations to be driven by animated vertices on the interior of a mesh.
+        Often interior tets are removed, creating an artificial surface that is not inteded to
+        represent the actual surface of the object. This surface is usually marked as fixed
+        (or animated). Unchecking this box will allow the part of the surface with fixed vertices to
+        affect the implicit contact surface geometry. Fixed vertices are determined by the point
+        attribute named "fixed".
+
+@related
+- [Node:sop/solver]

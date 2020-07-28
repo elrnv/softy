@@ -1,12 +1,10 @@
 pub mod aref;
 pub mod index;
 //pub mod soap;
-pub mod zip;
 
 /**
  * This crate provides various convenience functions and utilities.
  */
-pub use crate::zip::*;
 
 #[macro_export]
 macro_rules! iter_vals {

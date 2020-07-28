@@ -1829,11 +1829,10 @@ mod tests {
             ..Default::default()
         };
 
-        let tet = geo::mesh::TriMesh::from(PlatonicSolidBuilder::build_tetrahedron());
+        let (tet_verts, tet_faces) = make_tet();
+        let tet = geo::mesh::TriMesh::new(tet_verts.clone(), tet_faces);
         let surf =
             crate::mls_from_trimesh(&tet, params).expect("Failed to create a surface for a tet.");
-
-        let (tet_verts, _) = make_tet(); // expect this to be the same as in make_regular_tet.
 
         // Convert tet vertices into varibales because we are taking the derivative with respect to
         // vertices.
@@ -1872,6 +1871,8 @@ mod tests {
             jac[idx.1][idx.0] += val;
         }
 
+        let mut success = true;
+
         for pidx in 0..ad_tet_verts.len() {
             for i in 0..3 {
                 ad_tet_verts[pidx][i] = F1::var(ad_tet_verts[pidx][i]);
@@ -1882,25 +1883,28 @@ mod tests {
 
                 let col = 3 * pidx + i;
                 for row in 0..3 {
-                    //if !relative_eq!(
-                    //    jac[col][row],
-                    //    potential[row].deriv(),
-                    //    max_relative = 1e-5,
-                    //    epsilon = 1e-10
-                    //) {
-                    //    println!("({:?}, {:?}) => {:?} vs {:?}", row, col, jac[col][row], potential[row].deriv());
-                    //}
-                    assert_relative_eq!(
+                    if !relative_eq!(
                         jac[col][row],
                         potential[row].deriv(),
                         max_relative = 1e-5,
                         epsilon = 1e-10
-                    );
+                    ) {
+                        success = false;
+                        println!(
+                            "({:?}, {:?}) => {:?} vs {:?}",
+                            row,
+                            col,
+                            jac[col][row],
+                            potential[row].deriv()
+                        );
+                    }
                 }
 
                 ad_tet_verts[pidx][i] = F1::cst(ad_tet_verts[pidx][i]);
             }
         }
+
+        assert!(success);
     }
 
     #[test]

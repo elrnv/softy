@@ -11,8 +11,7 @@ use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use tensr::{IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
-use utils::zip;
+use tensr::{zip, IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
 
 macro_rules! apply_kernel_query_fn_impl_iter {
     ($surf:expr, $f:expr, ?) => {{

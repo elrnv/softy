@@ -6,7 +6,6 @@ use ipopt::{self, Index, Ipopt, Number};
 use super::FrictionSolveResult;
 use tensr::*;
 use unroll::unroll_for_loops;
-use utils::zip;
 
 use crate::Error;
 

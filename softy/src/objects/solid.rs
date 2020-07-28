@@ -82,16 +82,24 @@ impl TetMeshSolid {
     }
 
     /// Build the surface of the underlying `TetMesh`.
+    #[inline]
     pub(crate) fn surface(&self, use_fixed: bool) -> &TetMeshSurface {
         if use_fixed {
-            self.surface
-                .borrow_with(|| TetMeshSurface::from(&self.tetmesh))
+            self.entire_surface()
         } else {
             self.deforming_surface()
         }
     }
 
+    /// Build the entire surface of the underlying `TetMesh`.
+    #[inline]
+    pub(crate) fn entire_surface(&self) -> &TetMeshSurface {
+        self.surface
+            .borrow_with(|| TetMeshSurface::from(&self.tetmesh))
+    }
+
     /// Build the deforming part of the surface of the underlying `TetMesh`.
+    #[inline]
     pub(crate) fn deforming_surface(&self) -> &TetMeshSurface {
         self.deforming_surface
             .borrow_with(|| TetMeshSurface::new(&self.tetmesh, false))
@@ -101,6 +109,7 @@ impl TetMeshSolid {
 impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>>>
     for TetMeshSolid
 {
+    #[inline]
     fn elasticity(
         &'a self,
     ) -> Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>> {
@@ -112,12 +121,14 @@ impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHooke
 }
 
 impl<'a> Inertia<'a, TetMeshInertia<'a>> for TetMeshSolid {
+    #[inline]
     fn inertia(&'a self) -> TetMeshInertia<'a> {
         TetMeshInertia(self)
     }
 }
 
 impl<'a> Gravity<'a, TetMeshGravity<'a>> for TetMeshSolid {
+    #[inline]
     fn gravity(&'a self, g: [f64; 3]) -> TetMeshGravity<'a> {
         TetMeshGravity::new(self, g)
     }
@@ -162,13 +173,22 @@ impl TetMeshSurface {
                 .collect();
 
             let meshes = trimesh.split(&partition, 2);
-            trimesh = if meshes.len() > 1 {
-                meshes.into_iter().next().unwrap()
+            if meshes.len() > 1 {
+                trimesh = meshes.into_iter().next().unwrap();
+                // Filter out indices that correspond to fixed vertices.
+                indices = indices
+                    .into_iter()
+                    .zip(partition.iter())
+                    .filter_map(|(idx, &part)| if part < 1 { Some(idx) } else { None })
+                    .collect();
             } else {
                 // This will be the case when all vertices are fixed.
-                TriMesh::new(vec![], vec![])
-            };
+                trimesh = TriMesh::new(vec![], vec![]);
+                indices = vec![];
+            }
         }
+
+        debug_assert_eq!(trimesh.num_vertices(), indices.len());
 
         // Sort trimesh vertices according to their order in the original tetmesh.
         trimesh.sort_vertices_by_key(|k| indices[k]);
@@ -188,6 +208,7 @@ impl From<&TetMesh> for TetMeshSurface {
     /// Extract the triangle surface of this tetmesh.
     ///
     /// The returned trimesh maintains a link to the original tetmesh via the `indices` vector.
+    #[inline]
     fn from(tetmesh: &TetMesh) -> TetMeshSurface {
         TetMeshSurface::new(tetmesh, true)
     }

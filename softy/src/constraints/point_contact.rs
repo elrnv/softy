@@ -19,7 +19,6 @@ use rayon::iter::Either;
 #[cfg(feature = "af")]
 use reinterpret::*;
 use tensr::*;
-use utils::zip;
 
 /// Data needed to build a mass matrxi
 #[derive(Clone, Debug, PartialEq)]

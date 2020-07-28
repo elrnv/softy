@@ -1,9 +1,7 @@
 #![allow(dead_code)]
 use crate::contact::*;
 use reinterpret::*;
-use tensr::{Matrix3, Vector2};
-
-use utils::zip;
+use tensr::{zip, Matrix3, Vector2};
 
 /// Contact solver.
 pub struct ContactSolver<'a, CJI> {

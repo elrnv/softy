@@ -3,8 +3,6 @@ use super::{FrictionParams, FrictionSolveResult};
 use crate::contact::*;
 use tensr::*;
 
-use utils::zip;
-
 /// Friction solver.
 pub struct FrictionSolver<'a> {
     /// A set of tangential momenta in contact space for active contacts. These are used to

@@ -13,7 +13,6 @@ use geo::ops::*;
 use geo::prim::Triangle;
 use rayon::iter::Either;
 use tensr::*;
-use utils::zip;
 
 use crate::attrib_defines::*;
 use crate::energy::*;

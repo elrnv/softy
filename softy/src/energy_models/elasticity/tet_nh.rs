@@ -17,7 +17,6 @@ use rayon::prelude::*;
 use reinterpret::*;
 use tensr::*;
 use unroll::unroll_for_loops;
-use utils::zip;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.

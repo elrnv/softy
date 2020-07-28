@@ -2,10 +2,10 @@ use num_traits::FromPrimitive;
 //use rayon::prelude::*;
 use reinterpret::*;
 
+use flatk::zip;
 use geo::mesh::{topology::*, Attrib};
 use geo::prim::Tetrahedron;
 use tensr::{Real, Vector3};
-use utils::zip;
 
 use crate::attrib_defines::*;
 use crate::energy::*;

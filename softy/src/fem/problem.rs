@@ -6,7 +6,6 @@ use crate::TriMesh;
 use flatk::Entity;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use tensr::*;
-use utils::zip;
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
@@ -45,6 +44,7 @@ impl Default for Solution {
 
 /// Materialize a solution from the references got from Ipopt.
 impl<'a> From<ipopt::Solution<'a>> for Solution {
+    #[inline]
     fn from(sol: ipopt::Solution<'a>) -> Solution {
         let mut mysol = Solution::default();
         mysol.update(sol);
@@ -198,25 +198,6 @@ pub struct VertexState<X, V> {
     pub vel: V,
 }
 
-// TODO: port this impl to Entity derive
-impl<'a, X, V> VertexState<&'a mut [X], &'a mut [V]> {
-    pub fn iter_mut<'b>(&'b mut self) -> impl Iterator<Item = VertexState<&'b mut X, &'b mut V>> {
-        self.pos
-            .iter_mut()
-            .zip(self.vel.iter_mut())
-            .map(|(pos, vel)| VertexState { pos, vel })
-    }
-}
-// TODO: port this impl to Entity derive
-impl<'a, X, V> VertexState<&'a [X], &'a [V]> {
-    pub fn iter<'b>(&'b self) -> impl Iterator<Item = VertexState<&'b X, &'b V>> {
-        self.pos
-            .iter()
-            .zip(self.vel.iter())
-            .map(|(pos, vel)| VertexState { pos, vel })
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
 pub struct VertexWorkspace<X, V, G> {
     #[entity]
@@ -224,27 +205,6 @@ pub struct VertexWorkspace<X, V, G> {
     /// Gradient for all meshes for which the generalized coordinates don't coincide
     /// with vertex positions.
     pub grad: G,
-}
-
-// TODO: port this impl to Entity derive
-impl<'a, X, V, G> VertexWorkspace<&'a mut [X], &'a mut [V], &'a mut [G]> {
-    pub fn iter_mut<'b>(
-        &'b mut self,
-    ) -> impl Iterator<Item = VertexWorkspace<&'b mut X, &'b mut V, &'b mut G>> {
-        self.state
-            .iter_mut()
-            .zip(self.grad.iter_mut())
-            .map(|(state, grad)| VertexWorkspace { state, grad })
-    }
-}
-// TODO: port this impl to Entity derive
-impl<'a, X, V, G> VertexWorkspace<&'a [X], &'a [V], &'a [G]> {
-    pub fn iter<'b>(&'b self) -> impl Iterator<Item = VertexWorkspace<&'b X, &'b V, &'b G>> {
-        self.state
-            .iter()
-            .zip(self.grad.iter())
-            .map(|(state, grad)| VertexWorkspace { state, grad })
-    }
 }
 
 /// A generic `Vertex` with past and present states.
@@ -259,25 +219,6 @@ pub struct Vertex<X, V> {
     pub cur: VertexState<X, V>,
 }
 
-// TODO: port this impl to Entity derive
-impl<'a, X, V> Vertex<&'a mut [X], &'a mut [V]> {
-    pub fn iter_mut<'b>(&'b mut self) -> impl Iterator<Item = Vertex<&'b mut X, &'b mut V>> {
-        self.prev
-            .iter_mut()
-            .zip(self.cur.iter_mut())
-            .map(|(prev, cur)| Vertex { prev, cur })
-    }
-}
-// TODO: port this impl to Entity derive
-impl<'a, X, V> Vertex<&'a [X], &'a [V]> {
-    pub fn iter<'b>(&'b self) -> impl Iterator<Item = Vertex<&'b X, &'b V>> {
-        self.prev
-            .iter()
-            .zip(self.cur.iter())
-            .map(|(prev, cur)| Vertex { prev, cur })
-    }
-}
-
 /// Generalized coordinate `q`, and its time derivative `dq`, which is short for `dq/dt`.
 ///
 /// This can be a vertex position and velocity as in `VertexState` or an axis angle and its rotation
@@ -288,27 +229,6 @@ pub struct GeneralizedState<Q, D> {
     pub dq: D,
 }
 
-// TODO: port this impl to Entity derive
-impl<'a, X, V> GeneralizedState<&'a mut [X], &'a mut [V]> {
-    pub fn iter_mut<'b>(
-        &'b mut self,
-    ) -> impl Iterator<Item = GeneralizedState<&'b mut X, &'b mut V>> {
-        self.q
-            .iter_mut()
-            .zip(self.dq.iter_mut())
-            .map(|(q, dq)| GeneralizedState { q, dq })
-    }
-}
-// TODO: port this impl to Entity derive
-impl<'a, X, V> GeneralizedState<&'a [X], &'a [V]> {
-    pub fn iter<'b>(&'b self) -> impl Iterator<Item = GeneralizedState<&'b X, &'b V>> {
-        self.q
-            .iter()
-            .zip(self.dq.iter())
-            .map(|(q, dq)| GeneralizedState { q, dq })
-    }
-}
-
 /// Generalized coordinates with past and present states.
 #[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
 pub struct GeneralizedCoords<X, V> {
@@ -316,27 +236,6 @@ pub struct GeneralizedCoords<X, V> {
     pub prev: GeneralizedState<X, V>,
     #[entity]
     pub cur: GeneralizedState<X, V>,
-}
-
-// TODO: port this impl to Entity derive
-impl<'a, X, V> GeneralizedCoords<&'a mut [X], &'a mut [V]> {
-    pub fn iter_mut<'b>(
-        &'b mut self,
-    ) -> impl Iterator<Item = GeneralizedCoords<&'b mut X, &'b mut V>> {
-        self.prev
-            .iter_mut()
-            .zip(self.cur.iter_mut())
-            .map(|(prev, cur)| GeneralizedCoords { prev, cur })
-    }
-}
-// TODO: port this impl to Entity derive
-impl<'a, X, V> GeneralizedCoords<&'a [X], &'a [V]> {
-    pub fn iter<'b>(&'b self) -> impl Iterator<Item = GeneralizedCoords<&'b X, &'b V>> {
-        self.prev
-            .iter()
-            .zip(self.cur.iter())
-            .map(|(prev, cur)| GeneralizedCoords { prev, cur })
-    }
 }
 
 pub type SurfaceVertexData<D> = Subset<D>;
@@ -357,7 +256,7 @@ pub type VertexView3<'i, D> = VertexView<'i, Chunked3<D>>;
 pub type GeneralizedData3<D> = GeneralizedData<Chunked3<D>>;
 pub type GeneralizedView3<'i, D> = GeneralizedView<'i, Chunked3<D>>;
 
-/// Variables and their integrals precomputed for processing.
+/// Variables and their integrated values precomputed for processing.
 ///
 /// This is a helper struct for `ObjectData`.
 #[derive(Clone, Debug)]
@@ -375,7 +274,9 @@ pub struct WorkspaceData {
 }
 
 // TODO: update this doc:
-/// This set collects all simulated vertex data. Meshes that are not simulated are excluded.
+/// Simulation vertex and mesh data.
+///
+/// Meshes that are not simulated are excluded.
 /// The data is chunked into solids/shells, then into a subset of individual
 /// meshes, and finally into x,y,z coordinates. Rigid shells have 6 degrees of
 /// freedom, 3 for position and 3 for rotation, so a rigid shell will correspond
@@ -434,6 +335,7 @@ impl ObjectData {
         Chunked::from_offsets(vec![0, num_solids, num_solids + num_shells], out)
     }
 
+    #[inline]
     pub fn next_pos<'x>(
         &'x self,
         x: GeneralizedView3<'x, &'x [f64]>,
@@ -446,6 +348,7 @@ impl ObjectData {
         self.mesh_vertex_subset(x, pos, src_idx)
     }
 
+    #[inline]
     pub fn cur_pos(&self, src_idx: SourceObject) -> SurfaceVertexView3<&[f64]> {
         let ObjectData { dof, vtx, .. } = self;
         self.mesh_vertex_subset(
@@ -455,6 +358,7 @@ impl ObjectData {
         )
     }
 
+    #[inline]
     pub fn next_vel<'x>(
         &'x self,
         v: GeneralizedView3<'x, &'x [f64]>,
@@ -467,6 +371,7 @@ impl ObjectData {
         self.mesh_vertex_subset(v, vel, src_idx)
     }
 
+    #[inline]
     pub fn prev_vel(&self, src_idx: SourceObject) -> SurfaceVertexView3<&[f64]> {
         let ObjectData { dof, vtx, .. } = self;
         self.mesh_vertex_subset(
@@ -536,6 +441,7 @@ impl ObjectData {
         }
     }
 
+    #[inline]
     pub fn mesh_surface_vertex_count(&self, source: SourceObject) -> usize {
         match source {
             SourceObject::Solid(i, with_fixed) => self.solids[i].surface(with_fixed).indices.len(),
@@ -545,6 +451,7 @@ impl ObjectData {
 
     /// A utility function to find the coordinates of the given solid surface vertex index inside the
     /// global array of variables.
+    #[inline]
     fn tetmesh_solid_vertex_coordinates(
         &self,
         mesh_index: usize,
@@ -558,6 +465,7 @@ impl ObjectData {
 
     /// A utility function to find the coordinates of the given soft shell surface vertex index inside the
     /// global array of variables.
+    #[inline]
     fn soft_trimesh_shell_vertex_coordinates(&self, mesh_index: usize, coord: usize) -> usize {
         let surf_vtx_idx = coord / 3;
         let q = self.dof.view().at(1);
@@ -571,6 +479,7 @@ impl ObjectData {
     /// simulation coordinate index in our global array of generalized coordinates.
     ///
     /// If `None` is returned, it means the coordinate belongs to a rigid object vertex.
+    #[inline]
     pub fn source_coordinate(&self, index: SourceObject, coord: usize) -> Option<usize> {
         match index {
             SourceObject::Solid(i, with_fixed) => {
@@ -586,6 +495,7 @@ impl ObjectData {
     }
 
     /// Produce an iterator over the given slice of scaled variables.
+    #[inline]
     pub(crate) fn scaled_variables_iter<'a>(
         unscaled_var: &'a [Number],
         scale: Number,
@@ -593,6 +503,7 @@ impl ObjectData {
         unscaled_var.iter().map(move |&val| val * scale)
     }
 
+    #[inline]
     pub fn update_workspace_velocity(&self, uv: &[Number], scale: f64) {
         let mut ws = self.workspace.borrow_mut();
         let sv = ws.dof.view_mut().into_storage().dq;
@@ -1634,6 +1545,7 @@ impl NonLinearProblem {
         forces.iter().map(|&cf| cf * scale).collect()
     }
 
+    #[inline]
     pub fn num_frictional_contacts(&self) -> usize {
         self.frictional_contacts.len()
     }
@@ -2185,7 +2097,7 @@ impl NonLinearProblem {
         use geo::prim::Triangle;
         let mut vertex_areas = self.object_data.build_vertex_data();
         for (idx, solid) in self.object_data.solids.iter().enumerate() {
-            let TetMeshSurface { trimesh, indices } = &solid.surface(false);
+            let TetMeshSurface { trimesh, indices } = &solid.entire_surface();
             for face in trimesh.face_iter() {
                 let area_third =
                     Triangle::from_indexed_slice(face, trimesh.vertex_positions()).area() / 3.0;

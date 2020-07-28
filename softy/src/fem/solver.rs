@@ -10,7 +10,6 @@ use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use num_traits::Zero;
 use std::cell::RefCell;
 use tensr::*;
-use utils::zip;
 
 use crate::inf_norm;
 

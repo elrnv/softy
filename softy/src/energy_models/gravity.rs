@@ -2,12 +2,12 @@ use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::*;
+use flatk::zip;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
 use reinterpret::*;
 use tensr::{Real, Vector3};
-use utils::zip;
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
 /// object.

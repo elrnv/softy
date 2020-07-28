@@ -1,10 +1,8 @@
 use super::FrictionParams;
 use crate::contact::*;
 use crate::energy_models::tet_nh::ElasticTetMeshEnergy;
-use geo::math::{Matrix3, Vector3, Vector2};
+use geo::math::{Matrix3, Vector2, Vector3};
 use reinterpret::*;
-
-use utils::zip;
 
 pub struct ElasticEnergyParams {
     pub energy_model: ElasticTetMeshEnergy,
@@ -33,14 +31,23 @@ pub enum ContactJacobian<'a, CJI> {
 impl<'a, CJI> ContactJacobian<'a, CJI> {
     fn matrix_sprs(&self) -> sprs::CsMat<f64> {
         match self {
-            ContactJacobian::Selection { nrows, ncols, indices } => {
+            ContactJacobian::Selection {
+                nrows,
+                ncols,
+                indices,
+            } => {
                 let nnz = surf_indices.len();
                 let values = vec![1.0; nnz];
                 let rows: Vec<_> = (0..nnz).collect();
                 let cols: Vec<_> = surf_indices.to_vec();
                 sprs::TriMat::from_triplets((nrows, ncols), rows, cols, values).to_csr()
             }
-            ContactJacobian::Full { nrows, ncols, blocks, block_indices } => {
+            ContactJacobian::Full {
+                nrows,
+                ncols,
+                blocks,
+                block_indices,
+            } => {
                 let values: &[f64] = reinterpret_slice(blocks);
                 let index_iter = block_index_iter.flat_map(move |(row_mtx, col_mtx)| {
                     (0..3)
@@ -131,7 +138,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ElasticFrictionSolver<'a, CJI> {
                 ncols: velocity.len(),
                 blocks: contact_jacobian.0,
                 block_indices: contact_jacobian.1,
-            }),
+            },
             masses,
             elastic_energy,
         }
@@ -149,9 +156,10 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ElasticFrictionSolver<'a, CJI> {
             ..
         } = self;
         let mut friction_impulse = vec![Vector3::zeros(); velocity.len()];
-        let mut mass_inv_triplets = sprs::TriMat::with_capacity((masses.len(), masses.len()), masses.len());
+        let mut mass_inv_triplets =
+            sprs::TriMat::with_capacity((masses.len(), masses.len()), masses.len());
         for (i, &m) in masses.iter().enumerate() {
-            mass_inv_triplets.add_triplet(i, i, 1.0/m);
+            mass_inv_triplets.add_triplet(i, i, 1.0 / m);
         }
         let mass_inv = mass_inv_triplets.to_csr();
         let basis = contact_basis.tangent_basis_matrix_sprs();
@@ -164,8 +172,11 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ElasticFrictionSolver<'a, CJI> {
         let vel = ndarray::Array::from_iter(flat_velocity.iter().map(|&v| -v));
 
         let mut rhs = &basis_tr_jac * &vel;
-        sprs::linalg::trisolve::lsolve_csr_dense_rhs(delassus.view(), rhs.view_mut().into_slice().unwrap())
-            .expect("Failed to solve for impulse.");
+        sprs::linalg::trisolve::lsolve_csr_dense_rhs(
+            delassus.view(),
+            rhs.view_mut().into_slice().unwrap(),
+        )
+        .expect("Failed to solve for impulse.");
 
         friction_impulse = reinterpret_vec(rhs.to_vec());
 

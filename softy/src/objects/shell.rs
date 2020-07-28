@@ -4,7 +4,6 @@ use geo::mesh::{attrib, topology::*, VertexPositions};
 use geo::ops::*;
 use num_traits::Zero;
 use tensr::*;
-use utils::*;
 
 use crate::attrib_defines::*;
 use crate::energy_models::elasticity::*;

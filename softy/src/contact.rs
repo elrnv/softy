@@ -5,7 +5,6 @@ use implicits::QueryTopo;
 use reinterpret::*;
 pub use solver::ContactSolver;
 use tensr::*;
-use utils::zip;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {

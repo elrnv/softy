@@ -6,7 +6,6 @@ use num_traits::Zero;
 use reinterpret::*;
 
 use tensr::*;
-use utils::zip;
 
 use crate::contact::*;
 use crate::Error;

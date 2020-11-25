@@ -1,6 +1,8 @@
 pub mod aref;
-pub mod index;
 //pub mod soap;
+
+pub use geo::index;
+pub use geo::index::CheckedIndex;
 
 /**
  * This crate provides various convenience functions and utilities.

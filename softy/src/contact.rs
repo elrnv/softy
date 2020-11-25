@@ -1,8 +1,8 @@
 mod solver;
 
 use crate::friction::FrictionParams;
+use crate::Index;
 use implicits::QueryTopo;
-use reinterpret::*;
 pub use solver::ContactSolver;
 use tensr::*;
 
@@ -123,8 +123,8 @@ impl<T: Real> Into<[T; 3]> for VectorCyl<T> {
 /// This struct defines the basis frame at the set of contact points.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContactBasis {
-    pub(crate) normals: Vec<[f64; 3]>,
-    pub(crate) tangents: Vec<[f64; 3]>,
+    pub normals: Vec<[f64; 3]>,
+    pub tangents: Vec<[f64; 3]>,
 }
 
 impl ContactBasis {
@@ -290,9 +290,9 @@ impl ContactBasis {
         let num_cols = n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
-            reinterpret_vec(rows),
-            reinterpret_vec(cols),
-            reinterpret_vec(bases),
+            Chunked3::from_array_vec(rows).into_storage(),
+            Chunked3::from_array_vec(cols).into_storage(),
+            Chunked3::from_array_vec(bases).into_storage(),
         )
         .to_csr()
     }
@@ -321,9 +321,9 @@ impl ContactBasis {
         let num_cols = 2 * n;
         sprs::TriMat::from_triplets(
             (num_rows, num_cols),
-            reinterpret_vec(rows),
-            reinterpret_vec(cols),
-            reinterpret_vec(bases),
+            Chunked3::from_array_vec(Chunked2::from_array_vec(rows).into_storage()).into_storage(),
+            Chunked3::from_array_vec(Chunked2::from_array_vec(cols).into_storage()).into_storage(),
+            Chunked3::from_array_vec(Chunked2::from_array_vec(bases).into_storage()).into_storage(),
         )
         .to_csr()
     }
@@ -389,7 +389,11 @@ impl ContactBasis {
     /// A convenience function for projecting onto the tangent space of this basis.
     ///
     /// This is a faster and more accurate way to compute:
-    /// ```ignore
+    /// ```
+    /// # let vecs = vec![[1.0;3];1];
+    /// # let normals = vecs.clone();
+    /// # let tangents = vecs.clone();
+    /// # let basis = softy::ContactBasis { normals, tangents };
     /// let vecs2d: Vec<_> = basis.to_tangent_space(&vecs).collect();
     /// let projected_vecs: Vec<_> = basis.from_tangent_space(&vecs2d).collect();
     /// ```
@@ -423,56 +427,184 @@ impl ContactBasis {
 
 /// An intermediate representation of a contact jacobian that makes it easy to
 /// convert to other sparse representations.
-pub(crate) struct TripletContactJacobian<I> {
-    pub iter: I,
-    pub blocks: Vec<tensr::Matrix3<f64>>,
+pub(crate) struct TripletContactJacobian {
+    pub block_indices: Vec<(usize, usize)>,
+    pub blocks: Chunked3<Chunked3<Vec<f64>>>,
     pub num_rows: usize,
     pub num_cols: usize,
 }
 
-pub(crate) fn build_triplet_contact_jacobian<'a>(
-    surf: &QueryTopo,
-    active_contact_points: SubsetView<'a, Chunked3<&'a [f64]>>,
-    query_points: Chunked3<&'a [f64]>,
-) -> TripletContactJacobian<impl Iterator<Item = (usize, usize)> + Clone + 'a> {
-    let mut orig_cj_matrices = vec![tensr::Matrix3::zeros(); surf.num_contact_jacobian_matrices()];
-    surf.contact_jacobian_matrices(
-        query_points.into(),
-        reinterpret_mut_slice(&mut orig_cj_matrices),
-    );
+impl TripletContactJacobian {
+    pub fn new() -> TripletContactJacobian {
+        TripletContactJacobian {
+            block_indices: Vec::new(),
+            blocks: Chunked3::from_flat(Chunked3::from_flat(Vec::new())),
+            num_rows: 0,
+            num_cols: 0,
+        }
+    }
 
-    let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
+    pub fn from_selection<'a>(
+        surf: &QueryTopo,
+        active_contact_points: SelectView<'a, Chunked3<&'a [f64]>>,
+    ) -> TripletContactJacobian {
+        let mut orig_cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices()];
+        let query_points = active_contact_points.target;
+        surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
 
-    let cj_matrices: Vec<_> = orig_cj_indices_iter
-        .clone()
-        .zip(orig_cj_matrices.into_iter())
-        .filter_map(|((row, _), matrix)| active_contact_points.find_by_index(row).map(|_| matrix))
-        .collect();
+        // Build a reverse map for mapping to active contacts
+        let mut active_contact_point_indices = vec![Index::INVALID; query_points.len()];
+        for (i, &acpi) in active_contact_points.index_iter().enumerate() {
+            active_contact_point_indices[acpi] = Index::new(i);
+        }
 
-    // Remap rows to match active constraints. This means that some entries of the raw jacobian
-    // will not have a valid entry in the pruned jacobian.
-    let cj_indices_iter = orig_cj_indices_iter
-        .filter_map(move |(row, col)| active_contact_points.find_by_index(row).map(|at| (at, col)));
+        let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
 
-    TripletContactJacobian {
-        iter: cj_indices_iter,
-        blocks: cj_matrices,
-        num_rows: active_contact_points.len(),
-        num_cols: surf.surface_vertex_positions().len(),
+        let cj_matrices: Vec<_> = orig_cj_indices_iter
+            .clone()
+            .zip(orig_cj_matrices.into_iter())
+            .filter_map(|((row, _), matrix)| {
+                active_contact_point_indices[row]
+                    .into_option()
+                    .map(|_| matrix)
+            })
+            .collect();
+
+        // Remap rows to match active constraints. This means that some entries of the raw jacobian
+        // will not have a valid entry in the pruned jacobian.
+        let cj_indices_iter = orig_cj_indices_iter.filter_map(move |(row, col)| {
+            active_contact_point_indices[row]
+                .into_option()
+                .map(|idx| (idx, col))
+        });
+
+        let blocks = Chunked3::from_flat(Chunked3::from_array_vec(
+            Chunked3::from_array_vec(cj_matrices).into_storage(),
+        ));
+
+        TripletContactJacobian {
+            block_indices: cj_indices_iter.collect(),
+            blocks,
+            num_rows: active_contact_points.len(),
+            num_cols: surf.surface_vertex_positions().len(),
+        }
+    }
+
+    /// Append a set of triplets to the current contact Jacobian set of triplets.
+    ///
+    /// This includes the Jacobian with respect to object vertices as well as collider vertices.
+    ///
+    /// Note that this function does *not* update `num_rows` and `num_cols` automatically.
+    ///
+    /// Along with the necessary data for constructing the contact jacobian, this function accepts
+    /// three offsets intended to position this jacobian inside the global contact jacobian matrix.
+    ///
+    /// The columns of the contact jacobian are indexed by surface vertex indices in the entire
+    /// surface (as opposed to a subset) for objects and colliders.
+    pub fn append_selection<'a>(
+        &mut self,
+        surf: &QueryTopo,
+        active_contact_points: SelectView<'a, Chunked3<&'a [f64]>>,
+        contact_offset: usize,
+        object_offset: usize,
+        collider_offset: usize,
+    ) {
+        let TripletContactJacobian {
+            block_indices,
+            blocks,
+            ..
+        } = self;
+
+        // First we append the contact jacobian with respect to object vertices.
+
+        let mut orig_cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices()];
+        let query_points = active_contact_points.target;
+        surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
+
+        // Build a reverse map for mapping to active contacts
+        let mut active_contact_point_indices = vec![Index::INVALID; query_points.len()];
+        for (i, &acpi) in active_contact_points.index_iter().enumerate() {
+            active_contact_point_indices[acpi] = Index::new(i);
+        }
+
+        let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
+
+        let mut cj_matrices: Vec<_> = orig_cj_indices_iter
+            .clone()
+            .zip(orig_cj_matrices.into_iter())
+            .filter_map(|((row, _), matrix)| {
+                active_contact_point_indices[row]
+                    .into_option()
+                    .map(|_| matrix)
+            })
+            .collect();
+
+        // Remap rows to match active constraints. This means that some entries of the raw jacobian
+        // will not have a valid entry in the pruned jacobian.
+        block_indices.extend(orig_cj_indices_iter.filter_map(move |(row, col)| {
+            active_contact_point_indices[row]
+                .into_option()
+                .map(|idx| (contact_offset + idx, object_offset + col))
+        }));
+
+        // Lastly we append the contact Jacobian with respect to collider vertices.
+
+        block_indices.extend(
+            active_contact_points
+                .index_iter()
+                .enumerate()
+                .map(|(i, &acp)| (i, collider_offset + acp)),
+        );
+
+        cj_matrices.extend(
+            (0..active_contact_points.len()).map(|_| Matrix3::<f64>::identity().into_data()),
+        );
+
+        // Convert blocks into Chunked types.
+        // TODO: make this type of conversion more ergonomic in flatk.
+
+        let chunked_matrices = Chunked3::from_flat(Chunked3::from_array_vec(
+            Chunked3::from_array_vec(cj_matrices).into_storage(),
+        ));
+
+        blocks.extend(chunked_matrices.into_iter());
     }
 }
 
 /// Contact jacobian maps values at the surface vertex positions (of the object)
-/// to query points (contact points). Not all contact points are active, so rows
-/// are sparse, and not all surface vertex positions are affected by each query
-/// point, so columns are also sparse.
-pub type ContactJacobian<T = f64> = SSBlockMatrix3<T>;
-pub type ContactJacobianView<'a, T = f64> = SSBlockMatrix3View<'a, T>;
+/// to query points (contact points).
+///
+/// Not all contact points are active, so rows are sparse, and not all surface vertex positions are
+/// affected by each query point, so columns are also sparse.
+pub type ContactJacobian<T = f64> = Tensor![T; S S 3 3]; // SSBlockMatrix3<T>;
+pub type ContactJacobianView<'a, T = f64> = Tensor![T; &'a S S 3 3]; //SSBlockMatrix3View<'a, T>;
 
-impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContactJacobian<I> {
+/// The global contact Jacobian maps values at the surface vertex positions (of all objects) to
+/// query points (contact points).
+///
+/// # Notes about sparsity
+///
+/// Not all objects are in contact (even if there is a constraint between them), so outer dimension
+/// is sparse.
+///
+/// Only two objects participate in the contact jacobian block row, so second dimension is sparse.
+///
+/// Not all contact points are active, so third dimension is sparse.
+///
+/// Finally not all surface vertex positions are affected by each query point, so the fourth
+/// dimension is also sparse.
+pub type GlobalContactJacobian<T = f64> = Tensor![T; S S S S 3 3];
+pub type GlobalContactJacobianView<'a, T = f64> = Tensor![T; &'a S S S S 3 3];
+
+impl Into<ContactJacobian> for TripletContactJacobian {
     fn into(self) -> ContactJacobian {
-        let blocks = Chunked3::from_flat(Chunked3::from_flat(reinterpret_vec(self.blocks)));
-        ContactJacobian::from_index_iter_and_data(self.iter, self.num_rows, self.num_cols, blocks)
+        SSBlockMatrix3::from_index_iter_and_data(
+            self.block_indices.iter().cloned(),
+            self.num_rows,
+            self.num_cols,
+            self.blocks,
+        )
+        .into_data()
     }
 }
 //
@@ -495,20 +627,18 @@ impl<I: Iterator<Item = (usize, usize)>> Into<ContactJacobian> for TripletContac
 //    }
 //}
 
-impl<I> Into<sprs::CsMat<f64>> for TripletContactJacobian<I>
-where
-    I: Iterator<Item = (usize, usize)>,
-{
+impl Into<sprs::CsMat<f64>> for TripletContactJacobian {
     // Compute contact jacobian
     fn into(self) -> sprs::CsMat<f64> {
         let (rows, cols) = self
-            .iter
+            .block_indices
+            .iter()
             .flat_map(move |(row_mtx, col_mtx)| {
                 (0..3).flat_map(move |i| (0..3).map(move |j| (3 * row_mtx + i, 3 * col_mtx + j)))
             })
             .unzip();
 
-        let values = reinterpret::reinterpret_vec(self.blocks);
+        let values = self.blocks.into_storage();
 
         sprs::TriMat::from_triplets((3 * self.num_rows, 3 * self.num_cols), rows, cols, values)
             .to_csr()
@@ -549,6 +679,15 @@ pub type DelassusView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 pub(crate) type EffectiveMassInv<T = f64> = DSBlockMatrix3<T>;
 pub(crate) type EffectiveMassInvView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 
+/// Global effective mass inverse.
+///
+/// The dimensions in order are as follows
+/// D D -> Dense object contact coupling (only active couplings are included)
+/// D D -> For each coupling only active contacts are considered.
+/// 3 3 -> Each vertex mass is a 3x3 block.
+pub(crate) type GlobalEffectiveMassInv<T = f64> = Tensor![T; D D D D 3 3];
+pub(crate) type GlobalEffectiveMassInvView<'a, T = f64> = Tensor![T; &'a D D D D 3 3];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,7 +702,7 @@ mod tests {
         let mut normals = vec![[0.0; 3]; trimesh.num_vertices()];
         geo::algo::compute_vertex_area_weighted_normals(
             trimesh.vertex_positions(),
-            reinterpret_slice(trimesh.indices.as_slice()),
+            trimesh.indices.as_slice(),
             &mut normals,
         );
 
@@ -572,7 +711,7 @@ mod tests {
             *n.as_mut_tensor() /= norm;
         }
 
-        basis.update_from_normals(reinterpret_vec(normals));
+        basis.update_from_normals(normals);
     }
 
     // Verify that converting to contact space and back to physical space produces the same
@@ -589,9 +728,7 @@ mod tests {
             let vecs = utils::random_vectors(trimesh.num_vertices());
 
             // Test euclidean basis
-            let contact_vecs: Vec<_> = basis
-                .to_tangent_space(reinterpret_slice(vecs.as_slice()))
-                .collect();
+            let contact_vecs: Vec<_> = basis.to_tangent_space(vecs.as_slice()).collect();
             let projected_physical_vecs: Vec<_> =
                 basis.from_tangent_space(contact_vecs.as_slice()).collect();
 
@@ -604,7 +741,7 @@ mod tests {
             }
 
             let projected_contact_vecs: Vec<_> = basis
-                .to_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()))
+                .to_tangent_space(projected_physical_vecs.as_slice())
                 .collect();
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
@@ -629,10 +766,10 @@ mod tests {
             }
 
             // Test cylindrical coordinates
-            let contact_vecs = basis.to_polar_tangent_space(reinterpret_slice(vecs.as_slice()));
+            let contact_vecs = basis.to_polar_tangent_space(vecs.as_slice());
             let projected_physical_vecs = basis.from_polar_tangent_space(contact_vecs.as_slice());
             let projected_contact_vecs =
-                basis.to_polar_tangent_space(reinterpret_slice(projected_physical_vecs.as_slice()));
+                basis.to_polar_tangent_space(projected_physical_vecs.as_slice());
 
             for (a, &b) in contact_vecs.into_iter().zip(projected_contact_vecs.iter()) {
                 assert_relative_eq!(a.radius, b.radius, max_relative = 1e-9);

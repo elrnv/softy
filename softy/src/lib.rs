@@ -33,13 +33,12 @@ pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
 pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 
 pub use self::contact::*;
-pub use self::contact::{ContactType, FrictionalContactParams};
 pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
 use geo::mesh::attrib;
-pub use utils::index::Index;
+pub use utils::index::{CheckedIndex, Index};
 
 pub use attrib_defines::*;
 

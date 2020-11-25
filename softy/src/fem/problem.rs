@@ -2,21 +2,24 @@ use std::cell::RefCell;
 
 use ipopt::{self, Number};
 
-use crate::TriMesh;
 use flatk::Entity;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
+use num_traits::Zero;
 use tensr::*;
 
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::constraints::{
-    point_contact::PointContactConstraint, volume::VolumeConstraint, ContactConstraint,
+    point_contact::{MassData, PointContactConstraint},
+    volume::VolumeConstraint,
+    ContactConstraint,
 };
+use crate::contact::{ContactJacobian, ContactJacobianView, TripletContactJacobian};
 use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::*;
-use crate::PointCloud;
+use crate::{PointCloud, TriMesh};
 
 #[derive(Clone)]
 pub struct Solution {
@@ -459,7 +462,7 @@ impl ObjectData {
         with_fixed: bool,
     ) -> usize {
         let surf_vtx_idx = coord / 3;
-        let offset = self.dof.view().at(0).offset_value(mesh_index);
+        let offset = self.dof.view().at(SOLIDS_INDEX).offset_value(mesh_index);
         3 * (offset + self.solids[mesh_index].surface(with_fixed).indices[surf_vtx_idx]) + coord % 3
     }
 
@@ -1013,6 +1016,28 @@ impl ObjectData {
             }
         }
     }
+
+    /// Returns the rigid motion translation and rotation for the given source object if it is rigid.
+    ///
+    /// If the object is non-rigid, `None` is returned.
+    #[inline]
+    fn rigid_motion(&self, src: SourceObject) -> Option<[[f64; 3]; 2]> {
+        let q_cur = self
+            .dof
+            .view()
+            .map_storage(|dof| dof.cur.q)
+            .at(SHELLS_INDEX);
+        if let SourceObject::Shell(idx) = src {
+            let q_cur = q_cur.at(idx);
+            if let ShellData::Rigid { .. } = self.shells[idx].data {
+                Some([q_cur[0], q_cur[1]])
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
@@ -1550,6 +1575,396 @@ impl NonLinearProblem {
         self.frictional_contacts.len()
     }
 
+    /// Construct the global contact Jacobian matrix.
+    ///
+    /// The contact Jacobian consists of blocks represeting contacts between pairs of objects.
+    /// Each block represets a particular coupling. Given two objects A and B, there can be two
+    /// types of coupling:
+    /// A is an implicit surface in contact with vertices of B and
+    /// B is an implicit surface in contact with vertices of A.
+    /// Both of these are valid for solids since they represent a volume, while cloth can only
+    /// collide against implicit surfaces (for now) and not vice versa.
+    pub fn construct_contact_jacobian(
+        &self,
+        solution: ipopt::Solution,
+        constraint_values: &[f64],
+        // TODO: Move to GlobalContactJacobian, which combines these two outputs.
+    ) -> (ContactJacobian, Chunked<Offsets<Vec<usize>>>) {
+        let NonLinearProblem {
+            ref frictional_contacts,
+            ref volume_constraints,
+            ref object_data,
+            ..
+        } = *self;
+
+        let mut jac_triplets = TripletContactJacobian::new();
+
+        if frictional_contacts.is_empty() {
+            return (
+                jac_triplets.into(),
+                Chunked::from_offsets(vec![0], Offsets::new(vec![])),
+            );
+        }
+
+        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
+
+        let dof_view = object_data.dof.view();
+
+        // A set of offsets indexing the beginnings of surface vertex slices for each object.
+        // This is different than their generalized coordinate offsets.
+        let mut surface_object_offsets = vec![0; 3];
+        let mut surface_vertex_offsets = vec![0; dof_view.data().len() + 1];
+        let mut surface_vertex_offset = 0;
+        let mut idx = 1;
+
+        for object_dofs in dof_view.iter() {
+            for (solid_idx, _) in object_dofs.iter().enumerate() {
+                surface_vertex_offsets[idx] = surface_vertex_offset;
+                surface_vertex_offset += object_data.solids[solid_idx]
+                    .entire_surface()
+                    .trimesh
+                    .num_vertices();
+                idx += 1;
+            }
+            surface_object_offsets[SOLIDS_INDEX + 1] = surface_vertex_offset;
+            for (shell_idx, _) in object_dofs.iter().enumerate() {
+                surface_vertex_offsets[idx] = surface_vertex_offset;
+                surface_vertex_offset += object_data.shells[shell_idx].trimesh.num_vertices();
+                idx += 1;
+            }
+            surface_object_offsets[SHELLS_INDEX + 1] = surface_vertex_offset;
+        }
+
+        // Separate offsets by type of mesh for easier access.
+        let surface_vertex_offsets =
+            Chunked::from_offsets(surface_object_offsets, Offsets::new(surface_vertex_offsets));
+        let surface_vertex_offsets_view = surface_vertex_offsets.view();
+
+        let mut contact_offset = 0;
+
+        for fc in frictional_contacts.iter() {
+            let n = fc.constraint.borrow().constraint_size();
+            let constraint_offset = contact_offset + volume_constraints.len();
+
+            // Get the normal component of the contact impulse.
+            let contact_impulse = Self::contact_impulse_magnitudes(
+                &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
+                multiplier_impulse_scale,
+            );
+
+            log::debug!(
+                "Maximum contact impulse: {}",
+                crate::inf_norm(contact_impulse.iter().cloned())
+            );
+
+            let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
+
+            let (_, active_contact_indices, _) = fc
+                .constraint
+                .borrow()
+                .in_contact_indices(&contact_impulse, potential_values);
+
+            let object_vertex_offset = match fc.object_index {
+                SourceObject::Solid(i, _) => *surface_vertex_offsets_view.at(SOLIDS_INDEX).at(i),
+                SourceObject::Shell(i) => *surface_vertex_offsets_view.at(SHELLS_INDEX).at(i),
+            };
+            let collider_vertex_offset = match fc.collider_index {
+                SourceObject::Solid(i, _) => *surface_vertex_offsets_view.at(SOLIDS_INDEX).at(i),
+                SourceObject::Shell(i) => *surface_vertex_offsets_view.at(SHELLS_INDEX).at(i),
+            };
+
+            fc.constraint.borrow().append_contact_jacobian_triplets(
+                &mut jac_triplets,
+                &active_contact_indices,
+                contact_offset,
+                object_vertex_offset,
+                collider_vertex_offset,
+            );
+
+            contact_offset += n;
+        }
+
+        jac_triplets.num_rows = contact_offset;
+        jac_triplets.num_cols = surface_vertex_offsets_view.data().last_offset();
+
+        let jac: ContactJacobian = jac_triplets.into();
+        (
+            jac.into_tensor()
+                .pruned(|_, _, block| !block.is_zero())
+                .into_data(),
+            surface_vertex_offsets,
+        )
+    }
+
+    pub fn construct_effective_mass_inv(
+        &self,
+        solution: ipopt::Solution,
+        constraint_values: &[f64],
+        jac: ContactJacobianView,
+        surface_vertex_offsets: ChunkedView<Offsets<&[usize]>>,
+    ) -> Tensor![f64; S S 3 3] {
+        let NonLinearProblem {
+            ref frictional_contacts,
+            ref volume_constraints,
+            ref object_data,
+            ..
+        } = *self;
+
+        // TODO: improve this computation by avoiding intermediate mass matrix computation.
+
+        // Size of the effective mass matrix in each dimension.
+        let size = jac.into_tensor().num_cols();
+
+        let mut blocks = Vec::with_capacity(size);
+        let mut block_indices = Vec::with_capacity(size);
+
+        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
+
+        let mut contact_offset = 0;
+
+        for fc in frictional_contacts.iter() {
+            let FrictionalContactConstraint {
+                object_index,
+                collider_index,
+                constraint,
+            } = fc;
+
+            let constraint = constraint.borrow();
+
+            let n = constraint.constraint_size();
+            let constraint_offset = contact_offset + volume_constraints.len();
+
+            // Get the normal component of the contact impulse.
+            let contact_impulse = Self::contact_impulse_magnitudes(
+                &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
+                multiplier_impulse_scale,
+            );
+
+            log::debug!(
+                "Maximum contact impulse: {}",
+                crate::inf_norm(contact_impulse.iter().cloned())
+            );
+
+            let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
+
+            let (_, active_contact_indices, _) =
+                constraint.in_contact_indices(&contact_impulse, potential_values);
+
+            let PointContactConstraint {
+                implicit_surface: ref surf,
+                ref contact_points,
+                ref object_mass_data,
+                ref collider_mass_data,
+                ..
+            } = *constraint;
+
+            let start_object = match object_index {
+                SourceObject::Solid(i, _) => *surface_vertex_offsets.at(SOLIDS_INDEX).at(i),
+                SourceObject::Shell(i) => *surface_vertex_offsets.at(SHELLS_INDEX).at(i),
+            };
+            let start_collider = match collider_index {
+                SourceObject::Solid(i, _) => *surface_vertex_offsets.at(SOLIDS_INDEX).at(i),
+                SourceObject::Shell(i) => *surface_vertex_offsets.at(SHELLS_INDEX).at(i),
+            };
+
+            let surf_neigh_indices = surf.neighbourhood_vertex_indices();
+
+            match object_mass_data {
+                MassData::Sparse(vertex_masses) => {
+                    blocks.extend(
+                        surf_neigh_indices
+                            .iter()
+                            .map(|&i| Matrix3::diag(&vertex_masses[i][..]).into_data()),
+                    );
+                    block_indices.extend(
+                        surf_neigh_indices
+                            .iter()
+                            .map(|&i| (start_object + i, start_object + i)),
+                    );
+                }
+                MassData::Dense(mass, inertia) => {
+                    let [translation, rotation] = object_data
+                        .rigid_motion(*object_index)
+                        .expect("Object type doesn't match precomputed mass data");
+                    let eff_mass_inv = TriMeshShell::rigid_effective_mass_inv(
+                        *mass,
+                        translation.into_tensor(),
+                        rotation.into_tensor(),
+                        *inertia,
+                        Select::new(
+                            surf_neigh_indices.as_slice(),
+                            Chunked3::from_array_slice(surf.surface_vertex_positions()),
+                        ),
+                    );
+
+                    blocks.extend(
+                        eff_mass_inv
+                            .iter()
+                            .flat_map(|row| row.into_iter().map(|block| *block.into_arrays())),
+                    );
+                    block_indices.extend(surf_neigh_indices.iter().flat_map(|&row_idx| {
+                        surf_neigh_indices
+                            .iter()
+                            .map(move |&col_idx| (row_idx, col_idx))
+                    }));
+                }
+                MassData::Zero => {}
+            }
+
+            match collider_mass_data {
+                MassData::Sparse(vertex_masses) => {
+                    blocks.extend(
+                        surf_neigh_indices
+                            .iter()
+                            .map(|&i| Matrix3::diag(&vertex_masses[i][..]).into_data()),
+                    );
+                    block_indices.extend(
+                        surf_neigh_indices
+                            .iter()
+                            .map(|&i| (start_object + i, start_object + i)),
+                    );
+                }
+                MassData::Dense(mass, inertia) => {
+                    let [translation, rotation] = object_data
+                        .rigid_motion(fc.collider_index)
+                        .expect("Object type doesn't match precomputed mass data");
+                    let eff_mass_inv = TriMeshShell::rigid_effective_mass_inv(
+                        *mass,
+                        translation.into_tensor(),
+                        rotation.into_tensor(),
+                        *inertia,
+                        Select::new(&active_contact_indices, contact_points.view()),
+                    );
+                    blocks.extend(
+                        eff_mass_inv
+                            .iter()
+                            .flat_map(|row| row.into_iter().map(|block| *block.into_arrays())),
+                    );
+                    block_indices.extend(active_contact_indices.iter().flat_map(|&row_idx| {
+                        active_contact_indices
+                            .iter()
+                            .map(move |&col_idx| (row_idx, col_idx))
+                    }));
+                }
+                MassData::Zero => {}
+            }
+
+            contact_offset += n;
+        }
+
+        let blocks = Chunked3::from_flat(Chunked3::from_array_vec(
+            Chunked3::from_array_vec(blocks).into_storage(),
+        ));
+
+        let mass_inv = SSBlockMatrix3::<f64>::from_index_iter_and_data(
+            block_indices.into_iter(),
+            size,
+            size,
+            blocks,
+        );
+
+        let jac_mass = jac.view().into_tensor() * mass_inv.view().transpose();
+        (jac_mass.view() * jac.view().into_tensor().transpose()).into_data()
+    }
+
+    /// Returns true if all friction solves have been completed/converged.
+    ///
+    /// This should be the case if and only if all elements in `friction_steps`
+    /// are zero, which makes the return value simply a convenience.
+    pub fn update_friction_impulse_global(
+        &mut self,
+        solution: ipopt::Solution,
+        constraint_values: &[f64],
+        friction_steps: &mut [u32],
+    ) -> bool {
+        if self.frictional_contacts.is_empty() {
+            return true;
+        }
+
+        self.update_current_velocity(solution.primal_variables);
+        let q_cur = self.object_data.dof.view().map_storage(|dof| dof.cur.q);
+        let mut ws = self.object_data.workspace.borrow_mut();
+        let WorkspaceData { dof, vtx } = &mut *ws;
+        ObjectData::sync_vel(
+            &self.object_data.shells,
+            dof.view().map_storage(|dof| dof.dq),
+            q_cur,
+            vtx.view_mut().map_storage(|vtx| vtx.state.vel),
+        );
+
+        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
+
+        let (jac, surface_vertex_offsets) =
+            self.construct_contact_jacobian(solution.clone(), constraint_values);
+
+        let eff_mass_inv = self.construct_effective_mass_inv(
+            solution.clone(),
+            constraint_values,
+            jac.view(),
+            surface_vertex_offsets.view(),
+        );
+
+        let NonLinearProblem {
+            ref mut frictional_contacts,
+            ref volume_constraints,
+            ref object_data,
+            ..
+        } = *self;
+
+        let mut is_finished = true;
+
+        let mut constraint_offset = volume_constraints.len();
+
+        // Update normals
+
+        for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
+            let obj_cur_pos = object_data.cur_pos(fc.object_index);
+            let col_cur_pos = object_data.cur_pos(fc.collider_index);
+            let dq_next = dof.view().map_storage(|dof| dof.dq);
+            let vtx_vel_next = vtx.view().map_storage(|vtx| vtx.state.vel);
+            let obj_vel = object_data.next_vel(dq_next, vtx_vel_next, fc.object_index);
+            let col_vel = object_data.next_vel(dq_next, vtx_vel_next, fc.collider_index);
+
+            let n = fc.constraint.borrow().constraint_size();
+            let contact_impulse = Self::contact_impulse_magnitudes(
+                &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
+                multiplier_impulse_scale,
+            );
+
+            log::debug!(
+                "Maximum contact impulse: {}",
+                crate::inf_norm(contact_impulse.iter().cloned())
+            );
+            let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
+
+            // TODO: Refactor this low level code out. There needs to be a mechanism to pass rigid
+            // motion data to the constraints since rigid bodies have a special effective mass.
+            let q_cur = q_cur.at(SHELLS_INDEX);
+            let rigid_motion = [
+                object_data.rigid_motion(fc.object_index),
+                object_data.rigid_motion(fc.collider_index),
+            ];
+            friction_steps[fc_idx] = fc
+                .constraint
+                .borrow_mut()
+                .update_frictional_contact_impulse(
+                    &contact_impulse,
+                    [obj_cur_pos.view(), col_cur_pos.view()],
+                    [obj_vel.view(), col_vel.view()],
+                    rigid_motion,
+                    potential_values,
+                    friction_steps[fc_idx],
+                );
+
+            is_finished &= friction_steps[fc_idx] == 0;
+            constraint_offset += n;
+        }
+
+        //let normals = self.contact_normals();
+
+        is_finished
+    }
+
     /// Returns true if all friction solves have been completed/converged.
     /// This should be the case if and only if all elements in `friction_steps`
     /// are zero, which makes the return value simply a convenience.
@@ -1611,30 +2026,9 @@ impl NonLinearProblem {
             );
             let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
 
-            // TODO: Refactor this low level code out. There needs to be a mechanism to pass rigid
-            // motion data to the constraints since rigid bodies have a special effective mass.
-            let q_cur = q_cur.at(SHELLS_INDEX);
             let rigid_motion = [
-                if let SourceObject::Shell(idx) = fc.object_index {
-                    let q_cur = q_cur.at(idx);
-                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
-                        Some([q_cur[0].into_tensor(), q_cur[1].into_tensor()])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
-                if let SourceObject::Shell(idx) = fc.collider_index {
-                    let q_cur = q_cur.at(idx);
-                    if let ShellData::Rigid { .. } = self.object_data.shells[idx].data {
-                        Some([q_cur[0].into_tensor(), q_cur[1].into_tensor()])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
+                object_data.rigid_motion(fc.object_index),
+                object_data.rigid_motion(fc.collider_index),
             ];
             friction_steps[fc_idx] = fc
                 .constraint

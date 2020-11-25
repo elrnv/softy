@@ -26,6 +26,7 @@ impl<'a> FrictionPolarSolver<'a> {
         contact_impulse: &'a [f64],
         contact_basis: &'a ContactBasis,
         mass_inv_mtx: EffectiveMassInvView<'a>,
+        mass_inv_scale: f64,
         params: FrictionParams,
     ) -> Result<FrictionPolarSolver<'a>, Error> {
         let basis_mtx = contact_basis.tangent_basis_matrix();
@@ -35,16 +36,26 @@ impl<'a> FrictionPolarSolver<'a> {
 
         let mu = params.dynamic_friction;
 
-        let scale = predictor_impulse
+        let constraint_scale = predictor_impulse
             .iter()
             .map(|&p| Vector3::new(p).norm_squared())
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
             .unwrap_or(1.0);
-        let scale = 1.0 / scale.sqrt();
+
+        log::trace!(
+            "F Predictor impulse norm: {}",
+            crate::inf_norm(predictor_impulse.iter().flat_map(|v| v.iter()).cloned())
+        );
+
+        //std::dbg!(1.0/ mass_inv_scale);
+        //std::dbg!(constraint_scale.sqrt());
+        //std::dbg!(&mass_inv_mtx);
+
+        let constraint_scale = 1.0 / constraint_scale.sqrt();
 
         let predictor_impulse: Chunked3<Vec<f64>> = predictor_impulse
             .iter()
-            .map(|&p| (Vector3::new(p) * scale).into_data())
+            .map(|&p| (Vector3::new(p) * constraint_scale).into_data())
             .collect();
 
         let problem = SemiImplicitFrictionPolarProblem(FrictionPolarProblem {
@@ -55,7 +66,7 @@ impl<'a> FrictionPolarSolver<'a> {
             mass_inv_mtx,
             hessian,
             iterations: 0,
-            scale,
+            constraint_scale,
         });
 
         let mut ipopt = Ipopt::new_newton(problem)?;
@@ -90,7 +101,7 @@ impl<'a> FrictionPolarSolver<'a> {
             .iter()
             .map(|&p| {
                 let mut scaled_p = p;
-                scaled_p.radius /= solver_data.problem.0.scale;
+                scaled_p.radius /= solver_data.problem.0.constraint_scale;
                 scaled_p.to_euclidean()
             })
             .collect();
@@ -143,10 +154,13 @@ pub(crate) struct FrictionPolarProblem<'a> {
     hessian: DSBlockMatrix2,
     /// Iteration count,
     iterations: u32,
-    scale: f64,
+    constraint_scale: f64,
 }
 
 impl FrictionPolarProblem<'_> {
+    pub fn variable_scale(&self) -> f64 {
+        self.constraint_scale
+    }
     pub fn num_contacts(&self) -> usize {
         self.predictor_impulse.len()
     }
@@ -160,7 +174,7 @@ impl FrictionPolarProblem<'_> {
         for (l, u, &cr) in zip!(x_l.iter_mut(), x_u.iter_mut(), self.contact_impulse.iter()) {
             // First coordinate is the radius and second is the angle.
             l.radius = 0.0; // radius is never negative
-            u.radius = self.mu * cr.abs() * self.scale;
+            u.radius = self.mu * cr.abs() * self.constraint_scale;
             if u.radius == 0.0 {
                 l.angle = 0.0;
                 u.angle = 0.0;
@@ -183,7 +197,7 @@ impl FrictionPolarProblem<'_> {
         .enumerate()
         {
             let p = self.contact_basis.to_cylindrical_contact_coordinates(p, i);
-            let rad = self.mu * cr.abs() * self.scale;
+            let rad = self.mu * cr.abs() * self.constraint_scale;
             if rad > 0.0 {
                 if p.tangent.radius > rad {
                     r.radius = rad;
@@ -257,6 +271,10 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
     }
 
     fn objective_grad(&self, r_p: &[Number], grad_f: &mut [Number]) -> bool {
+        log::trace!(
+            "F Unscaled variable norm: {}",
+            crate::inf_norm(r_p.iter().cloned())
+        );
         let polar_impulses: &[Polar2<Number>] = reinterpret_slice(r_p);
         let polar_grad: &mut [[Number; 2]] = reinterpret_mut_slice(grad_f);
         assert_eq!(self.0.predictor_impulse.len(), polar_grad.len());
@@ -279,6 +297,11 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
                 let d = polar_gradient(r_p);
                 *out_g = (d * g).into();
             });
+
+        log::trace!(
+            "F Objective gradient norm: {}",
+            crate::inf_norm(grad_f.iter().cloned())
+        );
 
         true
     }
@@ -387,14 +410,14 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::*;
     use approx::*;
-    //use crate::test_utils::*;
     //use crate::*;
     //use std::path::PathBuf;
 
     #[test]
     fn sliding_point() -> Result<(), Error> {
-        let (velocity, impulse) = sliding_point_tester(0.000001)?;
+        let (velocity, impulse) = sliding_point_tester(0.000001, 1.0)?;
         assert!(velocity[1] > 0.8);
 
         assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-5, epsilon = 1e-8);
@@ -404,25 +427,25 @@ mod tests {
 
     #[test]
     fn sticking_point() -> Result<(), Error> {
-        let (velocity, impulse) = sliding_point_tester(1.5)?;
+        let (velocity, impulse) = sliding_point_tester(1.5, 1.0)?;
         assert_relative_eq!(velocity[1], 0.0, max_relative = 1e-5, epsilon = 1e-8);
 
         assert_relative_eq!(velocity[0], 0.0, max_relative = 1e-5, epsilon = 1e-8);
         assert_relative_eq!(impulse[0], 0.0, max_relative = 1e-5, epsilon = 1e-8);
+
         Ok(())
     }
 
     /// A point mass slides across a 2D surface in the positive x direction.
-    fn sliding_point_tester(mu: f64) -> Result<(Vector2<f64>, Vector2<f64>), Error> {
+    fn sliding_point_tester(mu: f64, mass: f64) -> Result<(Vector2<f64>, Vector2<f64>), Error> {
         let params = FrictionParams {
             smoothing_weight: 0.0,
             friction_forwarding: 1.0,
             dynamic_friction: mu,
             inner_iterations: 30,
-            tolerance: 1e-15,
+            tolerance: 1e-10,
             print_level: 0,
         };
-        let mass = 1.0;
 
         let predictor_impulse = vec![[-1.0 * mass, 0.0, 0.0]]; // one point across
         let contact_force = vec![10.0 * mass];
@@ -437,10 +460,12 @@ mod tests {
             &contact_force,
             &contact_basis,
             mass_inv_mtx.view(),
+            1.0 / mass,
             params,
         )?;
         let result = solver.step()?;
         let FrictionSolveResult { solution, .. } = result;
+        log::trace!("Final point: {:?}", solution);
 
         let impulse = Vector2::new(solution[0]);
         let new_vel = impulse / mass;

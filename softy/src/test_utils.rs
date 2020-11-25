@@ -316,3 +316,11 @@ pub fn make_grid(i: usize) -> PolyMesh {
     }
     .build()
 }
+
+pub fn init_logger() {
+    #[cfg(test)]
+    #[cfg(debug_assertions)]
+    let _ = env_logger::Builder::from_env("SOFTY_LOG")
+        .is_test(true)
+        .try_init();
+}

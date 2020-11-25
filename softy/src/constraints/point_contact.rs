@@ -6,8 +6,8 @@ use crate::friction::*;
 use crate::matrix::*;
 use crate::objects::TriMeshShell;
 use crate::Error;
-use crate::Index;
 use crate::TriMesh;
+use crate::{CheckedIndex, Index};
 use geo::bbox::BBox;
 use geo::mesh::topology::*;
 use geo::mesh::{Attrib, VertexPositions};
@@ -20,21 +20,27 @@ use rayon::iter::Either;
 use reinterpret::*;
 use tensr::*;
 
-/// Data needed to build a mass matrxi
+/// Data needed to build a mass matrix
 #[derive(Clone, Debug, PartialEq)]
 pub enum MassData {
-    Dense(f64, Matrix3<f64>),   // Rigid body data
+    Dense(f64, Matrix3<f64>), // Rigid body data
+    // TODO: make this a regular old vec<f64> no need to have triplets
     Sparse(Chunked3<Vec<f64>>), // Vertex masses
     Zero,                       // Infinite mass
 }
 
+type DBlockMatrix3<T> = Tensor![T; D D 3 3];
+
 #[derive(Clone, Debug, PartialEq)]
-enum MassMatrixInv<S, D, I> {
-    // Rigid body effective mass matrix on contact points
-    // The additional chunked vec is temporarily there for faking rigid-rigid friction.
-    Dense(DBlockMatrix3<D>, Chunked3<Vec<f64>>),
-    Sparse(DiagonalBlockMatrixBase<S, I, U3>), // Selected vertex masses
-    Zero,                                      // Infinite mass
+enum MassMatrixInv<S, T, I> {
+    /// Rigid body effective mass matrix on contact points
+    ///
+    /// The additional chunked Vec is temporarily there for faking rigid-rigid friction.
+    Dense(DBlockMatrix3<T>, Chunked3<Vec<f64>>),
+    /// Selected vertex masses
+    Sparse(DiagonalBlockMatrixBase<S, I, U3>),
+    /// Infinite mass
+    Zero,
 }
 
 impl MassData {
@@ -124,6 +130,18 @@ impl PointContactConstraint {
                 surface.surface_vertex_positions().len(),
                 object.untag().num_vertices()
             );
+
+            if let implicits::MLS::Local(mls) = &surface {
+                log::info!(
+                    "Implicit Surface:\n\
+                    Base radius: {}\n\
+                    Linearized: {}\n\
+                    Params: {:#?}",
+                    mls.base_radius,
+                    linearized,
+                    friction_params
+                );
+            }
 
             let query_points = collider.untag().vertex_positions();
 
@@ -527,7 +545,7 @@ impl PointContactConstraint {
 
     /// Prune contacts with zero contact_impulse and contacts without neighbouring samples.
     /// This function outputs the indices of contacts as well as a pruned vector of impulses.
-    fn in_contact_indices(
+    pub fn in_contact_indices(
         &self,
         contact_impulse: &[f64],
         potential: &[f64],
@@ -568,23 +586,46 @@ impl PointContactConstraint {
         )
     }
 
+    // Note that this does NOT set the num_cols and num_rows fields of TripletContactJacobian.
+    pub(crate) fn append_contact_jacobian_triplets(
+        &self,
+        jac_triplets: &mut TripletContactJacobian,
+        active_contact_indices: &[usize],
+        contact_offset: usize,
+        object_offset: usize,
+        collider_offset: usize,
+    ) {
+        let query_points = &self.contact_points;
+        let surf = &self.implicit_surface;
+        let active_contact_points = Select::new(active_contact_indices, query_points.view());
+
+        // Compute contact Jacobian
+        jac_triplets.append_selection(
+            &surf,
+            active_contact_points,
+            contact_offset,
+            object_offset,
+            collider_offset,
+        );
+    }
+
     fn compute_contact_jacobian(&self, active_contact_indices: &[usize]) -> ContactJacobian {
         let query_points = &self.contact_points;
         let surf = &self.implicit_surface;
-        let active_contact_points =
-            Subset::from_unique_ordered_indices(active_contact_indices, query_points.view());
+        let active_contact_points = Select::new(active_contact_indices, query_points.view());
 
         // Compute contact Jacobian
-        let jac_triplets =
-            build_triplet_contact_jacobian(&surf, active_contact_points, query_points.view());
+        let jac_triplets = TripletContactJacobian::from_selection(&surf, active_contact_points);
         let jac: ContactJacobian = jac_triplets.into();
-        jac.pruned(|_, _, block| !block.is_zero())
+        jac.into_tensor()
+            .pruned(|_, _, block| !block.is_zero())
+            .into_data()
     }
 
     fn compute_effective_mass_inv(
         &self,
         active_contact_indices: &[usize],
-        rigid_motion: [Option<[Vector3<f64>; 2]>; 2],
+        rigid_motion: [Option<[[f64; 3]; 2]>; 2],
         jac: ContactJacobianView,
     ) -> Option<EffectiveMassInv> {
         // Construct mass matrices for object and collider.
@@ -609,13 +650,10 @@ impl PointContactConstraint {
                     MassMatrixInv::Dense(
                         TriMeshShell::rigid_effective_mass_inv(
                             *mass,
-                            translation,
-                            rotation,
+                            translation.into_tensor(),
+                            rotation.into_tensor(),
                             *inertia,
-                            Subset::from_unique_ordered_indices(
-                                active_contact_indices,
-                                query_points.view(),
-                            ),
+                            Select::new(active_contact_indices, query_points.view()),
                         ),
                         Chunked3::from_flat(vec![*mass; active_contact_indices.len() * 3]),
                     )
@@ -624,7 +662,7 @@ impl PointContactConstraint {
             MassData::Zero => MassMatrixInv::Zero,
         };
 
-        let mut jac_mass = jac.as_data().clone().into_owned().into_tensor();
+        let mut jac_mass = jac.clone().into_owned().into_tensor();
 
         match &self.object_mass_data {
             MassData::Sparse(object_mass_data) => {
@@ -657,7 +695,7 @@ impl PointContactConstraint {
             }
         }
 
-        let object_mass_inv = jac_mass.view() * jac.view().transpose();
+        let object_mass_inv = jac_mass.view() * jac.view().into_tensor().transpose();
 
         Some(match collider_mass_inv {
             MassMatrixInv::Sparse(collider_mass_inv) => object_mass_inv.view() + collider_mass_inv,
@@ -683,7 +721,7 @@ impl PointContactConstraint {
     ) -> Chunked3<Vec<f64>> {
         let collider_velocity = Subset::from_unique_ordered_indices(active_contact_indices, v[1]);
 
-        let mut object_velocity = jac.view() * v[0].into_tensor();
+        let mut object_velocity = jac.view().into_tensor() * v[0].into_tensor();
         *&mut object_velocity.expr_mut() -= collider_velocity.expr();
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
@@ -885,7 +923,7 @@ impl ContactConstraint for PointContactConstraint {
         orig_contact_impulse_n: &[f64],
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         v: [SubsetView<Chunked3<&[f64]>>; 2],
-        rigid_motion: [Option<[Vector3<f64>; 2]>; 2],
+        rigid_motion: [Option<[[f64; 3]; 2]>; 2],
         potential_values: &[f64],
         mut friction_steps: u32,
     ) -> u32 {
@@ -975,7 +1013,18 @@ impl ContactConstraint for PointContactConstraint {
             });
             return 0;
         }
-        let effective_mass_inv = effective_mass_inv.unwrap();
+        let mut effective_mass_inv = effective_mass_inv.unwrap();
+
+        let (min_mass_inv, max_mass_inv) = effective_mass_inv
+            .storage()
+            .iter()
+            .fold((std::f64::INFINITY, 0.0_f64), |(min, max), &val| {
+                (if val > 0.0 { min.min(val) } else { min }, max.max(val))
+            });
+
+        std::dbg!(max_mass_inv);
+        std::dbg!(min_mass_inv);
+        let mass_inv_scale = 0.5 * (max_mass_inv + min_mass_inv);
 
         let mut contact_impulse: Chunked3<Vec<f64>> = contact_basis
             .from_normal_space(&smoothed_contact_impulse_n)
@@ -988,6 +1037,15 @@ impl ContactConstraint for PointContactConstraint {
             jac.view(),
             effective_mass_inv.view(),
         );
+
+        // Rescale the effective mass. It is important to note that this does not change the
+        // solution, but it effects the performance of the optimization significantly.
+        effective_mass_inv
+            .as_mut_data()
+            .storage_mut()
+            .iter_mut()
+            .for_each(|x| *x /= mass_inv_scale);
+
         // Project out the normal component.
         contact_basis.project_to_tangent_space(predictor_impulse.iter_mut());
 
@@ -997,236 +1055,141 @@ impl ContactConstraint for PointContactConstraint {
         let predictor_impulse: Chunked3<Vec<f64>> =
             (predictor_impulse.expr() + contact_impulse.expr() + prev_friction_impulse.expr())
                 .eval();
-        let success = if false {
-            // Polar coords
-            let predictor_impulse_t: Vec<_> = predictor_impulse
-                .iter()
-                .enumerate()
-                .map(|(aqi, &predictor_imp)| {
-                    let r = contact_basis.to_cylindrical_contact_coordinates(predictor_imp, aqi);
-                    r.tangent
-                })
-                .collect();
-            for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
-                predictor_impulse_t.iter(),
-                orig_contact_impulse_n.iter(),
-                friction_impulse.iter_mut()
-            )
-            .enumerate()
-            {
-                let r_t = if pred_r_t.radius > 0.0 {
-                    Polar2 {
-                        radius: params.dynamic_friction * cr.abs(),
-                        angle: crate::friction::polar_solver::negate_angle(pred_r_t.angle),
-                    }
-                } else {
-                    Polar2 {
-                        radius: 0.0,
-                        angle: 0.0,
-                    }
-                };
-                *r_out = contact_basis
-                    .from_cylindrical_contact_coordinates(r_t.into(), aqi)
-                    .into();
-            }
-            true
-        } else {
-            let mut contact_impulse_n = smoothed_contact_impulse_n.clone();
+        let mut contact_impulse_n = smoothed_contact_impulse_n.clone();
 
-            // Euclidean coords
-            if true {
-                // Switch between implicit solver and explicit solver here.
-                loop {
-                    //println!("predictor: {:?}", predictor_impulse.view());
-                    let friction_predictor: Chunked3<Vec<f64>> =
-                        (predictor_impulse.expr() - contact_impulse.expr()).eval();
-                    //println!("f_predictor: {:?}", friction_predictor.view());
-                    match crate::friction::polar_solver::FrictionPolarSolver::new(
-                        friction_predictor.view().into(),
-                        &contact_impulse_n,
-                        &contact_basis,
-                        effective_mass_inv.view(),
-                        *params,
-                    ) {
-                        Ok(mut solver) => {
-                            log::debug!("Solving Friction");
+        // Euclidean coords
+        // Switch between implicit solver and explicit solver here.
+        let success = loop {
+            //println!("predictor: {:?}", predictor_impulse.view());
+            let friction_predictor: Chunked3<Vec<f64>> =
+                (predictor_impulse.expr() - contact_impulse.expr()).eval();
+            //println!("f_predictor: {:?}", friction_predictor.view());
+            match crate::friction::polar_solver::FrictionPolarSolver::new(
+                friction_predictor.view().into(),
+                &contact_impulse_n,
+                &contact_basis,
+                effective_mass_inv.view(),
+                mass_inv_scale,
+                *params,
+            ) {
+                Ok(mut solver) => {
+                    log::debug!("Solving Friction");
 
-                            match solver.step() {
-                                Ok(FrictionSolveResult {
+                    match solver.step() {
+                        Ok(FrictionSolveResult {
+                            solution: r_t,
+                            iterations,
+                            ..
+                        }) => {
+                            log::info!("Friction iteration count: {}", iterations);
+                            friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
+                        }
+                        Err(Error::FrictionSolveError {
+                            status: ipopt::SolveStatus::MaximumIterationsExceeded,
+                            result:
+                                FrictionSolveResult {
                                     solution: r_t,
                                     iterations,
                                     ..
-                                }) => {
-                                    log::info!("Friction iteration count: {}", iterations);
-                                    friction_impulse =
-                                        contact_basis.from_tangent_space(&r_t).collect();
-                                }
-                                Err(Error::FrictionSolveError {
-                                    status: ipopt::SolveStatus::MaximumIterationsExceeded,
-                                    result:
-                                        FrictionSolveResult {
-                                            solution: r_t,
-                                            iterations,
-                                            ..
-                                        },
-                                }) => {
-                                    // This is not ideal, but the next outer iteration will hopefully fix this.
-                                    log::warn!("Friction iterations exceeded: {}", iterations);
-                                    friction_impulse =
-                                        contact_basis.from_tangent_space(&r_t).collect();
-                                }
-                                Err(err) => {
-                                    log::error!("{}", err);
-                                    break false;
-                                }
-                            }
+                                },
+                        }) => {
+                            // This is not ideal, but the next outer iteration will hopefully fix this.
+                            log::warn!("Friction iterations exceeded: {}", iterations);
+                            friction_impulse = contact_basis.from_tangent_space(&r_t).collect();
                         }
                         Err(err) => {
-                            log::error!("Failed to create friction solver: {}", err);
+                            log::error!("{}", err);
                             break false;
                         }
-                    }
-
-                    //match crate::friction::solver::FrictionSolver::new(
-                    //    friction_predictor.view().into(),
-                    //    &contact_impulse_n,
-                    //    &contact_basis,
-                    //    effective_mass_inv.view(),
-                    //    *params,
-                    //) {
-                    //    Ok(mut solver) => {
-                    //        log::debug!("Solving Friction2");
-
-                    //        match solver.step() {
-                    //            Ok(FrictionSolveResult { solution: r_t, iterations, .. }) => {
-                    //                log::info!("Friction iteration count: {}", iterations);
-                    //                let friction_impulse2: Chunked3<Vec<_>> = contact_basis.from_tangent_space(&r_t).collect();
-                    //                for (j, (f1, f2)) in friction_impulse.iter().zip(friction_impulse2.iter()).enumerate() {
-                    //                    for i in 0..3 {
-                    //                        if !approx::relative_eq!(f1[i], f2[i], max_relative = 1e-8, epsilon = 1e-6) {
-                    //                            log::warn!("Friction at {}: {} vs. {}", j, f1[i], f2[i]);
-                    //                        }
-                    //                    }
-                    //                }
-                    //            }
-                    //            Err(err) => {
-                    //                log::error!("{}", err);
-                    //                break false;
-                    //            }
-                    //        }
-                    //    }
-                    //    Err(err) => {
-                    //        log::error!("Failed to create friction solver: {}", err);
-                    //        break false;
-                    //    }
-                    //}
-
-                    //println!("c_before: {:?}", contact_impulse_n);
-                    let contact_predictor: Chunked3<Vec<f64>> =
-                        (predictor_impulse.expr() - friction_impulse.expr()).eval();
-                    //println!("c_predictor: {:?}", contact_predictor.view());
-
-                    let contact_impulse_n_copy = contact_impulse_n.clone();
-                    match crate::friction::contact_solver::ContactSolver::new(
-                        contact_predictor.view().into(),
-                        &contact_impulse_n_copy,
-                        &contact_basis,
-                        effective_mass_inv.view(),
-                        *params,
-                    ) {
-                        Ok(mut solver) => {
-                            log::debug!("Solving Contact");
-
-                            match solver.step() {
-                                Ok(r_n) => {
-                                    contact_impulse_n.copy_from_slice(&r_n);
-                                    contact_impulse.clear();
-                                    contact_impulse.extend(
-                                        contact_basis.from_normal_space(&contact_impulse_n),
-                                    );
-                                }
-                                Err(err) => {
-                                    log::error!("Failed contact solve: {}", err);
-                                    break false;
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            log::error!("Failed to create contact solver: {}", err);
-                            break false;
-                        }
-                    }
-
-                    //println!("c_after: {:?}", contact_impulse_n);
-                    //println!("c_after_full: {:?}", contact_impulse.view());
-
-                    let f_prev = prev_friction_impulse.view().into_tensor();
-                    let f_cur = friction_impulse.view().into_tensor();
-                    //println!("prev friction impulse: {:?}", f_prev.norm());
-                    //println!("cur friction impulse: {:?}", f_cur.norm());
-
-                    let f_delta: Chunked3<Vec<f64>> = (f_prev.expr() - f_cur.expr()).eval();
-                    let rel_err_numerator: f64 = f_delta
-                        .expr()
-                        .dot((effective_mass_inv.view() * f_delta.view().into_tensor()).expr());
-                    let rel_err_denominator: f64 = f_prev
-                        .expr()
-                        .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
-
-                    if rel_err_denominator > 0.0 {
-                        let rel_err = rel_err_numerator / rel_err_denominator;
-
-                        log::debug!("Friction relative error: {}", rel_err);
-                        if rel_err < 1e-4 {
-                            friction_steps = 0;
-                            break true;
-                        }
-                    } else if rel_err_numerator <= 0.0 {
-                        log::warn!(
-                            "Friction relative error is NaN: num = {:?}, denom = {:?}",
-                            rel_err_numerator,
-                            rel_err_denominator
-                        );
-                        friction_steps = 0;
-                        break true;
-                    } else {
-                        log::debug!("Friction relative error is infinite");
-                    }
-
-                    // Update prev_friction_impulse for computing error subsequent iterations.
-                    // Note that this should not and does not affect the "prev_step_friction_impulse"
-                    // variable which is used in friciton forwarding and set outside the loop.
-                    prev_friction_impulse = friction_impulse.clone();
-
-                    friction_steps -= 1;
-
-                    if friction_steps == 0 {
-                        break true;
                     }
                 }
+                Err(err) => {
+                    log::error!("Failed to create friction solver: {}", err);
+                    break false;
+                }
+            }
+
+            //println!("c_before: {:?}", contact_impulse_n);
+            let contact_predictor: Chunked3<Vec<f64>> =
+                (predictor_impulse.expr() - friction_impulse.expr()).eval();
+            //println!("c_predictor: {:?}", contact_predictor.view());
+
+            let contact_impulse_n_copy = contact_impulse_n.clone();
+            match crate::friction::contact_solver::ContactSolver::new(
+                contact_predictor.view().into(),
+                &contact_impulse_n_copy,
+                &contact_basis,
+                effective_mass_inv.view(),
+                *params,
+            ) {
+                Ok(mut solver) => {
+                    log::debug!("Solving Contact");
+
+                    match solver.step() {
+                        Ok(r_n) => {
+                            contact_impulse_n.copy_from_slice(&r_n);
+                            contact_impulse.clear();
+                            contact_impulse
+                                .extend(contact_basis.from_normal_space(&contact_impulse_n));
+                        }
+                        Err(err) => {
+                            log::error!("Failed contact solve: {}", err);
+                            break false;
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::error!("Failed to create contact solver: {}", err);
+                    break false;
+                }
+            }
+
+            //println!("c_after: {:?}", contact_impulse_n);
+            //println!("c_after_full: {:?}", contact_impulse.view());
+
+            let f_prev = prev_friction_impulse.view().into_tensor();
+            let f_cur = friction_impulse.view().into_tensor();
+            //println!("prev friction impulse: {:?}", f_prev.norm());
+            //println!("cur friction impulse: {:?}", f_cur.norm());
+
+            let f_delta: Chunked3<Vec<f64>> = (f_prev.expr() - f_cur.expr()).eval();
+            let rel_err_numerator: f64 = f_delta
+                .expr()
+                .dot((effective_mass_inv.view() * f_delta.view().into_tensor()).expr());
+
+            let rel_err_denominator: f64 = f_prev
+                .expr()
+                .dot::<f64, _>((effective_mass_inv.view() * f_prev.view()).expr());
+
+            if rel_err_denominator > 0.0 {
+                let rel_err = rel_err_numerator / rel_err_denominator;
+
+                log::debug!("Friction relative error: {}", rel_err);
+                if rel_err < 1e-4 {
+                    friction_steps = 0;
+                    break true;
+                }
+            } else if rel_err_numerator <= 0.0 {
+                log::warn!(
+                    "Friction relative error is NaN: num = {:?}, denom = {:?}",
+                    rel_err_numerator,
+                    rel_err_denominator
+                );
+                friction_steps = 0;
+                break true;
             } else {
-                let predictor_impulse_t: Vec<_> = contact_basis
-                    .to_tangent_space(predictor_impulse.view().into())
-                    .collect();
-                for (aqi, (&pred_r_t, &cr, r_out)) in zip!(
-                    predictor_impulse_t.iter(),
-                    orig_contact_impulse_n.iter(),
-                    friction_impulse.iter_mut(),
-                )
-                .enumerate()
-                {
-                    let pred_r_t = Vector2::new(pred_r_t);
-                    let pred_r_norm = pred_r_t.norm();
-                    let r_t = if pred_r_norm > 0.0 {
-                        pred_r_t * (params.dynamic_friction * cr.abs() / pred_r_norm)
-                    } else {
-                        Vector2::zero()
-                    };
-                    *r_out = contact_basis
-                        .from_contact_coordinates([0.0, r_t[0], r_t[1]], aqi)
-                        .into();
-                }
-                true
+                log::debug!("Friction relative error is infinite");
+            }
+
+            // Update prev_friction_impulse for computing error subsequent iterations.
+            // Note that this should not and does not affect the "prev_step_friction_impulse"
+            // variable which is used in friciton forwarding and set outside the loop.
+            prev_friction_impulse = friction_impulse.clone();
+
+            friction_steps -= 1;
+
+            if friction_steps == 0 {
+                break true;
             }
         };
 
@@ -1257,11 +1220,11 @@ impl ContactConstraint for PointContactConstraint {
             - prev_step_friction_impulse.expr())
         .eval();
         let mut object_friction_impulse_tensor =
-            jac.view().transpose() * forwarded_impulse.view().into_tensor();
+            jac.view().into_tensor().transpose() * forwarded_impulse.view().into_tensor();
         object_friction_impulse_tensor.negate();
 
         let mut object_impulse_corrector_tensor =
-            jac.view().transpose() * impulse_corrector.view().into_tensor();
+            jac.view().into_tensor().transpose() * impulse_corrector.view().into_tensor();
         object_impulse_corrector_tensor.negate();
 
         *object_impulse = Chunked3::from_flat((

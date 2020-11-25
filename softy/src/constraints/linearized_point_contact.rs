@@ -754,6 +754,7 @@ impl ContactConstraint for LinearizedPointContactConstraint {
         let predictor_impulse: Chunked3<Vec<f64>> =
             (predictor_impulse.expr() + contact_impulse.expr() + prev_friction_impulse.expr())
                 .eval();
+        eprintln!("WARNING: WRONG CONTACT SOLVER BENG USED");
         let success = if false {
             // Polar coords
             let predictor_impulse_t: Vec<_> = predictor_impulse

@@ -248,6 +248,11 @@ impl SolverBuilder {
             .flat_map(|(params, (obj_id, coll_id))| {
                 let material_source_obj = material_source.view().get(obj_id);
                 let material_source_coll = material_source.view().get(coll_id);
+                log::info!(
+                    "Building constraints between materials: ({}, {})",
+                    obj_id,
+                    coll_id
+                );
                 material_source_obj
                     .into_iter()
                     .flat_map(move |material_source_obj| {

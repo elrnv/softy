@@ -26,7 +26,7 @@ use crate::TriMesh;
 /// angle between the adjacent faces. `x0` to `x3` are the vertices making up all the degrees of
 /// freedom that affect the edge reflex angle.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct InteriorEdge {
+pub struct InteriorEdge {
     pub faces: [usize; 2],
     /// Each `edge_start[i]` is a vertex in `faces[i]` that marks the start of the
     /// edge. This value is either `0`, `1` or `2` for a triangle face.
@@ -40,16 +40,10 @@ impl InteriorEdge {
     /// For example if `ref_pos: Vec<[[f32; 3]; 3]>` is a collection of reference positions per
     /// triangle face, then getting the reference position of `x3` from edge `e` can be done with:
     ///
-    /// ```ignore
-    /// e.face_vert(&ref_pos, 1, 2);
     /// ```
-    ///
-    /// We could get the reference position of `x0` and `x1` either from face 0 or face 1, which
-    /// implies the following identities when the two faces have the same orientation:
-    ///
-    /// ```ignore
-    /// assert_eq!(e.face_vert(&ref_pos, 0, 0), e.face_vert(&ref_pos, 1, 1)); // x0
-    /// assert_eq!(e.face_vert(&ref_pos, 0, 1), e.face_vert(&ref_pos, 1, 0)); // x1
+    /// # let e = softy::objects::InteriorEdge::new([0;2], [0;2]);
+    /// # let ref_pos = vec![[[1.0; 3]; 3]; 1];
+    /// e.face_vert(&ref_pos, 1, 2);
     /// ```
     #[inline]
     pub fn face_vert<T: Copy>(&self, data: &[[T; 3]], face: usize, vert: u8) -> T {

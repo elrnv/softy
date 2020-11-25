@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 na = { package = "nalgebra", version = "0.18" }
 tensr = { git = "https://github.com/elrnv/tensr.git", features = ["autodiff"] }
-flatk = "0.3"
+flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.3" }
 ipopt = "0.5"
 geo = { path = "../geo" }
 rayon = "1.3"
@@ -33,7 +33,7 @@ hashbrown = "0.8"
 criterion = "0.3"
 autodiff = "0.2"
 rand = "0.7"
-env_logger = "0.7"
+env_logger = "0.8"
 
 [features]
 unstable = ["criterion/real_blackbox"]

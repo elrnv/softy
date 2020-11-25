@@ -195,7 +195,7 @@ pub trait ContactConstraint:
         contact_impulse: &[f64],
         x: [SubsetView<Chunked3<&[f64]>>; 2],
         dx: [SubsetView<Chunked3<&[f64]>>; 2],
-        rigid_motion: [Option<[Vector3<f64>; 2]>; 2],
+        rigid_motion: [Option<[[f64; 3]; 2]>; 2],
         constraint_values: &[f64],
         friction_steps: u32,
     ) -> u32;

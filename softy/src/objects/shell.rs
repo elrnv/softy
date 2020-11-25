@@ -602,19 +602,16 @@ impl TriMeshShell {
         translation: Vector3<f64>,
         rot: Vector3<f64>,
         inertia: Matrix3<f64>,
-        contact_points: SubsetView<Chunked3<&[f64]>>,
-    ) -> DBlockMatrix3<f64> {
+        contact_points: SelectView<Chunked3<&[f64]>>,
+    ) -> Tensor![f64; D D 3 3] {
         let n = contact_points.len();
         debug_assert!(n > 0);
-        let mut out = UniChunked::from_flat_with_stride(
-            UniChunked::from_flat(UniChunked::from_flat(vec![0.0; n * n * 9])),
-            n,
-        );
+        let mut out = <Tensor![f64; D D 3 3]>::from_shape(&[n, n, 3, 3]);
 
         let inertia_inv = inertia.inverse().expect("Failed to invert inertia matrix");
 
-        for (&row_p, mut out_row) in contact_points.iter().zip(out.iter_mut()) {
-            for (&col_p, out_block) in contact_points.iter().zip(out_row.iter_mut()) {
+        for ((_, &row_p), mut out_row) in contact_points.iter().zip(out.iter_mut()) {
+            for ((_, &col_p), out_block) in contact_points.iter().zip(out_row.iter_mut()) {
                 let block: Matrix3<f64> = Matrix3::identity() / mass
                     - rotate(row_p.into_tensor() - translation, -rot).skew()
                         * inertia_inv
@@ -624,7 +621,7 @@ impl TriMeshShell {
             }
         }
 
-        out.into_tensor()
+        out
     }
 }
 
@@ -762,11 +759,14 @@ mod tests {
             _ => panic!("Looking for a rigid mesh here."),
         };
 
-        let contact_points: Subset<_> = Subset::all(Chunked3::from_array_vec(vec![
-            [0.0, 0.5, 0.0],  // top
-            [-0.5, 0.0, 0.0], // side
-            [0.5, 0.5, 0.0],  // corner coincident with vertex
-        ]));
+        let contact_points = Select::new(
+            &[0, 1, 2][..],
+            Chunked3::from_array_vec(vec![
+                [0.0, 0.5, 0.0],  // top
+                [-0.5, 0.0, 0.0], // side
+                [0.5, 0.5, 0.0],  // corner coincident with vertex
+            ]),
+        );
 
         let effective_mass_inv = TriMeshShell::rigid_effective_mass_inv(
             mass,
@@ -774,8 +774,7 @@ mod tests {
             [0.0; 3].into_tensor(),
             inertia,
             contact_points.view(),
-        )
-        .into_data();
+        );
 
         for row in 0..3 {
             let rrow = contact_points[row].into_tensor().skew();

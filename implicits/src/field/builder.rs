@@ -388,7 +388,9 @@ impl<'mesh> ImplicitSurfaceBuilder<'mesh> {
         }
     }
 
-    /// Builds an mls based implicit surface. This function returns `None` when there is not enough data to
+    /// Builds an MLS based implicit surface.
+    ///
+    /// This function returns `None` when there is not enough data to
     /// make a valid implict surface. For example if kernel radius is 0.0 or points is empty, this
     /// function will return `None`.
     pub fn build_mls<T: Real>(&self) -> Option<MLS<T>>

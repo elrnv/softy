@@ -572,7 +572,9 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Compute the contact Jacobian of this implicit surface function with respect to surface
-    /// points. The returned 2D arrays are column major 3x3 matrices.
+    /// points.
+    ///
+    /// The returned 2D arrays are column major 3x3 matrices.
     pub fn contact_jacobian_matrices(&self, query_points: &[[T; 3]], matrices: &mut [[[T; 3]; 3]]) {
         apply_kernel_query_fn!(self, |kernel| self.contact_jacobian_matrices_impl(
             query_points,

@@ -195,6 +195,31 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    /// Return the indices of all neighbourhood vertices.
+    pub fn neighbourhood_vertex_indices(&self) -> Vec<usize> {
+        use hashbrown::HashSet;
+        let neigh_points = self.trivial_neighbourhood_seq();
+
+        let ImplicitSurfaceBase {
+            sample_type,
+            ref surface_topo,
+            ..
+        } = *self.base();
+
+        let indices = neigh_points
+            .flat_map(move |nbr_points| nbr_points.iter())
+            .cloned();
+
+        match sample_type {
+            SampleType::Vertex => indices.collect::<HashSet<_>>(),
+            SampleType::Face => indices
+                .flat_map(move |j| surface_topo[j].iter().cloned())
+                .collect::<HashSet<_>>(),
+        }
+        .into_iter()
+        .collect()
+    }
+
     /// Produce a `Vec` of normals at each surface vertex position. This is a convenience function
     /// of calling query jacobian on all surface vertices. This function also normalizes the
     /// resulting vectors.
@@ -946,6 +971,46 @@ fn split_range_into_chunks(
 
 #[cfg(test)]
 mod tests {
+    use crate::*;
+    use geo::mesh::builder::*;
+    use geo::mesh::*;
+
+    #[test]
+    fn neighbourhood_vertices() {
+        let trimesh = TriMesh::from(
+            TorusBuilder {
+                outer_divs: 1000,
+                inner_divs: 500,
+                ..TorusBuilder::default()
+            }
+            .build(),
+        );
+
+        let implicit_surface = ImplicitSurfaceBuilder::new()
+            .kernel(KernelType::Approximate {
+                tolerance: 0.00001,
+                radius_multiplier: 100.0,
+            })
+            .background_field(BackgroundFieldParams {
+                field_type: BackgroundFieldType::DistanceBased,
+                weighted: true,
+            })
+            .sample_type(SampleType::Face)
+            .trimesh(&trimesh)
+            .build_mls::<f64>()
+            .expect("Failed to create implicit surface.");
+
+        let grid = make_grid(23, 23);
+        let grid_pos: Vec<_> = grid.vertex_position_iter().cloned().collect();
+
+        let query_surf = implicit_surface.query_topo(&grid_pos);
+
+        let now = std::time::Instant::now();
+        let n = query_surf.neighbourhood_vertex_indices().len();
+        eprintln!("elapsed: {}; num = {}", now.elapsed().as_millis(), n);
+        //assert_eq!(n, 3046);
+    }
+
     #[test]
     fn split_range_into_chunks() {
         let r = 0..4;

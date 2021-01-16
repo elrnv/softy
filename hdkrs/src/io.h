@@ -6,6 +6,7 @@
 
 namespace hdkrs {
 namespace io {
+namespace {
 
 class ByteBuffer {
 public:
@@ -42,6 +43,11 @@ public:
     /**
      * Read the given meshes into an owned buffer.
      */
+    static ByteBuffer write_vtp_mesh(OwnedPtr<HR_PolyMesh> polymesh);
+    static ByteBuffer write_vtp_mesh(OwnedPtr<HR_PointCloud> ptcloud);
+    static ByteBuffer write_vtu_mesh(OwnedPtr<HR_PolyMesh> polymesh);
+    static ByteBuffer write_vtu_mesh(OwnedPtr<HR_TetMesh> tetmesh);
+    static ByteBuffer write_vtu_mesh(OwnedPtr<HR_PointCloud> ptcloud);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PolyMesh> polymesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_TetMesh> tetmesh);
     static ByteBuffer write_vtk_mesh(OwnedPtr<HR_PointCloud> ptcloud);
@@ -57,9 +63,12 @@ private:
 
 using MeshVariant = boost::variant<boost::blank, OwnedPtr<HR_PolyMesh>, OwnedPtr<HR_TetMesh>>;
 
+MeshVariant parse_vtp_mesh(const char * data, std::size_t size);
+MeshVariant parse_vtu_mesh(const char * data, std::size_t size);
 MeshVariant parse_vtk_mesh(const char * data, std::size_t size);
 MeshVariant parse_obj_mesh(const char * data, std::size_t size);
 
+} // namespace (static)
 } // namespace io
 } // namespace hdkrs
 

@@ -5,10 +5,14 @@
 use gut::io::{
     obj::*,
     vtk::{
+        VTKPolyExportStyle,
         convert_pointcloud_to_vtk_format, convert_polymesh_to_vtk_format,
         convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
-        convert_vtk_dataset_to_tetmesh, model::Vtk, parser::parse_be as parse_vtk,
-        writer::WriteVtk,
+        convert_vtk_dataset_to_tetmesh,
+        model::Vtk, model::DataSet, parse_vtk_be as parse_legacy_vtk,
+        parse_xml as parse_xml_vtk,
+        write_legacy as write_legacy_vtk,
+        write_xml as write_xml_vtk,
     },
 };
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
@@ -1338,11 +1342,16 @@ impl From<Vec<u8>> for HR_ByteBuffer {
     }
 }
 
-impl From<Vtk> for HR_ByteBuffer {
-    fn from(vtk: Vtk) -> Self {
+impl HR_ByteBuffer {
+    fn write_legacy_vtk(vtk: Vtk) -> Self {
         let mut vec_data = Vec::<u8>::new();
-        vec_data
-            .write_vtk_be(vtk)
+        write_legacy_vtk(vtk, &mut vec_data)
+            .expect("Failed to write Vtk data to byte buffer");
+        vec_data.into()
+    }
+    fn write_xml_vtk(vtk: Vtk) -> Self {
+        let mut vec_data = Vec::<u8>::new();
+        write_xml_vtk(vtk, &mut vec_data)
             .expect("Failed to write Vtk data to byte buffer");
         vec_data.into()
     }
@@ -1365,6 +1374,71 @@ pub unsafe extern "C" fn hr_free_byte_buffer(buf: HR_ByteBuffer) {
     }
 }
 
+
+/// Write the given HR_PolyMesh as a polygon mesh in XML VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_polymesh_vtp_buffer(mesh: *const HR_PolyMesh) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_polymesh_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::PolyData)
+        .map(HR_ByteBuffer::write_xml_vtk)
+        .unwrap_or_else(|_| Default::default())
+}
+
+/// Write the given HR_PointCloud as a polygon mesh in XML VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_pointcloud_vtp_buffer(
+    mesh: *const HR_PointCloud,
+) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_pointcloud_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::PolyData)
+        .map(HR_ByteBuffer::write_xml_vtk)
+        .unwrap_or_else(|_| Default::default())
+}
+
+/// Write the given HR_TetMesh as an unstructured grid in XML VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_tetmesh_vtu_buffer(mesh: *const HR_TetMesh) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_tetmesh_to_vtk_format(&(*mesh).mesh)
+        .map(HR_ByteBuffer::write_xml_vtk)
+        .unwrap_or_else(|_| Default::default())
+}
+
+/// Write the given HR_PolyMesh as an unstructured grid in XML VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_polymesh_vtu_buffer(mesh: *const HR_PolyMesh) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_polymesh_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::UnstructuredGrid)
+        .map(HR_ByteBuffer::write_xml_vtk)
+        .unwrap_or_else(|_| Default::default())
+}
+
+/// Write the given HR_PointCloud as an unstructured grid in XML VTK format returned through an appropriately sized
+/// `HR_ByteBuffer`.
+#[no_mangle]
+pub unsafe extern "C" fn hr_make_pointcloud_vtu_buffer(
+    mesh: *const HR_PointCloud,
+) -> HR_ByteBuffer {
+    // check invariants
+    assert!(!mesh.is_null());
+
+    convert_pointcloud_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::UnstructuredGrid)
+        .map(HR_ByteBuffer::write_xml_vtk)
+        .unwrap_or_else(|_| Default::default())
+}
+
 /// Write the given HR_TetMesh into a binary VTK format returned through an appropriately sized
 /// `HR_ByteBuffer`.
 #[no_mangle]
@@ -1373,7 +1447,7 @@ pub unsafe extern "C" fn hr_make_tetmesh_vtk_buffer(mesh: *const HR_TetMesh) -> 
     assert!(!mesh.is_null());
 
     convert_tetmesh_to_vtk_format(&(*mesh).mesh)
-        .map(From::from)
+        .map(HR_ByteBuffer::write_legacy_vtk)
         .unwrap_or_else(|_| Default::default())
 }
 
@@ -1384,8 +1458,8 @@ pub unsafe extern "C" fn hr_make_polymesh_vtk_buffer(mesh: *const HR_PolyMesh) -
     // check invariants
     assert!(!mesh.is_null());
 
-    convert_polymesh_to_vtk_format(&(*mesh).mesh)
-        .map(From::from)
+    convert_polymesh_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::PolyData)
+        .map(HR_ByteBuffer::write_legacy_vtk)
         .unwrap_or_else(|_| Default::default())
 }
 
@@ -1398,8 +1472,8 @@ pub unsafe extern "C" fn hr_make_pointcloud_vtk_buffer(
     // check invariants
     assert!(!mesh.is_null());
 
-    convert_pointcloud_to_vtk_format(&(*mesh).mesh)
-        .map(From::from)
+    convert_pointcloud_to_vtk_format(&(*mesh).mesh, VTKPolyExportStyle::PolyData)
+        .map(HR_ByteBuffer::write_legacy_vtk)
         .unwrap_or_else(|_| Default::default())
 }
 
@@ -1455,20 +1529,52 @@ impl Default for HR_Mesh {
     }
 }
 
-/// Parse a given byte array into a HR_TetMesh or a HR_PolyMesh depending on what is stored in the
-/// buffer assuming VTK format.
+/// Helper to convert the given VTK data set into a valid `HR_Mesh` type.
+///
+/// In case of failure `None` is returned.
+fn convert_vtk_polymesh_to_hr_mesh(data: DataSet) -> Option<HR_Mesh> {
+    if let Ok(mesh) = convert_vtk_dataset_to_polymesh(data) {
+        if mesh.num_faces() > 0 {
+            let polymesh = Box::new(HR_PolyMesh { mesh });
+            return Some(HR_Mesh {
+                tag: HRMeshType::HR_POLYMESH,
+                polymesh: Box::into_raw(polymesh),
+                ..HR_Mesh::default()
+            })
+        }
+    }
+    None
+}
+
+/// Parse a given byte array into a HR_PolyMesh depending on what is stored in the
+/// buffer assuming polygon VTK format.
 #[no_mangle]
-pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
+pub unsafe extern "C" fn hr_parse_vtp_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
     if data.is_null() || size == 0 {
         return HR_Mesh::default();
     }
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
 
-    let vtk_data_result = parse_vtk(slice);
-    if vtk_data_result.is_done() {
-        let vtk_data = vtk_data_result.unwrap().1.data;
-        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk_data.clone()) {
+    if let Ok(vtk) = parse_xml_vtk(&*slice) {
+        convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default)
+    } else {
+        HR_Mesh::default()
+    }
+}
+
+/// Parse a given byte array into a HR_TetMesh or a HR_PolyMesh depending on what is stored in the
+/// buffer assuming unstructured grid VTK format.
+#[no_mangle]
+pub unsafe extern "C" fn hr_parse_vtu_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
+    if data.is_null() || size == 0 {
+        return HR_Mesh::default();
+    }
+
+    let slice = slice::from_raw_parts_mut(data as *mut u8, size);
+
+    if let Ok(vtk) = parse_xml_vtk(&*slice) {
+        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk.data.clone()) {
             if mesh.num_cells() > 0 {
                 let tetmesh = Box::new(HR_TetMesh { mesh });
                 return HR_Mesh {
@@ -1479,16 +1585,34 @@ pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) ->
             }
         }
 
-        if let Ok(mesh) = convert_vtk_dataset_to_polymesh(vtk_data) {
-            if mesh.num_faces() > 0 {
-                let polymesh = Box::new(HR_PolyMesh { mesh });
+        return convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default);
+    }
+    HR_Mesh::default()
+}
+
+/// Parse a given byte array into a HR_TetMesh or a HR_PolyMesh depending on what is stored in the
+/// buffer assuming VTK format.
+#[no_mangle]
+pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) -> HR_Mesh {
+    if data.is_null() || size == 0 {
+        return HR_Mesh::default();
+    }
+
+    let slice = slice::from_raw_parts_mut(data as *mut u8, size);
+
+    if let Ok(vtk) = parse_legacy_vtk(&*slice) {
+        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk.data.clone()) {
+            if mesh.num_cells() > 0 {
+                let tetmesh = Box::new(HR_TetMesh { mesh });
                 return HR_Mesh {
-                    tag: HRMeshType::HR_POLYMESH,
-                    polymesh: Box::into_raw(polymesh),
+                    tag: HRMeshType::HR_TETMESH,
+                    tetmesh: Box::into_raw(tetmesh),
                     ..HR_Mesh::default()
                 };
             }
         }
+
+        return convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default);
     }
     HR_Mesh::default()
 }

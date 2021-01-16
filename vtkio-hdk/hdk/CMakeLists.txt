@@ -43,8 +43,13 @@ set( library_name vtkio )
 
 # Add a library and its source files.
 add_library( ${library_name} SHARED
+  src/GEO_Register.C
   src/GEO_VtkIO.C
   src/GEO_VtkIO.h
+  src/GEO_VtuIO.C
+  src/GEO_VtuIO.h
+  src/GEO_VtpIO.C
+  src/GEO_VtpIO.h
   src/add_mesh_visitor.h
 )
 

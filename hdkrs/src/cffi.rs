@@ -5,14 +5,9 @@
 use gut::io::{
     obj::*,
     vtk::{
-        VTKPolyExportStyle,
         convert_pointcloud_to_vtk_format, convert_polymesh_to_vtk_format,
-        convert_tetmesh_to_vtk_format, convert_vtk_dataset_to_polymesh,
-        convert_vtk_dataset_to_tetmesh,
-        model::Vtk, model::DataSet, parse_vtk_be as parse_legacy_vtk,
-        parse_xml as parse_xml_vtk,
-        write_legacy as write_legacy_vtk,
-        write_xml as write_xml_vtk,
+        convert_tetmesh_to_vtk_format, convert_vtk_to_polymesh, convert_vtk_to_tetmesh, model::Vtk,
+        VTKPolyExportStyle,
     },
 };
 use gut::mesh::{attrib, topology as topo, Attrib, PointCloud, PolyMesh, TetMesh, VertexPositions};
@@ -1345,14 +1340,12 @@ impl From<Vec<u8>> for HR_ByteBuffer {
 impl HR_ByteBuffer {
     fn write_legacy_vtk(vtk: Vtk) -> Self {
         let mut vec_data = Vec::<u8>::new();
-        write_legacy_vtk(vtk, &mut vec_data)
-            .expect("Failed to write Vtk data to byte buffer");
+        Vtk::write_legacy(vtk, &mut vec_data).expect("Failed to write Vtk data to byte buffer");
         vec_data.into()
     }
     fn write_xml_vtk(vtk: Vtk) -> Self {
         let mut vec_data = Vec::<u8>::new();
-        write_xml_vtk(vtk, &mut vec_data)
-            .expect("Failed to write Vtk data to byte buffer");
+        Vtk::write_xml(vtk, &mut vec_data).expect("Failed to write Vtk data to byte buffer");
         vec_data.into()
     }
 }
@@ -1373,7 +1366,6 @@ pub unsafe extern "C" fn hr_free_byte_buffer(buf: HR_ByteBuffer) {
         let _: Box<[u8]> = Box::from_raw(slice as *mut [u8]);
     }
 }
-
 
 /// Write the given HR_PolyMesh as a polygon mesh in XML VTK format returned through an appropriately sized
 /// `HR_ByteBuffer`.
@@ -1532,15 +1524,15 @@ impl Default for HR_Mesh {
 /// Helper to convert the given VTK data set into a valid `HR_Mesh` type.
 ///
 /// In case of failure `None` is returned.
-fn convert_vtk_polymesh_to_hr_mesh(data: DataSet) -> Option<HR_Mesh> {
-    if let Ok(mesh) = convert_vtk_dataset_to_polymesh(data) {
+fn convert_vtk_polymesh_to_hr_mesh(vtk: Vtk) -> Option<HR_Mesh> {
+    if let Ok(mesh) = convert_vtk_to_polymesh(vtk) {
         if mesh.num_faces() > 0 {
             let polymesh = Box::new(HR_PolyMesh { mesh });
             return Some(HR_Mesh {
                 tag: HRMeshType::HR_POLYMESH,
                 polymesh: Box::into_raw(polymesh),
                 ..HR_Mesh::default()
-            })
+            });
         }
     }
     None
@@ -1556,8 +1548,8 @@ pub unsafe extern "C" fn hr_parse_vtp_mesh(data: *const c_char, size: size_t) ->
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
 
-    if let Ok(vtk) = parse_xml_vtk(&*slice) {
-        convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default)
+    if let Ok(vtk) = Vtk::parse_xml(&*slice) {
+        convert_vtk_polymesh_to_hr_mesh(vtk).unwrap_or_else(HR_Mesh::default)
     } else {
         HR_Mesh::default()
     }
@@ -1573,8 +1565,8 @@ pub unsafe extern "C" fn hr_parse_vtu_mesh(data: *const c_char, size: size_t) ->
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
 
-    if let Ok(vtk) = parse_xml_vtk(&*slice) {
-        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk.data.clone()) {
+    if let Ok(vtk) = Vtk::parse_xml(&*slice) {
+        if let Ok(mesh) = convert_vtk_to_tetmesh(vtk.clone()) {
             if mesh.num_cells() > 0 {
                 let tetmesh = Box::new(HR_TetMesh { mesh });
                 return HR_Mesh {
@@ -1585,7 +1577,7 @@ pub unsafe extern "C" fn hr_parse_vtu_mesh(data: *const c_char, size: size_t) ->
             }
         }
 
-        return convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default);
+        return convert_vtk_polymesh_to_hr_mesh(vtk).unwrap_or_else(HR_Mesh::default);
     }
     HR_Mesh::default()
 }
@@ -1600,8 +1592,8 @@ pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) ->
 
     let slice = slice::from_raw_parts_mut(data as *mut u8, size);
 
-    if let Ok(vtk) = parse_legacy_vtk(&*slice) {
-        if let Ok(mesh) = convert_vtk_dataset_to_tetmesh(vtk.data.clone()) {
+    if let Ok(vtk) = Vtk::parse_legacy_be(&*slice) {
+        if let Ok(mesh) = convert_vtk_to_tetmesh(vtk.clone()) {
             if mesh.num_cells() > 0 {
                 let tetmesh = Box::new(HR_TetMesh { mesh });
                 return HR_Mesh {
@@ -1612,7 +1604,7 @@ pub unsafe extern "C" fn hr_parse_vtk_mesh(data: *const c_char, size: size_t) ->
             }
         }
 
-        return convert_vtk_polymesh_to_hr_mesh(vtk.data).unwrap_or_else(HR_Mesh::default);
+        return convert_vtk_polymesh_to_hr_mesh(vtk).unwrap_or_else(HR_Mesh::default);
     }
     HR_Mesh::default()
 }

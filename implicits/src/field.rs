@@ -765,11 +765,13 @@ impl<T: Real> ImplicitSurface<T> {
             })
             .collect();
 
-        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
 
-        hrbf.fit_offset(&pts, &hrbf_values, &nmls);
+        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts.clone())
+            .offsets(hrbf_values)
+            .normals(nmls)
+            .build()
+            .unwrap();
 
         query_points
             .par_iter()
@@ -829,10 +831,12 @@ impl<T: Real> ImplicitSurface<T> {
                 na::Vector3::from(nml).normalize()
             })
             .collect();
-        let mut hrbf = hrbf::HRBF::<f64, hrbf::Pow3<f64>>::new(pts.clone());
-
         let hrbf_values: Vec<f64> = values.iter().map(|&x| x.to_f64().unwrap()).collect();
-        hrbf.fit_offset(&pts, &hrbf_values, &nmls);
+        let hrbf = hrbf::Pow3HrbfBuilder::<f64>::new(pts.clone())
+            .offsets(hrbf_values)
+            .normals(nmls)
+            .build()
+            .unwrap();
 
         let result = sample_pos
             .par_iter()

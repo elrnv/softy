@@ -3,14 +3,11 @@
 members = [
     "geo",
     "utils",
-    "hdkrs",
     "softy",
     "softy-hdk",
     "implicits",
     "cimplicits",
     "implicits-hdk",
-    "vtkio-hdk",
-    "objio-hdk",
     "benchmark",
 ]
 

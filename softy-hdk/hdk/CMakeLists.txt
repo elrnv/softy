@@ -18,15 +18,10 @@ endif()
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
 
-# Add path for shared cmake modules like hdkrs
-if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/debug/cmake/")
-else()
-    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/release/cmake/")
-endif()
+list( APPEND CMAKE_PREFIX_PATH ".")
 
-# Set the directory of the sim library to be found by find_package
-set( Softy_DIR ${CMAKE_SOURCE_DIR} )
+file( READ "${CMAKE_BINARY_DIR}/rust/out_dir_hdkrs.txt" hdkrs_OUT_DIR )
+list( APPEND CMAKE_PREFIX_PATH "${hdkrs_OUT_DIR}/cmake")
 
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.
@@ -62,7 +57,7 @@ endif(WIN32)
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR} ${Softy_INCLUDE_DIRS} ${HDKRS_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR} ${Softy_INCLUDE_DIRS} ${hdkrs_INCLUDE_DIRS}
 )
 
 # Sets several common target properties, such as the library's output directory.

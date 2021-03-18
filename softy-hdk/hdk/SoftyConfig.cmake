@@ -4,7 +4,7 @@ else()
     set( Softy_LIB_DIR "${CMAKE_SOURCE_DIR}/../../target/release" )
 endif()
 
-find_path( Softy_INCLUDE_DIR softy-hdk.h PATHS ${Softy_LIB_DIR} DOC "Softy include directory")
+find_path( Softy_INCLUDE_DIR softy/src/lib.rs.h PATHS "${CMAKE_SOURCE_DIR}/../../target/cxxbridge" DOC "Softy include directory")
 find_library( Softy_LIBRARY softyhdk PATHS ${Softy_LIB_DIR} DOC "Softy library directory")
 
 include(FindPackageHandleStandardArgs)

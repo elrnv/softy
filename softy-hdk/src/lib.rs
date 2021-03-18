@@ -41,198 +41,215 @@ extern crate lazy_static;
 
 mod api;
 
-use hdkrs::{cffi, interop};
+use hdkrs::{PointCloud, PolyMesh, TetMesh};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EL_SoftyObjectType {
-    Solid,
-    Shell,
-    Rigid,
-}
+#[cxx::bridge(namespace = "softy")]
+mod ffi {
+    #[namespace = ""]
+    extern "C++" {
+        include!("hdkrs/src/lib.rs.h");
+        type GU_Detail = hdkrs::ffi::GU_Detail;
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EL_SoftyElasticityModel {
-    StableNeoHookean,
-    NeoHookean,
-}
+    #[derive(Debug)]
+    pub enum ObjectType {
+        Solid,
+        Shell,
+        Rigid,
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EL_SoftyContactType {
-    LinearizedPoint,
-    Point,
-}
+    #[derive(Debug)]
+    pub enum ElasticityModel {
+        StableNeoHookean,
+        NeoHookean,
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EL_SoftyKernel {
-    Interpolating,
-    Approximate,
-    Cubic,
-    Global,
-}
+    #[derive(Debug)]
+    pub enum ContactType {
+        LinearizedPoint,
+        Point,
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum EL_SoftyMuStrategy {
-    Monotone,
-    Adaptive,
-}
+    #[derive(Debug)]
+    pub enum Kernel {
+        Interpolating,
+        Approximate,
+        Cubic,
+        Global,
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct EL_SoftyMaterialProperties {
-    pub object_type: EL_SoftyObjectType,
-    pub elasticity_model: EL_SoftyElasticityModel,
-    pub density: f32,
-    pub damping: f32,
-    pub bending_stiffness: f32,
-    pub bulk_modulus: f32,
-    pub shear_modulus: f32,
-}
+    #[derive(Debug)]
+    pub enum MuStrategy {
+        Monotone,
+        Adaptive,
+    }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct EL_SoftyFrictionalContactParams {
-    pub object_material_id: u32,
-    pub collider_material_ids: EL_SoftyColliderMaterialIds,
-    pub kernel: EL_SoftyKernel,
-    pub contact_type: EL_SoftyContactType,
-    pub radius_multiplier: f32,
-    pub smoothness_tolerance: f32,
-    pub contact_offset: f32,
-    pub use_fixed: bool,
-    pub smoothing_weight: f32,
-    pub friction_forwarding: f32,
-    pub dynamic_cof: f32,
-    pub friction_tolerance: f32,
-    pub friction_inner_iterations: u32,
-}
+    #[derive(Debug)]
+    pub struct MaterialProperties {
+        pub object_type: ObjectType,
+        pub elasticity_model: ElasticityModel,
+        pub density: f32,
+        pub damping: f32,
+        pub bending_stiffness: f32,
+        pub bulk_modulus: f32,
+        pub shear_modulus: f32,
+    }
 
-/// A Helper trait to access C arrays.
-pub(crate) unsafe trait AsSlice {
-    type T;
-    fn ptr(&self) -> *const Self::T;
-    fn size(&self) -> usize;
-    fn as_slice(&self) -> &[Self::T] {
-        unsafe { std::slice::from_raw_parts(self.ptr(), self.size()) }
+    #[derive(Debug)]
+    pub struct FrictionalContactParams {
+        pub object_material_id: u32,
+        pub collider_material_ids: Vec<u32>,
+        pub kernel: Kernel,
+        pub contact_type: ContactType,
+        pub radius_multiplier: f32,
+        pub smoothness_tolerance: f32,
+        pub contact_offset: f32,
+        pub use_fixed: bool,
+        pub smoothing_weight: f32,
+        pub friction_forwarding: f32,
+        pub dynamic_cof: f32,
+        pub friction_tolerance: f32,
+        pub friction_inner_iterations: u32,
+    }
+
+    #[derive(Debug)]
+    pub struct SimParams {
+        pub time_step: f32,
+        pub gravity: f32,
+        pub log_file: String,
+
+        // Materials
+        pub materials: Vec<MaterialProperties>,
+
+        // Constraints
+        pub volume_constraint: bool,
+        pub friction_iterations: u32,
+        pub frictional_contacts: Vec<FrictionalContactParams>,
+
+        // Optimization
+        pub clear_velocity: bool,
+        pub tolerance: f32,
+        pub max_iterations: u32,
+        pub outer_tolerance: f32,
+        pub max_outer_iterations: u32,
+
+        // Ipopt
+        pub mu_strategy: MuStrategy,
+        pub max_gradient_scaling: f32,
+        pub print_level: u32,
+        pub derivative_test: u32,
+    }
+
+    /// Result reported from `register_new_solver` function.
+    /// In case of failure, solver_id is set to a negative number.
+    #[derive(Debug)]
+    pub struct RegistryResult {
+        solver_id: i64,
+        cook_result: CookResult,
+    }
+
+    pub struct SolverResult {
+        /// ID of the solver in the registry.
+        id: i64,
+
+        /// A reference to a Solver struct from the registry.
+        solver: Box<SoftySolver>,
+
+        /// A Cook result indicating the overall status of the result (success/failure) along with a
+        /// descriptive message reported back to the caller on the C side.
+        cook_result: CookResult,
+    }
+
+    pub struct StepResult {
+        meshes: Box<Meshes>,
+        cook_result: CookResult,
+    }
+
+    pub struct SolveResult {
+        solver_id: i64,
+        meshes: Box<Meshes>,
+        cook_result: CookResult,
+    }
+    extern "Rust" {
+        type MeshPoints;
+        fn set_tetmesh_points(self: Pin<&mut MeshPoints>, input: &GU_Detail);
+        fn set_polymesh_points(self: Pin<&mut MeshPoints>, input: &GU_Detail);
+        fn new_mesh_points() -> Box<MeshPoints>;
+    }
+    extern "Rust" {
+        type Meshes;
+        fn set_tetmesh(self: Pin<&mut Meshes>, detail: &GU_Detail);
+        fn set_polymesh(self: Pin<&mut Meshes>, detail: &GU_Detail);
+        fn new_meshes() -> Box<Meshes>;
+    }
+
+    extern "Rust" {
+        type SoftySolver;
+        fn init_env_logger();
+        fn register_new_solver(meshes: Box<Meshes>, sim_params: SimParams) -> RegistryResult;
+        unsafe fn step<'a>(
+            solver: Box<SoftySolver>,
+            mesh_points: Box<MeshPoints>,
+            interrupt_checker: UniquePtr<InterruptChecker>,
+        ) -> StepResult;
+        fn get_solver(solver_id: i64, meshes: Box<Meshes>, sim_params: SimParams) -> SolverResult;
+        fn clear_solver_registry();
+
+        fn add_meshes(detail: Pin<&mut GU_Detail>, meshes: Box<Meshes>);
+    }
+
+    #[namespace = "hdkrs"]
+    extern "C++" {
+        type InterruptChecker = hdkrs::ffi::InterruptChecker;
+        type CookResult = hdkrs::ffi::CookResult;
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct EL_SoftyColliderMaterialIds {
-    pub ptr: *const u32,
-    pub size: usize,
+use ffi::*;
+
+pub struct Meshes {
+    tetmesh: Option<TetMesh>,
+    polymesh: Option<PolyMesh>,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct EL_SoftyMaterials {
-    pub ptr: *const EL_SoftyMaterialProperties,
-    pub size: usize,
+fn new_meshes() -> Box<Meshes> {
+    Box::new(Meshes {
+        tetmesh: None,
+        polymesh: None,
+    })
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct EL_SoftyFrictionalContacts {
-    pub ptr: *const EL_SoftyFrictionalContactParams,
-    pub size: usize,
+fn new_mesh_points() -> Box<MeshPoints> {
+    Box::new(MeshPoints {
+        tetmesh_points: None,
+        polymesh_points: None,
+    })
 }
 
-unsafe impl AsSlice for EL_SoftyColliderMaterialIds {
-    type T = u32;
-    fn ptr(&self) -> *const Self::T {
-        self.ptr
-    }
-    fn size(&self) -> usize {
-        self.size
-    }
-}
-
-unsafe impl AsSlice for EL_SoftyMaterials {
-    type T = EL_SoftyMaterialProperties;
-    fn ptr(&self) -> *const Self::T {
-        self.ptr
-    }
-    fn size(&self) -> usize {
-        self.size
-    }
-}
-
-unsafe impl AsSlice for EL_SoftyFrictionalContacts {
-    type T = EL_SoftyFrictionalContactParams;
-    fn ptr(&self) -> *const Self::T {
-        self.ptr
-    }
-    fn size(&self) -> usize {
-        self.size
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct EL_SoftySimParams {
-    pub time_step: f32,
-    pub gravity: f32,
-    pub log_file: *const std::os::raw::c_char,
-
-    // Materials
-    pub materials: EL_SoftyMaterials,
-
-    // Constraints
-    pub volume_constraint: bool,
-    pub friction_iterations: u32,
-    pub frictional_contacts: EL_SoftyFrictionalContacts,
-
-    // Optimization
-    pub clear_velocity: bool,
-    pub tolerance: f32,
-    pub max_iterations: u32,
-    pub outer_tolerance: f32,
-    pub max_outer_iterations: u32,
-
-    // Ipopt
-    pub mu_strategy: EL_SoftyMuStrategy,
-    pub max_gradient_scaling: f32,
-    pub print_level: u32,
-    pub derivative_test: u32,
-}
-
-/// Result reported from `register_new_solver` function.
-/// In case of failure, solver_id is set to a negative number.
-#[repr(C)]
-pub struct EL_SoftyRegistryResult {
-    solver_id: i64,
-    cook_result: cffi::HR_CookResult,
+pub struct MeshPoints {
+    tetmesh_points: Option<PointCloud>,
+    polymesh_points: Option<PointCloud>,
 }
 
 /// This function initializes env_logger. It will panic if called more than once.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_init_env_logger() {
+pub fn init_env_logger() {
     env_logger::Builder::from_env("SOFTY_LOG").init();
 }
 
-/// Register a new solver in the registry. (C side)
-/// This function consumes `tetmesh` and `polymesh`.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_register_new_solver(
-    tetmesh: *mut cffi::HR_TetMesh,
-    polymesh: *mut cffi::HR_PolyMesh,
-    sim_params: EL_SoftySimParams,
-) -> EL_SoftyRegistryResult {
-    let solid = interop::into_box(tetmesh);
-    let shell = interop::into_box(polymesh);
-
-    match api::register_new_solver(solid, shell, sim_params) {
-        Ok((id, _)) => EL_SoftyRegistryResult {
+/// Register a new solver in the registry.
+pub fn register_new_solver(meshes: Box<Meshes>, sim_params: SimParams) -> RegistryResult {
+    match api::register_new_solver(
+        meshes.tetmesh.map(|m| m.0),
+        meshes.polymesh.map(|m| m.0),
+        sim_params,
+    ) {
+        Ok((id, _)) => RegistryResult {
             solver_id: i64::from(id),
             cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
         },
-        Err(err) => EL_SoftyRegistryResult {
+        Err(err) => RegistryResult {
             solver_id: -1,
             cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
         },
@@ -248,94 +265,91 @@ fn validate_id(id: i64) -> Option<u32> {
     }
 }
 
-/// Validate the given solver pointer from C side by converting it to an `Arc` if it still exists
-/// in the registry.
-unsafe fn validate_solver_ptr(solver: *mut EL_SoftySolverPtr) -> Option<EL_SoftySolverPtr> {
-    interop::into_box(solver).map(|x| *x)
+fn add_meshes(mut detail: Pin<&mut GU_Detail>, meshes: Box<Meshes>) {
+    if let Some(tetmesh) = meshes.tetmesh {
+        hdkrs::ffi::add_tetmesh(detail.as_mut(), &tetmesh);
+    }
+    if let Some(polymesh) = meshes.polymesh {
+        hdkrs::ffi::add_polymesh(detail, &polymesh);
+    }
 }
 
-/// Move the `Arc` to the heap and return its raw pointer.
-fn solver_ptr(solver: EL_SoftySolverPtr) -> *mut EL_SoftySolverPtr {
-    Box::into_raw(Box::new(solver)) as *mut EL_SoftySolverPtr
+impl Meshes {
+    fn set_tetmesh(mut self: Pin<&mut Meshes>, detail: &GU_Detail) {
+        self.tetmesh = hdkrs::ffi::build_tetmesh(detail).ok().map(|m| *m);
+    }
+    fn set_polymesh(mut self: Pin<&mut Meshes>, detail: &GU_Detail) {
+        self.polymesh = hdkrs::ffi::build_polymesh(detail).ok().map(|m| *m);
+    }
+}
+
+impl MeshPoints {
+    fn set_tetmesh_points(mut self: Pin<&mut MeshPoints>, detail: &GU_Detail) {
+        self.tetmesh_points = hdkrs::ffi::build_pointcloud(detail).ok().map(|m| *m);
+    }
+    fn set_polymesh_points(mut self: Pin<&mut MeshPoints>, detail: &GU_Detail) {
+        self.polymesh_points = hdkrs::ffi::build_pointcloud(detail).ok().map(|m| *m);
+    }
 }
 
 /// Opaque struct to represent `Arc<Mutex<api::Solver>>` on the C side.
-#[allow(non_camel_case_types)]
-pub type EL_SoftySolverPtr = Arc<Mutex<dyn api::Solver>>;
+pub enum SoftySolver {
+    Some(Arc<Mutex<dyn api::Solver>>),
+    None,
+}
 
-#[repr(C)]
-pub struct EL_SoftySolverResult {
-    /// ID of the solver in the registry.
-    id: i64,
-
-    /// A non-owning pointer to a Solver struct from the registry.
-    solver: *mut EL_SoftySolverPtr,
-
-    /// A Cook result indicating the overall status of the result (success/failure) along with a
-    /// descriptive message reported back to the caller on the C side.
-    cook_result: cffi::HR_CookResult,
+impl Into<Option<Arc<Mutex<dyn api::Solver>>>> for SoftySolver {
+    fn into(self) -> Option<Arc<Mutex<dyn api::Solver>>> {
+        match self {
+            SoftySolver::Some(s) => Some(s),
+            SoftySolver::None => None,
+        }
+    }
 }
 
 /// Register a new solver in the registry. (C side)
 /// This function consumes `tetmesh` and `polymesh`.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_get_solver(
-    solver_id: i64,
-    tetmesh: *mut cffi::HR_TetMesh,
-    polymesh: *mut cffi::HR_PolyMesh,
-    sim_params: EL_SoftySimParams,
-) -> EL_SoftySolverResult {
+pub fn get_solver(solver_id: i64, meshes: Box<Meshes>, sim_params: SimParams) -> SolverResult {
     match api::get_solver(
         validate_id(solver_id),
-        interop::into_box(tetmesh),
-        interop::into_box(polymesh),
+        meshes.tetmesh.map(|m| m.0),
+        meshes.polymesh.map(|m| m.0),
         sim_params,
     ) {
         Ok((id, solver)) => {
             assert!(Arc::strong_count(&solver) != 1);
-            EL_SoftySolverResult {
+            SolverResult {
                 id: i64::from(id),
-                solver: solver_ptr(solver),
+                solver: Box::new(SoftySolver::Some(solver)),
                 cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
             }
         }
-        Err(err) => EL_SoftySolverResult {
+        Err(err) => SolverResult {
             id: -1,
-            solver: ::std::ptr::null_mut(),
+            solver: Box::new(SoftySolver::None),
             cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
         },
     }
 }
 
 /// Delete all solvers in the registry.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_clear_solver_registry() {
+pub fn clear_solver_registry() {
     api::clear_solver_registry()
 }
 
-#[repr(C)]
-pub struct EL_SoftyStepResult {
-    tetmesh: *mut cffi::HR_TetMesh,
-    polymesh: *mut cffi::HR_PolyMesh,
-    cook_result: cffi::HR_CookResult,
-}
-
 /// Perform one step of the solve given a solver.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_step(
-    solver: *mut EL_SoftySolverPtr,
-    tetmesh_points: *mut cffi::HR_PointCloud,
-    polymesh_points: *mut cffi::HR_PointCloud,
-    interrupt_checker: *mut cffi::c_void,
-    check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
-) -> EL_SoftyStepResult {
-    let (tetmesh_mb, polymesh_mb, cook_result) = if let Some(solver) = validate_solver_ptr(solver) {
+pub fn step<'a>(
+    solver: Box<SoftySolver>,
+    mesh_points: Box<MeshPoints>,
+    mut interrupt_checker: cxx::UniquePtr<InterruptChecker>,
+) -> StepResult {
+    let (tetmesh_mb, polymesh_mb, cook_result) = if let SoftySolver::Some(solver) = *solver {
         match solver.try_lock() {
             Ok(mut solver) => api::step(
                 &mut *solver,
-                interop::into_box(tetmesh_points),
-                interop::into_box(polymesh_points),
-                interop::interrupt_callback(interrupt_checker, check_interrupt),
+                mesh_points.tetmesh_points.map(|m| m.0),
+                mesh_points.polymesh_points.map(|m| m.0),
+                move || interrupt_checker.pin_mut().check_interrupt(),
             ),
             Err(err) => (
                 None,
@@ -352,66 +366,58 @@ pub unsafe extern "C" fn el_softy_step(
     };
 
     if let Some(solver_tetmesh) = tetmesh_mb {
-        let tetmesh = Box::into_raw(Box::new(solver_tetmesh.into()));
         if let Some(solver_polymesh) = polymesh_mb {
-            EL_SoftyStepResult {
-                tetmesh,
-                polymesh: Box::into_raw(Box::new(solver_polymesh.reversed().into())),
+            StepResult {
+                meshes: Box::new(Meshes {
+                    tetmesh: Some(solver_tetmesh.into()),
+                    polymesh: Some(solver_polymesh.reversed().into()),
+                }),
                 cook_result: cook_result.into(),
             }
         } else {
-            EL_SoftyStepResult {
-                tetmesh: tetmesh.into(),
-                polymesh: std::ptr::null_mut(),
+            StepResult {
+                meshes: Box::new(Meshes {
+                    tetmesh: Some(solver_tetmesh.into()),
+                    polymesh: None,
+                }),
                 cook_result: cook_result.into(),
             }
         }
     } else {
-        EL_SoftyStepResult {
-            tetmesh: std::ptr::null_mut(),
-            polymesh: std::ptr::null_mut(),
+        StepResult {
+            meshes: new_meshes(),
             cook_result: cook_result.into(),
         }
     }
 }
 
-#[repr(C)]
-pub struct EL_SoftySolveResult {
-    solver_id: i64,
-    tetmesh: *mut cffi::HR_TetMesh,
-    polymesh: *mut cffi::HR_PolyMesh,
-    cook_result: cffi::HR_CookResult,
-}
-
 /// Gets a valid solver and performs one step of the solve.
-#[no_mangle]
-pub unsafe extern "C" fn el_softy_solve(
+pub fn solve<'a>(
     solver_id: i64,
-    tetmesh: *mut cffi::HR_TetMesh,
-    polymesh: *mut cffi::HR_PolyMesh,
-    sim_params: EL_SoftySimParams,
-    interrupt_checker: *mut cffi::c_void,
-    check_interrupt: Option<extern "C" fn(*const cffi::c_void) -> bool>,
-) -> EL_SoftySolveResult {
+    meshes: Box<Meshes>,
+    sim_params: SimParams,
+    mut interrupt_checker: cxx::UniquePtr<InterruptChecker>,
+) -> SolveResult {
     let (data, cook_result) = api::cook(
         validate_id(solver_id),
-        interop::into_box(tetmesh),
-        interop::into_box(polymesh),
+        meshes.tetmesh.map(|m| m.0),
+        meshes.polymesh.map(|m| m.0),
         sim_params,
-        interop::interrupt_callback(interrupt_checker, check_interrupt),
+        move || interrupt_checker.pin_mut().check_interrupt(),
     );
     if let Some((new_solver_id, solver_tetmesh)) = data {
-        EL_SoftySolveResult {
+        SolveResult {
             solver_id: i64::from(new_solver_id),
-            tetmesh: Box::into_raw(Box::new(solver_tetmesh.into())),
-            polymesh: ::std::ptr::null_mut(),
+            meshes: Box::new(Meshes {
+                tetmesh: Some(solver_tetmesh.into()),
+                polymesh: None,
+            }),
             cook_result: cook_result.into(),
         }
     } else {
-        EL_SoftySolveResult {
+        SolveResult {
             solver_id: -1,
-            tetmesh: ::std::ptr::null_mut(),
-            polymesh: ::std::ptr::null_mut(),
+            meshes: new_meshes(),
             cook_result: cook_result.into(),
         }
     }

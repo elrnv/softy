@@ -1,6 +1,5 @@
 use num_traits::FromPrimitive;
 //use rayon::prelude::*;
-use reinterpret::*;
 
 use flatk::zip;
 use geo::mesh::{topology::*, Attrib};
@@ -21,8 +20,8 @@ impl<T: Real> Energy<T> for SoftShellInertia<'_> {
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
         let trimesh = &self.0.trimesh;
 
-        let vel0: &[Vector3<T>] = reinterpret_slice(v0);
-        let vel1: &[Vector3<T>] = reinterpret_slice(v1);
+        let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);
+        let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
 
         zip!(
             trimesh
@@ -55,12 +54,12 @@ impl<T: Real> EnergyGradient<T> for SoftShellInertia<'_> {
     fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
         let trimesh = &self.0.trimesh;
 
-        let vel0: &[Vector3<T>] = reinterpret_slice(v0);
-        let vel1: &[Vector3<T>] = reinterpret_slice(v1);
+        let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);
+        let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
 
         debug_assert_eq!(grad_f.len(), v0.len());
 
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
         // Transfer forces from cell-vertices to vertices themselves
         for (&area, density, face) in zip!(
@@ -90,7 +89,7 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
         self.0.trimesh.num_faces() * NUM_HESSIAN_TRIPLETS_PER_TRI
     }
 
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         offset: MatrixElementIndex,
         rows: &mut [I],
@@ -102,8 +101,8 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
         let trimesh = &self.0.trimesh;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(rows);
-        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(cols);
+        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(rows) };
+        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(cols) };
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
@@ -135,7 +134,7 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
 
         // Break up the hessian triplets into chunks of elements for each triangle.
         let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-            reinterpret_mut_slice(indices);
+            unsafe { reinterpret::reinterpret_mut_slice(indices) };
 
         // The momentum hessian is a diagonal matrix.
         hess_chunks
@@ -164,7 +163,7 @@ impl<T: Real> EnergyHessian<T> for SoftShellInertia<'_> {
         let SoftShellInertia(ref shell) = *self;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] = reinterpret_mut_slice(values);
+        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(values) };
 
         let vol_iter = shell
             .trimesh

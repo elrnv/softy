@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use crate::contact::*;
-use reinterpret::*;
 use tensr::{zip, Matrix3, Vector2};
 
 /// Contact solver.
@@ -65,7 +64,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ContactSolver<'a, CJI> {
     ) -> ContactSolver<'a, CJI> {
         ContactSolver {
             velocity,
-            friction_impulse: reinterpret_slice(friction_impulse),
+            friction_impulse: bytemuck::cast_slice(friction_impulse),
             contact_basis,
             contact_jacobian,
             masses,
@@ -84,7 +83,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ContactSolver<'a, CJI> {
             *rn = (-v * m).max(0.0);
         }
 
-        reinterpret_vec(contact_impulse)
+        bytemuck::cast_vec(contact_impulse)
     }
 }
 

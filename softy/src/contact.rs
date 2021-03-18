@@ -39,10 +39,14 @@ impl Default for FrictionalContactParams {
 
 /// A two dimensional vector in polar coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Polar2<T> {
     pub radius: T,
     pub angle: T,
 }
+
+unsafe impl bytemuck::Pod for Polar2<f64> {}
+unsafe impl bytemuck::Zeroable for Polar2<f64> {}
 
 impl<T: Real> Polar2<T> {
     pub fn from_euclidean<V2: Into<[T; 2]>>(v: V2) -> Polar2<T> {

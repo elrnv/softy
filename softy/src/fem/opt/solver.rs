@@ -1,89 +1,23 @@
+use std::cell::RefCell;
+
+use num_traits::Zero;
+
+use geo::mesh::{topology::*, Attrib, VertexPositions};
+use geo::ops::{ShapeMatrix, Volume};
+use ipopt::{self, Ipopt, SolverData, SolverDataMut};
+use tensr::*;
+
+use super::problem::{FrictionalContactConstraint, Var};
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::problem::{FrictionalContactConstraint, Var};
-use crate::objects::*;
-use geo::mesh::{topology::*, Attrib, VertexPositions};
-use geo::ops::{ShapeMatrix, Volume};
-use geo::prim::Tetrahedron;
-use ipopt::{self, Ipopt, SolverData, SolverDataMut};
-use num_traits::Zero;
-use std::cell::RefCell;
-use tensr::*;
-
-use crate::inf_norm;
-
-use super::{
-    GeneralizedCoords, GeneralizedState, MuStrategy, NonLinearProblem, ObjectData, SimParams,
-    Solution, Vertex, VertexState, VertexWorkspace, WorkspaceData,
+use crate::fem::{
+    ref_tet, GeneralizedCoords, GeneralizedState, MuStrategy, NonLinearProblem, ObjectData,
+    SimParams, Solution, SolveResult, Vertex, VertexState, VertexWorkspace, WorkspaceData,
 };
+use crate::inf_norm;
+use crate::objects::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
-
-/// Result from one inner simulation step.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InnerSolveResult {
-    /// Number of inner iterations in one step.
-    pub iterations: u32,
-    /// The value of the objective at the end of the step.
-    pub objective_value: f64,
-    /// Constraint values at the solution of the inner step.
-    pub constraint_values: Vec<f64>,
-}
-
-/// Result from one simulation step.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct SolveResult {
-    /// Maximum number of inner iterations during one outer step.
-    pub max_inner_iterations: u32,
-    /// Number of total accumulated inner iterations.
-    pub inner_iterations: u32,
-    /// Number of outer iterations of the step.
-    pub iterations: u32,
-    /// The value of the objective at the end of the time step.
-    pub objective_value: f64,
-}
-
-impl SolveResult {
-    fn combine_inner_step_data(self, iterations: u32, objective_value: f64) -> SolveResult {
-        SolveResult {
-            // Aggregate max number of iterations.
-            max_inner_iterations: iterations.max(self.max_inner_iterations),
-
-            inner_iterations: iterations + self.inner_iterations,
-
-            // Adding a new inner solve result means we have completed another inner solve: +1
-            // outer iterations.
-            iterations: self.iterations + 1,
-
-            // The objective value of the solution is the objective value of the last inner solve.
-            objective_value,
-        }
-    }
-    /// Add an inner solve result to this solve result.
-    fn combine_inner_result(self, inner: &InnerSolveResult) -> SolveResult {
-        self.combine_inner_step_data(inner.iterations, inner.objective_value)
-    }
-}
-
-impl std::fmt::Display for SolveResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "Iterations: {}\nObjective: {}\nMax Inner Iterations: {}",
-            self.iterations, self.objective_value, self.max_inner_iterations
-        )
-    }
-}
-/// Get reference tetrahedron.
-/// This routine assumes that there is a vertex attribute called `ref` of type `[f32;3]`.
-pub fn ref_tet(ref_pos: &[RefPosType]) -> Tetrahedron<f64> {
-    Tetrahedron::new([
-        Vector3::new(ref_pos[0]).cast::<f64>().into(),
-        Vector3::new(ref_pos[1]).cast::<f64>().into(),
-        Vector3::new(ref_pos[2]).cast::<f64>().into(),
-        Vector3::new(ref_pos[3]).cast::<f64>().into(),
-    ])
-}
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -107,10 +41,10 @@ pub enum SourceIndex {
 
 impl SourceIndex {
     #[inline]
-    fn into_source(self, with_fixed: bool) -> super::SourceObject {
+    fn into_source(self, with_fixed: bool) -> crate::fem::SourceObject {
         match self {
-            SourceIndex::Solid(i) => super::SourceObject::Solid(i, with_fixed),
-            SourceIndex::Shell(i) => super::SourceObject::Shell(i),
+            SourceIndex::Solid(i) => crate::fem::SourceObject::Solid(i, with_fixed),
+            SourceIndex::Shell(i) => crate::fem::SourceObject::Shell(i),
         }
     }
 
@@ -1155,7 +1089,7 @@ impl Solver {
 
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
-    pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
+    pub fn inner_step(&mut self) -> Result<crate::fem::InnerSolveResult, Error> {
         // Solve non-linear problem
         let ipopt::SolveResult {
             // unpack ipopt result
@@ -1168,7 +1102,7 @@ impl Solver {
         let iterations = solver_data.problem.pop_iteration_count() as u32;
         solver_data.problem.update_warm_start(solver_data.solution);
 
-        let result = InnerSolveResult {
+        let result = crate::fem::InnerSolveResult {
             iterations,
             objective_value,
             constraint_values: constraint_values.to_vec(),

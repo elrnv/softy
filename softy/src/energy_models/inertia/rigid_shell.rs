@@ -1,5 +1,4 @@
 use num_traits::FromPrimitive;
-use reinterpret::*;
 use unroll::unroll_for_loops;
 
 use tensr::{Chunked3, IntoData, Matrix2x3, Matrix3, Real, Vector3};
@@ -58,7 +57,7 @@ impl<T: Real> EnergyGradient<T> for RigidShellInertia {
         let v1 = rigid_dofs(v1);
         let dv = v1 - v0;
 
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
         gradient[0] += dv[0] * T::from(self.mass).unwrap();
         gradient[1] += self.inertia.cast_inner::<T>() * dv[1];
@@ -71,7 +70,7 @@ impl EnergyHessianTopology for RigidShellInertia {
     }
 
     #[unroll_for_loops]
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         mut offset: MatrixElementIndex,
         rows: &mut [I],

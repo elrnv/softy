@@ -40,7 +40,7 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
         }
     }
     // This method is often overloaded so we forward it here explicitly for efficiency.
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         off: MatrixElementIndex,
         rows: &mut [I],
@@ -105,7 +105,7 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
         }
     }
     // This method is often overloaded so we forward it here explicitly for efficiency.
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         off: MatrixElementIndex,
         rows: &mut [I],
@@ -137,7 +137,6 @@ pub(crate) mod test_utils {
     use approx::*;
     use autodiff::F1 as F;
     use num_traits::Zero;
-    use reinterpret::*;
 
     pub(crate) fn test_tetmeshes() -> Vec<TetMesh> {
         vec![
@@ -202,7 +201,7 @@ pub(crate) mod test_utils {
         E: Energy<F> + EnergyGradient<F>,
     {
         for (energy, pos) in configurations.iter() {
-            let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
+            let (x0, mut x1) = autodiff_step(bytemuck::cast_slice(&pos), ty);
 
             let mut grad = vec![F::zero(); 3 * pos.len()];
             energy.add_energy_gradient(&x0, &x1, &mut grad);
@@ -231,7 +230,7 @@ pub(crate) mod test_utils {
         use crate::matrix::{MatrixElementIndex as Index, MatrixElementTriplet as Triplet};
 
         for (energy, pos) in configurations.iter() {
-            let (x0, mut x1) = autodiff_step(reinterpret_slice(&pos), ty);
+            let (x0, mut x1) = autodiff_step(bytemuck::cast_slice(&pos), ty);
 
             let mut hess_triplets =
                 vec![Triplet::new(0, 0, F::zero()); energy.energy_hessian_size()];

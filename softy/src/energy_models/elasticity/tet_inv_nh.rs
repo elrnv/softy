@@ -464,7 +464,7 @@ impl EnergyHessian for ElasticTetMeshEnergy {
     fn energy_hessian_size(&self) -> usize {
         Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.tetmesh.borrow().num_cells()
     }
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         offset: MatrixElementIndex,
         rows: &mut [I],

@@ -10,7 +10,6 @@ use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
 use crate::energy_models::Either;
-use crate::fem::problem::Var;
 use crate::objects::*;
 use crate::TriMesh;
 
@@ -589,7 +588,8 @@ impl TriMeshShell {
         Ok(())
     }
 
-    pub fn tagged_mesh(&self) -> Var<&TriMesh, f64> {
+    pub fn tagged_mesh(&self) -> crate::fem::opt::problem::Var<&TriMesh, f64> {
+        use crate::fem::opt::problem::Var;
         match self.data {
             ShellData::Fixed { .. } => Var::Fixed(&self.trimesh),
             ShellData::Rigid { mass, inertia, .. } => Var::Rigid(&self.trimesh, mass, inertia),
@@ -683,7 +683,7 @@ mod tests {
         let exp_inertia = Matrix3::identity() * moment_of_inertia;
 
         let (mass, cm, inertia) = TriMeshShell::integrate_rigid_properties(&mesh, 2.0);
-        assert_relative_eq!(mass, exp_mass);
+        assert_relative_eq!(mass, exp_mass, max_relative = 1e-7);
         assert_relative_eq!(cm, exp_cm, max_relative = 1e-7);
         assert_relative_eq!(inertia, exp_inertia, max_relative = 1e-7);
 

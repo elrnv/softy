@@ -3,7 +3,6 @@ use super::FrictionParams;
 use super::FrictionSolveResult;
 use ipopt::{self, Index, Ipopt, Number};
 use num_traits::Zero;
-use reinterpret::*;
 
 use tensr::*;
 
@@ -96,7 +95,7 @@ impl<'a> FrictionPolarSolver<'a> {
         } = self.solver.solve();
 
         let polar_solution: &[Polar2<f64>] =
-            reinterpret_slice(solver_data.solution.primal_variables);
+            bytemuck::cast_slice(solver_data.solution.primal_variables);
         let tangent_sol: Vec<[f64; 2]> = polar_solution
             .iter()
             .map(|&p| {
@@ -169,8 +168,8 @@ impl FrictionPolarProblem<'_> {
     }
 
     pub fn bounds(&self, x_l: &mut [Number], x_u: &mut [Number]) -> bool {
-        let x_l: &mut [Polar2<f64>] = reinterpret_mut_slice(x_l);
-        let x_u: &mut [Polar2<f64>] = reinterpret_mut_slice(x_u);
+        let x_l: &mut [Polar2<f64>] = bytemuck::cast_slice_mut(x_l);
+        let x_u: &mut [Polar2<f64>] = bytemuck::cast_slice_mut(x_u);
         for (l, u, &cr) in zip!(x_l.iter_mut(), x_u.iter_mut(), self.contact_impulse.iter()) {
             // First coordinate is the radius and second is the angle.
             l.radius = 0.0; // radius is never negative
@@ -188,7 +187,7 @@ impl FrictionPolarProblem<'_> {
     }
 
     pub fn initial_point(&self, r: &mut [Number]) -> bool {
-        let impulses: &mut [Polar2<f64>] = reinterpret_mut_slice(r);
+        let impulses: &mut [Polar2<f64>] = bytemuck::cast_slice_mut(r);
         for (i, (r, &cr, &p)) in zip!(
             impulses.iter_mut(),
             self.contact_impulse.iter(),
@@ -253,7 +252,7 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
     }
 
     fn objective(&self, r_p: &[Number], obj: &mut Number) -> bool {
-        let polar_impulses: &[Polar2<f64>] = reinterpret_slice(r_p);
+        let polar_impulses: &[Polar2<f64>] = bytemuck::cast_slice(r_p);
         assert_eq!(self.0.predictor_impulse.len(), polar_impulses.len());
 
         let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(
@@ -275,8 +274,8 @@ impl ipopt::BasicProblem for SemiImplicitFrictionPolarProblem<'_> {
             "F Unscaled variable norm: {}",
             crate::inf_norm(r_p.iter().cloned())
         );
-        let polar_impulses: &[Polar2<Number>] = reinterpret_slice(r_p);
-        let polar_grad: &mut [[Number; 2]] = reinterpret_mut_slice(grad_f);
+        let polar_impulses: &[Polar2<Number>] = bytemuck::cast_slice(r_p);
+        let polar_grad: &mut [[Number; 2]] = bytemuck::cast_slice_mut(grad_f);
         assert_eq!(self.0.predictor_impulse.len(), polar_grad.len());
 
         let mut r: Chunked3<Vec<f64>> = Chunked3::from_array_vec(
@@ -354,7 +353,7 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
         true
     }
     fn hessian_values(&self, r: &[Number], vals: &mut [Number]) -> bool {
-        let r_p: &[Polar2<Number>] = reinterpret_slice(r);
+        let r_p: &[Polar2<Number>] = bytemuck::cast_slice(r);
 
         let mut r: Chunked3<Vec<f64>> =
             Chunked3::from_array_vec(self.0.contact_basis.from_polar_tangent_space(r_p));

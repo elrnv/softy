@@ -276,8 +276,8 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetMeshElasticity<'_, E> {
 
         let damping = material.damping();
 
-        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos0: &[Vector3<T>] = bytemuck::cast_slice(x0);
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
 
         tetmesh
             .attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
@@ -344,10 +344,10 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
 
-        let pos0: &[Vector3<T>] = reinterpret_slice(x0);
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos0: &[Vector3<T>] = bytemuck::cast_slice(x0);
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
 
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
         // Transfer forces from cell-vertices to vertices themeselves
         tetmesh
@@ -423,7 +423,7 @@ impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {
         Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.0.tetmesh.num_cells()
     }
 
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         offset: MatrixElementIndex,
         rows: &mut [I],
@@ -436,8 +436,8 @@ impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_row_chunks: &mut [[I; 78]] = reinterpret_mut_slice(rows);
-            let hess_col_chunks: &mut [[I; 78]] = reinterpret_mut_slice(cols);
+            let hess_row_chunks: &mut [[I; 78]] = unsafe { reinterpret_mut_slice(rows) };
+            let hess_col_chunks: &mut [[I; 78]] = unsafe { reinterpret_mut_slice(cols) };
 
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
@@ -473,7 +473,7 @@ impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex; 78]] = reinterpret_mut_slice(indices);
+            let hess_chunks: &mut [[MatrixElementIndex; 78]] = unsafe { reinterpret_mut_slice(indices) };
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 
@@ -510,11 +510,11 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetMeshElastic
 
         let damping = material.damping();
 
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
 
         {
             // Break up the hessian triplets into chunks of elements for each tet.
-            let hess_chunks: &mut [[T; 78]] = reinterpret_mut_slice(values);
+            let hess_chunks: &mut [[T; 78]] = unsafe { reinterpret_mut_slice(values) };
 
             hess_chunks
                 .par_iter_mut()

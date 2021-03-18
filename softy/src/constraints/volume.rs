@@ -7,7 +7,6 @@ use geo::{
     mesh::{attrib::*, topology::*},
     ops::Volume,
 };
-use reinterpret::*;
 use tensr::{Matrix3, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,7 +60,7 @@ impl<'a> Constraint<'a, f64> for VolumeConstraint {
 
     fn constraint(&mut self, _x0: &'a [f64], x1: &'a [f64], value: &mut [f64]) {
         debug_assert_eq!(value.len(), self.constraint_size());
-        let pos1: &[[f64; 3]] = reinterpret_slice(x1);
+        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
         let mut total_volume = 0.0;
         for tri in self.surface_topo.iter() {
             let p = Matrix3::new(tri_at(pos1, tri));
@@ -93,7 +92,7 @@ impl VolumeConstraint {
         _x0: &'a [f64],
         x1: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        let pos1: &[[f64; 3]] = reinterpret_slice(x1);
+        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
             let p = Matrix3::new(tri_at(pos1, tri));
@@ -186,7 +185,7 @@ impl VolumeConstraint {
         x1: &'a [f64],
         lambda: &'a [f64],
     ) -> impl Iterator<Item = f64> + 'a {
-        let pos1: &[[f64; 3]] = reinterpret_slice(x1);
+        let pos1: &[[f64; 3]] = bytemuck::cast_slice(x1);
 
         self.surface_topo.iter().flat_map(move |tri| {
             let p = Matrix3::new(tri_at(pos1, tri));

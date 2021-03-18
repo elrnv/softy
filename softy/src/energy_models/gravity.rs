@@ -6,7 +6,6 @@ use flatk::zip;
 use geo::mesh::{topology::*, Attrib};
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
-use reinterpret::*;
 use tensr::{Real, Vector3};
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
@@ -35,7 +34,7 @@ impl<'a> TetMeshGravity<'a> {
 impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
         let tetmesh = &self.solid.tetmesh;
         let tet_iter = tetmesh
             .cell_iter()
@@ -68,7 +67,7 @@ impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
         debug_assert_eq!(grad.len(), _x0.len());
 
         let tetmesh = &self.solid.tetmesh;
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
 
         let g = self.g.cast::<T>();
 
@@ -125,7 +124,7 @@ impl<'a> SoftShellGravity<'a> {
 impl<T: Real> Energy<T> for SoftShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
-        let pos1: &[Vector3<T>] = reinterpret_slice(x1);
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
         let trimesh = &self.shell.trimesh;
         let tri_iter = trimesh
             .face_iter()
@@ -158,7 +157,7 @@ impl<T: Real> EnergyGradient<T> for SoftShellGravity<'_> {
         debug_assert_eq!(grad.len(), _x0.len());
 
         let trimesh = &self.shell.trimesh;
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
 
         let g = self.g.cast::<T>();
 

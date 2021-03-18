@@ -1,7 +1,7 @@
 use super::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::fem::problem::{Tag, Var};
+use crate::fem::opt::problem::{Tag, Var};
 use crate::friction::*;
 use crate::matrix::*;
 use crate::objects::TriMeshShell;

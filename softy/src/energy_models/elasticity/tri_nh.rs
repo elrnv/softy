@@ -4,7 +4,6 @@
 use num_traits::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
-use reinterpret::*;
 use unroll::unroll_for_loops;
 
 use crate::TriMesh;
@@ -20,6 +19,8 @@ use crate::matrix::*;
 use crate::objects::*;
 
 use super::{LinearElementEnergy, TriEnergy};
+
+// TODO: Remove reinterpret when bytemuck implements Pod for all arrays.
 
 /// Per-triangle Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for triangle energy computation. It encapsulates triangle specific energy computation.
@@ -702,7 +703,7 @@ impl<T: Real64, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> 
         let pos1 = Chunked3::from_flat(x1).into_arrays();
         let pos0 = Chunked3::from_flat(x0).into_arrays();
 
-        let gradient: &mut [Vector3<T>] = reinterpret_mut_slice(grad_f);
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
         // Gradient of membrane energy.
         for (density, &area, &DX_inv, face, &lambda, &mu) in zip!(
@@ -801,7 +802,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
             + NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE * self.interior_edges.len()
     }
 
-    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send>(
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
         &self,
         offset: MatrixElementIndex,
         rows: &mut [I],
@@ -816,9 +817,9 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         {
             // Break up the hessian indices into chunks of elements for each tri.
             let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-                reinterpret_mut_slice(&mut rows[..tri_entries]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut rows[..tri_entries]) };
             let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-                reinterpret_mut_slice(&mut cols[..tri_entries]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut cols[..tri_entries]) };
 
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
@@ -848,9 +849,9 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         {
             // Break up the hessian indices into chunks of elements for each edge.
             let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
-                reinterpret_mut_slice(&mut rows[tri_entries..]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut rows[tri_entries..]) };
             let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
-                reinterpret_mut_slice(&mut cols[tri_entries..]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut cols[tri_entries..]) };
 
             let hess_iter = hess_row_chunks
                 .par_iter_mut()
@@ -900,7 +901,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         {
             // Break up the hessian indices into chunks of elements for each triangle.
             let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-                reinterpret_mut_slice(&mut indices[..tri_entries]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut indices[..tri_entries]) };
 
             let hess_iter = hess_chunks
                 .par_iter_mut()
@@ -929,7 +930,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
         {
             // Break up the hessian indices into chunks of elements for each edge.
             let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
-                reinterpret_mut_slice(&mut indices[tri_entries..]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut indices[tri_entries..]) };
 
             let hess_iter = hess_chunks
                 .par_iter_mut()
@@ -993,7 +994,7 @@ impl<T: Real64 + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
         {
             // Break up the hessian triplets into chunks of elements for each triangle.
             let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
-                reinterpret_mut_slice(&mut values[..tri_entries]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut values[..tri_entries]) };
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
                 Either::from(
@@ -1073,7 +1074,7 @@ impl<T: Real64 + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
         {
             // Break up the Hessian triplets into chunks of elements for each triangle.
             let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE]] =
-                reinterpret_mut_slice(&mut values[tri_entries..]);
+                unsafe { reinterpret::reinterpret_mut_slice(&mut values[tri_entries..]) };
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
                 interior_edges.par_iter(),

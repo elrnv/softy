@@ -33,7 +33,8 @@ pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
 pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 
 pub use self::contact::*;
-pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult, Solver, SolverBuilder};
+pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult};
+pub use self::fem::{Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
@@ -207,6 +208,9 @@ impl Into<SimResult> for Result<SolveResult, Error> {
     }
 }
 
+/// Simulate one step.
+///
+/// This function also serves as an example of how one may construct a solver using a solver builder and run one step.
 pub fn sim(
     tetmesh: Option<TetMesh>,
     material: SolidMaterial,

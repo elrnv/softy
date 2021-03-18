@@ -472,7 +472,7 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
     #[cfg(test)]
     let mut edges = {
         // We want our tests to be deterministic, so we opt for hardcoding the seeds here.
-        let hash_builder = hashbrown::hash_map::DefaultHashBuilder::with_seeds(7, 47);
+        let hash_builder = hashbrown::hash_map::DefaultHashBuilder::with_seeds(7, 47, 271, 101);
         hashbrown::HashMap::with_capacity_and_hasher(trimesh.num_faces(), hash_builder)
     };
     #[cfg(not(test))]

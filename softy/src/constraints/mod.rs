@@ -5,7 +5,7 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::fem::problem::Var;
+use crate::fem::opt::problem::Var;
 use crate::friction::FrictionalContact;
 use crate::matrix::MatrixElementIndex;
 use crate::Error;

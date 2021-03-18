@@ -104,8 +104,10 @@ impl EnergyHessianTopology for TetMeshInertia<'_> {
         let tetmesh = &self.0.tetmesh;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] = unsafe { reinterpret::reinterpret_mut_slice(rows) };
-        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] = unsafe { reinterpret::reinterpret_mut_slice(cols) };
+        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] =
+            unsafe { reinterpret::reinterpret_mut_slice(rows) };
+        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] =
+            unsafe { reinterpret::reinterpret_mut_slice(cols) };
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
@@ -166,7 +168,8 @@ impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
         let TetMeshInertia(ref solid) = *self;
 
         // Break up the hessian triplets into chunks of elements for each tet.
-        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TET]] = unsafe { reinterpret::reinterpret_mut_slice(values) };
+        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TET]] =
+            unsafe { reinterpret::reinterpret_mut_slice(values) };
 
         let vol_iter = solid
             .tetmesh

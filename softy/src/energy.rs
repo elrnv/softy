@@ -56,7 +56,11 @@ pub trait EnergyHessianTopology {
 
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values into two
     /// separate arrays.
-    fn energy_hessian_rows_cols<I: FromPrimitive + Send + bytemuck::Pod>(&self, rows: &mut [I], cols: &mut [I]) {
+    fn energy_hessian_rows_cols<I: FromPrimitive + Send + bytemuck::Pod>(
+        &self,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
         self.energy_hessian_rows_cols_offset((0, 0).into(), rows, cols);
     }
 

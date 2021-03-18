@@ -473,7 +473,8 @@ impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {
 
         {
             // Break up the hessian indices into chunks of elements for each tet.
-            let hess_chunks: &mut [[MatrixElementIndex; 78]] = unsafe { reinterpret_mut_slice(indices) };
+            let hess_chunks: &mut [[MatrixElementIndex; 78]] =
+                unsafe { reinterpret_mut_slice(indices) };
 
             let hess_iter = hess_chunks.par_iter_mut().zip(tetmesh.cells().par_iter());
 

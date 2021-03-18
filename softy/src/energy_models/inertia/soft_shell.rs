@@ -101,8 +101,10 @@ impl EnergyHessianTopology for SoftShellInertia<'_> {
         let trimesh = &self.0.trimesh;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(rows) };
-        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(cols) };
+        let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+            unsafe { reinterpret::reinterpret_mut_slice(rows) };
+        let hess_col_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+            unsafe { reinterpret::reinterpret_mut_slice(cols) };
 
         // The momentum hessian is a diagonal matrix.
         hess_row_chunks
@@ -163,7 +165,8 @@ impl<T: Real> EnergyHessian<T> for SoftShellInertia<'_> {
         let SoftShellInertia(ref shell) = *self;
 
         // Break up the hessian triplets into chunks of elements for each triangle.
-        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] = unsafe { reinterpret::reinterpret_mut_slice(values) };
+        let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TRI]] =
+            unsafe { reinterpret::reinterpret_mut_slice(values) };
 
         let vol_iter = shell
             .trimesh

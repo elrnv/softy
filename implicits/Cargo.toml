@@ -7,11 +7,11 @@ license = "MPL-2.0"
 
 [dependencies]
 rayon = "1.5"
-na = { package = "nalgebra", version = "0.24" }
-hrbf = "0.4"
+na = { package = "nalgebra", version = "0.25" }
+hrbf = "0.5"
 geo = { path = "../geo" }
 flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.3", features = ["rayon"] }
-rstar = { version = "0.8" }
+rstar = "0.8"
 autodiff = { version = "0.3", features = ["bytemuck"] }
 num-traits = "0.2"
 utils = { path = "../utils", features = ["autodiff"] }
@@ -20,7 +20,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 thiserror = "1.0"
 arrayvec = "0.5"
 log = "0.4"
-hashbrown = "0.8"
+hashbrown = "0.11"
 
 [dev-dependencies]
 approx = "0.4"

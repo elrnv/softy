@@ -196,7 +196,11 @@ where
             local_samples_view.is_empty()
                 || local_samples_view
                     .iter()
-                    .any(|sample| sample.index == global_closest)
+                    .any(|sample| sample.index == global_closest),
+            "local samples: {:?} vs. global_closest: {} for query: {:?}",
+            local_samples_view,
+            global_closest,
+            &q
         );
         let closest_sample_index = {
             if let Some(index) = Self::closest_sample(q, local_samples_view) {

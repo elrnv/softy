@@ -19,11 +19,14 @@ find_package( Houdini REQUIRED )
 set( library_name cxxbridge )
 
 # Add a library and its source files.
-add_library( ${library_name} STATIC ../target/cxxbridge/implicits/src/lib.rs.cc)
+add_library( ${library_name} STATIC "${CMAKE_BINARY_DIR}/../cxxbridge/sources/implicits/src/lib.rs.cc" )
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
 target_link_libraries( ${library_name} Houdini )
+
+# Needed to expose cimplicits.h
+target_include_directories( ${library_name} PUBLIC "${CMAKE_BINARY_DIR}/../../../../")
 
 # Sets several common target properties, such as the library's output directory.
 houdini_configure_target( ${library_name} INSTDIR ${CMAKE_INSTALL_PREFIX} LIB_PREFIX lib)

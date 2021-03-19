@@ -12,7 +12,7 @@ crate-type = ["staticlib", "rlib"]
 geo = { path = "../geo" }
 implicits = { path = "../implicits" }
 cimplicits = { path = "../cimplicits", features = ["cxx"] }
-hdkrs = { path = "../../hdkrs/hdkrs" } #{ git = "https://github.com/elrnv/hdkrs.git" }
+hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 cxx = "1.0"
 
 [build-dependencies]

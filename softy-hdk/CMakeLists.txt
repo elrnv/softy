@@ -19,7 +19,7 @@ find_package( Houdini REQUIRED )
 set( library_name cxxbridge )
 
 # Add a library and its source files.
-add_library( ${library_name} STATIC ../target/cxxbridge/softy/src/lib.rs.cc)
+add_library( ${library_name} STATIC "${CMAKE_BINARY_DIR}/../target/cxxbridge/softy/src/lib.rs.cc" )
 
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.

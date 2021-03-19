@@ -18,10 +18,10 @@ endif()
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
 
-list( APPEND CMAKE_PREFIX_PATH ".")
-
 file( READ "${CMAKE_BINARY_DIR}/rust/out_dir_hdkrs.txt" hdkrs_OUT_DIR )
 list( APPEND CMAKE_PREFIX_PATH "${hdkrs_OUT_DIR}/cmake")
+
+set( Softy_DIR "${CMAKE_SOURCE_DIR}")
 
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.

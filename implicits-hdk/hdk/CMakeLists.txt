@@ -18,22 +18,20 @@ endif()
 # specifying this path.
 list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
 
-# Add path for shared cmake modules like hdkrs
-if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/debug/cmake/")
-else()
-    list( APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/../../target/release/cmake/")
-endif()
+file( READ "${CMAKE_BINARY_DIR}/rust/out_dir_hdkrs.txt" hdkrs_OUT_DIR )
+list( APPEND CMAKE_PREFIX_PATH "${hdkrs_OUT_DIR}/cmake")
 
 # Set the directory of the library to be found by find_package
-set( Implicits_DIR ${CMAKE_SOURCE_DIR} )
+set( Implicits_DIR "${CMAKE_SOURCE_DIR}" )
+
+file( READ "${CMAKE_BINARY_DIR}/rust/out_dir_hdkrs.txt" hdkrs_OUT_DIR )
+list( APPEND CMAKE_PREFIX_PATH "${hdkrs_OUT_DIR}/cmake" )
 
 # Locate Houdini's libraries and header files.
 # Registers an imported library target named 'Houdini'.
 find_package( Houdini REQUIRED )
 find_package( Implicits REQUIRED )
 find_package( hdkrs REQUIRED )
-find_package( Boost REQUIRED )
 
 if(APPLE)
     find_library( MACOS_SECURITY Security )
@@ -54,7 +52,7 @@ add_library( ${library_name} SHARED
 # compile definitions.
 target_link_libraries( ${library_name}
     PUBLIC Houdini ${MACOS_SECURITY}
-    PRIVATE ${Implicits_LIBRARIES} ${Boost_LIBRARIES})
+    PRIVATE ${Implicits_LIBRARIES})
 
 if(WIN32)
     # Add Rust specific Windows system dependencies.
@@ -63,9 +61,7 @@ endif(WIN32)
 
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS} ${HDKRS_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}
-)
+    ${CMAKE_CURRENT_BINARY_DIR} ${Implicits_INCLUDE_DIRS} ${hdkrs_INCLUDE_DIRS})
 
 # Sets several common target properties, such as the library's output directory.
 houdini_configure_target( ${library_name} )

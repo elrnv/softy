@@ -3,8 +3,8 @@
 // Needed for template generation with the ds file.
 #include "SOP_Implicits.proto.h"
 
-#include <hdkrs/mesh.h>
-#include <hdkrs/interrupt.h>
+#include <rust/cxx.h>
+#include <implicits/src/lib.rs.h>
 
 // Required for proper loading.
 #include <UT/UT_DSOVersion.h>
@@ -15,7 +15,6 @@
 #include <PRM/PRM_TemplateBuilder.h>
 #include <OP/OP_Operator.h>
 #include <OP/OP_OperatorTable.h>
-#include <implicits-hdk.h>
 
 const UT_StringHolder SOP_Implicits::theSOPTypeName("hdk_implicits"_sh);
 
@@ -189,7 +188,7 @@ class SOP_ImplicitsVerb : public SOP_NodeVerb
         virtual SOP_NodeParms *allocParms() const { return new SOP_ImplicitsParms(); }
         virtual UT_StringHolder name() const { return SOP_Implicits::theSOPTypeName; }
 
-        virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
+        virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_INPLACE; }
 
         virtual void cook(const CookParms &cookparms) const;
 
@@ -209,55 +208,59 @@ void
 SOP_ImplicitsVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
     using namespace hdkrs;
-    using namespace hdkrs::mesh;
-    using namespace interrupt;
 
     auto &&sopparms = cookparms.parms<SOP_ImplicitsParms>();
-    const GU_Detail *input0 = cookparms.inputGeo(0);
-    OwnedPtr<HR_PolyMesh> samplemesh(nullptr);
-    if (input0) {
-        samplemesh = build_polymesh(input0);
+    GU_Detail *detail = cookparms.gdh().gdpNC();
+    if (!detail) {
+        cookparms.sopAddError(UT_ERROR_OUTSTREAM, "Missing input query points");
+        return;
     }
 
     const GU_Detail *input1 = cookparms.inputGeo(1);
-    OwnedPtr<HR_PolyMesh> polymesh(nullptr);
-    if (input1) {
-        polymesh = build_polymesh(input1);
+    if (!input1) {
+        cookparms.sopAddError(UT_ERROR_OUTSTREAM, "Missing polygonal surface");
+        return;
     }
 
-    InterruptChecker interrupt_checker("Solving MLS");
+    try {
+        // Initialize interrupt checker
+        auto interrupt_checker = std::make_unique<hdkrs::InterruptChecker>("Solving MLS");
 
-    // Gather parameters
-    ISO_Params iso_params = iso_default_params();
-    iso_params.tolerance = sopparms.getTolerance();
-    iso_params.radius_multiplier = sopparms.getRadiusMultiplier();
-    if (sopparms.getUseBaseRadius()) {
-        iso_params.base_radius = sopparms.getBaseRadius();
+        // Gather query points and surface mesh
+        auto querymesh = implicits::build_pointcloud(*detail);
+        auto polymesh = implicits::build_polymesh(*input1);
+
+        // Gather parameters
+        ISO_Params iso_params = iso_default_params();
+        iso_params.tolerance = sopparms.getTolerance();
+        iso_params.radius_multiplier = sopparms.getRadiusMultiplier();
+        if (sopparms.getUseBaseRadius()) {
+            iso_params.base_radius = sopparms.getBaseRadius();
+        }
+        iso_params.kernel = static_cast<ISO_KernelType>(sopparms.getKernel());
+        iso_params.background_field = static_cast<ISO_BackgroundFieldType>(sopparms.getBgPotential());
+        iso_params.weighted = sopparms.getBgWeighted();
+        iso_params.sample_type = static_cast<ISO_SampleType>(sopparms.getSampleType());
+
+        implicits::Params params = implicits::default_params();
+        params.action = static_cast<implicits::Action>(sopparms.getAction());
+        params.iso_value = sopparms.getIsoValue();
+        params.project_below = sopparms.getProjectBelow();
+        params.debug = sopparms.getDebug();
+        params.iso_params = iso_params;
+
+        hdkrs::CookResult res = implicits::cook(*querymesh, *polymesh, params, std::move(interrupt_checker));
+
+        switch (res.tag) {
+            case hdkrs::CookResultTag::SUCCESS: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message.c_str()); break;
+            case hdkrs::CookResultTag::WARNING: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message.c_str()); break;
+            case hdkrs::CookResultTag::ERROR: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message.c_str()); break;
+        }
+
+        // Add the query points back into the current detail
+        implicits::update_points(*detail, *querymesh);
+
+    } catch (const std::runtime_error& e) {
+        cookparms.sopAddError(UT_ERROR_OUTSTREAM, (std::string("Error building meshes: ")  + e.what()).c_str());
     }
-    iso_params.kernel = static_cast<ISO_KernelType>(sopparms.getKernel());
-    iso_params.background_field = static_cast<ISO_BackgroundFieldType>(sopparms.getBgPotential());
-    iso_params.weighted = sopparms.getBgWeighted();
-    iso_params.sample_type = static_cast<ISO_SampleType>(sopparms.getSampleType());
-
-    HISO_Params params = hiso_default_params();
-    params.action = static_cast<HISO_Action>(sopparms.getAction());
-    params.iso_value = sopparms.getIsoValue();
-    params.project_below = sopparms.getProjectBelow();
-    params.debug = sopparms.getDebug();
-    params.iso_params = iso_params;
-
-    HR_CookResult res = hiso_cook( samplemesh.get(), polymesh.get(), params, &interrupt_checker, check_interrupt );
-
-    switch (res.tag) {
-        case HRCookResultTag::HR_SUCCESS: cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.message); break;
-        case HRCookResultTag::HR_WARNING: cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.message); break;
-        case HRCookResultTag::HR_ERROR: cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.message); break;
-    }
-
-    hr_free_result(res);
-
-    GU_Detail *detail = cookparms.gdh().gdpNC();
-
-    // Add the samples back into the current detail
-    add_polymesh(detail, std::move(samplemesh));
 }

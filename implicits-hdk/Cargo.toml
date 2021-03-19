@@ -11,8 +11,10 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 geo = { path = "../geo" }
 implicits = { path = "../implicits" }
-cimplicits = { path = "../cimplicits" }
-hdkrs = { path = "../hdkrs" }
+cimplicits = { path = "../cimplicits", features = ["cxx"] }
+hdkrs = { path = "../../hdkrs/hdkrs" } #{ git = "https://github.com/elrnv/hdkrs.git" }
+cxx = "1.0"
 
 [build-dependencies]
-cbindgen = "0.14.2"
+cxx-build = "1.0"
+cmake = { git = "https://github.com/elrnv/cmake-rs.git" }

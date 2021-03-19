@@ -98,6 +98,13 @@ pub struct ISO_Params {
     pub max_step: f32,
 }
 
+// Implement ExternType for ISO_Params so it can be used with other crates that rely on cxx.
+#[cfg(feature = "cxx")]
+unsafe impl cxx::ExternType for ISO_Params {
+    type Id = cxx::type_id!("ISO_Params");
+    type Kind = cxx::kind::Trivial;
+}
+
 impl Default for ISO_Params {
     fn default() -> ISO_Params {
         ISO_Params {

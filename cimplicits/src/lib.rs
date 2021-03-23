@@ -9,7 +9,7 @@ pub enum ISO_SampleType {
     /// normals of adjacent triangles.
     Vertex,
     /// Samples are located at triangle centroids. This type of implicit surface is typically
-    /// closer to the triangle surface than Vertex based implicits, especially when the triangle
+    /// closer to the triangle surface than Vertex based functions, especially when the triangle
     /// mesh is close to being uniform.
     Face,
 }
@@ -27,7 +27,7 @@ pub enum ISO_BackgroundFieldType {
     DistanceBased,
 }
 
-/// The type of kernel to be used when interpolating potential values from a neighbourhood of
+/// The type of kernel to be used when interpolating potential values from a neighborhood of
 /// samples.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -90,11 +90,11 @@ pub struct ISO_Params {
     /// The positions of sample point used to define the implicit surface.
     pub sample_type: ISO_SampleType,
     /// The max_step parameter determines the additional distance (beyond the radius of influence)
-    /// to consider when computing the set of neighbourhood samples for a given set of query
-    /// points. This is typically used for simulation, where the set of neighbourhoods is expected
+    /// to consider when computing the set of neighborhood samples for a given set of query
+    /// points. This is typically used for simulation, where the set of neighborhoods is expected
     /// to stay constant when the positions of the samples for the implicit surface or the
     /// positions of the query points may be perturbed. If positions are unperturbed between calls
-    /// to `iso_cache_neighbours`, then this can be set to 0.0.
+    /// to `iso_cache_neighbors`, then this can be set to 0.0.
     pub max_step: f32,
 }
 
@@ -347,7 +347,7 @@ pub unsafe extern "C" fn iso_project_to_above(
     }
 }
 
-// The following macros provide a generic implementation of the C functions computing jacobians
+// The following macros provide a generic implementation of the C functions computing Jacobians
 // below.
 macro_rules! impl_num_jac_entries {
     ($iso:ident.$fn:ident ()) => {
@@ -385,7 +385,7 @@ macro_rules! impl_jac_values {
 /// Get the number of entries in the sparse Jacobian of the implicit function with respect to surface
 /// vertices.
 ///
-/// These typically corresond to non-zero entries of the Jacobian, however they can
+/// These typically correspond to non-zero entries of the Jacobian, however they can
 /// actually be zero and multiple entries can correspond to the same position in the matrix,
 /// in which case the corresponding values will be summed.
 ///
@@ -513,7 +513,7 @@ pub unsafe extern "C" fn iso_contact_jacobian_values(
 
 /// Get the number of entries in the sparse Hessian product of the implicit function with respect
 /// to surface vertices.
-/// These typically corresond to non-zero entries of the Hessian product, however they can
+/// These typically correspond to non-zero entries of the Hessian product, however they can
 /// actually be zero and multiple entries can correspond to the same position in the matrix,
 /// in which case the corresponding values will be summed.
 ///
@@ -565,7 +565,7 @@ pub unsafe extern "C" fn iso_surface_hessian_product_indices(
 ///
 /// `num_query_points`   - number of triplets provided in `query_point_coords`.
 /// `query_point_coords` - triplets of coordinates (x,y,z) of the query points.
-/// `multipliers` - vector of multiplers of size equal to `num_query_points` that is to be
+/// `multipliers` - vector of multipliers of size equal to `num_query_points` that is to be
 ///                 multiplied by the full Hessian to get the Hessian product.
 /// `num_entries` - size of the `values` array, which should be equal to
 ///                 `iso_num_surface_hessian_product_entries`.
@@ -599,30 +599,30 @@ pub unsafe extern "C" fn iso_num_query_points(query_topo: *const ISO_QueryTopo) 
     surf.num_query_points() as c_int
 }
 
-/// Populate an array of indices enumerating all query points with non-empty neighbourhoods. The
-/// indices for query points with empty neighbourhoods are set to -1.
+/// Populate an array of indices enumerating all query points with non-empty neighborhoods. The
+/// indices for query points with empty neighborhoods are set to -1.
 /// This function is convenient for mapping from query point indices to constraint indices.
-/// The `neighbourhood_indices` array is expected be the same size as the number of query points.
+/// The `neighborhood_indices` array is expected be the same size as the number of query points.
 #[no_mangle]
-pub unsafe extern "C" fn iso_neighbourhood_indices(
+pub unsafe extern "C" fn iso_neighborhood_indices(
     query_topo: *const ISO_QueryTopo,
     num_query_points: c_int,
-    neighbourhood_indices: *mut c_int,
+    neighborhood_indices: *mut c_int,
 ) {
     let surf = &*(query_topo as *const implicits::QueryTopo);
-    let neighbourhood_indices =
-        std::slice::from_raw_parts_mut(neighbourhood_indices, num_query_points as usize);
+    let neighborhood_indices =
+        std::slice::from_raw_parts_mut(neighborhood_indices, num_query_points as usize);
 
-    let sizes = surf.neighbourhood_sizes();
+    let sizes = surf.neighborhood_sizes();
     assert_eq!(num_query_points as usize, sizes.len());
 
     // Initialize indices to -1.
-    for idx in neighbourhood_indices.iter_mut() {
+    for idx in neighborhood_indices.iter_mut() {
         *idx = -1;
     }
 
-    // Index nonempty neighbourhoods
-    for (i, (idx, _)) in neighbourhood_indices
+    // Index nonempty neighborhoods
+    for (i, (idx, _)) in neighborhood_indices
         .iter_mut()
         .zip(sizes.iter())
         .filter(|&(_, &s)| s != 0)
@@ -632,7 +632,7 @@ pub unsafe extern "C" fn iso_neighbourhood_indices(
     }
 }
 
-/// Recompute the neighbour cache if invalidated. This is done automatically when computing
+/// Recompute the neighbor cache if invalidated. This is done automatically when computing
 /// potential or jacobian. But it needs to be done explicitly to generate the correct Jacobian
 /// sparsity pattern because query points are not typically passed when requesting Jacobian
 /// indices.

@@ -8,7 +8,7 @@ impl<T: Real> QueryTopo<T> {
      * Query Jacobian
      */
     pub fn num_query_jacobian_entries(&self) -> usize {
-        self.num_neighbourhoods() * 3
+        self.num_neighborhoods() * 3
     }
 
     /// Compute the Jacobian of this implicit surface function with respect to query points.
@@ -40,7 +40,7 @@ impl<T: Real> QueryTopo<T> {
         })
     }
 
-    /// Values for which the query neighbourhood is empty are set to `None`.
+    /// Values for which the query neighborhood is empty are set to `None`.
     pub fn query_jacobian_block_par_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
@@ -63,7 +63,7 @@ impl<T: Real> QueryTopo<T> {
     /// Compute the Jacobian of this implicit surface function with respect to query points.
     ///
     /// This version of the query Jacobian returns all diagonal values of the Jacobian, including
-    /// values for points with empty neighbourhoods. This is especially valuable for projection
+    /// values for points with empty neighborhoods. This is especially valuable for projection
     /// where the background potential can help. The other Jacobian functions ignore these values
     /// altogether. This also means we don't need to worry about the size of `values` since it will
     /// always be the same as the size of `query_points`.
@@ -92,19 +92,19 @@ impl<T: Real> QueryTopo<T> {
     pub fn query_jacobian_block_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
-        self.trivial_neighbourhood_seq()
+        self.trivial_neighborhood_seq()
             .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
             .map(move |(i, _)| (i, i))
     }
 
     /// A parallel version of `query_jacobian_block_indices_iter`, however it includes an
-    /// additional integeer indicating the number of neighbours in a given query point
-    /// neighbourhood.
+    /// additional integeer indicating the number of neighbors in a given query point
+    /// neighborhood.
     pub fn query_jacobian_block_indices_par_iter<'a>(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = (usize, usize, usize)> + 'a {
-        self.trivial_neighbourhood_par()
+        self.trivial_neighborhood_par()
             .enumerate()
             .map(move |(i, nbrs)| (i, i, nbrs.len()))
     }
@@ -123,7 +123,7 @@ impl<T: Real> QueryTopo<T> {
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
         let closest_points = self.closest_samples_seq();
 
         let ImplicitSurfaceBase {
@@ -151,7 +151,7 @@ impl<T: Real> QueryTopo<T> {
     /// Parallel version of `query_jacobian_iter_impl`.
     ///
     /// When `full` is set to `false`, this iterator returns `None` for query points without
-    /// neighbourhoods. This allows it to be an `IndexedParallelIterator`.
+    /// neighborhoods. This allows it to be an `IndexedParallelIterator`.
     pub(crate) fn query_jacobian_par_iter_impl<'a, K: 'a>(
         &'a self,
         query_points: &'a [[T; 3]],
@@ -161,7 +161,7 @@ impl<T: Real> QueryTopo<T> {
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_par();
+        let neigh_points = self.trivial_neighborhood_par();
         let closest_points = self.closest_samples_par();
 
         let ImplicitSurfaceBase {
@@ -234,11 +234,11 @@ impl<T: Real> QueryTopo<T> {
     pub fn num_surface_jacobian_entries(&self) -> usize {
         let num_neigh_points = match self.base().sample_type {
             SampleType::Vertex => self
-                .extended_neighbourhood_seq()
+                .extended_neighborhood_seq()
                 .map(|x| x.len())
                 .sum::<usize>(),
             SampleType::Face => self
-                .trivial_neighbourhood_seq()
+                .trivial_neighborhood_seq()
                 .map(|x| x.len())
                 .sum::<usize>(),
         };
@@ -288,13 +288,13 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbour_cache` map.
+    /// by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize)> + 'a {
         match self.base().sample_type {
             SampleType::Vertex => Either::Left(
-                self.extended_neighbourhood_par()
+                self.extended_neighborhood_par()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
@@ -304,7 +304,7 @@ impl<T: Real> QueryTopo<T> {
                     }),
             ),
             SampleType::Face => Either::Right(
-                self.trivial_neighbourhood_par()
+                self.trivial_neighborhood_par()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
@@ -321,13 +321,13 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Return row and column indices for each non-zero block in the jacobian. This is determined
-    /// by the precomputed `neighbour_cache` map.
+    /// by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_block_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
         match self.base().sample_type {
             SampleType::Vertex => Either::Left(
-                self.extended_neighbourhood_seq()
+                self.extended_neighborhood_seq()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
@@ -335,7 +335,7 @@ impl<T: Real> QueryTopo<T> {
                     }),
             ),
             SampleType::Face => Either::Right(
-                self.trivial_neighbourhood_seq()
+                self.trivial_neighborhood_seq()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
                     .flat_map(move |(row, nbr_points)| {
@@ -350,7 +350,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbour_cache` map.
+    /// by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
@@ -359,12 +359,12 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbour_cache` map.
+    /// by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) {
         // For each row
         match self.base().sample_type {
             SampleType::Vertex => {
-                let neigh_points = self.extended_neighbourhood_seq();
+                let neigh_points = self.extended_neighborhood_seq();
                 let row_col_iter = neigh_points
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
@@ -381,7 +381,7 @@ impl<T: Real> QueryTopo<T> {
                 }
             }
             SampleType::Face => {
-                let neigh_points = self.trivial_neighbourhood_seq();
+                let neigh_points = self.trivial_neighborhood_seq();
                 let row_col_iter = neigh_points
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
@@ -437,7 +437,7 @@ impl<T: Real> QueryTopo<T> {
 
         match sample_type {
             SampleType::Vertex => {
-                let neigh_points = self.extended_neighbourhood_seq();
+                let neigh_points = self.extended_neighborhood_seq();
                 // For each row (query point)
                 Either::Left(
                     zip!(query_points.iter(), neigh_points)
@@ -456,7 +456,7 @@ impl<T: Real> QueryTopo<T> {
                 )
             }
             SampleType::Face => {
-                let neigh_points = self.trivial_neighbourhood_seq();
+                let neigh_points = self.trivial_neighborhood_seq();
                 Either::Right(
                     zip!(query_points.iter(), neigh_points)
                         .filter(|(_, nbrs)| !nbrs.is_empty())
@@ -498,7 +498,7 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Vertex => {
                 // For each row (query point)
                 Either::Left(
-                    zip!(query_points.par_iter(), self.extended_neighbourhood_par())
+                    zip!(query_points.par_iter(), self.extended_neighborhood_par())
                         .filter(|(_, nbrs)| !nbrs.is_empty())
                         .flat_map(move |(q, nbr_points)| {
                             let view = SamplesView::new(nbr_points, samples);
@@ -514,7 +514,7 @@ impl<T: Real> QueryTopo<T> {
                 )
             }
             SampleType::Face => Either::Right(
-                zip!(query_points.par_iter(), self.trivial_neighbourhood_par())
+                zip!(query_points.par_iter(), self.trivial_neighborhood_par())
                     .filter(|(_, nbrs)| !nbrs.is_empty())
                     .flat_map(move |(q, nbr_points)| {
                         let view = SamplesView::new(nbr_points, samples);
@@ -584,7 +584,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     pub fn num_contact_jacobian_matrices(&self) -> usize {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
         let num_pts_per_sample = match self.base().sample_type {
             SampleType::Vertex => 1,
             SampleType::Face => 3,
@@ -595,7 +595,7 @@ impl<T: Real> QueryTopo<T> {
     pub fn contact_jacobian_matrix_indices_iter(
         &self,
     ) -> impl Iterator<Item = (usize, usize)> + Clone {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             sample_type,
@@ -628,7 +628,7 @@ impl<T: Real> QueryTopo<T> {
     ) where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
@@ -676,7 +676,7 @@ impl<T: Real> QueryTopo<T> {
     ) where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
@@ -766,7 +766,7 @@ where
     let weight_sum_inv = bg.weight_sum_inv();
 
     // For each surface vertex contribution
-    let dw_neigh = normalized_neighbour_weight_gradient(q, view, kernel, bg);
+    let dw_neigh = normalized_neighbor_weight_gradient(q, view, kernel, bg);
 
     let main_jac: Vector3<T> = view
         .into_iter()
@@ -793,7 +793,7 @@ where
 }
 
 /// Compute the normalized sum of all sample weight gradients.
-pub(crate) fn normalized_neighbour_weight_gradient<'a, T, K, V>(
+pub(crate) fn normalized_neighbor_weight_gradient<'a, T, K, V>(
     q: Vector3<T>,
     samples: SamplesView<'a, 'a, T>,
     kernel: K,
@@ -818,7 +818,7 @@ where
     // Contribution from the background potential
     dw_neigh += bg.background_weight_gradient(None);
 
-    dw_neigh * weight_sum_inv // normalize the neighbourhood derivative
+    dw_neigh * weight_sum_inv // normalize the neighborhood derivative
 }
 
 /*
@@ -1402,11 +1402,11 @@ pub(crate) fn make_perturb_fn() -> impl FnMut() -> Vector3<f64> {
 #[cfg(test)]
 pub(crate) fn consolidate_face_jacobian<T: Real>(
     jac: &[[T; 3]],
-    neighbours: &[usize],
+    neighbors: &[usize],
     faces: &[[usize; 3]],
     num_verts: usize,
 ) -> Vec<[T; 3]> {
-    let tet_indices_iter = neighbours
+    let tet_indices_iter = neighbors
         .iter()
         .flat_map(|&neigh| faces[neigh].iter().cloned());
 
@@ -1470,8 +1470,8 @@ mod tests {
             values: vec![F1::cst(0.0)],
         };
 
-        // The set of neighbours is the one sample given.
-        let neighbours = vec![0];
+        // The set of neighbors is the one sample given.
+        let neighbors = vec![0];
 
         // Radius is such that samples are captured by the query point.
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
@@ -1485,7 +1485,7 @@ mod tests {
         let dual_topo = vec![vec![]];
 
         // Create a view of the samples for the Jacobian computation.
-        let view = SamplesView::new(neighbours.as_ref(), &samples);
+        let view = SamplesView::new(neighbors.as_ref(), &samples);
 
         // Compute the complete jacobian.
         let vert_jac: Vec<_> =
@@ -1498,7 +1498,7 @@ mod tests {
             samples.positions[0][i] = F1::var(samples.positions[0][i]);
 
             // Create a view of the samples for the potential function.
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
+            let view = SamplesView::new(neighbors.as_ref(), &samples);
 
             // Initialize background potential to zero.
             let mut p = F1::cst(0.0);
@@ -1562,7 +1562,7 @@ mod tests {
 
         let samples = new_test_samples(sample_type, &tet_faces, &tet_verts);
 
-        let neighbours = vec![0, 1, 2, 3]; // All tet faces or verts (depending on sample_type)
+        let neighbors = vec![0, 1, 2, 3]; // All tet faces or verts (depending on sample_type)
 
         let kernel = kernel::LocalApproximate::new(radius, 1e-5);
 
@@ -1577,7 +1577,7 @@ mod tests {
             let q = Vector3::new(q);
 
             // Compute the Jacobian.
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
+            let view = SamplesView::new(neighbors.as_ref(), &samples);
 
             let vert_jac = match sample_type {
                 SampleType::Face => {
@@ -1585,9 +1585,9 @@ mod tests {
                         face_jacobian_at(q, view, kernel, &tet_faces, &tet_verts, bg_field_params)
                             .collect();
 
-                    assert_eq!(jac.len(), 3 * neighbours.len());
+                    assert_eq!(jac.len(), 3 * neighbors.len());
 
-                    consolidate_face_jacobian(&jac, &neighbours, &tet_faces, tet_verts.len())
+                    consolidate_face_jacobian(&jac, &neighbors, &tet_faces, tet_verts.len())
                 }
                 SampleType::Vertex => {
                     let jac: Vec<_> = vertex_jacobian_at(
@@ -1600,7 +1600,7 @@ mod tests {
                     )
                     .collect();
 
-                    assert_eq!(jac.len(), neighbours.len());
+                    assert_eq!(jac.len(), neighbors.len());
 
                     jac
                 }
@@ -1614,7 +1614,7 @@ mod tests {
 
                     let ad_samples = new_test_samples(sample_type, &tet_faces, &ad_tet_verts);
 
-                    let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
+                    let view = SamplesView::new(neighbors.as_ref(), &ad_samples);
                     let mut p = F1::cst(0.0);
                     compute_potential_at(q, view, kernel, bg_field_params, &mut p);
 
@@ -1963,7 +1963,7 @@ mod tests {
 
         let samples = Samples::new_triangle_samples(&tet_faces, &tet_verts, vec![0.0; 4]);
 
-        let neighbours = vec![0, 1, 2, 3]; // All tet faces
+        let neighbors = vec![0, 1, 2, 3]; // All tet faces
 
         let kernel = kernel::LocalApproximate::new(radius, 1e-5);
 
@@ -1979,7 +1979,7 @@ mod tests {
             let q = Vector3::new(q);
 
             // Compute the Jacobian.
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
+            let view = SamplesView::new(neighbors.as_ref(), &samples);
 
             let jac = query_jacobian_at(q, view, None, kernel, bg_field_params);
 
@@ -1991,7 +1991,7 @@ mod tests {
                 let ad_samples =
                     Samples::new_triangle_samples(&tet_faces, &ad_tet_verts, vec![F1::cst(0.0); 4]);
 
-                let view = SamplesView::new(neighbours.as_ref(), &ad_samples);
+                let view = SamplesView::new(neighbors.as_ref(), &ad_samples);
 
                 let mut p = F1::cst(0.0);
                 compute_potential_at(q, view, kernel, bg_field_params, &mut p);

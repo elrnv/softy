@@ -108,13 +108,13 @@ impl<T: Real> QueryTopo<T> {
      */
 
     pub fn num_query_hessian_product_entries(&self) -> usize {
-        self.num_neighbourhoods() * 6
+        self.num_neighborhoods() * 6
     }
 
     pub fn query_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
-        self.trivial_neighbourhood_seq()
+        self.trivial_neighborhood_seq()
             .enumerate()
             .filter(move |(_, nbrs)| !nbrs.is_empty())
             .flat_map(move |(i, _)| {
@@ -170,7 +170,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
@@ -220,8 +220,8 @@ impl<T: Real> QueryTopo<T> {
      */
 
     /// Get the total number of entries for the sparse Hessian non-zeros. The Hessian is taken with
-    /// respect to sample points. This estimate is based on the current neighbour data, which
-    /// gives the number of query points, if the neighbourhood was not precomputed this function
+    /// respect to sample points. This estimate is based on the current neighbor data, which
+    /// gives the number of query points, if the neighborhood was not precomputed this function
     /// returns `None`.
     pub fn num_surface_hessian_product_entries(&self) -> Option<usize> {
         // TODO: Figure out how to do this more efficiently.
@@ -272,7 +272,7 @@ impl<T: Real> QueryTopo<T> {
     pub fn surface_hessian_product_indices_iter<'a>(
         &'a self,
     ) -> Result<impl Iterator<Item = (usize, usize)> + 'a, Error> {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref surface_topo,
@@ -343,7 +343,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
@@ -415,8 +415,8 @@ where
     let bg_hess = bg.compute_query_hessian();
 
     // For each surface vertex contribution
-    let dw_neigh = jacobian::normalized_neighbour_weight_gradient(q, view, kernel, bg.clone());
-    let ddw_neigh = normalized_neighbour_weight_hessian(q, view, kernel, bg);
+    let dw_neigh = jacobian::normalized_neighbor_weight_gradient(q, view, kernel, bg.clone());
+    let ddw_neigh = normalized_neighbor_weight_hessian(q, view, kernel, bg);
 
     // For vectors a and b, this computes a*b' + b*a'.
     let sym_outer = |a: Vector3<T>, b: Vector3<T>| a * b.transpose() + b * a.transpose();
@@ -444,7 +444,7 @@ where
 }
 
 /// Compute the normalized sum of all sample weight gradients.
-pub(crate) fn normalized_neighbour_weight_hessian<'a, T, K, V>(
+pub(crate) fn normalized_neighbor_weight_hessian<'a, T, K, V>(
     q: Vector3<T>,
     samples: SamplesView<'a, 'a, T>,
     kernel: K,
@@ -467,7 +467,7 @@ where
     // Contribution from the background potential
     ddw_neigh += bg.background_weight_hessian(None);
 
-    ddw_neigh * weight_sum_inv // normalize the neighbourhood derivative
+    ddw_neigh * weight_sum_inv // normalize the neighborhood derivative
 }
 
 /*
@@ -899,7 +899,7 @@ mod tests {
         let mut jac_cols = vec![0; num_jac_entries];
         let mut jac_values = vec![F1::cst(0.0); num_jac_entries];
 
-        let num_neighs = query_surf.num_neighbourhoods();
+        let num_neighs = query_surf.num_neighborhoods();
         let mut multipliers = vec![F1::cst(0.0); num_neighs];
         query_surf
             .surface_hessian_product_indices(&mut hess_rows, &mut hess_cols)
@@ -908,12 +908,12 @@ mod tests {
         let mut hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
         let mut ad_hess_full = vec![vec![0.0; 3 * num_verts]; 3 * num_verts];
 
-        let query_neighbourhood_sizes = query_surf.neighbourhood_sizes();
-        dbg!(&query_neighbourhood_sizes);
+        let query_neighborhood_sizes = query_surf.neighborhood_sizes();
+        dbg!(&query_neighborhood_sizes);
 
         // We use the multipliers to isolate the hessian for each query point.
         for (mult_idx, q_idx) in (0..num_query_points)
-            .filter(|&q_idx| query_neighbourhood_sizes[q_idx] != 0)
+            .filter(|&q_idx| query_neighborhood_sizes[q_idx] != 0)
             .enumerate()
         {
             multipliers[mult_idx] = F1::cst(1.0);
@@ -1122,20 +1122,20 @@ mod tests {
 
         let samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
-        let neighbours: Vec<_> = samples
+        let neighbors: Vec<_> = samples
             .iter()
             .filter(|s| (q - s.pos).norm() < F1::cst(radius + max_step))
             .map(|sample| sample.index)
             .collect();
 
-        if neighbours.is_empty() {
+        if neighbors.is_empty() {
             return;
         }
 
         // Radius is such that samples are captured by the query point.
         let kernel = kernel::LocalApproximate::new(radius, 0.00001);
 
-        let view = SamplesView::new(neighbours.as_ref(), &samples);
+        let view = SamplesView::new(neighbors.as_ref(), &samples);
 
         // Compute the complete hessian.
         let hess: Vec<(usize, usize, Matrix3<F1>)> = face_hessian_at(
@@ -1180,7 +1180,7 @@ mod tests {
                 //    let tri = Triangle::from_indexed_slice(tri_indices, &tri_verts);
                 //    *p = tri.centroid();
                 //}
-                let view = SamplesView::new(neighbours.as_ref(), &samples);
+                let view = SamplesView::new(neighbors.as_ref(), &samples);
 
                 // Compute the Jacobian. After calling this function, calling
                 // `.deriv()` on the output will give us the second derivative.
@@ -1194,7 +1194,7 @@ mod tests {
                 )
                 .collect();
 
-                let vert_jac = consolidate_face_jacobian(&jac, &neighbours, tri_faces, num_verts);
+                let vert_jac = consolidate_face_jacobian(&jac, &neighbors, tri_faces, num_verts);
 
                 // Compute the potential and test the jacobian for good measure.
                 let mut p = F1::cst(0.0);
@@ -1359,13 +1359,13 @@ mod tests {
 
         let mut samples = new_test_samples(SampleType::Face, &tri_faces, &tri_verts);
 
-        let neighbours: Vec<_> = samples
+        let neighbors: Vec<_> = samples
             .iter()
             .filter(|s| (q - s.pos).norm() < F1::cst(radius + max_step))
             .map(|sample| sample.index)
             .collect();
 
-        if neighbours.is_empty() {
+        if neighbors.is_empty() {
             return;
         }
 
@@ -1376,7 +1376,7 @@ mod tests {
 
         // Compute the complete hessian.
         let hess: Vec<(usize, usize, Matrix3<F1>)> = {
-            let view = SamplesView::new(neighbours.as_ref(), &samples);
+            let view = SamplesView::new(neighbors.as_ref(), &samples);
 
             let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
@@ -1396,7 +1396,7 @@ mod tests {
                 samples.positions[sample_idx][i] = F1::var(samples.positions[sample_idx][i]);
                 //println!("row = {}; i = {}", sample_idx, i);
 
-                let view = SamplesView::new(neighbours.as_ref(), &samples);
+                let view = SamplesView::new(neighbors.as_ref(), &samples);
 
                 let bg = BackgroundField::local(q, view, kernel, bg_field_params, None).unwrap();
 
@@ -1404,7 +1404,7 @@ mod tests {
                 // `.deriv()` on the output will give us the second derivative.
                 let mut jac = vec![Vector3::zero(); num_samples];
                 for (jac_val, &idx) in
-                    jacobian::sample_jacobian_at(q, view, kernel, bg.clone()).zip(neighbours.iter())
+                    jacobian::sample_jacobian_at(q, view, kernel, bg.clone()).zip(neighbors.iter())
                 {
                     jac[idx] = jac_val;
                 }
@@ -1565,7 +1565,7 @@ mod tests {
     fn face_normal_hessian_tester(verts: &[[f64; 3]], faces: &[[usize; 3]]) {
         let samples = Samples::new_triangle_samples(faces, verts, vec![0.0; faces.len()]);
 
-        let neighbours: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
+        let neighbors: Vec<usize> = (0..faces.len()).collect(); // look at all the faces
 
         // Set a random product vector.
         let multipliers = utils::random_vectors(faces.len());
@@ -1579,7 +1579,7 @@ mod tests {
         let ad_multiplier = move |Sample { index, .. }| ad_multipliers[index];
 
         // Compute the normal hessian product.
-        let view = SamplesView::new(neighbours.as_ref(), &samples);
+        let view = SamplesView::new(neighbors.as_ref(), &samples);
         let hess_iter =
             compute_face_unit_normals_hessian_products(view, verts, faces, multiplier.clone());
 
@@ -1601,7 +1601,7 @@ mod tests {
         let mut ad_hess = [[0.0; 12]; 12]; // ad Dense matrix
 
         assert_eq!(
-            ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(neighbours.len()),
+            ImplicitSurface::<f64>::num_face_unit_normals_hessian_entries(neighbors.len()),
             num_hess_entries
         );
 
@@ -1620,7 +1620,7 @@ mod tests {
 
                 let ad_samples =
                     Samples::new_triangle_samples(faces, &ad_verts, vec![F1::cst(0.0); 4]);
-                let ad_view = SamplesView::new(neighbours.as_ref(), &ad_samples);
+                let ad_view = SamplesView::new(neighbors.as_ref(), &ad_samples);
 
                 // Convert the samples to use autodiff constants.
                 let grad = super::jacobian::compute_face_unit_normal_derivative(

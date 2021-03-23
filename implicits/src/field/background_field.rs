@@ -69,7 +69,7 @@ impl ClosestIndex {
 }
 
 /// This `struct` represents the data needed to compute a background field at a local query
-/// point. This `struct` also conveniently computes useful information about the neighbourhood
+/// point. This `struct` also conveniently computes useful information about the neighborhood
 /// (like closest distance to a sample point) that can be reused elsewhere.
 #[derive(Clone, Debug)]
 pub(crate) struct BackgroundField<'a, T, V, K>
@@ -84,7 +84,7 @@ pub(crate) struct BackgroundField<'a, T, V, K>
     pub bg_field_value: BackgroundFieldValue<V>,
     /// Determines if this background field should be mixed in with the local field.
     pub weighted: bool,
-    /// The sum of all the weights in the neighbourhood of the query point.
+    /// The sum of all the weights in the neighborhood of the query point.
     pub weight_sum: T,
     /// The radial kernel used to compute the weights.
     pub kernel: K,
@@ -92,7 +92,7 @@ pub(crate) struct BackgroundField<'a, T, V, K>
     pub closest_sample_dist: T,
     /// Displacement vector to the query point from the closest sample point.
     pub closest_sample_disp: Vector3<T>,
-    /// The index of the closest sample point in the samples neighbourhood.
+    /// The index of the closest sample point in the samples neighborhood.
     pub closest_sample_index: ClosestIndex,
 }
 
@@ -187,7 +187,7 @@ where
         bg_params: BackgroundFieldParams,
         bg_value: Option<V>,
     ) -> Self {
-        // Check that the closest sample is in our neighbourhood of samples.
+        // Check that the closest sample is in our neighborhood of samples.
 
         // Note that the following assertion may sometimes fail. An issue has been filed with the
         // author of rstar: https://github.com/Stoeoef/rstar/issues/13
@@ -280,7 +280,7 @@ where
     /// boundary. Note that this weight is unnormalized.
     pub(crate) fn background_weight(&self) -> T {
         if self.kernel.radius() < self.closest_sample_dist {
-            // Closest point is not inside the local neighbourhood.
+            // Closest point is not inside the local neighborhood.
             T::one()
         } else if self.weighted {
             self.kernel
@@ -334,12 +334,12 @@ where
             match self.closest_sample_index {
                 ClosestIndex::Local(local_sample_index) => {
                     if index != local_sample_index {
-                        // requested point is not the closest one, but it's in the local neighbourhood.
+                        // requested point is not the closest one, but it's in the local neighborhood.
                         return Matrix3::zero();
                     }
                 }
                 ClosestIndex::Global(_) =>
-                // No local neighbourhood, this hessian is for background only.
+                // No local neighborhood, this hessian is for background only.
                 {
                     return Matrix3::zero();
                 }
@@ -483,16 +483,16 @@ where
     }
 
     /// Compute background field derivative contribution.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// Compute derivative if the closest point is in the neighborhood. Otherwise we
     /// assume the background field is constant. This Jacobian is taken with respect to the
     /// sample points.
     pub(crate) fn compute_jacobian(&self) -> impl Iterator<Item = Vector3<T>> + 'a {
         let weight_sum_inv = self.weight_sum_inv();
         // The normalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
+        // neighborhood.
         let wb = self.background_weight() * weight_sum_inv;
         // Gradient of the unnormalized weight evaluated at the distance to the
-        // boundary of the neighbourhood.
+        // boundary of the neighborhood.
         let dwbdp = self.background_weight_gradient(Some(self.closest_sample_index.get()));
         let field = self.field_value();
         let bg_grad = self.field_gradient();
@@ -521,7 +521,7 @@ where
     }
 
     /// Compute background field derivative contribution with respect to one sample.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// Compute derivative if the closest point is in the neighborhood. Otherwise we
     /// assume the background field is constant.
     pub(crate) fn compute_sample_jacobian(
         self,
@@ -576,7 +576,7 @@ where
     //    let weight_sum_inv = self.weight_sum_inv();
 
     //    // The normalized weight evaluated at the distance to the boundary of the
-    //    // neighbourhood.
+    //    // neighborhood.
     //    let wb = self.background_weight() * weight_sum_inv;
 
     //    let bg_grad = self.field_gradient();
@@ -585,7 +585,7 @@ where
     //}
 
     /// Compute background field second derivative contribution.
-    /// Compute Hessian if the closest point is in the neighbourhood. Otherwise we
+    /// Compute Hessian if the closest point is in the neighborhood. Otherwise we
     /// assume the background field is constant. This Hessian is taken with respect to the
     /// sample points.
     pub(crate) fn hessian_blocks(&self) -> impl Iterator<Item = Matrix3<T>> + 'a {
@@ -683,7 +683,7 @@ where
     }
 
     /// Compute background field derivative contribution.
-    /// Compute derivative if the closest point is in the neighbourhood. Otherwise we
+    /// Compute derivative if the closest point is in the neighborhood. Otherwise we
     /// assume the background field is constant. This Jacobian is taken with respect to the
     /// query position.
     pub(crate) fn compute_query_jacobian(&self) -> Vector3<T> {
@@ -700,7 +700,7 @@ where
         let weight_sum_inv = self.weight_sum_inv();
 
         // The normalized weight evaluated at the distance to the boundary of the
-        // neighbourhood.
+        // neighborhood.
         let wb = self.background_weight() * weight_sum_inv;
 
         let grad = if weighted {
@@ -723,7 +723,7 @@ where
     }
 
     /// Compute background field query Hessian contribution.
-    /// Compute second derivative if the closest point is in the neighbourhood. Otherwise we
+    /// Compute second derivative if the closest point is in the neighborhood. Otherwise we
     /// assume the background field is constant. This Hessian is taken with respect to the
     /// query position.
     pub(crate) fn compute_query_hessian(&self) -> Matrix3<T> {
@@ -741,7 +741,7 @@ where
 
         let weight_sum_inv = self.weight_sum_inv();
 
-        // The unnormalized weight evaluated at the distance to the boundary of the neighbourhood.
+        // The unnormalized weight evaluated at the distance to the boundary of the neighborhood.
         let wb = self.background_weight();
 
         let mut hess = self.field_hessian() * wb;
@@ -943,7 +943,7 @@ mod tests {
             .collect();
 
         let query_topo = surface.query_topo(&query_points);
-        let neighs: Vec<_> = query_topo.trivial_neighbourhood_seq().collect();
+        let neighs: Vec<_> = query_topo.trivial_neighborhood_seq().collect();
         let mut samples = query_topo.samples().clone();
 
         let radius = query_topo.radius();
@@ -1076,7 +1076,7 @@ mod tests {
             .collect();
 
         let query_topo = surface.query_topo(&query_points);
-        let neighs: Vec<_> = query_topo.trivial_neighbourhood_seq().collect();
+        let neighs: Vec<_> = query_topo.trivial_neighborhood_seq().collect();
         let samples = query_topo.samples().clone();
 
         let radius = query_topo.radius();

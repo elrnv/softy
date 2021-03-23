@@ -289,7 +289,7 @@ impl<T: Scalar> Kernel<T> for LocalCubic {
 }
 
 /// Local interpolating kernel. This kernel is exactly interpolating but it suffers from smoothness
-/// artifacts. Note that `closest_d` represents the distance to the closest neighbour, which means
+/// artifacts. Note that `closest_d` represents the distance to the closest neighbor, which means
 /// it must be manually updated before evaluating the kernel.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct LocalInterpolating {

@@ -14,7 +14,7 @@ where
 {
     let mut changed = false;
 
-    // Allocate additional neighbourhoods to match the size of query_points.
+    // Allocate additional neighborhoods to match the size of query_points.
     changed |= query_points.len() != set.len();
     set.resize(query_points.len(), 0);
 
@@ -32,7 +32,7 @@ where
     changed
 }
 
-/// There are three types of neighbourhoods for each query point:
+/// There are three types of neighborhoods for each query point:
 ///   1. closest samples to each query point, which we call the *closest set*,
 ///   1. the set of samples within a distance of the query point, which we call the *trivial
 ///      set* and
@@ -40,20 +40,20 @@ where
 ///      dub the *extended set*.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Neighbourhood {
+pub struct Neighborhood {
     /// The closest sample to each query point.
     closest_set: Vec<usize>,
-    /// The trivial neighbourhood of a set of query points. These are simply the set of samples that
+    /// The trivial neighborhood of a set of query points. These are simply the set of samples that
     /// are within a certain distance from each query point.
     trivial_set: Vec<Vec<usize>>,
-    /// The extended neighbourhood of a set of query points. This is a superset of the trivial
-    /// neighbourhood that includes samples that are topologically adjacent to the trivial set.
+    /// The extended neighborhood of a set of query points. This is a superset of the trivial
+    /// neighborhood that includes samples that are topologically adjacent to the trivial set.
     extended_set: Vec<Vec<usize>>,
 }
 
-impl Neighbourhood {
+impl Neighborhood {
     pub(crate) fn new() -> Self {
-        Neighbourhood {
+        Neighborhood {
             closest_set: Vec::new(),
             trivial_set: Vec::new(),
             extended_set: Vec::new(),
@@ -90,8 +90,8 @@ impl Neighbourhood {
         s.finish()
     }
 
-    /// Compute neighbour cache if it is invalid (or hasn't been created yet). Return `true` if the
-    /// trivial set of neighbours has changed and `false` otherwise.
+    /// Compute neighbor cache if it is invalid (or hasn't been created yet). Return `true` if the
+    /// trivial set of neighbors has changed and `false` otherwise.
     pub(crate) fn compute_trivial_set<'a, T, I, N>(
         &mut self,
         query_points: &[[T; 3]],
@@ -105,7 +105,7 @@ impl Neighbourhood {
         let cache = &mut self.trivial_set;
         let mut changed = false;
 
-        // Allocate additional neighbourhoods to match the size of query_points.
+        // Allocate additional neighborhoods to match the size of query_points.
         changed |= query_points.len() != cache.len();
         cache.resize(query_points.len(), Vec::new());
 
@@ -131,11 +131,11 @@ impl Neighbourhood {
         &self.trivial_set
     }
 
-    /// Compute neighbour cache. Return `true` if the
-    /// extended set of neighbours of the given query points has changed and `false` otherwise.
+    /// Compute neighbor cache. Return `true` if the
+    /// extended set of neighbors of the given query points has changed and `false` otherwise.
     /// Note that this function requires the trival
     /// set to already be computed. If trivial set has not been previously computed, use the
-    /// `compute_neighbourhoods` function to compute both. This fuction will return `None` if the
+    /// `compute_neighborhoods` function to compute both. This fuction will return `None` if the
     /// trivial set is invalid.
     pub(crate) fn compute_extended_set<T>(
         &mut self,
@@ -147,7 +147,7 @@ impl Neighbourhood {
     where
         T: Real,
     {
-        let Neighbourhood {
+        let Neighborhood {
             trivial_set,
             extended_set,
             ..
@@ -159,7 +159,7 @@ impl Neighbourhood {
 
         let mut changed = false;
 
-        // Allocate additional neighbourhoods to match the size of query_points.
+        // Allocate additional neighborhoods to match the size of query_points.
         changed |= query_points.len() != extended_set.len();
         extended_set.resize(query_points.len(), Vec::new());
 
@@ -185,9 +185,9 @@ impl Neighbourhood {
         Some(changed)
     }
 
-    /// Compute neighbouroods. Return `true` if neighbourhood sparsity has changed and `false`
+    /// Compute neighboroods. Return `true` if neighborhood sparsity has changed and `false`
     /// otherwise.
-    pub(crate) fn compute_neighbourhoods<'a, T, I, N, C>(
+    pub(crate) fn compute_neighborhoods<'a, T, I, N, C>(
         &mut self,
         query_points: &[[T; 3]],
         neigh: N,

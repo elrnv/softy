@@ -87,7 +87,7 @@ pub mod background_field;
 pub mod builder;
 pub mod hessian;
 pub mod jacobian;
-pub mod neighbour_cache;
+pub mod neighbor_cache;
 pub mod query;
 pub mod samples;
 pub mod spatial_tree;
@@ -99,7 +99,7 @@ pub use self::spatial_tree::*;
 
 pub(crate) use self::background_field::*;
 pub use self::background_field::{BackgroundFieldParams, BackgroundFieldType};
-pub(crate) use self::neighbour_cache::Neighbourhood;
+pub(crate) use self::neighbor_cache::Neighborhood;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -139,7 +139,7 @@ where
     /// Sample points defining the entire implicit surface.
     pub samples: Samples<T>,
 
-    /// Vertex neighbourhood topology. For each vertex, this vector stores all the indices to
+    /// Vertex neighborhood topology. For each vertex, this vector stores all the indices to
     /// adjacent triangles.
     pub dual_topo: Vec<Vec<usize>>,
 
@@ -305,7 +305,7 @@ impl<T: Real> ImplicitSurfaceBase<T> {
         // Then update the samples that determine the shape of the implicit surface.
         self.update_samples();
 
-        // Finally update the rtree responsible for neighbour search.
+        // Finally update the rtree responsible for neighbor search.
         self.spatial_tree = build_rtree_from_samples(&self.samples);
 
         num_updated
@@ -360,7 +360,7 @@ impl<T: Real> MLS<T> {
     /// Build a query topology type to be able to ask questions about the surface potential and
     /// derivatives at a set of query points.
     ///
-    /// This type contains the necessary neighbourhood information to make queries fast.
+    /// This type contains the necessary neighborhood information to make queries fast.
     pub fn query_topo<Q>(self, query_points: Q) -> QueryTopo<T>
     where
         Q: AsRef<[[T; 3]]>,
@@ -471,7 +471,7 @@ impl<T: Real> MLS<T> {
         let mut tangents = vec![[0.0f32; 3]; mesh.num_vertices()];
 
         let query_points = mesh.vertex_positions();
-        let neigh_points = query_surf.trivial_neighbourhood_par();
+        let neigh_points = query_surf.trivial_neighborhood_par();
         let closest_points = query_surf.closest_samples_par();
 
         // Initialize extra debug info.
@@ -515,10 +515,10 @@ impl<T: Real> MLS<T> {
 
                 let view = SamplesView::new(neighs, &samples);
 
-                // Record number of neighbours in total.
+                // Record number of neighbors in total.
                 *num_neighs = view.len() as i32;
 
-                // Record up to 11 neighbours
+                // Record up to 11 neighbors
                 for (k, neigh) in view.iter().take(11).enumerate() {
                     out_neighs[k] = neigh.index as i32;
                 }
@@ -610,8 +610,8 @@ impl<T: Real> MLS<T> {
         .reduce(|| Ok(()), |acc, result| acc.and(result));
 
         {
-            mesh.set_attrib_data::<_, VertexIndex>("num_neighbours", &num_neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("neighbours", &neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("num_neighbors", &num_neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("neighbors", &neighs_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
             mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
@@ -1028,7 +1028,7 @@ pub(crate) fn compute_local_vector_at<T, K>(
 ///
 /// Note that the product vector is given by a closure `multiplier` which must give a valid
 /// vector value for any vertex index, however not all indices will be used since only the
-/// neighbourhood of vertex at `index` will have non-zero gradients.
+/// neighborhood of vertex at `index` will have non-zero gradients.
 pub(crate) fn compute_face_unit_normals_gradient_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
     surface_vertices: &'a [[T; 3]],
@@ -1122,7 +1122,7 @@ where
 ///
 /// Note that the product vector is given by a closure `dx` which must give a valid vector
 /// value for any vertex index, however not all indices will be used since only the
-/// neighbourhood of vertex at `index` will have non-zero gradients.
+/// neighborhood of vertex at `index` will have non-zero gradients.
 pub(crate) fn compute_vertex_unit_normals_gradient_products<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
     surface_topo: &'a [[usize; 3]],
@@ -1172,8 +1172,8 @@ where
     // taking the derivative.
     for &tri_idx in dual_topo[index].iter() {
         let tri_indices = &surface_topo[tri_idx];
-        // Pull contributions from all neighbours on the surface, not just ones part of the
-        // neighbourhood,
+        // Pull contributions from all neighbors on the surface, not just ones part of the
+        // neighborhood,
         let tri = Triangle::from_indexed_slice(tri_indices, samples.all_points());
         // Note that area_normal_gradient returns column-major matrix, but we use row-major,
         // since area_normal_gradient is skew symmetric, we interpret this as a negation.
@@ -1233,7 +1233,7 @@ mod tests {
         eprintln!("ImplicitSurface: {}", size_of::<ImplicitSurface>());
         eprintln!("ImplicitSurfaceBase: {}", size_of::<ImplicitSurfaceBase>());
         eprintln!("QueryTopo: {}", size_of::<QueryTopo>());
-        eprintln!("Neighbourhood: {}", size_of::<Neighbourhood>());
+        eprintln!("Neighborhood: {}", size_of::<Neighborhood>());
         Ok(())
     }
 
@@ -1386,7 +1386,7 @@ mod tests {
         Ok(())
     }
 
-    /// Test projection where each projected vertex has a non-empty local neighbourhood of the
+    /// Test projection where each projected vertex has a non-empty local neighborhood of the
     /// implicit surface.
     #[test]
     fn local_projection_test() -> Result<(), Error> {
@@ -1399,7 +1399,7 @@ mod tests {
         projection_tester(&query_surf, grid, Side::Below)
     }
 
-    /// Test projection where some projected vertices may not have a local neighbourhood at all.
+    /// Test projection where some projected vertices may not have a local neighborhood at all.
     /// This is a more complex test than the local_projection_test
     #[test]
     fn global_projection_test() -> Result<(), Error> {
@@ -1463,16 +1463,16 @@ mod tests {
     mod test_structs {
         use serde::{Deserialize, Serialize};
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-        pub struct NeighbourCache<T> {
+        pub struct NeighborCache<T> {
             pub points: Vec<T>,
             pub valid: bool,
         }
 
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-        pub struct Neighbourhood {
-            closest_set: NeighbourCache<usize>,
-            trivial_set: NeighbourCache<Vec<usize>>,
-            extended_set: NeighbourCache<Vec<usize>>,
+        pub struct Neighborhood {
+            closest_set: NeighborCache<usize>,
+            trivial_set: NeighborCache<Vec<usize>>,
+            extended_set: NeighborCache<Vec<usize>>,
         }
 
         /// This struct helps deserialize testing assets without having to store an rtree.
@@ -1485,7 +1485,7 @@ mod tests {
             pub surface_vertex_positions: Vec<super::Vector3<f64>>,
             pub samples: super::Samples<f64>,
             pub max_step: f64,
-            pub query_neighbourhood: std::cell::RefCell<Neighbourhood>,
+            pub query_neighborhood: std::cell::RefCell<Neighborhood>,
             pub dual_topo: Vec<Vec<usize>>,
             pub sample_type: super::SampleType,
         }
@@ -1577,21 +1577,21 @@ mod tests {
     }
 
     #[test]
-    fn neighbourhoods() -> Result<(), Error> {
+    fn neighborhoods() -> Result<(), Error> {
         // Local test
         let (surface, grid) = make_octahedron_and_grid_local(false)?;
         let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         assert_eq!(
-            query_surf.num_neighbourhoods(),
-            query_surf.nonempty_neighbourhood_indices().len()
+            query_surf.num_neighborhoods(),
+            query_surf.nonempty_neighborhood_indices().len()
         );
 
         // Non-local test
         let (surface, grid) = make_octahedron_and_grid(false, 2.45)?;
         let query_surf = QueryTopo::new(grid.vertex_positions(), surface);
         assert_eq!(
-            query_surf.num_neighbourhoods(),
-            query_surf.nonempty_neighbourhood_indices().len()
+            query_surf.num_neighborhoods(),
+            query_surf.nonempty_neighborhood_indices().len()
         );
         Ok(())
     }

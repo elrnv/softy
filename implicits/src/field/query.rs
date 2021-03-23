@@ -3,7 +3,7 @@ use log::debug;
 use rayon::iter::Either;
 
 /// A data structure to store precomputed query information about an implicit surface. For example
-/// precomputed sample neighbours to each query point are stored here for local potential fields.
+/// precomputed sample neighbors to each query point are stored here for local potential fields.
 /// Note that this data structure doesn't store the actual query positions, just the topologies,
 /// since different query positions can be used with the same topology.
 #[derive(Clone, Debug)]
@@ -15,15 +15,15 @@ where
     Local {
         /// Local mls implicit surface.
         surf: LocalMLS<T>,
-        /// Store the neighbouring sample points for each query point we see.
-        neighbourhood: Neighbourhood,
+        /// Store the neighboring sample points for each query point we see.
+        neighborhood: Neighborhood,
     },
     Global {
         /// Global mls implicit surface.
         surf: GlobalMLS<T>,
         /// Closest sample indices.
         closest_samples: Vec<usize>,
-        /// An array of sample indices `0..#samples`. This is here to make neighbour api compatible
+        /// An array of sample indices `0..#samples`. This is here to make neighbor api compatible
         /// with local MLS.
         sample_indices: Vec<usize>,
     },
@@ -37,7 +37,7 @@ impl<T: Real> QueryTopo<T> {
         let mut query_topo = match mls {
             MLS::Local(surf) => QueryTopo::Local {
                 surf,
-                neighbourhood: Neighbourhood::new(),
+                neighborhood: Neighborhood::new(),
             },
             MLS::Global(surf) => {
                 let sample_indices: Vec<_> = (0..surf.surf_base.samples.len()).collect();
@@ -52,11 +52,11 @@ impl<T: Real> QueryTopo<T> {
         query_topo
     }
 
-    /// Compute neighbour topology. Return true if topology has changed.
+    /// Compute neighbor topology. Return true if topology has changed.
     pub fn reset(&mut self, query_points: &[[T; 3]]) -> bool {
         match *self {
             QueryTopo::Local {
-                ref mut neighbourhood,
+                ref mut neighborhood,
                 surf: ref local_mls,
             } => {
                 let ImplicitSurfaceBase {
@@ -71,7 +71,7 @@ impl<T: Real> QueryTopo<T> {
                 debug!("Kernel radius: {}", radius);
                 let radius_ext = radius + num_traits::cast::<_, f64>(local_mls.max_step).unwrap();
                 let radius2 = radius_ext * radius_ext;
-                let neighbourhood_query = |q| {
+                let neighborhood_query = |q| {
                     let q_pos = Vector3::new(q).cast::<f64>().into();
                     spatial_tree.locate_within_distance(q_pos, radius2).cloned()
                 };
@@ -80,9 +80,9 @@ impl<T: Real> QueryTopo<T> {
                         .nearest_neighbor(&Vector3::new(q).cast::<f64>().into())
                         .expect("Empty spatial tree")
                 };
-                neighbourhood.compute_neighbourhoods(
+                neighborhood.compute_neighborhoods(
                     query_points,
-                    neighbourhood_query,
+                    neighborhood_query,
                     closest_sample_query,
                     surface_topo,
                     dual_topo,
@@ -93,7 +93,7 @@ impl<T: Real> QueryTopo<T> {
                 ref mut closest_samples,
                 surf: GlobalMLS { ref surf_base, .. },
                 ..
-            } => neighbour_cache::compute_closest_set(
+            } => neighbor_cache::compute_closest_set(
                 query_points,
                 |q| {
                     surf_base
@@ -162,43 +162,43 @@ impl<T: Real> QueryTopo<T> {
         self.base().samples.len()
     }
 
-    /// The number of query points in the cache (regardless if their neighbourhood is empty).
+    /// The number of query points in the cache (regardless if their neighborhood is empty).
     /// This function returns `None` if the cache is invalid.
     pub fn num_query_points(&self) -> usize {
-        self.trivial_neighbourhood_seq().len()
+        self.trivial_neighborhood_seq().len()
     }
 
-    /// The number of query points with non-empty neighbourhoods.
-    pub fn num_neighbourhoods(&self) -> usize {
-        self.trivial_neighbourhood_seq()
+    /// The number of query points with non-empty neighborhoods.
+    pub fn num_neighborhoods(&self) -> usize {
+        self.trivial_neighborhood_seq()
             .filter(|x| !x.is_empty())
             .count()
     }
 
-    /// Return a vector of indices for query points with non-empty neighbourhoods.
-    pub fn nonempty_neighbourhood_indices(&self) -> Vec<usize> {
+    /// Return a vector of indices for query points with non-empty neighborhoods.
+    pub fn nonempty_neighborhood_indices(&self) -> Vec<usize> {
         match self.base().sample_type {
             SampleType::Vertex => {
-                Self::nonempty_neighbourhood_indices_impl(self.extended_neighbourhood_seq())
+                Self::nonempty_neighborhood_indices_impl(self.extended_neighborhood_seq())
             }
             SampleType::Face => {
-                Self::nonempty_neighbourhood_indices_impl(self.trivial_neighbourhood_seq())
+                Self::nonempty_neighborhood_indices_impl(self.trivial_neighborhood_seq())
             }
         }
     }
 
-    /// Return a vector over query points, giving the sizes of each neighbourhood.
-    pub fn neighbourhood_sizes(&self) -> Vec<usize> {
+    /// Return a vector over query points, giving the sizes of each neighborhood.
+    pub fn neighborhood_sizes(&self) -> Vec<usize> {
         match self.base().sample_type {
-            SampleType::Vertex => self.extended_neighbourhood_seq().map(|x| x.len()).collect(),
-            SampleType::Face => self.trivial_neighbourhood_seq().map(|x| x.len()).collect(),
+            SampleType::Vertex => self.extended_neighborhood_seq().map(|x| x.len()).collect(),
+            SampleType::Face => self.trivial_neighborhood_seq().map(|x| x.len()).collect(),
         }
     }
 
-    /// Return the indices of all neighbourhood vertices.
-    pub fn neighbourhood_vertex_indices(&self) -> Vec<usize> {
+    /// Return the indices of all neighborhood vertices.
+    pub fn neighborhood_vertex_indices(&self) -> Vec<usize> {
         use hashbrown::HashSet;
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             sample_type,
@@ -277,16 +277,16 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /*
-     * Neighbourhood accessors
+     * Neighborhood accessors
      */
 
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_par<'a>(
+    /// This function returns precomputed neighbors.
+    pub fn trivial_neighborhood_par<'a>(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => {
-                Either::Left(neighbourhood.trivial_set().par_iter().map(|x| x.as_slice()))
+            QueryTopo::Local { neighborhood, .. } => {
+                Either::Left(neighborhood.trivial_set().par_iter().map(|x| x.as_slice()))
             }
             QueryTopo::Global {
                 closest_samples,
@@ -303,8 +303,8 @@ impl<T: Real> QueryTopo<T> {
     /// This function returns precomputed closest samples.
     pub fn closest_samples_par<'a>(&'a self) -> impl IndexedParallelIterator<Item = usize> + 'a {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => {
-                Either::Left(neighbourhood.closest_set().par_iter().cloned())
+            QueryTopo::Local { neighborhood, .. } => {
+                Either::Left(neighborhood.closest_set().par_iter().cloned())
             }
             QueryTopo::Global {
                 closest_samples, ..
@@ -312,30 +312,27 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
-    /// This function returns precomputed neighbours.
-    pub fn extended_neighbourhood_par<'a>(
+    /// This function returns precomputed neighbors.
+    pub fn extended_neighborhood_par<'a>(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => Either::Left(
-                neighbourhood
-                    .extended_set()
-                    .par_iter()
-                    .map(|x| x.as_slice()),
-            ),
-            QueryTopo::Global { .. } => Either::Right(self.trivial_neighbourhood_par()),
+            QueryTopo::Local { neighborhood, .. } => {
+                Either::Left(neighborhood.extended_set().par_iter().map(|x| x.as_slice()))
+            }
+            QueryTopo::Global { .. } => Either::Right(self.trivial_neighborhood_par()),
         }
     }
 
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_par_chunks<'a>(
+    /// This function returns precomputed neighbors.
+    pub fn trivial_neighborhood_par_chunks<'a>(
         &'a self,
         chunk_size: usize,
     ) -> impl IndexedParallelIterator<Item = Box<dyn Iterator<Item = &'a [usize]> + Send + Sync + 'a>> + 'a
     {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => Either::Left(
-                neighbourhood
+            QueryTopo::Local { neighborhood, .. } => Either::Left(
+                neighborhood
                     .trivial_set()
                     .as_parallel_slice()
                     .par_chunks(chunk_size)
@@ -366,8 +363,8 @@ impl<T: Real> QueryTopo<T> {
         chunk_size: usize,
     ) -> impl IndexedParallelIterator<Item = &'a [usize]> + 'a {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => Either::Left(
-                neighbourhood
+            QueryTopo::Local { neighborhood, .. } => Either::Left(
+                neighborhood
                     .closest_set()
                     .as_parallel_slice()
                     .par_chunks(chunk_size),
@@ -378,13 +375,13 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
-    /// This function returns precomputed neighbours.
-    pub fn trivial_neighbourhood_seq<'a>(
+    /// This function returns precomputed neighbors.
+    pub fn trivial_neighborhood_seq<'a>(
         &'a self,
     ) -> Box<dyn ExactSizeIterator<Item = &'a [usize]> + 'a> {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => {
-                Box::new(neighbourhood.trivial_set().iter().map(|x| x.as_slice()))
+            QueryTopo::Local { neighborhood, .. } => {
+                Box::new(neighborhood.trivial_set().iter().map(|x| x.as_slice()))
             }
             QueryTopo::Global {
                 closest_samples,
@@ -397,8 +394,8 @@ impl<T: Real> QueryTopo<T> {
     /// This function returns precomputed closest samples.
     pub fn closest_samples_seq<'a>(&'a self) -> Box<dyn Iterator<Item = usize> + 'a> {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => {
-                Box::new(neighbourhood.closest_set().iter().cloned())
+            QueryTopo::Local { neighborhood, .. } => {
+                Box::new(neighborhood.closest_set().iter().cloned())
             }
             QueryTopo::Global {
                 closest_samples, ..
@@ -406,21 +403,21 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
-    /// This function returns precomputed neighbours.
-    pub fn extended_neighbourhood_seq<'a>(&'a self) -> Box<dyn Iterator<Item = &'a [usize]> + 'a> {
+    /// This function returns precomputed neighbors.
+    pub fn extended_neighborhood_seq<'a>(&'a self) -> Box<dyn Iterator<Item = &'a [usize]> + 'a> {
         match self {
-            QueryTopo::Local { neighbourhood, .. } => {
-                Box::new(neighbourhood.extended_set().iter().map(|x| x.as_slice()))
+            QueryTopo::Local { neighborhood, .. } => {
+                Box::new(neighborhood.extended_set().iter().map(|x| x.as_slice()))
             }
-            QueryTopo::Global { .. } => Box::new(self.trivial_neighbourhood_seq()),
+            QueryTopo::Global { .. } => Box::new(self.trivial_neighborhood_seq()),
         }
     }
 
-    /// Given a set of neighbourhoods, return the indices of the non-empty ones.
-    pub fn nonempty_neighbourhood_indices_impl<'a>(
-        neighbourhoods: impl Iterator<Item = &'a [usize]>,
+    /// Given a set of neighborhoods, return the indices of the non-empty ones.
+    pub fn nonempty_neighborhood_indices_impl<'a>(
+        neighborhoods: impl Iterator<Item = &'a [usize]>,
     ) -> Vec<usize> {
-        neighbourhoods
+        neighborhoods
             .enumerate()
             .filter(|(_, x)| !x.is_empty())
             .map(|(i, _)| i)
@@ -431,7 +428,7 @@ impl<T: Real> QueryTopo<T> {
      * Queries and computations
      */
 
-    pub fn num_neighbours_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
+    pub fn num_neighbors_within_distance<Q: Into<[T; 3]>>(&self, q: Q, radius: f64) -> usize {
         let q_pos = Vector3::new(q.into()).cast::<f64>().into();
         self.base()
             .spatial_tree
@@ -439,7 +436,7 @@ impl<T: Real> QueryTopo<T> {
             .count()
     }
 
-    pub fn nearest_neighbour_lookup<Q: Into<[T; 3]>>(&self, q: Q) -> Option<&Sample<T>> {
+    pub fn nearest_neighbor_lookup<Q: Into<[T; 3]>>(&self, q: Q) -> Option<&Sample<T>> {
         let q_pos = Vector3::new(q.into()).cast::<f64>().into();
         self.base().spatial_tree.nearest_neighbor(&q_pos)
     }
@@ -777,7 +774,7 @@ impl<T: Real> QueryTopo<T> {
         ))
     }
 
-    /// Compute the MLS potential on query points with non-empty neighbourhoods.
+    /// Compute the MLS potential on query points with non-empty neighborhoods.
     pub fn local_potential(&self, query_points: &[[T; 3]], out_field: &mut [T]) {
         debug_assert!(
             query_points.iter().all(|&q| q.iter().all(|&x| !x.is_nan())),
@@ -797,7 +794,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         assert_eq!(neigh_points.len(), out_field.len());
 
@@ -809,10 +806,10 @@ impl<T: Real> QueryTopo<T> {
 
         zip!(query_points.iter(), neigh_points, out_field.iter_mut())
             //.filter(|(_, nbrs, _)| !nbrs.is_empty())
-            .for_each(move |(q, neighbours, field)| {
+            .for_each(move |(q, neighbors, field)| {
                 compute_potential_at(
                     Vector3::new(*q),
-                    SamplesView::new(neighbours, samples),
+                    SamplesView::new(neighbors, samples),
                     kernel,
                     bg_field_params,
                     field,
@@ -832,7 +829,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_par();
+        let neigh_points = self.trivial_neighborhood_par();
 
         assert_eq!(neigh_points.len(), out_field.len());
 
@@ -848,13 +845,13 @@ impl<T: Real> QueryTopo<T> {
             out_field.par_iter_mut()
         )
         //.filter(|(_, nbrs, _)| !nbrs.is_empty())
-        .map(move |(q, neighbours, field)| {
+        .map(move |(q, neighbors, field)| {
             if interrupt() {
                 return Err(Error::Interrupted);
             }
             compute_potential_at(
                 Vector3::new(*q),
-                SamplesView::new(neighbours, samples),
+                SamplesView::new(neighbors, samples),
                 kernel,
                 bg_field_params,
                 field,
@@ -865,7 +862,7 @@ impl<T: Real> QueryTopo<T> {
     }
 
     /// Implementation of the Moving Least Squares algorithm for computing an implicit surface on
-    /// query points with non-empty neighbourhoods.
+    /// query points with non-empty neighborhoods.
     fn compute_local_potential<'a, K>(
         &self,
         query_points: &[[T; 3]],
@@ -875,7 +872,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_seq();
+        let neigh_points = self.trivial_neighborhood_seq();
 
         let ImplicitSurfaceBase {
             ref samples,
@@ -886,10 +883,10 @@ impl<T: Real> QueryTopo<T> {
         zip!(query_points.iter(), neigh_points)
             .filter(|(_, nbrs)| !nbrs.is_empty())
             .zip(out_field.iter_mut())
-            .for_each(move |((q, neighbours), field)| {
+            .for_each(move |((q, neighbors), field)| {
                 compute_potential_at(
                     Vector3::new(*q),
-                    SamplesView::new(neighbours, samples),
+                    SamplesView::new(neighbors, samples),
                     kernel,
                     bg_field_params,
                     field,
@@ -920,7 +917,7 @@ impl<T: Real> QueryTopo<T> {
         T: Real,
         K: SphericalKernel<T> + Copy + std::fmt::Debug + Sync + Send,
     {
-        let neigh_points = self.trivial_neighbourhood_par();
+        let neigh_points = self.trivial_neighborhood_par();
 
         assert_eq!(neigh_points.len(), out_vectors.len());
 
@@ -936,10 +933,10 @@ impl<T: Real> QueryTopo<T> {
             out_vectors.par_iter_mut()
         )
         //.filter(|(_, nbrs, _)| !nbrs.is_empty())
-        .for_each(move |(q, neighbours, vector)| {
+        .for_each(move |(q, neighbors, vector)| {
             compute_local_vector_at(
                 Vector3::new(*q),
-                SamplesView::new(neighbours, samples),
+                SamplesView::new(neighbors, samples),
                 kernel,
                 bg_field_params,
                 vector,
@@ -976,7 +973,7 @@ mod tests {
     use geo::mesh::*;
 
     #[test]
-    fn neighbourhood_vertices() {
+    fn neighborhood_vertices() {
         let trimesh = TriMesh::from(
             TorusBuilder {
                 outer_divs: 1000,
@@ -1006,7 +1003,7 @@ mod tests {
         let query_surf = implicit_surface.query_topo(&grid_pos);
 
         let now = std::time::Instant::now();
-        let n = query_surf.neighbourhood_vertex_indices().len();
+        let n = query_surf.neighborhood_vertex_indices().len();
         eprintln!("elapsed: {}; num = {}", now.elapsed().as_millis(), n);
         //assert_eq!(n, 3046);
     }

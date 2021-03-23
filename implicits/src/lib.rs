@@ -166,8 +166,8 @@ pub enum Error {
     UnsupportedKernel,
     #[error("unsupported sample type is specified")]
     UnsupportedSampleType,
-    #[error("missing neighbour data")]
-    MissingNeighbourData,
+    #[error("missing neighbor data")]
+    MissingNeighborData,
     #[error("invalid background field construction")]
     InvalidBackgroundConstruction,
     #[error("failed to compute implicit surface")]

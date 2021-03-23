@@ -1303,13 +1303,13 @@ impl NonLinearProblem {
                 let collider_pos = object_data.next_pos(q, pos, *collider_index);
                 changed |= constraint
                     .borrow_mut()
-                    .update_neighbours(object_pos.view(), collider_pos.view());
+                    .update_neighbors(object_pos.view(), collider_pos.view());
             } else {
                 let object_pos = object_data.cur_pos(*object_index);
                 let collider_pos = object_data.cur_pos(*collider_index);
                 changed |= constraint
                     .borrow_mut()
-                    .update_neighbours(object_pos.view(), collider_pos.view());
+                    .update_neighbors(object_pos.view(), collider_pos.view());
             }
         }
 
@@ -1447,7 +1447,7 @@ impl NonLinearProblem {
         crate::inf_norm(g)
     }
 
-    /// Return the constraint violation and whether the neighbourhood data (sparsity) would be
+    /// Return the constraint violation and whether the neighborhood data (sparsity) would be
     /// changed if we took this step.
     pub fn probe_contact_constraint_violation(&mut self, solution: ipopt::Solution) -> f64 {
         self.constraint_violation_norm(solution.primal_variables)
@@ -1718,7 +1718,7 @@ impl NonLinearProblem {
                 SourceObject::Shell(i) => *surface_vertex_offsets.at(SHELLS_INDEX).at(i),
             };
 
-            let surf_neigh_indices = surf.neighbourhood_vertex_indices();
+            let surf_neigh_indices = surf.neighborhood_vertex_indices();
 
             match object_mass_data {
                 MassData::Sparse(vertex_masses) => {

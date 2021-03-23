@@ -329,10 +329,10 @@ pub trait ContactConstraint:
     /// A `Vec` of active constraint indices. This will return an error if there were no
     /// query points cached.
     fn active_constraint_indices(&self) -> Vec<usize>;
-    /// Update the query point neighbourhoods and return `true` if changed.
-    /// Note that this function doesn't remap any data corresponding to the old neighbourhood
+    /// Update the query point neighborhoods and return `true` if changed.
+    /// Note that this function doesn't remap any data corresponding to the old neighborhood
     /// information.
-    fn update_neighbours(
+    fn update_neighbors(
         &mut self,
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,

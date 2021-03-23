@@ -1428,7 +1428,7 @@ impl Solver {
 
                     // We don't commit the solution here because it may be far from the
                     // true solution, just redo the whole solve with the right
-                    // neighbourhood information.
+                    // neighborhood information.
                     false
                 } else {
                     log::debug!("Max step: {:e} is saturated, but constraint is still violated, continuing...", step);
@@ -1541,7 +1541,7 @@ impl Solver {
 
             // The following block determines if after the inner step there were any changes
             // in the constraints where new points may have violated the constraint. If so we
-            // update the constraint neighbourhoods and rerun the inner step.
+            // update the constraint neighborhoods and rerun the inner step.
             match step_result {
                 Ok(step_result) => {
                     result = result.combine_inner_result(&step_result);

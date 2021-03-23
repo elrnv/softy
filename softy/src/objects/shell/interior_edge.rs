@@ -7,7 +7,7 @@ use tensr::*;
 use crate::attrib_defines::*;
 use crate::TriMesh;
 
-/// An `InteriorEdge` is an manifold edge with exactly two neighbouring faces.
+/// An `InteriorEdge` is an manifold edge with exactly two neighboring faces.
 ///
 /// For triangle meshes, an interior edge can be drawn as follows:
 ///
@@ -195,7 +195,7 @@ impl InteriorEdge {
     //    [a0, a1]
     //}
 
-    /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge.
+    /// Compute the reflex of the dihedral angle made by the faces neighboring this edge.
     #[inline]
     pub(crate) fn edge_angle<T: Real>(&self, pos: &[[T; 3]], faces: &[[usize; 3]]) -> T {
         let [an0, an1] = self.face_area_normals(pos, faces);
@@ -203,7 +203,7 @@ impl InteriorEdge {
         an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
     }
 
-    /// Compute the reflex of the dihedral angle made by the faces neighbouring this edge from
+    /// Compute the reflex of the dihedral angle made by the faces neighboring this edge from
     /// the reference configuration.
     ///
     /// If the two edge vertex positions are coincident in the reference configuration,

@@ -531,7 +531,7 @@ impl<'a, E> TriMeshElasticity<'a, E> {
     ///
     /// This function is similar to `tri_hessian_for_each` but for the bending energy.
     ///
-    /// Each edge neighbourhood is described in [`InteriorEdge`].
+    /// Each edge neighborhood is described in [`InteriorEdge`].
     #[inline]
     #[unroll_for_loops]
     fn edge_hessian_for_each<D, L, DH, LH, DF, LF>(

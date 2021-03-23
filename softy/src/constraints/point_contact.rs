@@ -258,14 +258,14 @@ impl PointContactConstraint {
         //}
 
         let surf = &self.implicit_surface;
-        let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(&surf);
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&surf);
         let row_correction = |((row, col), val)| {
-            let idx: Index = neighbourhood_indices[row];
+            let idx: Index = neighborhood_indices[row];
             assert!(idx.is_valid());
             (idx.unwrap(), col, [val])
         };
 
-        let num_rows = surf.num_neighbourhoods();
+        let num_rows = surf.num_neighborhoods();
 
         let obj_jac = if !self.object_is_fixed() {
             let num_cols = surf.surface_vertex_positions().len();
@@ -305,7 +305,7 @@ impl PointContactConstraint {
     }
 
     /// Compute vertex to vertex topology of the entire collider mesh along with corresponding
-    /// cotangent weights. This makes it easy to query neighbours when we are computing laplacians.
+    /// cotangent weights. This makes it easy to query neighbors when we are computing laplacians.
     fn build_vertex_topo(mesh: &TriMesh) -> Chunked<Vec<(usize, f64)>> {
         let mut topo = vec![Vec::with_capacity(5); mesh.num_vertices()];
         let pos = mesh.vertex_positions();
@@ -324,7 +324,7 @@ impl PointContactConstraint {
             }
         };
 
-        // Accumulate all the neighbours
+        // Accumulate all the neighbors
         mesh.face_iter().for_each(|&[v0, v1, v2]| {
             let t0 = cot(v0, v1, v2);
             let t1 = cot(v1, v2, v0);
@@ -337,7 +337,7 @@ impl PointContactConstraint {
             topo[v2].push((v1, t0));
         });
 
-        // Sort and dedup neighbourhoods
+        // Sort and dedup neighborhoods
         for nbrhood in topo.iter_mut() {
             nbrhood.sort_by_key(|(idx, _)| *idx);
             nbrhood.dedup_by(|(v0, t0), (v1, t1)| {
@@ -353,7 +353,7 @@ impl PointContactConstraint {
         Chunked::from_nested_vec(topo)
     }
 
-    /// Build a matrix that smoothes values at contact points with their neighbours by the given
+    /// Build a matrix that smoothes values at contact points with their neighbors by the given
     /// weight. For `weight = 0.0`, no smoothing is performed, and this matrix is the identity.
     ///
     /// The implementation uses cotangent weights. This is especially important here since we are
@@ -366,9 +366,9 @@ impl PointContactConstraint {
         let surf = &self.implicit_surface;
         if let Some(active_contact_indices) = active_contact_indices {
             let size = active_contact_indices.len();
-            let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
+            let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
             for (i, &aci) in active_contact_indices.iter().enumerate() {
-                neighbourhood_indices[aci] = Index::new(i);
+                neighborhood_indices[aci] = Index::new(i);
             }
 
             let triplets =
@@ -379,12 +379,12 @@ impl PointContactConstraint {
                         let weighted_nbrhood = &self.collider_vertex_topo[active_idx];
                         let n = weighted_nbrhood
                             .iter()
-                            .filter(|&(nbr_idx, _)| neighbourhood_indices[*nbr_idx].is_valid())
+                            .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
                             .count();
                         std::iter::repeat((valid_idx, weight / n as f64))
                             .zip(weighted_nbrhood.iter())
                             .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
-                                neighbourhood_indices[*nbr_idx]
+                                neighborhood_indices[*nbr_idx]
                                     .into_option()
                                     .map(|valid_nbr| (valid_idx, valid_nbr, w * normalized_weight))
                             })
@@ -393,22 +393,22 @@ impl PointContactConstraint {
             // Don't need to sort or compress.
             DSMatrix::from_sorted_triplets_iter_uncompressed(triplets, size, size)
         } else {
-            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(&surf);
-            let size = surf.num_neighbourhoods();
+            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&surf);
+            let size = surf.num_neighborhoods();
             let triplets = self
                 .collider_vertex_topo
                 .iter()
-                .zip(neighbourhood_indices.iter())
+                .zip(neighborhood_indices.iter())
                 .filter_map(|(nbrhood, idx)| idx.into_option().map(|i| (nbrhood, i)))
                 .flat_map(|(weighted_nbrhood, valid_idx)| {
                     let n = weighted_nbrhood
                         .iter()
-                        .filter(|&(nbr_idx, _)| neighbourhood_indices[*nbr_idx].is_valid())
+                        .filter(|&(nbr_idx, _)| neighborhood_indices[*nbr_idx].is_valid())
                         .count();
                     std::iter::repeat((valid_idx, weight / n as f64))
                         .zip(weighted_nbrhood.iter())
                         .filter_map(|((valid_idx, normalized_weight), (nbr_idx, w))| {
-                            neighbourhood_indices[*nbr_idx]
+                            neighborhood_indices[*nbr_idx]
                                 .into_option()
                                 .map(|valid_nbr| (valid_idx, valid_nbr, w * normalized_weight))
                         })
@@ -431,11 +431,11 @@ impl PointContactConstraint {
 
     #[allow(dead_code)]
     fn background_points(&self) -> Vec<bool> {
-        let neighbourhood_sizes = self.implicit_surface.neighbourhood_sizes();
+        let neighborhood_sizes = self.implicit_surface.neighborhood_sizes();
 
-        let mut background_points = vec![true; neighbourhood_sizes.len()];
+        let mut background_points = vec![true; neighborhood_sizes.len()];
 
-        for (_, bg) in neighbourhood_sizes
+        for (_, bg) in neighborhood_sizes
             .iter()
             .zip(background_points.iter_mut())
             .filter(|&(&c, _)| c != 0)
@@ -449,7 +449,7 @@ impl PointContactConstraint {
     /// This function fills the non-local values of the constraint function with a constant signed
     /// value (equal to the contact radius in magnitude) to help the optimization determine
     /// feasible regions. This is done using a flood fill algorithm as follows.
-    /// 1. Identify non-local query poitns with `neighbourhood_sizes`.
+    /// 1. Identify non-local query poitns with `neighborhood_sizes`.
     /// 2. Partition the primitives of the kinematic object (from which the points are from) into
     ///    connected components of non-local points. This means that points with a valid local
     ///    potential serve as boundaries.
@@ -476,10 +476,10 @@ impl PointContactConstraint {
                 // Get an edge with vertices in sorted order.
                 let edge = [f[vtx], f[(vtx + 1) % 3]];
 
-                let neighbourhood = &mut hedge_dest_indices[edge[0]];
+                let neighborhood = &mut hedge_dest_indices[edge[0]];
 
-                if let Err(idx) = neighbourhood.binary_search_by(|x: &usize| x.cmp(&edge[1])) {
-                    neighbourhood.insert(idx, edge[1]);
+                if let Err(idx) = neighborhood.binary_search_by(|x: &usize| x.cmp(&edge[1])) {
+                    neighborhood.insert(idx, edge[1]);
                 }
             }
         }
@@ -544,7 +544,7 @@ impl PointContactConstraint {
         }
     }
 
-    /// Prune contacts with zero contact_impulse and contacts without neighbouring samples.
+    /// Prune contacts with zero contact_impulse and contacts without neighboring samples.
     /// This function outputs the indices of contacts as well as a pruned vector of impulses.
     pub fn in_contact_indices(
         &self,
@@ -565,7 +565,7 @@ impl PointContactConstraint {
             .filter_map(|(i, (&cf, dist))| {
                 if cf != 0.0
                     && dist * dist_scale < 1e-4
-                    && surf.num_neighbours_within_distance(query_points[query_indices[i]], radius)
+                    && surf.num_neighbors_within_distance(query_points[query_indices[i]], radius)
                         > 0
                 {
                     Some((i, cf))
@@ -743,22 +743,22 @@ impl PointContactConstraint {
     }
 }
 
-/// Enumerate non-empty neighbourhoods in place.
-fn enumerate_nonempty_neighbourhoods_inplace(surf: &QueryTopo) -> Vec<Index> {
-    neighbourhood_indices_with(surf, |_, s| s != 0)
+/// Enumerate non-empty neighborhoods in place.
+fn enumerate_nonempty_neighborhoods_inplace(surf: &QueryTopo) -> Vec<Index> {
+    neighborhood_indices_with(surf, |_, s| s != 0)
 }
 
-/// Prune neighbourhood indices using a given function that takes the index (query point)
-/// and size of the neighbourhood.
-/// Only those neighbourhoods for which `f` returns true will be present in the output.
-fn neighbourhood_indices_with(surf: &QueryTopo, f: impl Fn(usize, usize) -> bool) -> Vec<Index> {
-    let mut neighbourhood_indices = vec![Index::INVALID; surf.num_query_points()];
+/// Prune neighborhood indices using a given function that takes the index (query point)
+/// and size of the neighborhood.
+/// Only those neighborhoods for which `f` returns true will be present in the output.
+fn neighborhood_indices_with(surf: &QueryTopo, f: impl Fn(usize, usize) -> bool) -> Vec<Index> {
+    let mut neighborhood_indices = vec![Index::INVALID; surf.num_query_points()];
 
-    let neighbourhood_sizes = surf.neighbourhood_sizes();
+    let neighborhood_sizes = surf.neighborhood_sizes();
 
-    for (i, (_, (idx, _))) in neighbourhood_indices
+    for (i, (_, (idx, _))) in neighborhood_indices
         .iter_mut()
-        .zip(neighbourhood_sizes.iter())
+        .zip(neighborhood_sizes.iter())
         .enumerate()
         .filter(|&(i, (_, &s))| f(i, s))
         .enumerate()
@@ -766,7 +766,7 @@ fn neighbourhood_indices_with(surf: &QueryTopo, f: impl Fn(usize, usize) -> bool
         *idx = Index::new(i);
     }
 
-    neighbourhood_indices
+    neighborhood_indices
 }
 
 impl ContactConstraint for PointContactConstraint {
@@ -854,7 +854,7 @@ impl ContactConstraint for PointContactConstraint {
             ..
         } = self.frictional_contact.as_ref().unwrap();
 
-        let query_indices = self.implicit_surface.nonempty_neighbourhood_indices();
+        let query_indices = self.implicit_surface.nonempty_neighborhood_indices();
         assert_eq!(query_indices.len(), normals.len());
 
         // Only interested in normals at contact points on the collider impulse.
@@ -935,7 +935,7 @@ impl ContactConstraint for PointContactConstraint {
         self.update_contact_pos(x);
 
         // Note that there is a distinction between active *contacts* and active *constraints*.
-        // Active *constraints* correspond to to those points that are in the MLS neighbourhood of
+        // Active *constraints* correspond to to those points that are in the MLS neighborhood of
         // influence to be part of the optimization. Active *contacts* are a subset of those that
         // are considered in contact.
         let (active_constraint_subset, active_contact_indices, orig_contact_impulse_n) =
@@ -1467,10 +1467,10 @@ impl ContactConstraint for PointContactConstraint {
     }
 
     fn active_constraint_indices(&self) -> Vec<usize> {
-        self.implicit_surface.nonempty_neighbourhood_indices()
+        self.implicit_surface.nonempty_neighborhood_indices()
     }
 
-    fn update_neighbours(
+    fn update_neighbors(
         &mut self,
         object_pos: SubsetView<Chunked3<&[f64]>>,
         collider_pos: SubsetView<Chunked3<&[f64]>>,
@@ -1522,7 +1522,7 @@ impl ContactConstraint for PointContactConstraint {
 
         self.constraint_jacobian.replace(jac);
 
-        let num_non_zero_constraints = self.implicit_surface.num_neighbourhoods();
+        let num_non_zero_constraints = self.implicit_surface.num_neighborhoods();
         let mut c0 = vec![0.0; num_non_zero_constraints];
         self.implicit_surface
             .local_potential(self.contact_points.view().into(), c0.as_mut_slice());
@@ -1542,7 +1542,7 @@ pub(crate) type Input<'a> = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]; // Object 
 
 impl PointContactConstraint {
     pub(crate) fn constraint_size(&self) -> usize {
-        self.implicit_surface.num_neighbourhoods()
+        self.implicit_surface.num_neighborhoods()
     }
 
     pub(crate) fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
@@ -1586,7 +1586,7 @@ impl PointContactConstraint {
             .zip(self.contact_points.iter())
         {
             // Clear potential value.
-            let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
+            let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
             if closest_sample
                 .nml
                 .dot(Vector3::new(*q) - closest_sample.pos)
@@ -1607,10 +1607,10 @@ impl PointContactConstraint {
         //let collider_mesh = self.collision_object.borrow();
         //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
 
-        let neighbourhood_sizes = surf.neighbourhood_sizes();
+        let neighborhood_sizes = surf.neighborhood_sizes();
 
-        // Because `value` tracks only the values for which the neighbourhood is not empty.
-        for ((_, new_v), v) in neighbourhood_sizes
+        // Because `value` tracks only the values for which the neighborhood is not empty.
+        for ((_, new_v), v) in neighborhood_sizes
             .iter()
             .zip(self.constraint_value.iter())
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
@@ -1669,15 +1669,14 @@ impl PointContactConstraint {
         iter: impl Iterator<Item = (usize, usize)>,
         is_fixed: bool,
     ) -> impl Iterator<Item = MatrixElementIndex> {
-        let neighbourhood_indices =
-            enumerate_nonempty_neighbourhoods_inplace(&self.implicit_surface);
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&self.implicit_surface);
         if is_fixed { None } else { Some(iter) }
             .into_iter()
             .flatten()
             .map(move |(row, col)| {
-                assert!(neighbourhood_indices[row].is_valid());
+                assert!(neighborhood_indices[row].is_valid());
                 MatrixElementIndex {
-                    row: neighbourhood_indices[row].unwrap(),
+                    row: neighborhood_indices[row].unwrap(),
                     col,
                 }
             })
@@ -1747,7 +1746,7 @@ impl PointContactConstraint {
             let iter = surf
                 .surface_jacobian_block_indices_iter()
                 .zip(surf.surface_jacobian_block_iter(self.contact_points.view().into()));
-            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(surf);
+            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.object_is_fixed() {
                     None
@@ -1757,8 +1756,8 @@ impl PointContactConstraint {
                 .into_iter()
                 .flatten()
                 .map(move |((row, col), block)| {
-                    assert!(neighbourhood_indices[row].is_valid());
-                    (neighbourhood_indices[row].unwrap(), col, block)
+                    assert!(neighborhood_indices[row].is_valid());
+                    (neighborhood_indices[row].unwrap(), col, block)
                 }),
             )
         }
@@ -1788,7 +1787,7 @@ impl PointContactConstraint {
             let iter = surf
                 .query_jacobian_block_indices_iter()
                 .zip(surf.query_jacobian_block_iter(self.contact_points.view().into()));
-            let neighbourhood_indices = enumerate_nonempty_neighbourhoods_inplace(surf);
+            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
             Either::Right(
                 if self.collider_is_fixed() {
                     None
@@ -1798,8 +1797,8 @@ impl PointContactConstraint {
                 .into_iter()
                 .flatten()
                 .map(move |((row, col), block)| {
-                    assert!(neighbourhood_indices[row].is_valid());
-                    (neighbourhood_indices[row].unwrap(), col, block)
+                    assert!(neighborhood_indices[row].is_valid());
+                    (neighborhood_indices[row].unwrap(), col, block)
                 }),
             )
         }
@@ -2017,7 +2016,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
     type Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]; // Object and collider vertices
 
     fn constraint_size(&self) -> usize {
-        self.implicit_surface.num_neighbourhoods()
+        self.implicit_surface.num_neighborhoods()
     }
 
     fn constraint_bounds(&self) -> (Vec<f64>, Vec<f64>) {
@@ -2039,7 +2038,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
             .zip(self.contact_points.iter())
         {
             // Clear potential value.
-            let closest_sample = surf.nearest_neighbour_lookup(*q).unwrap();
+            let closest_sample = surf.nearest_neighbor_lookup(*q).unwrap();
             if closest_sample
                 .nml
                 .dot(Vector3::new(*q) - closest_sample.pos)
@@ -2060,7 +2059,7 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
         //let collider_mesh = self.collision_object.borrow();
         //Self::fill_background_potential(&collider_mesh, &bg_pts, radius, &mut cbuf);
 
-        let neighbourhood_sizes = surf.neighbourhood_sizes();
+        let neighborhood_sizes = surf.neighborhood_sizes();
 
         //println!("cbuf = ");
         //for c in cbuf.iter() {
@@ -2068,8 +2067,8 @@ impl<'a> Constraint<'a, f64> for PointContactConstraint {
         //}
         //println!("");
 
-        // Because `value` tracks only the values for which the neighbourhood is not empty.
-        for ((_, new_v), v) in neighbourhood_sizes
+        // Because `value` tracks only the values for which the neighborhood is not empty.
+        for ((_, new_v), v) in neighborhood_sizes
             .iter()
             .zip(self.constraint_value.iter())
             .filter(|&(&nbrhood_size, _)| nbrhood_size != 0)
@@ -2122,12 +2121,11 @@ impl ContactConstraintJacobian<'_, f64> for PointContactConstraint {
             )
         };
 
-        let neighbourhood_indices =
-            enumerate_nonempty_neighbourhoods_inplace(&self.implicit_surface);
+        let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(&self.implicit_surface);
         Box::new(idx_iter.map(move |(row, col)| {
-            assert!(neighbourhood_indices[row].is_valid());
+            assert!(neighborhood_indices[row].is_valid());
             MatrixElementIndex {
-                row: neighbourhood_indices[row].unwrap(),
+                row: neighborhood_indices[row].unwrap(),
                 col,
             }
         }))

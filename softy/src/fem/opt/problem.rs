@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use ipopt::{self, Number};
 
-use flatk::Entity;
+use flatk::Component;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use num_traits::Zero;
 use tensr::*;
@@ -137,55 +137,6 @@ pub struct FrictionalContactConstraint {
     pub constraint: RefCell<PointContactConstraint>,
 }
 
-/// An enum that tags data as static (Fixed) or changing (Variable).
-/// `Var` is short for "variability".
-#[derive(Copy, Clone, Debug)]
-pub enum Var<M, T> {
-    Fixed(M),
-    Rigid(M, T, Matrix3<T>),
-    Variable(M),
-}
-
-/// Object/Collider type.
-///
-/// Same as above but without the mesh.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Tag<T> {
-    Fixed,
-    Rigid(T, Matrix3<T>),
-    Variable,
-}
-
-impl<M, T> Var<M, T> {
-    #[inline]
-    pub fn map<U, F: FnOnce(M) -> U>(self, f: F) -> Var<U, T> {
-        match self {
-            Var::Fixed(x) => Var::Fixed(f(x)),
-            Var::Rigid(x, m, i) => Var::Rigid(f(x), m, i),
-            Var::Variable(x) => Var::Variable(f(x)),
-        }
-    }
-
-    /// Effectively untag the underlying data by converting into the inner type.
-    #[inline]
-    pub fn untag(self) -> M {
-        match self {
-            Var::Fixed(t) | Var::Variable(t) | Var::Rigid(t, _, _) => t,
-        }
-    }
-}
-
-impl<M, T: Clone> Var<M, T> {
-    #[inline]
-    pub fn tag(&self) -> Tag<T> {
-        match self {
-            Var::Fixed(_) => Tag::Fixed,
-            Var::Rigid(_, mass, inertia) => Tag::Rigid(mass.clone(), inertia.clone()),
-            Var::Variable(_) => Tag::Variable,
-        }
-    }
-}
-
 /// Index of solid objects in the global array of vertices and dofs.
 const SOLIDS_INDEX: usize = 0;
 /// Index of shell objects in the global array of vertices and dofs.
@@ -195,15 +146,15 @@ const SHELLS_INDEX: usize = 1;
 ///
 /// `X` and `V` can be either a single component (x, y or z) like `f64`, a triplet like `[f64; 3]`
 /// or a stacked collection of components like `Vec<f64>` depending on the context.
-#[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct VertexState<X, V> {
     pub pos: X,
     pub vel: V,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct VertexWorkspace<X, V, G> {
-    #[entity]
+    #[component]
     pub state: VertexState<X, V>,
     /// Gradient for all meshes for which the generalized coordinates don't coincide
     /// with vertex positions.
@@ -214,11 +165,11 @@ pub struct VertexWorkspace<X, V, G> {
 ///
 /// A single vertex may have other attributes depending on the context.
 /// This struct keeps track of the most fundamental attributes required for animation.
-#[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct Vertex<X, V> {
-    #[entity]
+    #[component]
     pub prev: VertexState<X, V>,
-    #[entity]
+    #[component]
     pub cur: VertexState<X, V>,
 }
 
@@ -226,18 +177,18 @@ pub struct Vertex<X, V> {
 ///
 /// This can be a vertex position and velocity as in `VertexState` or an axis angle and its rotation
 /// differential representation for rigid body motion. Other coordinate representations are possible.
-#[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct GeneralizedState<Q, D> {
     pub q: Q,
     pub dq: D,
 }
 
 /// Generalized coordinates with past and present states.
-#[derive(Copy, Clone, Debug, PartialEq, Default, Entity)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct GeneralizedCoords<X, V> {
-    #[entity]
+    #[component]
     pub prev: GeneralizedState<X, V>,
-    #[entity]
+    #[component]
     pub cur: GeneralizedState<X, V>,
 }
 

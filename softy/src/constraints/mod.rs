@@ -5,7 +5,6 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::fem::opt::problem::Var;
 use crate::friction::FrictionalContact;
 use crate::matrix::MatrixElementIndex;
 use crate::Error;
@@ -21,12 +20,53 @@ pub use self::volume::*;
 use tensr::*;
 use utils::aref::*;
 
-/// Construct a new contact constraint based on the given parameters. There are more than
-/// one type of contact constraint, which is resolved using dynamic dispatch.
-/// This approach reduces a lot of boiler plate code compared to using enums.
+/// An struct describing a fixed, rigid or deformable contact surface.
+#[derive(Copy, Clone, Debug)]
+pub struct ContactSurface<M, T> {
+    pub mesh: M,
+    pub kind: SurfaceKind<T>,
+}
+
+/// The kind of contact surface: fixed, rigid or deformable.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum SurfaceKind<T> {
+    Fixed,
+    Rigid { mass: T, inertia: Matrix3<T> },
+    Deformable,
+}
+
+impl<M, T> ContactSurface<M, T> {
+    pub fn deformable(mesh: M) -> Self {
+        ContactSurface {
+            mesh,
+            kind: SurfaceKind::Deformable,
+        }
+    }
+    pub fn rigid(mesh: M, mass: T, inertia: Matrix3<T>) -> Self {
+        ContactSurface {
+            mesh,
+            kind: SurfaceKind::Rigid { mass, inertia },
+        }
+    }
+    pub fn fixed(mesh: M) -> Self {
+        ContactSurface {
+            mesh,
+            kind: SurfaceKind::Fixed,
+        }
+    }
+    #[inline]
+    pub fn map<U, F: FnOnce(M) -> U>(self, f: F) -> ContactSurface<U, T> {
+        ContactSurface {
+            mesh: f(self.mesh),
+            kind: self.kind,
+        }
+    }
+}
+
+/// Construct a new contact constraint based on the given parameters.
 pub fn build_contact_constraint(
-    object: Var<&TriMesh, f64>,
-    collider: Var<&TriMesh, f64>,
+    object: ContactSurface<&TriMesh, f64>,
+    collider: ContactSurface<&TriMesh, f64>,
     params: FrictionalContactParams,
 ) -> Result<RefCell<PointContactConstraint>, crate::Error> {
     Ok(RefCell::new(PointContactConstraint::new(

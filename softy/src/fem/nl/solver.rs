@@ -988,7 +988,7 @@ impl SolverBuilder {
 /// Finite element engine.
 pub struct Solver {
     /// Non-linear solver.
-    solver: Ipopt<NonLinearProblem>,
+    solver: NonLinearEquations,
     /// Step count (outer iterations). These count the number of times the function `step` was
     /// called.
     step_count: usize,

@@ -588,12 +588,14 @@ impl TriMeshShell {
         Ok(())
     }
 
-    pub fn tagged_mesh(&self) -> crate::fem::opt::problem::Var<&TriMesh, f64> {
-        use crate::fem::opt::problem::Var;
+    pub fn contact_surface(&self) -> crate::constraints::ContactSurface<&TriMesh, f64> {
+        use crate::constraints::ContactSurface;
         match self.data {
-            ShellData::Fixed { .. } => Var::Fixed(&self.trimesh),
-            ShellData::Rigid { mass, inertia, .. } => Var::Rigid(&self.trimesh, mass, inertia),
-            _ => Var::Variable(&self.trimesh),
+            ShellData::Fixed { .. } => ContactSurface::fixed(&self.trimesh),
+            ShellData::Rigid { mass, inertia, .. } => {
+                ContactSurface::rigid(&self.trimesh, mass, inertia)
+            }
+            _ => ContactSurface::deformable(&self.trimesh),
         }
     }
 

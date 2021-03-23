@@ -1,7 +1,5 @@
 use std::cell::RefCell;
 
-use ipopt::{self, Number};
-
 use flatk::Entity;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use num_traits::Zero;
@@ -24,34 +22,13 @@ use crate::{PointCloud, TriMesh};
 #[derive(Clone)]
 pub struct Solution {
     /// This is the solution of the solve.
-    pub primal_variables: Vec<f64>,
-    /// Lower bound multipliers.
-    pub lower_bound_multipliers: Vec<f64>,
-    /// Upper bound multipliers.
-    pub upper_bound_multipliers: Vec<f64>,
-    /// Constraint (Lagrange) multipliers.
-    pub constraint_multipliers: Vec<f64>,
+    pub u: Vec<f64>,
 }
 
 /// Create an empty solution.
 impl Default for Solution {
     fn default() -> Solution {
-        Solution {
-            primal_variables: Vec::new(),
-            lower_bound_multipliers: Vec::new(),
-            upper_bound_multipliers: Vec::new(),
-            constraint_multipliers: Vec::new(),
-        }
-    }
-}
-
-/// Materialize a solution from the references got from Ipopt.
-impl<'a> From<ipopt::Solution<'a>> for Solution {
-    #[inline]
-    fn from(sol: ipopt::Solution<'a>) -> Solution {
-        let mut mysol = Solution::default();
-        mysol.update(sol);
-        mysol
+        Solution { u: Vec::new() }
     }
 }
 
@@ -65,55 +42,11 @@ fn integrate_rotation<T: Real>(k0: Vector3<T>, dw: Vector3<T>) -> Vector3<T> {
 }
 
 impl Solution {
-    /// Initialize a solution with all variables and multipliers set to zero.
-    pub fn reset(&mut self, num_variables: usize, num_constraints: usize) -> &mut Self {
-        self.clear();
-        let x = vec![0.0; num_variables];
-        self.primal_variables.extend_from_slice(&x);
-        self.lower_bound_multipliers.extend_from_slice(&x);
-        self.upper_bound_multipliers.extend_from_slice(&x);
-        self.constraint_multipliers
-            .extend_from_slice(&vec![0.0; num_constraints]);
-        self
+    fn new(num_variables: usize) -> Solution {
+        Solution {
+            u: vec![0.0; num_variables],
+        }
     }
-
-    /// Clear all solution vectors.
-    pub fn clear(&mut self) {
-        self.primal_variables.clear();
-        self.lower_bound_multipliers.clear();
-        self.upper_bound_multipliers.clear();
-        self.constraint_multipliers.clear();
-    }
-
-    /// Update allocated solution vectors with new data from Ipopt.
-    pub fn update<'a>(&mut self, sol: ipopt::Solution<'a>) -> &mut Self {
-        self.clear();
-        self.primal_variables
-            .extend_from_slice(sol.primal_variables);
-        self.lower_bound_multipliers
-            .extend_from_slice(sol.lower_bound_multipliers);
-        self.upper_bound_multipliers
-            .extend_from_slice(sol.upper_bound_multipliers);
-        self.constraint_multipliers
-            .extend_from_slice(sol.constraint_multipliers);
-        self
-    }
-
-    ///// for the next solve. For this reason we must remap the old multipliers to the new set of
-    ///// constraints. Constraint multipliers that are new in the next solve will have a zero value.
-    ///// This function works on a subset of all multipliers. The caller gives a slice of the
-    ///// multipliers for which this function produces a new Vec of multipliers correspnding to the
-    ///// new constraints, where the old multipliers are copied as available.
-    ///// The values in `new_indices` and `old_indices` are required to be sorted.
-    /////
-    ///// NOTE: Most efficient to replace the entire constraint_multipliers vector in the warm start.
-    //pub fn remap_constraint_multipliers(
-    //    constraint_multipliers: &[f64],
-    //    old_indices: &[usize],
-    //    new_indices: &[usize],
-    //) -> Vec<f64> {
-    //    remap_values(constraint_multipliers, 0.0, old_indices, new_indices)
-    //}
 }
 
 /// The index of the object subject to the appropriate contact constraint.
@@ -135,55 +68,6 @@ pub struct FrictionalContactConstraint {
     pub object_index: SourceObject,
     pub collider_index: SourceObject,
     pub constraint: RefCell<PointContactConstraint>,
-}
-
-/// An enum that tags data as static (Fixed) or changing (Variable).
-/// `Var` is short for "variability".
-#[derive(Copy, Clone, Debug)]
-pub enum Var<M, T> {
-    Fixed(M),
-    Rigid(M, T, Matrix3<T>),
-    Variable(M),
-}
-
-/// Object/Collider type.
-///
-/// Same as above but without the mesh.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Tag<T> {
-    Fixed,
-    Rigid(T, Matrix3<T>),
-    Variable,
-}
-
-impl<M, T> Var<M, T> {
-    #[inline]
-    pub fn map<U, F: FnOnce(M) -> U>(self, f: F) -> Var<U, T> {
-        match self {
-            Var::Fixed(x) => Var::Fixed(f(x)),
-            Var::Rigid(x, m, i) => Var::Rigid(f(x), m, i),
-            Var::Variable(x) => Var::Variable(f(x)),
-        }
-    }
-
-    /// Effectively untag the underlying data by converting into the inner type.
-    #[inline]
-    pub fn untag(self) -> M {
-        match self {
-            Var::Fixed(t) | Var::Variable(t) | Var::Rigid(t, _, _) => t,
-        }
-    }
-}
-
-impl<M, T: Clone> Var<M, T> {
-    #[inline]
-    pub fn tag(&self) -> Tag<T> {
-        match self {
-            Var::Fixed(_) => Tag::Fixed,
-            Var::Rigid(_, mass, inertia) => Tag::Rigid(mass.clone(), inertia.clone()),
-            Var::Variable(_) => Tag::Variable,
-        }
-    }
 }
 
 /// Index of solid objects in the global array of vertices and dofs.

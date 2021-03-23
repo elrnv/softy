@@ -1,7 +1,6 @@
 use super::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::fem::opt::problem::{Tag, Var};
 use crate::friction::*;
 use crate::matrix::*;
 use crate::objects::TriMeshShell;
@@ -70,11 +69,11 @@ pub struct PointContactConstraint {
 
     /// A flag indicating if the object is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
-    object_tag: Tag<f64>,
+    object_kind: SurfaceKind<f64>,
 
     /// A flag indicating if the collider is fixed. Otherwise it's considered
     /// to be deforming, and thus appropriate derivatives are computed.
-    collider_tag: Tag<f64>,
+    collider_kind: SurfaceKind<f64>,
 
     /// The distance above which to constrain collider contact points.
     ///
@@ -103,20 +102,20 @@ pub struct PointContactConstraint {
 impl PointContactConstraint {
     pub fn new(
         // Main object experiencing contact against its implicit surface representation.
-        object: Var<&TriMesh, f64>,
+        object: ContactSurface<&TriMesh, f64>,
         // Collision object consisting of points pushing against the solid object.
-        collider: Var<&TriMesh, f64>,
+        collider: ContactSurface<&TriMesh, f64>,
         kernel: KernelType,
         friction_params: Option<FrictionParams>,
         contact_offset: f64,
         linearized: bool,
     ) -> Result<Self, Error> {
         let mut surface_builder = ImplicitSurfaceBuilder::new();
-        let object_tag = object.tag();
-        let collider_tag = collider.tag();
+        let object_kind = object.kind;
+        let collider_kind = collider.kind;
 
         surface_builder
-            .trimesh(object.untag())
+            .trimesh(object.mesh)
             .kernel(kernel)
             .sample_type(SampleType::Face)
             .background_field(BackgroundFieldParams {
@@ -128,7 +127,7 @@ impl PointContactConstraint {
             // Sanity check that the surface is built correctly.
             assert_eq!(
                 surface.surface_vertex_positions().len(),
-                object.untag().num_vertices()
+                object.mesh.num_vertices()
             );
 
             if let implicits::MLS::Local(mls) = &surface {
@@ -143,7 +142,7 @@ impl PointContactConstraint {
                 );
             }
 
-            let query_points = collider.untag().vertex_positions();
+            let query_points = collider.mesh.vertex_positions();
 
             // Construct mass matrices
             let object_mass_data = Self::mass_matrix_data(object)?;
@@ -151,8 +150,8 @@ impl PointContactConstraint {
 
             assert!(object_mass_data.is_some() || collider_mass_data.is_some());
 
-            let object = object.untag();
-            let collider = collider.untag();
+            let object = object.mesh;
+            let collider = collider.mesh;
 
             let mut bbox = BBox::empty();
             bbox.absorb(object.bounding_box());
@@ -170,8 +169,8 @@ impl PointContactConstraint {
                 }),
                 object_mass_data,
                 collider_mass_data,
-                object_tag,
-                collider_tag,
+                object_kind,
+                collider_kind,
                 contact_offset,
                 problem_diameter: bbox.diameter(),
                 constraint_value: vec![0.0; query_points.len()],
@@ -193,17 +192,18 @@ impl PointContactConstraint {
     }
 
     fn object_is_fixed(&self) -> bool {
-        self.object_tag == Tag::Fixed
+        self.object_kind == SurfaceKind::Fixed
     }
     fn collider_is_fixed(&self) -> bool {
-        self.collider_tag == Tag::Fixed
+        self.collider_kind == SurfaceKind::Fixed
     }
 
-    fn mass_matrix_data(mesh: Var<&TriMesh, f64>) -> Result<MassData, Error> {
-        match mesh {
-            Var::Rigid(_, mass, inertia) => Ok(MassData::Dense(mass, inertia)),
-            Var::Fixed(_) => Ok(MassData::Zero),
-            Var::Variable(mesh) => mesh
+    fn mass_matrix_data(surf: ContactSurface<&TriMesh, f64>) -> Result<MassData, Error> {
+        match surf.kind {
+            SurfaceKind::Rigid { mass, inertia } => Ok(MassData::Dense(mass, inertia)),
+            SurfaceKind::Fixed => Ok(MassData::Zero),
+            SurfaceKind::Deformable => surf
+                .mesh
                 .attrib_as_slice::<MassType, VertexIndex>(MASS_ATTRIB)
                 .map_err(|_| Error::InvalidParameter {
                     name: "Missing mass attribute or parameter".to_string(),
@@ -214,8 +214,9 @@ impl PointContactConstraint {
                             name: "Zero mass".to_string(),
                         })
                     } else {
-                        let data: Chunked3<Vec<_>> = if let Ok(fixed) =
-                            mesh.attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+                        let data: Chunked3<Vec<_>> = if let Ok(fixed) = surf
+                            .mesh
+                            .attrib_iter::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
                         {
                             // Fixed vertices have infinite mass, so zero inverse mass.
                             attrib

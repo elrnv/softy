@@ -7,7 +7,7 @@ use geo::ops::{ShapeMatrix, Volume};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use tensr::*;
 
-use super::problem::{FrictionalContactConstraint, Var};
+use super::problem::FrictionalContactConstraint;
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
@@ -223,17 +223,17 @@ impl SolverBuilder {
         material_source_obj.into_iter().flat_map(move |&m0| {
             let object = match m0 {
                 SourceIndex::Solid(i) => {
-                    Var::Variable(&solids[i].surface(params.use_fixed).trimesh)
+                    ContactSurface::deformable(&solids[i].surface(params.use_fixed).trimesh)
                 }
-                SourceIndex::Shell(i) => shells[i].tagged_mesh(),
+                SourceIndex::Shell(i) => shells[i].contact_surface(),
             };
 
             material_source_coll.into_iter().flat_map(move |&m1| {
                 let collider = match m1 {
                     SourceIndex::Solid(j) => {
-                        Var::Variable(&solids[j].surface(params.use_fixed).trimesh)
+                        ContactSurface::deformable(&solids[j].surface(params.use_fixed).trimesh)
                     }
-                    SourceIndex::Shell(j) => shells[j].tagged_mesh(),
+                    SourceIndex::Shell(j) => shells[j].contact_surface(),
                 };
                 build_contact_constraint(object, collider, params)
                     .ok()

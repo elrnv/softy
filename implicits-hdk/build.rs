@@ -1,5 +1,4 @@
 use cxx_build::CFG;
-use std::path::{Path, PathBuf};
 
 fn main() {
     CFG.include_prefix = "implicits";

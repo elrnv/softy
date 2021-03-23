@@ -119,8 +119,8 @@ fn convert_to_cookresult(res: Result<bool, implicits::Error>) -> CookResult {
         Err(implicits::Error::MissingNormals) => {
             CookResult::Error("Vertex normals are missing or have the wrong type".to_string())
         }
-        Err(implicits::Error::MissingNeighbourData) => {
-            CookResult::Error("Missing neighbour data for derivative computations".to_string())
+        Err(implicits::Error::MissingNeighborData) => {
+            CookResult::Error("Missing neighbor data for derivative computations".to_string())
         }
         Err(implicits::Error::Failure) => CookResult::Error("Internal Error".to_string()),
         Err(implicits::Error::UnsupportedKernel) => {

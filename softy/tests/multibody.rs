@@ -1,5 +1,6 @@
 mod test_utils;
 
+use softy::opt_fem::*;
 use softy::*;
 //use std::path::PathBuf;
 use geo::mesh::builder::*;

@@ -33,7 +33,8 @@ pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
 pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 
 pub use self::contact::*;
-pub use self::fem::{InnerSolveResult, MuStrategy, SimParams, SolveResult};
+pub use self::fem::nl as nl_fem;
+pub use self::fem::opt as opt_fem;
 pub use self::fem::{Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
@@ -64,15 +65,17 @@ pub enum Error {
     },
     #[error("Inverted reference element detected")]
     InvertedReferenceElement { inverted: Vec<usize> },
-    #[error("Error during main solve step")]
+    #[error("Error during main non-linear solve step")]
+    NLSolveError { result: nl_fem::SolveResult },
+    #[error("Error during main optimization solve step")]
     /// This reports iterations, objective value and max inner iterations.
-    SolveError {
+    OptSolveError {
         status: ipopt::SolveStatus,
-        result: SolveResult,
+        result: opt_fem::SolveResult,
     },
     #[error("Error during an inner solve step")]
     /// This reports iterations and objective value.
-    InnerSolveError {
+    InnerOptSolveError {
         status: ipopt::SolveStatus,
         objective_value: f64,
         iterations: u32,
@@ -119,13 +122,18 @@ pub enum Error {
     },
     #[error("File I/O Error")]
     InvalidImplicitSurface,
-    #[error("Eror generating the implicit field")]
+    #[error("Error generating the implicit field")]
     ImplicitsError {
         #[from]
         source: implicits::Error,
     },
     #[error("Unimplemented feature: {description:?}")]
     UnimplementedFeature { description: String },
+    #[error("Invalid solver configuration")]
+    InvalidSolverConfig {
+        #[from]
+        source: fem::nl::newton::Error,
+    },
 }
 
 pub enum SimResult {
@@ -139,13 +147,13 @@ impl From<Error> for SimResult {
         match err {
             Error::SizeMismatch => SimResult::Error(format!("{}", err)),
             Error::AttribError { source } => SimResult::Error(format!("{}", source)),
-            Error::SolveError { status, result } => match status {
+            Error::OptSolveError { status, result } => match status {
                 ipopt::SolveStatus::MaximumIterationsExceeded => {
                     SimResult::Warning(format!("Maximum iterations exceeded \n{}", result))
                 }
                 status => SimResult::Error(format!("Solve failed: {:?}\n{}", status, result)),
             },
-            Error::InnerSolveError {
+            Error::InnerOptSolveError {
                 status,
                 objective_value,
                 iterations,
@@ -199,7 +207,16 @@ impl From<Error> for SimResult {
     }
 }
 
-impl Into<SimResult> for Result<SolveResult, Error> {
+impl Into<SimResult> for Result<nl_fem::SolveResult, Error> {
+    fn into(self) -> SimResult {
+        match self {
+            Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
+            Err(err) => err.into(),
+        }
+    }
+}
+
+impl Into<SimResult> for Result<opt_fem::SolveResult, Error> {
     fn into(self) -> SimResult {
         match self {
             Ok(solve_result) => SimResult::Success(format!("{}", solve_result)),
@@ -215,7 +232,7 @@ pub fn sim(
     tetmesh: Option<TetMesh>,
     material: SolidMaterial,
     polymesh: Option<PolyMesh>,
-    sim_params: SimParams,
+    sim_params: crate::fem::opt::SimParams,
     interrupter: Option<Box<dyn FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
@@ -240,12 +257,12 @@ pub fn sim(
     }
 }
 
-pub(crate) fn inf_norm<I>(iter: I) -> f64
+pub(crate) fn inf_norm<I, T: tensr::Real>(iter: I) -> T
 where
-    I: IntoIterator<Item = f64>,
+    I: IntoIterator<Item = T>,
 {
     iter.into_iter()
         .map(|x| x.abs())
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-        .unwrap_or(0.0)
+        .unwrap_or(T::zero())
 }

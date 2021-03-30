@@ -625,10 +625,103 @@ impl TriMeshShell {
 
         out
     }
+
+    /// Given a trimesh, compute the strain energy per triangle.
+    fn compute_strain_energy_attrib(&mut self) {
+        use geo::ops::ShapeMatrix;
+        // Overwrite the "strain_energy" attribute.
+        let mut strain = self
+            .trimesh
+            .remove_attrib::<FaceIndex>(STRAIN_ENERGY_ATTRIB)
+            .unwrap();
+        strain
+            .direct_iter_mut::<f64>()
+            .unwrap()
+            .zip(zip!(
+                self.trimesh
+                    .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                self.trimesh
+                    .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                self.trimesh
+                    .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                    .unwrap(),
+                self.trimesh
+                    .attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(
+                        REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                    )
+                    .unwrap(),
+                self.trimesh.tri_iter()
+            ))
+            .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tri))| {
+                let shape_mtx = Matrix2x3::new(tri.shape_matrix());
+                *strain =
+                    NeoHookeanTriEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu).energy()
+            });
+
+        self.trimesh
+            .insert_attrib::<FaceIndex>(STRAIN_ENERGY_ATTRIB, strain)
+            .unwrap();
+    }
+
+    /// Given a trimesh, compute the elastic forces per vertex, and save it at a vertex attribute.
+    fn compute_elastic_forces_attrib(&mut self) {
+        use geo::ops::ShapeMatrix;
+        let mut forces_attrib = self
+            .trimesh
+            .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
+            .unwrap();
+
+        let mut forces =
+            Chunked3::from_array_slice_mut(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+
+        // Reset forces
+        for f in forces.iter_mut() {
+            *f = [0.0; 3];
+        }
+
+        let grad_iter = zip!(
+            self.trimesh
+                .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            self.trimesh
+                .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            self.trimesh
+                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                .unwrap(),
+            self.trimesh
+                .attrib_iter::<RefTriShapeMtxInvType, FaceIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB)
+                .unwrap(),
+            self.trimesh.tri_iter()
+        )
+        .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tri)| {
+            let shape_mtx = Matrix2x3::new(tri.shape_matrix());
+            NeoHookeanTriEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
+                .energy_gradient()
+        });
+
+        for (grad, face) in grad_iter.zip(self.trimesh.faces().iter()) {
+            for j in 0..3 {
+                let f = Vector3::new(forces[face[j]]);
+                forces[face[j]] = (f - grad[j]).into();
+            }
+        }
+
+        // Reinsert forces back into the attrib map
+        self.trimesh
+            .insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)
+            .unwrap();
+    }
 }
 
-impl<'a> Elasticity<'a, Option<TriMeshNeoHookean<'a, f64>>> for TriMeshShell {
-    fn elasticity(&'a self) -> Option<TriMeshNeoHookean<'a, f64>> {
+impl TriMeshShell {
+    pub fn elasticity<'a, T: Real>(&'a self) -> Option<TriMeshNeoHookean<'a, T>> {
         TriMeshNeoHookean::new(self)
     }
 }

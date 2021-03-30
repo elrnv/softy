@@ -2,6 +2,7 @@ use approx::*;
 
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::{Attrib, VertexPositions};
+use softy::opt_fem::*;
 use softy::*;
 pub use test_utils::*;
 

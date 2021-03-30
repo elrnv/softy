@@ -2,6 +2,7 @@ mod test_utils;
 
 use approx::*;
 use geo::mesh::VertexPositions;
+use softy::opt_fem::*;
 use softy::*;
 pub use test_utils::*;
 

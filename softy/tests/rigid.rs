@@ -5,6 +5,7 @@ use geo::mesh::attrib::*;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
 use geo::ops::*;
+use softy::opt_fem::*;
 use softy::*;
 use tensr::*;
 pub use test_utils::*;

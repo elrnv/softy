@@ -1,3 +1,9 @@
+use lazycell::LazyCell;
+
+use flatk::{zip, Chunked3};
+use geo::mesh::Attrib;
+use tensr::{Matrix3, Real, Vector3};
+
 use crate::attrib_defines::*;
 use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
@@ -5,8 +11,6 @@ use crate::energy_models::inertia::*;
 use crate::energy_models::Either;
 use crate::objects::{material::*, *};
 use crate::{TetMesh, TriMesh};
-use geo::mesh::Attrib;
-use lazycell::LazyCell;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by
 /// physical material properties that govern how it behaves.
@@ -104,15 +108,106 @@ impl TetMeshSolid {
         self.deforming_surface
             .borrow_with(|| TetMeshSurface::new(&self.tetmesh, false))
     }
+
+    /// Given a tetmesh, compute the strain energy per tetrahedron.
+    fn compute_strain_energy_attrib(&mut self) {
+        use geo::ops::ShapeMatrix;
+        // Overwrite the "strain_energy" attribute.
+        let mut strain = self
+            .tetmesh
+            .remove_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB)
+            .unwrap();
+        strain
+            .direct_iter_mut::<f64>()
+            .unwrap()
+            .zip(zip!(
+                self.tetmesh
+                    .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                self.tetmesh
+                    .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
+                    .unwrap()
+                    .map(|&x| f64::from(x)),
+                self.tetmesh
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .unwrap(),
+                self.tetmesh
+                    .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(
+                        REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
+                    )
+                    .unwrap(),
+                self.tetmesh.tet_iter()
+            ))
+            .for_each(|(strain, (lambda, mu, &vol, &ref_shape_mtx_inv, tet))| {
+                let shape_mtx = Matrix3::new(tet.shape_matrix());
+                *strain =
+                    NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu).energy()
+            });
+
+        self.tetmesh
+            .insert_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB, strain)
+            .unwrap();
+    }
+
+    /// Computes the elastic forces per vertex, and saves it at a vertex attribute.
+    fn compute_elastic_forces_attrib(&mut self) {
+        use geo::ops::ShapeMatrix;
+        let mut forces_attrib = self
+            .tetmesh
+            .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
+            .unwrap();
+
+        let mut forces =
+            Chunked3::from_array_slice_mut(forces_attrib.as_mut_slice::<[f64; 3]>().unwrap());
+
+        // Reset forces
+        for f in forces.iter_mut() {
+            *f = [0.0; 3];
+        }
+
+        let grad_iter = zip!(
+            self.tetmesh
+                .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            self.tetmesh
+                .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)
+                .unwrap()
+                .map(|&x| f64::from(x)),
+            self.tetmesh
+                .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                .unwrap(),
+            self.tetmesh
+                .attrib_iter::<RefTetShapeMtxInvType, CellIndex>(REFERENCE_SHAPE_MATRIX_INV_ATTRIB,)
+                .unwrap(),
+            self.tetmesh.tet_iter()
+        )
+        .map(|(lambda, mu, &vol, &ref_shape_mtx_inv, tet)| {
+            let shape_mtx = Matrix3::new(tet.shape_matrix());
+            NeoHookeanTetEnergy::new(shape_mtx, ref_shape_mtx_inv, vol, lambda, mu)
+                .energy_gradient()
+        });
+
+        for (grad, cell) in grad_iter.zip(self.tetmesh.cells().iter()) {
+            for j in 0..4 {
+                let f = Vector3::new(forces[cell[j]]);
+                forces[cell[j]] = (f - grad[j]).into();
+            }
+        }
+
+        // Reinsert forces back into the attrib map
+        self.tetmesh
+            .insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)
+            .unwrap();
+    }
 }
 
-impl<'a> Elasticity<'a, Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>>>
-    for TetMeshSolid
-{
+impl TetMeshSolid {
     #[inline]
-    fn elasticity(
+    pub fn elasticity<'a, T: Real>(
         &'a self,
-    ) -> Either<TetMeshNeoHookean<'a, f64>, TetMeshStableNeoHookean<'a, f64>> {
+    ) -> Either<TetMeshNeoHookean<'a, T>, TetMeshStableNeoHookean<'a, T>> {
         match self.material.model() {
             ElasticityModel::NeoHookean => Either::Left(TetMeshNeoHookean::new(self)),
             ElasticityModel::StableNeoHookean => Either::Right(TetMeshStableNeoHookean::new(self)),

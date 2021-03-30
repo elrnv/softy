@@ -7,14 +7,12 @@ use geo::ops::{ShapeMatrix, Volume};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use tensr::*;
 
-use super::problem::FrictionalContactConstraint;
+use super::problem::{FrictionalContactConstraint, Solution};
+use super::{MuStrategy, SimParams, SolveResult};
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::{
-    ref_tet, GeneralizedCoords, GeneralizedState, MuStrategy, NonLinearProblem, ObjectData,
-    SimParams, Solution, SolveResult, Vertex, VertexState, VertexWorkspace, WorkspaceData,
-};
+use crate::fem::{object_data::*, opt::InnerSolveResult, ref_tet, NonLinearProblem};
 use crate::inf_norm;
 use crate::objects::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
@@ -41,10 +39,10 @@ pub enum SourceIndex {
 
 impl SourceIndex {
     #[inline]
-    fn into_source(self, with_fixed: bool) -> crate::fem::SourceObject {
+    fn into_source(self, with_fixed: bool) -> SourceObject {
         match self {
-            SourceIndex::Solid(i) => crate::fem::SourceObject::Solid(i, with_fixed),
-            SourceIndex::Shell(i) => crate::fem::SourceObject::Shell(i),
+            SourceIndex::Solid(i) => SourceObject::Solid(i, with_fixed),
+            SourceIndex::Shell(i) => SourceObject::Shell(i),
         }
     }
 
@@ -114,7 +112,7 @@ impl SolverBuilder {
     /// models, the first index corresponds to the object (affected) while the
     /// second index corresponds to the collider (unaffected). Some
     /// bi-directional constraints treat the two objects differently, and
-    /// changing the order of the indices may change the behaviour. In these
+    /// changing the order of the indices may change the behavior. In these
     /// cases, the first index corresponds to the `object` (primary) and the second to the
     /// `collider` (secondary).
     pub fn add_frictional_contact(
@@ -262,7 +260,7 @@ impl SolverBuilder {
     fn build_object_data(
         solids: Vec<TetMeshSolid>,
         shells: Vec<TriMeshShell>,
-    ) -> Result<ObjectData, Error> {
+    ) -> Result<ObjectData<f64>, Error> {
         // Generalized coordinates and their derivatives.
         let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<f64>, Vec<f64>>>>::default();
 
@@ -1089,10 +1087,10 @@ impl Solver {
 
     /// Solve one step without updating the mesh. This function is useful for testing and
     /// benchmarking. Otherwise it is intended to be used internally.
-    pub fn inner_step(&mut self) -> Result<crate::fem::InnerSolveResult, Error> {
-        // Solve non-linear problem
+    pub fn inner_step(&mut self) -> Result<InnerSolveResult, Error> {
+        // Solve non-linear problem.
         let ipopt::SolveResult {
-            // unpack ipopt result
+            // Unpack ipopt result.
             solver_data,
             constraint_values,
             objective_value,
@@ -1102,7 +1100,7 @@ impl Solver {
         let iterations = solver_data.problem.pop_iteration_count() as u32;
         solver_data.problem.update_warm_start(solver_data.solution);
 
-        let result = crate::fem::InnerSolveResult {
+        let result = InnerSolveResult {
             iterations,
             objective_value,
             constraint_values: constraint_values.to_vec(),
@@ -1112,7 +1110,7 @@ impl Solver {
             ipopt::SolveStatus::SolveSucceeded | ipopt::SolveStatus::SolvedToAcceptableLevel => {
                 Ok(result)
             }
-            e => Err(Error::InnerSolveError {
+            e => Err(Error::InnerOptSolveError {
                 status: e,
                 objective_value,
                 iterations,
@@ -1488,7 +1486,7 @@ impl Solver {
         // Initialize the result of this function.
         let mut result = SolveResult {
             max_inner_iterations: 0,
-            inner_iterations: 0,
+            total_inner_iterations: 0,
             iterations: 0,
             objective_value: 0.0,
         };
@@ -1582,7 +1580,7 @@ impl Solver {
                         }
                     }
                 }
-                Err(Error::InnerSolveError {
+                Err(Error::InnerOptSolveError {
                     status,
                     iterations,
                     objective_value,
@@ -1599,7 +1597,7 @@ impl Solver {
                         // Can't recover, return with an error
                         result = result.combine_inner_step_data(iterations, objective_value);
                         self.commit_solution(true, !all_contacts_linear);
-                        return Err(Error::SolveError { status, result });
+                        return Err(Error::OptSolveError { status, result });
                     }
                     if !recovery {
                         log::info!("Recovering: Revert previous step");
@@ -1647,7 +1645,7 @@ impl Solver {
 
         //self.output_meshes(self.step_count as u32);
 
-        self.inner_iterations += result.inner_iterations as usize;
+        self.inner_iterations += result.total_inner_iterations as usize;
         self.step_count += 1;
 
         log::debug!("Inner iterations: {}", self.inner_iterations);

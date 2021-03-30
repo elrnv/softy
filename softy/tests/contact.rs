@@ -6,6 +6,7 @@ use geo::mesh::builder::*;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
 use geo::ops::transform::*;
+use softy::opt_fem::*;
 use softy::*;
 use std::path::PathBuf;
 use test_utils::*;

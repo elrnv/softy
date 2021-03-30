@@ -1,4 +1,5 @@
 use crate::attrib_defines::*;
+use crate::fem::opt::{MuStrategy, SimParams as OptParams};
 use crate::fem::*;
 use crate::objects::*;
 use crate::{PolyMesh, TetMesh, TriMesh};
@@ -9,7 +10,7 @@ use geo::mesh::VertexPositions;
 use geo::ops::*;
 use tensr::{IntoData, Vector3};
 
-pub const STATIC_PARAMS: SimParams = SimParams {
+pub const STATIC_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
     clear_velocity: false,
@@ -25,14 +26,14 @@ pub const STATIC_PARAMS: SimParams = SimParams {
     log_file: None,
 };
 
-//pub(crate) const QUASI_STATIC_PARAMS: SimParams = SimParams {
+//pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
 //    gravity: [0.0f32, 0.0, 0.0],
 //    time_step: Some(0.01),
 //    clear_velocity: true,
 //    ..STATIC_PARAMS
 //};
 
-pub const DYNAMIC_PARAMS: SimParams = SimParams {
+pub const DYNAMIC_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.01),
     ..STATIC_PARAMS

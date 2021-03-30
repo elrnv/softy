@@ -3,6 +3,7 @@ mod test_utils;
 use geo::mesh::builder::*;
 use geo::ops::transform::*;
 use log::debug;
+use softy::opt_fem::*;
 use softy::*;
 pub use test_utils::*;
 

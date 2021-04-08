@@ -86,7 +86,7 @@ fn box_squish_full() -> Result<(), Error> {
 
     let params = SimParams {
         time_step: Some(0.02),
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let fc_point = FrictionalContactParams {
@@ -127,7 +127,7 @@ fn box_squish_linearized() -> Result<(), Error> {
     let params = SimParams {
         print_level: 2,
         time_step: Some(0.02),
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let fc_params = FrictionalContactParams {
@@ -189,7 +189,7 @@ fn tet_push() -> Result<(), Error> {
         outer_tolerance: 1e-5, // This is a fairly strict tolerance.
         max_outer_iterations: 20,
         gravity: [0.0f32, 0.0, 0.0],
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     };
 
     let mut solver = SolverBuilder::new(params.clone())
@@ -271,7 +271,7 @@ fn ball_tri_push_tester(
         max_iterations: 100,
         outer_tolerance: 1e-5, // This is a fairly strict tolerance.
         max_outer_iterations: 200,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let polymesh = geo::io::load_polymesh(&PathBuf::from("assets/tri.vtk"))?;
@@ -347,7 +347,7 @@ fn ball_bounce_tester(
         gravity: [0.0f32, -9.81, 0.0],
         time_step: Some(0.0208333),
         friction_iterations,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let mut grid = GridBuilder {
@@ -518,7 +518,7 @@ fn two_tets_in_contact() -> Result<(), Error> {
         gravity: [0.0f32, 0.0, 0.0],
         //print_level: 5,
         //derivative_test: 2,
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     };
 
     let mut solver = SolverBuilder::new(params.clone())

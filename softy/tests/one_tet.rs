@@ -13,7 +13,7 @@ fn one_tet_solver() -> Solver {
     SolverBuilder::new(SimParams {
         print_level: 0,
         derivative_test: 0,
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     })
     .add_solid(mesh, default_solid())
     .build()
@@ -26,7 +26,7 @@ fn equilibrium() {
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     };
 
     let mesh = make_one_tet_mesh();
@@ -66,7 +66,7 @@ fn simple_deformed() {
 fn consistent_outer_iterations() -> Result<(), Error> {
     let params = SimParams {
         outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     };
 
     let mesh = make_one_deformed_tet_mesh();
@@ -90,7 +90,7 @@ fn volume_constraint() -> Result<(), Error> {
 
     let material = default_solid().with_volume_preservation(true);
 
-    let mut solver = SolverBuilder::new(STATIC_PARAMS)
+    let mut solver = SolverBuilder::new(STATIC_OPT_PARAMS)
         .add_solid(mesh, material)
         .build()?;
     solver.step()?;

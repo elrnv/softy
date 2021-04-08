@@ -29,7 +29,7 @@ fn friction_tester(
         print_level: 0,
         max_gradient_scaling: 1e-7,
         friction_iterations,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let coupling = if implicit_tetmesh { (0, 1) } else { (1, 0) };
@@ -218,7 +218,7 @@ fn self_contact() -> Result<(), Error> {
         print_level: 5,
         max_gradient_scaling: 1e-7,
         friction_iterations: 1,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     assert!(SolverBuilder::new(params.clone())

@@ -1,6 +1,7 @@
 mod test_utils;
 
 use geo;
+use softy::opt_fem::*;
 use softy::*;
 use std::path::PathBuf;
 pub use test_utils::*;
@@ -8,7 +9,7 @@ pub use test_utils::*;
 #[test]
 fn static_sim() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
-    let mut solver = SolverBuilder::new(STATIC_PARAMS)
+    let mut solver = SolverBuilder::new(STATIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;
@@ -22,7 +23,7 @@ fn static_sim() -> Result<(), Error> {
 #[test]
 fn dynamic_sim() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;
@@ -37,7 +38,7 @@ fn dynamic_sim() -> Result<(), Error> {
 fn static_volume_constraint() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
     let material = default_solid().with_volume_preservation(true);
-    let mut solver = SolverBuilder::new(STATIC_PARAMS)
+    let mut solver = SolverBuilder::new(STATIC_OPT_PARAMS)
         .add_solid(mesh, material)
         .build()?;
     solver.step()?;
@@ -53,7 +54,7 @@ fn static_volume_constraint() -> Result<(), Error> {
 fn dynamic_volume_constraint() -> Result<(), Error> {
     let mesh = make_three_tet_mesh();
     let material = default_solid().with_volume_preservation(true);
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, material)
         .build()?;
     solver.step()?;
@@ -77,7 +78,7 @@ fn animation() -> Result<(), Error> {
     ];
     let mesh = make_three_tet_mesh_with_verts(verts.clone());
 
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
         .build()?;
 
@@ -105,7 +106,7 @@ fn animation_volume_constraint() -> Result<(), Error> {
 
     let incompressible_material = default_solid().with_volume_preservation(true);
 
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, incompressible_material)
         .build()?;
 
@@ -141,7 +142,7 @@ fn inverted_fixed_reference_element_test() -> Result<(), Error> {
     fixed[mesh.cell(0)[3]] = 1;
     mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
 
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;
@@ -168,7 +169,7 @@ fn inverted_fixed_element_test() -> Result<(), Error> {
     fixed[mesh.cell(0)[3]] = 1;
     mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
 
-    let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+    let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
         .build()?;
     solver.step()?;

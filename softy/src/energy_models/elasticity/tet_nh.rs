@@ -349,7 +349,7 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
 
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 
-        // Transfer forces from cell-vertices to vertices themeselves
+        // Transfer forces from cell-vertices to vertices themselves.
         tetmesh
             .attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
             .unwrap()
@@ -606,7 +606,7 @@ mod tests {
     use super::*;
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
-    use crate::fem::SolverBuilder;
+    use crate::fem::opt::SolverBuilder;
     use crate::objects::TetMeshSolid;
     use geo::mesh::VertexPositions;
 

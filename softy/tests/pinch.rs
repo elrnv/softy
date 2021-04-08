@@ -18,7 +18,7 @@ fn pinch_tester(fc_params: FrictionalContactParams) -> Result<(), Error> {
         time_step: Some(0.01),
         print_level: 5,
         friction_iterations: 1,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let material = default_solid()
@@ -29,7 +29,7 @@ fn pinch_tester(fc_params: FrictionalContactParams) -> Result<(), Error> {
     let mut box_mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box.vtk"))?;
     box_mesh.remove_attrib::<VertexIndex>("fixed")?;
 
-    let mut solver = fem::SolverBuilder::new(params.clone())
+    let mut solver = SolverBuilder::new(params.clone())
         .add_solid(box_mesh, material)
         .add_fixed(clamps, 1)
         .add_frictional_contact(fc_params, (0, 1))

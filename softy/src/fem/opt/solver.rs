@@ -8,11 +8,11 @@ use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use tensr::*;
 
 use super::problem::{FrictionalContactConstraint, Solution};
-use super::{MuStrategy, SimParams, SolveResult};
+use super::{InnerSolveResult, MuStrategy, NonLinearProblem, SimParams, SolveResult};
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::{object_data::*, opt::InnerSolveResult, ref_tet, NonLinearProblem};
+use crate::fem::{ref_tet, state::*};
 use crate::inf_norm;
 use crate::objects::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
@@ -257,10 +257,10 @@ impl SolverBuilder {
     /// Helper function to build a global array of vertex data. This is stacked
     /// vertex positions and velocities used by the solver to deform all meshes
     /// at the same time.
-    fn build_object_data(
+    fn build_state(
         solids: Vec<TetMeshSolid>,
         shells: Vec<TriMeshShell>,
-    ) -> Result<ObjectData<f64>, Error> {
+    ) -> Result<State<f64>, Error> {
         // Generalized coordinates and their derivatives.
         let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<f64>, Vec<f64>>>>::default();
 
@@ -396,7 +396,7 @@ impl SolverBuilder {
             }
         });
 
-        Ok(ObjectData {
+        Ok(State {
             dof: dof.clone(),
             vtx,
 
@@ -653,9 +653,9 @@ impl SolverBuilder {
         let solids = Self::build_solids(solids)?;
         let shells = Self::build_shells(soft_shells, rigid_shells, fixed_shells)?;
 
-        let object_data = Self::build_object_data(solids, shells)?;
+        let state = Self::build_state(solids, shells)?;
 
-        let volume_constraints = Self::build_volume_constraints(&object_data.solids);
+        let volume_constraints = Self::build_volume_constraints(&state.solids);
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -671,29 +671,24 @@ impl SolverBuilder {
             });
         }
 
-        let frictional_contacts = Self::build_frictional_contacts(
-            &object_data.solids,
-            &object_data.shells,
-            frictional_contacts,
-        );
+        let frictional_contacts =
+            Self::build_frictional_contacts(&state.solids, &state.shells, frictional_contacts);
 
-        let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
+        let max_size = Self::compute_max_size(&state.solids, &state.shells);
 
         // The following scales have units of force (N).
-        let max_modulus_scale = Self::compute_max_modulus(&object_data.solids, &object_data.shells)?
-            as f64
-            * max_size
-            * max_size;
+        let max_modulus_scale =
+            Self::compute_max_modulus(&state.solids, &state.shells)? as f64 * max_size * max_size;
 
         let max_element_mass_scale = if time_step > 0.0 {
-            Self::compute_max_element_mass(&object_data.solids, &object_data.shells) * max_size
+            Self::compute_max_element_mass(&state.solids, &state.shells) * max_size
                 / (time_step * time_step)
         } else {
             0.0
         };
 
         let max_element_bending_scale =
-            Self::compute_max_bending_stiffness(&object_data.shells) / max_size;
+            Self::compute_max_bending_stiffness(&state.shells) / max_size;
 
         // Determine the most likely dominant force.
         let mut max_scale = max_modulus_scale
@@ -707,7 +702,7 @@ impl SolverBuilder {
         }
 
         Ok(NonLinearProblem {
-            object_data,
+            state,
             frictional_contacts,
             volume_constraints,
             time_step,
@@ -1033,32 +1028,32 @@ impl Solver {
 
     /// Get a slice of solid objects represented in this solver.
     pub fn solids(&self) -> &[TetMeshSolid] {
-        &self.problem().object_data.solids
+        &self.problem().state.solids
     }
 
     /// Get a slice of shell objects represented in this solver.
     pub fn shells(&self) -> &[TriMeshShell] {
-        &self.problem().object_data.shells
+        &self.problem().state.shells
     }
 
     /// Get an immutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid(&self, index: usize) -> &TetMeshSolid {
-        &self.problem().object_data.solids[index]
+        &self.problem().state.solids[index]
     }
 
     /// Get a mutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid_mut(&mut self, index: usize) -> &mut TetMeshSolid {
-        &mut self.problem_mut().object_data.solids[index]
+        &mut self.problem_mut().state.solids[index]
     }
 
     /// Get an immutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell(&self, index: usize) -> &TriMeshShell {
-        &self.problem().object_data.shells[index]
+        &self.problem().state.shells[index]
     }
 
     /// Get a mutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell_mut(&mut self, index: usize) -> &mut TriMeshShell {
-        &mut self.problem_mut().object_data.shells[index]
+        &mut self.problem_mut().state.shells[index]
     }
 
     /// Get simulation parameters.

@@ -6,7 +6,7 @@ use softy::{test_utils::*, *};
 const SQUISH_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.001),
-    ..DYNAMIC_PARAMS
+    ..DYNAMIC_OPT_PARAMS
 };
 
 fn stretch_material() -> SolidMaterial {

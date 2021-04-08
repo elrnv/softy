@@ -37,7 +37,7 @@ fn sim_test() {
         .unwrap();
 
     assert!(
-        match sim(Some(mesh), material(), None, STATIC_PARAMS, None) {
+        match sim(Some(mesh), material(), None, STATIC_OPT_PARAMS, None) {
             SimResult::Success(_) => true,
             _ => false,
         }

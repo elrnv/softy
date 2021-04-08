@@ -37,7 +37,7 @@ fn tube_cloth() -> Result<(), Error> {
         print_level: 0,
         max_gradient_scaling: 1e-3,
         friction_iterations: 10,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let cloth_material = SoftShellMaterial::new(1)

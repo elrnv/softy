@@ -1,14 +1,11 @@
 pub mod nl;
-pub mod object_data;
 pub mod opt;
+pub mod state;
 
 use geo::prim::Tetrahedron;
 use tensr::Vector3;
 
 use crate::RefPosType;
-
-pub(crate) use self::opt::problem::*;
-pub use self::opt::solver::*;
 
 // pub use self::nl::problem::*;
 // pub use self::nl::solver::*;

@@ -6,6 +6,7 @@ pub use test_utils::*;
 pub mod complex_tests {
     use super::*;
     use geo;
+    use softy::opt_fem::*;
     use softy::*;
     use std::path::PathBuf;
 
@@ -19,7 +20,7 @@ pub mod complex_tests {
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk")).unwrap();
         let mut solver = SolverBuilder::new(SimParams {
             print_level: 0,
-            ..DYNAMIC_PARAMS
+            ..DYNAMIC_OPT_PARAMS
         })
         .add_solid(mesh, stiff_material())
         .build()
@@ -32,7 +33,7 @@ pub mod complex_tests {
     fn torus_long_test() -> Result<(), Error> {
         init_logger();
         let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/torus_tets.vtk"))?;
-        let mut solver = SolverBuilder::new(DYNAMIC_PARAMS)
+        let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
             .add_solid(mesh, stiff_material())
             .build()?;
 

@@ -18,7 +18,7 @@ fn rigid_box_under_gravity_one_step() {
     let params = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(0, 1000.0);
@@ -50,7 +50,7 @@ fn rigid_box_rotate() {
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(0, 1.0);
@@ -111,7 +111,7 @@ fn rigid_box_perturbed_rotate() {
         gravity: [0.0f32, 0.0, 0.0],
         time_step: Some(dt),
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(0, 1.0);
@@ -173,7 +173,7 @@ fn rigid_simple_contact() {
     let params = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(1, 1.0);
@@ -243,7 +243,7 @@ fn rigid_torque_contact() {
     let params = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(1, 1.0);
@@ -290,7 +290,7 @@ fn rigid_torque_complex_contact() {
     let params = SimParams {
         gravity: [0.0f32, -9.81, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let rigid_material = RigidMaterial::new(1, 1.0);

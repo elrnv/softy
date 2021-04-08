@@ -3,7 +3,7 @@ use softy::{test_utils::*, *};
 
 const STRETCH_PARAMS: SimParams = SimParams {
     gravity: [0.0f32, 0.0, 0.0],
-    ..STATIC_PARAMS
+    ..STATIC_OPT_PARAMS
 };
 
 fn stretch_material() -> SolidMaterial {

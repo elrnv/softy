@@ -35,7 +35,6 @@ pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
 pub use self::contact::*;
 pub use self::fem::nl as nl_fem;
 pub use self::fem::opt as opt_fem;
-pub use self::fem::{Solver, SolverBuilder};
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
@@ -236,7 +235,7 @@ pub fn sim(
     interrupter: Option<Box<dyn FnMut() -> bool>>,
 ) -> SimResult {
     if let Some(mesh) = tetmesh {
-        let mut builder = fem::SolverBuilder::new(sim_params);
+        let mut builder = fem::opt::SolverBuilder::new(sim_params);
         builder.add_solid(mesh, material);
         if let Some(shell_mesh) = polymesh {
             // The fixed shell is a distinct material

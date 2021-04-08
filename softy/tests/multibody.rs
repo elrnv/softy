@@ -22,7 +22,7 @@ fn stacking_boxes() -> Result<(), Error> {
         time_step: Some(0.0208333),
         friction_iterations: 1,
         print_level: 0,
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     };
 
     let mut grid = GridBuilder {

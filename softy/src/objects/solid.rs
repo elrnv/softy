@@ -233,7 +233,7 @@ impl<'a> Gravity<'a, TetMeshGravity<'a>> for TetMeshSolid {
 pub(crate) struct TetMeshSurface {
     /// Vertex indices into the original tetmesh.
     pub indices: Vec<usize>,
-    /// The triangle mesh representing the entire surface othe original tetmesh.
+    /// The triangle mesh representing the entire surface of the original TetMesh.
     pub trimesh: TriMesh,
 }
 

@@ -12,7 +12,7 @@ use super::SimParams;
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::{object_data::*, ref_tet};
+use crate::fem::{ref_tet, state::*};
 use crate::inf_norm;
 use crate::objects::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
@@ -257,15 +257,15 @@ impl SolverBuilder {
     /// Helper function to build a global array of vertex data. This is stacked
     /// vertex positions and velocities used by the solver to deform all meshes
     /// at the same time.
-    fn build_object_data(
+    fn build_state<T: Real>(
         solids: Vec<TetMeshSolid>,
         shells: Vec<TriMeshShell>,
-    ) -> Result<ObjectData<f64>, Error> {
+    ) -> Result<State<T>, Error> {
         // Generalized coordinates and their derivatives.
-        let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<f64>, Vec<f64>>>>::default();
+        let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<T>, Vec<T>>>>::default();
 
         // Vertex position and velocities.
-        let mut vtx = Chunked::<Chunked3<VertexState<Vec<f64>, Vec<f64>>>>::default();
+        let mut vtx = Chunked::<Chunked3<VertexState<Vec<T>, Vec<T>>>>::default();
 
         for TetMeshSolid {
             tetmesh: ref mesh, ..
@@ -279,8 +279,8 @@ impl SolverBuilder {
                 }
                 .iter()
                 .map(|dof| GeneralizedState {
-                    q: *dof.q,
-                    dq: *dof.dq,
+                    q: *dof.q.as_tensor().cast::<T>().as_data(),
+                    dq: *dof.dq.as_tensor().cast::<T>().as_data(),
                 }),
             );
             vtx.push_iter(std::iter::empty());
@@ -341,37 +341,39 @@ impl SolverBuilder {
                     let angular = Vector3::new([angular[0], angular[1], angular[2]]);
 
                     let dq = [linear.into_data(), angular.into_data()];
-                    dof.push_iter(
-                        q.iter()
-                            .zip(dq.iter())
-                            .map(|(&q, &dq)| GeneralizedState { q, dq }),
-                    );
+                    dof.push_iter(q.iter().zip(dq.iter()).map(|(q, dq)| GeneralizedState {
+                        q: *q.as_tensor().cast::<T>().as_data(),
+                        dq: *dq.as_tensor().cast::<T>().as_data(),
+                    }));
 
-                    vtx.push_iter(
-                        mesh.vertex_position_iter()
-                            .zip(mesh_vel.iter())
-                            .map(|(&pos, &vel)| VertexState { pos, vel }),
-                    );
+                    vtx.push_iter(mesh.vertex_position_iter().zip(mesh_vel.iter()).map(
+                        |(&pos, &vel)| VertexState {
+                            pos: *pos.as_tensor().cast::<T>().as_data(),
+                            vel: *vel.as_tensor().cast::<T>().as_data(),
+                        },
+                    ));
                 }
                 ShellData::Soft { .. } => {
                     let mesh_prev_vel =
                         mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-                    dof.push_iter(
-                        mesh.vertex_position_iter()
-                            .zip(mesh_prev_vel.iter())
-                            .map(|(&pos, &vel)| GeneralizedState { q: pos, dq: vel }),
-                    );
+                    dof.push_iter(mesh.vertex_position_iter().zip(mesh_prev_vel.iter()).map(
+                        |(&pos, &vel)| GeneralizedState {
+                            q: *pos.as_tensor().cast::<T>().as_data(),
+                            dq: *vel.as_tensor().cast::<T>().as_data(),
+                        },
+                    ));
                     vtx.push_iter(std::iter::empty());
                 }
                 ShellData::Fixed { .. } => {
                     dof.push_iter(std::iter::empty());
                     let mesh_vel =
                         mesh.direct_attrib_clone_into_vec::<VelType, VertexIndex>(VELOCITY_ATTRIB)?;
-                    vtx.push_iter(
-                        mesh.vertex_position_iter()
-                            .zip(mesh_vel.iter())
-                            .map(|(&pos, &vel)| VertexState { pos, vel }),
-                    );
+                    vtx.push_iter(mesh.vertex_position_iter().zip(mesh_vel.iter()).map(
+                        |(&pos, &vel)| VertexState {
+                            pos: *pos.as_tensor().cast::<T>().as_data(),
+                            vel: *vel.as_tensor().cast::<T>().as_data(),
+                        },
+                    ));
                 }
             }
         }
@@ -392,11 +394,11 @@ impl SolverBuilder {
             let n = vtx.len();
             VertexWorkspace {
                 state: vtx,
-                grad: vec![0.0; n],
+                grad: vec![T::zero(); n],
             }
         });
 
-        Ok(ObjectData {
+        Ok(State {
             dof: dof.clone(),
             vtx,
 
@@ -509,6 +511,64 @@ impl SolverBuilder {
         mass
     }
 
+    /// Helper function to compute the minimum element mass in the problem.
+    fn compute_min_element_mass(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        use std::cmp::Ordering;
+        let mut mass = solids
+            .iter()
+            .map(|TetMeshSolid { ref tetmesh, .. }| {
+                tetmesh
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .ok()
+                    .and_then(|ref_vol_iter| {
+                        tetmesh
+                            .attrib_iter::<DensityType, CellIndex>(DENSITY_ATTRIB)
+                            .ok()
+                            .and_then(|density_iter| {
+                                ref_vol_iter
+                                    .zip(density_iter)
+                                    .map(|(vol, &density)| vol * f64::from(density))
+                                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+                            })
+                    })
+                    .unwrap_or(1.0)
+            })
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+            .unwrap_or(1.0);
+
+        mass = mass.min(
+            shells
+                .iter()
+                .map(
+                    |TriMeshShell {
+                         ref trimesh,
+                         ref data,
+                         ..
+                     }| {
+                        match data {
+                            ShellData::Rigid { mass, .. } => *mass,
+                            ShellData::Soft { .. } => trimesh
+                                .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                                .expect("Missing reference area attribute")
+                                .zip(
+                                    trimesh
+                                        .attrib_iter::<DensityType, FaceIndex>(DENSITY_ATTRIB)
+                                        .expect("Missing density attribute on trimesh"),
+                                )
+                                .map(|(area, &density)| area * f64::from(density))
+                                .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+                                .unwrap_or(1.0),
+                            _ => 1.0,
+                        }
+                    },
+                )
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less))
+                .unwrap_or(1.0),
+        );
+
+        mass
+    }
+
     /// Helper to compute max object size (diameter) over all deformable or rigid objects.
     /// This is used for normalizing the problem.
     fn compute_max_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
@@ -536,8 +596,7 @@ impl SolverBuilder {
     }
 
     /// Helper to compute max element size. This is used for normalizing tolerances.
-    #[cfg(ignore)]
-    fn compute_element_max_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+    fn compute_max_element_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
         let mut max_size = 0.0_f64;
 
         for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
@@ -640,7 +699,111 @@ impl SolverBuilder {
         max_bending_stiffness
     }
 
-    fn build_problem(&self) -> Result<NLProblem<f64>, Error> {
+    /// Helper to compute min element size. This is used for normalizing tolerances.
+    fn compute_min_element_size(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> f64 {
+        let mut min_size = f64::INFINITY;
+
+        for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
+            min_size = min_size.min(
+                tetmesh
+                    .attrib_iter::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+                    .expect("Reference volume missing")
+                    .min_by(|a, b| a.partial_cmp(b).expect("Degenerate tetrahedron detected"))
+                    .expect("Given TetMesh is empty")
+                    .cbrt(),
+            );
+        }
+
+        for TriMeshShell { ref trimesh, .. } in shells.iter() {
+            min_size = min_size.min(
+                trimesh
+                    .attrib_iter::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB)
+                    .ok()
+                    .and_then(|area_iter| {
+                        area_iter
+                            .min_by(|a, b| a.partial_cmp(b).expect("Degenerate triangle detected"))
+                    })
+                    .unwrap_or(&f64::INFINITY)
+                    .sqrt(),
+            );
+        }
+
+        min_size
+    }
+
+    /// Helper function to compute the minimum elastic modulus of all given meshes.
+    /// This aids in figuring out the correct scaling for the problem.
+    fn compute_min_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
+        let mut min_modulus = f32::INFINITY;
+
+        for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
+            min_modulus = min_modulus
+                .min(
+                    *tetmesh
+                        .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)?
+                        .min_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
+                        .expect("Given TetMesh is empty"),
+                )
+                .min(
+                    *tetmesh
+                        .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)?
+                        .min_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
+                        .expect("Given TetMesh is empty"),
+                );
+        }
+
+        for TriMeshShell { ref trimesh, data } in shells.iter() {
+            match data {
+                ShellData::Soft { .. } => {
+                    min_modulus = min_modulus
+                        .min(
+                            *trimesh
+                                .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)?
+                                .min_by(|a, b| {
+                                    a.partial_cmp(b).expect("Invalid First Lame Parameter")
+                                })
+                                .expect("Given TriMesh is empty"),
+                        )
+                        .min(
+                            *trimesh
+                                .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)?
+                                .min_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
+                                .expect("Given TriMesh is empty"),
+                        );
+                }
+                _ => {}
+            }
+        }
+
+        Ok(min_modulus)
+    }
+
+    /// Helper function to compute the minimum elastic bending stiffness.
+    fn compute_min_bending_stiffness(shells: &[TriMeshShell]) -> f64 {
+        let mut min_bending_stiffness = f64::INFINITY;
+
+        for TriMeshShell { data, .. } in shells.iter() {
+            match data {
+                ShellData::Soft {
+                    interior_edge_bending_stiffness,
+                    ..
+                } => {
+                    min_bending_stiffness = min_bending_stiffness.min(
+                        interior_edge_bending_stiffness
+                            .iter()
+                            .cloned()
+                            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                            .unwrap_or(f64::INFINITY),
+                    )
+                }
+                _ => {}
+            }
+        }
+
+        min_bending_stiffness
+    }
+
+    pub(crate) fn build_problem<T: Real>(&self) -> Result<NLProblem<T>, Error> {
         let SolverBuilder {
             sim_params: params,
             solids,
@@ -653,9 +816,9 @@ impl SolverBuilder {
         let solids = Self::build_solids(solids)?;
         let shells = Self::build_shells(soft_shells, rigid_shells, fixed_shells)?;
 
-        let object_data = Self::build_object_data(solids, shells)?;
+        let state = Self::build_state(solids, shells)?;
 
-        let volume_constraints = Self::build_volume_constraints(&object_data.solids);
+        let volume_constraints = Self::build_volume_constraints(&state.solids);
 
         let gravity = [
             f64::from(params.gravity[0]),
@@ -671,33 +834,38 @@ impl SolverBuilder {
             });
         }
 
-        let frictional_contacts = Self::build_frictional_contacts(
-            &object_data.solids,
-            &object_data.shells,
-            frictional_contacts,
-        );
+        let frictional_contacts =
+            Self::build_frictional_contacts(&state.solids, &state.shells, frictional_contacts);
 
-        let max_size = Self::compute_max_size(&object_data.solids, &object_data.shells);
+        // Compute maxes
+
+        let max_size = Self::compute_max_size(&state.solids, &state.shells);
+
+        let max_element_size = Self::compute_max_element_size(&state.solids, &state.shells);
 
         // The following scales have units of force (N).
-        let max_modulus_scale = Self::compute_max_modulus(&object_data.solids, &object_data.shells)?
+        let max_element_modulus_scale = Self::compute_max_modulus(&state.solids, &state.shells)?
             as f64
-            * max_size
-            * max_size;
+            * max_element_size
+            * max_element_size;
 
-        let max_element_mass_scale = if time_step > 0.0 {
-            Self::compute_max_element_mass(&object_data.solids, &object_data.shells) * max_size
-                / (time_step * time_step)
+        let max_element_mass = Self::compute_max_element_mass(&state.solids, &state.shells);
+
+        let max_element_gravity_scale = max_element_mass * gravity.as_tensor().norm();
+
+        let max_element_inertia_scale = if time_step > 0.0 {
+            max_element_mass * max_element_size / (time_step * time_step)
         } else {
             0.0
         };
 
         let max_element_bending_scale =
-            Self::compute_max_bending_stiffness(&object_data.shells) / max_size;
+            Self::compute_max_bending_stiffness(&state.shells) / max_element_size;
 
         // Determine the most likely dominant force.
-        let mut max_scale = max_modulus_scale
-            .max(max_element_mass_scale)
+        let mut max_scale = max_element_modulus_scale
+            .max(max_element_inertia_scale)
+            .max(max_element_gravity_scale)
             .max(max_element_bending_scale);
 
         // max_scale is a denominator. Ensure that it is never zero.
@@ -706,8 +874,36 @@ impl SolverBuilder {
             max_scale = 1.0;
         }
 
+        // Compute mins
+
+        let min_element_size = Self::compute_min_element_size(&state.solids, &state.shells);
+
+        let min_element_modulus_scale = Self::compute_min_modulus(&state.solids, &state.shells)?
+            as f64
+            * min_element_size
+            * min_element_size;
+
+        let min_element_mass = Self::compute_min_element_mass(&state.solids, &state.shells);
+
+        let min_element_gravity_scale = min_element_mass * gravity.as_tensor().norm();
+
+        let min_element_inertia_scale = if time_step > 0.0 {
+            min_element_mass * min_element_size / (time_step * time_step)
+        } else {
+            f64::INFINITY
+        };
+
+        let min_element_bending_scale =
+            Self::compute_min_bending_stiffness(&state.shells) / min_element_size;
+
+        // Determine the least dominant force.
+        let min_scale = min_element_modulus_scale
+            .min(min_element_inertia_scale)
+            .min(min_element_gravity_scale)
+            .min(min_element_bending_scale);
+
         Ok(NLProblem {
-            object_data,
+            state,
             frictional_contacts,
             volume_constraints,
             time_step,
@@ -716,30 +912,48 @@ impl SolverBuilder {
             initial_residual_error: std::f64::INFINITY,
             iter_counter: RefCell::new(0),
             max_size,
-            force_scale: max_scale,
+            max_element_force_scale: max_scale,
+            min_element_force_scale: min_scale,
         })
     }
 
     /// Build the simulation solver.
-    pub fn build(
+    pub fn build(&self) -> Result<Solver<f64>, Error> {
+        self.build_with_interrupt(|| true)
+    }
+
+    /// Build the simulation solver with a given interrupter.
+    ///
+    /// This version of build allows the caller to conditionally interrupt the solver.
+    pub fn build_with_interrupt(
         &self,
-        mut interrupt_checker: impl FnMut() -> bool + 'static,
+        mut interrupt_checker: impl FnMut() -> bool + Send + 'static,
     ) -> Result<Solver<f64>, Error> {
-        let problem = self.build_problem()?;
+        let problem = self.build_problem::<f64>()?;
 
         let num_variables = problem.num_variables();
 
-        // Setup ipopt paramters using the input simulation params.
+        // Setup Ipopt parameters using the input simulation params.
         let params = self.sim_params.clone();
 
+        let r_scale = problem.min_element_force_scale;
+        let r_tol = params.tolerance * r_scale as f32;
+
+        let x_tol = params.tolerance;
+
         log::info!("Simulation Parameters:\n{:#?}", params);
+        log::info!("r_tol: {:?}", r_tol);
+        log::info!("x_tol: {:?}", x_tol);
+        log::trace!("r-scale: {:?}", r_scale);
 
         // Construct the non-linear equation solver.
         let solver = Newton {
             problem,
             params: NewtonParams {
-                tol: params.tolerance,
+                r_tol,
+                x_tol,
                 max_iter: params.max_iterations,
+                line_search: params.line_search,
             },
             intermediate_callback: RefCell::new(Box::new(move |_| interrupt_checker())),
         };
@@ -949,6 +1163,11 @@ pub struct Solver<T> {
 }
 
 impl<T: Real64> Solver<T> {
+    /// Set the interrupt checker to the given function.
+    pub fn set_simple_interrupter(&self, mut interrupted: impl FnMut() -> bool + Send + 'static) {
+        *self.solver.intermediate_callback.borrow_mut() = Box::new(move |_| !interrupted());
+    }
+
     /// If the time step was not specified or specified to be zero, then this function will return
     /// zero.
     pub fn time_step(&self) -> f64 {
@@ -966,32 +1185,32 @@ impl<T: Real64> Solver<T> {
 
     /// Get a slice of solid objects represented in this solver.
     pub fn solids(&self) -> &[TetMeshSolid] {
-        &self.problem().object_data.solids
+        &self.problem().state.solids
     }
 
     /// Get a slice of shell objects represented in this solver.
     pub fn shells(&self) -> &[TriMeshShell] {
-        &self.problem().object_data.shells
+        &self.problem().state.shells
     }
 
     /// Get an immutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid(&self, index: usize) -> &TetMeshSolid {
-        &self.problem().object_data.solids[index]
+        &self.problem().state.solids[index]
     }
 
     /// Get a mutable borrow for the underlying `TetMeshSolid` at the given index.
     pub fn solid_mut(&mut self, index: usize) -> &mut TetMeshSolid {
-        &mut self.problem_mut().object_data.solids[index]
+        &mut self.problem_mut().state.solids[index]
     }
 
     /// Get an immutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell(&self, index: usize) -> &TriMeshShell {
-        &self.problem().object_data.shells[index]
+        &self.problem().state.shells[index]
     }
 
     /// Get a mutable borrow for the underlying `TriMeshShell` at the given index.
     pub fn shell_mut(&mut self, index: usize) -> &mut TriMeshShell {
-        &mut self.problem_mut().object_data.shells[index]
+        &mut self.problem_mut().state.shells[index]
     }
 
     /// Get simulation parameters.
@@ -1032,8 +1251,8 @@ impl<T: Real64> Solver<T> {
         if relax_max_step {
             let dt = self.time_step();
             if let Some(radius) = self.problem().min_contact_radius() {
-                let step = inf_norm(self.problem().scaled_variables_iter(&self.solution))
-                    * if dt > 0.0 { dt } else { 1.0 };
+                let step =
+                    inf_norm(self.solution.iter().cloned()) * if dt > 0.0 { dt } else { 1.0 };
                 let new_max_step = (step.to_f64().unwrap() - radius).max(self.max_step * 0.5);
                 if self.max_step != new_max_step {
                     log::info!(
@@ -1090,15 +1309,19 @@ impl<T: Real64> Solver<T> {
 
 impl<T: Real64> Solver<T>
 where
-    for<'a> &'a T: std::ops::Mul<&'a T, Output = T>, // Needed for sprs matrix multiply.
+    T: na::RealField,
 {
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         let result = self.solver.solve_with(&mut self.solution);
-        if matches!(result.status, Status::Success) {
-            self.commit_solution(false);
-            // On success, update the mesh with useful metrics.
-            //self.problem_mut().update_mesh_data();
+        log::trace!("Solve Result: {}", &result);
+        match result.status {
+            Status::Success | Status::MaximumIterationsExceeded => {
+                self.commit_solution(false);
+                // On success, update the mesh with useful metrics.
+                //self.problem_mut().update_mesh_data();
+            }
+            _ => {}
         }
 
         Ok(result)

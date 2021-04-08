@@ -19,7 +19,7 @@ mod tests {
     use geo::mesh::VertexPositions;
 
     use crate::energy_models::{test_utils::*, Either};
-    use crate::fem::SolverBuilder;
+    use crate::fem::opt::SolverBuilder;
     use crate::objects::*;
 
     use super::*;

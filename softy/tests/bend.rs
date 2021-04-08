@@ -22,7 +22,7 @@ fn equilibrium() {
     let params = SimParams {
         gravity: [0.0f32, 0.0, 0.0],
         outer_tolerance: 1e-10, // This is a fairly strict tolerance.
-        ..STATIC_PARAMS
+        ..STATIC_OPT_PARAMS
     };
 
     let mut mesh = make_four_tri_mesh();
@@ -53,10 +53,12 @@ fn simple_static_undeformed() {
 
     mesh.vertex_positions_mut()[0][2] = 0.0; // Unbend
 
-    let mut solver = SolverBuilder::new(SimParams { ..STATIC_PARAMS })
-        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
-        .build()
-        .expect("Failed to build a solver for a three triangle test.");
+    let mut solver = SolverBuilder::new(SimParams {
+        ..STATIC_OPT_PARAMS
+    })
+    .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+    .build()
+    .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
     let solution = &solver.shell(0).trimesh;
@@ -78,10 +80,12 @@ fn simple_static_undeformed() {
 fn static_deformed() {
     init_logger();
     let mesh = make_three_tri_mesh();
-    let mut solver = SolverBuilder::new(SimParams { ..STATIC_PARAMS })
-        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
-        .build()
-        .expect("Failed to build a solver for a three triangle test.");
+    let mut solver = SolverBuilder::new(SimParams {
+        ..STATIC_OPT_PARAMS
+    })
+    .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+    .build()
+    .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
     let solution = &solver.shell(0).trimesh;
@@ -110,7 +114,7 @@ fn dynamic_deformed() {
     let mesh = make_three_tri_mesh();
     let mut solver = SolverBuilder::new(SimParams {
         gravity: [0.0f32, -9.81, 0.0],
-        ..DYNAMIC_PARAMS
+        ..DYNAMIC_OPT_PARAMS
     })
     .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
     .build()

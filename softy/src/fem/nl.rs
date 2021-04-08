@@ -4,7 +4,10 @@ pub mod newton;
 pub mod problem;
 pub mod solver;
 
-pub use newton::SolveResult;
+pub use newton::*;
+pub use problem::*;
+pub use solver::*;
+
 /// Simulation parameters.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SimParams {
@@ -16,4 +19,5 @@ pub struct SimParams {
     pub clear_velocity: bool,
     pub tolerance: f32,
     pub max_iterations: u32,
+    pub line_search: LineSearch,
 }

@@ -4,6 +4,9 @@
 pub mod problem;
 pub mod solver;
 
+pub use problem::*;
+pub use solver::*;
+
 /// Barrier parameter reduction strategy for interior point methods.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MuStrategy {

@@ -726,16 +726,17 @@ impl PointContactConstraint {
         *&mut object_velocity.expr_mut() -= collider_velocity.expr();
 
         let sprs_effective_mass_inv: sprs::CsMat<f64> = effective_mass_inv.clone().into();
-        //        let ldlt_solver =
-        //            sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
-        //        let predictor_impulse = Chunked3::from_flat(ldlt_solver.solve(rhs.storage()));
 
         if !object_velocity.is_empty() {
-            sprs::linalg::trisolve::lsolve_csr_dense_rhs(
-                sprs_effective_mass_inv.view(),
-                object_velocity.storage_mut(),
-            )
-            .unwrap();
+            // TODO: check that this works as we expect it to.
+            let ldlt_solver =
+                sprs_ldl::LdlNumeric::<f64, usize>::new(sprs_effective_mass_inv.view()).unwrap();
+            return Chunked3::from_flat(ldlt_solver.solve(object_velocity.storage()));
+            //sprs::linalg::trisolve::lsolve_csr_dense_rhs(
+            //    sprs_effective_mass_inv.view(),
+            //    object_velocity.storage_mut(),
+            //)
+            //.unwrap();
         }
 
         // The solve turns our relative velocity into a relative impulse.

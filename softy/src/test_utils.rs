@@ -1,6 +1,6 @@
 use crate::attrib_defines::*;
+use crate::fem::nl::{LineSearch, SimParams as NLParams};
 use crate::fem::opt::{MuStrategy, SimParams as OptParams};
-use crate::fem::*;
 use crate::objects::*;
 use crate::{PolyMesh, TetMesh, TriMesh};
 use geo::mesh::attrib::*;
@@ -10,7 +10,7 @@ use geo::mesh::VertexPositions;
 use geo::ops::*;
 use tensr::{IntoData, Vector3};
 
-pub const STATIC_PARAMS: OptParams = OptParams {
+pub const STATIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
     clear_velocity: false,
@@ -26,6 +26,15 @@ pub const STATIC_PARAMS: OptParams = OptParams {
     log_file: None,
 };
 
+pub const STATIC_NL_PARAMS: NLParams = NLParams {
+    gravity: [0.0f32, -9.81, 0.0],
+    time_step: None,
+    clear_velocity: false,
+    tolerance: 1e-3,
+    max_iterations: 300,
+    line_search: LineSearch::default_backtracking(),
+};
+
 //pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
 //    gravity: [0.0f32, 0.0, 0.0],
 //    time_step: Some(0.01),
@@ -33,10 +42,16 @@ pub const STATIC_PARAMS: OptParams = OptParams {
 //    ..STATIC_PARAMS
 //};
 
-pub const DYNAMIC_PARAMS: OptParams = OptParams {
+pub const DYNAMIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.01),
-    ..STATIC_PARAMS
+    ..STATIC_OPT_PARAMS
+};
+
+pub const DYNAMIC_NL_PARAMS: NLParams = NLParams {
+    gravity: [0.0f32, 0.0, 0.0],
+    time_step: Some(0.01),
+    ..STATIC_NL_PARAMS
 };
 
 // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus

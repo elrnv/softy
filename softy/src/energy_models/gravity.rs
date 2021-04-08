@@ -243,7 +243,7 @@ impl<T: Real> EnergyHessian<T> for RigidShellGravity {
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
-    use crate::fem::SolverBuilder;
+    use crate::fem::opt::SolverBuilder;
     use geo::mesh::VertexPositions;
 
     mod solid {

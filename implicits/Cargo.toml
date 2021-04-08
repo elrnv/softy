@@ -10,7 +10,7 @@ rayon = "1.5"
 na = { package = "nalgebra", version = "0.25" }
 hrbf = "0.5"
 geo = { path = "../geo" }
-flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.4", features = ["rayon"] }
+flatk = { git = "https://github.com/elrnv/flatk.git", version = "0.5", features = ["rayon"] }
 rstar = "0.8"
 autodiff = { version = "0.3", features = ["bytemuck"] }
 num-traits = "0.2"

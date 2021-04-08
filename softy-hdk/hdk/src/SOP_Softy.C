@@ -362,8 +362,22 @@ static const char *theDsFile = R"THEDSFILE(
     }
 
     group {
-        name "optimization"
-        label "Optimization"
+        name "solver"
+        label "Solver"
+
+        parm {
+            name "solvertype"
+            cppname "SolverType"
+            label "Solver Type"
+            type ordinal
+            default { "0" }
+            menu {
+                "ipopt" "IPOPT (Optimization)"
+                "newton" "Newton"
+                "newtonbt" "Newton with Backtracking"
+                "trustregion" "Trust Region"
+            }
+        }
 
         parm {
             name "clearvelocity"
@@ -372,6 +386,7 @@ static const char *theDsFile = R"THEDSFILE(
             type toggle
             default { "off" }
         }
+
         parm {
             name "innertolerance"
             cppname "InnerTolerance"
@@ -388,6 +403,7 @@ static const char *theDsFile = R"THEDSFILE(
             default { "200" }
             range { 0 1000 }
         }
+
         parm {
             name "outertolerance"
             cppname "OuterTolerance"
@@ -395,7 +411,9 @@ static const char *theDsFile = R"THEDSFILE(
             type log
             default { "1e-5" }
             range { 0.0 1.0 }
+            hidewhen "{ solvertype != ipopt }"
         }
+
         parm {
             name "maxouteriterations"
             cppname "MaxOuterIterations"
@@ -403,12 +421,14 @@ static const char *theDsFile = R"THEDSFILE(
             type integer
             default { "50" }
             range { 0 1000 }
+            hidewhen "{ solvertype != ipopt }"
         }
 
         groupcollapsible {
             name    "ipoptoptions"
             label   "Ipopt Options"
             grouptag { "group_type" "collapsible" }
+            disablewhen "{ solvertype != ipopt }"
 
             parm {
                 name "mustrategy"
@@ -560,6 +580,20 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
         sim_params.materials.push_back(mtl_props);
     }
 
+    switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType())) {
+        case SOP_SoftyEnums::SolverType::NEWTON:
+            sim_params.solver_type = softy::SolverType::Newton;
+            break;
+        case SOP_SoftyEnums::SolverType::NEWTONBT:
+            sim_params.solver_type = softy::SolverType::NewtonBacktracking;
+            break;
+        case SOP_SoftyEnums::SolverType::TRUSTREGION:
+            sim_params.solver_type = softy::SolverType::TrustRegion;
+            break;
+        case SOP_SoftyEnums::SolverType::IPOPT:
+            sim_params.solver_type = softy::SolverType::Ipopt;
+            break;
+    }
     sim_params.clear_velocity = sopparms.getClearVelocity();
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();

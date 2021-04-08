@@ -84,8 +84,40 @@ pub(crate) fn get_solver(
     }
 }
 
-impl<'a> Into<softy::SimParams> for &'a SimParams {
-    fn into(self) -> softy::SimParams {
+impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
+    fn into(self) -> softy::nl_fem::SimParams {
+        let SimParams {
+            solver_type,
+            time_step,
+            gravity,
+            clear_velocity,
+            tolerance,
+            max_iterations,
+            ..
+        } = *self;
+        let line_search = match solver_type {
+            SolverType::NewtonBacktracking => fem::nl::LineSearch::default_backtracking(),
+            _ => fem::nl::LineSearch::None,
+        };
+        std::dbg!(line_search);
+
+        fem::nl::SimParams {
+            time_step: if time_step > 0.0 {
+                Some(time_step)
+            } else {
+                None
+            },
+            gravity: [0.0, -gravity, 0.0],
+            clear_velocity,
+            tolerance,
+            max_iterations,
+            line_search,
+        }
+    }
+}
+
+impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
+    fn into(self) -> fem::opt::SimParams {
         let SimParams {
             time_step,
             gravity,
@@ -105,7 +137,7 @@ impl<'a> Into<softy::SimParams> for &'a SimParams {
             max_gradient_scaling,
             ..
         } = *self;
-        softy::SimParams {
+        fem::opt::SimParams {
             time_step: if time_step > 0.0 {
                 Some(time_step)
             } else {
@@ -121,8 +153,8 @@ impl<'a> Into<softy::SimParams> for &'a SimParams {
             print_level,
             derivative_test,
             mu_strategy: match mu_strategy {
-                MuStrategy::Monotone => softy::MuStrategy::Monotone,
-                MuStrategy::Adaptive => softy::MuStrategy::Adaptive,
+                MuStrategy::Monotone => fem::opt::MuStrategy::Monotone,
+                MuStrategy::Adaptive => fem::opt::MuStrategy::Adaptive,
                 i => panic!("Unrecognized mu strategy: {:?}", i),
             },
             max_gradient_scaling,
@@ -290,6 +322,54 @@ fn get_frictional_contacts<'a>(
         .collect()
 }
 
+trait SolverBuilder {
+    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial);
+    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial);
+    fn add_frictional_contact(
+        &mut self,
+        fc: softy::FrictionalContactParams,
+        indices: (usize, usize),
+    );
+    fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
+}
+impl SolverBuilder for fem::opt::SolverBuilder {
+    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial) {
+        fem::opt::SolverBuilder::add_solid(self, tetmesh, material);
+    }
+    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial) {
+        fem::opt::SolverBuilder::add_shell(self, polymesh, material);
+    }
+    fn add_frictional_contact(
+        &mut self,
+        fc: softy::FrictionalContactParams,
+        indices: (usize, usize),
+    ) {
+        fem::opt::SolverBuilder::add_frictional_contact(self, fc, indices);
+    }
+    fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
+        Ok(Arc::new(Mutex::new(fem::opt::SolverBuilder::build(self)?)))
+    }
+}
+
+impl SolverBuilder for fem::nl::SolverBuilder {
+    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial) {
+        fem::nl::SolverBuilder::add_solid(self, tetmesh, material);
+    }
+    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial) {
+        fem::nl::SolverBuilder::add_shell(self, polymesh, material);
+    }
+    fn add_frictional_contact(
+        &mut self,
+        fc: softy::FrictionalContactParams,
+        indices: (usize, usize),
+    ) {
+        fem::nl::SolverBuilder::add_frictional_contact(self, fc, indices);
+    }
+    fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error> {
+        Ok(Arc::new(Mutex::new(fem::nl::SolverBuilder::build(self)?)))
+    }
+}
+
 /// Register a new solver in the registry. (Rust side)
 //#[allow(clippy::needless_pass_by_value)]
 #[inline]
@@ -300,12 +380,15 @@ pub(crate) fn register_new_solver(
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     use geo::algo::SplitIntoConnectedComponents;
     if solid.is_none() && shell.is_none() {
-        eprintln!("NO SOLID OR SHELL");
         return Err(Error::MissingSolverAndMesh);
     }
 
     // Build a basic solver with a solid material.
-    let mut solver_builder = fem::SolverBuilder::new((&params).into());
+    let mut solver_builder: Box<dyn SolverBuilder> = match params.solver_type {
+        SolverType::Ipopt => Box::new(fem::opt::SolverBuilder::new((&params).into())),
+        // All other solvers are custom nonlinear system solvers.
+        _ => Box::new(fem::nl::SolverBuilder::new((&params).into())),
+    };
 
     if let Some(mut tetmesh) = solid {
         softy::init_mesh_source_index_attribute(&mut tetmesh)?;
@@ -361,9 +444,7 @@ pub(crate) fn register_new_solver(
 
     if let Some(id) = vacant_id {
         // Insert a new solver at the location we determined is vacant.
-        let new_solver = solver_table
-            .entry(id)
-            .or_insert_with(|| Arc::new(Mutex::new(solver)));
+        let new_solver = solver_table.entry(id).or_insert_with(|| solver);
         Ok((id, Arc::clone(new_solver)))
     } else {
         Err(Error::RegistryFull)
@@ -464,7 +545,7 @@ where
         Ok((solver_id, solver)) => {
             let mut solver = solver.lock().unwrap();
             solver.set_interrupter(Box::new(check_interrupt));
-            let cook_result = convert_to_cookresult(solver.solve().into());
+            let cook_result = convert_to_cookresult(solver.solve());
             let solver_tetmesh = solver.solid_mesh();
             (Some((solver_id, solver_tetmesh)), cook_result)
         }

@@ -54,6 +54,14 @@ mod ffi {
     }
 
     #[derive(Debug)]
+    pub enum SolverType {
+        Ipopt,
+        Newton,
+        NewtonBacktracking,
+        TrustRegion,
+    }
+
+    #[derive(Debug)]
     pub enum ObjectType {
         Solid,
         Shell,
@@ -128,7 +136,8 @@ mod ffi {
         pub friction_iterations: u32,
         pub frictional_contacts: Vec<FrictionalContactParams>,
 
-        // Optimization
+        // Solver params
+        pub solver_type: SolverType,
         pub clear_velocity: bool,
         pub tolerance: f32,
         pub max_iterations: u32,
@@ -235,7 +244,9 @@ pub struct MeshPoints {
 
 /// This function initializes env_logger. It will panic if called more than once.
 pub fn init_env_logger() {
-    env_logger::Builder::from_env("SOFTY_LOG").init();
+    env_logger::Builder::from_env("SOFTY_LOG")
+        .format_timestamp(None)
+        .init();
 }
 
 /// Register a new solver in the registry.

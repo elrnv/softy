@@ -9,8 +9,8 @@ rust-latest:
       - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
       - rustc --version
   script:
-    - cargo build --verbose
-    - cargo test --verbose
+    - cargo build -p softy -p implicits -p utils --verbose
+    - cargo test -p softy -p implicits -p utils --verbose
 
 rust-nightly:
   stage: build
@@ -20,6 +20,6 @@ rust-nightly:
       - apt-get install --yes libopenblas-dev cmake libclang-dev gfortran
       - rustc --version
   script:
-    - cargo build --verbose
-    - cargo test --verbose
+    - cargo build -p softy -p implicits -p utils --verbose
+    - cargo test -p softy -p implicits -p utils --verbose
   allow_failure: true

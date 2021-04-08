@@ -7,7 +7,7 @@ mod preamble;
 use approx::*;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use preamble::*;
-use utils::soap::Vector3;
+use tensr::Vector3;
 
 // NOTE: the cross product approach has multiple advantages:
 // 1. doesn't require the edge vector e

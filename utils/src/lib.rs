@@ -51,9 +51,11 @@ pub fn build_mesh_laplacian(mesh: &geo::mesh::TriMesh<f64>, weight: f64) -> tens
     // We multiply the contributions by 0.5 only when there are overlaps. From the triangle
     // mesh topology we know that there will be at most two overlaps, and if there are none,
     // that means the edge has only one adjacent face (a boundary edge).
-    let mut lap_data = lap
-        .into_data()
-        .pruned(|a, &b| *a += 0.5 * (*a + b), |_, _, &val| val != 0.0);
+    let mut lap_data = lap.into_data().pruned(
+        |a, &b| *a += 0.5 * (*a + b),
+        |_, _, &val| val != 0.0,
+        |_, _| {},
+    );
 
     // Normalize rows
     for (row_idx, mut row) in lap_data.iter_mut().enumerate() {

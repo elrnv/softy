@@ -10,7 +10,7 @@ geo = { path = "../geo" }
 rand = "0.8"
 typenum = "1.12"
 reinterpret = "0.2"
-sprs = { version = "0.9", optional = true }
+sprs = { version = "0.10", optional = true }
 image = "0.23"
 unroll = "0.1"
 num-traits = "0.2"
@@ -54,12 +54,6 @@ name = "mtx_vec_mul"
 harness = false
 [[bench]]
 name = "mtx_mtx_mul"
-harness = false
-[[bench]]
-name = "matrix_vector_mul_order"
-harness = false
-[[bench]]
-name = "matrix_add"
 harness = false
 [[bench]]
 name = "angle"

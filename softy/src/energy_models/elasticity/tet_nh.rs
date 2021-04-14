@@ -223,7 +223,14 @@ pub struct TetMeshElasticity<'a, E>(pub &'a TetMeshSolid, std::marker::PhantomDa
 pub type TetMeshNeoHookean<'a, T> = TetMeshElasticity<'a, NeoHookeanTetEnergy<T>>;
 
 impl<'a, E> TetMeshElasticity<'a, E> {
-    const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 78; // There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
+    /// Number of Hessian triplets per tetrahedron.
+    ///
+    /// There are 4*6 + 3*9*4/2 = 78 triplets per tet (overestimate)
+    const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 78;
+    /// Number of Hessian triplets per tetrahedron on the diagonal.
+    ///
+    /// There are 4*3 = 12.
+    const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET: usize = 12;
 
     pub fn new(solid: &'a TetMeshSolid) -> Self {
         TetMeshElasticity(solid, std::marker::PhantomData)
@@ -421,6 +428,9 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
 impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
         Self::NUM_HESSIAN_TRIPLETS_PER_TET * self.0.tetmesh.num_cells()
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        Self::NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET * self.0.tetmesh.num_cells()
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(

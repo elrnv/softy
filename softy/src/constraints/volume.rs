@@ -206,6 +206,9 @@ impl<'a> ConstraintHessian<'a, f64> for VolumeConstraint {
     fn constraint_hessian_size(&self) -> usize {
         6 * 3 * self.surface_topo.len()
     }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
     fn constraint_hessian_indices_iter<'b>(
         &'b self,
     ) -> Result<Box<dyn Iterator<Item = MatrixElementIndex> + 'b>, Error> {

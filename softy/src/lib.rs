@@ -131,7 +131,7 @@ pub enum Error {
     #[error("Invalid solver configuration")]
     InvalidSolverConfig {
         #[from]
-        source: fem::nl::newton::Error,
+        source: fem::nl::Error,
     },
 }
 

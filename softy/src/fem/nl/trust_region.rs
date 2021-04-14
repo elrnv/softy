@@ -1,21 +1,35 @@
 use std::cell::RefCell;
 
 use super::problem::NonLinearProblem;
-use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
+use super::{Callback, CallbackArgs};
 use crate::inf_norm;
 use tensr::*;
 
 // Parameters for the Newton solver.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct NewtonParams {
+pub struct TrustRegionParams {
     /// Residual tolerance.
     pub r_tol: f32,
     /// Variable tolerance.
     pub x_tol: f32,
     /// Maximum number of iterations permitted.
     pub max_iter: u32,
-    /// Line search method.
-    pub line_search: LineSearch,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Status {
+    Success,
+    MaximumIterationsExceeded,
+    LinearSolveError,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SolveResult {
+    /// Number of successful iterations.
+    pub iterations: u32,
+    /// Solve status.
+    pub status: Status,
 }
 
 impl std::fmt::Display for SolveResult {
@@ -24,7 +38,7 @@ impl std::fmt::Display for SolveResult {
     }
 }
 
-pub struct NewtonWorkspace<T> {
+pub struct TrustRegionWorkspace<T> {
     x_prev: Vec<T>,
     r: Vec<T>,
     jtr: Vec<T>,
@@ -39,19 +53,19 @@ pub struct NewtonWorkspace<T> {
     j: DSMatrix<T>,
 }
 
-pub struct Newton<P, T> {
+pub struct TrustRegion<P, T> {
     pub problem: P,
-    pub params: NewtonParams,
+    pub params: TrustRegionParams,
     pub intermediate_callback: RefCell<Callback<T>>,
-    pub workspace: RefCell<NewtonWorkspace<T>>,
+    pub workspace: RefCell<TrustRegionWorkspace<T>>,
 }
 
-impl<T, P> Newton<P, T>
+impl<T, P> TrustRegion<P, T>
 where
     T: Real + na::RealField,
     P: NonLinearProblem<T>,
 {
-    pub fn new(problem: P, params: NewtonParams, intermediate_callback: Callback<T>) -> Self {
+    pub fn new(problem: P, params: TrustRegionParams, intermediate_callback: Callback<T>) -> Self {
         let n = problem.num_variables();
         // Initialize previous iterate.
         let x_prev = vec![T::zero(); n];
@@ -93,11 +107,11 @@ where
             },
         );
 
-        Newton {
+        TrustRegion {
             problem,
             params,
             intermediate_callback: RefCell::new(intermediate_callback),
-            workspace: RefCell::new(NewtonWorkspace {
+            workspace: RefCell::new(TrustRegionWorkspace {
                 x_prev,
                 r,
                 jtr,
@@ -111,29 +125,10 @@ where
             }),
         }
     }
-}
-
-impl<T, P> NLSolver<P, T> for Newton<P, T>
-where
-    T: Real + na::RealField,
-    P: NonLinearProblem<T>,
-{
-    /// Gets a reference to the intermediate callback function.
-    fn intermediate_callback(&self) -> &RefCell<Callback<T>> {
-        &self.intermediate_callback
-    }
-    /// Gets a reference to the underlying problem instance.
-    fn problem(&self) -> &P {
-        &self.problem
-    }
-    /// Gets a mutable reference the underlying problem instance.
-    fn problem_mut(&mut self) -> &mut P {
-        &mut self.problem
-    }
 
     /// Solves the problem and returns the solution along with the solve result
     /// info.
-    fn solve(&self) -> (Vec<T>, SolveResult) {
+    pub fn solve(&self) -> (Vec<T>, SolveResult) {
         let mut x = self.problem.initial_point();
         let res = self.solve_with(x.as_mut_slice());
         (x, res)
@@ -144,8 +139,8 @@ where
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&self, x: &mut [T]) -> SolveResult {
-        let NewtonWorkspace {
+    pub fn solve_with(&self, x: &mut [T]) -> SolveResult {
+        let TrustRegionWorkspace {
             r,
             jtr,
             r_cur,
@@ -195,14 +190,10 @@ where
 
             //log::trace!("j_vals = {:?}", &j_vals);
 
-            // Zero out Jacobian.
-            j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-            j_sprs.data_mut().iter_mut().for_each(|x| *x = T::zero());
-
             // Update the Jacobian matrix.
-            for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
-                j.storage_mut()[pos] += j_val;
-                j_sprs.data_mut()[pos] += j_val;
+            for (src, &dst) in j_mapping.iter().enumerate() {
+                j.storage_mut()[dst] = j_vals[src];
+                j_sprs.data_mut()[dst] = j_vals[src];
             }
 
             r_cur.copy_from_slice(&r);
@@ -241,85 +232,38 @@ where
             // The solve converts the rhs r into the unknown negative search direction p.
 
             // probe
-            //let mut probe_x = x.to_vec();
-            //let mut probe_r = r.clone();
-            //{
-            //    use std::io::Write;
-            //    let mut f =
-            //        std::fs::File::create(format!("./out/alpha_res_{}.jl", iterations)).unwrap();
-            //    writeln!(&mut f, "alpha_res2 = [").ok();
-            //    for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
-            //        zip!(probe_x.iter_mut(), r.iter(), x.iter())
-            //            .for_each(|(px, &r, &x)| *px = x - alpha * r);
-            //        self.problem.residual(&probe_x, probe_r.as_mut_slice());
-            //        writeln!(
-            //            &mut f,
-            //            "{:?} {:10.3e};",
-            //            alpha,
-            //            probe_r.as_slice().as_tensor().norm().to_f64().unwrap()
-            //        )
-            //        .ok();
-            //    }
-            //    writeln!(&mut f, "]").ok();
-            //}
+            let mut probe_x = x.to_vec();
+            let mut probe_r = r.clone();
+            {
+                use std::io::Write;
+                let mut f =
+                    std::fs::File::create(format!("./out/alpha_res_{}.jl", iterations)).unwrap();
+                writeln!(&mut f, "alpha_res2 = [").ok();
+                for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
+                    zip!(probe_x.iter_mut(), r.iter(), x.iter())
+                        .for_each(|(px, &r, &x)| *px = x - alpha * r);
+                    self.problem.residual(&probe_x, probe_r.as_mut_slice());
+                    writeln!(
+                        &mut f,
+                        "{:?} {:10.3e};",
+                        alpha,
+                        probe_r.as_slice().as_tensor().norm().to_f64().unwrap()
+                    )
+                    .ok();
+                }
+                writeln!(&mut f, "]").ok();
+            }
 
             // Update previous step.
             x_prev.copy_from_slice(x);
 
-            let rho = self.params.line_search.step_factor();
-            let ls_count = if rho >= 1.0 {
-                // Take the full step
-                *x.as_mut_tensor() -= p.as_tensor();
-                self.problem.residual(x, r_next.as_mut_slice());
-                1
-            } else {
-                // Line search.
-                let mut alpha = 1.0;
-                let mut ls_count = 1;
-
-                loop {
-                    // Step and project.
-                    zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
-                        *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
-                    });
-
-                    // Compute the candidate residual.
-                    self.problem.residual(&x, r_next.as_mut_slice());
-
-                    // Compute gradient of the merit function 0.5 r'r, which is r' dr/dx.
-                    jtr.iter_mut().for_each(|x| *x = T::zero());
-                    j.view()
-                        .add_left_mul_in_place(r_cur.as_tensor(), jtr.as_mut_tensor());
-
-                    // Residual dot search direction.
-                    // Check Armijo condition:
-                    // Given f(x) = 0.5 || r(x) ||^2 = 0.5 r(x)'r(x)
-                    // Test f(x + p) < f(x) - cα(J(x)'r(x))'p(x)
-                    let jtr_dot_p = jtr
-                        .iter()
-                        .zip(p.iter())
-                        .fold(0.0, |acc, (&jtr, &p)| acc + (jtr * p).to_f64().unwrap());
-                    if (&r_next).as_tensor().norm_squared().to_f64().unwrap()
-                        <= (&r_cur).as_tensor().norm_squared().to_f64().unwrap()
-                            - 2.0 * self.params.line_search.armijo_coeff() * alpha * jtr_dot_p
-                    {
-                        break;
-                    }
-
-                    alpha *= rho;
-
-                    //if alpha < 1e-3 {
-                    //    break;
-                    //}
-
-                    ls_count += 1;
-                }
-                ls_count
-            };
+            // Take the full step
+            *x.as_mut_tensor() -= p.as_tensor();
+            self.problem.residual(x, r_next.as_mut_slice());
 
             iterations += 1;
 
-            log_debug_stats(iterations, ls_count, &r_next, x, &x_prev);
+            log_debug_stats(iterations, 1, &r_next, x, &x_prev);
 
             let denom = inf_norm(x.iter().cloned()) + T::one();
 
@@ -397,96 +341,4 @@ fn print_sprs<T: Real>(mat: &sprs::CsMatView<T>) {
         eprintln!(";");
     }
     eprintln!("]");
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub enum LineSearch {
-    /// Backtracking line search method decreases the step `α` by `rho` to
-    /// Satisfy the sufficient decrease condition:
-    /// f(xₖ + αpₖ) ≤ f(xₖ) + cα∇fₖᵀpₖ
-    BackTracking {
-        c: f64,
-        rho: f64,
-    },
-    None,
-}
-
-impl Default for LineSearch {
-    fn default() -> LineSearch {
-        LineSearch::default_backtracking()
-    }
-}
-
-impl LineSearch {
-    pub const fn default_backtracking() -> Self {
-        LineSearch::BackTracking { c: 1e-4, rho: 0.9 }
-    }
-    /// Gets the factor by which the step size should be decreased.
-    pub fn step_factor(&self) -> f64 {
-        match self {
-            LineSearch::BackTracking { rho, .. } => *rho,
-            LineSearch::None => 1.0,
-        }
-    }
-
-    // Gets the coefficient for the Armijo condition.
-    pub fn armijo_coeff(&self) -> f64 {
-        match self {
-            LineSearch::BackTracking { c, .. } => *c,
-            LineSearch::None => 1.0,
-        }
-    }
-}
-
-/// Implementation of the conjugate residual method.
-///
-/// The Conjugate Residual method solves the system `Ax = b` where `A` is Hermitian, and `b` is non-zero.
-/// https://en.wikipedia.org/wiki/Conjugate_residual_method
-#[allow(non_snake_case)]
-pub struct ConjugateResidual<'a, T, F> {
-    /// Function to compute the `Ax` product.
-    Ax: F,
-    x: &'a mut [T],
-    r: &'a mut [T],
-    p: Vec<T>,
-    Ar: Vec<T>,
-    Ap: Vec<T>,
-    /// Preconditioner.
-    M: Option<DSMatrix<T>>,
-}
-
-impl<'a, T, F> ConjugateResidual<'a, T, F>
-where
-    T: Real,
-    F: FnMut(&[T], &mut [T]),
-{
-    #[allow(non_snake_case)]
-    pub fn new(mut Ax: F, x: &'a mut [T], b: &'a mut [T]) -> Self {
-        let mut p = vec![T::zero(); x.len()];
-
-        // r0 = b - Ax0
-        Ax(x, &mut p);
-        b.iter_mut().zip(p.iter()).for_each(|(b, &p)| *b -= p);
-
-        // p0 = r0
-        p.copy_from_slice(b);
-
-        // Initialize Ap0 & Ar0
-        let mut Ar = vec![T::zero(); x.len()];
-        Ax(b, &mut Ar);
-
-        let Ap = Ar.clone();
-
-        ConjugateResidual {
-            Ax,
-            x,
-            r: b,
-            p,
-            Ar,
-            Ap,
-            M: None,
-        }
-    }
-
-    //pub fn solve()
 }

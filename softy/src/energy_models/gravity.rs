@@ -94,6 +94,9 @@ impl EnergyHessianTopology for TetMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 impl<T: Real> EnergyHessian<T> for TetMeshGravity<'_> {
@@ -186,6 +189,9 @@ impl EnergyHessianTopology for SoftShellGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 
@@ -230,6 +236,9 @@ impl<T: Real> EnergyGradient<T> for RigidShellGravity {
 
 impl EnergyHessianTopology for RigidShellGravity {
     fn energy_hessian_size(&self) -> usize {
+        0
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
         0
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}

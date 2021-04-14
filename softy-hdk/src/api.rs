@@ -93,6 +93,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             clear_velocity,
             tolerance,
             max_iterations,
+            derivative_test,
             ..
         } = *self;
         let line_search = match solver_type {
@@ -112,6 +113,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             tolerance,
             max_iterations,
             line_search,
+            jacobian_test: derivative_test > 0,
         }
     }
 }

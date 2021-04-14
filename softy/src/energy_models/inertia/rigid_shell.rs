@@ -7,6 +7,7 @@ use crate::energy::*;
 use crate::matrix::*;
 
 const NUM_HESSIAN_TRIPLETS: usize = 9;
+const NUM_HESSIAN_DIAGONAL_TRIPLETS: usize = 6;
 
 pub(crate) struct RigidShellInertia {
     pub mass: f64,
@@ -67,6 +68,10 @@ impl<T: Real> EnergyGradient<T> for RigidShellInertia {
 impl EnergyHessianTopology for RigidShellInertia {
     fn energy_hessian_size(&self) -> usize {
         NUM_HESSIAN_TRIPLETS
+    }
+
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        NUM_HESSIAN_DIAGONAL_TRIPLETS
     }
 
     #[unroll_for_loops]

@@ -1898,14 +1898,37 @@ impl NonLinearProblem {
             return;
         }
 
+        let n = self.num_variables();
+        let nrows = n;
+        let ncols = n;
         let mut rows = vec![0; values.len()];
         let mut cols = vec![0; values.len()];
         assert!(self.hessian_indices(&mut rows, &mut cols));
 
-        let mut hess = DMatrix::<f64>::zeros(self.num_variables(), self.num_variables());
+        let mut hess = DMatrix::<f64>::zeros(nrows, ncols);
         for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
             hess[(row as usize, col as usize)] += v;
         }
+
+        use std::io::Write;
+
+        let mut f =
+            std::fs::File::create(format!("./out/hess_{}.jl", self.iter_counter.borrow())).unwrap();
+        writeln!(&mut f, "hess = [").ok();
+        for mut r in 0..nrows {
+            for mut c in 0..ncols {
+                if r < c {
+                    std::mem::swap(&mut r, &mut c);
+                }
+                if hess[(r, c)] != 0.0 {
+                    write!(&mut f, "{:17.9e}", hess[(r, c)]).ok();
+                } else {
+                    write!(&mut f, "    0    ",).ok();
+                }
+            }
+            writeln!(&mut f, ";").ok();
+        }
+        writeln!(&mut f, "]").ok();
 
         let svd = na::SVD::new(hess, false, false);
         let s: &[Number] = Storage::as_slice(&svd.singular_values.data);

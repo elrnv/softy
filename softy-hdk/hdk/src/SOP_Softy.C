@@ -424,6 +424,15 @@ static const char *theDsFile = R"THEDSFILE(
             hidewhen "{ solvertype != ipopt }"
         }
 
+        parm {
+            name "derivativetest"
+            cppname "DerivativeTest"
+            label "Derivative Test"
+            type integer
+            default { "0" }
+            range { 0! 2! }
+        }
+
         groupcollapsible {
             name    "ipoptoptions"
             label   "Ipopt Options"
@@ -458,15 +467,6 @@ static const char *theDsFile = R"THEDSFILE(
                 type integer
                 default { "0" }
                 range { 0! 12! }
-            }
-
-            parm {
-                name "derivativetest"
-                cppname "DerivativeTest"
-                label "Derivative Test"
-                type integer
-                default { "0" }
-                range { 0! 2! }
             }
         }
 

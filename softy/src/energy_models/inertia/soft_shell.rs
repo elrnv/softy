@@ -12,6 +12,7 @@ use crate::matrix::*;
 use crate::objects::shell::*;
 
 const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 9;
+const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI: usize = 9;
 
 pub(crate) struct SoftShellInertia<'a>(pub &'a TriMeshShell);
 
@@ -87,6 +88,9 @@ impl<T: Real> EnergyGradient<T> for SoftShellInertia<'_> {
 impl EnergyHessianTopology for SoftShellInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.trimesh.num_faces() * NUM_HESSIAN_TRIPLETS_PER_TRI
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        self.0.trimesh.num_faces() * NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(

@@ -29,6 +29,9 @@ impl<E: EnergyHessianTopology> EnergyHessianTopology for Option<E> {
     fn energy_hessian_size(&self) -> usize {
         self.as_ref().map_or(0, |e| e.energy_hessian_size())
     }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        self.as_ref().map_or(0, |e| e.num_hessian_diagonal_nnz())
+    }
     fn energy_hessian_indices_offset(
         &self,
         off: MatrixElementIndex,
@@ -92,6 +95,12 @@ impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology f
         match self {
             Either::Left(e) => e.energy_hessian_size(),
             Either::Right(e) => e.energy_hessian_size(),
+        }
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        match self {
+            Either::Left(e) => e.num_hessian_diagonal_nnz(),
+            Either::Right(e) => e.num_hessian_diagonal_nnz(),
         }
     }
     fn energy_hessian_indices_offset(

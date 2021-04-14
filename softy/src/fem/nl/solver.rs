@@ -2,13 +2,14 @@ use std::cell::RefCell;
 
 use num_traits::Zero;
 
-use super::newton::*;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use tensr::*;
 
-use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem, Solution};
-use super::SimParams;
+use super::mcp::*;
+use super::newton::*;
+use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem};
+use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
 use crate::constraints::*;
 use crate::contact::*;
@@ -918,7 +919,7 @@ impl SolverBuilder {
     }
 
     /// Build the simulation solver.
-    pub fn build(&self) -> Result<Solver<f64>, Error> {
+    pub fn build(&self) -> Result<Solver<impl NLSolver<NLProblem<f64>, f64>, f64>, Error> {
         self.build_with_interrupt(|| true)
     }
 
@@ -928,7 +929,7 @@ impl SolverBuilder {
     pub fn build_with_interrupt(
         &self,
         mut interrupt_checker: impl FnMut() -> bool + Send + 'static,
-    ) -> Result<Solver<f64>, Error> {
+    ) -> Result<Solver<impl NLSolver<NLProblem<f64>, f64>, f64>, Error> {
         let problem = self.build_problem::<f64>()?;
 
         let num_variables = problem.num_variables();
@@ -947,16 +948,16 @@ impl SolverBuilder {
         log::trace!("r-scale: {:?}", r_scale);
 
         // Construct the non-linear equation solver.
-        let solver = Newton {
+        let solver = MCPSolver::newton(
             problem,
-            params: NewtonParams {
+            NewtonParams {
                 r_tol,
                 x_tol,
                 max_iter: params.max_iterations,
                 line_search: params.line_search,
             },
-            intermediate_callback: RefCell::new(Box::new(move |_| interrupt_checker())),
-        };
+            Box::new(move |_| interrupt_checker()),
+        );
 
         Ok(Solver {
             solver,
@@ -1144,9 +1145,9 @@ impl SolverBuilder {
 }
 
 /// Finite element engine.
-pub struct Solver<T> {
+pub struct Solver<S, T> {
     /// Non-linear solver.
-    solver: Newton<NLProblem<T>, T>,
+    solver: S,
     /// Simulation parameters. This is kept around for convenience.
     sim_params: SimParams,
     /// Maximal displacement length.
@@ -1162,10 +1163,14 @@ pub struct Solver<T> {
     solution: Vec<T>,
 }
 
-impl<T: Real64> Solver<T> {
+impl<S, T> Solver<S, T>
+where
+    T: Real64 + na::RealField,
+    S: NLSolver<NLProblem<T>, T>,
+{
     /// Set the interrupt checker to the given function.
     pub fn set_simple_interrupter(&self, mut interrupted: impl FnMut() -> bool + Send + 'static) {
-        *self.solver.intermediate_callback.borrow_mut() = Box::new(move |_| !interrupted());
+        *self.solver.intermediate_callback().borrow_mut() = Box::new(move |_| !interrupted());
     }
 
     /// If the time step was not specified or specified to be zero, then this function will return
@@ -1175,12 +1180,12 @@ impl<T: Real64> Solver<T> {
     }
     /// Get an immutable reference to the underlying problem.
     fn problem(&self) -> &NLProblem<T> {
-        &self.solver.problem
+        self.solver.problem()
     }
 
     /// Get a mutable reference to the underlying problem.
     fn problem_mut(&mut self) -> &mut NLProblem<T> {
-        &mut self.solver.problem
+        self.solver.problem_mut()
     }
 
     /// Get a slice of solid objects represented in this solver.
@@ -1242,9 +1247,12 @@ impl<T: Real64> Solver<T> {
     fn commit_solution(&mut self, relax_max_step: bool) {
         {
             let and_velocity = !self.sim_params.clear_velocity;
+            let Self {
+                solver, solution, ..
+            } = self;
 
             // Advance internal state (positions and velocities) of the problem.
-            self.solver.problem.advance(&self.solution, and_velocity);
+            solver.problem_mut().advance(&solution, and_velocity);
         }
 
         // Reduce max_step for next iteration if the solution was a good one.
@@ -1307,12 +1315,17 @@ impl<T: Real64> Solver<T> {
     }
 }
 
-impl<T: Real64> Solver<T>
+impl<S, T> Solver<S, T>
 where
-    T: na::RealField,
+    T: Real64 + na::RealField,
+    S: NLSolver<NLProblem<T>, T>,
 {
     /// Run the optimization solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        if self.sim_params.jacobian_test {
+            self.problem().check_jacobian(true);
+        }
+
         let result = self.solver.solve_with(&mut self.solution);
         log::trace!("Solve Result: {}", &result);
         match result.status {

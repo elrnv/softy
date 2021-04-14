@@ -145,6 +145,8 @@ pub trait ConstraintHessian<'a, T: Scalar>: ConstraintJacobian<'a, T> {
     type InputDual;
     /// The number of non-zeros in the Hessian matrix of the constraint.
     fn constraint_hessian_size(&self) -> usize;
+    /// The number of non-zeros in the diagonal of the Hessian matrix of the constraint.
+    fn num_hessian_diagonal_nnz(&self) -> usize;
     /// Compute the Hessian matrix values (multiplied by `lambda`) corresponding to their positions
     /// in the matrix returned by `constraint_hessian_indices`. This means that the vector returned
     /// from this function must have the same length as the vector returned by

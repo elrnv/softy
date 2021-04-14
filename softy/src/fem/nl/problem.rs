@@ -38,7 +38,7 @@ impl Solution {
 
 /// A struct that keeps track of which objects are being affected by the contact
 /// constraints.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FrictionalContactConstraint {
     pub object_index: SourceObject,
     pub collider_index: SourceObject,
@@ -47,7 +47,8 @@ pub struct FrictionalContactConstraint {
 
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
-pub(crate) struct NLProblem<T> {
+#[derive(Clone, Debug)]
+pub struct NLProblem<T> {
     /// A data model of the current problem.
     ///
     /// This includes all primal variables and any additional mesh data required
@@ -1421,7 +1422,7 @@ impl<T: Real64> NLProblem<T> {
         for r in 0..nrows {
             for c in 0..ncols {
                 if jac[(r, c)] != 0.0 {
-                    write!(&mut f, "{:9.5}", jac[(r, c)]).ok();
+                    write!(&mut f, "{:17.9e}", jac[(r, c)]).ok();
                 } else {
                     write!(&mut f, "    0    ",).ok();
                 }
@@ -1434,7 +1435,7 @@ impl<T: Real64> NLProblem<T> {
         let s: &[f64] = Storage::as_slice(&svd.singular_values.data);
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
-        writeln!(&mut f, "cond_jac = {}", cond);
+        writeln!(&mut f, "cond_jac = {}", cond).ok();
     }
 
     #[allow(dead_code)]
@@ -1485,24 +1486,30 @@ impl<T: Real64> NLProblem<T> {
     fn jacobian_nnz(&self) -> usize {
         let mut num = 0;
         for solid in self.state.solids.iter() {
-            num += solid.elasticity::<T>().energy_hessian_size()
+            num += 2 * solid.elasticity::<T>().energy_hessian_size()
+                - solid.elasticity::<T>().num_hessian_diagonal_nnz()
                 + if !self.is_static() {
-                    solid.inertia().energy_hessian_size()
+                    2 * solid.inertia().energy_hessian_size()
+                        - solid.inertia().num_hessian_diagonal_nnz()
                 } else {
                     0
                 };
         }
         for shell in self.state.shells.iter() {
-            num += shell.elasticity::<T>().energy_hessian_size()
+            num += 2 * shell.elasticity::<T>().energy_hessian_size()
+                - shell.elasticity::<T>().num_hessian_diagonal_nnz()
                 + if !self.is_static() {
-                    shell.inertia().energy_hessian_size()
+                    2 * shell.inertia().energy_hessian_size()
+                        - shell.inertia().num_hessian_diagonal_nnz()
                 } else {
                     0
                 };
         }
         for (_, vc) in self.volume_constraints.iter() {
-            num += vc.borrow().constraint_hessian_size();
+            num +=
+                2 * vc.borrow().constraint_hessian_size() - vc.borrow().num_hessian_diagonal_nnz()
         }
+
         for fc in self.frictional_contacts.iter() {
             //TODO: add frictional contact counts
             //if !self.is_rigid(fc.object_index) {
@@ -1520,7 +1527,7 @@ impl<T: Real64> NLProblem<T> {
     /// For the velocity part of the force balance equation `M dv/dt - f(q, v) = 0`,
     /// this represents `M dv`.
     /// Strictly speaking this is equal to the momentum difference `M (v_+ - v_-)`.
-    fn add_momentum_diff(&self, _q: &[T], v: &[T], r: &mut [T]) {
+    fn add_momentum_diff(&self, v: &[T], r: &mut [T]) {
         let dof = self.state.dof.view();
         let v_cur = dof.map_storage(|dof| dof.cur.dq);
         let v_next = dof.view().map_storage(|_| v);
@@ -1643,7 +1650,7 @@ impl<T: Real64> NLProblem<T> {
         self.subtract_force(q, v, r);
         *r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
-        self.add_momentum_diff(q, v, r);
+        self.add_momentum_diff(v, r);
     }
 }
 
@@ -1656,22 +1663,6 @@ pub trait NonLinearProblem<T: Real> {
     fn initial_point(&self) -> Vec<T> {
         vec![T::zero(); self.num_variables()]
     }
-    /// Initializes the lower and upper bounds of the problem respectively.
-    ///
-    /// If bounds change between solves, then it is sufficient to override `update_bounds` only.
-    /// This function calls `update_bounds` by default.
-    /// If the bounds are not updated between solves, override this function
-    /// instead to avoid wasted work between solves.
-    fn initial_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-        let mut l = vec![std::f64::NEG_INFINITY; self.num_variables()];
-        let mut u = vec![std::f64::INFINITY; self.num_variables()];
-        self.update_bounds(l.as_mut_slice(), u.as_mut_slice());
-        (l, u)
-    }
-    /// Updates the lower and upper bounds of the problem.
-    ///
-    /// If the bounds change between solves, this function should be defined instead of `initial_bounds`.
-    fn update_bounds(&self, l: &mut [f64], u: &mut [f64]) {}
 
     /// The vector function `r` whose roots we want to find.
     ///
@@ -1694,86 +1685,47 @@ pub trait NonLinearProblem<T: Real> {
     /// The size of `values` is the same as the size of one of the index vectors
     /// returned by `jacobian_indices`.
     fn jacobian_values(&self, x: &[T], values: &mut [T]);
+
+    /// A version of `jacobian_values` that gets additional information about
+    /// the problem.
+    ///
+    /// If this function is implemented, then `jacobian_values` will never be called.
+    fn advanced_jacobian_values(
+        &self,
+        x: &[T],
+        _r: &[T],
+        _rows: &[usize],
+        _cols: &[usize],
+        values: &mut [T],
+    ) {
+        self.jacobian_values(x, values);
+    }
+}
+
+/// A Mixed complementarity problem is a non-linear problem subject to box constraints.
+pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
+    /// Initializes the lower and upper bounds of the problem respectively.
+    ///
+    /// If bounds change between solves, then it is sufficient to override `update_bounds` only.
+    /// This function calls `update_bounds` by default.
+    /// If the bounds are not updated between solves, override this function
+    /// instead to avoid wasted work between solves.
+    fn initial_bounds(&self) -> (Vec<f64>, Vec<f64>) {
+        let mut l = vec![std::f64::NEG_INFINITY; self.num_variables()];
+        let mut u = vec![std::f64::INFINITY; self.num_variables()];
+        self.update_bounds(l.as_mut_slice(), u.as_mut_slice());
+        (l, u)
+    }
+    /// Updates the lower and upper bounds of the problem.
+    ///
+    /// If the bounds change between solves, this function should be defined instead of `initial_bounds`.
+    fn update_bounds(&self, l: &mut [f64], u: &mut [f64]) {}
 }
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     fn num_variables(&self) -> usize {
         self.state.dof.storage().len()
-    }
-
-    fn initial_bounds(&self) -> (Vec<f64>, Vec<f64>) {
-        let uv_l = vec![std::f64::NEG_INFINITY; self.num_variables()];
-        let uv_u = vec![std::f64::INFINITY; self.num_variables()];
-
-        // Fixed vertices have a predetermined velocity which is specified in the dof variable.
-        // Unscale velocities so we can set the unscaled bounds properly.
-        let uv_flat_view = self.state.dof.view().into_storage().cur.dq;
-        let ws = self.state.workspace.borrow();
-        let unscaled_dq = ws.dof.view().map_storage(|dof| dof.dq);
-        let solid_prev_uv = unscaled_dq.isolate(SOLIDS_INDEX);
-        let shell_prev_uv = unscaled_dq.isolate(SHELLS_INDEX);
-
-        // Copy data structure over to uv_l and uv_u
-        let mut uv_l = self.state.dof.view().map_storage(move |_| uv_l);
-        let mut uv_u = self.state.dof.view().map_storage(move |_| uv_u);
-
-        for (i, (solid, uv)) in self
-            .state
-            .solids
-            .iter()
-            .zip(solid_prev_uv.iter())
-            .enumerate()
-        {
-            if let Ok(fixed_verts) = solid
-                .tetmesh
-                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-            {
-                let mut uv_l = uv_l.view_mut().isolate(SOLIDS_INDEX).isolate(i);
-                let mut uv_u = uv_u.view_mut().isolate(SOLIDS_INDEX).isolate(i);
-                // Find and set fixed vertices.
-                uv_l.iter_mut()
-                    .zip(uv_u.iter_mut())
-                    .zip(uv.iter())
-                    .zip(fixed_verts.iter())
-                    .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|(((l, u), uv), _)| {
-                        *l = uv.as_tensor().cast::<f64>().into();
-                        *u = *l;
-                    });
-            }
-        }
-
-        for (i, (shell, uv)) in self
-            .state
-            .shells
-            .iter()
-            .zip(shell_prev_uv.iter())
-            .enumerate()
-        {
-            if let Ok(fixed_verts) = shell
-                .trimesh
-                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-            {
-                let mut uv_l = uv_l.view_mut().isolate(1).isolate(i);
-                let mut uv_u = uv_u.view_mut().isolate(1).isolate(i);
-                // Find and set fixed vertices.
-                uv_l.iter_mut()
-                    .zip(uv_u.iter_mut())
-                    .zip(uv.iter())
-                    .zip(fixed_verts.iter())
-                    .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|(((l, u), uv), _)| {
-                        *l = uv.as_tensor().cast::<f64>().into();
-                        *u = *l;
-                    });
-            }
-        }
-        let uv_l = uv_l.into_storage();
-        let uv_u = uv_u.into_storage();
-        //debug_assert!(uv_l.iter().all(|&x| x.is_finite()));
-        //debug_assert!(uv_u.iter().all(|&x| x.is_finite()));
-        (uv_l, uv_u)
     }
 
     fn residual(&self, x: &[T], r: &mut [T]) {
@@ -1857,6 +1809,19 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             }
         }
 
+        // Duplicate off-diagonal indices to form a complete matrix.
+        let (rows_begin, rows_end) = rows.split_at_mut(count);
+        let (cols_begin, cols_end) = cols.split_at_mut(count);
+        let mut i = 0;
+        for (&r, &c) in rows_begin.iter().zip(cols_begin.iter()) {
+            if r != c {
+                cols_end[i] = r;
+                rows_end[i] = c;
+                i += 1;
+            }
+        }
+        count += i;
+
         // TODO: Add frictional contact indices
 
         assert_eq!(count, rows.len());
@@ -1864,7 +1829,15 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         (rows, cols)
     }
 
-    fn jacobian_values(&self, v: &[T], vals: &mut [T]) {
+    fn jacobian_values(&self, v: &[T], vals: &mut [T]) {}
+    fn advanced_jacobian_values(
+        &self,
+        v: &[T],
+        _r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+    ) {
         //let lambda = Vec::new();
         self.state.be_step(v, self.time_step());
 
@@ -1955,6 +1928,17 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
             }
         }
 
+        // Duplicate off-diagonal entries.
+        let (vals_begin, vals_end) = vals.split_at_mut(count);
+        let mut i = 0;
+        for (&r, &c, &val) in zip!(rows.iter(), cols.iter(), vals_begin.iter()) {
+            if r != c {
+                vals_end[i] = val;
+                i += 1;
+            }
+        }
+        count += i;
+
         //for (solid_idx, vc) in self.volume_constraints.iter() {
         //    let q_cur = dof_cur.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
         //    let q_next = dof_next.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
@@ -1985,32 +1969,215 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     }
 }
 
+impl<T: Real64> MixedComplementarityProblem<T> for NLProblem<T> {
+    fn initial_bounds(&self) -> (Vec<f64>, Vec<f64>) {
+        let uv_l = vec![std::f64::NEG_INFINITY; self.num_variables()];
+        let uv_u = vec![std::f64::INFINITY; self.num_variables()];
+
+        // Fixed vertices have a predetermined velocity which is specified in the dof variable.
+        // Unscale velocities so we can set the unscaled bounds properly.
+        let uv_flat_view = self.state.dof.view().into_storage().cur.dq;
+        let ws = self.state.workspace.borrow();
+        let unscaled_dq = ws.dof.view().map_storage(|dof| dof.dq);
+        let solid_prev_uv = unscaled_dq.isolate(SOLIDS_INDEX);
+        let shell_prev_uv = unscaled_dq.isolate(SHELLS_INDEX);
+
+        // Copy data structure over to uv_l and uv_u
+        let mut uv_l = self.state.dof.view().map_storage(move |_| uv_l);
+        let mut uv_u = self.state.dof.view().map_storage(move |_| uv_u);
+
+        for (i, (solid, uv)) in self
+            .state
+            .solids
+            .iter()
+            .zip(solid_prev_uv.iter())
+            .enumerate()
+        {
+            if let Ok(fixed_verts) = solid
+                .tetmesh
+                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            {
+                let mut uv_l = uv_l.view_mut().isolate(SOLIDS_INDEX).isolate(i);
+                let mut uv_u = uv_u.view_mut().isolate(SOLIDS_INDEX).isolate(i);
+                // Find and set fixed vertices.
+                uv_l.iter_mut()
+                    .zip(uv_u.iter_mut())
+                    .zip(uv.iter())
+                    .zip(fixed_verts.iter())
+                    .filter(|&(_, &fixed)| fixed != 0)
+                    .for_each(|(((l, u), uv), _)| {
+                        *l = uv.as_tensor().cast::<f64>().into();
+                        *u = *l;
+                    });
+            }
+        }
+
+        for (i, (shell, uv)) in self
+            .state
+            .shells
+            .iter()
+            .zip(shell_prev_uv.iter())
+            .enumerate()
+        {
+            if let Ok(fixed_verts) = shell
+                .trimesh
+                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
+            {
+                let mut uv_l = uv_l.view_mut().isolate(1).isolate(i);
+                let mut uv_u = uv_u.view_mut().isolate(1).isolate(i);
+                // Find and set fixed vertices.
+                uv_l.iter_mut()
+                    .zip(uv_u.iter_mut())
+                    .zip(uv.iter())
+                    .zip(fixed_verts.iter())
+                    .filter(|&(_, &fixed)| fixed != 0)
+                    .for_each(|(((l, u), uv), _)| {
+                        *l = uv.as_tensor().cast::<f64>().into();
+                        *u = *l;
+                    });
+            }
+        }
+        let uv_l = uv_l.into_storage();
+        let uv_u = uv_u.into_storage();
+        //debug_assert!(uv_l.iter().all(|&x| x.is_finite()));
+        //debug_assert!(uv_u.iter().all(|&x| x.is_finite()));
+        (uv_l, uv_u)
+    }
+}
+
+impl<T: Real> NLProblem<T> {
+    /// Constructs a clone of this problem with autodiff variables.
+    pub fn clone_as_autodiff(&self) -> NLProblem<autodiff::F1> {
+        let Self {
+            state,
+            frictional_contacts,
+            volume_constraints,
+            gravity,
+            time_step,
+            iterations,
+            initial_residual_error,
+            iter_counter,
+            max_size,
+            max_element_force_scale,
+            min_element_force_scale,
+        } = self.clone();
+        NLProblem {
+            state: state.clone_as_autodiff(),
+            frictional_contacts,
+            volume_constraints,
+            gravity,
+            time_step,
+            iterations,
+            initial_residual_error,
+            iter_counter,
+            max_size,
+            max_element_force_scale,
+            min_element_force_scale,
+        }
+    }
+
+    /// Checks that the given problem has a consistent Jacobian imlementation.
+    pub(crate) fn check_jacobian(&self, perturb_initial: bool) -> bool {
+        log::debug!("Checking Jacobian..");
+        use autodiff::F1 as F;
+        let problem = self.clone_as_autodiff();
+        let n = problem.num_variables();
+        let mut x0 = problem.initial_point();
+        if perturb_initial {
+            perturb(&mut x0);
+        }
+
+        let mut r = vec![F::zero(); n];
+        problem.residual(&x0, &mut r);
+
+        let (jac_rows, jac_cols) = problem.jacobian_indices();
+
+        let mut jac_values = vec![F::zero(); jac_rows.len()];
+        problem.advanced_jacobian_values(&x0, &r, &jac_rows, &jac_cols, &mut jac_values);
+
+        // Build a dense Jacobian.
+        let mut jac_ad = vec![vec![0.0; n]; n];
+        let mut jac = vec![vec![0.0; n]; n];
+        for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
+            jac[row][col] += val.value();
+        }
+
+        let mut success = true;
+        for i in 0..n {
+            x0[i] = F::var(x0[i]);
+            problem.residual(&x0, &mut r);
+            for j in 0..n {
+                let res = approx::relative_eq!(
+                    jac[i][j],
+                    r[j].deriv(),
+                    max_relative = 1e-6,
+                    epsilon = 1e-10
+                );
+                jac_ad[i][j] = r[j].deriv();
+                if !res {
+                    success = false;
+                    log::debug!("({}, {}): {} vs. {}", i, j, jac[i][j], r[j].deriv());
+                }
+            }
+            x0[i] = F::cst(x0[i]);
+        }
+
+        if !success && n < 15 {
+            // Print dense hessian if its small
+            log::debug!("Actual:");
+            for row in 0..n {
+                for col in 0..=row {
+                    log::debug!("{:10.2e}", jac[row][col]);
+                }
+                log::debug!("");
+            }
+
+            log::debug!("Expected:");
+            for row in 0..n {
+                for col in 0..=row {
+                    log::debug!("{:10.2e}", jac_ad[row][col]);
+                }
+                log::debug!("");
+            }
+        }
+        if success {
+            log::debug!("No errors during Jacobian check.");
+        }
+        success
+    }
+}
+
+pub(crate) fn perturb(x: &mut [autodiff::F1]) {
+    use rand::distributions::Uniform;
+    use rand::prelude::*;
+    let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
+    let range = Uniform::new(-0.1, 0.1);
+    x.iter_mut().for_each(move |x| *x += rng.sample(range));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::energy::*;
     use crate::fem::nl::*;
     use crate::test_utils::*;
-    use crate::{TetMesh, TriMesh};
-    use approx::*;
-    use autodiff::F1 as F;
-    use num_traits::Zero;
 
     /// Verifies that the problem jacobian is implemented correctly.
     #[test]
     fn nl_problem_jacobian_one_tet() {
+        init_logger();
         let mut solver_builder = SolverBuilder::new(sample_params());
         solver_builder.add_solid(make_one_tet_mesh(), solid_material());
-        let problem = solver_builder.build_problem().unwrap();
-        jacobian_tester(problem);
+        let problem = solver_builder.build_problem::<f64>().unwrap();
+        assert!(problem.check_jacobian(true));
     }
 
     #[test]
     fn nl_problem_jacobian_three_tets() {
+        init_logger();
         let mut solver_builder = SolverBuilder::new(sample_params());
         solver_builder.add_solid(make_three_tet_mesh(), solid_material());
-        let problem = solver_builder.build_problem().unwrap();
-        jacobian_tester(problem);
+        let problem = solver_builder.build_problem::<f64>().unwrap();
+        assert!(problem.check_jacobian(true));
     }
 
     fn solid_material() -> SolidMaterial {
@@ -2032,76 +2199,7 @@ mod tests {
             tolerance: 1e-2,
             max_iterations: 1,
             line_search: LineSearch::default_backtracking(),
+            jacobian_test: false,
         }
-    }
-
-    fn perturb(x: &mut [F]) {
-        use rand::distributions::Uniform;
-        use rand::prelude::*;
-        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let range = Uniform::new(-0.1, 0.1);
-        x.iter_mut().for_each(move |x| *x += rng.sample(range));
-    }
-
-    fn jacobian_tester(problem: NLProblem<F>) {
-        let n = problem.num_variables();
-        let mut x0 = problem.initial_point();
-        perturb(&mut x0);
-
-        let (jac_rows, jac_cols) = problem.jacobian_indices();
-
-        let mut jac_values = vec![F::zero(); jac_rows.len()];
-        problem.jacobian_values(&x0, &mut jac_values);
-
-        // Build a dense Jacobian.
-        let mut jac_ad = vec![vec![0.0; n]; n];
-        let mut jac = vec![vec![0.0; n]; n];
-        for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
-            jac[row][col] += val.value();
-            if row != col {
-                jac[col][row] += val.value();
-            }
-        }
-
-        let mut success = true;
-        for i in 0..n {
-            x0[i] = F::var(x0[i]);
-            let mut r = vec![F::zero(); n];
-            problem.residual(&x0, &mut r);
-            for j in 0..n {
-                let res = relative_eq!(
-                    jac[i][j],
-                    r[j].deriv(),
-                    max_relative = 1e-6,
-                    epsilon = 1e-10
-                );
-                jac_ad[i][j] = r[j].deriv();
-                if !res {
-                    success = false;
-                    eprintln!("({}, {}): {} vs. {}", i, j, jac[i][j], r[j].deriv());
-                }
-            }
-            x0[i] = F::cst(x0[i]);
-        }
-
-        if !success && n < 15 {
-            // Print dense hessian if its small
-            eprintln!("Actual:");
-            for row in 0..n {
-                for col in 0..=row {
-                    eprint!("{:10.2e}", jac[row][col]);
-                }
-                eprintln!("");
-            }
-
-            eprintln!("Expected:");
-            for row in 0..n {
-                for col in 0..=row {
-                    eprint!("{:10.2e}", jac_ad[row][col]);
-                }
-                eprintln!("");
-            }
-        }
-        assert!(success);
     }
 }

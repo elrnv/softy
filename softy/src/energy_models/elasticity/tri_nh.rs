@@ -466,6 +466,10 @@ const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 45; // There are 3*6 + 3*9 = 45 trip
 const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE_DIAG: usize = 24;
 // There are 4*6 + 3*3*6 = 78 triplets per interior edge in total.
 const NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE: usize = 78;
+// There are 4*3 = 12 triplets on the diagonal per interior edge.
+const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_INTERIOR_EDGE: usize = 12;
+// There are 3*3 = 9 triplets on the diagonal per tri.
+const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI: usize = 9;
 
 impl<'a, E> TriMeshElasticity<'a, E> {
     /// Construct a new elasticity model from the given `TriMeshShell`. Since `TriMeshShell`s can
@@ -800,6 +804,10 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     fn energy_hessian_size(&self) -> usize {
         NUM_HESSIAN_TRIPLETS_PER_TRI * self.trimesh.num_faces()
             + NUM_HESSIAN_TRIPLETS_PER_INTERIOR_EDGE * self.interior_edges.len()
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI * self.trimesh.num_faces()
+            + NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_INTERIOR_EDGE * self.interior_edges.len()
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(

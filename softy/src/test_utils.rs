@@ -33,6 +33,7 @@ pub const STATIC_NL_PARAMS: NLParams = NLParams {
     tolerance: 1e-3,
     max_iterations: 300,
     line_search: LineSearch::default_backtracking(),
+    jacobian_test: false,
 };
 
 //pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
@@ -55,7 +56,7 @@ pub const DYNAMIC_NL_PARAMS: NLParams = NLParams {
 };
 
 // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus
-// (mu) and density in the same range of magnitude. Higher stiffnesses compared to denisty will
+// (mu) and density in the same range of magnitude. Higher stiffnesses compared to density will
 // produce highly oscillatory configurations and keep the solver from converging fast.
 // As an example if we increase the moduli below by 1000, the solver can't converge, even in
 // 300 steps.

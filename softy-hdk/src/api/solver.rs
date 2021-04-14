@@ -69,7 +69,10 @@ impl Solver for fem::opt::Solver {
     }
 }
 
-impl Solver for fem::nl::Solver<f64> {
+impl<S> Solver for fem::nl::Solver<S, f64>
+where
+    S: Send + fem::nl::NLSolver<fem::nl::NLProblem<f64>, f64>,
+{
     #[inline]
     fn solve(&mut self) -> SimResult {
         self.step().into()

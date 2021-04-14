@@ -41,6 +41,8 @@ pub trait EnergyGradient<T: Real> {
 pub trait EnergyHessianTopology {
     /// The number of non-zeros in the Hessian matrix of the energy.
     fn energy_hessian_size(&self) -> usize;
+    /// The number of non-zeros on the diagonal of the Hessian matrix of the energy.
+    fn num_hessian_diagonal_nnz(&self) -> usize;
     /// Compute the Hessian row and column indices of the Hessian matrix non-zero values.
     /// The `offset` parameter positions this energy Hessian product
     /// within a global Hessian matrix specified by the user.

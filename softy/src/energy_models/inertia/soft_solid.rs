@@ -12,6 +12,7 @@ use crate::matrix::*;
 use crate::objects::solid::*;
 
 const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 12;
+const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET: usize = 12;
 
 pub(crate) struct TetMeshInertia<'a>(pub &'a TetMeshSolid);
 
@@ -90,6 +91,10 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
 impl EnergyHessianTopology for TetMeshInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.tetmesh.num_cells() * NUM_HESSIAN_TRIPLETS_PER_TET
+    }
+
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        self.0.tetmesh.num_cells() * NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(

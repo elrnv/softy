@@ -34,7 +34,7 @@ TBD
 # References
 
  - [\[1\] Egor Larionov, Ye Fan, and Dinesh K. Pai. 2021. Frictional Contact on Smooth Elastic Solids. ACM
-   Trans. Graph. 40, 2, Article 15 (April 2021), 17 pages. DOI:https://doi.org/10.1145/3446663 [\[1\]],
+   Trans. Graph. 40, 2, Article 15 (April 2021), 17 pages. DOI:https://doi.org/10.1145/3446663][\[1\]],
 
 
 # C API conventions

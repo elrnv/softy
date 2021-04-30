@@ -1,3 +1,41 @@
+# Softy
+
+Simulation tools and libraries for animating rigid and soft objects (including cloth) subject to
+frictional contacts against smooth implicit surfaces.
+
+This repository includes a reference implementation for [\[1\]].
+
+# Overview
+
+The included tools and libraries are organized in directories as follows
+ - [implicits](implicits)  --- A Rust crate to generate local and global implicit surfaces.
+ - [implicits-hdk](implicits-hdk)  --- A [Houdini](https://sidefx.com/products/houdini) plugin for
+   the [implicits](implicits) Rust crate.
+ - [cimplicits](cimplicits) --- A C wrapper for the [implicits](implicits) crate.
+ - [softy](softy)  --- A Rust crate for simulating interacting soft (both solid and shell) and rigid objects.
+ - [softy-hdk](softy-hdk)  --- A [Houdini](https://sidefx.com/products/houdini) plugin for
+   the [softy](softy) Rust crate.
+
+These tools are mainly written in [Rust](https://www.rust-lang.org) with C/C++ wrappers.
+
+## Implicit Surfaces
+
+TBD
+
+## Finite element simulation of soft tissues and cloth
+
+TBD
+
+## Houdini Plugins
+
+TBD
+
+
+# References
+
+ - [\[1\] Egor Larionov, Ye Fan, and Dinesh K. Pai. 2021. Frictional Contact on Smooth Elastic Solids. ACM
+   Trans. Graph. 40, 2, Article 15 (April 2021), 17 pages. DOI:https://doi.org/10.1145/3446663 [\[1\]],
+
 
 # C API conventions
 
@@ -26,3 +64,5 @@ This repository is licensed under the [Mozilla Public License, v. 2.0](https://m
 # Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+[\[1\]]: https://doi.org/10.1145/3446663

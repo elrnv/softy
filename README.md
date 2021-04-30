@@ -5,6 +5,15 @@ frictional contacts against smooth implicit surfaces.
 
 This repository includes a reference implementation for [\[1\]].
 
+Softy and its documentation is a work in progress and contains loads of experimental code and
+unfinished prototypes for future works.
+
+Some relatively independent utilities have already been factored out of this repo in an effort to
+simplify the implementation and make parts of it useful for other purposes. Beware that some of
+these are documented (e.g. [`autodiff`](https://github.com/elrnv/autodiff.git),
+[`hdkrs`](https://github.com/elrnv/hdkrs.git)), but some are not
+(e.g. [`gut`](https://github.com/gut)).
+
 # Overview
 
 The included tools and libraries are organized in directories as follows

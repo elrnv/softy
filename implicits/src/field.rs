@@ -191,6 +191,27 @@ impl<T: Scalar> LocalMLS<T> {
         self.base_radius * self.kernel.radius_multiplier()
     }
 }
+impl<T: Real> LocalMLS<T> {
+    /// Creates a clone of this `LocalMLS` with all reals cast to the given type.
+    pub fn clone_cast<S: Real>(&self) -> LocalMLS<S> {
+        LocalMLS {
+            kernel: self.kernel.clone(),
+            base_radius: self.base_radius,
+            max_step: S::from(self.max_step).unwrap(),
+            surf_base: Box::new(self.surf_base.clone_cast::<S>()),
+        }
+    }
+}
+
+impl<T: Real> GlobalMLS<T> {
+    /// Creates a clone of this `GlobalMLS` with all reals cast to the given type.
+    pub fn clone_cast<S: Real>(&self) -> GlobalMLS<S> {
+        GlobalMLS {
+            kernel: self.kernel.clone(),
+            surf_base: Box::new(self.surf_base.clone_cast::<S>()),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde_all", derive(serde::Serialize, serde::Deserialize))]
@@ -222,6 +243,25 @@ where
 }
 
 impl<T: Real> ImplicitSurfaceBase<T> {
+    /// Creates a clone of this `ImplicitSurfaceBase` with all reals cast to the given type.
+    pub fn clone_cast<S: Real>(&self) -> ImplicitSurfaceBase<S> {
+        use tensr::AsTensor;
+        let samples = self.samples.clone_cast::<S>();
+        let spatial_tree = build_rtree_from_samples(&samples);
+        ImplicitSurfaceBase {
+            bg_field_params: self.bg_field_params.clone(),
+            surface_topo: self.surface_topo.clone(),
+            surface_vertex_positions: self
+                .surface_vertex_positions
+                .iter()
+                .map(|x| x.as_tensor().cast::<S>().into())
+                .collect(),
+            samples,
+            dual_topo: self.dual_topo.clone(),
+            sample_type: self.sample_type,
+            spatial_tree,
+        }
+    }
     /// Reverse the direction of the normals.
     ///
     /// This effectively swaps the sign of the implicit potential.

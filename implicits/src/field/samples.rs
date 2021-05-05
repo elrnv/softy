@@ -2,7 +2,7 @@ use geo::ops::*;
 use num_traits::Zero;
 use rayon::prelude::IndexedParallelIterator;
 use std::ops::Neg;
-use tensr::{Scalar, Vector3};
+use tensr::{AsTensor, Scalar, Vector3};
 
 pub use super::*;
 
@@ -52,6 +52,26 @@ pub struct Samples<T> {
     /// match by interpolating implicit surfaces. This means that, for example, the zero
     /// iso-surface will not necessarily pass through the given points.
     pub values: Vec<T>,
+}
+
+impl<T: Scalar> Samples<T> {
+    /// Creates a clone of this `Samples` with all reals cast to the given type.
+    pub fn clone_cast<S: Scalar>(&self) -> Samples<S> {
+        Samples {
+            positions: self
+                .positions
+                .iter()
+                .map(|v| v.as_tensor().cast::<S>().into())
+                .collect(),
+            normals: self
+                .normals
+                .iter()
+                .map(|v| v.as_tensor().cast::<S>().into())
+                .collect(),
+            velocities: self.velocities.iter().map(|v| v.cast::<S>()).collect(),
+            values: self.values.iter().map(|&x| S::from(x).unwrap()).collect(),
+        }
+    }
 }
 
 impl<T: Scalar + Neg<Output = T>> Samples<T> {

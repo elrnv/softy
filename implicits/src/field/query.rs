@@ -116,6 +116,25 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
+    /// Creates a clone of this `QueryTopo` with all reals cast to the given type.
+    pub fn clone_cast<S: Real>(&self) -> QueryTopo<S> {
+        match self {
+            QueryTopo::Local { surf, neighborhood } => QueryTopo::Local {
+                surf: surf.clone_cast::<S>(),
+                neighborhood: neighborhood.clone(),
+            },
+            QueryTopo::Global {
+                surf,
+                closest_samples,
+                sample_indices,
+            } => QueryTopo::Global {
+                surf: surf.clone_cast::<S>(),
+                closest_samples: closest_samples.clone(),
+                sample_indices: sample_indices.clone(),
+            },
+        }
+    }
+
     /*
      * Base accessors
      */

@@ -436,7 +436,7 @@ mod tests {
         let grid = make_grid(22, 22);
         let grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
+            .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();
@@ -523,7 +523,7 @@ mod tests {
         let grid = make_grid(23, 23);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
+            .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();
@@ -614,7 +614,7 @@ mod tests {
         let grid = make_grid(11, 11);
         let mut grid_pos: Vec<_> = grid
             .vertex_position_iter()
-            .map(|&p| Vector3::new(p).map(|x| F1::cst(x)).into())
+            .map(|&p| Vector3::new(p).mapd(|x| F1::cst(x)).into())
             .collect();
 
         let trimesh = PlatonicSolidBuilder::build_octahedron();

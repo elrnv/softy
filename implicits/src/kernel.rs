@@ -221,7 +221,7 @@ impl GlobalInvDistance2 {
     }
 }
 
-impl<T: Scalar> Kernel<T> for GlobalInvDistance2 {
+impl<T: Scalar + Float> Kernel<T> for GlobalInvDistance2 {
     fn f(&self, x: T) -> T {
         let eps = T::from(self.epsilon).unwrap();
         let w = T::one() / (x * x + eps * eps);
@@ -229,11 +229,11 @@ impl<T: Scalar> Kernel<T> for GlobalInvDistance2 {
     }
 
     fn df(&self, x: T) -> T {
-        T::from(self.f(autodiff::F1::var(x)).deriv()).unwrap()
+        self.f(autodiff::F::<T, T>::var(x)).deriv()
     }
 
     fn ddf(&self, x: T) -> T {
-        T::from(self.df(autodiff::F1::var(x)).deriv()).unwrap()
+        self.df(autodiff::F::<T, T>::var(x)).deriv()
     }
 }
 
@@ -306,7 +306,7 @@ impl LocalInterpolating {
     }
 }
 
-impl<T: Scalar> Kernel<T> for LocalInterpolating {
+impl<T: Scalar + Float> Kernel<T> for LocalInterpolating {
     fn f(&self, x: T) -> T {
         let r = T::from(self.radius).unwrap();
         let xc = T::from(self.closest_d).unwrap();
@@ -321,11 +321,11 @@ impl<T: Scalar> Kernel<T> for LocalInterpolating {
         envelope * sc * sc * (T::one() / (s * s) - T::one())
     }
     fn df(&self, x: T) -> T {
-        T::from(self.f(autodiff::F1::var(x)).deriv()).unwrap()
+        self.f(autodiff::F::var(x)).deriv()
     }
 
     fn ddf(&self, x: T) -> T {
-        T::from(self.df(autodiff::F1::var(x)).deriv()).unwrap()
+        self.df(autodiff::F::var(x)).deriv()
     }
 }
 

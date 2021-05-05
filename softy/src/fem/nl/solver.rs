@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use num_traits::Zero;
 
+use autodiff as ad;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use tensr::*;
@@ -16,6 +17,7 @@ use crate::contact::*;
 use crate::fem::{ref_tet, state::*};
 use crate::inf_norm;
 use crate::objects::*;
+use crate::Real64;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 #[derive(Clone, Debug)]
@@ -164,11 +166,11 @@ impl SolverBuilder {
     }
 
     /// Helper function to compute a set of frictional contacts.
-    fn build_frictional_contacts(
+    fn build_frictional_contacts<T: Real>(
         solids: &[TetMeshSolid],
         shells: &[TriMeshShell],
-        frictional_contacts: Vec<(FrictionalContactParams, (usize, usize))>,
-    ) -> Vec<FrictionalContactConstraint> {
+        frictional_contacts: &[(FrictionalContactParams, (usize, usize))],
+    ) -> Vec<FrictionalContactConstraint<T>> {
         let material_source = Self::build_material_sources(solids, shells);
 
         // Convert frictional contact parameters into frictional contact constraints.
@@ -177,8 +179,8 @@ impl SolverBuilder {
         // is assigned, then at least two frictional contact constraints are created.
 
         frictional_contacts
-            .into_iter()
-            .flat_map(|(params, (obj_id, coll_id))| {
+            .iter()
+            .flat_map(|&(params, (obj_id, coll_id))| {
                 let material_source_obj = material_source.view().get(obj_id);
                 let material_source_coll = material_source.view().get(coll_id);
                 log::info!(
@@ -205,13 +207,13 @@ impl SolverBuilder {
             .collect()
     }
 
-    fn build_contact_constraint<'a>(
+    fn build_contact_constraint<'a, T: Real>(
         solids: &'a [TetMeshSolid],
         shells: &'a [TriMeshShell],
         params: FrictionalContactParams,
         material_source_coll: &'a [SourceIndex],
         material_source_obj: &'a [SourceIndex],
-    ) -> impl Iterator<Item = FrictionalContactConstraint> + 'a {
+    ) -> impl Iterator<Item = FrictionalContactConstraint<T>> + 'a {
         let construct_friction_constraint =
             move |m0: SourceIndex, m1: SourceIndex, constraint| FrictionalContactConstraint {
                 object_index: m0.into_source(params.use_fixed),
@@ -261,7 +263,7 @@ impl SolverBuilder {
     fn build_state<T: Real>(
         solids: Vec<TetMeshSolid>,
         shells: Vec<TriMeshShell>,
-    ) -> Result<State<T>, Error> {
+    ) -> Result<State<T, ad::FT<T>>, Error> {
         // Generalized coordinates and their derivatives.
         let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<T>, Vec<T>>>>::default();
 
@@ -389,13 +391,34 @@ impl SolverBuilder {
         });
         let vtx = vtx_state.clone().map_storage(|vtx| Vertex {
             prev: vtx.clone(),
-            cur: vtx,
+            cur: vtx.clone(),
         });
         let vtx_ws_next = vtx_state.clone().map_storage(|vtx| {
             let n = vtx.len();
+            let state_ad = VertexState {
+                pos: vtx.pos.iter().map(|&x| ad::F::cst(x)).collect(),
+                vel: vtx.vel.iter().map(|&x| ad::F::cst(x)).collect(),
+            };
             VertexWorkspace {
                 state: vtx,
+                state_ad,
                 grad: vec![T::zero(); n],
+                lambda: vec![T::zero(); n],
+                vfc: vec![T::zero(); n],
+                lambda_ad: vec![ad::F::zero(); n],
+                vfc_ad: vec![ad::F::zero(); n],
+            }
+        });
+
+        let dof_ws_next = dof_state.clone().map_storage(|dof| {
+            let m = dof.len();
+            GeneralizedWorkspace {
+                state: dof.clone(),
+                state_ad: GeneralizedState {
+                    q: dof.q.iter().cloned().map(ad::F::cst).collect(),
+                    dq: dof.dq.iter().cloned().map(ad::F::cst).collect(),
+                },
+                r_ad: vec![ad::F::zero(); m],
             }
         });
 
@@ -404,7 +427,7 @@ impl SolverBuilder {
             vtx,
 
             workspace: RefCell::new(WorkspaceData {
-                dof: dof_state,
+                dof: dof_ws_next,
                 vtx: vtx_ws_next,
             }),
 
@@ -737,40 +760,42 @@ impl SolverBuilder {
     fn compute_min_modulus(solids: &[TetMeshSolid], shells: &[TriMeshShell]) -> Result<f32, Error> {
         let mut min_modulus = f32::INFINITY;
 
+        let ignore_zero = |x| if x == 0.0 { f32::INFINITY } else { x };
+
         for TetMeshSolid { ref tetmesh, .. } in solids.iter() {
             min_modulus = min_modulus
-                .min(
+                .min(ignore_zero(
                     *tetmesh
                         .attrib_iter::<LambdaType, CellIndex>(LAMBDA_ATTRIB)?
                         .min_by(|a, b| a.partial_cmp(b).expect("Invalid First Lame Parameter"))
-                        .expect("Given TetMesh is empty"),
-                )
-                .min(
+                        .unwrap_or(&f32::INFINITY),
+                ))
+                .min(ignore_zero(
                     *tetmesh
                         .attrib_iter::<MuType, CellIndex>(MU_ATTRIB)?
                         .min_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
-                        .expect("Given TetMesh is empty"),
-                );
+                        .unwrap_or(&f32::INFINITY),
+                ));
         }
 
         for TriMeshShell { ref trimesh, data } in shells.iter() {
             match data {
                 ShellData::Soft { .. } => {
                     min_modulus = min_modulus
-                        .min(
+                        .min(ignore_zero(
                             *trimesh
                                 .attrib_iter::<LambdaType, FaceIndex>(LAMBDA_ATTRIB)?
                                 .min_by(|a, b| {
                                     a.partial_cmp(b).expect("Invalid First Lame Parameter")
                                 })
-                                .expect("Given TriMesh is empty"),
-                        )
-                        .min(
+                                .unwrap_or(&f32::INFINITY),
+                        ))
+                        .min(ignore_zero(
                             *trimesh
                                 .attrib_iter::<MuType, FaceIndex>(MU_ATTRIB)?
                                 .min_by(|a, b| a.partial_cmp(b).expect("Invalid Shear Modulus"))
-                                .expect("Given TriMesh is empty"),
-                        );
+                                .unwrap_or(&f32::INFINITY),
+                        ));
                 }
                 _ => {}
             }
@@ -835,8 +860,16 @@ impl SolverBuilder {
             });
         }
 
-        let frictional_contacts =
-            Self::build_frictional_contacts(&state.solids, &state.shells, frictional_contacts);
+        let frictional_contacts_ad = Self::build_frictional_contacts::<ad::FT<T>>(
+            &state.solids,
+            &state.shells,
+            &frictional_contacts,
+        );
+        let frictional_contacts = Self::build_frictional_contacts::<T>(
+            &state.solids,
+            &state.shells,
+            &frictional_contacts,
+        );
 
         // Compute maxes
 
@@ -863,6 +896,11 @@ impl SolverBuilder {
         let max_element_bending_scale =
             Self::compute_max_bending_stiffness(&state.shells) / max_element_size;
 
+        log::trace!("max_element_modulus_scale = {}", max_element_modulus_scale);
+        log::trace!("max_element_inertia_scale = {}", max_element_inertia_scale);
+        log::trace!("max_element_gravity_scale = {}", max_element_gravity_scale);
+        log::trace!("max_element_bending_scale = {}", max_element_bending_scale);
+
         // Determine the most likely dominant force.
         let mut max_scale = max_element_modulus_scale
             .max(max_element_inertia_scale)
@@ -877,16 +915,18 @@ impl SolverBuilder {
 
         // Compute mins
 
+        let ignore_zero = |x| if x == 0.0 { f64::INFINITY } else { x };
+
         let min_element_size = Self::compute_min_element_size(&state.solids, &state.shells);
 
-        let min_element_modulus_scale = Self::compute_min_modulus(&state.solids, &state.shells)?
-            as f64
-            * min_element_size
-            * min_element_size;
+        let min_element_modulus_scale =
+            ignore_zero(Self::compute_min_modulus(&state.solids, &state.shells)? as f64)
+                * min_element_size
+                * min_element_size;
 
         let min_element_mass = Self::compute_min_element_mass(&state.solids, &state.shells);
 
-        let min_element_gravity_scale = min_element_mass * gravity.as_tensor().norm();
+        let min_element_gravity_scale = ignore_zero(min_element_mass * gravity.as_tensor().norm());
 
         let min_element_inertia_scale = if time_step > 0.0 {
             min_element_mass * min_element_size / (time_step * time_step)
@@ -897,15 +937,26 @@ impl SolverBuilder {
         let min_element_bending_scale =
             Self::compute_min_bending_stiffness(&state.shells) / min_element_size;
 
+        log::trace!("min_element_modulus_scale = {}", min_element_modulus_scale);
+        log::trace!("min_element_inertia_scale = {}", min_element_inertia_scale);
+        log::trace!("min_element_gravity_scale = {}", min_element_gravity_scale);
+        log::trace!("min_element_bending_scale = {}", min_element_bending_scale);
+
         // Determine the least dominant force.
         let min_scale = min_element_modulus_scale
             .min(min_element_inertia_scale)
             .min(min_element_gravity_scale)
             .min(min_element_bending_scale);
 
+        let num_variables = state.dof.storage().len();
+
         Ok(NLProblem {
             state,
+            lambda: RefCell::new(Vec::new()),
+            lambda_ad: RefCell::new(Vec::new()),
+            kappa: 1e5,
             frictional_contacts,
+            frictional_contacts_ad,
             volume_constraints,
             time_step,
             gravity,
@@ -919,18 +970,18 @@ impl SolverBuilder {
     }
 
     /// Build the simulation solver.
-    pub fn build(&self) -> Result<Solver<impl NLSolver<NLProblem<f64>, f64>, f64>, Error> {
+    pub fn build<T: Real64>(&self) -> Result<Solver<impl NLSolver<NLProblem<T>, T>, T>, Error> {
         self.build_with_interrupt(|| true)
     }
 
     /// Build the simulation solver with a given interrupter.
     ///
     /// This version of build allows the caller to conditionally interrupt the solver.
-    pub fn build_with_interrupt(
+    pub fn build_with_interrupt<T: Real64>(
         &self,
         mut interrupt_checker: impl FnMut() -> bool + Send + 'static,
-    ) -> Result<Solver<impl NLSolver<NLProblem<f64>, f64>, f64>, Error> {
-        let problem = self.build_problem::<f64>()?;
+    ) -> Result<Solver<impl NLSolver<NLProblem<T>, T>, T>, Error> {
+        let problem = self.build_problem::<T>()?;
 
         let num_variables = problem.num_variables();
 
@@ -954,16 +1005,19 @@ impl SolverBuilder {
                 r_tol,
                 x_tol,
                 max_iter: params.max_iterations,
+                linsolve_tol: params.linsolve_tolerance,
+                linsolve_max_iter: params.max_linsolve_iterations,
                 line_search: params.line_search,
             },
             Box::new(move |_| interrupt_checker()),
+            Box::new(|_| true),
         );
 
         Ok(Solver {
             solver,
             sim_params: params,
             max_step: 0.0,
-            solution: vec![0.0; num_variables],
+            solution: vec![T::zero(); num_variables],
         })
     }
 
@@ -1168,9 +1222,14 @@ where
     T: Real64 + na::RealField,
     S: NLSolver<NLProblem<T>, T>,
 {
-    /// Set the interrupt checker to the given function.
-    pub fn set_simple_interrupter(&self, mut interrupted: impl FnMut() -> bool + Send + 'static) {
-        *self.solver.intermediate_callback().borrow_mut() = Box::new(move |_| !interrupted());
+    /// Sets the interrupt checker to be called at every outer iteration.
+    pub fn set_coarse_interrupter(&self, mut interrupted: impl FnMut() -> bool + Send + 'static) {
+        *self.solver.outer_callback().borrow_mut() = Box::new(move |_| !interrupted());
+    }
+
+    /// Sets the interrupt checker to be called at every inner iteration.
+    pub fn set_fine_interrupter(&self, mut interrupted: impl FnMut() -> bool + Send + 'static) {
+        *self.solver.inner_callback().borrow_mut() = Box::new(move |_| !interrupted());
     }
 
     /// If the time step was not specified or specified to be zero, then this function will return
@@ -1325,6 +1384,8 @@ where
         if self.sim_params.jacobian_test {
             self.problem().check_jacobian(true);
         }
+
+        self.problem_mut().update_constraint_set();
 
         let result = self.solver.solve_with(&mut self.solution);
         log::trace!("Solve Result: {}", &result);

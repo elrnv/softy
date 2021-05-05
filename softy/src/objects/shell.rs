@@ -599,26 +599,26 @@ impl TriMeshShell {
         }
     }
 
-    pub fn rigid_effective_mass_inv(
-        mass: f64,
-        translation: Vector3<f64>,
-        rot: Vector3<f64>,
-        inertia: Matrix3<f64>,
-        contact_points: SelectView<Chunked3<&[f64]>>,
-    ) -> Tensor![f64; D D 3 3] {
+    pub fn rigid_effective_mass_inv<T: Real>(
+        mass: T,
+        translation: Vector3<T>,
+        rot: Vector3<T>,
+        inertia: Matrix3<T>,
+        contact_points: SelectView<Chunked3<&[T]>>,
+    ) -> Tensor![T; D D 3 3] {
         let n = contact_points.len();
         debug_assert!(n > 0);
-        let mut out = <Tensor![f64; D D 3 3]>::from_shape(&[n, n, 3, 3]);
+        let mut out = <Tensor![T; D D 3 3]>::from_shape(&[n, n, 3, 3]);
 
         let inertia_inv = inertia.inverse().expect("Failed to invert inertia matrix");
 
         for ((_, &row_p), mut out_row) in contact_points.iter().zip(out.iter_mut()) {
             for ((_, &col_p), out_block) in contact_points.iter().zip(out_row.iter_mut()) {
-                let block: Matrix3<f64> = Matrix3::identity() / mass
+                let block: Matrix3<T> = Matrix3::identity() / mass
                     - rotate(row_p.into_tensor() - translation, -rot).skew()
                         * inertia_inv
                         * rotate(col_p.into_tensor() - translation, -rot).skew();
-                let out_arrays: &mut [[f64; 3]; 3] = out_block.into_arrays();
+                let out_arrays: &mut [[T; 3]; 3] = out_block.into_arrays();
                 *out_arrays = block.into_data();
             }
         }

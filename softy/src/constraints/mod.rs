@@ -4,7 +4,7 @@ pub mod volume;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
-use crate::friction::FrictionalContact;
+use crate::friction::FrictionImpulses;
 use crate::matrix::MatrixElementIndex;
 use crate::Error;
 use crate::TriMesh;
@@ -63,11 +63,11 @@ impl<M, T> ContactSurface<M, T> {
 }
 
 /// Construct a new contact constraint based on the given parameters.
-pub fn build_contact_constraint(
+pub fn build_contact_constraint<T: Real>(
     object: ContactSurface<&TriMesh, f64>,
     collider: ContactSurface<&TriMesh, f64>,
     params: FrictionalContactParams,
-) -> Result<RefCell<PointContactConstraint>, crate::Error> {
+) -> Result<RefCell<PointContactConstraint<T>>, crate::Error> {
     Ok(RefCell::new(PointContactConstraint::new(
         object,
         collider,
@@ -194,18 +194,18 @@ fn remap_values_complex_test() {
     );
 }
 
-pub trait ContactConstraint:
-    for<'a> Constraint<'a, f64, Input = [SubsetView<'a, Chunked3<&'a [f64]>>; 2]>
-    + for<'a> ContactConstraintJacobian<'a, f64>
-    + for<'a> ContactConstraintHessian<'a, f64, InputDual = &'a [f64]>
+pub trait ContactConstraint<T: Real>:
+    for<'a> Constraint<'a, T, Input = [SubsetView<'a, Chunked3<&'a [T]>>; 2]>
+    + for<'a> ContactConstraintJacobian<'a, T>
+    + for<'a> ContactConstraintHessian<'a, T, InputDual = &'a [T]>
     + std::fmt::Debug
 {
     /// Total number of contacts that could occur.
     fn num_potential_contacts(&self) -> usize;
     /// Provide the frictional contact data.
-    fn frictional_contact(&self) -> Option<&FrictionalContact>;
+    fn frictional_contact(&self) -> Option<&FrictionImpulses<T>>;
     /// Provide the frictional contact mutable data.
-    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionalContact>;
+    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionImpulses<T>>;
     /// Return a set of surface vertex indices that could be in contact.
     fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]>;
 
@@ -223,56 +223,48 @@ pub trait ContactConstraint:
 
     /// Project friction impulses to the tangential plane according to the provided positional
     /// configuration.
-    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]);
+    fn project_friction_impulses(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]);
 
     /// Update the position configuration of contacting objects using the given position data.
-    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[f64]>>; 2]);
+    fn update_contact_pos(&mut self, x: [SubsetView<Chunked3<&[T]>>; 2]);
 
     /// Update the underlying friction impulse based on the given predictive step.
     fn update_frictional_contact_impulse(
         &mut self,
-        contact_impulse: &[f64],
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
-        dx: [SubsetView<Chunked3<&[f64]>>; 2],
-        rigid_motion: [Option<[[f64; 3]; 2]>; 2],
-        constraint_values: &[f64],
+        contact_impulse: &[T],
+        x: [SubsetView<Chunked3<&[T]>>; 2],
+        dx: [SubsetView<Chunked3<&[T]>>; 2],
+        rigid_motion: [Option<[[T; 3]; 2]>; 2],
+        constraint_values: &[T],
         friction_steps: u32,
     ) -> u32;
 
     fn add_mass_weighted_frictional_contact_impulse_to_object(
         &self,
-        x: SubsetView<Chunked3<&mut [f64]>>,
+        x: SubsetView<Chunked3<&mut [T]>>,
     );
 
     fn add_mass_weighted_frictional_contact_impulse_to_collider(
         &self,
-        x: SubsetView<Chunked3<&mut [f64]>>,
+        x: SubsetView<Chunked3<&mut [T]>>,
     );
 
-    fn smooth_collider_values(&self, _: SubsetView<&mut [f64]>) {}
+    fn smooth_collider_values(&self, _: SubsetView<&mut [T]>) {}
 
     /// Add the friction corrector impulse to the given vector.
-    fn add_friction_corrector_impulse(&self, _: [SubsetView<Chunked3<&mut [f64]>>; 2], _: f64) {}
+    fn add_friction_corrector_impulse(&self, _: [SubsetView<Chunked3<&mut [T]>>; 2], _: T) {}
 
-    fn collider_contact_normals(&mut self, _: Chunked3<&mut [f64]>) {}
+    fn collider_contact_normals(&mut self, _: Chunked3<&mut [T]>) {}
 
     /// Add the frictional impulse to the given gradient vector representing the object.
-    fn add_friction_impulse_to_object(
-        &self,
-        grad: SubsetView<Chunked3<&mut [f64]>>,
-        multiplier: f64,
-    );
+    fn add_friction_impulse_to_object(&self, grad: SubsetView<Chunked3<&mut [T]>>, multiplier: T);
 
     /// Add the frictional impulse to the given gradient vector representing the collider.
-    fn add_friction_impulse_to_collider(
-        &self,
-        grad: SubsetView<Chunked3<&mut [f64]>>,
-        multiplier: f64,
-    );
+    fn add_friction_impulse_to_collider(&self, grad: SubsetView<Chunked3<&mut [T]>>, multiplier: T);
 
     /// Compute the frictional energy dissipation.
-    fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[f64]>>; 2]) -> f64 {
-        let mut dissipation = 0.0;
+    fn frictional_dissipation(&self, vel: [SubsetView<Chunked3<&[T]>>; 2]) -> T {
+        let mut dissipation = T::zero();
         if let Some(ref frictional_contact) = self.frictional_contact() {
             if frictional_contact.object_impulse.is_empty() {
                 return dissipation;
@@ -297,7 +289,7 @@ pub trait ContactConstraint:
                     Vector3::new(
                         frictional_contact
                             .contact_basis
-                            .from_contact_coordinates([0.0, f[1], f[2]], contact_idx)
+                            .from_contact_coordinates([T::zero(), f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
@@ -312,15 +304,15 @@ pub trait ContactConstraint:
 
     fn add_contact_impulse(
         &mut self,
-        x: [SubsetView<Chunked3<&[f64]>>; 2],
-        contact_impulse: &[f64],
-        impulse: [Chunked3<&mut [f64]>; 2],
+        x: [SubsetView<Chunked3<&[T]>>; 2],
+        contact_impulse: &[T],
+        impulse: [Chunked3<&mut [T]>; 2],
     );
     /// Retrieve a vector of contact normals. These are unit vectors pointing
     /// away from the surface. These normals are returned for each query point
     /// even if it is not touching the surface. This function returns an error if
     /// there are no cached query points.
-    fn contact_normals(&self) -> Vec<[f64; 3]>;
+    fn contact_normals(&self) -> Vec<[T; 3]>;
     /// Get the radius of influence.
     fn contact_radius(&self) -> f64;
     /// Update the multiplier for the radius of influence.
@@ -333,8 +325,8 @@ pub trait ContactConstraint:
     /// information.
     fn update_neighbors(
         &mut self,
-        object_pos: SubsetView<Chunked3<&[f64]>>,
-        collider_pos: SubsetView<Chunked3<&[f64]>>,
+        object_pos: SubsetView<Chunked3<&[T]>>,
+        collider_pos: SubsetView<Chunked3<&[T]>>,
     ) -> bool;
     /// The `max_step` parameter sets the maximum position change allowed between calls to retrieve
     /// the derivative sparsity pattern. If this is set too large, the derivative will be denser
@@ -345,8 +337,8 @@ pub trait ContactConstraint:
     /// Precompute constraint functions based on the given position to be used in the optimization.
     fn linearize_constraint(
         &mut self,
-        _object_pos: SubsetView<Chunked3<&[f64]>>,
-        _collider_pos: SubsetView<Chunked3<&[f64]>>,
+        _object_pos: SubsetView<Chunked3<&[T]>>,
+        _collider_pos: SubsetView<Chunked3<&[T]>>,
     ) {
     }
     fn is_linear(&self) -> bool {

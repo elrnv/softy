@@ -121,7 +121,7 @@ pub struct FrictionalContactConstraint {
 pub(crate) struct NonLinearProblem {
     /// A model of the current problem. This includes all primal variables and
     /// any additional mesh data required for simulation.
-    pub state: State<f64>,
+    pub state: State<f64, autodiff::FT<f64>>,
     /// One way contact constraints between a pair of objects.
     pub frictional_contacts: Vec<FrictionalContactConstraint>,
     /// Constraint on the total volume.
@@ -249,7 +249,7 @@ impl NonLinearProblem {
         State::update_simulated_meshes_with(
             &mut solids,
             &mut shells,
-            ws.dof.view(),
+            ws.dof.view().map_storage(|dof| dof.state),
             ws.vtx.view().map_storage(|vtx| vtx.state),
         );
         geo::io::save_tetmesh(
@@ -406,9 +406,9 @@ impl NonLinearProblem {
             state.integrate_step(time_step);
             let mut ws = state.workspace.borrow_mut();
             let WorkspaceData { dof, vtx, .. } = &mut *ws;
-            State::sync_pos(
+            sync_pos(
                 &state.shells,
-                dof.view().map_storage(|dof| dof.q),
+                dof.view().map_storage(|dof| dof.state.q),
                 vtx.view_mut().map_storage(|vtx| vtx.state.pos),
             );
         }
@@ -422,7 +422,7 @@ impl NonLinearProblem {
         } in frictional_contacts.iter_mut()
         {
             if solution_is_some {
-                let q = ws.dof.view().map_storage(|dof| dof.q);
+                let q = ws.dof.view().map_storage(|dof| dof.state.q);
                 let pos = ws.vtx.view().map_storage(|vtx| vtx.state.pos);
                 let object_pos = state.next_pos(q, pos, *object_index);
                 let collider_pos = state.next_pos(q, pos, *collider_index);
@@ -473,12 +473,12 @@ impl NonLinearProblem {
             let [obj_idx, coll_idx] = [fc.object_index, fc.collider_index];
             let fc = fc.constraint.borrow();
 
-            let dq = dof.view_mut().map_storage(|dof| dof.dq);
+            let dq = dof.view_mut().map_storage(|dof| dof.state.dq);
             let vtx_vel = vtx.view_mut().map_storage(|vtx| vtx.state.vel);
             let mut obj_vel = state.mesh_vertex_subset(dq, vtx_vel, obj_idx);
             fc.add_mass_weighted_frictional_contact_impulse_to_object(obj_vel.view_mut());
 
-            let dq = dof.view_mut().map_storage(|dof| dof.dq);
+            let dq = dof.view_mut().map_storage(|dof| dof.state.dq);
             let vtx_vel = vtx.view_mut().map_storage(|vtx| vtx.state.vel);
             let mut coll_vel = state.mesh_vertex_subset(dq, vtx_vel, coll_idx);
             fc.add_mass_weighted_frictional_contact_impulse_to_collider(coll_vel.view_mut());
@@ -498,15 +498,15 @@ impl NonLinearProblem {
                 vtx: vtx_next,
                 ..
             } = &mut *ws;
-            State::sync_vel(
+            sync_vel(
                 &self.state.shells,
-                dof_next.view().map_storage(|dof| dof.dq),
+                dof_next.view().map_storage(|dof| dof.state.dq),
                 self.state.dof.view().map_storage(|dof| dof.cur.q),
                 vtx_next.view_mut().map_storage(|vtx| vtx.state.vel),
             );
-            State::sync_pos(
+            sync_pos(
                 &self.state.shells,
-                dof_next.view().map_storage(|dof| dof.q),
+                dof_next.view().map_storage(|dof| dof.state.q),
                 vtx_next.view_mut().map_storage(|vtx| vtx.state.pos),
             );
         }
@@ -620,19 +620,23 @@ impl NonLinearProblem {
             for (i, solid) in self.state.solids.iter().enumerate() {
                 let dof_cur = dof_cur.at(SOLIDS_INDEX).at(i).into_storage();
                 let dof_next = dof_next.at(SOLIDS_INDEX).at(i).into_storage();
-                obj += solid.elasticity().energy(dof_cur.q, dof_next.q);
-                obj += solid.gravity(self.gravity).energy(dof_cur.q, dof_next.q);
+                obj += solid.elasticity().energy(dof_cur.q, dof_next.state.q);
+                obj += solid
+                    .gravity(self.gravity)
+                    .energy(dof_cur.q, dof_next.state.q);
                 if !self.is_static() {
-                    obj += solid.inertia().energy(dof_cur.dq, dof_next.dq);
+                    obj += solid.inertia().energy(dof_cur.dq, dof_next.state.dq);
                 }
             }
 
             for (i, shell) in self.state.shells.iter().enumerate() {
                 let dof_cur = dof_cur.at(SHELLS_INDEX).at(i).into_storage();
                 let dof_next = dof_next.at(SHELLS_INDEX).at(i).into_storage();
-                obj += shell.elasticity().energy(dof_cur.q, dof_next.q);
-                obj += shell.gravity(self.gravity).energy(dof_cur.q, dof_next.q);
-                obj += shell.inertia().energy(dof_cur.dq, dof_next.dq);
+                obj += shell.elasticity().energy(dof_cur.q, dof_next.state.q);
+                obj += shell
+                    .gravity(self.gravity)
+                    .energy(dof_cur.q, dof_next.state.q);
+                obj += shell.inertia().energy(dof_cur.dq, dof_next.state.dq);
             }
         }
 
@@ -644,18 +648,18 @@ impl NonLinearProblem {
                 dof: ws_dof,
                 vtx: ws_vtx,
             } = &mut *ws;
-            State::sync_vel(
+            sync_vel(
                 &self.state.shells,
-                ws_dof.view().map_storage(|dof| dof.dq),
+                ws_dof.view().map_storage(|dof| dof.state.dq),
                 self.state.dof.view().map_storage(|dof| dof.cur.q),
                 ws_vtx.view_mut().map_storage(|vtx| vtx.state.vel),
             );
             let vtx_next = ws_vtx.view();
             for fc in self.frictional_contacts.iter() {
                 let fc_constraint = fc.constraint.borrow();
-                if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
+                if let Some(fc_contact) = fc_constraint.friction_impulses.as_ref() {
                     if fc_contact.params.friction_forwarding > 0.0 {
-                        let dq_next = ws_dof.view().map_storage(|dof| dof.dq);
+                        let dq_next = ws_dof.view().map_storage(|dof| dof.state.dq);
                         let vel_next = vtx_next.map_storage(|vtx| vtx.state.vel);
                         let obj_v = self.state.next_vel(dq_next, vel_next, fc.object_index);
                         let col_v = self.state.next_vel(dq_next, vel_next, fc.collider_index);
@@ -991,9 +995,9 @@ impl NonLinearProblem {
         let q_cur = self.state.dof.view().map_storage(|dof| dof.cur.q);
         let mut ws = self.state.workspace.borrow_mut();
         let WorkspaceData { dof, vtx } = &mut *ws;
-        State::sync_vel(
+        sync_vel(
             &self.state.shells,
-            dof.view().map_storage(|dof| dof.dq),
+            dof.view().map_storage(|dof| dof.state.dq),
             q_cur,
             vtx.view_mut().map_storage(|vtx| vtx.state.vel),
         );
@@ -1026,7 +1030,7 @@ impl NonLinearProblem {
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let obj_cur_pos = state.cur_pos(fc.object_index);
             let col_cur_pos = state.cur_pos(fc.collider_index);
-            let dq_next = dof.view().map_storage(|dof| dof.dq);
+            let dq_next = dof.view().map_storage(|dof| dof.state.dq);
             let vtx_vel_next = vtx.view().map_storage(|vtx| vtx.state.vel);
             let obj_vel = state.next_vel(dq_next, vtx_vel_next, fc.object_index);
             let col_vel = state.next_vel(dq_next, vtx_vel_next, fc.collider_index);
@@ -1045,7 +1049,6 @@ impl NonLinearProblem {
 
             // TODO: Refactor this low level code out. There needs to be a mechanism to pass rigid
             // motion data to the constraints since rigid bodies have a special effective mass.
-            let q_cur = q_cur.at(SHELLS_INDEX);
             let rigid_motion = [
                 state.rigid_motion(fc.object_index),
                 state.rigid_motion(fc.collider_index),
@@ -1088,9 +1091,9 @@ impl NonLinearProblem {
         let q_cur = self.state.dof.view().map_storage(|dof| dof.cur.q);
         let mut ws = self.state.workspace.borrow_mut();
         let WorkspaceData { dof, vtx } = &mut *ws;
-        State::sync_vel(
+        sync_vel(
             &self.state.shells,
-            dof.view().map_storage(|dof| dof.dq),
+            dof.view().map_storage(|dof| dof.state.dq),
             q_cur,
             vtx.view_mut().map_storage(|vtx| vtx.state.vel),
         );
@@ -1115,7 +1118,7 @@ impl NonLinearProblem {
         for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
             let obj_cur_pos = state.cur_pos(fc.object_index);
             let col_cur_pos = state.cur_pos(fc.collider_index);
-            let dq_next = dof.view().map_storage(|dof| dof.dq);
+            let dq_next = dof.view().map_storage(|dof| dof.state.dq);
             let vtx_vel_next = vtx.view().map_storage(|vtx| vtx.state.vel);
             let obj_vel = state.next_vel(dq_next, vtx_vel_next, fc.object_index);
             let col_vel = state.next_vel(dq_next, vtx_vel_next, fc.collider_index);
@@ -1961,7 +1964,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
         self.state
             .update_workspace_velocity(uv_flat_view, 1.0 / self.variable_scale());
         let ws = self.state.workspace.borrow();
-        let unscaled_dq = ws.dof.view().map_storage(|dof| dof.dq);
+        let unscaled_dq = ws.dof.view().map_storage(|dof| dof.state.dq);
         let solid_prev_uv = unscaled_dq.isolate(SOLIDS_INDEX);
         let shell_prev_uv = unscaled_dq.isolate(SHELLS_INDEX);
 
@@ -2064,7 +2067,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
 
         {
             let ws = self.state.workspace.borrow();
-            let q_next = ws.dof.view().map_storage(|dof| dof.q);
+            let q_next = ws.dof.view().map_storage(|dof| dof.state.q);
             let q_cur = dof_cur.map_storage(|dof| dof.q);
 
             for (i, solid) in self.state.solids.iter().enumerate() {
@@ -2100,7 +2103,7 @@ impl ipopt::BasicProblem for NonLinearProblem {
             {
                 let dq_cur = dof_cur.map_storage(|dof| dof.dq);
                 let ws = self.state.workspace.borrow();
-                let dq_next = ws.dof.view().map_storage(|dof| dof.dq);
+                let dq_next = ws.dof.view().map_storage(|dof| dof.state.dq);
                 {
                     let grad_flat = grad.view_mut().into_storage();
                     // This is a correction to transform the above energy derivatives to
@@ -2154,10 +2157,10 @@ impl ipopt::BasicProblem for NonLinearProblem {
                 //});
 
                 let fc_constraint = fc.constraint.borrow();
-                if let Some(fc_contact) = fc_constraint.frictional_contact.as_ref() {
+                if let Some(fc_contact) = fc_constraint.friction_impulses.as_ref() {
                     // ws.grad is a zero initialized memory slice to which we can write the gradient to.
                     // This may be different than `grad.view_mut()` if the object is rigid and has
-                    // different degrees of freedom.
+                    // different degrees of freedom than vertex DoFs.
                     let mut ws = self.state.workspace.borrow_mut();
                     if fc_contact.params.friction_forwarding > 0.0 {
                         let mut obj_g = self.state.mesh_vertex_subset(
@@ -2262,8 +2265,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut ws = self.state.workspace.borrow_mut();
         let WorkspaceData { dof, vtx, .. } = &mut *ws;
-        let q_next = dof.view().map_storage(|dof| dof.q);
-        State::sync_pos(
+        let q_next = dof.view().map_storage(|dof| dof.state.q);
+        sync_pos(
             &self.state.shells,
             q_next,
             vtx.view_mut().map_storage(|vtx| vtx.state.pos),
@@ -2486,8 +2489,8 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut ws = self.state.workspace.borrow_mut();
         let WorkspaceData { dof, vtx, .. } = &mut *ws;
-        let q_next = dof.view().map_storage(|dof| dof.q);
-        State::sync_pos(
+        let q_next = dof.view().map_storage(|dof| dof.state.q);
+        sync_pos(
             &self.state.shells,
             q_next,
             vtx.view_mut().map_storage(|vtx| vtx.state.pos),
@@ -2497,7 +2500,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         let q_cur = self.state.dof.view().map_storage(|dof| dof.cur.q);
 
         let q_cur_solid = q_cur.at(SOLIDS_INDEX);
-        let q_next_solid = dof_next.at(SOLIDS_INDEX).map_storage(|dof| dof.q);
+        let q_next_solid = dof_next.at(SOLIDS_INDEX).map_storage(|dof| dof.state.q);
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let n = vc.borrow().constraint_jacobian_size();
@@ -2518,7 +2521,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         //       Or refactor rigid handling as a remapping of the constraint jacobian to generalized
         //       coordinates.
         //       Because constraints can be linearized it makes sense to bake this in to the constraint
-        //       so that jacobians don't need to be recomputed every time.
+        //       so that Jacobians don't need to be recomputed every time.
         // Special handling for rigid Jacobians since these are dense.
         let process_rigid_object = |constraint: &PointContactConstraint,
                                     pos: SurfaceVertexView3<&[f64]>,
@@ -2596,7 +2599,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
         };
 
         let vtx_pos_next = vtx.view().map_storage(|vtx| vtx.state.pos);
-        let q_next = dof_next.map_storage(|dof| dof.q);
+        let q_next = dof_next.map_storage(|dof| dof.state.q);
         for fc in self.frictional_contacts.iter() {
             let nrows = fc.constraint.borrow().constraint_size();
             let scale = self.contact_constraint_scale();
@@ -2613,7 +2616,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let obj_rigid_count = process_rigid_object(
                 &*constraint,
                 obj_pos.view(),
-                dof_next.map_storage(|dof| dof.q),
+                dof_next.map_storage(|dof| dof.state.q),
                 fc.object_index,
                 nrows,
                 scale,
@@ -2636,7 +2639,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let coll_rigid_count = process_rigid_collider(
                 &*constraint,
                 q_cur,
-                dof_next.map_storage(|dof| dof.dq),
+                dof_next.map_storage(|dof| dof.state.dq),
                 fc.collider_index,
                 nrows,
                 scale,
@@ -2834,9 +2837,9 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         let mut ws = self.state.workspace.borrow_mut();
         let WorkspaceData { dof, vtx, .. } = &mut *ws;
-        State::sync_pos(
+        sync_pos(
             &self.state.shells,
-            dof.view().map_storage(|dof| dof.q),
+            dof.view().map_storage(|dof| dof.state.q),
             vtx.view_mut().map_storage(|vtx| vtx.state.pos),
         );
 
@@ -2859,7 +2862,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = elasticity.energy_hessian_size();
             elasticity.energy_hessian_values(
                 dof_cur.q,
-                dof_next.q,
+                dof_next.state.q,
                 dt * dt * obj_factor,
                 &mut vals[count..count + n],
             );
@@ -2870,7 +2873,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 let n = inertia.energy_hessian_size();
                 inertia.energy_hessian_values(
                     dof_cur.dq,
-                    dof_next.dq,
+                    dof_next.state.dq,
                     obj_factor,
                     &mut vals[count..count + n],
                 );
@@ -2885,7 +2888,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
             let n = elasticity.energy_hessian_size();
             elasticity.energy_hessian_values(
                 dof_cur.q,
-                dof_next.q,
+                dof_next.state.q,
                 dt * dt * obj_factor,
                 &mut vals[count..count + n],
             );
@@ -2896,7 +2899,7 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
                 let n = inertia.energy_hessian_size();
                 inertia.energy_hessian_values(
                     dof_cur.dq,
-                    dof_next.dq,
+                    dof_next.state.dq,
                     obj_factor,
                     &mut vals[count..count + n],
                 );
@@ -2906,7 +2909,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for (solid_idx, vc) in self.volume_constraints.iter() {
             let q_cur = dof_cur.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
-            let q_next = dof_next.at(SOLIDS_INDEX).at(*solid_idx).into_storage().q;
+            let q_next = dof_next
+                .at(SOLIDS_INDEX)
+                .at(*solid_idx)
+                .into_storage()
+                .state
+                .q;
             let nc = vc.borrow().constraint_size();
             let nh = vc.borrow().constraint_hessian_size();
             vc.borrow_mut()
@@ -2925,12 +2933,12 @@ impl ipopt::ConstrainedProblem for NonLinearProblem {
 
         for fc in self.frictional_contacts.iter() {
             let obj_pos = self.state.next_pos(
-                dof_next.map_storage(|dof| dof.q),
+                dof_next.map_storage(|dof| dof.state.q),
                 vtx.view().map_storage(|vtx| vtx.state.pos),
                 fc.object_index,
             );
             let coll_pos = self.state.next_pos(
-                dof_next.map_storage(|dof| dof.q),
+                dof_next.map_storage(|dof| dof.state.q),
                 vtx.view().map_storage(|vtx| vtx.state.pos),
                 fc.collider_index,
             );

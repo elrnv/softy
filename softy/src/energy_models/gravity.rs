@@ -61,9 +61,9 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TetMeshGravity<'_> {
+impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
+    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
 
         let tetmesh = &self.solid.tetmesh;
@@ -154,9 +154,9 @@ impl<T: Real> Energy<T> for SoftShellGravity<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for SoftShellGravity<'_> {
+impl<X: Real, T: Real> EnergyGradient<X, T> for SoftShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
+    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
 
         let trimesh = &self.shell.trimesh;
@@ -224,9 +224,9 @@ impl<T: Real> Energy<T> for RigidShellGravity {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for RigidShellGravity {
+impl<X: Real, T: Real> EnergyGradient<X, T> for RigidShellGravity {
     /// Add the gravity gradient to the given global vector.
-    fn add_energy_gradient(&self, _x0: &[T], _x1: &[T], grad: &mut [T]) {
+    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
         use tensr::AsMutTensor;
         debug_assert_eq!(grad.len(), _x0.len());
 

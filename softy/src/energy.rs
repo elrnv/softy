@@ -24,7 +24,7 @@ pub trait Energy<T: Real> {
 
 /// The energy gradient is required for optimization methods that require first order derivative
 /// information, like Gradient Descent for instance.
-pub trait EnergyGradient<T: Real> {
+pub trait EnergyGradient<X: Real, T: Real> {
     /// Compute the change in energy with respect to change in configuration and add it to the
     /// given slice of global gradient values.
     ///
@@ -34,7 +34,7 @@ pub trait EnergyGradient<T: Real> {
     /// differential of `x` but it often is.
     ///
     /// This derivative is with respect to `dx`.
-    fn add_energy_gradient(&self, x: &[T], dx: &[T], grad: &mut [T]);
+    fn add_energy_gradient(&self, x: &[X], dx: &[T], grad: &mut [T]);
 }
 
 /// The topology (sparsity) of the energy hessian.

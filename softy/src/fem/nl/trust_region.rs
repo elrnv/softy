@@ -53,10 +53,14 @@ pub struct TrustRegionWorkspace<T> {
     j: DSMatrix<T>,
 }
 
-pub struct TrustRegion<P, T> {
+pub struct TrustRegion<P, T>
+where
+    T: 'static,
+{
     pub problem: P,
     pub params: TrustRegionParams,
-    pub intermediate_callback: RefCell<Callback<T>>,
+    pub outer_callback: RefCell<Callback<T>>,
+    pub inner_callback: RefCell<Callback<T>>,
     pub workspace: RefCell<TrustRegionWorkspace<T>>,
 }
 
@@ -65,7 +69,12 @@ where
     T: Real + na::RealField,
     P: NonLinearProblem<T>,
 {
-    pub fn new(problem: P, params: TrustRegionParams, intermediate_callback: Callback<T>) -> Self {
+    pub fn new(
+        problem: P,
+        params: TrustRegionParams,
+        outer_callback: Callback<T>,
+        inner_callback: Callback<T>,
+    ) -> Self {
         let n = problem.num_variables();
         // Initialize previous iterate.
         let x_prev = vec![T::zero(); n];
@@ -110,7 +119,8 @@ where
         TrustRegion {
             problem,
             params,
-            intermediate_callback: RefCell::new(intermediate_callback),
+            outer_callback: RefCell::new(outer_callback),
+            inner_callback: RefCell::new(inner_callback),
             workspace: RefCell::new(TrustRegionWorkspace {
                 x_prev,
                 r,
@@ -128,7 +138,7 @@ where
 
     /// Solves the problem and returns the solution along with the solve result
     /// info.
-    pub fn solve(&self) -> (Vec<T>, SolveResult) {
+    pub fn solve(&mut self) -> (Vec<T>, SolveResult) {
         let mut x = self.problem.initial_point();
         let res = self.solve_with(x.as_mut_slice());
         (x, res)
@@ -139,7 +149,14 @@ where
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    pub fn solve_with(&self, x: &mut [T]) -> SolveResult {
+    pub fn solve_with(&mut self, x: &mut [T]) -> SolveResult {
+        let Self {
+            problem,
+            params,
+            outer_callback,
+            inner_callback,
+            workspace,
+        } = self;
         let TrustRegionWorkspace {
             r,
             jtr,
@@ -151,12 +168,12 @@ where
             j_mapping,
             j,
             x_prev,
-        } = &mut *self.workspace.borrow_mut();
+        } = &mut *workspace.borrow_mut();
 
         let mut iterations = 0;
 
         // Initialize the residual.
-        self.problem.residual(x, r.as_mut_slice());
+        problem.residual(x, r.as_mut_slice());
 
         //let cr = ConjugateResidual::new(
         //    |x, out| {
@@ -169,14 +186,16 @@ where
         // Convert to sprs format for debugging. The CSR structure is preserved.
         let mut j_sprs: sprs::CsMat<T> = j.clone().into();
 
-        let r_tol = T::from(self.params.r_tol).unwrap();
-        let x_tol = T::from(self.params.x_tol).unwrap();
+        let r_tol = T::from(params.r_tol).unwrap();
+        let x_tol = T::from(params.x_tol).unwrap();
 
         log_debug_stats_header();
         log_debug_stats(0, 0, &r, x, &x_prev);
         loop {
-            if !(self.intermediate_callback.borrow_mut())(CallbackArgs {
+            if !(outer_callback.borrow_mut())(CallbackArgs {
                 residual: r.as_slice(),
+                x,
+                problem,
             }) {
                 return SolveResult {
                     iterations,
@@ -185,8 +204,7 @@ where
             }
 
             // Update Jacobian values.
-            self.problem
-                .advanced_jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
+            problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
 
             //log::trace!("j_vals = {:?}", &j_vals);
 
@@ -216,7 +234,7 @@ where
 
             // Check solution:
             // Compute out = J * p
-            //let mut out = vec![0.0; self.problem.num_variables()];
+            //let mut out = vec![0.0; problem.num_variables()];
             //for (row_idx, row) in j.as_data().iter().enumerate() {
             //    for (col_idx, val, _) in row.iter() {
             //        out[row_idx] += (*val * p[col_idx]).to_f64().unwrap();
@@ -242,7 +260,7 @@ where
                 for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
                     zip!(probe_x.iter_mut(), r.iter(), x.iter())
                         .for_each(|(px, &r, &x)| *px = x - alpha * r);
-                    self.problem.residual(&probe_x, probe_r.as_mut_slice());
+                    problem.residual(&probe_x, probe_r.as_mut_slice());
                     writeln!(
                         &mut f,
                         "{:?} {:10.3e};",
@@ -259,7 +277,7 @@ where
 
             // Take the full step
             *x.as_mut_tensor() -= p.as_tensor();
-            self.problem.residual(x, r_next.as_mut_slice());
+            problem.residual(x, r_next.as_mut_slice());
 
             iterations += 1;
 
@@ -278,7 +296,7 @@ where
             }
 
             // Check that we are running no more than the maximum allowed iterations.
-            if iterations >= self.params.max_iter {
+            if iterations >= params.max_iter {
                 return SolveResult {
                     iterations,
                     status: Status::MaximumIterationsExceeded,

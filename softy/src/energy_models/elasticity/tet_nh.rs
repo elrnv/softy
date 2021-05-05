@@ -337,9 +337,9 @@ impl<T: Real, E: TetEnergy<T>> Energy<T> for TetMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
+impl<X: Real, T: Real, E: TetEnergy<T>> EnergyGradient<X, T> for TetMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, x0: &[X], x1: &[T], grad_f: &mut [T]) {
         let TetMeshSolid {
             ref tetmesh,
             material,
@@ -351,7 +351,7 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
         debug_assert_eq!(grad_f.len(), x0.len());
         debug_assert_eq!(grad_f.len(), x1.len());
 
-        let pos0: &[Vector3<T>] = bytemuck::cast_slice(x0);
+        let pos0: &[Vector3<X>] = bytemuck::cast_slice(x0);
         let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
 
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
@@ -385,8 +385,15 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
             .for_each(|(_, (density, &vol, &DX_inv, cell, &lambda, &mu))| {
                 // Make deformed tet.
                 let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+                let tet_x0 = Tetrahedron::from_indexed_slice(cell, pos0);
+                let tet_x0_t = Tetrahedron::<T>(
+                    tet_x0.0.cast::<T>().unwrap().into(),
+                    tet_x0.1.cast::<T>().unwrap().into(),
+                    tet_x0.2.cast::<T>().unwrap().into(),
+                    tet_x0.3.cast::<T>().unwrap().into(),
+                );
                 // Make tet displacement.
-                let tet_dx = &tet_x1 - &Tetrahedron::from_indexed_slice(cell, pos0);
+                let tet_dx = &tet_x1 - &tet_x0_t;
 
                 let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
                 let vol = T::from(vol).unwrap();
@@ -423,6 +430,107 @@ impl<T: Real, E: TetEnergy<T>> EnergyGradient<T> for TetMeshElasticity<'_, E> {
                 //}
             });
     }
+
+    ///// Parallel version of `add_energy_gradient`.
+    /////
+    ///// Here to facilityate parallelism, `grad_f` is a per-vertex quantity
+    //fn add_energy_gradient_par(&self, x0: &[X], x1: &[T], grad_f: &mut [T]) {
+    //    let TetMeshSolid {
+    //        ref tetmesh,
+    //        material,
+    //        ..
+    //    } = *self.0;
+
+    //    let damping = material.damping();
+
+    //    debug_assert_eq!(grad_f.len(), x0.len());
+    //    debug_assert_eq!(grad_f.len(), x1.len());
+
+    //    let pos0: &[Vector3<X>] = bytemuck::cast_slice(x0);
+    //    let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+
+    //    let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
+    //    let mut out: Vec<Vector3<T>> = vec![Vector3::zero(); tetmesh.num_cells() * 4];
+
+    //    tetmesh
+    //        .attrib_iter::<FixedIntType, CellIndex>(FIXED_ATTRIB)
+    //        .unwrap()
+    //        .zip(zip!(
+    //            Either::from(
+    //                tetmesh
+    //                    .attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
+    //                    .map(|i| i.cloned())
+    //                    .map_err(|_| std::iter::repeat(0.0f32))
+    //                    .par_iter()
+    //            ),
+    //            tetmesh
+    //                .attrib_as_slice::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB)
+    //                .unwrap()
+    //                .par_iter(),
+    //            tetmesh
+    //                .attrib_as_slice::<RefTetShapeMtxInvType, CellIndex>(
+    //                    REFERENCE_SHAPE_MATRIX_INV_ATTRIB
+    //                )
+    //                .unwrap()
+    //                .par_iter(),
+    //            tetmesh.cells().par_iter(),
+    //            tetmesh
+    //                .attrib_as_slice()::<LambdaType, CellIndex>(LAMBDA_ATTRIB)
+    //                .unwrap()
+    //            .par_iter(),
+    //            tetmesh.attrib_as_slice()::<MuType, CellIndex>(MU_ATTRIB).unwrap().par_iter(),
+    //            out.par_iter_mut()
+    //        ))
+    //        .filter(|(&fixed, _)| fixed == 0)
+    //        .for_each(|(_, (density, &vol, &DX_inv, cell, &lambda, &mu))| {
+    //            // Make deformed tet.
+    //            let tet_x1 = Tetrahedron::from_indexed_slice(cell, pos1);
+    //            let tet_x0 = Tetrahedron::from_indexed_slice(cell, pos0);
+    //            let tet_x0_t = Tetrahedron::<T>(
+    //                tet_x0.0.cast::<T>().unwrap().into(),
+    //                tet_x0.1.cast::<T>().unwrap().into(),
+    //                tet_x0.2.cast::<T>().unwrap().into(),
+    //                tet_x0.3.cast::<T>().unwrap().into(),
+    //            );
+    //            // Make tet displacement.
+    //            let tet_dx = &tet_x1 - &tet_x0_t;
+
+    //            let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
+    //            let vol = T::from(vol).unwrap();
+    //            let lambda = T::from(lambda).unwrap();
+    //            let mu = T::from(mu).unwrap();
+
+    //            let tet_energy =
+    //                E::new(Matrix3::new(tet_x1.shape_matrix()), DX_inv, vol, lambda, mu);
+
+    //            let grad = tet_energy.energy_gradient();
+
+    //            for i in 0..4 {
+    //                gradient[cell[i]] += grad[i];
+    //            }
+
+    //            // Damping
+    //            if density != 0.0 {
+    //                let density = T::from(density).unwrap();
+    //                let damping = T::from(damping).unwrap();
+    //                let dF = tet_energy.deformation_gradient_differential(&tet_dx);
+
+    //                // Note: damping is already scaled by dt
+    //                let damp = DX_inv.transpose() * dF * vol * density * damping;
+    //                for i in 0..3 {
+    //                    gradient[cell[i]] += damp[i];
+    //                    gradient[cell[3]] -= damp[i];
+    //                }
+    //            }
+
+    //            //let dH = tet_energy.energy_hessian_product_transpose(&tet_dx);
+    //            //for i in 0..3 {
+    //            //    gradient[cell[i]] += dH[i] * damping;
+    //            //    gradient[cell[3]] -= dH[i] * damping;
+    //            //}
+    //        });
+    //    // Transfer forces from cell-vertices to vertices themselves.
+    //}
 }
 
 impl<E> EnergyHessianTopology for TetMeshElasticity<'_, E> {

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use autodiff as ad;
 use flatk::Component;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use num_traits::Zero;
@@ -45,13 +46,32 @@ pub struct VertexState<X, V> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
-pub struct VertexWorkspace<X, V, G> {
+pub struct VertexWorkspaceComponent<X, V, XAD, VAD, G, L, FC, LAD, FCAD> {
     #[component]
     pub state: VertexState<X, V>,
+    #[component]
+    pub state_ad: VertexState<XAD, VAD>,
     /// Gradient for all meshes for which the generalized coordinates don't coincide
     /// with vertex positions.
     pub grad: G,
+    pub lambda: L,
+    pub vfc: FC,
+    pub lambda_ad: LAD,
+    pub vfc_ad: FCAD,
 }
+
+pub type VertexWorkspace<T, F> = VertexWorkspaceComponent<T, T, F, F, T, T, T, F, F>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
+pub struct GeneralizedWorkspaceComponent<X, V, XAD, VAD, RAD> {
+    #[component]
+    pub state: GeneralizedState<X, V>,
+    #[component]
+    pub state_ad: GeneralizedState<XAD, VAD>,
+    pub r_ad: RAD,
+}
+
+pub type GeneralizedWorkspace<T, F> = GeneralizedWorkspaceComponent<T, T, F, F, F>;
 
 /// A generic `Vertex` with past and present states.
 ///
@@ -118,19 +138,19 @@ pub type GeneralizedView3<'i, D> = GeneralizedView<'i, Chunked3<D>>;
 ///
 /// This is a helper struct for `ObjectData`.
 #[derive(Clone, Debug)]
-pub struct WorkspaceData<T> {
+pub struct WorkspaceData<T, F> {
     /// Next state in generalized coordinates.
     ///
     /// Currently all generalized coordinates fit into triplets, however this may not always
     /// be the case.
-    pub dof: GeneralizedData3<GeneralizedState<Vec<T>, Vec<T>>>,
+    pub dof: GeneralizedData3<GeneralizedWorkspace<Vec<T>, Vec<F>>>,
     /// Vertex positions, velocities and gradients.
     ///
     /// These are stored for all meshes where the generalized coordinates
     /// don't coincide with vertex degrees of freedom. These are used to pass concrete
     /// vertex quantities (as opposed to generalized coordinates) to constraint
     /// functions and compute intermediate vertex data.
-    pub vtx: VertexData3<VertexWorkspace<Vec<T>, Vec<T>, Vec<T>>>,
+    pub vtx: VertexData3<VertexWorkspace<Vec<T>, Vec<F>>>,
 }
 
 // TODO: update this doc:
@@ -145,7 +165,7 @@ pub struct WorkspaceData<T> {
 /// This struct is responsible for mapping between input mesh vertices and
 /// generalized coordinates.
 #[derive(Clone, Debug)]
-pub struct State<T> {
+pub struct State<T, F> {
     /// Generalized coordinates from the previous time step.
     ///
     /// Sometimes referred to as `q` in literature.
@@ -158,7 +178,7 @@ pub struct State<T> {
     pub vtx: VertexData3<Vertex<Vec<T>, Vec<T>>>,
 
     /// Workspace data used to precompute variables and their integrated values.
-    pub workspace: RefCell<WorkspaceData<T>>,
+    pub workspace: RefCell<WorkspaceData<T, F>>,
 
     /// Tetrahedron mesh representing a soft solid computational domain.
     pub solids: Vec<TetMeshSolid>,
@@ -167,8 +187,8 @@ pub struct State<T> {
     pub shells: Vec<TriMeshShell>,
 }
 
-impl<T: Real> State<T> {
-    pub fn clone_as_autodiff(&self) -> State<autodiff::F1> {
+impl<T: Real> State<T, ad::FT<T>> {
+    pub fn clone_as_autodiff(&self) -> State<ad::FT<f64>, ad::FT<ad::FT<f64>>> {
         let State {
             dof,
             vtx,
@@ -180,7 +200,18 @@ impl<T: Real> State<T> {
         let convert = |v: &[T]| {
             v.iter()
                 .cloned()
-                .map(|x| autodiff::F1::cst(x.to_f64().unwrap()))
+                .map(|x| ad::F::cst(x.to_f64().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        let convert_ad = |v: &[ad::FT<T>]| {
+            v.iter()
+                .cloned()
+                .map(|x| {
+                    ad::F::new(
+                        ad::F::new(x.value().to_f64().unwrap(), x.deriv().to_f64().unwrap()),
+                        ad::F::zero(),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         let convert_state = |state: &GeneralizedState<&[T], &[T]>| GeneralizedState {
@@ -195,10 +226,27 @@ impl<T: Real> State<T> {
             pos: convert(state.pos),
             vel: convert(state.vel),
         };
-        let convert_vtx_workspace = |ws: &VertexWorkspace<&[T], &[T], &[T]>| VertexWorkspace {
+        let convert_vtx_workspace = |ws: &VertexWorkspace<&[T], &[ad::FT<T>]>| VertexWorkspace {
             state: convert_vtx_state(&ws.state),
+            state_ad: VertexState {
+                pos: convert_ad(&ws.state_ad.pos),
+                vel: convert_ad(&ws.state_ad.vel),
+            },
             grad: convert(ws.grad),
+            lambda: convert(ws.lambda),
+            vfc: convert(ws.vfc),
+            lambda_ad: convert_ad(ws.lambda_ad),
+            vfc_ad: convert_ad(ws.vfc_ad),
         };
+        let convert_dof_workspace =
+            |ws: &GeneralizedWorkspace<&[T], &[ad::FT<T>]>| GeneralizedWorkspace {
+                state: convert_state(&ws.state),
+                state_ad: GeneralizedState {
+                    q: convert_ad(ws.state_ad.q),
+                    dq: convert_ad(ws.state_ad.dq),
+                },
+                r_ad: convert_ad(ws.r_ad),
+            };
         let convert_vtx_coords = |&Vertex { ref prev, ref cur }| Vertex {
             prev: convert_vtx_state(prev),
             cur: convert_vtx_state(cur),
@@ -208,7 +256,7 @@ impl<T: Real> State<T> {
         let dof = dof.clone_with_storage(dof_storage);
         let vtx = vtx.clone_with_storage(vtx_storage);
         let ws = workspace.borrow();
-        let ws_dof_storage = convert_state(ws.dof.view().storage());
+        let ws_dof_storage = convert_dof_workspace(ws.dof.view().storage());
         let ws_vtx_storage = convert_vtx_workspace(ws.vtx.view().storage());
         let workspace = RefCell::new(WorkspaceData {
             dof: ws.dof.clone_with_storage(ws_dof_storage),
@@ -224,7 +272,101 @@ impl<T: Real> State<T> {
     }
 }
 
-impl<T: Real64> State<T> {
+/// Update vertex positions of non dof vertices.
+///
+/// This ensures that vertex data queried by constraint functions is current.
+/// This function is only intended to sync pos with cur_x.
+pub fn sync_pos<S: Real>(
+    shells: &[TriMeshShell],
+    q: GeneralizedView3<&[S]>,
+    mut pos: VertexView3<&mut [S]>,
+) {
+    for (i, shell) in shells.iter().enumerate() {
+        if let ShellData::Rigid { .. } = shell.data {
+            let q = q.isolate(SHELLS_INDEX).isolate(i);
+            let mut pos = pos.view_mut().isolate(SHELLS_INDEX).isolate(i);
+            debug_assert_eq!(q.len(), 2);
+            let translation = Vector3::new(q[0]);
+            let rotation = Vector3::new(q[1]);
+            // Apply the translation and rotation from cur_x to the shell and save it to pos.
+            // Previous values in pos are not used.
+            for (out_p, &r) in pos.iter_mut().zip(
+                shell
+                    .trimesh
+                    .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
+                    .expect("Missing rigid body reference positions"),
+            ) {
+                *out_p.as_mut_tensor() =
+                    rotate(r.into_tensor().cast::<S>(), rotation) + translation;
+            }
+        }
+    }
+}
+
+/// Update vertex velocities of vertices not in q (dofs).
+pub fn sync_vel<S: Real>(
+    shells: &[TriMeshShell],
+    dq_next: GeneralizedView3<&[S]>,
+    q_cur: GeneralizedView3<&[S]>,
+    mut vel_next: VertexView3<&mut [S]>,
+) {
+    for (i, shell) in shells.iter().enumerate() {
+        if let ShellData::Rigid { .. } = shell.data {
+            let dq_next = dq_next.isolate(SHELLS_INDEX).isolate(i);
+            let q_cur = q_cur.isolate(SHELLS_INDEX).isolate(i);
+            debug_assert_eq!(dq_next.len(), 2);
+            let rotation = Vector3::new(q_cur[1]);
+            let linear = Vector3::new(dq_next[0]);
+            let angular = Vector3::new(dq_next[1]);
+            let mut vel_next = vel_next.view_mut().isolate(SHELLS_INDEX).isolate(i);
+            for (out_vel, &r) in vel_next.iter_mut().zip(
+                shell
+                    .trimesh
+                    .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
+                    .expect("Missing rigid body reference positions"),
+            ) {
+                *out_vel.as_mut_tensor() =
+                    rotate(angular.cross(r.into_tensor().cast::<S>()), rotation) + linear;
+            }
+        }
+    }
+}
+
+impl<T: Real> State<T, ad::FT<T>> {
+    /// Build a `VertexView` struct with the given data.
+    pub fn vtx_view<D>(&self, data: D) -> VertexView<D> {
+        Chunked {
+            chunks: self.vtx.chunks.view(),
+            data: Chunked {
+                chunks: self.vtx.data.chunks.view(),
+                data,
+            },
+        }
+    }
+    /// Build a `GeneralizedView` struct with the given data.
+    pub fn dof_view<D>(&self, data: D) -> GeneralizedView<D> {
+        Chunked {
+            chunks: self.dof.chunks.view(),
+            data: Chunked {
+                chunks: self.dof.data.chunks.view(),
+                data,
+            },
+        }
+    }
+
+    /// Build a `VertexData` struct with the given data collection.
+    ///
+    /// To build a `VertexData3` simply ensure that `data` is a `Chunked3` type.
+    pub fn vertex_data_with<D>(&self, data: D) -> VertexData<D> {
+        Chunked {
+            chunks: self.vtx.chunks.clone(),
+            data: Chunked {
+                chunks: self.vtx.data.chunks.clone(),
+                data,
+            },
+        }
+    }
+
     /// Build a `VertexData` struct with a zero entry for each vertex of each mesh.
     pub fn build_vertex_data<S: Zero + Copy>(&self) -> VertexData<Vec<S>> {
         let mut mesh_sizes = Vec::new();
@@ -392,72 +534,12 @@ impl<T: Real64> State<T> {
     #[inline]
     pub fn update_workspace_velocity(&self, uv: &[T], scale: f64) {
         let mut ws = self.workspace.borrow_mut();
-        let sv = ws.dof.view_mut().into_storage().dq;
+        let sv = ws.dof.view_mut().into_storage().state.dq;
         for (output, input) in sv
             .iter_mut()
             .zip(Self::scaled_variables_iter(uv, T::from(scale).unwrap()))
         {
             *output = input;
-        }
-    }
-
-    /// Update vertex positions of non dof vertices.
-    ///
-    /// This ensures that vertex data queried by constraint functions is current.
-    /// This function is only intended to sync pos with cur_x.
-    pub fn sync_pos(
-        shells: &[TriMeshShell],
-        q: GeneralizedView3<&[T]>,
-        mut pos: VertexView3<&mut [T]>,
-    ) {
-        for (i, shell) in shells.iter().enumerate() {
-            if let ShellData::Rigid { .. } = shell.data {
-                let q = q.isolate(SHELLS_INDEX).isolate(i);
-                let mut pos = pos.view_mut().isolate(SHELLS_INDEX).isolate(i);
-                debug_assert_eq!(q.len(), 2);
-                let translation = Vector3::new(q[0]);
-                let rotation = Vector3::new(q[1]);
-                // Apply the translation and rotation from cur_x to the shell and save it to pos.
-                // Previous values in pos are not used.
-                for (out_p, &r) in pos.iter_mut().zip(
-                    shell
-                        .trimesh
-                        .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
-                        .expect("Missing rigid body reference positions"),
-                ) {
-                    *out_p.as_mut_tensor() =
-                        rotate(r.into_tensor().cast::<T>(), rotation) + translation;
-                }
-            }
-        }
-    }
-
-    /// Update vertex velocities of vertices not in q (dofs).
-    pub fn sync_vel(
-        shells: &[TriMeshShell],
-        dq_next: GeneralizedView3<&[T]>,
-        q_cur: GeneralizedView3<&[T]>,
-        mut vel_next: VertexView3<&mut [T]>,
-    ) {
-        for (i, shell) in shells.iter().enumerate() {
-            if let ShellData::Rigid { .. } = shell.data {
-                let dq_next = dq_next.isolate(SHELLS_INDEX).isolate(i);
-                let q_cur = q_cur.isolate(SHELLS_INDEX).isolate(i);
-                debug_assert_eq!(dq_next.len(), 2);
-                let rotation = Vector3::new(q_cur[1]);
-                let linear = Vector3::new(dq_next[0]);
-                let angular = Vector3::new(dq_next[1]);
-                let mut vel_next = vel_next.view_mut().isolate(SHELLS_INDEX).isolate(i);
-                for (out_vel, &r) in vel_next.iter_mut().zip(
-                    shell
-                        .trimesh
-                        .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
-                        .expect("Missing rigid body reference positions"),
-                ) {
-                    *out_vel.as_mut_tensor() =
-                        rotate(angular.cross(r.into_tensor().cast::<T>()), rotation) + linear;
-                }
-            }
         }
     }
 
@@ -494,6 +576,42 @@ impl<T: Real64> State<T> {
         }
     }
 
+    /// Add vertex vectors to the given array of degrees of freedom.
+    ///
+    /// This is a noop when degrees of freedom coincide with vertex velocities.
+    /// This function defines how non vertex degrees of freedom are related to
+    /// vertex DoFs for velocity vector quantities.
+    pub fn transfer_velocity_vtx_to_dof<I: Real, O: Real>(
+        &self,
+        source: SourceObject,
+        vtx: VertexView3<&mut [I]>,
+        dof: GeneralizedView3<&mut [O]>,
+    ) {
+        match source {
+            SourceObject::Shell(i) => {
+                let mut dof = dof.isolate(SHELLS_INDEX).isolate(i);
+                let mut vtx = vtx.isolate(SHELLS_INDEX).isolate(i);
+                if let ShellData::Rigid { .. } = self.shells[i].data {
+                    debug_assert_eq!(dof.len(), 2);
+                    let r_iter = self.shells[i]
+                        .trimesh
+                        .attrib_iter::<RigidRefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)
+                        .expect("Missing rigid body reference positions");
+                    for (vtx, &r) in vtx.iter_mut().zip(r_iter) {
+                        // Transfer gradient from vertices to degrees of freedom.
+                        *dof[0].as_mut_tensor() += vtx.as_tensor().cast::<O>();
+                        let r = r.into_tensor();
+                        *dof[1].as_mut_tensor() +=
+                            r.cast::<O>().cross((*vtx).into_tensor().cast::<O>());
+                        // Transfer complete, zero out input.
+                        *vtx = [I::zero(); 3];
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Update `cur_x` using backward Euler integration with the given velocity `v`.
     pub fn integrate_step(&self, dt: f64) {
         debug_assert!(dt > 0.0);
@@ -501,7 +619,7 @@ impl<T: Real64> State<T> {
         let WorkspaceData { dof, .. } = &mut *ws;
 
         {
-            let mut dof_next = dof.view_mut().into_storage();
+            let mut dof_next = dof.view_mut().into_storage().state;
             let q_cur = self.dof.view().into_storage().cur.q;
             debug_assert_eq!(q_cur.len(), dof_next.len());
 
@@ -531,49 +649,55 @@ impl<T: Real64> State<T> {
                 ShellData::Rigid { .. } => {
                     // We are only interested in rigid rotations.
                     assert_eq!(q_cur.len(), 2);
-                    let dof = dof_next.isolate(SHELLS_INDEX);
-                    *dof.q =
-                        integrate_rotation(q_cur[1].into_tensor(), *dof.dq.as_mut_tensor() * dt)
-                            .into_data();
+                    let dof = dof_next.isolate(1).state;
+                    *dof.q = integrate_rotation(
+                        q_cur[1].into_tensor(),
+                        *dof.dq.as_mut_tensor() * T::from(dt).unwrap(),
+                    )
+                    .into_data();
                 }
                 _ => {}
             }
         }
     }
 
-    /// Take a backward Euler step in `q` computed in the state workspace.
-    pub fn be_step(&self, v: &[T], dt: f64) {
+    /// Take a backward Euler step computed in `q_next`.
+    pub fn be_step<S: Real>(&self, v: &[S], dt: f64, q_cur: &[T], q_next: &mut [S]) {
         debug_assert!(dt > 0.0);
 
+        // Source of topology information.
         let dof = self.dof.view();
-
-        let q_cur = dof.into_storage().cur.q;
-
-        let mut ws = self.workspace.borrow_mut();
-        let q_next = ws.dof.view_mut().into_storage().q;
 
         // In static simulations, velocity is simply displacement.
 
-        // Integrate all (positional) degrees of freedom using standard implicit euler.
+        // Integrate all (positional) degrees of freedom using standard implicit Euler.
         // Note this code includes rigid motion, but we will overwrite those below.
         zip!(q_next.iter_mut(), q_cur.iter(), v.iter()).for_each(|(q_next, &q_cur, v_next)| {
-            *q_next = v_next.mul_add(T::from(dt).unwrap(), q_cur)
+            *q_next = v_next.mul_add(S::from(dt).unwrap(), S::from(q_cur).unwrap())
         });
 
         // Integrate rigid rotation.
-        let mut dof_next = ws.dof.view_mut().isolate(SHELLS_INDEX);
-        let q_cur = dof.isolate(SHELLS_INDEX).map_storage(|dof| dof.cur.q);
+        let mut q_next = dof.isolate(SHELLS_INDEX).map_storage(|_| q_next);
+        let v_next = dof.isolate(SHELLS_INDEX).map_storage(|_| v);
+        let q_cur = dof.isolate(SHELLS_INDEX).map_storage(|_| q_cur);
 
-        for (shell, q_cur, dof_next) in zip!(self.shells.iter(), q_cur.iter(), dof_next.iter_mut())
-        {
+        for (shell, q_cur, v_next, q_next) in zip!(
+            self.shells.iter(),
+            q_cur.iter(),
+            v_next.iter(),
+            q_next.iter_mut()
+        ) {
             match shell.data {
                 ShellData::Rigid { .. } => {
                     // We are only interested in rigid rotations.
                     assert_eq!(q_cur.len(), 2);
-                    let dof = dof_next.isolate(SHELLS_INDEX);
-                    *dof.q =
-                        integrate_rotation(q_cur[1].into_tensor(), *dof.dq.as_mut_tensor() * dt)
-                            .into_data();
+                    let q_next = q_next.isolate(1);
+                    let v_next = v_next.isolate(1);
+                    *q_next = integrate_rotation(
+                        q_cur[1].into_tensor().cast::<S>(),
+                        *v_next.as_tensor() * S::from(dt).unwrap(),
+                    )
+                    .into_data();
                 }
                 _ => {}
             }
@@ -589,6 +713,9 @@ impl<T: Real64> State<T> {
     pub fn lerp_step(&self, v: &[T], dt: f64, alpha: f64) {
         debug_assert!(dt > 0.0);
 
+        let dt = T::from(dt).unwrap();
+        let alpha = T::from(alpha).unwrap();
+
         let dof = self.dof.view();
 
         let GeneralizedState {
@@ -597,7 +724,7 @@ impl<T: Real64> State<T> {
         } = dof.storage().cur;
 
         let mut ws = self.workspace.borrow_mut();
-        let q_next = ws.dof.view_mut().into_storage().q;
+        let q_next = ws.dof.view_mut().into_storage().state.q;
 
         // In static simulations, velocity is simply displacement.
 
@@ -606,8 +733,8 @@ impl<T: Real64> State<T> {
             |(q_next, &q_cur, &v_cur, &v_next)| {
                 // `q_next = q_cur + h*((1-alpha)*v_next + alpha*v_cur)`
                 *q_next = v_next
-                    .mul_add(T::from(1.0 - alpha).unwrap(), v_cur * alpha)
-                    .mul_add(T::from(dt).unwrap(), q_cur);
+                    .mul_add(T::one() - alpha, v_cur * alpha)
+                    .mul_add(dt, q_cur);
             },
         );
 
@@ -627,10 +754,10 @@ impl<T: Real64> State<T> {
                     let cur = dof_cur.isolate(1);
 
                     let dof = dof_next.isolate(SHELLS_INDEX);
-                    let v_next = dof.dq.as_tensor();
-                    *dof.q = (Quaternion::from_vector(*cur.q.as_tensor())
+                    let v_next = dof.state.dq.as_tensor();
+                    *dof.state.q = (Quaternion::from_vector(*cur.q.as_tensor())
                         * Quaternion::from_vector(*cur.dq.as_tensor() * dt * alpha)
-                        * Quaternion::from_vector(*v_next * dt * (1.0 - alpha)))
+                        * Quaternion::from_vector(*v_next * dt * (T::one() - alpha)))
                     .into_vector()
                     .into_data()
                 }
@@ -645,18 +772,23 @@ impl<T: Real64> State<T> {
     pub fn bdf2_step(&self, v: &[T], dt: f64, gamma: f64) {
         debug_assert!(dt > 0.0);
 
+        let dt = T::from(dt).unwrap();
+        let gamma = T::from(gamma).unwrap();
+
         let dof = self.dof.view();
 
         let q_cur = dof.storage().cur.q;
         let q_prev = dof.storage().prev.q;
 
         let mut ws = self.workspace.borrow_mut();
-        let q_next = ws.dof.view_mut().into_storage().q;
+        let q_next = ws.dof.view_mut().into_storage().state.q;
 
         // Compute coefficients
-        let a = 1.0 / (gamma * (2.0 - gamma));
-        let b = (1.0 - gamma) * (1.0 - gamma) / (gamma * (2.0 - gamma));
-        let c = (1.0 - gamma) / (2.0 - gamma);
+        let _1 = T::one();
+        let _2 = T::from(2.0).unwrap();
+        let a = _1 / (gamma * (_2 - gamma));
+        let b = (_1 - gamma) * (_1 - gamma) / (gamma * (_2 - gamma));
+        let c = (_1 - gamma) / (_2 - gamma);
 
         // Integrate all (positional) degrees of freedom using standard implicit euler.
         // Note this code includes rigid motion, but we will overwrite those below.
@@ -683,8 +815,8 @@ impl<T: Real64> State<T> {
                     assert_eq!(q_cur.len(), 2);
                     assert_eq!(q_prev.len(), 2);
                     let dof = dof_next.isolate(SHELLS_INDEX);
-                    let v_next = dof.dq.as_tensor();
-                    *dof.q = (Quaternion::from_vector(*q_cur[1].as_tensor() * a)
+                    let v_next = dof.state.dq.as_tensor();
+                    *dof.state.q = (Quaternion::from_vector(*q_cur[1].as_tensor() * a)
                         * Quaternion::from_vector(-*q_prev[1].as_tensor() * b)
                         * Quaternion::from_vector(*v_next * dt * c))
                     .into_vector()
@@ -722,7 +854,7 @@ impl<T: Real64> State<T> {
         }
 
         debug_assert!(time_step > 0.0);
-        let dt_inv = 1.0 / time_step;
+        let dt_inv = T::one() / T::from(time_step).unwrap();
 
         // Get the tetmesh and pos so we can update the fixed vertices.
         for (solid, mut dof_cur) in zip!(self.solids.iter(), dof_cur.iter_mut()) {
@@ -774,7 +906,7 @@ impl<T: Real64> State<T> {
         let mut vtx_cur = vtx.view_mut().isolate(SHELLS_INDEX).map_storage(|v| v.cur);
 
         debug_assert!(time_step > 0.0);
-        let dt_inv = 1.0 / time_step;
+        let dt_inv = T::one() / T::from(time_step).unwrap();
 
         // Get the trimesh and {dof,vtx}_cur so we can update the fixed vertices.
         for (shell, (mut dof_cur, mut vtx_cur)) in self
@@ -919,7 +1051,7 @@ impl<T: Real64> State<T> {
             )
             .for_each(|(GeneralizedCoords { prev, cur }, next)| {
                 *prev.q = *cur.q;
-                *cur.q = *next.q;
+                *cur.q = *next.state.q;
             });
 
             // Advance vertex positions
@@ -941,7 +1073,7 @@ impl<T: Real64> State<T> {
                 )
                 .for_each(|(GeneralizedCoords { prev, cur }, next)| {
                     *prev.dq = *cur.dq;
-                    *cur.dq = *next.dq;
+                    *cur.dq = *next.state.dq;
                 });
 
                 // Advance vertex velocities

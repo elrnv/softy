@@ -1,8 +1,11 @@
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
+use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
 use crate::inf_norm;
+use crate::Real;
 use tensr::*;
 
 // Parameters for the Newton solver.
@@ -12,8 +15,12 @@ pub struct NewtonParams {
     pub r_tol: f32,
     /// Variable tolerance.
     pub x_tol: f32,
-    /// Maximum number of iterations permitted.
+    /// Maximum number of Newton iterations permitted.
     pub max_iter: u32,
+    /// Residual tolerance for the linear solve.
+    pub linsolve_tol: f32,
+    /// Maximum number of iterations permitted for the linear solve.
+    pub linsolve_max_iter: u32,
     /// Line search method.
     pub line_search: LineSearch,
 }
@@ -24,42 +31,51 @@ impl std::fmt::Display for SolveResult {
     }
 }
 
-pub struct NewtonWorkspace<T> {
+pub struct NewtonWorkspace<T: Real> {
+    linsolve: BiCGSTAB<T>,
     x_prev: Vec<T>,
     r: Vec<T>,
-    jtr: Vec<T>,
+    p: Vec<T>,
+    jp: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
     j_rows: Vec<usize>,
     j_cols: Vec<usize>,
     j_vals: Vec<T>,
-    /// Mapping from original triplets given by the `j_*` members to the final
-    /// compressed sparse matrix.
+    //// Mapping from original triplets given by the `j_*` members to the final
+    //// compressed sparse matrix.
     j_mapping: Vec<usize>,
     j: DSMatrix<T>,
 }
 
-pub struct Newton<P, T> {
+pub struct Newton<P, T: Real> {
     pub problem: P,
     pub params: NewtonParams,
-    pub intermediate_callback: RefCell<Callback<T>>,
+    pub inner_callback: RefCell<Callback<T>>,
+    pub outer_callback: RefCell<Callback<T>>,
     pub workspace: RefCell<NewtonWorkspace<T>>,
 }
 
 impl<T, P> Newton<P, T>
 where
-    T: Real + na::RealField,
+    T: Real,
     P: NonLinearProblem<T>,
 {
-    pub fn new(problem: P, params: NewtonParams, intermediate_callback: Callback<T>) -> Self {
+    pub fn new(
+        problem: P,
+        params: NewtonParams,
+        outer_callback: Callback<T>,
+        inner_callback: Callback<T>,
+    ) -> Self {
         let n = problem.num_variables();
         // Initialize previous iterate.
         let x_prev = vec![T::zero(); n];
 
-        let r = vec![T::zero(); n];
-        let jtr = r.clone();
+        let r = x_prev.clone();
+        let jp = r.clone();
         let r_next = r.clone();
         let r_cur = r.clone();
+        let p = r.clone();
 
         // Construct the sparse Jacobian.
 
@@ -93,14 +109,20 @@ where
             },
         );
 
+        // Allocate space for the linear solver.
+        let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
+
         Newton {
             problem,
             params,
-            intermediate_callback: RefCell::new(intermediate_callback),
+            outer_callback: RefCell::new(outer_callback),
+            inner_callback: RefCell::new(inner_callback),
             workspace: RefCell::new(NewtonWorkspace {
+                linsolve,
                 x_prev,
                 r,
-                jtr,
+                p,
+                jp,
                 r_cur,
                 r_next,
                 j_rows,
@@ -115,12 +137,20 @@ where
 
 impl<T, P> NLSolver<P, T> for Newton<P, T>
 where
-    T: Real + na::RealField,
+    T: Real,
     P: NonLinearProblem<T>,
 {
-    /// Gets a reference to the intermediate callback function.
-    fn intermediate_callback(&self) -> &RefCell<Callback<T>> {
-        &self.intermediate_callback
+    /// Gets a reference to the outer callback function.
+    ///
+    /// This callback gets called at the beginning of every Newton iteration.
+    fn outer_callback(&self) -> &RefCell<Callback<T>> {
+        &self.outer_callback
+    }
+    /// Gets a reference to the inner callback function.
+    ///
+    /// This is the callback that gets called for every inner linear solve.
+    fn inner_callback(&self) -> &RefCell<Callback<T>> {
+        &self.inner_callback
     }
     /// Gets a reference to the underlying problem instance.
     fn problem(&self) -> &P {
@@ -133,7 +163,7 @@ where
 
     /// Solves the problem and returns the solution along with the solve result
     /// info.
-    fn solve(&self) -> (Vec<T>, SolveResult) {
+    fn solve(&mut self) -> (Vec<T>, SolveResult) {
         let mut x = self.problem.initial_point();
         let res = self.solve_with(x.as_mut_slice());
         (x, res)
@@ -144,10 +174,20 @@ where
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&self, x: &mut [T]) -> SolveResult {
+    fn solve_with(&mut self, x: &mut [T]) -> SolveResult {
+        let Self {
+            problem,
+            params,
+            inner_callback,
+            outer_callback,
+            workspace,
+        } = self;
+
         let NewtonWorkspace {
+            linsolve,
             r,
-            jtr,
+            p,
+            jp,
             r_cur,
             r_next,
             j_rows,
@@ -156,81 +196,118 @@ where
             j_mapping,
             j,
             x_prev,
-        } = &mut *self.workspace.borrow_mut();
+        } = &mut *workspace.borrow_mut();
 
         let mut iterations = 0;
 
         // Initialize the residual.
-        self.problem.residual(x, r.as_mut_slice());
-
-        //let cr = ConjugateResidual::new(
-        //    |x, out| {
-
-        //    },
-        //    x,
-        //    r,
-        //);
+        problem.residual(x, r.as_mut_slice());
 
         // Convert to sprs format for debugging. The CSR structure is preserved.
         let mut j_sprs: sprs::CsMat<T> = j.clone().into();
 
-        let r_tol = T::from(self.params.r_tol).unwrap();
-        let x_tol = T::from(self.params.x_tol).unwrap();
+        let r_tol = T::from(params.r_tol).unwrap();
+        let x_tol = T::from(params.x_tol).unwrap();
 
         log_debug_stats_header();
-        log_debug_stats(0, 0, &r, x, &x_prev);
-        loop {
-            if !(self.intermediate_callback.borrow_mut())(CallbackArgs {
+        log_debug_stats(0, 0, 0, linsolve.tol, &r, x, &x_prev);
+
+        // Remember original tolerance so we can reset it later.
+        let orig_linsolve_tol = linsolve.tol;
+
+        // Timing stats
+        let mut linsolve_time = Duration::new(0, 0);
+        let mut ls_time = Duration::new(0, 0);
+        let mut jprod_time = Duration::new(0, 0);
+        let mut residual_time = Duration::new(0, 0);
+        let mut linsolve_result = super::linsolve::SolveResult::default();
+
+        let result = loop {
+            if !(outer_callback.borrow_mut())(CallbackArgs {
                 residual: r.as_slice(),
+                x,
+                problem,
             }) {
-                return SolveResult {
+                break SolveResult {
                     iterations,
                     status: Status::Interrupted,
                 };
             }
 
             // Update Jacobian values.
-            self.problem
-                .advanced_jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
+            //let before_j = Instant::now();
+            //problem
+            //    .jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
+            //jprod_time += Instant::now() - before_j;
 
-            //log::trace!("j_vals = {:?}", &j_vals);
+            ////log::trace!("j_vals = {:?}", &j_vals);
 
-            // Zero out Jacobian.
-            j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
-            j_sprs.data_mut().iter_mut().for_each(|x| *x = T::zero());
+            //// Zero out Jacobian.
+            //j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+            //j_sprs.data_mut().iter_mut().for_each(|x| *x = T::zero());
 
-            // Update the Jacobian matrix.
-            for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
-                j.storage_mut()[pos] += j_val;
-                j_sprs.data_mut()[pos] += j_val;
-            }
+            //// Update the Jacobian matrix.
+            //for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
+            //    j.storage_mut()[pos] += j_val;
+            //    j_sprs.data_mut()[pos] += j_val;
+            //}
 
-            r_cur.copy_from_slice(&r);
-
+            let r_prev_norm = r_cur.as_tensor().norm().to_f64().unwrap();
+            let r_cur_norm = r.as_tensor().norm().to_f64().unwrap();
+            let mut r_next_norm = r_cur_norm;
             //log::trace!("r = {:?}", &r);
 
-            //print_sprs(&j_sprs.view());
-
-            if !sid_solve_mut(j.view(), r.as_mut_slice()) {
-                return SolveResult {
+            if !r_cur_norm.is_finite() {
+                break SolveResult {
                     iterations,
-                    status: Status::LinearSolveError,
+                    status: Status::Diverged,
                 };
             }
 
+            //print_sprs(&j_sprs.view());
+
+            let before_linsolve = Instant::now();
+            // Update tolerance (forcing term)
+            linsolve.tol = orig_linsolve_tol
+                .min(((r_cur_norm - linsolve_result.residual).abs() / r_prev_norm) as f32);
+
+            r_cur.copy_from_slice(&r);
+            linsolve_result = linsolve.solve(
+                |p, out| {
+                    let before_jprod = Instant::now();
+                    problem.jacobian_product(x, p, r_cur, j_rows, j_cols, out);
+                    //out.iter_mut().for_each(|x| *x = T::zero());
+                    //j.view()
+                    //    .add_mul_in_place_par(p.as_tensor(), out.as_mut_tensor());
+                    jprod_time += Instant::now() - before_jprod;
+                    inner_callback.borrow_mut()(CallbackArgs {
+                        residual: r_cur.as_slice(),
+                        x,
+                        problem,
+                    })
+                },
+                p.as_mut_slice(),
+                r.as_mut_slice(),
+            );
+            linsolve_time += Instant::now() - before_linsolve;
+
+            //if !sid_solve_mut(j.view(), r.as_mut_slice()) {
+            //    break SolveResult {
+            //        iterations,
+            //        status: Status::LinearSolveError,
+            //    };
+            //}
+
             // r is now the search direction, rename to avoid confusion.
-            let p = r.as_slice();
+            //let p = r.as_slice();
 
             // log::trace!("p = {:?}", &r);
 
             // Check solution:
             // Compute out = J * p
-            //let mut out = vec![0.0; self.problem.num_variables()];
-            //for (row_idx, row) in j.as_data().iter().enumerate() {
-            //    for (col_idx, val, _) in row.iter() {
-            //        out[row_idx] += (*val * p[col_idx]).to_f64().unwrap();
-            //    }
-            //}
+            //jp.iter_mut().for_each(|x| *x = T::zero());
+            //j.view()
+            //    .add_right_mul_in_place(p.as_tensor(), jp.as_mut_tensor());
             //for (&a, &x) in out.iter().zip(r_cur.iter()) {
             //    log::trace!(
             //        "newton solve residual: {:?}",
@@ -251,7 +328,7 @@ where
             //    for alpha in (0..100).map(|i| T::from(i).unwrap() / T::from(100.0).unwrap()) {
             //        zip!(probe_x.iter_mut(), r.iter(), x.iter())
             //            .for_each(|(px, &r, &x)| *px = x - alpha * r);
-            //        self.problem.residual(&probe_x, probe_r.as_mut_slice());
+            //        problem.residual(&probe_x, probe_r.as_mut_slice());
             //        writeln!(
             //            &mut f,
             //            "{:?} {:10.3e};",
@@ -263,54 +340,82 @@ where
             //    writeln!(&mut f, "]").ok();
             //}
 
+            if !p.as_tensor().norm_squared().is_finite() {
+                break SolveResult {
+                    iterations,
+                    status: Status::StepTooLarge,
+                };
+            }
+
             // Update previous step.
             x_prev.copy_from_slice(x);
 
-            let rho = self.params.line_search.step_factor();
+            let before_ls = Instant::now();
+            let rho = params.line_search.step_factor();
+
+            // Take the full step
+            *x.as_mut_tensor() -= p.as_tensor();
+
+            // Compute the residual for the full step.
+            let before_residual = Instant::now();
+            problem.residual(&x, r_next.as_mut_slice());
+            residual_time += Instant::now() - before_residual;
+
             let ls_count = if rho >= 1.0 {
-                // Take the full step
-                *x.as_mut_tensor() -= p.as_tensor();
-                self.problem.residual(x, r_next.as_mut_slice());
                 1
             } else {
                 // Line search.
                 let mut alpha = 1.0;
                 let mut ls_count = 1;
+                let mut sigma = linsolve.tol as f64;
 
                 loop {
-                    // Step and project.
+                    // Compute gradient of the merit function 0.5 r'r  multiplied by p, which is r' dr/dx p.
+                    // Gradient dot search direction.
+                    // Check Armijo condition:
+                    // Given f(x) = 0.5 || r(x) ||^2 = 0.5 r(x)'r(x)
+                    // Test f(x + p) < f(x) - cα(J(x)'r(x))'p(x)
+
+                    let before_jprod = Instant::now();
+                    //jp.iter_mut().for_each(|x| *x = T::zero());
+                    //j.view()
+                    //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
+                    problem.jacobian_product(x, p, r_cur, j_rows, j_cols, jp.as_mut_slice());
+                    jprod_time += Instant::now() - before_jprod;
+
+                    // TRADITIONAL BACKTRACKING:
+                    //let rjp = jp
+                    //    .iter()
+                    //    .zip(r_cur.iter())
+                    //    .fold(0.0, |acc, (&jp, &r)| acc + (jp * r).to_f64().unwrap());
+                    //if (&r_next).as_tensor().norm_squared().to_f64().unwrap()
+                    //    <= (&r_cur).as_tensor().norm_squared().to_f64().unwrap()
+                    //        - 2.0 * params.line_search.armijo_coeff() * alpha * rjp
+                    //{
+                    //    break;
+                    //}
+
+                    r_next_norm = r_next.as_tensor().norm().to_f64().unwrap();
+                    if r_next_norm <= r_cur_norm * (1.0 - rho * (1.0 - sigma)) {
+                        break;
+                    }
+
+                    alpha *= rho;
+                    sigma = 1.0 - alpha * (1.0 - sigma);
+
+                    if alpha < 1e-3 {
+                        break;
+                    }
+
+                    // Take a fractional step.
                     zip!(x.iter_mut(), x_prev.iter(), p.iter()).for_each(|(x, &x0, &p)| {
                         *x = num_traits::Float::mul_add(p, T::from(-alpha).unwrap(), x0);
                     });
 
                     // Compute the candidate residual.
-                    self.problem.residual(&x, r_next.as_mut_slice());
-
-                    // Compute gradient of the merit function 0.5 r'r, which is r' dr/dx.
-                    jtr.iter_mut().for_each(|x| *x = T::zero());
-                    j.view()
-                        .add_left_mul_in_place(r_cur.as_tensor(), jtr.as_mut_tensor());
-
-                    // Residual dot search direction.
-                    // Check Armijo condition:
-                    // Given f(x) = 0.5 || r(x) ||^2 = 0.5 r(x)'r(x)
-                    // Test f(x + p) < f(x) - cα(J(x)'r(x))'p(x)
-                    let jtr_dot_p = jtr
-                        .iter()
-                        .zip(p.iter())
-                        .fold(0.0, |acc, (&jtr, &p)| acc + (jtr * p).to_f64().unwrap());
-                    if (&r_next).as_tensor().norm_squared().to_f64().unwrap()
-                        <= (&r_cur).as_tensor().norm_squared().to_f64().unwrap()
-                            - 2.0 * self.params.line_search.armijo_coeff() * alpha * jtr_dot_p
-                    {
-                        break;
-                    }
-
-                    alpha *= rho;
-
-                    //if alpha < 1e-3 {
-                    //    break;
-                    //}
+                    let before_residual = Instant::now();
+                    problem.residual(x, r_next.as_mut_slice());
+                    residual_time += Instant::now() - before_residual;
 
                     ls_count += 1;
                 }
@@ -319,23 +424,39 @@ where
 
             iterations += 1;
 
-            log_debug_stats(iterations, ls_count, &r_next, x, &x_prev);
+            ls_time += Instant::now() - before_ls;
 
-            let denom = inf_norm(x.iter().cloned()) + T::one();
+            log_debug_stats(
+                iterations,
+                ls_count,
+                linsolve_result.iterations,
+                linsolve.tol,
+                &r_next,
+                x,
+                &x_prev,
+            );
+
+            let denom = x.as_tensor().norm() + T::one();
 
             // Check the convergence condition.
-            if inf_norm(r_next.iter().cloned()) < r_tol
-                || inf_norm(x_prev.iter().zip(x.iter()).map(|(&a, &b)| a - b)) < x_tol * denom
+            if r_next_norm < r_tol.to_f64().unwrap()
+                || num_traits::Float::sqrt(
+                    x_prev
+                        .iter()
+                        .zip(x.iter())
+                        .map(|(&a, &b)| (a - b) * (a - b))
+                        .sum::<T>(),
+                ) < x_tol * denom
             {
-                return SolveResult {
+                break SolveResult {
                     iterations,
                     status: Status::Success,
                 };
             }
 
             // Check that we are running no more than the maximum allowed iterations.
-            if iterations >= self.params.max_iter {
-                return SolveResult {
+            if iterations >= params.max_iter {
+                break SolveResult {
                     iterations,
                     status: Status::MaximumIterationsExceeded,
                 };
@@ -343,17 +464,51 @@ where
 
             // Reset r to be a valid residual for the next iteration.
             r.copy_from_slice(&r_next);
-        }
+        };
+
+        // Reset tolerance for future solves.
+        linsolve.tol = orig_linsolve_tol;
+
+        log::debug!(
+            "Balance equation computation time: {}ms",
+            residual_time.as_millis()
+        );
+        log::debug!("Jacobian product time: {}ms", jprod_time.as_millis());
+        log::debug!("Linear solve time: {}ms", linsolve_time.as_millis());
+        log::debug!("Line search time: {}ms", ls_time.as_millis());
+        result
     }
 }
 
+/*
+ * Status print routines.
+ * i       - iteration number
+ * res-2   - 2-norm of the residual
+ * res-inf - inf-norm of the residual
+ * d-inf   - inf-norm of the step vector
+ * x-inf   - inf-norm of the variable vector
+ * lin #   - number of linear solver iterations
+ * ls #    - number of line search steps
+ */
 fn log_debug_stats_header() {
-    log::debug!("    i |   res-2    |  res-inf   |   d-inf    |   x-inf    | ls # ");
-    log::debug!("------+------------+------------+------------+------------+------");
-}
-fn log_debug_stats<T: Real>(iterations: u32, ls_steps: u32, r: &[T], x: &[T], x_prev: &[T]) {
     log::debug!(
-        "{i:>5} |  {res2:10.3e} |{resi:10.3e} | {di:10.3e} | {xi:10.3e} | {ls:>4} ",
+        "    i |   res-2    |  res-inf   |   d-inf    |   x-inf    | lin # |   sigma    | ls # "
+    );
+    log::debug!(
+        "------+------------+------------+------------+------------+-------+------------+------"
+    );
+}
+fn log_debug_stats<T: Real>(
+    iterations: u32,
+    ls_steps: u32,
+    linsolve_iter: u32,
+    sigma: f32,
+    r: &[T],
+    x: &[T],
+    x_prev: &[T],
+) {
+    log::debug!(
+        "{i:>5} |  {res2:10.3e} |{resi:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {sigma:10.3e} | {ls:>4} ",
         i = iterations,
         res2 = r.as_tensor().norm().to_f64().unwrap(),
         resi = inf_norm(r.iter().cloned()).to_f64().unwrap(),
@@ -361,6 +516,8 @@ fn log_debug_stats<T: Real>(iterations: u32, ls_steps: u32, r: &[T], x: &[T], x_
             .to_f64()
             .unwrap(),
         xi = inf_norm(x.iter().cloned()).to_f64().unwrap(),
+        lin = linsolve_iter,
+        sigma = sigma,
         ls = ls_steps
     );
 }
@@ -436,57 +593,4 @@ impl LineSearch {
             LineSearch::None => 1.0,
         }
     }
-}
-
-/// Implementation of the conjugate residual method.
-///
-/// The Conjugate Residual method solves the system `Ax = b` where `A` is Hermitian, and `b` is non-zero.
-/// https://en.wikipedia.org/wiki/Conjugate_residual_method
-#[allow(non_snake_case)]
-pub struct ConjugateResidual<'a, T, F> {
-    /// Function to compute the `Ax` product.
-    Ax: F,
-    x: &'a mut [T],
-    r: &'a mut [T],
-    p: Vec<T>,
-    Ar: Vec<T>,
-    Ap: Vec<T>,
-    /// Preconditioner.
-    M: Option<DSMatrix<T>>,
-}
-
-impl<'a, T, F> ConjugateResidual<'a, T, F>
-where
-    T: Real,
-    F: FnMut(&[T], &mut [T]),
-{
-    #[allow(non_snake_case)]
-    pub fn new(mut Ax: F, x: &'a mut [T], b: &'a mut [T]) -> Self {
-        let mut p = vec![T::zero(); x.len()];
-
-        // r0 = b - Ax0
-        Ax(x, &mut p);
-        b.iter_mut().zip(p.iter()).for_each(|(b, &p)| *b -= p);
-
-        // p0 = r0
-        p.copy_from_slice(b);
-
-        // Initialize Ap0 & Ar0
-        let mut Ar = vec![T::zero(); x.len()];
-        Ax(b, &mut Ar);
-
-        let Ap = Ar.clone();
-
-        ConjugateResidual {
-            Ax,
-            x,
-            r: b,
-            p,
-            Ar,
-            Ap,
-            M: None,
-        }
-    }
-
-    //pub fn solve()
 }

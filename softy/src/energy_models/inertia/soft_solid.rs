@@ -53,12 +53,12 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
+impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
         let tetmesh = &self.0.tetmesh;
 
-        let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);
+        let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
         let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
 
         debug_assert_eq!(grad_f.len(), v0.len());
@@ -77,8 +77,14 @@ impl<T: Real> EnergyGradient<T> for TetMeshInertia<'_> {
             tetmesh.cell_iter()
         ) {
             let tet_v0 = Tetrahedron::from_indexed_slice(cell, vel0);
+            let tet_v0_t = Tetrahedron::<T>(
+                tet_v0.0.cast::<T>().unwrap().into(),
+                tet_v0.1.cast::<T>().unwrap().into(),
+                tet_v0.2.cast::<T>().unwrap().into(),
+                tet_v0.3.cast::<T>().unwrap().into(),
+            );
             let tet_v1 = Tetrahedron::from_indexed_slice(cell, vel1);
-            let tet_dv = (tet_v1 - tet_v0).into_array();
+            let tet_dv = (tet_v1 - tet_v0_t).into_array();
 
             for i in 0..4 {
                 gradient[cell[i]] +=

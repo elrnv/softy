@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use num_traits::Zero;
 
+use autodiff as ad;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
@@ -260,7 +261,7 @@ impl SolverBuilder {
     fn build_state(
         solids: Vec<TetMeshSolid>,
         shells: Vec<TriMeshShell>,
-    ) -> Result<State<f64>, Error> {
+    ) -> Result<State<f64, ad::FT<f64>>, Error> {
         // Generalized coordinates and their derivatives.
         let mut dof = Chunked::<Chunked3<GeneralizedState<Vec<f64>, Vec<f64>>>>::default();
 
@@ -382,17 +383,39 @@ impl SolverBuilder {
 
         let dof = dof_state.clone().map_storage(|dof| GeneralizedCoords {
             prev: dof.clone(),
-            cur: dof,
+            cur: dof.clone(),
         });
         let vtx = vtx_state.clone().map_storage(|vtx| Vertex {
             prev: vtx.clone(),
             cur: vtx,
         });
+
+        let dof_ws_next = dof_state.clone().map_storage(|dof| {
+            let m = dof.len();
+            GeneralizedWorkspace {
+                state: dof,
+                // Ignored (but they must have correct size)
+                state_ad: GeneralizedState {
+                    q: vec![ad::FT::zero(); m],
+                    dq: vec![ad::FT::zero(); m],
+                },
+                r_ad: vec![ad::FT::zero(); m],
+            }
+        });
         let vtx_ws_next = vtx_state.clone().map_storage(|vtx| {
             let n = vtx.len();
             VertexWorkspace {
                 state: vtx,
+                state_ad: VertexState {
+                    pos: vec![ad::FT::zero(); n],
+                    vel: vec![ad::FT::zero(); n],
+                },
                 grad: vec![0.0; n],
+                // Ignored (but they must have correct size)
+                lambda: vec![f64::zero(); n],
+                lambda_ad: vec![ad::FT::zero(); n],
+                vfc: vec![f64::zero(); n],
+                vfc_ad: vec![ad::FT::zero(); n],
             }
         });
 
@@ -401,7 +424,7 @@ impl SolverBuilder {
             vtx,
 
             workspace: RefCell::new(WorkspaceData {
-                dof: dof_state,
+                dof: dof_ws_next,
                 vtx: vtx_ws_next,
             }),
 

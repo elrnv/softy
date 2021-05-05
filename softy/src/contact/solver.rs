@@ -10,7 +10,7 @@ pub struct ContactSolver<'a, CJI> {
     /// A set of friction impulses for each contact point.
     friction_impulse: &'a [Vector2<f64>],
     /// Basis defining the normal and tangent space at each point of contact.
-    contact_basis: &'a ContactBasis,
+    contact_basis: &'a ContactBasis<f64>,
     /// Contact Jacobian is a sparse matrix that maps vectors from vertices to contact points.
     /// If the `None` is specified, it is assumed that the contact Jacobian is the identity matrix,
     /// meaning that contacts occur at vertex positions.
@@ -27,7 +27,7 @@ impl<'a> ContactSolver<'a, std::iter::Empty<(usize, usize)>> {
     pub fn without_contact_jacobian(
         velocity: &'a [f64],
         friction_impulse: &'a [[f64; 2]],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         masses: &'a [f64],
     ) -> ContactSolver<'a, std::iter::Empty<(usize, usize)>> {
         Self::new_impl(velocity, friction_impulse, contact_basis, masses, None)
@@ -42,7 +42,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ContactSolver<'a, CJI> {
     pub fn new(
         velocity: &'a [f64],
         friction_impulse: &'a [[f64; 2]],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         masses: &'a [f64],
         contact_jacobian: (&'a [Matrix3<f64>], CJI),
     ) -> ContactSolver<'a, CJI> {
@@ -58,7 +58,7 @@ impl<'a, CJI: Iterator<Item = (usize, usize)>> ContactSolver<'a, CJI> {
     fn new_impl(
         velocity: &'a [f64],
         friction_impulse: &'a [[f64; 2]],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         masses: &'a [f64],
         contact_jacobian: Option<(&'a [Matrix3<f64>], CJI)>,
     ) -> ContactSolver<'a, CJI> {

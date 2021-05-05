@@ -23,7 +23,7 @@ impl<'a> FrictionPolarSolver<'a> {
     pub(crate) fn new(
         predictor_impulse: &'a [[f64; 3]],
         contact_impulse: &'a [f64],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         mass_inv_mtx: EffectiveMassInvView<'a>,
         mass_inv_scale: f64,
         params: FrictionParams,
@@ -144,7 +144,7 @@ pub(crate) struct FrictionPolarProblem<'a> {
     /// A set of contact impulses for each contact point.
     contact_impulse: &'a [f64],
     /// Basis defining the normal and tangent space at each point of contact.
-    contact_basis: &'a ContactBasis,
+    contact_basis: &'a ContactBasis<f64>,
     /// Coefficient of dynamic friction.
     mu: f64,
     /// Effective mass matrix.

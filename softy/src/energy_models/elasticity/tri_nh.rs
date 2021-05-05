@@ -364,16 +364,18 @@ struct DiscreteShellTanBendingEnergy<'a, T> {
 }
 
 #[allow(dead_code)]
-impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
+impl<T: Real> DiscreteShellTanBendingEnergy<'_, T> {
     /// Compute the bending energy.
     #[inline]
     fn energy(&self) -> T {
+        let half = T::from(0.5).unwrap();
+        let _2 = T::from(2.0).unwrap();
         let theta = self
             .edge
             .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
         let theta_strain = theta - self.ref_theta;
-        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
-        self.ref_shape * self.stiffness * tan_strain * tan_strain * 0.5
+        let tan_strain = (theta_strain * half).tan() * _2;
+        self.ref_shape * self.stiffness * tan_strain * tan_strain * half
     }
 
     /// Compute energy derivative with respect to θ.
@@ -381,12 +383,14 @@ impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
     /// If `W` is the energy then this value corresponds to `∂W/∂θ`.
     #[inline]
     fn energy_angle_derivative(&self) -> T {
+        let half = T::from(0.5).unwrap();
+        let _2 = T::from(2.0).unwrap();
         let theta = self
             .edge
             .incremental_angle(self.prev_theta, self.cur_pos, self.faces);
         let theta_strain = theta - self.ref_theta;
-        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
-        let tan_strain_dth_sqrt = T::one() / (theta_strain * 0.5).cos();
+        let tan_strain = (theta_strain * half).tan() * _2;
+        let tan_strain_dth_sqrt = T::one() / (theta_strain * half).cos();
         let tan_strain_dth = tan_strain_dth_sqrt * tan_strain_dth_sqrt;
         self.ref_shape * self.stiffness * tan_strain * tan_strain_dth
     }
@@ -428,12 +432,14 @@ impl<T: Real64> DiscreteShellTanBendingEnergy<'_, T> {
         // ∂θ/∂x ∂²W/∂θ² ∂θ/∂xᵀ + ∂W/∂θ ∂²θ/∂x²
         let dth_dx = edge.edge_angle_gradient(cur_pos, faces).into_tensor(); // ∂θ/∂x
 
+        let half = T::from(0.5).unwrap();
+        let _2 = T::from(2.0).unwrap();
         let theta = edge.incremental_angle(prev_theta, cur_pos, faces);
         let theta_strain = theta - ref_theta;
-        let tan_strain = (theta_strain * 0.5).tan() * 2.0;
-        let sec = T::one() / (theta_strain * 0.5).cos();
+        let tan_strain = (theta_strain * half).tan() * _2;
+        let sec = T::one() / (theta_strain * half).cos();
         let tan_strain_dth = sec * sec;
-        let tan_strain_ddth = tan_strain_dth * (tan_strain_dth + tan_strain * tan_strain * 0.5);
+        let tan_strain_ddth = tan_strain_dth * (tan_strain_dth + tan_strain * tan_strain * half);
         let d2w_dth2 = stiffness * ref_shape * tan_strain_ddth; // ∂²W/∂θ²
 
         let d2th_dx2 = edge.edge_angle_hessian(cur_pos, faces); // ∂²θ/∂x²
@@ -591,7 +597,7 @@ impl<'a, E> TriMeshElasticity<'a, E> {
 }
 
 /// Define a hyperelastic energy model for `TriMeshShell`s.
-impl<T: Real64, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
+impl<T: Real, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     fn energy(&self, x0: &[T], x1: &[T]) -> T {
         let TriMeshElasticity {
@@ -686,10 +692,10 @@ impl<T: Real64, E: TriEnergy<T>> Energy<T> for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real64, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> {
+impl<X: Real, T: Real, E: TriEnergy<T>> EnergyGradient<X, T> for TriMeshElasticity<'_, E> {
     #[allow(non_snake_case)]
     #[unroll_for_loops]
-    fn add_energy_gradient(&self, x0: &[T], x1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, x0: &[X], x1: &[T], grad_f: &mut [T]) {
         let TriMeshElasticity {
             ref trimesh,
             damping,
@@ -734,7 +740,9 @@ impl<T: Real64, E: TriEnergy<T>> EnergyGradient<T> for TriMeshElasticity<'_, E> 
             // Make tri displacement.
             let tri_x0 = Triangle::from_indexed_slice(face, pos0);
             let tri_dx = Triangle::new(
-                (*tri_x1.as_array().as_tensor() - tri_x0.into_array().into_tensor()).into(),
+                (*tri_x1.as_array().as_tensor()
+                    - tri_x0.into_array().into_tensor().cast_inner::<T>())
+                .into(),
             );
 
             let DX_inv = DX_inv.mapd_inner(|x| T::from(x).unwrap());
@@ -977,7 +985,7 @@ impl<E: Send + Sync> EnergyHessianTopology for TriMeshElasticity<'_, E> {
     }
 }
 
-impl<T: Real64 + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
+impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
     for TriMeshElasticity<'_, E>
 {
     #[allow(non_snake_case)]

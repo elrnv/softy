@@ -30,8 +30,10 @@ pub const STATIC_NL_PARAMS: NLParams = NLParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
     clear_velocity: false,
-    tolerance: 1e-3,
+    tolerance: 1e-5,
     max_iterations: 300,
+    linsolve_tolerance: 1e-5,
+    max_linsolve_iterations: 300,
     line_search: LineSearch::default_backtracking(),
     jacobian_test: false,
 };

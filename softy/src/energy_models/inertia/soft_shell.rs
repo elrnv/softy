@@ -50,12 +50,12 @@ impl<T: Real> Energy<T> for SoftShellInertia<'_> {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for SoftShellInertia<'_> {
+impl<X: Real, T: Real> EnergyGradient<X, T> for SoftShellInertia<'_> {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
         let trimesh = &self.0.trimesh;
 
-        let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);
+        let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
         let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
 
         debug_assert_eq!(grad_f.len(), v0.len());
@@ -74,8 +74,13 @@ impl<T: Real> EnergyGradient<T> for SoftShellInertia<'_> {
             trimesh.face_iter()
         ) {
             let tri_v0 = Triangle::from_indexed_slice(face, vel0);
+            let tri_v0_t = Triangle::<T>(
+                tri_v0.0.cast::<T>().unwrap().into(),
+                tri_v0.1.cast::<T>().unwrap().into(),
+                tri_v0.2.cast::<T>().unwrap().into(),
+            );
             let tri_v1 = Triangle::from_indexed_slice(face, vel1);
-            let dv = *tri_v1.as_array().as_tensor() - *tri_v0.as_array().as_tensor();
+            let dv = *tri_v1.as_array().as_tensor() - *tri_v0_t.as_array().as_tensor();
 
             let third = 1.0 / 3.0;
             for i in 0..3 {

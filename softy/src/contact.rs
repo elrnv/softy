@@ -126,16 +126,41 @@ impl<T: Real> Into<[T; 3]> for VectorCyl<T> {
 
 /// This struct defines the basis frame at the set of contact points.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ContactBasis {
-    pub normals: Vec<[f64; 3]>,
-    pub tangents: Vec<[f64; 3]>,
+pub struct ContactBasis<T> {
+    pub normals: Vec<[T; 3]>,
+    pub tangents: Vec<[T; 3]>,
 }
 
-impl ContactBasis {
-    pub fn new() -> ContactBasis {
+impl<T: Real> ContactBasis<T> {
+    pub fn new() -> ContactBasis<T> {
         ContactBasis {
             normals: Vec::new(),
             tangents: Vec::new(),
+        }
+    }
+
+    /// Converts this contact basis to `ContactBasis<f64>`.
+    ///
+    /// # Panics
+    /// This function panics if the conversion to `f64` fails.
+    #[inline]
+    pub fn to_f64(&self) -> ContactBasis<f64> {
+        self.clone_cast()
+    }
+    /// Clone this basis with all variables cast to `S`.
+    #[inline]
+    pub fn clone_cast<S: Real>(&self) -> ContactBasis<S> {
+        ContactBasis {
+            normals: self
+                .normals
+                .iter()
+                .map(|x| x.as_tensor().cast::<S>().into())
+                .collect(),
+            tangents: self
+                .tangents
+                .iter()
+                .map(|x| x.as_tensor().cast::<S>().into())
+                .collect(),
         }
     }
 
@@ -150,13 +175,13 @@ impl ContactBasis {
         // TODO: In addition to remapping this basis, we should just rebuild the missing parts.
         self.normals = crate::constraints::remap_values(
             self.normals.iter().cloned(),
-            [0.0; 3],
+            [T::zero(); 3],
             old_set.iter().cloned(),
             new_set.iter().cloned(),
         );
         self.tangents = crate::constraints::remap_values(
             self.tangents.iter().cloned(),
-            [0.0; 3],
+            [T::zero(); 3],
             old_set.iter().cloned(),
             new_set.iter().cloned(),
         );
@@ -166,15 +191,15 @@ impl ContactBasis {
         &self,
         v: V3,
         contact_index: usize,
-    ) -> VectorCyl<f64>
+    ) -> VectorCyl<T>
     where
-        V3: Into<[f64; 3]>,
+        V3: Into<[T; 3]>,
     {
         VectorCyl::from(self.to_contact_coordinates(v, contact_index))
     }
 
     /// Row-major basis matrix that transforms vectors from physical space to contact space.
-    pub fn contact_basis_matrix(&self, contact_index: usize) -> Matrix3<f64> {
+    pub fn contact_basis_matrix(&self, contact_index: usize) -> Matrix3<T> {
         let n = self.normals[contact_index];
         let t = self.tangents[contact_index];
         let b = Vector3::new(n).cross(Vector3::new(t)).into();
@@ -184,26 +209,26 @@ impl ContactBasis {
 
     /// Transform a vector at the given contact point index to contact coordinates. The index
     /// determines which local contact coordinates to use.
-    pub fn to_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> [f64; 3]
+    pub fn to_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> [T; 3]
     where
-        V3: Into<[f64; 3]>,
+        V3: Into<[T; 3]>,
     {
         (self.contact_basis_matrix(contact_index) * Vector3::new(v.into())).into()
     }
 
     pub fn from_cylindrical_contact_coordinates(
         &self,
-        v: VectorCyl<f64>,
+        v: VectorCyl<T>,
         contact_index: usize,
-    ) -> [f64; 3] {
+    ) -> [T; 3] {
         self.from_contact_coordinates(v, contact_index)
     }
 
     /// Transform a vector at the given contact point index to physical coordinates. The index
     /// determines which local contact coordinates to use.
-    pub fn from_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> [f64; 3]
+    pub fn from_contact_coordinates<V3>(&self, v: V3, contact_index: usize) -> [T; 3]
     where
-        V3: Into<[f64; 3]>,
+        V3: Into<[T; 3]>,
     {
         (self.contact_basis_matrix(contact_index).transpose() * Vector3::new(v.into())).into()
     }
@@ -212,8 +237,8 @@ impl ContactBasis {
     /// to stacked 2D vectors in the tangent space of the contact point.
     pub fn to_tangent_space<'a>(
         &'a self,
-        physical: &'a [[f64; 3]],
-    ) -> impl Iterator<Item = [f64; 2]> + 'a {
+        physical: &'a [[T; 3]],
+    ) -> impl Iterator<Item = [T; 2]> + 'a {
         physical.iter().enumerate().map(move |(i, &v)| {
             let [_, v1, v2] = self.to_contact_coordinates(v, i);
             [v1, v2]
@@ -223,36 +248,30 @@ impl ContactBasis {
     /// Transform a given stacked vector of vectors in contact space to vectors in physical space.
     pub fn from_tangent_space<'a>(
         &'a self,
-        contact: &'a [[f64; 2]],
-    ) -> impl Iterator<Item = [f64; 3]> + 'a {
+        contact: &'a [[T; 2]],
+    ) -> impl Iterator<Item = [T; 3]> + 'a {
         contact
             .iter()
             .enumerate()
-            .map(move |(i, &v)| self.from_contact_coordinates([0.0, v[0], v[1]], i))
+            .map(move |(i, &v)| self.from_contact_coordinates([T::zero(), v[0], v[1]], i))
     }
 
     /// Transform a given vector of vectors in physical space to values in normal direction.
-    pub fn to_normal_space<'a>(
-        &'a self,
-        physical: &'a [[f64; 3]],
-    ) -> impl Iterator<Item = f64> + 'a {
+    pub fn to_normal_space<'a>(&'a self, physical: &'a [[T; 3]]) -> impl Iterator<Item = T> + 'a {
         physical
             .iter()
             .enumerate()
             .map(move |(i, &v)| self.to_contact_coordinates(v, i)[0])
     }
     /// Transform a given vector of normal coordinates in contact space to vectors in physical space.
-    pub fn from_normal_space<'a>(
-        &'a self,
-        contact: &'a [f64],
-    ) -> impl Iterator<Item = [f64; 3]> + 'a {
+    pub fn from_normal_space<'a>(&'a self, contact: &'a [T]) -> impl Iterator<Item = [T; 3]> + 'a {
         contact
             .iter()
             .enumerate()
-            .map(move |(i, &n)| self.from_contact_coordinates([n, 0.0, 0.0], i))
+            .map(move |(i, &n)| self.from_contact_coordinates([n, T::zero(), T::zero()], i))
     }
 
-    pub fn to_polar_tangent_space(&self, physical: &[[f64; 3]]) -> Vec<Polar2<f64>> {
+    pub fn to_polar_tangent_space(&self, physical: &[[T; 3]]) -> Vec<Polar2<T>> {
         physical
             .iter()
             .enumerate()
@@ -260,7 +279,7 @@ impl ContactBasis {
             .collect()
     }
 
-    pub fn from_polar_tangent_space(&self, contact: &[Polar2<f64>]) -> Vec<[f64; 3]> {
+    pub fn from_polar_tangent_space(&self, contact: &[Polar2<T>]) -> Vec<[T; 3]> {
         contact
             .iter()
             .enumerate()
@@ -271,7 +290,7 @@ impl ContactBasis {
             .collect()
     }
 
-    pub fn normal_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
+    pub fn normal_basis_matrix_sprs(&self) -> sprs::CsMat<T> {
         let n = self.normals.len();
 
         // A vector of column major change of basis "matrices"
@@ -279,12 +298,12 @@ impl ContactBasis {
         let col_mtx = Vector3::new([0usize, 0, 0]);
         let mut rows = vec![[0; 3]; n];
         let mut cols = vec![[0; 3]; n];
-        let mut bases = vec![[0.0; 3]; n];
+        let mut bases = vec![[T::zero(); 3]; n];
         for (contact_idx, (m, r, c)) in
             zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
         {
             let mtx = self.contact_basis_matrix(contact_idx);
-            *m = mtx[0].into();
+            *m = mtx[0].into_data();
 
             *r = row_mtx.mapd(|x| x + 3 * contact_idx).into();
             *c = col_mtx.mapd(|x| x + contact_idx).into();
@@ -301,7 +320,7 @@ impl ContactBasis {
         .to_csr()
     }
 
-    pub fn tangent_basis_matrix_sprs(&self) -> sprs::CsMat<f64> {
+    pub fn tangent_basis_matrix_sprs(&self) -> sprs::CsMat<T> {
         let n = self.normals.len();
 
         // A vector of column major change of basis matrices
@@ -309,7 +328,7 @@ impl ContactBasis {
         let col_stencil = Matrix2x3::new([[0usize, 1, 0], [1, 0, 1]]);
         let mut rows = vec![[[0; 3]; 2]; n];
         let mut cols = vec![[[0; 3]; 2]; n];
-        let mut bases = vec![[[0.0; 3]; 2]; n];
+        let mut bases = vec![[[T::zero(); 3]; 2]; n];
         for (contact_idx, (m, r, c)) in
             zip!(bases.iter_mut(), rows.iter_mut(), cols.iter_mut()).enumerate()
         {
@@ -332,7 +351,7 @@ impl ContactBasis {
         .to_csr()
     }
 
-    pub fn normal_basis_matrix(&self) -> BlockDiagonalMatrix3x1 {
+    pub fn normal_basis_matrix(&self) -> BlockDiagonalMatrix3x1<T> {
         let n = self.normals.len();
 
         // A vector of column major change of basis matrices
@@ -349,7 +368,7 @@ impl ContactBasis {
         )))
     }
 
-    pub fn tangent_basis_matrix(&self) -> BlockDiagonalMatrix3x2 {
+    pub fn tangent_basis_matrix(&self) -> BlockDiagonalMatrix3x2<T> {
         let n = self.normals.len();
 
         // A vector of column major change of basis matrices
@@ -372,16 +391,16 @@ impl ContactBasis {
 
     /// Update the basis for the contact space at each contact point given the specified set of
     /// normals. The tangent space is chosen arbitrarily.
-    pub fn update_from_normals(&mut self, normals: Vec<[f64; 3]>) {
+    pub fn update_from_normals(&mut self, normals: Vec<[T; 3]>) {
         self.tangents.clear();
-        self.tangents.resize(normals.len(), [0.0; 3]);
+        self.tangents.resize(normals.len(), [T::zero(); 3]);
         self.normals = normals;
 
         for (&n, t) in self.normals.iter().zip(self.tangents.iter_mut()) {
             // Find the axis that is most aligned with the normal, then use the next axis for the
             // tangent.
             let tangent_axis = (Vector3::new(n).iamax() + 1) % 3;
-            t[tangent_axis] = 1.0;
+            t[tangent_axis] = T::one();
 
             // Project out the normal component.
             *t.as_mut_tensor() -= Vector3::new(n) * n[tangent_axis];
@@ -405,7 +424,7 @@ impl ContactBasis {
     pub fn project_to_tangent_space<'a, V>(&self, vecs: V)
     where
         V: Iterator,
-        V::Item: Into<&'a mut Vector3<f64>>,
+        V::Item: Into<&'a mut Vector3<T>>,
     {
         Self::project_out_normal_component(self.normals.iter().cloned(), vecs);
     }
@@ -417,8 +436,8 @@ impl ContactBasis {
     where
         N: Iterator,
         V: Iterator,
-        N::Item: Into<Vector3<f64>>,
-        V::Item: Into<&'a mut Vector3<f64>>,
+        N::Item: Into<Vector3<T>>,
+        V::Item: Into<&'a mut Vector3<T>>,
     {
         for (n, v) in normals.zip(vecs) {
             let n = n.into();
@@ -431,15 +450,15 @@ impl ContactBasis {
 
 /// An intermediate representation of a contact jacobian that makes it easy to
 /// convert to other sparse representations.
-pub(crate) struct TripletContactJacobian {
+pub(crate) struct TripletContactJacobian<T> {
     pub block_indices: Vec<(usize, usize)>,
-    pub blocks: Chunked3<Chunked3<Vec<f64>>>,
+    pub blocks: Chunked3<Chunked3<Vec<T>>>,
     pub num_rows: usize,
     pub num_cols: usize,
 }
 
-impl TripletContactJacobian {
-    pub fn new() -> TripletContactJacobian {
+impl<T: Real> TripletContactJacobian<T> {
+    pub fn new() -> TripletContactJacobian<T> {
         TripletContactJacobian {
             block_indices: Vec::new(),
             blocks: Chunked3::from_flat(Chunked3::from_flat(Vec::new())),
@@ -449,10 +468,10 @@ impl TripletContactJacobian {
     }
 
     pub fn from_selection<'a>(
-        surf: &QueryTopo,
-        active_contact_points: SelectView<'a, Chunked3<&'a [f64]>>,
-    ) -> TripletContactJacobian {
-        let mut orig_cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices()];
+        surf: &QueryTopo<T>,
+        active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
+    ) -> TripletContactJacobian<T> {
+        let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
         let query_points = active_contact_points.target;
         surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
 
@@ -507,8 +526,8 @@ impl TripletContactJacobian {
     /// surface (as opposed to a subset) for objects and colliders.
     pub fn append_selection<'a>(
         &mut self,
-        surf: &QueryTopo,
-        active_contact_points: SelectView<'a, Chunked3<&'a [f64]>>,
+        surf: &QueryTopo<T>,
+        active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
         contact_offset: usize,
         object_offset: usize,
         collider_offset: usize,
@@ -521,7 +540,7 @@ impl TripletContactJacobian {
 
         // First we append the contact jacobian with respect to object vertices.
 
-        let mut orig_cj_matrices = vec![[[0.0; 3]; 3]; surf.num_contact_jacobian_matrices()];
+        let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
         let query_points = active_contact_points.target;
         surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
 
@@ -560,9 +579,8 @@ impl TripletContactJacobian {
                 .map(|(i, &acp)| (i, collider_offset + acp)),
         );
 
-        cj_matrices.extend(
-            (0..active_contact_points.len()).map(|_| Matrix3::<f64>::identity().into_data()),
-        );
+        cj_matrices
+            .extend((0..active_contact_points.len()).map(|_| Matrix3::<T>::identity().into_data()));
 
         // Convert blocks into Chunked types.
         // TODO: make this type of conversion more ergonomic in flatk.
@@ -571,7 +589,9 @@ impl TripletContactJacobian {
             Chunked3::from_array_vec(cj_matrices).into_storage(),
         ));
 
-        blocks.extend(chunked_matrices.into_iter());
+        blocks
+            .storage_mut()
+            .extend(chunked_matrices.into_storage().into_iter());
     }
 }
 
@@ -600,8 +620,8 @@ pub type ContactJacobianView<'a, T = f64> = Tensor![T; &'a S S 3 3]; //SSBlockMa
 pub type GlobalContactJacobian<T = f64> = Tensor![T; S S S S 3 3];
 pub type GlobalContactJacobianView<'a, T = f64> = Tensor![T; &'a S S S S 3 3];
 
-impl Into<ContactJacobian> for TripletContactJacobian {
-    fn into(self) -> ContactJacobian {
+impl<T: Real> Into<ContactJacobian<T>> for TripletContactJacobian<T> {
+    fn into(self) -> ContactJacobian<T> {
         SSBlockMatrix3::from_index_iter_and_data(
             self.block_indices.iter().cloned(),
             self.num_rows,
@@ -631,7 +651,7 @@ impl Into<ContactJacobian> for TripletContactJacobian {
 //    }
 //}
 
-impl Into<sprs::CsMat<f64>> for TripletContactJacobian {
+impl Into<sprs::CsMat<f64>> for TripletContactJacobian<f64> {
     // Compute contact jacobian
     fn into(self) -> sprs::CsMat<f64> {
         let (rows, cols) = self
@@ -701,7 +721,7 @@ mod tests {
 
     /// We pass a contact basis here by mutable reference. This tests that a basis can be reused
     /// safely.
-    fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>, basis: &mut ContactBasis) {
+    fn contact_basis_from_trimesh(trimesh: &TriMesh<f64>, basis: &mut ContactBasis<f64>) {
         use tensr::*;
         let mut normals = vec![[0.0; 3]; trimesh.num_vertices()];
         geo::algo::compute_vertex_area_weighted_normals(

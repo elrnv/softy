@@ -15,7 +15,7 @@ impl<'a> ContactSolver<'a> {
     pub fn new(
         predictor_impulse: &'a [[f64; 3]],
         contact_impulse_n: &'a [f64],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<ContactSolver<'a>, Error> {

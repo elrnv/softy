@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use rayon::prelude::*;
 use tensr::*;
 
 use super::newton::{Newton, NewtonParams};
@@ -41,19 +42,8 @@ where
     fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
         self.problem.jacobian_indices()
     }
-    fn jacobian_values(&self, x: &[T], values: &mut [T]) {
-        self.problem.jacobian_values(x, values)
-    }
-    fn advanced_jacobian_values(
-        &self,
-        x: &[T],
-        r: &[T],
-        rows: &[usize],
-        cols: &[usize],
-        values: &mut [T],
-    ) {
-        self.problem
-            .advanced_jacobian_values(x, r, rows, cols, values);
+    fn jacobian_values(&self, x: &[T], r: &[T], rows: &[usize], cols: &[usize], values: &mut [T]) {
+        self.problem.jacobian_values(x, r, rows, cols, values);
         let mut seen = self.workspace_seen.borrow_mut();
         seen.iter_mut().for_each(|x| *x = false);
 
@@ -73,6 +63,34 @@ where
             }
         }
     }
+    fn jacobian_product(
+        &self,
+        x: &[T],
+        p: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        jp: &mut [T],
+    ) {
+        self.problem.jacobian_product(x, p, r, rows, cols, jp);
+        let (l, u) = &*self.bounds.borrow();
+        zip!(
+            x.par_iter(),
+            l.par_iter(),
+            u.par_iter(),
+            r.par_iter(),
+            jp.par_iter_mut()
+        )
+        .for_each(|(&x, &l, &u, &r, jp)| {
+            let u = T::from(u).unwrap();
+            let l = T::from(l).unwrap();
+            if r <= x - u {
+                *jp = x - u;
+            } else if r >= x - l {
+                *jp = x - l;
+            }
+        });
+    }
 }
 
 impl<S, T, P> NLSolver<P, T> for MCPSolver<S>
@@ -81,9 +99,17 @@ where
     T: Real + na::RealField,
     P: MixedComplementarityProblem<T>,
 {
-    /// Gets a reference to the intermediate callback function.
-    fn intermediate_callback(&self) -> &RefCell<Callback<T>> {
-        &self.solver.intermediate_callback()
+    /// Gets a reference to the outer callback function.
+    ///
+    /// This callback gets called at the beginning of every Newton iteration.
+    fn outer_callback(&self) -> &RefCell<Callback<T>> {
+        &self.solver.outer_callback()
+    }
+    /// Gets a reference to the inner callback function.
+    ///
+    /// This is the callback that gets called for every inner linear solve.
+    fn inner_callback(&self) -> &RefCell<Callback<T>> {
+        &self.solver.inner_callback()
     }
     /// Gets a reference to the underlying problem instance.
     fn problem(&self) -> &P {
@@ -95,7 +121,7 @@ where
     }
     /// Solves the problem and returns the solution along with the solve result
     /// info.
-    fn solve(&self) -> (Vec<T>, SolveResult) {
+    fn solve(&mut self) -> (Vec<T>, SolveResult) {
         {
             let (l, u) = &mut *self.solver.problem().bounds.borrow_mut();
             self.problem()
@@ -110,7 +136,7 @@ where
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&self, x: &mut [T]) -> SolveResult {
+    fn solve_with(&mut self, x: &mut [T]) -> SolveResult {
         {
             let (l, u) = &mut *self.solver.problem().bounds.borrow_mut();
             self.problem()
@@ -126,33 +152,11 @@ where
     T: Real + na::RealField,
     P: MixedComplementarityProblem<T>,
 {
-    pub fn newton(problem: P, params: NewtonParams, intermediate_callback: Callback<T>) -> Self {
-        let n = problem.num_variables();
-        // Create bounds.
-        let (l, u) = problem.initial_bounds();
-        assert_eq!(l.len(), n);
-        assert_eq!(u.len(), n);
-
-        let mcp = MCP {
-            problem,
-            bounds: RefCell::new((l, u)),
-            workspace_seen: RefCell::new(vec![false; n]),
-        };
-
-        let newton = Newton::new(mcp, params, intermediate_callback);
-
-        MCPSolver { solver: newton }
-    }
-}
-impl<T, P> MCPSolver<TrustRegion<MCP<P>, T>>
-where
-    T: Real + na::RealField,
-    P: MixedComplementarityProblem<T>,
-{
-    pub fn trust_region(
+    pub fn newton(
         problem: P,
-        params: TrustRegionParams,
-        intermediate_callback: Callback<T>,
+        params: NewtonParams,
+        outer_callback: Callback<T>,
+        inner_callback: Callback<T>,
     ) -> Self {
         let n = problem.num_variables();
         // Create bounds.
@@ -166,7 +170,35 @@ where
             workspace_seen: RefCell::new(vec![false; n]),
         };
 
-        let trust_region = TrustRegion::new(mcp, params, intermediate_callback);
+        let newton = Newton::new(mcp, params, outer_callback, inner_callback);
+
+        MCPSolver { solver: newton }
+    }
+}
+impl<T, P> MCPSolver<TrustRegion<MCP<P>, T>>
+where
+    T: Real + na::RealField,
+    P: MixedComplementarityProblem<T>,
+{
+    pub fn trust_region(
+        problem: P,
+        params: TrustRegionParams,
+        outer_callback: Callback<T>,
+        inner_callback: Callback<T>,
+    ) -> Self {
+        let n = problem.num_variables();
+        // Create bounds.
+        let (l, u) = problem.initial_bounds();
+        assert_eq!(l.len(), n);
+        assert_eq!(u.len(), n);
+
+        let mcp = MCP {
+            problem,
+            bounds: RefCell::new((l, u)),
+            workspace_seen: RefCell::new(vec![false; n]),
+        };
+
+        let trust_region = TrustRegion::new(mcp, params, outer_callback, inner_callback);
 
         MCPSolver {
             solver: trust_region,

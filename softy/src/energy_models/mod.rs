@@ -16,8 +16,8 @@ impl<T: Real, E: Energy<T>> Energy<T> for Option<E> {
     }
 }
 
-impl<T: Real, E: EnergyGradient<T>> EnergyGradient<T> for Option<E> {
-    fn add_energy_gradient(&self, x0: &[T], x1: &[T], g: &mut [T]) {
+impl<X: Real, T: Real, E: EnergyGradient<X, T>> EnergyGradient<X, T> for Option<E> {
+    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
         match self {
             Some(e) => e.add_energy_gradient(x0, x1, g),
             None => {}
@@ -81,8 +81,10 @@ impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for Either<A, B> {
     }
 }
 
-impl<T: Real, A: EnergyGradient<T>, B: EnergyGradient<T>> EnergyGradient<T> for Either<A, B> {
-    fn add_energy_gradient(&self, x0: &[T], x1: &[T], g: &mut [T]) {
+impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
+    for Either<A, B>
+{
+    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
         match self {
             Either::Left(e) => e.add_energy_gradient(x0, x1, g),
             Either::Right(e) => e.add_energy_gradient(x0, x1, g),
@@ -207,7 +209,7 @@ pub(crate) mod test_utils {
 
     pub(crate) fn gradient_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
-        E: Energy<F> + EnergyGradient<F>,
+        E: Energy<F> + EnergyGradient<F, F>,
     {
         for (energy, pos) in configurations.iter() {
             let (x0, mut x1) = autodiff_step(bytemuck::cast_slice(&pos), ty);
@@ -232,7 +234,7 @@ pub(crate) mod test_utils {
 
     pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
     where
-        E: EnergyGradient<F> + EnergyHessian<F>,
+        E: EnergyGradient<F, F> + EnergyHessian<F>,
     {
         // An arbitrary scale (!=1.0) that will ensure that Hessians are scaled correctly.
         let scale = 0.2;

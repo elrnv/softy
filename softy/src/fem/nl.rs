@@ -1,5 +1,6 @@
 //! A module for FEM solvers for non-linear equations.
 
+pub mod linsolve;
 pub mod mcp;
 pub mod newton;
 pub mod problem;
@@ -26,6 +27,8 @@ pub struct SimParams {
     pub clear_velocity: bool,
     pub tolerance: f32,
     pub max_iterations: u32,
+    pub linsolve_tolerance: f32,
+    pub max_linsolve_iterations: u32,
     /// Test that the problem Jacobian is correct.
     pub jacobian_test: bool,
     pub line_search: LineSearch,
@@ -39,8 +42,13 @@ pub enum Error {
     MissingMaximumIterations,
 }
 
-pub struct CallbackArgs<'a, T> {
+pub struct CallbackArgs<'a, T>
+where
+    T: 'static,
+{
     pub residual: &'a [T],
+    pub x: &'a [T],
+    pub problem: &'a mut dyn NonLinearProblem<T>,
 }
 
 pub type Callback<T> = Box<dyn FnMut(CallbackArgs<T>) -> bool + Send + 'static>;
@@ -50,6 +58,8 @@ pub enum Status {
     Success,
     MaximumIterationsExceeded,
     LinearSolveError,
+    Diverged,
+    StepTooLarge,
     Interrupted,
 }
 
@@ -62,19 +72,21 @@ pub struct SolveResult {
 }
 
 pub trait NLSolver<P, T> {
-    /// Gets a reference to the intermediate callback function.
-    fn intermediate_callback(&self) -> &RefCell<Callback<T>>;
+    /// Gets a reference to the outer callback function.
+    fn outer_callback(&self) -> &RefCell<Callback<T>>;
+    /// Gets a reference to the inner callback function.
+    fn inner_callback(&self) -> &RefCell<Callback<T>>;
     /// Gets a reference to the underlying problem instance.
     fn problem(&self) -> &P;
     /// Gets a mutable reference the underlying problem instance.
     fn problem_mut(&mut self) -> &mut P;
     /// Solves the problem and returns the solution along with the solve result
     /// info.
-    fn solve(&self) -> (Vec<T>, SolveResult);
+    fn solve(&mut self) -> (Vec<T>, SolveResult);
     /// Solve the problem given an initial guess `x` and returns the solve result
     /// info.
     ///
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
-    fn solve_with(&self, x: &mut [T]) -> SolveResult;
+    fn solve_with(&mut self, x: &mut [T]) -> SolveResult;
 }

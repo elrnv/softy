@@ -48,15 +48,15 @@ impl<T: Real> Energy<T> for RigidShellInertia {
     }
 }
 
-impl<T: Real> EnergyGradient<T> for RigidShellInertia {
+impl<X: Real, T: Real> EnergyGradient<X, T> for RigidShellInertia {
     #[allow(non_snake_case)]
-    fn add_energy_gradient(&self, v0: &[T], v1: &[T], grad_f: &mut [T]) {
+    fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
         debug_assert_eq!(grad_f.len(), v0.len());
 
         // There are translation and rotation dofs only for rigid bodies.
         let v0 = rigid_dofs(v0);
         let v1 = rigid_dofs(v1);
-        let dv = v1 - v0;
+        let dv = v1 - v0.cast_inner::<T>();
 
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad_f);
 

@@ -12,7 +12,7 @@ pub struct FrictionSolver<'a> {
     /// A set of contact forces for each contact point.
     contact_impulse: &'a [f64],
     /// Basis defining the normal and tangent space at each point of contact.
-    contact_basis: &'a ContactBasis,
+    contact_basis: &'a ContactBasis<f64>,
     /// Friction coefficient.
     mu: f64,
     mass_inv_mtx: EffectiveMassInvView<'a>,
@@ -23,7 +23,7 @@ impl<'a> FrictionSolver<'a> {
         predictor_impulse: &'a [[f64; 3]],
         prev_friction_impulse_t: &'a [[f64; 2]],
         contact_impulse: &'a [f64],
-        contact_basis: &'a ContactBasis,
+        contact_basis: &'a ContactBasis<f64>,
         mass_inv_mtx: EffectiveMassInvView<'a>,
         params: FrictionParams,
     ) -> Result<FrictionSolver<'a>, ()> {

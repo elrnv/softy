@@ -1,8 +1,8 @@
 mod test_utils;
 
-use softy::nl_fem::SimParams as NLParams;
-use softy::nl_fem::*;
-use softy::*;
+use softy::fem::nl::SimParams as NLParams;
+use softy::fem::nl::*;
+use softy::{ElasticityParameters, Error, SolidMaterial, TetMesh};
 use std::path::PathBuf;
 pub use test_utils::*;
 
@@ -36,7 +36,7 @@ fn equilibrium() {
 
     let mut solver = SolverBuilder::new(params)
         .add_solid(mesh.clone(), soft_material)
-        .build()
+        .build::<f64>()
         .expect("Failed to create solver for soft box equilibrium test");
     assert!(solver.step().is_ok());
 
@@ -45,18 +45,15 @@ fn equilibrium() {
     compare_meshes(solution, &mesh, 1e-6);
 }
 
-/*
 #[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(4);
-    let mut solver = SolverBuilder::new(OptParams {
-        print_level: 0,
-        derivative_test: 0,
-        ..STRETCH_OPT_PARAMS
+    let mut solver = SolverBuilder::new(NLParams {
+        ..STRETCH_NL_PARAMS
     })
     .add_solid(mesh, medium_solid_material())
-    .build()?;
+    .build::<f64>()?;
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
@@ -64,15 +61,14 @@ fn stretch_plain() -> Result<(), Error> {
     Ok(())
 }
 
+/*
 #[test]
 fn stretch_volume_constraint() -> Result<(), Error> {
     init_logger();
     let incompressible_material = medium_solid_material().with_volume_preservation(true);
     let mesh = make_stretched_box(4);
-    let mut solver = SolverBuilder::new(OptParams {
-        print_level: 0,
-        derivative_test: 0,
-        ..STRETCH_OPT_PARAMS
+    let mut solver = SolverBuilder::new(NLParams {
+        ..STRETCH_NL_PARAMS
     })
     .add_solid(mesh, incompressible_material)
     .build()?;
@@ -83,6 +79,7 @@ fn stretch_volume_constraint() -> Result<(), Error> {
     compare_meshes(solution, &expected, 1e-3);
     Ok(())
 }
+*/
 
 #[test]
 fn twist_plain() -> Result<(), Error> {
@@ -90,13 +87,12 @@ fn twist_plain() -> Result<(), Error> {
     let material = medium_solid_material()
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0));
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
-    let params = OptParams {
-        print_level: 0,
-        ..STRETCH_OPT_PARAMS
+    let params = NLParams {
+        ..STRETCH_NL_PARAMS
     };
     let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
-        .build()?;
+        .build::<f64>()?;
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
     let solution = &solver.solid(0).tetmesh;
@@ -104,6 +100,7 @@ fn twist_plain() -> Result<(), Error> {
     Ok(())
 }
 
+/*
 #[test]
 fn twist_dynamic_volume_constraint() -> Result<(), Error> {
     init_logger();
@@ -113,11 +110,9 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
 
     // We use a large time step to get the simulation to settle to the static sim with less
     // iterations.
-    let params = OptParams {
-        print_level: 0,
-        derivative_test: 0,
+    let params = NLParams {
         time_step: Some(2.0),
-        ..DYNAMIC_OPT_PARAMS
+        ..DYNAMIC_NL_PARAMS
     };
 
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
@@ -129,7 +124,7 @@ fn twist_dynamic_volume_constraint() -> Result<(), Error> {
     for _ in 1u32..15 {
         let result = solver.step()?;
         assert!(
-            result.iterations <= params.max_outer_iterations,
+            result.iterations <= params.max_iterations,
             "Unconstrained solver ran out of outer iterations."
         );
     }
@@ -149,9 +144,8 @@ fn twist_volume_constraint() -> Result<(), Error> {
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
-    let params = OptParams {
-        print_level: 0,
-        ..STRETCH_OPT_PARAMS
+    let params = NLParams {
+        ..STRETCH_NL_PARAMS
     };
     let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
@@ -173,11 +167,9 @@ fn twist_volume_constraint_consistent_outer_iterations() -> Result<(), Error> {
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0))
         .with_volume_preservation(true);
 
-    let params = OptParams {
-        print_level: 0,
-        derivative_test: 0,
-        outer_tolerance: 1e-5, // This is a fairly strict tolerance.
-        ..STRETCH_OPT_PARAMS
+    let params = NLParams {
+        tolerance: 1e-5, // This is a fairly strict tolerance.
+        ..STRETCH_NL_PARAMS
     };
 
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;

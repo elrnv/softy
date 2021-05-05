@@ -47,6 +47,13 @@ pub use implicits::KernelType;
 
 use thiserror::Error;
 
+pub trait Real: tensr::Real + na::RealField {}
+impl<T> Real for T where T: tensr::Real + na::RealField {}
+
+/// An extension to the real trait that allows ops with f64 floats.
+pub trait Real64: tensr::Real64 + na::RealField {}
+impl<T> Real64 for T where T: tensr::Real64 + na::RealField {}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Size mismatch error")]

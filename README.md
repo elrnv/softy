@@ -40,6 +40,11 @@ TBD
 TBD
 
 
+# Examples
+
+For simulation examples, please check our [Examples Repo](https://gitlab.com/elrnv/softy-examples.git).
+
+
 # References
 
  - [\[1\] Egor Larionov, Ye Fan, and Dinesh K. Pai. 2021. Frictional Contact on Smooth Elastic Solids. ACM

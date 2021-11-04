@@ -1,10 +1,13 @@
 mod solver;
 
+use rayon::prelude::*;
+
+use implicits::QueryTopo;
+use tensr::*;
+
 use crate::friction::FrictionParams;
 use crate::Index;
-use implicits::QueryTopo;
 pub use solver::ContactSolver;
-use tensr::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ContactType {
@@ -471,9 +474,9 @@ impl<T: Real> TripletContactJacobian<T> {
         surf: &QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
     ) -> TripletContactJacobian<T> {
-        let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
+        //let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
         let query_points = active_contact_points.target;
-        surf.contact_jacobian_matrices(query_points.into(), &mut orig_cj_matrices);
+        let orig_cj_matrix_iter = surf.contact_jacobian_matrices_par_iter(query_points.into());
 
         // Build a reverse map for mapping to active contacts
         let mut active_contact_point_indices = vec![Index::INVALID; query_points.len()];
@@ -481,32 +484,22 @@ impl<T: Real> TripletContactJacobian<T> {
             active_contact_point_indices[acpi] = Index::new(i);
         }
 
-        let orig_cj_indices_iter = surf.contact_jacobian_matrix_indices_iter();
-
-        let cj_matrices: Vec<_> = orig_cj_indices_iter
-            .clone()
-            .zip(orig_cj_matrices.into_iter())
-            .filter_map(|((row, _), matrix)| {
-                active_contact_point_indices[row]
-                    .into_option()
-                    .map(|_| matrix)
-            })
-            .collect();
-
         // Remap rows to match active constraints. This means that some entries of the raw jacobian
         // will not have a valid entry in the pruned jacobian.
-        let cj_indices_iter = orig_cj_indices_iter.filter_map(move |(row, col)| {
-            active_contact_point_indices[row]
-                .into_option()
-                .map(|idx| (idx, col))
-        });
+        let (cj_indices, cj_matrices): (Vec<_>, Vec<_>) = orig_cj_matrix_iter
+            .filter_map(|(row, col, matrix)| {
+                active_contact_point_indices[row]
+                    .into_option()
+                    .map(|idx| ((idx, col), matrix))
+            })
+            .unzip();
 
         let blocks = Chunked3::from_flat(Chunked3::from_array_vec(
             Chunked3::from_array_vec(cj_matrices).into_storage(),
         ));
 
         TripletContactJacobian {
-            block_indices: cj_indices_iter.collect(),
+            block_indices: cj_indices,
             blocks,
             num_rows: active_contact_points.len(),
             num_cols: surf.surface_vertex_positions().len(),

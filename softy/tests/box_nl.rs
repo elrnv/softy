@@ -48,7 +48,7 @@ fn equilibrium() {
 #[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
-    let mesh = make_stretched_box(4);
+    let mesh = make_stretched_box(10);
     let mut solver = SolverBuilder::new(NLParams {
         ..STRETCH_NL_PARAMS
     })

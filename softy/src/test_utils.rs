@@ -32,10 +32,12 @@ pub const STATIC_NL_PARAMS: NLParams = NLParams {
     clear_velocity: false,
     tolerance: 1e-5,
     max_iterations: 300,
-    linsolve_tolerance: 1e-5,
-    max_linsolve_iterations: 300,
+    linsolve_tolerance: 1e-9,
+    max_linsolve_iterations: 10000,
     line_search: LineSearch::default_backtracking(),
     jacobian_test: false,
+    friction_tolerance: 1e-5,
+    contact_tolerance: 1e-5,
 };
 
 //pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {

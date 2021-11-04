@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use geo::mesh::PolyMesh;
 use geo::ops::*;
+use softy::fem::opt::{SimParams, SolverBuilder};
 use softy::{test_utils::*, *};
 
 const SQUISH_PARAMS: SimParams = SimParams {

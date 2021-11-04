@@ -12,7 +12,7 @@ ipopt = "0.5"
 geo = { path = "../geo" }
 rayon = "1.5"
 reinterpret = "0.2"
-bytemuck = { version = "1.0", features = ["extern_crate_alloc"] }
+bytemuck = { version = "1.7", features = ["extern_crate_alloc"] }
 implicits = { path = "../implicits" }
 unroll = "0.1"
 approx = "0.4"

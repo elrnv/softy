@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use softy::fem::opt::{SimParams, SolverBuilder};
 use softy::{test_utils::*, *};
 
 const STRETCH_PARAMS: SimParams = SimParams {

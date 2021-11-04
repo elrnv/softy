@@ -7,6 +7,7 @@ use implicits::*;
 use lazycell::LazyCell;
 use num_traits::Zero;
 use rayon::iter::Either;
+use rayon::prelude::*;
 #[cfg(feature = "af")]
 use reinterpret::*;
 use tensr::*;
@@ -943,8 +944,9 @@ impl<T: Real> PointContactConstraint<T> {
     }
 }
 
-/// Computes the derivative of a cubic penalty function for contacts.
+/// Computes the derivative of a cubic penalty function for contacts multiplied by `-κ`.
 ///
+/// The penalty and its derivative alone:
 /// ```verbatim
 /// b(x;δ) = -((x-δ)^3)/δ if x < δ and 0 otherwise
 /// db(x;δ) = -(3/δ)(x-δ)^2 if x < δ and 0 otherwise
@@ -960,13 +962,39 @@ pub fn compute_contact_force_magnitude<S: Real>(
         *lambda = if d.to_f32().unwrap() >= delta {
             S::zero()
         } else {
-            let _3 = S::from(3.0).unwrap();
+            let _2 = S::from(2.0).unwrap();
             let delta = S::from(delta).unwrap();
             let kappa = S::from(kappa).unwrap();
-            kappa * (_3 / delta) * (d - delta) * (d - delta)
+            -kappa * (_2 / delta) * (d - delta)
         }
     });
 }
+
+pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
+    if d.to_f32().unwrap() >= delta {
+        S::zero()
+    } else {
+        let delta = S::from(delta).unwrap();
+        let dd = delta - d;
+        (dd * dd) / delta
+    }
+}
+//pub fn compute_contact_penalty<S: Real>(
+//    // Input distance & Output force magnitude
+//    lambda: &mut [S],
+//    delta: f32,
+//) {
+//    lambda.iter_mut().for_each(|lambda| {
+//        let d = *lambda;
+//        *lambda = if d.to_f32().unwrap() >= delta {
+//            S::zero()
+//        } else {
+//            let delta = S::from(delta).unwrap();
+//            let dd = delta - d;
+//            (dd * dd * dd) / delta
+//        }
+//    });
+//}
 
 /// Enumerate non-empty neighborhoods in place.
 fn enumerate_nonempty_neighborhoods_inplace<T: Real>(surf: &QueryTopo<T>) -> Vec<Index> {
@@ -2049,6 +2077,48 @@ impl<T: Real> PointContactConstraint<T> {
         }
     }
 
+    pub(crate) fn object_constraint_jacobian_blocks_par_iter<'a>(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        if let Some(jac) = self.constraint_jacobian.borrow() {
+            Either::Left(
+                jac[0]
+                    .as_ref()
+                    .map(|jac| {
+                        jac.view()
+                            .as_data()
+                            .into_par_iter()
+                            .enumerate()
+                            .flat_map_iter(move |(row_idx, row)| {
+                                row.into_iter().map(move |(block_col_idx, block)| {
+                                    (row_idx, block_col_idx, block.into_arrays()[0])
+                                })
+                            })
+                    })
+                    .into_par_iter()
+                    .flatten(),
+            )
+        } else {
+            let surf = &self.implicit_surface;
+            let iter =
+                surf.surface_jacobian_indexed_block_par_iter(self.contact_points.view().into());
+            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+            Either::Right(
+                if self.object_is_fixed() {
+                    None
+                } else {
+                    Some(iter)
+                }
+                .into_par_iter()
+                .flatten()
+                .map(move |(row, col, block)| {
+                    assert!(neighborhood_indices[row].is_valid());
+                    (neighborhood_indices[row].unwrap(), col, block)
+                }),
+            )
+        }
+    }
+
     pub(crate) fn collider_constraint_jacobian_blocks_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize, [T; 3])> + 'a {
@@ -2083,6 +2153,48 @@ impl<T: Real> PointContactConstraint<T> {
                 .into_iter()
                 .flatten()
                 .map(move |((row, col), block)| {
+                    assert!(neighborhood_indices[row].is_valid());
+                    (neighborhood_indices[row].unwrap(), col, block)
+                }),
+            )
+        }
+    }
+
+    pub(crate) fn collider_constraint_jacobian_blocks_par_iter<'a>(
+        &'a self,
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        if let Some(jac) = self.constraint_jacobian.borrow() {
+            Either::Left(
+                jac[1]
+                    .as_ref()
+                    .map(|jac| {
+                        jac.view()
+                            .as_data()
+                            .into_par_iter()
+                            .enumerate()
+                            .flat_map_iter(move |(row_idx, row)| {
+                                row.into_iter().map(move |(block_col_idx, block)| {
+                                    (row_idx, block_col_idx, block.into_arrays()[0])
+                                })
+                            })
+                    })
+                    .into_par_iter()
+                    .flatten(),
+            )
+        } else {
+            let surf = &self.implicit_surface;
+            let iter =
+                surf.query_jacobian_indexed_block_par_iter(self.contact_points.view().into());
+            let neighborhood_indices = enumerate_nonempty_neighborhoods_inplace(surf);
+            Either::Right(
+                if self.collider_is_fixed() {
+                    None
+                } else {
+                    Some(iter)
+                }
+                .into_par_iter()
+                .flatten()
+                .map(move |(row, col, block)| {
                     assert!(neighborhood_indices[row].is_valid());
                     (neighborhood_indices[row].unwrap(), col, block)
                 }),

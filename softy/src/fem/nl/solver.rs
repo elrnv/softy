@@ -12,6 +12,7 @@ use super::newton::*;
 use super::problem::{FrictionalContactConstraint, NLProblem, NonLinearProblem};
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
+use crate::constraints::point_contact::compute_contact_penalty;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::fem::{ref_tet, state::*};
@@ -210,7 +211,7 @@ impl SolverBuilder {
     fn build_contact_constraint<'a, T: Real>(
         solids: &'a [TetMeshSolid],
         shells: &'a [TriMeshShell],
-        params: FrictionalContactParams,
+        mut params: FrictionalContactParams,
         material_source_coll: &'a [SourceIndex],
         material_source_obj: &'a [SourceIndex],
     ) -> impl Iterator<Item = FrictionalContactConstraint<T>> + 'a {
@@ -236,6 +237,7 @@ impl SolverBuilder {
                     }
                     SourceIndex::Shell(j) => shells[j].contact_surface(),
                 };
+                params.contact_type = ContactType::Point; // Linearized not supported for nl solvers.
                 build_contact_constraint(object, collider, params)
                     .ok()
                     .map(|c| construct_friction_constraint(m0, m1, c))
@@ -954,7 +956,8 @@ impl SolverBuilder {
             state,
             lambda: RefCell::new(Vec::new()),
             lambda_ad: RefCell::new(Vec::new()),
-            kappa: 1e5,
+            kappa: 1.0 / params.contact_tolerance as f64,
+            delta: params.contact_tolerance as f64,
             frictional_contacts,
             frictional_contacts_ad,
             volume_constraints,
@@ -1379,26 +1382,98 @@ where
     T: Real64 + na::RealField,
     S: NLSolver<NLProblem<T>, T>,
 {
-    /// Run the optimization solver on one time step.
+    /// Run the non-linear solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
-        if self.sim_params.jacobian_test {
-            self.problem().check_jacobian(true);
+        let Self {
+            sim_params,
+            solver,
+            solution,
+            ..
+        } = self;
+
+        if sim_params.jacobian_test {
+            solver.problem().check_jacobian(true);
         }
 
-        self.problem_mut().update_constraint_set();
+        solver.problem_mut().update_constraint_set();
 
-        let result = self.solver.solve_with(&mut self.solution);
-        log::trace!("Solve Result: {}", &result);
-        match result.status {
-            Status::Success | Status::MaximumIterationsExceeded => {
-                self.commit_solution(false);
-                // On success, update the mesh with useful metrics.
-                //self.problem_mut().update_mesh_data();
+        let mut contact_iterations = 5i32;
+
+        // Loop to resolve all contacts.
+        loop {
+            let result = solver.solve_with(solution.as_mut_slice());
+            log::trace!("Solve Result: {}", &result);
+            match result.status {
+                Status::Success | Status::MaximumIterationsExceeded => {
+                    // Compute contact violation.
+                    let constraint = solver
+                        .problem_mut()
+                        .contact_constraint(solution.as_slice())
+                        .into_storage();
+                    //let mut orig_lambda = constraint.clone();
+                    //let mut shifted_lambda = constraint.clone();
+                    let smallest = constraint
+                        .iter()
+                        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                        .copied()
+                        .unwrap_or(T::zero())
+                        .to_f64()
+                        .unwrap();
+                    //shifted_lambda.iter_mut().for_each(|x| *x -= smallest);
+                    //compute_contact_penalty(
+                    //    shifted_lambda.as_mut_slice(),
+                    //    sim_params.contact_tolerance,
+                    //);
+                    //compute_contact_penalty(
+                    //    orig_lambda.as_mut_slice(),
+                    //    sim_params.contact_tolerance,
+                    //);
+
+                    let delta = sim_params.contact_tolerance as f64;
+                    let denom: f64 = (compute_contact_penalty(0.0, delta as f32)
+                        - sim_params.tolerance as f64 / solver.problem().kappa)
+                        .min(0.5 * delta)
+                        .max(f64::EPSILON);
+
+                    let bump_ratio: f64 =
+                        compute_contact_penalty(smallest, sim_params.contact_tolerance) / denom;
+                    log::trace!("Bump ratio: {}", bump_ratio);
+                    log::trace!("Kappa: {}", solver.problem().kappa);
+                    let violation = solver
+                        .problem_mut()
+                        .contact_violation(constraint.storage().as_slice());
+                    log::trace!("Contact violation: {}", violation);
+
+                    contact_iterations -= 1;
+
+                    if contact_iterations < 0 {
+                        break Err(Error::NLSolveError {
+                            result: SolveResult {
+                                status: Status::MaximumContactIterationsExceeded,
+                                ..result
+                            },
+                        });
+                    }
+
+                    if violation > T::zero() {
+                        solver.problem_mut().kappa *= bump_ratio.max(2.0);
+                        continue;
+                    } else {
+                        // Relax kappa
+                        if solver.problem().kappa > 1.0 / sim_params.contact_tolerance as f64 {
+                            solver.problem_mut().kappa /= 2.0;
+                        }
+                        self.commit_solution(false);
+                        // On success, update the mesh with useful metrics.
+                        //self.problem_mut().update_mesh_data();
+                        break Ok(result);
+                    }
+                }
+                _ => {
+                    break Err(Error::NLSolveError { result });
+                }
             }
-            _ => {}
         }
-
-        Ok(result)
     }
 }
 

@@ -32,6 +32,10 @@ pub struct SimParams {
     /// Test that the problem Jacobian is correct.
     pub jacobian_test: bool,
     pub line_search: LineSearch,
+    /// The velocity error tolerance for sticking between objects.
+    pub friction_tolerance: f32,
+    /// The distance tolerance between objects in contact.
+    pub contact_tolerance: f32,
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +61,7 @@ pub type Callback<T> = Box<dyn FnMut(CallbackArgs<T>) -> bool + Send + 'static>;
 pub enum Status {
     Success,
     MaximumIterationsExceeded,
+    MaximumContactIterationsExceeded,
     LinearSolveError,
     Diverged,
     StepTooLarge,

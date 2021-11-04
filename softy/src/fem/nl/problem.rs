@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 
-use crate::fem::state::*;
 use autodiff as ad;
 use geo::mesh::{topology::*, Attrib, VertexPositions};
 use num_traits::{One, Zero};
+use rayon::prelude::*;
 use tensr::*;
 
 use crate::attrib_defines::*;
@@ -16,6 +16,7 @@ use crate::constraints::{
 use crate::contact::{ContactJacobian, ContactJacobianView, TripletContactJacobian};
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{elasticity::*, gravity::*, inertia::*};
+use crate::fem::state::*;
 use crate::matrix::*;
 use crate::objects::*;
 use crate::{PointCloud, TriMesh};
@@ -71,6 +72,9 @@ pub struct NLProblem<T: Real> {
     ///
     /// This quantity is used to dynamically enforce non-penetration.
     pub kappa: f64,
+    /// Contact tolerance.
+    // TODO: move this to FrictionalContactConstraint.
+    pub delta: f64,
     /// One way contact constraints between a pair of objects.
     pub frictional_contacts: Vec<FrictionalContactConstraint<T>>,
     /// One way contact constraints between a pair of objects (used for automatic differentiation).
@@ -855,91 +859,6 @@ impl<T: Real64> NLProblem<T> {
         is_finished
     }
 
-    /// Returns true if all friction solves have been completed/converged.
-    ///
-    /// This should be the case if and only if all elements in `friction_steps`
-    /// are zero, which makes the return value simply a convenience.
-    pub fn update_friction_impulse(
-        &mut self,
-        solution: &[T],
-        constraint_values: &[f64],
-        friction_steps: &mut [u32],
-    ) -> bool {
-        if self.frictional_contacts.is_empty() {
-            return true;
-        }
-
-        //self.update_current_velocity(solution);
-        let q_cur = self.state.dof.view().map_storage(|dof| dof.cur.q);
-        let mut ws = self.state.workspace.borrow_mut();
-        let WorkspaceData { dof, vtx } = &mut *ws;
-        sync_vel(
-            &self.state.shells,
-            dof.view().map_storage(|dof| dof.state.dq),
-            q_cur,
-            vtx.view_mut().map_storage(|vtx| vtx.state.vel),
-        );
-
-        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
-        let NLProblem {
-            ref mut frictional_contacts,
-            ref volume_constraints,
-            ref state,
-            ..
-        } = *self;
-
-        let mut is_finished = true;
-
-        let mut constraint_offset = volume_constraints.len();
-
-        // TODO: This is not the right way to compute friction forces since it decouples each pair
-        //       of colliding objects. We should construct a global jacobian matrix instead to
-        //       resolve all friction forces simultaneously. We may use the block nature of
-        //       contacts to construct a blockwise sparse matrix here.
-
-        //        for (fc_idx, fc) in frictional_contacts.iter_mut().enumerate() {
-        //            let obj_cur_pos = state.cur_pos(fc.object_index);
-        //            let col_cur_pos = state.cur_pos(fc.collider_index);
-        //            let dq_next = dof.view().map_storage(|dof| dof.dq);
-        //            let vtx_vel_next = vtx.view().map_storage(|vtx| vtx.state.vel);
-        //            let obj_vel = state.next_vel(dq_next, vtx_vel_next, fc.object_index);
-        //            let col_vel = state.next_vel(dq_next, vtx_vel_next, fc.collider_index);
-        //
-        //            let n = fc.constraint.borrow().constraint_size();
-        //            let contact_impulse = Self::contact_impulse_magnitudes(
-        //                &solution.constraint_multipliers[constraint_offset..constraint_offset + n],
-        //                multiplier_impulse_scale,
-        //            );
-        //
-        //            log::debug!(
-        //                "Maximum contact impulse: {}",
-        //                crate::inf_norm(contact_impulse.iter().cloned())
-        //            );
-        //            let potential_values = &constraint_values[constraint_offset..constraint_offset + n];
-        //
-        //            let rigid_motion = [
-        //                state.rigid_motion(fc.object_index),
-        //                state.rigid_motion(fc.collider_index),
-        //            ];
-        //            friction_steps[fc_idx] = fc
-        //                .constraint
-        //                .borrow_mut()
-        //                .update_frictional_contact_impulse(
-        //                    &contact_impulse,
-        //                    [obj_cur_pos.view(), col_cur_pos.view()],
-        //                    [obj_vel.view(), col_vel.view()],
-        //                    rigid_motion,
-        //                    potential_values,
-        //                    friction_steps[fc_idx],
-        //                );
-        //
-        //            is_finished &= friction_steps[fc_idx] == 0;
-        //            constraint_offset += n;
-        //        }
-
-        is_finished
-    }
-
     //    pub fn contact_potential(&self) -> VertexData<Vec<f64>> {
     //        let NLProblem {
     //            state,
@@ -1592,6 +1511,56 @@ impl<T: Real64> NLProblem<T> {
         }
     }
 
+    /// Compute contact violation: `max(0, -min(d(q)))`
+    pub fn contact_violation(&self, constraint: &[T]) -> T {
+        T::zero().max(
+            -*constraint
+                .iter()
+                // If there is a NaN, propagate it down so it will appear in the violation.
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                .unwrap_or(&T::infinity()),
+        )
+    }
+    pub fn contact_constraint(&self, v: &[T]) -> Chunked<Vec<T>> {
+        let WorkspaceData { dof, vtx } = &mut *self.state.workspace.borrow_mut();
+        let GeneralizedWorkspace {
+            state: GeneralizedState { q, .. },
+            ..
+        } = dof.view_mut().into_storage();
+        let VertexWorkspace {
+            state: VertexState { pos, .. },
+            ..
+        } = vtx.view_mut().into_storage();
+
+        // Integrate position.
+        let q_cur = self.state.dof.storage().cur.q.as_slice();
+        self.state.be_step(v, self.time_step(), q_cur, q);
+
+        let dof = self.state.dof.view();
+        let vtx = self.state.vtx.view();
+        let q = dof.map_storage(|_| &*q);
+        let mut pos = vtx.map_storage(|_| &mut *pos);
+
+        // Transfer position data to vertex position state (relevant for rigid bodies)
+        sync_pos(&self.state.shells, q, pos.view_mut());
+
+        let pos = pos.view(); // Convert to a read-only reference.
+
+        let mut constraint = Chunked::new();
+        for (i, fc) in self.frictional_contacts.iter().enumerate() {
+            let mut fc_constraint = fc.constraint.borrow_mut();
+
+            // Compute constraint (i.e. distance).
+            let n = fc_constraint.constraint_size();
+            constraint.push_iter(std::iter::repeat(T::zero()).take(n));
+
+            let obj_pos = self.state.mesh_vertex_subset(q, pos, fc.object_index);
+            let col_pos = self.state.mesh_vertex_subset(q, pos, fc.collider_index);
+            fc_constraint.constraint([obj_pos, col_pos], constraint.view_mut().isolate(i));
+        }
+        constraint
+    }
+
     fn subtract_friction_and_contact_forces<S: Real>(
         &self,
         q: &[S],
@@ -1612,7 +1581,7 @@ impl<T: Real64> NLProblem<T> {
         let vel = vtx.map_storage(|_| &*vel);
         let mut vfc = vtx.map_storage(|_| vfc);
 
-        let delta = 1e-4;
+        let delta = self.delta as f32;
         let kappa = self.kappa as f32;
         let mut dist = Vec::new();
 
@@ -1652,13 +1621,6 @@ impl<T: Real64> NLProblem<T> {
 
             compute_contact_force_magnitude(local_lambda, delta, kappa);
 
-            // Compute constraint Jacobian product to vfc.
-            if !fc_constraint.is_linear() {
-                // Must not update the surface if constraint is linearized.
-                fc_constraint.update_surface_with_mesh_pos(obj_pos);
-                fc_constraint.update_contact_points(col_pos);
-            }
-
             // Compute Friction forces.
             let obj_vel = self.state.mesh_vertex_subset(dq, vel, fc.object_index);
             let col_vel = self.state.mesh_vertex_subset(dq, vel, fc.collider_index);
@@ -1671,30 +1633,38 @@ impl<T: Real64> NLProblem<T> {
 
             // Compute lambda * constraint Jacobian (notice the order) and
             // *subtract* it from f (or vfc).
-            let obj_j_blocks_iter = fc_constraint.object_constraint_jacobian_blocks_iter();
+            let obj_j_blocks = fc_constraint
+                .object_constraint_jacobian_blocks_par_iter()
+                .collect::<Vec<_>>();
             let mut obj_fc =
                 self.state
                     .mesh_vertex_subset(f.view_mut(), vfc.view_mut(), fc.object_index);
 
-            for (row, col, j) in obj_j_blocks_iter {
+            // Subtract contact force on object.
+            for &(row, col, j) in obj_j_blocks.iter() {
                 *obj_fc[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
             }
 
+            // Subtract friction force force on object.
             if let Some((obj_f, _)) = friction.as_ref() {
                 for (obj_f, fc) in zip!(obj_f.iter(), obj_fc.iter_mut()) {
                     *fc.as_mut_tensor() -= obj_f.as_tensor();
                 }
             }
 
-            let col_j_blocks_iter = fc_constraint.collider_constraint_jacobian_blocks_iter();
+            let col_j_blocks = fc_constraint
+                .collider_constraint_jacobian_blocks_par_iter()
+                .collect::<Vec<_>>();
             let mut col_fc =
                 self.state
                     .mesh_vertex_subset(f.view_mut(), vfc.view_mut(), fc.collider_index);
 
-            for (row, col, j) in col_j_blocks_iter {
+            // Subtract contact force on collider.
+            for &(row, col, j) in col_j_blocks.iter() {
                 *col_fc[col].as_mut_tensor() -= *j.as_tensor() * local_lambda[row];
             }
 
+            // Subtract friction force force on collider.
             if let Some((_, col_f)) = friction.as_ref() {
                 for (i, col_f, _) in col_f.iter() {
                     *col_fc[i].as_mut_tensor() -= col_f.as_tensor();
@@ -2085,7 +2055,6 @@ impl<T: Real64> NLProblem<T> {
         debug_assert!(vals.iter().all(|x| x.is_finite()));
     }
 
-    // TODO: make autodiff generic over T.
     fn be_jacobian_product(
         &self,
         v: &[T],
@@ -2201,7 +2170,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         } = dof.view_mut().into_storage();
         let VertexWorkspace {
             state: VertexState { pos, vel },
-            lambda,
             vfc,
             ..
         } = vtx.view_mut().into_storage();
@@ -2316,6 +2284,7 @@ impl<T: Real> NLProblem<T> {
             lambda,
             lambda_ad,
             kappa,
+            delta,
             frictional_contacts,
             volume_constraints,
             gravity,
@@ -2346,6 +2315,7 @@ impl<T: Real> NLProblem<T> {
                     .collect(),
             ),
             kappa,
+            delta,
             frictional_contacts: frictional_contacts
                 .iter()
                 .map(|x| x.clone_cast::<ad::F1>())
@@ -2492,6 +2462,8 @@ mod tests {
             max_linsolve_iterations: 300,
             line_search: LineSearch::default_backtracking(),
             jacobian_test: false,
+            contact_tolerance: 0.001,
+            friction_tolerance: 0.001,
         }
     }
 }

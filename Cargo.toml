@@ -20,4 +20,4 @@ debug = true # Change this to true to enable debug symbols in release mode
 rpath = false
 
 [patch.crates-io]
-autodiff = {path = "../autodiff"}
+autodiff = {git = "https://github.com/elrnv/autodiff.git"}

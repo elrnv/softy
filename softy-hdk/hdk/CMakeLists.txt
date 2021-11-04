@@ -55,6 +55,8 @@ if(WIN32)
     target_link_libraries( ${library_name} PRIVATE Ws2_32 userenv )
 endif(WIN32)
 
+message(STATUS "${hdkrs_INCLUDE_DIRS}")
+
 # Include ${CMAKE_CURRENT_BINARY_DIR} for the generated header.
 target_include_directories( ${library_name} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR} ${Softy_INCLUDE_DIRS} ${hdkrs_INCLUDE_DIRS}

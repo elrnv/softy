@@ -92,8 +92,12 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             gravity,
             clear_velocity,
             tolerance,
+            outer_tolerance,
             max_iterations,
+            max_outer_iterations,
             derivative_test,
+            friction_tolerance,
+            contact_tolerance,
             ..
         } = *self;
         let line_search = match solver_type {
@@ -110,10 +114,14 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             },
             gravity: [0.0, -gravity, 0.0],
             clear_velocity,
-            tolerance,
-            max_iterations,
+            tolerance: outer_tolerance,
+            max_iterations: max_outer_iterations,
+            linsolve_tolerance: tolerance,
+            max_linsolve_iterations: max_iterations,
             line_search,
             jacobian_test: derivative_test > 0,
+            friction_tolerance,
+            contact_tolerance,
         }
     }
 }

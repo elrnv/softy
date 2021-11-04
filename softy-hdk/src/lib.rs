@@ -136,6 +136,10 @@ mod ffi {
         pub friction_iterations: u32,
         pub frictional_contacts: Vec<FrictionalContactParams>,
 
+        // TODO: move these into FrictionalContactParams.
+        pub friction_tolerance: f32, // epsilon
+        pub contact_tolerance: f32,  // delta
+
         // Solver params
         pub solver_type: SolverType,
         pub clear_velocity: bool,

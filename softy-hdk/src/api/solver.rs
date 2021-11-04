@@ -121,6 +121,6 @@ where
     }
     #[inline]
     fn set_interrupter(&mut self, interrupter: Box<dyn FnMut() -> bool + Send>) {
-        self.set_simple_interrupter(interrupter);
+        self.set_coarse_interrupter(interrupter);
     }
 }

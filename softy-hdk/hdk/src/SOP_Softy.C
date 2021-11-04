@@ -411,7 +411,6 @@ static const char *theDsFile = R"THEDSFILE(
             type log
             default { "1e-5" }
             range { 0.0 1.0 }
-            hidewhen "{ solvertype != ipopt }"
         }
 
         parm {
@@ -421,7 +420,6 @@ static const char *theDsFile = R"THEDSFILE(
             type integer
             default { "50" }
             range { 0 1000 }
-            hidewhen "{ solvertype != ipopt }"
         }
 
         parm {
@@ -433,11 +431,32 @@ static const char *theDsFile = R"THEDSFILE(
             range { 0! 2! }
         }
 
+        parm {
+            name "frictiontolerance"
+            cppname "FrictionTolerance"
+            label "Friction Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ solvertype == ipopt }"
+        }
+
+        parm {
+            name "contacttolerance"
+            cppname "ContactTolerance"
+            label "Contact Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ solvertype == ipopt }"
+        }
+
         groupcollapsible {
             name    "ipoptoptions"
             label   "Ipopt Options"
             grouptag { "group_type" "collapsible" }
             disablewhen "{ solvertype != ipopt }"
+            hidewhen "{ solvertype != ipopt }"
 
             parm {
                 name "mustrategy"
@@ -671,6 +690,8 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
     
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
+    sim_params.friction_tolerance = sopparms.getFrictionTolerance();
+    sim_params.contact_tolerance = sopparms.getContactTolerance();
 
     switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy())) {
         case SOP_SoftyEnums::MuStrategy::MONOTONE:

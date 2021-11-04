@@ -40,7 +40,17 @@ impl<T: Real> QueryTopo<T> {
         })
     }
 
-    /// Values for which the query neighborhood is empty are set to `None`.
+    /// Blocks for which the query neighborhood is empty are set to `None`.
+    pub fn query_jacobian_indexed_block_par_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
+        self.query_jacobian_block_indices_par_iter()
+            .zip(self.query_jacobian_block_par_iter(query_points))
+            .filter_map(|((row, col, _), block)| block.map(|b| (row, col, b)))
+    }
+
+    /// Blocks for which the query neighborhood is empty are set to `None`.
     pub fn query_jacobian_block_par_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
@@ -98,8 +108,10 @@ impl<T: Real> QueryTopo<T> {
             .map(move |(i, _)| (i, i))
     }
 
-    /// A parallel version of `query_jacobian_block_indices_iter`, however it includes an
-    /// additional integeer indicating the number of neighbors in a given query point
+    /// A parallel version of `query_jacobian_block_indices_iter`.
+    ///
+    /// In addition to the row and column indices, this version includes an
+    /// integer indicating the number of neighbors in a given query point
     /// neighborhood.
     pub fn query_jacobian_block_indices_par_iter<'a>(
         &'a self,
@@ -268,10 +280,10 @@ impl<T: Real> QueryTopo<T> {
         })
     }
 
-    pub fn surface_jacobian_block_par_iter<'a>(
+    pub fn surface_jacobian_indexed_block_par_iter<'a>(
         &'a self,
         query_points: &'a [[T; 3]],
-    ) -> impl ParallelIterator<Item = [T; 3]> + 'a {
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a {
         apply_kernel_query_fn_impl_iter!(self, |kernel| {
             self.surface_jacobian_par_iter_impl(query_points, kernel)
         })
@@ -287,41 +299,40 @@ impl<T: Real> QueryTopo<T> {
         })
     }
 
-    /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbor_cache` map.
+    /// Return row and column indices for each non-zero entry in the jacobian.
+    ///
+    /// This is determined by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices_par_iter<'a>(
         &'a self,
     ) -> impl ParallelIterator<Item = (usize, usize)> + 'a {
         match self.base().sample_type {
-            SampleType::Vertex => Either::Left(
+            SampleType::Vertex => rayon::iter::Either::Left(
                 self.extended_neighborhood_par()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                    .flat_map(move |(row, nbr_points)| {
-                        nbr_points.par_iter().flat_map(move |col| {
-                            (0usize..3).into_par_iter().map(move |i| (row, 3 * col + i))
-                        })
+                    .flat_map_iter(move |(row, nbr_points)| {
+                        nbr_points.iter().map(move |&col| (row, col))
                     }),
             ),
-            SampleType::Face => Either::Right(
+            SampleType::Face => rayon::iter::Either::Right(
                 self.trivial_neighborhood_par()
                     .enumerate()
                     .filter(|(_, nbr_points)| !nbr_points.is_empty())
-                    .flat_map(move |(row, nbr_points)| {
-                        nbr_points.par_iter().flat_map(move |&pidx| {
+                    .flat_map_iter(move |(row, nbr_points)| {
+                        nbr_points.iter().flat_map(move |&pidx| {
                             self.base().surface_topo[pidx]
-                                .par_iter()
-                                .flat_map(move |col| {
-                                    (0usize..3).into_par_iter().map(move |i| (row, 3 * col + i))
-                                })
+                                .iter()
+                                .map(move |&col| (row, col))
                         })
                     }),
             ),
         }
+        .flat_map_iter(move |(row, col)| (0usize..3).map(move |i| (row, 3 * col + i)))
     }
 
-    /// Return row and column indices for each non-zero block in the jacobian. This is determined
-    /// by the precomputed `neighbor_cache` map.
+    /// Return row and column indices for each non-zero block in the jacobian.
+    ///
+    /// This is determined by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_block_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
@@ -349,8 +360,9 @@ impl<T: Real> QueryTopo<T> {
         }
     }
 
-    /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbor_cache` map.
+    /// Return row and column indices for each non-zero entry in the jacobian.
+    ///
+    /// This is determined by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices_iter<'a>(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize)> + 'a {
@@ -358,8 +370,9 @@ impl<T: Real> QueryTopo<T> {
             .flat_map(move |(row, col)| (0..3).map(move |i| (row, 3 * col + i)))
     }
 
-    /// Return row and column indices for each non-zero entry in the jacobian. This is determined
-    /// by the precomputed `neighbor_cache` map.
+    /// Return row and column indices for each non-zero entry in the jacobian.
+    ///
+    /// This is determined by the precomputed `neighbor_cache` map.
     pub fn surface_jacobian_indices(&self, rows: &mut [usize], cols: &mut [usize]) {
         // For each row
         match self.base().sample_type {
@@ -480,7 +493,7 @@ impl<T: Real> QueryTopo<T> {
         &'a self,
         query_points: &'a [[T; 3]],
         kernel: K,
-    ) -> impl ParallelIterator<Item = [T; 3]> + 'a
+    ) -> impl ParallelIterator<Item = (usize, usize, [T; 3])> + 'a
     where
         K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
     {
@@ -498,34 +511,47 @@ impl<T: Real> QueryTopo<T> {
             SampleType::Vertex => {
                 // For each row (query point)
                 Either::Left(
-                    zip!(query_points.par_iter(), self.extended_neighborhood_par())
-                        .filter(|(_, nbrs)| !nbrs.is_empty())
-                        .flat_map(move |(q, nbr_points)| {
+                    query_points
+                        .par_iter()
+                        .zip(self.extended_neighborhood_par())
+                        .enumerate()
+                        .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+                        .flat_map_iter(move |(row, (q, nbr_points))| {
                             let view = SamplesView::new(nbr_points, samples);
-                            vertex_jacobian_par_at(
-                                Vector3::new(*q),
-                                view,
-                                kernel,
-                                surface_topo,
-                                dual_topo,
-                                bg_field_params,
-                            )
+                            nbr_points
+                                .iter()
+                                .zip(vertex_jacobian_at(
+                                    Vector3::new(*q),
+                                    view,
+                                    kernel,
+                                    surface_topo,
+                                    dual_topo,
+                                    bg_field_params,
+                                ))
+                                .map(move |(&col, block)| (row, col, block))
                         }),
                 )
             }
             SampleType::Face => Either::Right(
-                zip!(query_points.par_iter(), self.trivial_neighborhood_par())
-                    .filter(|(_, nbrs)| !nbrs.is_empty())
-                    .flat_map(move |(q, nbr_points)| {
+                query_points
+                    .par_iter()
+                    .zip(self.trivial_neighborhood_par())
+                    .enumerate()
+                    .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+                    .flat_map_iter(move |(row, (q, nbr_points))| {
                         let view = SamplesView::new(nbr_points, samples);
-                        face_jacobian_par_at(
-                            Vector3::new(*q),
-                            view,
-                            kernel,
-                            surface_topo,
-                            surface_vertex_positions,
-                            bg_field_params,
-                        )
+                        nbr_points
+                            .iter()
+                            .flat_map(move |&pidx| self.base().surface_topo[pidx].iter())
+                            .zip(face_jacobian_at(
+                                Vector3::new(*q),
+                                view,
+                                kernel,
+                                surface_topo,
+                                surface_vertex_positions,
+                                bg_field_params,
+                            ))
+                            .map(move |(&col, block)| (row, col, block))
                     }),
             ),
         }
@@ -583,6 +609,18 @@ impl<T: Real> QueryTopo<T> {
         ))
     }
 
+    /// Compute the contact Jacobian of this implicit surface function with respect to surface
+    /// points.
+    ///
+    /// The returned 2D arrays are column major 3x3 matrices.
+    pub fn contact_jacobian_matrices_par_iter<'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+    ) -> impl ParallelIterator<Item = (usize, usize, [[T; 3]; 3])> + 'a {
+        apply_kernel_query_fn_impl_iter!(self, |kernel| self
+            .contact_jacobian_matrices_par_impl(query_points, kernel))
+    }
+
     pub fn num_contact_jacobian_matrices(&self) -> usize {
         let neigh_points = self.trivial_neighborhood_seq();
         let num_pts_per_sample = match self.base().sample_type {
@@ -615,6 +653,35 @@ impl<T: Real> QueryTopo<T> {
                     .flat_map(move |(row, j)| surface_topo[j].iter().map(move |&col| (row, col)))
                     .collect::<Vec<_>>()
                     .into_iter(),
+            ),
+        }
+    }
+
+    pub fn contact_jacobian_matrix_indices_par_iter(
+        &self,
+    ) -> impl IndexedParallelIterator<Item = (usize, usize)> + Clone {
+        let neigh_points = self.trivial_neighborhood_par();
+
+        let ImplicitSurfaceBase {
+            sample_type,
+            ref surface_topo,
+            ..
+        } = *self.base();
+
+        let indices = neigh_points
+            .enumerate()
+            .filter(move |(_, nbrs)| !nbrs.is_empty())
+            .flat_map_iter(move |(row, nbr_points)| nbr_points.iter().map(move |&col| (row, col)));
+
+        match sample_type {
+            SampleType::Vertex => Either::Left(indices.collect::<Vec<_>>().into_par_iter()),
+            SampleType::Face => Either::Right(
+                indices
+                    .flat_map_iter(move |(row, j)| {
+                        surface_topo[j].iter().map(move |&col| (row, col))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_par_iter(),
             ),
         }
     }
@@ -663,6 +730,51 @@ impl<T: Real> QueryTopo<T> {
                         *mtx = new_mtx.into();
                     });
             }
+        }
+    }
+
+    /// Multiplier is a stacked velocity stored at samples.
+    pub(crate) fn contact_jacobian_matrices_par_impl<'a, K: 'a>(
+        &'a self,
+        query_points: &'a [[T; 3]],
+        kernel: K,
+    ) -> impl ParallelIterator<Item = (usize, usize, [[T; 3]; 3])> + 'a
+    where
+        K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
+    {
+        let neigh_points = self.trivial_neighborhood_par();
+
+        let ImplicitSurfaceBase {
+            ref samples,
+            ref surface_topo,
+            bg_field_params,
+            sample_type,
+            ..
+        } = *self.base();
+
+        let third = T::one() / T::from(3.0).unwrap();
+
+        assert_eq!(query_points.len(), neigh_points.len());
+
+        // For each row (query point),
+        let jac = zip!(query_points.par_iter(), neigh_points)
+            .enumerate()
+            .filter(|(_, (_, nbrs))| !nbrs.is_empty())
+            .flat_map_iter(move |(row, (q, nbr_points))| {
+                let view = SamplesView::new(nbr_points, samples);
+                contact_jacobian_at(Vector3::new(*q), view, kernel, bg_field_params)
+                    .0
+                    .zip(nbr_points.iter())
+                    .map(move |(mtx, &col)| (row, col, mtx))
+            });
+
+        match sample_type {
+            SampleType::Vertex => Either::Left(jac.map(|(row, col, m)| (row, col, m.into()))),
+            SampleType::Face => Either::Right(jac.flat_map_iter(move |(row, j, mtx)| {
+                surface_topo[j]
+                    .iter()
+                    .map(move |&col| (row, col, (mtx * third).into()))
+            })),
         }
     }
 

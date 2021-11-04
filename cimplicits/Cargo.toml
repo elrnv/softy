@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 geo = { path = "../geo" }
 implicits = { path = "../implicits" }
-bytemuck = "1.2"
+bytemuck = "1.7"
 cxx = { version = "1.0", optional = true }
 
 [build-dependencies]

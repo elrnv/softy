@@ -1,0 +1,14 @@
+SimParams(
+    gravity: (0.0, -9.81, 0.0),
+    time_step: None,
+    clear_velocity: false,
+    tolerance: 1e-5,
+    max_iterations: 300,
+    linsolve_tolerance: 1e-9,
+    max_linsolve_iterations: 10000,
+    line_search: BackTracking(c: 1e-4, rho: 0.9),
+    jacobian_test: false,
+    friction_tolerance: 1e-5,
+    contact_tolerance: 1e-5,
+)
+

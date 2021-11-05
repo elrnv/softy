@@ -6,10 +6,12 @@ use softy::{ElasticityParameters, Error, SolidMaterial, TetMesh};
 use std::path::PathBuf;
 pub use test_utils::*;
 
-const STRETCH_NL_PARAMS: NLParams = NLParams {
-    gravity: [0.0f32, 0.0, 0.0],
-    ..STATIC_NL_PARAMS
-};
+fn stretch_nl_params() -> NLParams {
+    NLParams {
+        gravity: [0.0f32, 0.0, 0.0],
+        ..load_nl_params("assets/static_nl_params.ron").unwrap()
+    }
+}
 
 pub fn medium_solid_material() -> SolidMaterial {
     default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
@@ -48,9 +50,9 @@ fn equilibrium() {
 #[test]
 fn stretch_plain() -> Result<(), Error> {
     init_logger();
-    let mesh = make_stretched_box(10);
+    let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(NLParams {
-        ..STRETCH_NL_PARAMS
+        ..stretch_nl_params()
     })
     .add_solid(mesh, medium_solid_material())
     .build::<f64>()?;
@@ -68,7 +70,7 @@ fn stretch_volume_constraint() -> Result<(), Error> {
     let incompressible_material = medium_solid_material().with_volume_preservation(true);
     let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(NLParams {
-        ..STRETCH_NL_PARAMS
+        ..stretch_nl_params()
     })
     .add_solid(mesh, incompressible_material)
     .build()?;
@@ -88,7 +90,7 @@ fn twist_plain() -> Result<(), Error> {
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0));
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
     let params = NLParams {
-        ..STRETCH_NL_PARAMS
+        ..stretch_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
@@ -145,7 +147,7 @@ fn twist_volume_constraint() -> Result<(), Error> {
         .with_volume_preservation(true);
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk")).unwrap();
     let params = NLParams {
-        ..STRETCH_NL_PARAMS
+        ..stretch_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
         .add_solid(mesh, material)
@@ -169,7 +171,7 @@ fn twist_volume_constraint_consistent_outer_iterations() -> Result<(), Error> {
 
     let params = NLParams {
         tolerance: 1e-5, // This is a fairly strict tolerance.
-        ..STRETCH_NL_PARAMS
+        ..stretch_nl_params()
     };
 
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;

@@ -1,12 +1,14 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+use tensr::*;
+
 use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
 use crate::inf_norm;
 use crate::Real;
-use tensr::*;
 
 // Parameters for the Newton solver.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
@@ -261,9 +263,9 @@ where
             //let before_j = Instant::now();
             //problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
             // TODO: For debugging only
-            //for (i, (jp, p)) in j_dense.iter_mut().zip(identity.iter()).enumerate() {
-            //    problem.jacobian_product(x, &p, &r, &j_rows, &j_cols, jp)
-            //}
+            for (i, (jp, p)) in j_dense.iter_mut().zip(identity.iter()).enumerate() {
+                problem.jacobian_product(x, &p, &r, &j_rows, &j_cols, jp)
+            }
             //eprintln!("J = [");
             //for jp in j_dense.iter() {
             //    for j in jp.iter() {
@@ -272,7 +274,8 @@ where
             //    eprintln!(";");
             //}
             //eprintln!("]");
-            //eig(j_dense.view());
+            svd_values(j_dense.view());
+            write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
             ////log::trace!("j_vals = {:?}", &j_vals);
@@ -597,7 +600,31 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
         }
     }
 
-    log::trace!("{:?}", dense.eigenvalues());
+    log::debug!("J eigenvalues: {:?}", dense.complex_eigenvalues());
+}
+
+fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
+    // nalgebra dense prototype using lu.
+    let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());
+
+    for (row_idx, row) in mtx.iter().enumerate() {
+        for (col_idx, val) in row.iter().enumerate() {
+            *dense.index_mut((row_idx, col_idx)) = *val;
+        }
+    }
+
+    log::debug!("J singular values: {:?}", dense.singular_values());
+}
+fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32) {
+    // nalgebra dense prototype using lu.
+    let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());
+
+    for (row_idx, row) in mtx.iter().enumerate() {
+        for (col_idx, val) in row.iter().enumerate() {
+            *dense.index_mut((row_idx, col_idx)) = val.to_f64().unwrap();
+        }
+    }
+    super::problem::write_jacobian_img(&dense, iter);
 }
 
 #[allow(dead_code)]
@@ -615,7 +642,7 @@ fn print_sprs<T: Real>(mat: &sprs::CsMatView<T>) {
     eprintln!("]");
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum LineSearch {
     /// Backtracking line search method decreases the step `α` by `rho` to
     /// Satisfy the sufficient decrease condition:

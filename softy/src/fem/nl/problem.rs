@@ -57,6 +57,33 @@ impl<T: Real> FrictionalContactConstraint<T> {
     }
 }
 
+// Debug code to write the jacobian as an image.
+#[allow(dead_code)]
+pub fn write_jacobian_img(jac: &na::DMatrix<f64>, iter: u32) {
+    use image::ImageBuffer;
+
+    let nrows = jac.nrows();
+    let ncols = jac.ncols();
+
+    let ciel = 1.0; //jac.max();
+    let floor = -1.0; //jac.min();
+
+    let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
+        let val = jac[(r as usize, c as usize)];
+        let color = if val > 0.0 {
+            [255, (255.0 * val / ciel) as u8, 0]
+        } else if val < 0.0 {
+            [0, (255.0 * (1.0 + val / floor)) as u8, 255]
+        } else {
+            [255, 0, 255]
+        };
+        image::Rgb(color)
+    });
+
+    img.save(format!("./out/jac_{}.png", iter))
+        .expect("Failed to save Jacobian Image");
+}
+
 /// This struct encapsulates the non-linear problem to be solved by a non-linear solver like Ipopt.
 /// It is meant to be owned by the solver.
 #[derive(Clone, Debug)]
@@ -1331,32 +1358,6 @@ impl<T: Real64> NLProblem<T> {
      */
 
     #[allow(dead_code)]
-    pub fn write_jacobian_img(&self, jac: &na::DMatrix<f64>) {
-        use image::ImageBuffer;
-
-        let nrows = jac.nrows();
-        let ncols = jac.ncols();
-
-        let ciel = 1.0; //jac.max();
-        let floor = -1.0; //jac.min();
-
-        let img = ImageBuffer::from_fn(ncols as u32, nrows as u32, |c, r| {
-            let val = jac[(r as usize, c as usize)];
-            let color = if val > 0.0 {
-                [255, (255.0 * val / ciel) as u8, 0]
-            } else if val < 0.0 {
-                [0, (255.0 * (1.0 + val / floor)) as u8, 255]
-            } else {
-                [255, 0, 255]
-            };
-            image::Rgb(color)
-        });
-
-        img.save(format!("./out/jac_{}.png", self.iter_counter.borrow()))
-            .expect("Failed to save Jacobian Image");
-    }
-
-    #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[T]) {
         use na::{base::storage::Storage, DMatrix};
 
@@ -1374,7 +1375,7 @@ impl<T: Real64> NLProblem<T> {
             jac[(row as usize, col as usize)] += v.to_f64().unwrap();
         }
 
-        self.write_jacobian_img(&jac);
+        write_jacobian_img(&jac, *self.iter_counter.borrow() as u32);
 
         use std::io::Write;
 

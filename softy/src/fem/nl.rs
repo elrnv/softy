@@ -7,6 +7,7 @@ pub mod problem;
 pub mod solver;
 pub mod trust_region;
 
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use thiserror::Error;
 
@@ -17,7 +18,7 @@ pub use solver::*;
 pub use trust_region::*;
 
 /// Simulation parameters.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
@@ -29,9 +30,9 @@ pub struct SimParams {
     pub max_iterations: u32,
     pub linsolve_tolerance: f32,
     pub max_linsolve_iterations: u32,
+    pub line_search: LineSearch,
     /// Test that the problem Jacobian is correct.
     pub jacobian_test: bool,
-    pub line_search: LineSearch,
     /// The velocity error tolerance for sticking between objects.
     pub friction_tolerance: f32,
     /// The distance tolerance between objects in contact.

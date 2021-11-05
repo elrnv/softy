@@ -1,3 +1,9 @@
+use std::fs::File;
+use std::path::Path;
+
+use tensr::{IntoData, Vector3};
+use thiserror::Error;
+
 use crate::attrib_defines::*;
 use crate::fem::nl::{LineSearch, SimParams as NLParams};
 use crate::fem::opt::{MuStrategy, SimParams as OptParams};
@@ -8,7 +14,6 @@ use geo::mesh::builder::*;
 use geo::mesh::topology::VertexIndex;
 use geo::mesh::VertexPositions;
 use geo::ops::*;
-use tensr::{IntoData, Vector3};
 
 pub const STATIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, -9.81, 0.0],
@@ -39,6 +44,19 @@ pub const STATIC_NL_PARAMS: NLParams = NLParams {
     friction_tolerance: 1e-5,
     contact_tolerance: 1e-5,
 };
+
+#[derive(Error, Debug)]
+pub enum LoadParamsError {
+    #[error("IO")]
+    IO(#[from] std::io::Error),
+    #[error("Parse")]
+    Parse(#[from] ron::Error),
+}
+
+pub fn load_nl_params(path: impl AsRef<Path>) -> std::result::Result<NLParams, LoadParamsError> {
+    let f = File::open(path.as_ref())?;
+    Ok(ron::de::from_reader(f)?)
+}
 
 //pub(crate) const QUASI_STATIC_PARAMS: OptParams = OptParams {
 //    gravity: [0.0f32, 0.0, 0.0],

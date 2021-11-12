@@ -516,11 +516,11 @@ impl<T: Real> QueryTopo<T> {
                         .zip(self.extended_neighborhood_par())
                         .enumerate()
                         .filter(|(_, (_, nbrs))| !nbrs.is_empty())
-                        .flat_map_iter(move |(row, (q, nbr_points))| {
+                        .flat_map(move |(row, (q, nbr_points))| {
                             let view = SamplesView::new(nbr_points, samples);
                             nbr_points
-                                .iter()
-                                .zip(vertex_jacobian_at(
+                                .par_iter()
+                                .zip(vertex_jacobian_par_at(
                                     Vector3::new(*q),
                                     view,
                                     kernel,
@@ -1043,6 +1043,11 @@ where
 }
 
 /// Jacobian of the face based local potential with respect to surface vertex positions.
+// TODO: Figure out how to make this function perform well.
+// Currently if we try to plug it into the parallel `surface_jacobian_par_iter_impl` function,
+// the performance tanks over 10x. There must be some unnecessary work happening somewhere.
+// Benchmark the code with the existing `potential` benchmark.
+#[allow(dead_code)]
 pub(crate) fn face_jacobian_par_at<'a, T, K: 'a>(
     q: Vector3<T>,
     view: SamplesView<'a, 'a, T>,
@@ -1050,7 +1055,7 @@ pub(crate) fn face_jacobian_par_at<'a, T, K: 'a>(
     surface_topo: &'a [[usize; 3]],
     surface_vertex_positions: &'a [[T; 3]],
     bg_field_params: BackgroundFieldParams,
-) -> impl IndexedParallelIterator<Item = [T; 3]> + 'a
+) -> impl IndexedParallelIterator<Item = [[T; 3]; 3]> + 'a
 where
     T: Real,
     K: SphericalKernel<T> + std::fmt::Debug + Copy + Sync + Send,
@@ -1074,10 +1079,14 @@ where
         },
     );
 
-    use tensr::SumOp;
-
-    // There are 3 contributions from each sample to each vertex.
-    nml_jac.zip(main_jac).map(|(n, m)| (m + n.sum_op()).into())
+    let third = T::one() / T::from(3.0).unwrap();
+    nml_jac.zip(main_jac).map(move |(n, m)| {
+        [
+            (m * third + n[0]).into(),
+            (m * third + n[1]).into(),
+            (m * third + n[2]).into(),
+        ]
+    })
 }
 
 /// Compute the Jacobian for the implicit surface potential given by the samples with the

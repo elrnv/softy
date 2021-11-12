@@ -5,13 +5,14 @@
 
 use crate::kernel::*;
 use crate::Error;
+use crate::Real;
 use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 use num_traits::ToPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use rstar::RTree;
-use tensr::{zip, IntoData, Matrix, Matrix3, Real, Scalar, Vector3};
+use tensr::{zip, IntoData, Matrix, Matrix3, Scalar, Vector3};
 
 macro_rules! apply_kernel_query_fn_impl_iter {
     ($surf:expr, $f:expr, ?) => {{
@@ -761,7 +762,6 @@ impl<T: Real> ImplicitSurface<T> {
     where
         F: Fn() -> bool + Sync + Send,
         M: VertexMesh<T>,
-        T: na::RealField,
     {
         match self {
             ImplicitSurface::MLS(mls) => {
@@ -1087,6 +1087,7 @@ where
 }
 
 /// Parallel version of `compute_face_unit_normals_gradient_products`
+#[allow(dead_code)]
 pub(crate) fn compute_face_unit_normals_gradient_products_par<'a, T, F>(
     samples: SamplesView<'a, 'a, T>,
     surface_vertices: &'a [[T; 3]],
@@ -1123,6 +1124,7 @@ where
 }
 
 /// Parallel version of `face_unit_normal_gradient_iter`.
+#[allow(dead_code)]
 pub(crate) fn face_unit_normal_gradient_product<T>(
     sample: Sample<T>,
     surface_vertices: &[[T; 3]],
@@ -1137,9 +1139,9 @@ where
     let tri = Triangle::from_indexed_slice(tri_indices, surface_vertices);
     // Note: Implicit transpose when interpreting column-major matrix as a row-major matrix.
     Matrix3::new([
-        (Matrix3::new(tri.area_normal_gradient(0)) * nml_proj_mult).into(),
-        (Matrix3::new(tri.area_normal_gradient(1)) * nml_proj_mult).into(),
-        (Matrix3::new(tri.area_normal_gradient(2)) * nml_proj_mult).into(),
+        (-Matrix3::new(tri.area_normal_gradient(0)) * nml_proj_mult).into(),
+        (-Matrix3::new(tri.area_normal_gradient(1)) * nml_proj_mult).into(),
+        (-Matrix3::new(tri.area_normal_gradient(2)) * nml_proj_mult).into(),
     ])
 }
 

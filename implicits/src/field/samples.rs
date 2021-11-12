@@ -1,7 +1,7 @@
+use crate::Real;
 use geo::ops::*;
 use num_traits::Zero;
 use rayon::prelude::IndexedParallelIterator;
-use std::ops::Neg;
 use tensr::{AsTensor, Scalar, Vector3};
 
 pub use super::*;
@@ -74,7 +74,7 @@ impl<T: Scalar> Samples<T> {
     }
 }
 
-impl<T: Scalar + Neg<Output = T>> Samples<T> {
+impl<T: Real> Samples<T> {
     /// Construct samples centered at vertices. The normals are optionally given, or otherwise
     /// computed using an area weighted method.
     pub fn new_vertex_samples<V3>(

@@ -14,8 +14,10 @@ pub mod field;
 
 pub use crate::field::*;
 pub use crate::kernel::KernelType;
-use tensr::Real;
 use thiserror::Error;
+
+pub trait Real: tensr::Real + na::RealField {}
+impl<T> Real for T where T: tensr::Real + na::RealField {}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Params {

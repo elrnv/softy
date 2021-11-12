@@ -1,4 +1,5 @@
 use super::samples::*;
+use crate::Real;
 use rstar::{PointDistance, RTree, RTreeObject, AABB};
 use tensr::{Scalar, Vector3};
 

@@ -6,7 +6,8 @@
 #[macro_use]
 extern crate approx;
 
-use geo::mesh::{attrib, PointCloud, PolyMesh, TriMesh};
+use geo::attrib;
+use geo::mesh::{PointCloud, PolyMesh, TriMesh};
 
 #[macro_use]
 mod kernel;
@@ -194,7 +195,7 @@ impl From<attrib::Error> for Error {
 /// attribute.
 #[cfg(test)]
 pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
-    use geo::mesh::attrib::*;
+    use geo::attrib::*;
     use geo::mesh::builder::*;
     use geo::mesh::topology::*;
 
@@ -204,14 +205,16 @@ pub(crate) fn make_grid(rows: usize, cols: usize) -> PolyMesh<f64> {
         orientation: AxisPlaneOrientation::XY,
     }
     .build();
-    mesh.add_attrib::<_, VertexIndex>("potential", 0.0f32)
+    mesh.insert_attrib_with_default::<_, VertexIndex>("potential", 0.0f32)
         .unwrap();
     mesh
 }
 
 #[cfg(test)]
 mod tests {
+    use super::Error;
     use super::*;
+    use geo::attrib::*;
     use geo::io::load_polymesh;
     use geo::mesh::builder::*;
     use geo::mesh::topology::*;

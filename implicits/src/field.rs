@@ -6,7 +6,8 @@
 use crate::kernel::*;
 use crate::Error;
 use crate::Real;
-use geo::mesh::{attrib::*, topology::VertexIndex, VertexMesh};
+use geo::attrib::*;
+use geo::mesh::{topology::VertexIndex, VertexMesh};
 use geo::prim::Triangle;
 use num_traits::ToPrimitive;
 use num_traits::Zero;
@@ -651,14 +652,14 @@ impl<T: Real> MLS<T> {
         .reduce(|| Ok(()), |acc, result| acc.and(result));
 
         {
-            mesh.set_attrib_data::<_, VertexIndex>("num_neighbors", &num_neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("neighbors", &neighs_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("bg_weight", &bg_weight_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", &weight_sum_attrib_data)?;
-            mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
-            mesh.set_attrib_data::<_, VertexIndex>("alt_potential", &alt_potential)?;
-            mesh.set_attrib_data::<_, VertexIndex>("normals", &normals)?;
-            mesh.set_attrib_data::<_, VertexIndex>("tangents", &tangents)?;
+            mesh.set_attrib_data::<_, VertexIndex>("num_neighbors", num_neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("neighbors", neighs_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("bg_weight", bg_weight_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("weight_sum", weight_sum_attrib_data)?;
+            mesh.set_attrib_data::<_, VertexIndex>("potential", potential)?;
+            mesh.set_attrib_data::<_, VertexIndex>("alt_potential", alt_potential)?;
+            mesh.set_attrib_data::<_, VertexIndex>("normals", normals)?;
+            mesh.set_attrib_data::<_, VertexIndex>("tangents", tangents)?;
         }
 
         result
@@ -893,7 +894,7 @@ impl<T: Real> ImplicitSurface<T> {
             })
             .reduce(|| Ok(()), |acc, result| acc.and(result));
 
-        mesh.set_attrib_data::<_, VertexIndex>("potential", &potential)?;
+        mesh.set_attrib_data::<_, VertexIndex>("potential", potential)?;
 
         result
     }
@@ -1459,7 +1460,7 @@ mod tests {
     #[test]
     fn narrow_projection_test() -> Result<(), Error> {
         // Make a mesh to be projected.
-        use geo::mesh::attrib::*;
+        use geo::attrib::*;
         use geo::mesh::builder::*;
         use geo::mesh::topology::*;
 
@@ -1469,7 +1470,7 @@ mod tests {
             orientation: AxisPlaneOrientation::ZX,
         }
         .build();
-        grid.add_attrib::<_, VertexIndex>("potential", 0.0f32)
+        grid.insert_attrib_with_default::<_, VertexIndex>("potential", 0.0f32)
             .unwrap();
 
         grid.reverse();

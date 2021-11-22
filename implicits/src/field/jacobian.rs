@@ -2327,7 +2327,7 @@ mod tests {
             .cloned()
             .map(|v| Vector3::new(v).mapd(|x| x as f32).into())
             .collect();
-        tet.set_attrib_data::<[f32; 3], VertexIndex>("V", &multipliers_f32)
+        tet.set_attrib_data::<[f32; 3], VertexIndex>("V", multipliers_f32)
             .unwrap();
 
         let surf_params = Params {

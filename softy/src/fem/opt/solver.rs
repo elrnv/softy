@@ -3,7 +3,8 @@ use std::cell::RefCell;
 use num_traits::Zero;
 
 use autodiff as ad;
-use geo::mesh::{topology::*, Attrib, VertexPositions};
+use geo::attrib::Attrib;
+use geo::mesh::{topology::*, VertexPositions};
 use geo::ops::{ShapeMatrix, Volume};
 use ipopt::{self, Ipopt, SolverData, SolverDataMut};
 use tensr::*;
@@ -15,7 +16,9 @@ use crate::constraints::*;
 use crate::contact::*;
 use crate::fem::{ref_tet, state::*};
 use crate::inf_norm;
-use crate::objects::*;
+use crate::objects::material::*;
+use crate::objects::shell::*;
+use crate::objects::solid::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 #[derive(Clone, Debug)]

@@ -3,8 +3,6 @@
 //! is defined on the mesh itself. This allows us to define variable material
 //! properties.
 
-pub trait Material {}
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MaterialBase<P> {
     /// Material unique identifier.
@@ -98,7 +96,7 @@ pub struct SolidProperties {
 }
 
 /// A trait for materials that can can be moved by external forces.
-pub trait DynamicMaterial: Material {
+pub trait DynamicMaterial {
     /// The density parameter.
     fn density(&self) -> Option<f32>;
 }
@@ -131,11 +129,41 @@ pub enum ShellMaterial {
     Soft(SoftShellMaterial),
 }
 
+/// A generic material.
+#[derive(Copy, Clone, Debug)]
+pub enum Material {
+    Fixed(FixedMaterial),
+    Rigid(RigidMaterial),
+    SoftShell(SoftShellMaterial),
+    Solid(SolidMaterial),
+}
+
 pub type FixedMaterial = MaterialBase<FixedProperties>;
 pub type RigidMaterial = MaterialBase<RigidProperties>;
 pub type SoftShellMaterial = MaterialBase<SoftShellProperties>;
 pub type SolidMaterial = MaterialBase<SolidProperties>;
 
+impl From<FixedMaterial> for Material {
+    fn from(mat: FixedMaterial) -> Self {
+        Material::Fixed(mat)
+    }
+}
+impl From<RigidMaterial> for Material {
+    fn from(mat: RigidMaterial) -> Self {
+        Material::Rigid(mat)
+    }
+}
+impl From<SoftShellMaterial> for Material {
+    fn from(mat: SoftShellMaterial) -> Self {
+        Material::SoftShell(mat)
+    }
+}
+
+impl From<SolidMaterial> for Material {
+    fn from(mat: SolidMaterial) -> Self {
+        Material::Solid(mat)
+    }
+}
 impl RigidMaterial {
     /// Construct a rigid material with the given identifier and density.
     ///
@@ -490,18 +518,6 @@ impl ElasticityParameters {
         )
     }
 }
-
-/*
- * Material implementations
- */
-
-impl Material for FixedMaterial {}
-
-impl Material for RigidMaterial {}
-
-impl Material for SoftShellMaterial {}
-
-impl Material for SolidMaterial {}
 
 impl DynamicMaterial for RigidMaterial {
     fn density(&self) -> Option<f32> {

@@ -526,7 +526,7 @@ mod tests {
     //fn pinch_tester(
     //    sc_params: FrictionalContactParams,
     //) -> Result<(), Error> {
-    //    use geo::mesh::attrib::Attrib;
+    //    use geo::attrib::Attrib;
     //    use geo::mesh::VertexPositions;
     //    use geo::mesh::topology::*;
 

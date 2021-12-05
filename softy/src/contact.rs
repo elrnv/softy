@@ -2,7 +2,9 @@ mod solver;
 
 use rayon::prelude::*;
 
+use crate::Real;
 use implicits::QueryTopo;
+use num_traits::Float;
 use tensr::*;
 
 use crate::friction::FrictionParams;
@@ -56,13 +58,13 @@ impl<T: Real> Polar2<T> {
         let v = v.into();
         Polar2 {
             radius: Vector2::new([v[0], v[1]]).norm(),
-            angle: T::atan2(v[1], v[0]),
+            angle: Float::atan2(v[1], v[0]),
         }
     }
 
     pub fn to_euclidean(self) -> [T; 2] {
         let Polar2 { radius, angle } = self;
-        [radius * angle.cos(), radius * angle.sin()]
+        [radius * Float::cos(angle), radius * Float::sin(angle)]
     }
 }
 
@@ -95,7 +97,7 @@ impl<T: Real> VectorCyl<T> {
             normal: v[0],
             tangent: Polar2 {
                 radius: Vector2::new([v[1], v[2]]).norm(),
-                angle: T::atan2(v[2], v[1]),
+                angle: Float::atan2(v[2], v[1]),
             },
         }
     }
@@ -105,7 +107,11 @@ impl<T: Real> VectorCyl<T> {
             normal,
             tangent: Polar2 { radius, angle },
         } = self;
-        [normal, radius * angle.cos(), radius * angle.sin()]
+        [
+            normal,
+            radius * Float::cos(angle),
+            radius * Float::sin(angle),
+        ]
     }
 }
 

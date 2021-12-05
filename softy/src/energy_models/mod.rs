@@ -66,7 +66,7 @@ impl<T: Real + Send + Sync, E: EnergyHessian<T>> EnergyHessian<T> for Option<E> 
     }
 }
 
-/// Another energy adapter for combining two different energies.
+/// Either energy adapter for combining two different energies.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Either<A, B> {
     Left(A),
@@ -141,6 +141,71 @@ impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHess
     }
 }
 
+/*
+ * Energy implementation for a tuple of energies.
+ */
+
+impl<T: Real, A: Energy<T>, B: Energy<T>> Energy<T> for (A, B) {
+    fn energy(&self, x0: &[T], x1: &[T]) -> T {
+        self.0.energy(x0, x1) + self.1.energy(x0, x1)
+    }
+}
+
+impl<X: Real, T: Real, A: EnergyGradient<X, T>, B: EnergyGradient<X, T>> EnergyGradient<X, T>
+    for (A, B)
+{
+    fn add_energy_gradient(&self, x0: &[X], x1: &[T], g: &mut [T]) {
+        self.0.add_energy_gradient(x0, x1, g);
+        self.1.add_energy_gradient(x0, x1, g);
+    }
+}
+
+impl<A: EnergyHessianTopology, B: EnergyHessianTopology> EnergyHessianTopology for (A, B) {
+    fn energy_hessian_size(&self) -> usize {
+        self.0.energy_hessian_size() + self.1.energy_hessian_size()
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        self.0.num_hessian_diagonal_nnz() + self.1.num_hessian_diagonal_nnz()
+    }
+    fn energy_hessian_indices_offset(
+        &self,
+        off: MatrixElementIndex,
+        indices: &mut [MatrixElementIndex],
+    ) {
+        self.0
+            .energy_hessian_indices_offset(off, &mut indices[..self.0.energy_hessian_size()]);
+        self.1
+            .energy_hessian_indices_offset(off, &mut indices[self.0.energy_hessian_size()..]);
+    }
+    // This method is often overloaded so we forward it here explicitly for efficiency.
+    fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
+        &self,
+        off: MatrixElementIndex,
+        rows: &mut [I],
+        cols: &mut [I],
+    ) {
+        self.0.energy_hessian_rows_cols_offset(
+            off,
+            &mut rows[..self.0.energy_hessian_size()],
+            &mut cols[..self.0.energy_hessian_size()],
+        );
+        self.1.energy_hessian_rows_cols_offset(
+            off,
+            &mut rows[self.0.energy_hessian_size()..],
+            &mut cols[self.0.energy_hessian_size()..],
+        );
+    }
+}
+
+impl<T: Real + Send + Sync, A: EnergyHessian<T>, B: EnergyHessian<T>> EnergyHessian<T> for (A, B) {
+    fn energy_hessian_values(&self, x0: &[T], x1: &[T], scale: T, vals: &mut [T]) {
+        self.0
+            .energy_hessian_values(x0, x1, scale, &mut vals[..self.0.energy_hessian_size()]);
+        self.1
+            .energy_hessian_values(x0, x1, scale, &mut vals[self.0.energy_hessian_size()..]);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::energy::*;
@@ -208,7 +273,7 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn gradient_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
+    pub(crate) fn gradient_tester<E>(configurations: Vec<(E, &[[f64; 3]])>, ty: EnergyType)
     where
         E: Energy<F> + EnergyGradient<F, F>,
     {
@@ -233,7 +298,7 @@ pub(crate) mod test_utils {
         }
     }
 
-    pub(crate) fn hessian_tester<E>(configurations: Vec<(E, Vec<[f64; 3]>)>, ty: EnergyType)
+    pub(crate) fn hessian_tester<E>(configurations: Vec<(E, &[[f64; 3]])>, ty: EnergyType)
     where
         E: EnergyGradient<F, F> + EnergyHessian<F>,
     {

@@ -2,12 +2,14 @@ use std::cell::RefCell;
 
 use autodiff as ad;
 use flatk::Component;
-use geo::mesh::{topology::*, Attrib, VertexPositions};
+use geo::attrib::Attrib;
+use geo::mesh::{topology::*, VertexPositions};
 use num_traits::Zero;
 use tensr::*;
 
 use crate::attrib_defines::*;
-use crate::objects::*;
+use crate::objects::shell::*;
+use crate::objects::solid::*;
 
 /// Integrate rotation axis-angle.
 /// `k0` is previous axis-angle vector.

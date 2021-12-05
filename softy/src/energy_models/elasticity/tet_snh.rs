@@ -8,10 +8,9 @@ use geo::ops::*;
 use geo::prim::Tetrahedron;
 use tensr::*;
 
+use super::tetmesh_nh::TetMeshElasticity;
+use super::tetsolid_nh::TetSolidElasticity;
 use super::LinearElementEnergy;
-//use std::path::Path;
-//use geo::io::save_tetmesh;
-use super::tet_nh::TetMeshElasticity;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -260,6 +259,7 @@ impl<T: Real> LinearElementEnergy<T> for StableNeoHookeanTetEnergy<T> {
 }
 
 pub type TetMeshStableNeoHookean<'a, T> = TetMeshElasticity<'a, StableNeoHookeanTetEnergy<T>>;
+pub type TetSolidStableNeoHookean<'a, T> = TetSolidElasticity<'a, StableNeoHookeanTetEnergy<T>>;
 
 #[cfg(test)]
 mod tests {
@@ -268,7 +268,7 @@ mod tests {
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
     use crate::fem::opt::SolverBuilder;
-    use crate::objects::TetMeshSolid;
+    use crate::objects::solid::TetMeshSolid;
     use crate::objects::*;
 
     use super::*;
@@ -300,13 +300,13 @@ mod tests {
 
     fn build_energies(
         solids: &[TetMeshSolid],
-    ) -> Vec<(TetMeshStableNeoHookean<autodiff::F1>, Vec<[f64; 3]>)> {
+    ) -> Vec<(TetMeshStableNeoHookean<autodiff::F1>, &[[f64; 3]])> {
         solids
             .iter()
             .map(|solid| {
                 (
                     TetMeshStableNeoHookean::new(solid),
-                    solid.tetmesh.vertex_positions().to_vec(),
+                    solid.tetmesh.vertex_positions(),
                 )
             })
             .collect()

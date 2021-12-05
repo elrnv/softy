@@ -175,12 +175,12 @@ mod tests {
             .collect()
     }
 
-    fn build_energies(shells: &[TriMeshShell]) -> Vec<(RigidShellInertia, Vec<[f64; 3]>)> {
+    fn build_energies(shells: &[TriMeshShell]) -> Vec<(RigidShellInertia, &[[f64; 3]])> {
         shells
             .iter()
             .map(|shell| match shell.inertia().unwrap() {
                 Either::Left(_) => unreachable!(),
-                Either::Right(inertia) => (inertia, vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
+                Either::Right(inertia) => (inertia, &[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
             })
             .collect()
     }

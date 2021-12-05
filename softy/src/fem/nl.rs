@@ -5,6 +5,7 @@ pub mod mcp;
 pub mod newton;
 pub mod problem;
 pub mod solver;
+pub mod state;
 pub mod trust_region;
 
 use serde::{Deserialize, Serialize};

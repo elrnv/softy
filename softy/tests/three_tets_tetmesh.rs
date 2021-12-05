@@ -127,7 +127,7 @@ fn animation_volume_constraint() -> Result<(), Error> {
 /// Check that an inverted reference element with all vertices fixed doesn't break the simulation.
 #[test]
 fn inverted_fixed_reference_element_test() -> Result<(), Error> {
-    use geo::mesh::attrib::*;
+    use geo::attrib::*;
     use geo::mesh::topology::*;
     let mut mesh = make_three_tet_mesh();
 
@@ -153,7 +153,7 @@ fn inverted_fixed_reference_element_test() -> Result<(), Error> {
 /// Check that an inverted element with all vertices fixed doesn't break the simulation.
 #[test]
 fn inverted_fixed_element_test() -> Result<(), Error> {
-    use geo::mesh::attrib::*;
+    use geo::attrib::*;
     use geo::mesh::topology::*;
     use geo::mesh::VertexPositions;
     let mut mesh = make_three_tet_mesh();

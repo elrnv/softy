@@ -1,15 +1,24 @@
 use geo::prim::{Tetrahedron, Triangle};
+use na::Scalar;
 use tensr::{Matrix2, Matrix2x3, Matrix3, Vector3};
 
 //mod tet_inv_nh;
 mod tet_nh;
 mod tet_snh;
+mod tetmesh_nh;
+mod tetsolid_nh;
 mod tri_nh;
+mod trimesh_nh;
+mod trishell_nh;
 
 pub use tet_nh::*;
 pub use tet_snh::*;
 //pub use tet_inv_nh::*;
+pub use tetmesh_nh::*;
+pub use tetsolid_nh::*;
 pub use tri_nh::*;
+pub use trimesh_nh::*;
+pub use trishell_nh::*;
 
 /// Element energy interface.
 pub trait LinearElementEnergy<T> {
@@ -57,7 +66,7 @@ pub trait LinearElementEnergy<T> {
     fn energy_hessian_product_transpose(&self, dx: &Self::Element) -> Self::ShapeMatrix;
 }
 
-pub trait TetEnergy<T>:
+pub trait TetEnergy<T: Scalar>:
     LinearElementEnergy<
     T,
     Element = Tetrahedron<T>,
@@ -68,7 +77,7 @@ pub trait TetEnergy<T>:
 >
 {
 }
-impl<T, E> TetEnergy<T> for E where
+impl<T: Scalar, E> TetEnergy<T> for E where
     E: LinearElementEnergy<
         T,
         Element = Tetrahedron<T>,
@@ -79,7 +88,7 @@ impl<T, E> TetEnergy<T> for E where
     >
 {
 }
-pub trait TriEnergy<T>:
+pub trait TriEnergy<T: Scalar>:
     LinearElementEnergy<
     T,
     Element = Triangle<T>,
@@ -90,7 +99,7 @@ pub trait TriEnergy<T>:
 >
 {
 }
-impl<T, E> TriEnergy<T> for E where
+impl<T: Scalar, E> TriEnergy<T> for E where
     E: LinearElementEnergy<
         T,
         Element = Triangle<T>,

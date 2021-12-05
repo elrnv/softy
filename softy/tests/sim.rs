@@ -1,6 +1,6 @@
 mod test_utils;
 
-use geo::mesh::attrib::*;
+use geo::attrib::*;
 use geo::mesh::topology::*;
 use softy::*;
 pub use test_utils::*;

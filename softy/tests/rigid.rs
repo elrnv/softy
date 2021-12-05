@@ -1,7 +1,7 @@
 mod test_utils;
 
 use approx::*;
-use geo::mesh::attrib::*;
+use geo::attrib::*;
 use geo::mesh::topology::*;
 use geo::mesh::VertexPositions;
 use geo::ops::*;

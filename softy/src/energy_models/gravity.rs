@@ -1,9 +1,13 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-use crate::objects::*;
+use crate::objects::shell::*;
+use crate::objects::solid::TetMeshSolid;
+use crate::objects::tetsolid::*;
+use crate::objects::trishell::*;
 use flatk::zip;
-use geo::mesh::{topology::*, Attrib};
+use geo::attrib::Attrib;
+use geo::mesh::topology::*;
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
 use tensr::{Real, Vector3};
@@ -12,6 +16,89 @@ use tensr::{Real, Vector3};
 /// object.
 pub trait Gravity<'a, E> {
     fn gravity(&'a self, g: [f64; 3]) -> E;
+}
+
+/*
+ * Gravity for `TetSolid`s.
+ */
+
+pub struct TetSolidGravity<'a> {
+    solid: &'a TetSolid,
+    g: Vector3<f64>,
+}
+
+impl<'a> TetSolidGravity<'a> {
+    pub fn new(solid: &'a TetSolid, gravity: [f64; 3]) -> TetSolidGravity<'a> {
+        TetSolidGravity {
+            solid,
+            g: gravity.into(),
+        }
+    }
+}
+
+/// Define energy for gravity.
+/// Gravity is a position based energy.
+impl<T: Real> Energy<T> for TetSolidGravity<'_> {
+    /// Since gravity depends on position, `x` is expected to be a position quantity.
+    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+        let tet_elems = &self.solid.tet_elements;
+        let tet_iter = tet_elems
+            .tets
+            .iter()
+            .map(|cell| Tetrahedron::from_indexed_slice(cell, pos1));
+
+        let g = self.g.cast::<T>();
+
+        zip!(
+            tet_elems.ref_volume.iter(),
+            tet_elems.density.iter().map(|&x| f64::from(x)),
+            tet_iter
+        )
+        .map(|(&vol, density, tet)| {
+            // We really want mass here. Since mass is conserved we can rely on reference
+            // volume and density.
+            g.dot(Vector3::new(tet.centroid())) * T::from(-vol * density).unwrap()
+        })
+        .sum()
+    }
+}
+
+impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidGravity<'_> {
+    /// Add the gravity gradient to the given global vector.
+    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
+        debug_assert_eq!(grad.len(), _x0.len());
+
+        let tet_elems = &self.solid.tet_elements;
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
+
+        let g = self.g.cast::<T>();
+
+        // Transfer forces from cell-vertices to vertices themeselves
+        for (&vol, density, cell) in zip!(
+            tet_elems.ref_volume.iter(),
+            tet_elems.density.iter().map(|&x| f64::from(x)),
+            tet_elems.tets.iter()
+        ) {
+            for i in 0..4 {
+                // Energy gradient is in opposite direction to the force hence minus here.
+                gradient[cell[i]] -= g * T::from(0.25 * vol * density).unwrap();
+            }
+        }
+    }
+}
+
+impl EnergyHessianTopology for TetSolidGravity<'_> {
+    fn energy_hessian_size(&self) -> usize {
+        0
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
+    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
+}
+impl<T: Real> EnergyHessian<T> for TetSolidGravity<'_> {
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
 /// A constant directional force.
@@ -104,18 +191,17 @@ impl<T: Real> EnergyHessian<T> for TetMeshGravity<'_> {
 }
 
 /*
- * Gravity for trimesh shells
+ * Gravity for `TriShell`s
  */
 
-/// A constant directional force.
-pub struct SoftShellGravity<'a> {
-    shell: &'a TriMeshShell,
+pub struct SoftTriShellGravity<'a> {
+    shell: &'a TriShell,
     g: Vector3<f64>,
 }
 
-impl<'a> SoftShellGravity<'a> {
-    pub fn new(shell: &'a TriMeshShell, gravity: [f64; 3]) -> SoftShellGravity<'a> {
-        SoftShellGravity {
+impl<'a> SoftTriShellGravity<'a> {
+    pub fn new(shell: &'a TriShell, gravity: [f64; 3]) -> SoftTriShellGravity<'a> {
+        SoftTriShellGravity {
             shell,
             g: gravity.into(),
         }
@@ -124,7 +210,94 @@ impl<'a> SoftShellGravity<'a> {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
-impl<T: Real> Energy<T> for SoftShellGravity<'_> {
+impl<T: Real> Energy<T> for SoftTriShellGravity<'_> {
+    /// Since gravity depends on position, `x` is expected to be a position quantity.
+    fn energy(&self, _x0: &[T], x1: &[T]) -> T {
+        let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
+        let tri_elems = &self.shell.triangle_elements;
+        let tri_iter = tri_elems
+            .triangles
+            .iter()
+            .map(|face| Triangle::from_indexed_slice(face, pos1));
+
+        let g = self.g.cast::<T>();
+
+        zip!(
+            tri_elems.ref_area.iter(),
+            tri_elems.density.iter().map(|&x| f64::from(x)),
+            tri_iter
+        )
+        .map(|(&area, density, tri)| {
+            // We really want mass here. Since mass is conserved we can rely on reference
+            // volume and density.
+            g.dot(Vector3::new(tri.centroid())) * T::from(-area * density).unwrap()
+        })
+        .sum()
+    }
+}
+
+impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriShellGravity<'_> {
+    /// Add the gravity gradient to the given global vector.
+    fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
+        debug_assert_eq!(grad.len(), _x0.len());
+
+        let tri_elems = &self.shell.triangle_elements;
+        let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
+
+        let g = self.g.cast::<T>();
+
+        let third = 1.0 / 3.0;
+
+        // Transfer forces from cell-vertices to vertices themeselves
+        for (&area, density, face) in zip!(
+            tri_elems.ref_area.iter(),
+            tri_elems.density.iter().map(|&x| f64::from(x)),
+            tri_elems.triangles.iter()
+        ) {
+            for i in 0..3 {
+                // Energy gradient is in opposite direction to the force hence minus here.
+                gradient[face[i]] -= g * T::from(third * area * density).unwrap();
+            }
+        }
+    }
+}
+
+impl EnergyHessianTopology for SoftTriShellGravity<'_> {
+    fn energy_hessian_size(&self) -> usize {
+        0
+    }
+    fn num_hessian_diagonal_nnz(&self) -> usize {
+        0
+    }
+    fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
+}
+
+impl<T: Real> EnergyHessian<T> for SoftTriShellGravity<'_> {
+    fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
+}
+
+/*
+ * Gravity for trimesh shells
+ */
+
+/// A constant directional force.
+pub struct SoftTriMeshShellGravity<'a> {
+    shell: &'a TriMeshShell,
+    g: Vector3<f64>,
+}
+
+impl<'a> SoftTriMeshShellGravity<'a> {
+    pub fn new(shell: &'a TriMeshShell, gravity: [f64; 3]) -> SoftTriMeshShellGravity<'a> {
+        SoftTriMeshShellGravity {
+            shell,
+            g: gravity.into(),
+        }
+    }
+}
+
+/// Define energy for gravity.
+/// Gravity is a position based energy.
+impl<T: Real> Energy<T> for SoftTriMeshShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
@@ -154,7 +327,7 @@ impl<T: Real> Energy<T> for SoftShellGravity<'_> {
     }
 }
 
-impl<X: Real, T: Real> EnergyGradient<X, T> for SoftShellGravity<'_> {
+impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriMeshShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
@@ -185,7 +358,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for SoftShellGravity<'_> {
     }
 }
 
-impl EnergyHessianTopology for SoftShellGravity<'_> {
+impl EnergyHessianTopology for SoftTriMeshShellGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
     }
@@ -195,7 +368,7 @@ impl EnergyHessianTopology for SoftShellGravity<'_> {
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 
-impl<T: Real> EnergyHessian<T> for SoftShellGravity<'_> {
+impl<T: Real> EnergyHessian<T> for SoftTriMeshShellGravity<'_> {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
 
@@ -253,9 +426,12 @@ mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;
     use crate::fem::opt::SolverBuilder;
+    use crate::objects::DynamicObject;
     use geo::mesh::VertexPositions;
 
     mod solid {
+        use crate::SolidMaterial;
+
         use super::*;
 
         fn solid_material() -> SolidMaterial {
@@ -277,13 +453,13 @@ mod tests {
                 .collect()
         }
 
-        fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshGravity, Vec<[f64; 3]>)> {
+        fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshGravity, &[[f64; 3]])> {
             solids
                 .iter()
                 .map(|solid| {
                     (
                         solid.gravity([0.0, -9.81, 0.0]),
-                        solid.tetmesh.vertex_positions().to_vec(),
+                        solid.tetmesh.vertex_positions(),
                     )
                 })
                 .collect()
@@ -304,7 +480,7 @@ mod tests {
 
     mod soft_shell {
         use super::*;
-        use crate::energy_models::Either;
+        use crate::{energy_models::Either, SoftShellMaterial};
 
         fn soft_shell_material() -> SoftShellMaterial {
             SoftShellMaterial::new(0).with_density(1000.0)
@@ -327,14 +503,17 @@ mod tests {
 
         fn build_energies(
             shells: &[TriMeshShell],
-        ) -> Vec<(Either<SoftShellGravity, RigidShellGravity>, Vec<[f64; 3]>)> {
+        ) -> Vec<(
+            Either<SoftTriMeshShellGravity, RigidShellGravity>,
+            &[[f64; 3]],
+        )> {
             shells
                 .iter()
                 .map(|shell| {
                     let g = shell.gravity([0.0, -9.81, 0.0]).unwrap();
                     let pos = match &g {
-                        Either::Left(_) => shell.trimesh.vertex_positions().to_vec(),
-                        Either::Right(_) => vec![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+                        Either::Left(_) => shell.trimesh.vertex_positions(),
+                        Either::Right(_) => &[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]][..],
                     };
                     (g, pos)
                 })

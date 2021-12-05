@@ -3,7 +3,8 @@ use std::cell::RefCell;
 use ipopt::{self, Number};
 
 use crate::fem::state::*;
-use geo::mesh::{topology::*, Attrib, VertexPositions};
+use geo::attrib::Attrib;
+use geo::mesh::{topology::*, VertexPositions};
 use num_traits::Zero;
 use tensr::*;
 
@@ -18,7 +19,8 @@ use crate::contact::{ContactJacobian, ContactJacobianView, TripletContactJacobia
 use crate::energy::*;
 use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
-use crate::objects::*;
+use crate::objects::shell::*;
+use crate::objects::solid::*;
 use crate::{PointCloud, TriMesh};
 
 #[derive(Clone)]

@@ -46,10 +46,10 @@ mod tests {
                 .collect()
         }
 
-        fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshInertia, Vec<[f64; 3]>)> {
+        fn build_energies(solids: &[TetMeshSolid]) -> Vec<(TetMeshInertia, &[[f64; 3]])> {
             solids
                 .iter()
-                .map(|solid| (solid.inertia(), solid.tetmesh.vertex_positions().to_vec()))
+                .map(|solid| (solid.inertia(), solid.tetmesh.vertex_positions()))
                 .collect()
         }
 
@@ -86,11 +86,11 @@ mod tests {
                 .collect()
         }
 
-        fn build_energies(shells: &[TriMeshShell]) -> Vec<(SoftShellInertia, Vec<[f64; 3]>)> {
+        fn build_energies(shells: &[TriMeshShell]) -> Vec<(SoftTriMeshShellInertia, &[[f64; 3]])> {
             shells
                 .iter()
                 .map(|shell| match shell.inertia().unwrap() {
-                    Either::Left(inertia) => (inertia, shell.trimesh.vertex_positions().to_vec()),
+                    Either::Left(inertia) => (inertia, shell.trimesh.vertex_positions()),
                     Either::Right(_) => unreachable!(),
                 })
                 .collect()

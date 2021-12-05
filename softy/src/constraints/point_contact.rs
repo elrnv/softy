@@ -17,7 +17,7 @@ use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
-use crate::objects::TriMeshShell;
+use crate::objects::trimesh::TriMeshShell;
 use crate::Error;
 use crate::TriMesh;
 use crate::{CheckedIndex, Index};

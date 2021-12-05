@@ -2,17 +2,17 @@ use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::matrix::*;
 use crate::Error;
-use crate::TetMesh;
-use geo::{
-    mesh::{attrib::*, topology::*},
-    ops::Volume,
-};
+use crate::Material;
+use crate::{Mesh, TetMesh};
+use geo::{attrib::*, mesh::topology::*, ops::Volume};
 use tensr::{Matrix3, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VolumeConstraint {
-    /// The topology of the surface of a tetrahedral mesh. This is a vector of triplets of indices
-    /// of tetmesh vertices. Each triplet corresponds to a triangle on the surface of the tetmesh.
+    /// The topology of the surface of a volumetric mesh.
+    ///
+    /// This is a vector of triplets of indices of mesh vertices. Each
+    /// triplet corresponds to a triangle on the surface of the mesh.
     pub surface_topo: Vec<[usize; 3]>,
 
     /// The volume of the solid at rest. The contraint is equated to this value.
@@ -24,19 +24,81 @@ impl VolumeConstraint {
         let surface_topo = tetmesh.surface_topo();
         VolumeConstraint {
             surface_topo,
-            rest_volume: Self::compute_volume(tetmesh),
+            rest_volume: Self::compute_tetmesh_volume(tetmesh),
         }
     }
 
-    pub fn compute_volume(tetmesh: &TetMesh) -> f64 {
-        let ref_pos = tetmesh
-            .attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
-            .unwrap();
+    /// Constructs a volume constraint per zone id in a given `Mesh`.
+    pub fn try_from_mesh(mesh: &Mesh, materials: &[Material]) -> Result<Vec<Self>, Error> {
+        if materials.is_empty() {
+            return Ok(vec![]);
+        }
 
+        let ref_pos =
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
+
+        let unique_zones = mesh
+            .attrib_clone_into_vec::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)
+            .unwrap_or_else(|_| vec![0; 1]);
+        unique_zones.sort();
+        unique_zones.dedup();
+        Ok(unique_zones
+            .iter()
+            .map(|zone| {
+                let cell_iter = mesh
+                    .cell_iter()
+                    .zip(
+                        mesh.attrib_iter::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)
+                            .unwrap_or_else(|_| Box::new(std::iter::repeat(&0))),
+                    )
+                    .zip(
+                        mesh.attrib_iter::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB)
+                            .unwrap_or_else(|_| Box::new(std::iter::repeat(&0))),
+                    )
+                    .filter_map(|((cell, &cell_zone), &mtl_id)| {
+                        if cell_zone == zone
+                            && materials[mtl_id.max(0) as usize].volume_preservation()
+                        {
+                            Some(cell)
+                        } else {
+                            None
+                        }
+                    });
+                let rest_volume = cell_iter
+                    .clone()
+                    .map(|&cell| {
+                        let tet = [
+                            ref_pos[cell[0]],
+                            ref_pos[cell[1]],
+                            ref_pos[cell[2]],
+                            ref_pos[cell[3]],
+                        ];
+                        crate::fem::ref_tet(&tet).signed_volume()
+                    })
+                    .sum();
+                let surface_topo = TetMesh::surface_topo_from_tets(cell_iter);
+                VolumeConstraint {
+                    surface_topo,
+                    rest_volume,
+                }
+            })
+            .collect())
+    }
+
+    /// Computes the volume of a tetmesh given its vertex reference positions (one per tet vertex).
+    pub fn compute_volume(ref_pos: &[RefPosType]) -> f64 {
         ref_pos
             .chunks_exact(4)
             .map(|tet| crate::fem::ref_tet(tet).volume())
             .sum()
+    }
+
+    pub fn compute_tetmesh_volume(tetmesh: &TetMesh) -> f64 {
+        let ref_pos = tetmesh
+            .attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
+            .unwrap();
+
+        Self::compute_volume(ref_pos)
     }
 }
 

@@ -1,6 +1,7 @@
 use unroll::unroll_for_loops;
 
-use geo::mesh::{attrib, topology::*, VertexPositions};
+use geo::attrib::Attrib;
+use geo::mesh::{topology::*, VertexPositions};
 use geo::ops::*;
 use num_traits::Zero;
 use tensr::*;
@@ -13,7 +14,7 @@ use crate::energy_models::Either;
 use crate::objects::*;
 use crate::TriMesh;
 
-mod interior_edge;
+pub(crate) mod interior_edge;
 pub use interior_edge::*;
 
 #[derive(Copy, Clone, Debug)]
@@ -54,7 +55,6 @@ pub(crate) enum ShellData {
         material: FixedMaterial,
     },
 }
-
 /// A soft shell represented by a trimesh. It is effectively a triangle mesh decorated by
 /// physical material properties that govern how it behaves.
 #[derive(Clone, Debug)]
@@ -244,7 +244,9 @@ impl TriMeshShell {
                 .zip(interior_edge_angles.iter_mut())
                 .for_each(|(e, t)| {
                     *t = e
-                        .incremental_angle(T::from(*t).unwrap(), x1, trimesh.faces())
+                        .incremental_angle(T::from(*t).unwrap(), x1, |f, i| {
+                            trimesh.face_to_vertex(f, i).unwrap().into()
+                        })
                         .to_f64()
                         .unwrap();
                 });
@@ -265,7 +267,7 @@ impl TriMeshShell {
                 self.init_rest_pos_vertex_attribute(cm)?;
                 // Vertex masses are needed for the friction solve.
                 self.trimesh
-                    .set_attrib::<MassType, VertexIndex>(MASS_ATTRIB, mass)?;
+                    .reset_attrib_to_default::<MassType, VertexIndex>(MASS_ATTRIB, mass)?;
             }
             ShellData::Soft { .. } => {
                 self.init_deformable_vertex_attributes()?;
@@ -278,7 +280,10 @@ impl TriMeshShell {
                     // Add elastic strain energy attribute.
                     // This will be computed at the end of the time step.
                     self.trimesh
-                        .set_attrib::<StrainEnergyType, FaceIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+                        .reset_attrib_to_default::<StrainEnergyType, FaceIndex>(
+                            STRAIN_ENERGY_ATTRIB,
+                            0f64,
+                        )?;
                 }
 
                 // Below we prepare attributes that give elasticity and density parameters. If such were
@@ -311,7 +316,7 @@ impl TriMeshShell {
             .collect();
 
         self.mesh_mut()
-            .set_attrib_data::<FixedIntType, FaceIndex>(FIXED_ATTRIB, &fixed_elements)?;
+            .set_attrib_data::<FixedIntType, FaceIndex>(FIXED_ATTRIB, fixed_elements)?;
 
         Ok(())
     }
@@ -327,7 +332,7 @@ impl TriMeshShell {
         self.trimesh
             .set_attrib_data::<RigidRefPosType, VertexIndex>(
                 REFERENCE_VERTEX_POS_ATTRIB,
-                &ref_pos,
+                ref_pos,
             )?;
         Ok(())
     }
@@ -338,15 +343,12 @@ impl TriMeshShell {
         let mesh = &mut self.trimesh;
 
         let ref_areas = Self::compute_ref_tri_areas(mesh)?;
-        mesh.set_attrib_data::<RefAreaType, FaceIndex>(
-            REFERENCE_AREA_ATTRIB,
-            ref_areas.as_slice(),
-        )?;
+        mesh.set_attrib_data::<RefAreaType, FaceIndex>(REFERENCE_AREA_ATTRIB, ref_areas)?;
 
         let ref_shape_mtx_inverses = Self::compute_ref_tri_shape_matrix_inverses(mesh)?;
         mesh.set_attrib_data::<_, FaceIndex>(
             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-            ref_shape_mtx_inverses.as_slice(),
+            ref_shape_mtx_inverses,
         )?;
 
         self.init_bending_attributes()?;
@@ -415,7 +417,7 @@ impl TriMeshShell {
         if let Some(bending_stiffness) = material.bending_stiffness() {
             match self
                 .mesh_mut()
-                .add_attrib_data::<BendingStiffnessType, FaceIndex>(
+                .insert_attrib_data::<BendingStiffnessType, FaceIndex>(
                     BENDING_STIFFNESS_ATTRIB,
                     vec![bending_stiffness; num_elements],
                 ) {
@@ -428,7 +430,10 @@ impl TriMeshShell {
             // is nothing on the mesh, simply initialize bending stiffness to zero. This is
             // a reasonable default.
             self.mesh_mut()
-                .attrib_or_add::<BendingStiffnessType, FaceIndex>(BENDING_STIFFNESS_ATTRIB, 0.0)?;
+                .attrib_or_insert_with_default::<BendingStiffnessType, FaceIndex>(
+                    BENDING_STIFFNESS_ATTRIB,
+                    0.0,
+                )?;
         }
 
         let mesh = self.mesh();
@@ -445,11 +450,11 @@ impl TriMeshShell {
             interior_edges
                 .iter()
                 .map(|e| {
-                    let length = f64::from(e.ref_length(&ref_pos));
+                    let length = f64::from(e.ref_length(|f, i| ref_pos[f][i]));
                     // A triangle height measure used to normalize the length. This allows the energy
                     // model to correctly approximate mean curvature.
-                    let h_e = f64::from(e.tile_span(&ref_pos));
-                    let ref_angle = f64::from(e.ref_edge_angle(&ref_pos));
+                    let h_e = f64::from(e.tile_span(|f, i| ref_pos[f][i]));
+                    let ref_angle = f64::from(e.ref_edge_angle(|f, i| ref_pos[f][i]));
                     (ref_angle, length / h_e)
                 })
                 .unzip();
@@ -475,7 +480,11 @@ impl TriMeshShell {
         // Initialize interior_edge_angles.
         let mut interior_edge_angles: Vec<_> = interior_edges
             .iter()
-            .map(|e| e.edge_angle(mesh.vertex_positions(), mesh.faces()))
+            .map(|e| {
+                e.edge_angle(mesh.vertex_positions(), |f, i| {
+                    mesh.face_to_vertex(f, i).unwrap().into()
+                })
+            })
             .collect();
 
         // At this point we are confident that bending stiffness is correctly initialized on the mesh.
@@ -556,7 +565,7 @@ impl TriMeshShell {
             }
         }
 
-        mesh.attrib_or_add_data::<RefPosType, FaceVertexIndex>(
+        mesh.attrib_or_insert_data::<RefPosType, FaceVertexIndex>(
             REFERENCE_FACE_VERTEX_POS_ATTRIB,
             ref_pos.as_slice(),
         )?;
@@ -584,7 +593,7 @@ impl TriMeshShell {
             }
         }
 
-        trimesh.set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, &masses)?;
+        trimesh.set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)?;
         Ok(())
     }
 
@@ -628,7 +637,6 @@ impl TriMeshShell {
 
     /// Given a trimesh, compute the strain energy per triangle.
     fn compute_strain_energy_attrib(&mut self) {
-        use geo::ops::ShapeMatrix;
         // Overwrite the "strain_energy" attribute.
         let mut strain = self
             .trimesh
@@ -669,7 +677,6 @@ impl TriMeshShell {
 
     /// Given a trimesh, compute the elastic forces per vertex, and save it at a vertex attribute.
     fn compute_elastic_forces_attrib(&mut self) {
-        use geo::ops::ShapeMatrix;
         let mut forces_attrib = self
             .trimesh
             .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
@@ -729,24 +736,31 @@ impl TriMeshShell {
 /// Inertia implementation for trimesh shells.
 ///
 /// Shells can be fixed (no inertia), rigid or soft.
-impl<'a> Inertia<'a, Option<Either<SoftShellInertia<'a>, RigidShellInertia>>> for TriMeshShell {
-    fn inertia(&'a self) -> Option<Either<SoftShellInertia<'a>, RigidShellInertia>> {
+impl<'a> Inertia<'a, Option<Either<SoftTriMeshShellInertia<'a>, RigidShellInertia>>>
+    for TriMeshShell
+{
+    fn inertia(&'a self) -> Option<Either<SoftTriMeshShellInertia<'a>, RigidShellInertia>> {
         match self.data {
             ShellData::Fixed { .. } => None,
             ShellData::Rigid {
                 mass, cm, inertia, ..
             } => Some(Either::Right(RigidShellInertia { mass, cm, inertia })),
-            ShellData::Soft { .. } => Some(Either::Left(SoftShellInertia(self))),
+            ShellData::Soft { .. } => Some(Either::Left(SoftTriMeshShellInertia(self))),
         }
     }
 }
 
-impl<'a> Gravity<'a, Option<Either<SoftShellGravity<'a>, RigidShellGravity>>> for TriMeshShell {
-    fn gravity(&'a self, g: [f64; 3]) -> Option<Either<SoftShellGravity<'a>, RigidShellGravity>> {
+impl<'a> Gravity<'a, Option<Either<SoftTriMeshShellGravity<'a>, RigidShellGravity>>>
+    for TriMeshShell
+{
+    fn gravity(
+        &'a self,
+        g: [f64; 3],
+    ) -> Option<Either<SoftTriMeshShellGravity<'a>, RigidShellGravity>> {
         match self.data {
             ShellData::Fixed { .. } => None,
             ShellData::Rigid { mass, .. } => Some(Either::Right(RigidShellGravity::new(g, mass))),
-            ShellData::Soft { .. } => Some(Either::Left(SoftShellGravity::new(self, g))),
+            ShellData::Soft { .. } => Some(Either::Left(SoftTriMeshShellGravity::new(self, g))),
         }
     }
 }

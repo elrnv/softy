@@ -1,11 +1,9 @@
-use geo::mesh::{
-    attrib::{self, AttribIndex, VertexAttrib},
-    topology::*,
-    Attrib, VertexPositions,
-};
+use geo::attrib::{self, Attrib, AttribIndex, VertexAttrib};
+use geo::mesh::{topology::*, VertexPositions};
 pub use material::*;
-pub use shell::*;
-pub use solid::*;
+pub use tetmesh_surface::*;
+//pub use shell::*;
+//pub use solid::*;
 
 use crate::attrib_defines::*;
 use crate::Error;
@@ -13,6 +11,9 @@ use crate::Error;
 pub mod material;
 pub mod shell;
 pub mod solid;
+pub mod tetmesh_surface;
+pub mod tetsolid;
+pub mod trishell;
 
 /// A utility for initializing the source index attribute to use for updating mesh vertices.
 ///
@@ -31,7 +32,7 @@ where
     // If this index is missing, it is assumed that the source is coincident
     // with the provided mesh.
     let num_verts = mesh.num_vertices();
-    match mesh.add_attrib_data::<SourceIndexType, VertexIndex>(
+    match mesh.insert_attrib_data::<SourceIndexType, VertexIndex>(
         SOURCE_INDEX_ATTRIB,
         (0..num_verts).collect::<Vec<_>>(),
     ) {
@@ -70,7 +71,7 @@ pub trait Object {
 
     fn init_kinematic_vertex_attributes(&mut self) -> Result<(), Error> {
         self.mesh_mut()
-            .attrib_or_add::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
+            .attrib_or_insert_with_default::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])?;
         Ok(())
     }
 
@@ -95,7 +96,7 @@ pub trait DynamicObject: Object {
         // return an error if there is an existing Fixed attribute with the wrong type.
         {
             let mesh = self.mesh_mut();
-            use geo::mesh::attrib::*;
+            use geo::attrib::*;
             let fixed_buf = mesh
                 .remove_attrib::<VertexIndex>(FIXED_ATTRIB)
                 .unwrap_or_else(|_| {
@@ -119,7 +120,7 @@ pub trait DynamicObject: Object {
             let num_elements = self.num_elements();
             match self
                 .mesh_mut()
-                .add_attrib_data::<DensityType, Self::ElementIndex>(
+                .insert_attrib_data::<DensityType, Self::ElementIndex>(
                     DENSITY_ATTRIB,
                     vec![density as f32; num_elements],
                 ) {
@@ -150,7 +151,10 @@ pub trait DeformableObject: DynamicObject {
             // Add elastic force attributes.
             // These will be computed at the end of the time step.
             self.mesh_mut()
-                .set_attrib::<ElasticForceType, VertexIndex>(ELASTIC_FORCE_ATTRIB, [0f64; 3])?;
+                .reset_attrib_to_default::<ElasticForceType, VertexIndex>(
+                    ELASTIC_FORCE_ATTRIB,
+                    [0f64; 3],
+                )?;
         }
 
         Ok(())
@@ -167,7 +171,7 @@ pub trait ElasticObject: DeformableObject {
             let num_elements = self.num_elements();
             match self
                 .mesh_mut()
-                .add_attrib_data::<LambdaType, Self::ElementIndex>(
+                .insert_attrib_data::<LambdaType, Self::ElementIndex>(
                     LAMBDA_ATTRIB,
                     vec![elasticity.lambda; num_elements],
                 ) {
@@ -178,7 +182,7 @@ pub trait ElasticObject: DeformableObject {
             }
             match self
                 .mesh_mut()
-                .add_attrib_data::<MuType, Self::ElementIndex>(
+                .insert_attrib_data::<MuType, Self::ElementIndex>(
                     MU_ATTRIB,
                     vec![elasticity.mu; num_elements],
                 ) {

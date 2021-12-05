@@ -28,6 +28,7 @@ pub type PointCloud = geo::mesh::PointCloud<f64>;
 pub type TetMesh = geo::mesh::TetMesh<f64>;
 pub type PolyMesh = geo::mesh::PolyMesh<f64>;
 pub type TriMesh = geo::mesh::TriMesh<f64>;
+pub type Mesh = geo::mesh::Mesh<f64>;
 
 pub type TetMeshExt = geo::mesh::TetMeshExt<f64>;
 pub type TriMeshExt = geo::mesh::TriMeshExt<f64>;
@@ -38,7 +39,7 @@ pub use self::fem::opt as opt_fem;
 pub use self::friction::*;
 pub use self::objects::init_mesh_source_index_attribute;
 pub use self::objects::material::*;
-use geo::mesh::attrib;
+use geo::attrib;
 pub use utils::index::{CheckedIndex, Index};
 
 pub use attrib_defines::*;
@@ -51,8 +52,8 @@ pub trait Real: tensr::Real + na::RealField {}
 impl<T> Real for T where T: tensr::Real + na::RealField {}
 
 /// An extension to the real trait that allows ops with f64 floats.
-pub trait Real64: tensr::Real64 + na::RealField {}
-impl<T> Real64 for T where T: tensr::Real64 + na::RealField {}
+pub trait Real64: Real + tensr::Real64 {}
+impl<T> Real64 for T where T: Real + tensr::Real64 {}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -104,6 +105,8 @@ pub enum Error {
     MissingSourceIndex,
     #[error("Missing elasticity parameters")]
     MissingElasticityParams,
+    #[error("Missing density")]
+    MissingDensity,
     #[error("Missing contact parameters")]
     MissingContactParams,
     #[error("Missing contact constraint")]

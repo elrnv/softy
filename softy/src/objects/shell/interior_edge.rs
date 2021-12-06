@@ -7,6 +7,7 @@ use geo::prim::Triangle;
 use tensr::*;
 
 use crate::attrib_defines::*;
+use crate::fem::nl::state::VertexType;
 use crate::{Error, Mesh, TriMesh};
 
 /// An `InteriorEdge` is an manifold edge with exactly two neighboring faces.
@@ -531,6 +532,7 @@ pub fn ref_tri(ref_tri: &[RefPosType]) -> Triangle<f64> {
 #[unroll_for_loops]
 pub(crate) fn compute_interior_edge_topology_from_mesh(
     mesh: &Mesh,
+    vertex_type: &[VertexType],
 ) -> Result<Vec<InteriorEdge>, Error> {
     // An edge is actually defined by a pair of vertices.
     // We iterate through all the faces and register each half edge (sorted by vertex index)
@@ -579,8 +581,6 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
         .for_each(add_face_edges);
 
     let mut interior_edges = Vec::with_capacity(mesh.num_cells()); // Estimate capacity
-
-    let fixed = mesh.attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)?;
 
     // Given a pair of verts marking an edge, find which of v0, v1 and v2 corresponds to
     // one of the verts such that the next face vertex is also an edge vertex.
@@ -632,7 +632,7 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
             if dihedral
                 .verts(|f, i| mesh.cell_to_vertex(f, i).unwrap().into_inner())
                 .iter()
-                .all(|&v| fixed[v] == 0)
+                .all(|&v| vertex_type[v] != VertexType::Fixed)
             {
                 // Only include that dihedral if at least one vertex is not fixed.
                 interior_edges.push(dihedral);

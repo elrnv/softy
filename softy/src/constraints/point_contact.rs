@@ -1,7 +1,8 @@
 use autodiff as ad;
+use geo::attrib::Attrib;
 use geo::bbox::BBox;
 use geo::mesh::topology::*;
-use geo::mesh::{Attrib, VertexPositions};
+use geo::mesh::VertexPositions;
 use geo::ops::*;
 use implicits::*;
 use lazycell::LazyCell;
@@ -17,8 +18,9 @@ use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
-use crate::objects::trimesh::TriMeshShell;
+use crate::objects::shell::TriMeshShell;
 use crate::Error;
+use crate::Real;
 use crate::TriMesh;
 use crate::{CheckedIndex, Index};
 

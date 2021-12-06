@@ -20,6 +20,8 @@ use crate::contact::{ContactJacobian, ContactJacobianView, TripletContactJacobia
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
 use crate::energy_models::{elasticity::*, gravity::*, inertia::*};
 use crate::matrix::*;
+use crate::objects::tetsolid::*;
+use crate::objects::trishell::*;
 use crate::objects::*;
 use crate::PointCloud;
 use crate::{Real, Real64};
@@ -1386,15 +1388,17 @@ impl<T: Real64> NLProblem<T> {
     /// For the velocity part of the force balance equation `M dv/dt - f(q, v) = 0`,
     /// this represents `M dv`.
     /// Strictly speaking this is equal to the momentum difference `M (v_+ - v_-)`.
-    fn add_momentum_diff<S: Real>(&self, v: &[S], r: &mut [S]) {
-        use super::state::VERTEX_DOFS;
-        let dof_view = self.state.dof.view();
-        let dq_cur = dof_view.isolate(VERTEX_DOFS).cur.dq;
-        let v = dof_view.map_storage(|_| v).isolate(VERTEX_DOFS);
-        let r = dof_view.map_storage(|_| r).isolate(VERTEX_DOFS);
+    fn add_momentum_diff<S: Real>(&self, state: ChunkedView<StepState<&[S], &mut [S]>>) {
+        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
 
-        self.state.solid.inertia().add_energy_gradient(dq_cur, v, r);
-        self.state.shell.inertia().add_energy_gradient(dq_cur, v, r);
+        self.state
+            .solid
+            .inertia()
+            .add_energy_gradient(cur.dq, next.dq, r);
+        self.state
+            .shell
+            .inertia()
+            .add_energy_gradient(cur.dq, next.dq, r);
     }
 
     //    /// Compute contact violation: `max(0, -min(d(q)))`
@@ -1574,28 +1578,23 @@ impl<T: Real64> NLProblem<T> {
     /// `M dv/dt - f(q,v) = 0`, this function subtracts `f(q,v)`.
     fn subtract_force<S: Real>(
         &self,
-        q_cur: &[S],
-        dof_next: ChunkedView<GenerqalizedState<&[S], &[S]>>,
-        vtx_state: ParticleState<&mut [S], &mut [S]>,
-        f: ChunkedView<&mut [S]>,
-        vfc: &mut [S],
+        state: ChunkedView<StepState<&[S], &mut [S]>>,
+        solid: &TetSolid,
+        shell: &TriShell,
+        //vfc: &mut [S],
         //frictional_contacts: &[FrictionalContactConstraint<S>],
-        lambda: &mut Vec<S>,
+        //lambda: &mut Vec<S>,
     ) {
-        let State { solid, shell, .. } = self.state;
+        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
 
-        let mut f = f.isolate(VERTEX_DOFS);
-        let dof_next = dof_next.isolate(VERTEX_DOFS);
-        let q_cur = q_cur.isolate(VERTEX_DOFS);
-
-        solid.elasticity().add_energy_gradient(q_cur, dof_next.q, f);
+        solid.elasticity().add_energy_gradient(cur.q, next.q, r);
         solid
             .gravity(self.gravity)
-            .add_energy_gradient(q_cur, q_next, f);
-        shell.elasticity().add_energy_gradient(q_cur, dof_next.q, f);
+            .add_energy_gradient(cur.q, next.q, r);
+        shell.elasticity().add_energy_gradient(cur.q, next.q, r);
         shell
             .gravity(self.gravity)
-            .add_energy_gradient(q_cur, dof_next.q, f);
+            .add_energy_gradient(cur.q, next.q, r);
 
         //self.subtract_friction_and_contact_forces(
         //    q,
@@ -1608,32 +1607,36 @@ impl<T: Real64> NLProblem<T> {
         //    lambda,
         //);
 
-        debug_assert!(f.storage().iter().all(|f| f.is_finite()));
+        debug_assert!(state.storage().r.iter().all(|r| r.is_finite()));
     }
 
     /// Compute the backward Euler residual with automatic differentiation.
     fn be_residual_autodiff(&self) {
         let state = &mut *self.state.borrow_mut();
+        let step_state = state.dof.view_mut().map_storage(|dof| dof.step_state_ad());
         // Clear residual vector.
-        state
-            .dof
-            .storage_mut()
-            .r_ad
-            .iter_mut()
-            .for_each(|x| *x = ad::F::zero());
+        {
+            let r = step_state.storage_mut().r_ad.as_mut_slice();
+            r.iter_mut().for_each(|x| *x = ad::F::zero());
+        }
 
         // Integrate position.
-        state.be_step(state.dof.storage().next_ad.dq.as_slice(), self.time_step());
-        state.update_vertices(dq);
+        State::be_step(step_state, self.time_step());
+        state.update_vertices_ad();
 
         self.subtract_force(
-            q_cur, dof_next, vtx_state, f, vfc, //&self.frictional_contacts_ad,
-            lambda,
+            step_state,
+            &state.solid,
+            &state.shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
         );
-        *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
+
+        {
+            let r = step_state.storage_mut().r_ad.as_mut_slice();
+            *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
+        }
 
         if !self.is_static() {
-            self.add_momentum_diff(dq, r);
+            self.add_momentum_diff(step_state);
         }
     }
 
@@ -1642,18 +1645,26 @@ impl<T: Real64> NLProblem<T> {
         // Clear residual vector.
         r.iter_mut().for_each(|x| *x = T::zero());
 
+        let state = &mut *self.state.borrow_mut();
+        let step_state = state
+            .dof
+            .view_mut()
+            .map_storage(move |dof| dof.step_state(dq, r));
+
         // Integrate position.
-        self.state.be_step(dq, self.time_step());
-        self.state.update_vertices(dq);
+        State::be_step(step_state, self.time_step());
+        state.update_vertices(dq);
 
         self.subtract_force(
-            q, dq, pos, vel, r, vfc, //&self.frictional_contacts,
-            lambda,
+            step_state,
+            &state.solid,
+            &state.shell, //vfc, &self.frictional_contacts, lambda,
         );
-        *r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
+
+        step_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
         if !self.is_static() {
-            self.add_momentum_diff(dq, r);
+            self.add_momentum_diff(step_state);
         }
     }
 
@@ -1661,75 +1672,53 @@ impl<T: Real64> NLProblem<T> {
         let mut rows = vec![0; self.jacobian_nnz()];
         let mut cols = vec![0; self.jacobian_nnz()];
         // This is used for counting offsets.
-        let dq_cur_solid = self
+        let dq_cur = self
             .state
             .dof
             .view()
-            .at(SOLIDS_INDEX)
-            .map_storage(|dof| dof.cur.dq);
-        let dq_cur_shell = self
-            .state
-            .dof
-            .view()
-            .at(SHELLS_INDEX)
+            .at(VERTEX_DOFS)
             .map_storage(|dof| dof.cur.dq);
 
         let mut count = 0; // Constraint counter
 
         // Add energy indices
-        for (solid_idx, solid) in self.state.solids.iter().enumerate() {
-            let offset = dq_cur_solid.offset_value(solid_idx) * 3;
-            let elasticity = solid.elasticity::<T>();
-            let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_rows_cols_offset(
-                (offset, offset).into(),
-                &mut rows[count..count + n],
-                &mut cols[count..count + n],
-            );
+        let solid = &self.state.solid;
+        let elasticity = solid.elasticity::<T>();
+        let n = elasticity.energy_hessian_size();
+        elasticity
+            .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
 
+        count += n;
+
+        if !self.is_static() {
+            let inertia = solid.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia
+                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
             count += n;
-
-            if !self.is_static() {
-                let inertia = solid.inertia();
-                let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_rows_cols_offset(
-                    (offset, offset).into(),
-                    &mut rows[count..count + n],
-                    &mut cols[count..count + n],
-                );
-                count += n;
-            }
         }
 
-        for (shell_idx, shell) in self.state.shells.iter().enumerate() {
-            let offset = dq_cur_shell.offset_value(shell_idx) * 3;
-            let elasticity = shell.elasticity::<T>();
-            let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_rows_cols_offset(
-                (offset, offset).into(),
-                &mut rows[count..count + n],
-                &mut cols[count..count + n],
-            );
-            count += n;
+        let shell = &self.state.shell;
+        let elasticity = shell.elasticity::<T>();
+        let n = elasticity.energy_hessian_size();
+        elasticity
+            .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
 
-            if !self.is_static() {
-                let inertia = shell.inertia();
-                let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_rows_cols_offset(
-                    (offset, offset).into(),
-                    &mut rows[count..count + n],
-                    &mut cols[count..count + n],
-                );
-                count += n;
-            }
+        count += n;
+
+        if !self.is_static() {
+            let inertia = shell.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia
+                .energy_hessian_rows_cols(&mut rows[count..count + n], &mut cols[count..count + n]);
+            count += n;
         }
 
         // Add volume constraint indices
         for (solid_idx, vc) in self.volume_constraints.iter() {
-            let offset = dq_cur_solid.offset_value(*solid_idx) * 3;
             for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
-                rows[count] = row + offset;
-                cols[count] = col + offset;
+                rows[count] = row;
+                cols[count] = col;
                 count += 1;
             }
         }
@@ -1754,111 +1743,66 @@ impl<T: Real64> NLProblem<T> {
         (rows, cols)
     }
 
-    fn be_jacobian_values(&self, v: &[T], rows: &[usize], cols: &[usize], vals: &mut [T]) {
-        //let lambda = Vec::new();
-        let mut ws = self.state.workspace.borrow_mut();
-        let WorkspaceData {
-            dof: dof_next,
-            vtx: vtx_next,
-            ..
-        } = &mut *ws;
-
-        let q_next = dof_next.storage_mut().state.q.as_mut_slice();
-        let q_cur = self.state.dof.storage().cur.q.as_slice();
-        self.state.be_step(v, self.time_step(), q_cur, q_next);
+    fn be_jacobian_values(
+        &self,
+        dq: &[T],
+        r: &[T],
+        rows: &[usize],
+        cols: &[usize],
+        vals: &mut [T],
+    ) {
+        let state = &mut *self.state.borrow_mut();
+        let step_state = state
+            .dof
+            .view_mut()
+            .map_storage(|dof| dof.step_state(dq, r));
+        State::be_step(step_state, self.time_step());
+        state.update_vertices(dq);
 
         let mut count = 0; // Values counter
         let mut coff = 0; // Constraint offset
 
-        // Correction to make the above hessian wrt velocity instead of displacement.
         let dt = T::from(self.time_step()).unwrap();
 
         // Constraint scaling
         let c_scale = dt * dt;
 
-        let dof_cur = self.state.dof.view().map_storage(|dof| dof.cur);
-
-        sync_pos(
-            &self.state.shells,
-            dof_next.view().map_storage(|dof| dof.state.q),
-            vtx_next.view_mut().map_storage(|vtx| vtx.state.pos),
-        );
-
-        let dof_next = dof_next.view();
-
         // Multiply energy hessian by objective factor and scaling factors.
         let factor = T::from(self.impulse_inv_scale()).unwrap();
 
-        for (solid_idx, solid) in self.state.solids.iter().enumerate() {
-            let dof_cur = dof_cur.at(SOLIDS_INDEX).at(solid_idx).into_storage();
-            let q_next = dof_next
-                .at(SOLIDS_INDEX)
-                .at(solid_idx)
-                .into_storage()
-                .state
-                .q;
-            let v_next = dof_next
-                .at(SOLIDS_INDEX)
-                .at(solid_idx)
-                .map_storage(|_| v)
-                .into_storage();
-            let elasticity = solid.elasticity::<T>();
-            let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(
-                dof_cur.q,
-                q_next,
-                dt * dt * factor,
-                &mut vals[count..count + n],
-            );
-            count += n;
+        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
+        let elasticity = state.solid.elasticity::<T>();
+        let n = elasticity.energy_hessian_size();
+        elasticity.energy_hessian_values(
+            cur.q,
+            next.q,
+            dt * dt * factor,
+            &mut vals[count..count + n],
+        );
+        count += n;
 
-            if !self.is_static() {
-                let inertia = solid.inertia();
-                let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_values(
-                    dof_cur.dq,
-                    v_next,
-                    factor,
-                    &mut vals[count..count + n],
-                );
-                count += n;
-            }
+        if !self.is_static() {
+            let inertia = state.solid.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
+            count += n;
         }
 
-        for (shell_idx, shell) in self.state.shells.iter().enumerate() {
-            let dof_cur = dof_cur.at(SHELLS_INDEX).at(shell_idx).into_storage();
-            let q_next = dof_next
-                .at(SHELLS_INDEX)
-                .at(shell_idx)
-                .into_storage()
-                .state
-                .q;
-            let v_next = dof_next
-                .at(SHELLS_INDEX)
-                .at(shell_idx)
-                .map_storage(|_| v)
-                .into_storage();
-            let elasticity = shell.elasticity::<T>();
-            let n = elasticity.energy_hessian_size();
-            elasticity.energy_hessian_values(
-                dof_cur.q,
-                q_next,
-                dt * dt * factor,
-                &mut vals[count..count + n],
-            );
-            count += n;
+        let elasticity = state.shell.elasticity::<T>();
+        let n = elasticity.energy_hessian_size();
+        elasticity.energy_hessian_values(
+            cur.q,
+            next.q,
+            dt * dt * factor,
+            &mut vals[count..count + n],
+        );
+        count += n;
 
-            if !self.is_static() {
-                let inertia = shell.inertia();
-                let n = inertia.energy_hessian_size();
-                inertia.energy_hessian_values(
-                    dof_cur.dq,
-                    v_next,
-                    factor,
-                    &mut vals[count..count + n],
-                );
-                count += n;
-            }
+        if !self.is_static() {
+            let inertia = state.shell.inertia();
+            let n = inertia.energy_hessian_size();
+            inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
+            count += n;
         }
 
         // Duplicate off-diagonal entries.
@@ -2004,7 +1948,6 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn residual(&self, x: &[T], r: &mut [T]) {
         self.be_residual(x, r);
-        self.be_residual(q, x, pos, vel, r, vfc, lambda);
     }
 
     #[inline]
@@ -2013,8 +1956,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     }
 
     #[inline]
-    fn jacobian_values(&self, v: &[T], _r: &[T], rows: &[usize], cols: &[usize], vals: &mut [T]) {
-        self.be_jacobian_values(v, rows, cols, vals);
+    fn jacobian_values(&self, v: &[T], r: &[T], rows: &[usize], cols: &[usize], vals: &mut [T]) {
+        self.be_jacobian_values(v, r, rows, cols, vals);
     }
     #[inline]
     fn jacobian_product(
@@ -2035,71 +1978,6 @@ impl<T: Real64> MixedComplementarityProblem<T> for NLProblem<T> {
         let uv_l = vec![std::f64::NEG_INFINITY; self.num_variables()];
         let uv_u = vec![std::f64::INFINITY; self.num_variables()];
 
-        // Fixed vertices have a predetermined velocity which is specified in the dof variable.
-        // Unscale velocities so we can set the unscaled bounds properly.
-        let uv_flat_view = self.state.dof.view().into_storage().cur.dq;
-        let ws = self.state.workspace.borrow();
-        let unscaled_dq = ws.dof.view().map_storage(|dof| dof.state.dq);
-        let solid_prev_uv = unscaled_dq.isolate(SOLIDS_INDEX);
-        let shell_prev_uv = unscaled_dq.isolate(SHELLS_INDEX);
-
-        // Copy data structure over to uv_l and uv_u
-        let mut uv_l = self.state.dof.view().map_storage(move |_| uv_l);
-        let mut uv_u = self.state.dof.view().map_storage(move |_| uv_u);
-
-        for (i, (solid, uv)) in self
-            .state
-            .solids
-            .iter()
-            .zip(solid_prev_uv.iter())
-            .enumerate()
-        {
-            if let Ok(fixed_verts) = solid
-                .tetmesh
-                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-            {
-                let mut uv_l = uv_l.view_mut().isolate(SOLIDS_INDEX).isolate(i);
-                let mut uv_u = uv_u.view_mut().isolate(SOLIDS_INDEX).isolate(i);
-                // Find and set fixed vertices.
-                uv_l.iter_mut()
-                    .zip(uv_u.iter_mut())
-                    .zip(uv.iter())
-                    .zip(fixed_verts.iter())
-                    .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|(((l, u), uv), _)| {
-                        *l = uv.as_tensor().cast::<f64>().into();
-                        *u = *l;
-                    });
-            }
-        }
-
-        for (i, (shell, uv)) in self
-            .state
-            .shells
-            .iter()
-            .zip(shell_prev_uv.iter())
-            .enumerate()
-        {
-            if let Ok(fixed_verts) = shell
-                .trimesh
-                .attrib_as_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
-            {
-                let mut uv_l = uv_l.view_mut().isolate(1).isolate(i);
-                let mut uv_u = uv_u.view_mut().isolate(1).isolate(i);
-                // Find and set fixed vertices.
-                uv_l.iter_mut()
-                    .zip(uv_u.iter_mut())
-                    .zip(uv.iter())
-                    .zip(fixed_verts.iter())
-                    .filter(|&(_, &fixed)| fixed != 0)
-                    .for_each(|(((l, u), uv), _)| {
-                        *l = uv.as_tensor().cast::<f64>().into();
-                        *u = *l;
-                    });
-            }
-        }
-        let uv_l = uv_l.into_storage();
-        let uv_u = uv_u.into_storage();
         //debug_assert!(uv_l.iter().all(|&x| x.is_finite()));
         //debug_assert!(uv_u.iter().all(|&x| x.is_finite()));
         (uv_l, uv_u)
@@ -2111,11 +1989,8 @@ impl<T: Real> NLProblem<T> {
     pub fn clone_as_autodiff(&self) -> NLProblem<ad::F1> {
         let Self {
             state,
-            lambda,
-            lambda_ad,
             kappa,
             delta,
-            frictional_contacts,
             volume_constraints,
             gravity,
             time_step,
@@ -2128,32 +2003,10 @@ impl<T: Real> NLProblem<T> {
             ..
         } = self.clone();
 
-        let lambda = lambda.borrow();
-        let lambda_ad = lambda_ad.borrow();
         NLProblem {
             state: state.clone_as_autodiff(),
-            lambda: RefCell::new(
-                lambda
-                    .iter()
-                    .map(|&x| ad::F1::cst(x.to_f64().unwrap()))
-                    .collect(),
-            ),
-            lambda_ad: RefCell::new(
-                lambda_ad
-                    .iter()
-                    .map(|&x| <ad::FT<ad::F1>>::cst(ad::F1::cst(x.value().to_f64().unwrap())))
-                    .collect(),
-            ),
             kappa,
             delta,
-            frictional_contacts: frictional_contacts
-                .iter()
-                .map(|x| x.clone_cast::<ad::F1>())
-                .collect(),
-            frictional_contacts_ad: frictional_contacts
-                .iter()
-                .map(|x| x.clone_cast::<ad::FT<ad::F1>>())
-                .collect(),
             volume_constraints,
             gravity,
             time_step,

@@ -8,6 +8,7 @@ use super::problem::{MixedComplementarityProblem, NonLinearProblem};
 use super::trust_region::{TrustRegion, TrustRegionParams};
 use super::NLSolver;
 use super::{Callback, SolveResult};
+use crate::Real;
 
 /// A mixed complementarity problem solver.
 pub struct MCPSolver<S> {

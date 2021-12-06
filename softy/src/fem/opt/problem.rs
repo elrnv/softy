@@ -21,6 +21,7 @@ use crate::energy_models::{elasticity::*, gravity::Gravity, inertia::Inertia};
 use crate::matrix::*;
 use crate::objects::shell::*;
 use crate::objects::solid::*;
+use crate::objects::tetmesh_surface::TetMeshSurface;
 use crate::{PointCloud, TriMesh};
 
 #[derive(Clone)]

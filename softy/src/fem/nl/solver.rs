@@ -22,8 +22,8 @@ use crate::inf_norm;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::objects::*;
-use crate::Real64;
 use crate::{Error, Mesh, PointCloud, PolyMesh, TetMesh, TriMesh};
+use crate::{Real, Real64};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
@@ -179,7 +179,7 @@ impl SolverBuilder {
             }
         }
 
-        for (&vol, &density, cell) in zip!(
+        for (&area, &density, cell) in zip!(
             shell.triangle_elements.ref_area.iter(),
             shell.triangle_elements.density.iter(),
             shell.triangle_elements.triangles.iter(),
@@ -516,12 +516,12 @@ where
 
     /// Get a slice of solid objects represented in this solver.
     pub fn solid(&self) -> std::cell::Ref<TetSolid> {
-        Ref::map(self.problem().state.borrow(), |state| &state.solid)
+        std::cell::Ref::map(self.problem().state.borrow(), |state| &state.solid)
     }
 
     /// Get a slice of shell objects represented in this solver.
     pub fn shell(&self) -> std::cell::Ref<TriShell> {
-        Ref::map(self.problem().state.borrow(), |state| &state.shell)
+        std::cell::Ref::map(self.problem().state.borrow(), |state| &state.shell)
     }
 
     /// Get simulation parameters.
@@ -540,13 +540,8 @@ where
     }
 
     /// Update the solid meshes with the given points.
-    pub fn update_solid_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
-        self.problem_mut().update_solid_vertices(pts)
-    }
-
-    /// Update the shell meshes with the given points.
-    pub fn update_shell_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
-        self.problem_mut().update_shell_vertices(pts)
+    pub fn update_vertices(&mut self, pts: &PointCloud) -> Result<(), Error> {
+        self.problem_mut().update_vertices(pts)
     }
 
     /// Update the `mesh` and `prev_pos` with the current solution.

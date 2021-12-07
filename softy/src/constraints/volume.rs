@@ -35,7 +35,7 @@ impl VolumeConstraint {
         }
 
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
 
         let mut unique_zones = mesh
             .attrib_clone_into_vec::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)

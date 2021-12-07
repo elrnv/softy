@@ -368,13 +368,10 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attrib_defines::*;
     use crate::energy_models::{elasticity::test_utils::*, test_utils::*};
     use crate::fem::nl::solver::SolverBuilder;
-    use crate::fem::nl::state::VertexType;
     use crate::objects::{tetsolid::TetElements, *};
-    use geo::attrib::*;
-    use geo::mesh::{topology::VertexIndex, Mesh, VertexPositions};
+    use geo::mesh::{Mesh, VertexPositions};
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0)
@@ -392,7 +389,7 @@ mod tests {
 
         test_tetmeshes()
             .into_iter()
-            .map(|tetmesh| Mesh::from(tetmesh.inverted()))
+            .map(|tetmesh| Mesh::from(tetmesh))
             .flat_map(|mut mesh| {
                 SolverBuilder::init_cell_vertex_ref_pos_attribute(&mut mesh).unwrap();
                 let materials = vec![material.into()];

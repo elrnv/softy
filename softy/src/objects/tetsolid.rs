@@ -163,18 +163,15 @@ impl TetElements {
         let ref_volumes: Vec<_> = orig_cell_indices
             .iter()
             .map(|&orig_cell_idx| {
-                let cell = mesh.indices.view().at(orig_cell_idx);
                 let tet = [
-                    ref_pos[cell[0]],
-                    ref_pos[cell[1]],
-                    ref_pos[cell[2]],
-                    ref_pos[cell[3]],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 0).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 1).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 2).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 3).unwrap().into_inner()],
                 ];
                 ref_tet(&tet).signed_volume()
             })
             .collect();
-
-        dbg!(&ref_volumes);
 
         let inverted: Vec<_> = ref_volumes
             .iter()
@@ -198,12 +195,11 @@ impl TetElements {
         Ok(orig_cell_indices
             .iter()
             .map(|&orig_cell_idx| {
-                let cell = mesh.indices.view().at(orig_cell_idx);
                 let tet = [
-                    ref_pos[cell[0]],
-                    ref_pos[cell[1]],
-                    ref_pos[cell[2]],
-                    ref_pos[cell[3]],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 0).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 1).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 2).unwrap().into_inner()],
+                    ref_pos[mesh.cell_vertex(orig_cell_idx, 3).unwrap().into_inner()],
                 ];
                 Matrix3::new(ref_tet(&tet).shape_matrix())
                     .inverse()

@@ -155,7 +155,7 @@ impl TriangleElements {
     /// Compute areas for reference triangles in the given `Mesh`.
     fn compute_ref_tri_areas(mesh: &Mesh, orig_cell_indices: &[usize]) -> Result<Vec<f64>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         let areas: Vec<_> = orig_cell_indices
             .iter()
             .map(|&orig_cell_idx| {
@@ -198,7 +198,7 @@ impl TriangleElements {
         orig_cell_indices: &[usize],
     ) -> Result<Vec<Matrix2<f64>>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
         Ok(orig_cell_indices
             .iter()
@@ -363,7 +363,7 @@ impl DihedralElements {
     ) -> Result<DihedralElements, Error> {
         // Initialize edge topology and reference quantities.
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         let get_ref_pos = |f, i| ref_pos[mesh.cell_vertex(f, i).unwrap().into_inner()];
 
         let mut dihedrals = compute_interior_edge_topology_from_mesh(&mesh, vertex_type)?;

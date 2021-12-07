@@ -98,29 +98,28 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
         // All the free vertices are considered as degrees of freedom.
         // We sorted the vertices such that free vertices come first.
 
-        let num_verts = vtx_pos.len();
-        let num_free_verts = vertex_type
+        let num_vert_coords = vtx_pos.len();
+        let num_free_vert_coords = vertex_type
             .binary_search(&VertexType::Free.next_variant())
-            .unwrap_or(num_verts);
-
-        let num_vtx_dofs = num_free_verts * 3;
+            .map(|x| x * 3)
+            .unwrap_or(num_vert_coords);
 
         let q = vtx_pos
             .iter()
-            .take(num_vtx_dofs)
+            .take(num_free_vert_coords)
             .map(|&x| Q::from(x).unwrap())
             //.chain(rigid.translation())
             //.chain(rigid.orientation())
             .collect();
         let dq = vtx_vel
             .iter()
-            .take(num_vtx_dofs)
+            .take(num_free_vert_coords)
             .map(|&v| D::from(v).unwrap())
             //.chain(rigid.translation())
             //.chain(rigid.orientation())
             .collect();
 
-        Chunked::from_offsets(vec![0, num_vtx_dofs], GeneralizedState { q, dq })
+        Chunked::from_offsets(vec![0, num_free_vert_coords], GeneralizedState { q, dq })
     }
 }
 
@@ -192,6 +191,7 @@ impl<T: Real, F: Real> GeneralizedCoords<Vec<T>, Vec<F>> {
             q: cur.q.iter().map(|&x| F::from(x).unwrap()).collect(),
             dq: cur.dq.iter().map(|&x| F::from(x).unwrap()).collect(),
         };
+        let r_ad = vec![F::zero(); cur.len()];
         Chunked::from_offsets(
             offsets.into_inner(),
             GeneralizedCoords {
@@ -199,7 +199,7 @@ impl<T: Real, F: Real> GeneralizedCoords<Vec<T>, Vec<F>> {
                 cur,
                 next_q,
                 next_ad,
-                r_ad: Vec::new(),
+                r_ad,
             },
         )
     }

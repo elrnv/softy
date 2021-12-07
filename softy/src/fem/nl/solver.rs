@@ -114,6 +114,30 @@ impl SolverBuilder {
             .collect())
     }
 
+    /// A helper function to initialize the vertex velocity attribute.
+    pub(crate) fn init_velocity_attribute(mesh: &mut Mesh) -> Result<(), Error> {
+        // If there is already an attribute with the right type, just leave it alone.
+        if let Ok(_) = mesh.attrib_check::<VelType, VertexIndex>(VELOCITY_ATTRIB) {
+            return Ok(());
+        }
+        // Remove an attribute with the same name if it exists since it will have the wrong type.
+        if let Ok(attrib) = mesh.remove_attrib::<VertexIndex>(VELOCITY_ATTRIB) {
+            // If the attribute is [f32;3] we can just convert it to the right type.
+            if let Ok(iter32) = attrib.iter::<[f32; 3]>() {
+                let vel64 = iter32
+                    .map(|v| [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])])
+                    .collect();
+                mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, vel64)?;
+                return Ok(());
+            }
+        }
+        // If none of the above applies, just insert the new attribute.
+        // We know that this will not panic because above we removed any attribute with the same name.
+        mesh.attrib_or_insert_with_default::<VelType, VertexIndex>(VELOCITY_ATTRIB, [0.0; 3])
+            .unwrap();
+        Ok(())
+    }
+
     /// A helper function to populate the vertex face reference position attribute.
     pub(crate) fn init_cell_vertex_ref_pos_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         // If the attribute already exists, just leave it alone.
@@ -223,7 +247,9 @@ impl SolverBuilder {
 
         // Compute the reference position attribute temporarily.
         // This is used when building the simulation elements and constraints of the mesh.
+        init_mesh_source_index_attribute(&mut mesh)?;
         Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
+        Self::init_velocity_attribute(&mut mesh)?;
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
         let state = State::try_from_mesh_and_materials(&mesh, &materials, &vertex_type)?;

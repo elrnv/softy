@@ -620,15 +620,13 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
 
 #[cfg(test)]
 mod tests {
+    use crate::nl_fem::state::VertexType;
     use crate::Mesh;
-    use geo::attrib::Attrib;
-    use geo::mesh::topology::*;
     use geo::mesh::VertexPositions;
 
-    use crate::attrib_defines::*;
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
-    use crate::fem::nl::state::VertexType;
+    use crate::fem::nl::solver::SolverBuilder;
     use crate::objects::trishell::TriShell;
     use crate::objects::*;
 
@@ -661,54 +659,29 @@ mod tests {
         membrane_only_material().with_bending_stiffness(2.0)
     }
 
+    fn test_shells_for_material<'a>(
+        materials: &'a [Material],
+    ) -> impl Iterator<Item = (TriShell, Vec<[f64; 3]>)> + 'a {
+        test_trimeshes().into_iter().map(move |mesh| {
+            let mut mesh = Mesh::from(mesh);
+            SolverBuilder::init_cell_vertex_ref_pos_attribute(&mut mesh).unwrap();
+            let vertex_types =
+                crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
+
+            (
+                TriShell::try_from_mesh_and_materials(&mesh, &materials, &vertex_types).unwrap(),
+                mesh.vertex_positions().to_vec(),
+            )
+        })
+    }
+
     fn test_shells() -> Vec<(TriShell, Vec<[f64; 3]>)> {
-        test_trimeshes()
-            .into_iter()
-            .map(|mesh| {
-                let mesh = Mesh::from(mesh);
-                let vertex_types = mesh
-                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
-                    .unwrap();
-                (
-                    TriShell::try_from_mesh_and_materials(
-                        &mesh,
-                        &[membrane_only_material().into()][..],
-                        vertex_types,
-                    )
-                    .unwrap(),
-                    mesh.vertex_positions().to_vec(),
-                )
-            })
-            .chain(test_trimeshes().into_iter().map(|mesh| {
-                let mesh = Mesh::from(mesh);
-                let vertex_types = mesh
-                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
-                    .unwrap();
-                (
-                    TriShell::try_from_mesh_and_materials(
-                        &mesh,
-                        &[bend_only_material().into()][..],
-                        vertex_types,
-                    )
-                    .unwrap(),
-                    mesh.vertex_positions().to_vec(),
-                )
-            }))
-            .chain(test_trimeshes().into_iter().map(|mesh| {
-                let mesh = Mesh::from(mesh);
-                let vertex_types = mesh
-                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
-                    .unwrap();
-                (
-                    TriShell::try_from_mesh_and_materials(
-                        &mesh,
-                        &[material().into()][..],
-                        vertex_types,
-                    )
-                    .unwrap(),
-                    mesh.vertex_positions().to_vec(),
-                )
-            }))
+        let membrane_only_materials = vec![membrane_only_material().into()];
+        let bend_only_materials = vec![bend_only_material().into()];
+        let materials = vec![material().into()];
+        test_shells_for_material(&membrane_only_materials)
+            .chain(test_shells_for_material(&bend_only_materials))
+            .chain(test_shells_for_material(&materials))
             .collect()
     }
 

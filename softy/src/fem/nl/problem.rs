@@ -1391,22 +1391,16 @@ impl<T: Real64> NLProblem<T> {
     fn add_momentum_diff<S: Real>(
         &self,
         state: ChunkedView<ResidualStepState<&[T], &[S], &mut [S]>>,
+        solid: &TetSolid,
+        shell: &TriShell,
     ) {
         let ResidualStepState {
             step_state: StepState { cur, next, .. },
             r,
         } = state.isolate(VERTEX_DOFS);
 
-        self.state
-            .borrow()
-            .solid
-            .inertia()
-            .add_energy_gradient(cur.dq, next.dq, r);
-        self.state
-            .borrow()
-            .shell
-            .inertia()
-            .add_energy_gradient(cur.dq, next.dq, r);
+        solid.inertia().add_energy_gradient(cur.dq, next.dq, r);
+        shell.inertia().add_energy_gradient(cur.dq, next.dq, r);
     }
 
     /// Compute contact violation: `max(0, -min(d(q)))`
@@ -1664,7 +1658,7 @@ impl<T: Real64> NLProblem<T> {
         *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state);
+            self.add_momentum_diff(res_state, &state.solid, &state.shell);
         }
     }
 
@@ -1698,7 +1692,7 @@ impl<T: Real64> NLProblem<T> {
         *res_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state);
+            self.add_momentum_diff(res_state, &state.solid, &state.shell);
         }
     }
 

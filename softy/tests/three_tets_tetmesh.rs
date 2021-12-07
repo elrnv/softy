@@ -140,7 +140,7 @@ fn inverted_fixed_reference_element_test() -> Result<(), Error> {
     fixed[mesh.cell(0)[1]] = 1;
     fixed[mesh.cell(0)[2]] = 1;
     fixed[mesh.cell(0)[3]] = 1;
-    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
+    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)?;
 
     let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())
@@ -167,7 +167,7 @@ fn inverted_fixed_element_test() -> Result<(), Error> {
     fixed[mesh.cell(0)[1]] = 1;
     fixed[mesh.cell(0)[2]] = 1;
     fixed[mesh.cell(0)[3]] = 1;
-    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, &fixed)?;
+    mesh.set_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)?;
 
     let mut solver = SolverBuilder::new(DYNAMIC_OPT_PARAMS)
         .add_solid(mesh, default_solid())

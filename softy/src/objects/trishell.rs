@@ -14,6 +14,7 @@ use crate::energy_models::inertia::*;
 use crate::fem::nl::state::VertexType;
 use crate::objects::*;
 use crate::Mesh;
+use crate::Real;
 
 use super::shell::interior_edge::*;
 
@@ -35,7 +36,7 @@ fn shell_mtl_iter<'a>(
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TriangleElements {
+pub struct TriangleElements {
     // Cell indices into the mesh these triangles originated from.
     pub orig_cell_indices: Vec<usize>,
     pub triangles: Vec<[usize; 3]>,
@@ -72,8 +73,6 @@ impl TriangleElements {
             })
             .unzip();
 
-        let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
-
         // Initialize density.
         let density: Vec<_> = if let Ok(density_attrib) =
             mesh.attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
@@ -83,6 +82,7 @@ impl TriangleElements {
                 .map(|&orig_cell_idx| density_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| mtl?.density().ok_or(Error::MissingDensity))
                 .collect::<Result<Vec<_>, Error>>()?
         };
@@ -103,6 +103,7 @@ impl TriangleElements {
                 .map(|&orig_cell_idx| lambda_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
                     .map(|x| x.lambda)
@@ -117,6 +118,7 @@ impl TriangleElements {
                 .map(|&orig_cell_idx| mu_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
                     .map(|x| x.mu)
@@ -133,7 +135,8 @@ impl TriangleElements {
                 .map(|&orig_cell_idx| damping_attrib[orig_cell_idx])
                 .collect()
         } else {
-            mtls.map(|mtl| mtl?.damping().ok_or(Error::MissingDamping))
+            let mtls = shell_mtl_iter(mesh, materials, &orig_cell_indices)?;
+            mtls.map(|mtl| Ok(mtl?.damping()))
                 .collect::<Result<Vec<_>, Error>>()?
         };
 
@@ -218,13 +221,15 @@ impl TriangleElements {
     /// If the strain attribute exists on the mesh, this function will only add
     /// to the existing attribute, and will not overwrite any values not
     /// associated with triangle of this `TriShell`.
-    pub(crate) fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) {
+    pub(crate) fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) -> Result<(), Error> {
         // Set the "strain_energy" attribute.
+        mesh.attrib_or_insert_with_default::<StrainEnergyType, CellIndex>(
+            STRAIN_ENERGY_ATTRIB,
+            0.0f64,
+        )?;
+        // No panics since attribute was added above.
         let mut strain_attrib = mesh
-            .attrib_or_insert_with_default::<StrainEnergyType, CellIndex>(
-                STRAIN_ENERGY_ATTRIB,
-                0.0f64,
-            )
+            .remove_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB)
             .unwrap();
         // Panics: No panic since strain is created above as f64.
         let strain = strain_attrib.as_mut_slice::<StrainEnergyType>().unwrap();
@@ -252,6 +257,8 @@ impl TriangleElements {
                 .energy()
             },
         );
+        mesh.insert_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB, strain_attrib)?;
+        Ok(())
     }
 
     /// Add triangle vertex masses on the given mesh.
@@ -283,11 +290,12 @@ impl TriangleElements {
     /// If the attribute doesn't already exists, it will be created, otherwise
     /// it will be added to.
     fn add_elastic_forces(&self, mesh: &mut Mesh) -> Result<(), Error> {
-        let forces_attrib = mesh.attrib_or_insert_with_default::<ElasticForceType, VertexIndex>(
+        mesh.attrib_or_insert_with_default::<ElasticForceType, VertexIndex>(
             ELASTIC_FORCE_ATTRIB,
             [0.0; 3],
         )?;
-        let mut forces = forces_attrib.as_mut_slice::<ElasticForceType>().unwrap();
+        let mut forces_attrib = mesh.remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)?;
+        let forces = forces_attrib.as_mut_slice::<ElasticForceType>().unwrap();
 
         zip!(
             self.lambda.iter(),
@@ -312,6 +320,7 @@ impl TriangleElements {
                 forces[tri_indices[j]] = (f - grad[j]).into();
             }
         });
+        mesh.insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)?;
         Ok(())
     }
 
@@ -321,7 +330,7 @@ impl TriangleElements {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct DihedralElements {
+pub struct DihedralElements {
     // Cell indices into the mesh from which `triangles` originated.
     pub orig_cell_indices: Vec<usize>,
     /// A list of triangle elements.
@@ -357,7 +366,7 @@ impl DihedralElements {
             mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
         let get_ref_pos = |f, i| ref_pos[mesh.cell_vertex(f, i).unwrap().into_inner()];
 
-        let mut dihedrals = compute_interior_edge_topology_from_mesh(&mesh)?;
+        let mut dihedrals = compute_interior_edge_topology_from_mesh(&mesh, vertex_type)?;
         let (mut ref_angles, mut ref_length): (Vec<_>, Vec<_>) = dihedrals
             .iter()
             .map(|e| {
@@ -455,7 +464,7 @@ impl DihedralElements {
         triangles.reserve(mesh.num_cells());
         let mut orig_cell_indices = Vec::new();
         orig_cell_indices.reserve(mesh.num_cells());
-        for edge in dihedrals.iter() {
+        for edge in dihedrals.iter_mut() {
             for i in 0..2 {
                 if let Some(valid_idx) = triangle_map[edge.faces[i]].into_option() {
                     edge.faces[i] = valid_idx; // Remap to new index.
@@ -464,7 +473,7 @@ impl DihedralElements {
                     triangle_map[edge.faces[i]] = Index::new(new_idx);
 
                     // Push the newly discovered triangle.
-                    let cell = mesh.indices.view().at(edge.faces[i]);
+                    let cell = flatk::View::view(&mesh.indices).at(edge.faces[i]);
                     triangles.push([cell[0], cell[1], cell[2]]);
                     // Update mapping to original mesh.
                     orig_cell_indices.push(edge.faces[i]);
@@ -511,7 +520,7 @@ impl DihedralElements {
 
 /// Data used for simulating shells.
 #[derive(Clone, Debug)]
-pub(crate) struct TriShell {
+pub struct TriShell {
     pub triangle_elements: TriangleElements,
     pub dihedral_elements: DihedralElements,
 }
@@ -561,7 +570,7 @@ impl TriShell {
     /// If the strain attribute exists on the mesh, this function will only add
     /// to the existing attribute, and will not overwrite any values not
     /// associated with triangle of this `TriShell`.
-    fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) {
+    fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.triangle_elements.compute_strain_energy_attrib(mesh)
     }
 

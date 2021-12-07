@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use num_traits::Float;
 use rayon::prelude::*;
 use tensr::*;
 
@@ -37,7 +38,10 @@ where
         self.problem.residual(x, r);
         let (l, u) = &*self.bounds.borrow();
         zip!(r.iter_mut(), x.iter(), l.iter(), u.iter()).for_each(|(r, &x, &l, &u)| {
-            *r = r.max(x - T::from(u).unwrap()).min(x - T::from(l).unwrap());
+            *r = Float::min(
+                Float::max(*r, x - T::from(u).unwrap()),
+                x - T::from(l).unwrap(),
+            );
         });
     }
     fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {

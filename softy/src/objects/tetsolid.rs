@@ -18,7 +18,7 @@ fn solid_mtl_iter<'a>(
     mesh: &'a Mesh,
     materials: &'a [Material],
     orig_cell_indices: &'a [usize],
-) -> Result<impl Iterator<Item = Result<&'a SolidMaterial, Error>>, Error> {
+) -> Result<impl ExactSizeIterator<Item = Result<&'a SolidMaterial, Error>> + Clone, Error> {
     let mtl_id = mesh.attrib_as_slice::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB)?;
     Ok(orig_cell_indices.iter().map(move |&orig_cell_idx| {
         let mtl_id = mtl_id[orig_cell_idx];
@@ -32,7 +32,7 @@ fn solid_mtl_iter<'a>(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct TetElements {
+pub struct TetElements {
     pub orig_cell_indices: Vec<usize>,
     pub tets: Vec<[usize; 4]>,
     pub density: Vec<f32>,
@@ -74,8 +74,6 @@ impl TetElements {
             })
             .unzip();
 
-        let mtls = solid_mtl_iter(mesh, materials, &orig_cell_indices)?;
-
         // Initialize density.
         let density: Vec<_> = if let Ok(density_attrib) =
             mesh.attrib_as_slice::<DensityType, CellIndex>(DENSITY_ATTRIB)
@@ -85,6 +83,7 @@ impl TetElements {
                 .map(|&orig_cell_idx| density_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = solid_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| mtl?.density().ok_or(Error::MissingDensity))
                 .collect::<Result<Vec<_>, Error>>()?
         };
@@ -105,6 +104,7 @@ impl TetElements {
                 .map(|&orig_cell_idx| lambda_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = solid_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
                     .map(|x| x.lambda)
@@ -119,6 +119,7 @@ impl TetElements {
                 .map(|&orig_cell_idx| mu_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = solid_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| {
                 mtl?.elasticity()
                     .map(|x| x.mu)
@@ -135,6 +136,7 @@ impl TetElements {
                 .map(|&orig_cell_idx| damping_attrib[orig_cell_idx])
                 .collect()
         } else {
+            let mtls = solid_mtl_iter(mesh, materials, &orig_cell_indices)?;
             mtls.map(|mtl| Ok(mtl?.damping()))
                 .collect::<Result<Vec<_>, Error>>()?
         };
@@ -157,7 +159,7 @@ impl TetElements {
         orig_cell_indices: &[usize],
     ) -> Result<Vec<f64>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         let ref_volumes: Vec<_> = orig_cell_indices
             .iter()
             .map(|&orig_cell_idx| {
@@ -171,6 +173,8 @@ impl TetElements {
                 ref_tet(&tet).signed_volume()
             })
             .collect();
+
+        dbg!(&ref_volumes);
 
         let inverted: Vec<_> = ref_volumes
             .iter()
@@ -189,7 +193,7 @@ impl TetElements {
         orig_cell_indices: &[usize],
     ) -> Result<Vec<Matrix3<f64>>, Error> {
         let ref_pos =
-            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)?;
+            mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)?;
         // Compute reference shape matrix inverses
         Ok(orig_cell_indices
             .iter()
@@ -213,14 +217,18 @@ impl TetElements {
     /// If the strain attribute exists on the mesh, this function will only add
     /// to the existing attribute, and will not overwrite any values not
     /// associated with tets of this `TetSolid`.
-    pub(crate) fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) {
+    pub(crate) fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) -> Result<(), Error> {
         // Set the "strain_energy" attribute.
+        mesh.attrib_or_insert_with_default::<StrainEnergyType, CellIndex>(
+            STRAIN_ENERGY_ATTRIB,
+            0.0f64,
+        )?;
+
+        // No panics since we just added the attribute above if it doesn't exist.
         let mut strain_attrib = mesh
-            .attrib_or_insert_with_default::<StrainEnergyType, CellIndex>(
-                STRAIN_ENERGY_ATTRIB,
-                0.0f64,
-            )
+            .remove_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB)
             .unwrap();
+
         // Panics: No panic since strain is created above as f64.
         let strain = strain_attrib.as_mut_slice::<StrainEnergyType>().unwrap();
 
@@ -249,6 +257,9 @@ impl TetElements {
                 .energy()
             },
         );
+
+        mesh.insert_attrib::<CellIndex>(STRAIN_ENERGY_ATTRIB, strain_attrib)?;
+        Ok(())
     }
 
     /// Add tet vertex masses on the given mesh.
@@ -281,11 +292,15 @@ impl TetElements {
     /// If the attribute doesn't already exists, it will be created, otherwise
     /// it will be added to.
     fn add_elastic_forces(&self, mesh: &mut Mesh) -> Result<(), Error> {
-        let forces_attrib = mesh.attrib_or_insert_with_default::<ElasticForceType, VertexIndex>(
+        mesh.attrib_or_insert_with_default::<ElasticForceType, VertexIndex>(
             ELASTIC_FORCE_ATTRIB,
             [0.0; 3],
         )?;
-        let mut forces = forces_attrib.as_mut_slice::<ElasticForceType>().unwrap();
+
+        let mut forces_attrib = mesh
+            .remove_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB)
+            .unwrap();
+        let forces = forces_attrib.as_mut_slice::<ElasticForceType>().unwrap();
 
         zip!(
             self.lambda.iter(),
@@ -311,6 +326,9 @@ impl TetElements {
                 forces[tet_indices[j]] = (f - grad[j]).into();
             }
         });
+
+        mesh.insert_attrib::<VertexIndex>(ELASTIC_FORCE_ATTRIB, forces_attrib)?;
+
         Ok(())
     }
 
@@ -412,16 +430,22 @@ impl TetSolid {
     }
 }
 
-impl<'a> Inertia<'a, TetSolidInertia<'a>> for TetSolid {
+impl<'a> Inertia<'a, (TetSolidInertia<'a>, TetSolidInertia<'a>)> for TetSolid {
     #[inline]
-    fn inertia(&'a self) -> TetSolidInertia<'a> {
-        TetSolidInertia(self)
+    fn inertia(&'a self) -> (TetSolidInertia<'a>, TetSolidInertia<'a>) {
+        (
+            TetSolidInertia(&self.nh_tet_elements),
+            TetSolidInertia(&self.snh_tet_elements),
+        )
     }
 }
 
-impl<'a> Gravity<'a, TetSolidGravity<'a>> for TetSolid {
+impl<'a> Gravity<'a, (TetSolidGravity<'a>, TetSolidGravity<'a>)> for TetSolid {
     #[inline]
-    fn gravity(&'a self, g: [f64; 3]) -> TetSolidGravity<'a> {
-        TetSolidGravity::new(self, g)
+    fn gravity(&'a self, g: [f64; 3]) -> (TetSolidGravity<'a>, TetSolidGravity<'a>) {
+        (
+            TetSolidGravity::new(&self.nh_tet_elements, g),
+            TetSolidGravity::new(&self.snh_tet_elements, g),
+        )
     }
 }

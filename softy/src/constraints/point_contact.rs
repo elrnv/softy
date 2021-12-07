@@ -2695,7 +2695,7 @@ mod tests {
             &mut values,
         );
 
-        grid.set_attrib_data::<_, VertexIndex>("potential", &values)
+        grid.set_attrib_data::<_, VertexIndex>("potential", values.clone())
             .expect("Failed to set potential field on grid");
 
         //geo::io::save_polymesh(&geo::mesh::PolyMesh::from(grid.clone()), &std::path::PathBuf::from("out/background_test.vtk")).unwrap();

@@ -19,6 +19,7 @@ use crate::inf_norm;
 use crate::objects::material::*;
 use crate::objects::shell::*;
 use crate::objects::solid::*;
+use crate::objects::*;
 use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 #[derive(Clone, Debug)]
@@ -899,9 +900,9 @@ impl SolverBuilder {
             }
         }
 
-        mesh.attrib_or_add_data::<RefPosType, CellVertexIndex>(
+        mesh.attrib_or_insert_data::<RefPosType, CellVertexIndex>(
             REFERENCE_CELL_VERTEX_POS_ATTRIB,
-            ref_pos.as_slice(),
+            &ref_pos,
         )?;
         Ok(())
     }
@@ -948,22 +949,19 @@ impl SolverBuilder {
         }
 
         tetmesh
-            .set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, &masses)
+            .set_attrib_data::<MassType, VertexIndex>(MASS_ATTRIB, masses)
             .unwrap();
     }
 
     pub(crate) fn prepare_deformable_tetmesh_attributes(mesh: &mut TetMesh) -> Result<(), Error> {
         Self::prepare_cell_vertex_ref_pos_attribute(mesh)?;
         let ref_volumes = Self::compute_ref_tet_signed_volumes(mesh)?;
-        mesh.set_attrib_data::<RefVolType, CellIndex>(
-            REFERENCE_VOLUME_ATTRIB,
-            ref_volumes.as_slice(),
-        )?;
+        mesh.set_attrib_data::<RefVolType, CellIndex>(REFERENCE_VOLUME_ATTRIB, ref_volumes)?;
 
         let ref_shape_mtx_inverses = Self::compute_ref_tet_shape_matrix_inverses(mesh)?;
         mesh.set_attrib_data::<_, CellIndex>(
             REFERENCE_SHAPE_MATRIX_INV_ATTRIB,
-            ref_shape_mtx_inverses.as_slice(),
+            ref_shape_mtx_inverses,
         )?;
         Ok(())
     }
@@ -983,7 +981,10 @@ impl SolverBuilder {
             // These will be computed at the end of the time step.
             solid
                 .tetmesh
-                .set_attrib::<StrainEnergyType, CellIndex>(STRAIN_ENERGY_ATTRIB, 0f64)?;
+                .reset_attrib_to_default::<StrainEnergyType, CellIndex>(
+                    STRAIN_ENERGY_ATTRIB,
+                    0f64,
+                )?;
         }
 
         // Below we prepare attributes that give elasticity and density parameters. If such were

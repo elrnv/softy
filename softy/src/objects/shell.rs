@@ -12,6 +12,7 @@ use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
 use crate::energy_models::Either;
 use crate::objects::*;
+use crate::Real;
 use crate::TriMesh;
 
 pub(crate) mod interior_edge;

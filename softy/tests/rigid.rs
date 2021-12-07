@@ -67,7 +67,7 @@ fn rigid_box_rotate() {
                 .into_data()
         })
         .collect();
-    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
+    mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
         .unwrap();
 
     let mut solver = SolverBuilder::new(params)
@@ -135,7 +135,7 @@ fn rigid_box_perturbed_rotate() {
             .into_data()
         })
         .collect();
-    mesh.add_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
+    mesh.insert_attrib_data::<VelType, VertexIndex>(VELOCITY_ATTRIB, init_vel)
         .unwrap();
 
     let mut solver = SolverBuilder::new(params)

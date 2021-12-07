@@ -11,6 +11,7 @@ use tensr::*;
 use super::tetmesh_nh::TetMeshElasticity;
 use super::tetsolid_nh::TetSolidElasticity;
 use super::LinearElementEnergy;
+use crate::Real;
 
 /// Per-tetrahedron Neo-Hookean energy model. This struct stores conveniently precomputed values
 /// for tet energy computation. It encapsulates tet specific energy computation.
@@ -128,7 +129,7 @@ impl<T: Real> LinearElementEnergy<T> for StableNeoHookeanTetEnergy<T> {
         let J_minus_alpha = J_minus_1 - T::from(0.75).unwrap() * mu / lambda;
         volume
             * half
-            * (mu * (I - T::from(3.0).unwrap() - (I + T::one()).ln())
+            * (mu * (I - T::from(3.0).unwrap() - num_traits::Float::ln(I + T::one()))
                 + lambda * J_minus_alpha * J_minus_alpha)
     }
 

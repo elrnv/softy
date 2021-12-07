@@ -2,7 +2,7 @@ mod test_utils;
 
 use softy::fem::nl::SimParams as NLParams;
 use softy::fem::nl::*;
-use softy::{ElasticityParameters, Error, SolidMaterial, TetMesh};
+use softy::{ElasticityParameters, Error, Mesh, SolidMaterial, TetMesh};
 use std::path::PathBuf;
 pub use test_utils::*;
 
@@ -37,14 +37,19 @@ fn equilibrium() {
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box.vtk")).unwrap();
 
     let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh.clone(), soft_material)
+        .set_mesh(Mesh::from(mesh.clone()))
+        .set_materials(vec![soft_material.into()])
         .build::<f64>()
         .expect("Failed to create solver for soft box equilibrium test");
     assert!(solver.step().is_ok());
 
     // Expect the box to remain in original configuration
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &mesh, 1e-6);
+    let solid = &solver.solid();
+    let solution = TetMesh::new(
+        solver.vertex_positions().to_vec(),
+        solid.nh_tet_elements.tets.clone(),
+    );
+    compare_meshes(&solution, &mesh, 1e-6);
 }
 
 #[test]
@@ -54,12 +59,17 @@ fn stretch_plain() -> Result<(), Error> {
     let mut solver = SolverBuilder::new(NLParams {
         ..stretch_nl_params()
     })
-    .add_solid(mesh, medium_solid_material())
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![medium_solid_material().into()])
     .build::<f64>()?;
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &expected, 1e-2);
+    let solid = &solver.solid();
+    let solution = TetMesh::new(
+        solver.vertex_positions().to_vec(),
+        solid.nh_tet_elements.tets.clone(),
+    );
+    compare_meshes(&solution, &expected, 1e-2);
     Ok(())
 }
 
@@ -93,12 +103,17 @@ fn twist_plain() -> Result<(), Error> {
         ..stretch_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
-        .add_solid(mesh, material)
+        .set_mesh(Mesh::from(mesh))
+        .set_materials(vec![material.into()])
         .build::<f64>()?;
     solver.step()?;
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
-    let solution = &solver.solid(0).tetmesh;
-    compare_meshes(solution, &expected, 1e-3);
+    let solid = &solver.solid();
+    let solution = TetMesh::new(
+        solver.vertex_positions().to_vec(),
+        solid.nh_tet_elements.tets.clone(),
+    );
+    compare_meshes(&solution, &expected, 1e-3);
     Ok(())
 }
 

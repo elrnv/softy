@@ -5,13 +5,13 @@ use tensr::{IntoData, Vector3};
 use thiserror::Error;
 
 use crate::attrib_defines::*;
-use crate::fem::nl::{LineSearch, SimParams as NLParams};
+use crate::fem::nl::{state::VertexType, LineSearch, SimParams as NLParams};
 use crate::fem::opt::{MuStrategy, SimParams as OptParams};
 use crate::objects::*;
 use crate::{PolyMesh, TetMesh, TriMesh};
 use geo::attrib::*;
 use geo::mesh::builder::*;
-use geo::mesh::topology::VertexIndex;
+use geo::mesh::topology::{CellIndex, FaceIndex, NumCells, NumFaces, VertexIndex};
 use geo::mesh::VertexPositions;
 use geo::ops::*;
 
@@ -51,6 +51,19 @@ pub enum LoadParamsError {
     IO(#[from] std::io::Error),
     #[error("Parse")]
     Parse(#[from] ron::Error),
+}
+
+pub fn vertex_types_from_fixed(fixed: &[FixedIntType]) -> Vec<VertexType> {
+    fixed
+        .iter()
+        .map(|&x| {
+            if x == 1 {
+                VertexType::Fixed
+            } else {
+                VertexType::Free
+            }
+        })
+        .collect()
 }
 
 pub fn load_nl_params(path: impl AsRef<Path>) -> std::result::Result<NLParams, LoadParamsError> {
@@ -99,8 +112,19 @@ pub fn make_one_tri_mesh() -> TriMesh {
     let verts = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
     let indices = vec![[0, 2, 1]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0])
+    let fixed = vec![1, 1, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     let verts_f32: Vec<_> = verts
         .iter()
@@ -130,9 +154,21 @@ pub fn make_two_tri_mesh() -> TriMesh {
     let indices = vec![[2, 0, 1], [0, 3, 1]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
 
+    let fixed = vec![0, 1, 0, 1];
     // Top two vertices are fixed to remove the nullspace in shell sims.
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 0, 1])
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     // Reference configuration is flat.
     verts[0][2] = 0.0;
@@ -159,9 +195,22 @@ pub fn make_three_tri_mesh() -> TriMesh {
     let indices = vec![[0, 1, 2], [0, 3, 1], [1, 4, 2]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
 
+    let fixed = vec![0, 0, 1, 0, 1];
+
     // Top two vertices are fixed to remove the nullspace in shell sims.
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 0, 1])
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     // Reference configuration is bent the other way.
     verts[3][2] = -0.5;
@@ -187,8 +236,20 @@ pub fn make_four_tri_mesh() -> TriMesh {
     ];
     let indices = vec![[0, 1, 2], [2, 1, 3], [2, 3, 4], [4, 3, 5]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
+    let fixed = vec![1, 1, 0, 0, 0, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     // Reference configuration is flat.
     verts[5][1] = 0.0;
@@ -215,8 +276,19 @@ pub fn make_four_tri_mesh_unoriented() -> TriMesh {
     ];
     let indices = vec![[0, 2, 1], [2, 3, 1], [2, 3, 4], [4, 3, 5]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0, 0, 0])
+    let fixed = vec![1, 1, 0, 0, 0, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     let verts_f32: Vec<_> = verts
         .iter()
@@ -236,8 +308,19 @@ pub fn make_one_tet_trimesh() -> TriMesh {
     ];
     let indices = vec![[0, 2, 1], [0, 3, 2], [0, 1, 3], [1, 2, 3]];
     let mut mesh = TriMesh::new(verts.clone(), indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
+    let fixed = vec![1, 1, 0, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, FaceIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_faces()],
+    )
+    .unwrap();
 
     let verts_f32: Vec<_> = verts
         .iter()
@@ -257,8 +340,19 @@ pub fn make_one_tet_mesh() -> TetMesh {
     ];
     let indices = vec![[0, 2, 1, 3]];
     let mut mesh = TetMesh::new(verts.clone(), indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])
+    let fixed = vec![1, 1, 0, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_cells()],
+    )
+    .unwrap();
 
     let verts_f32: Vec<_> = verts
         .iter()
@@ -278,8 +372,19 @@ pub fn make_one_deformed_tet_mesh() -> TetMesh {
 pub fn make_three_tet_mesh_with_verts(verts: Vec<[f64; 3]>) -> TetMesh {
     let indices = vec![[5, 2, 4, 0], [3, 2, 5, 0], [1, 0, 3, 5]];
     let mut mesh = TetMesh::new(verts, indices);
-    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
+    let fixed = vec![0, 0, 1, 1, 0, 0];
+    mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    mesh.insert_attrib_data::<VertexType, VertexIndex>(
+        VERTEX_TYPE_ATTRIB,
+        vertex_types_from_fixed(&fixed),
+    )
+    .unwrap();
+    mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; mesh.num_cells()],
+    )
+    .unwrap();
 
     let ref_verts = vec![
         [0.0, 0.0, 0.0],
@@ -318,6 +423,10 @@ pub fn make_box(i: usize) -> TetMesh {
     box_mesh
         .insert_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
+    box_mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; box_mesh.num_cells()],
+    );
     box_mesh
 }
 
@@ -341,8 +450,18 @@ pub fn make_stretched_box(i: usize) -> TetMesh {
     }
 
     box_mesh
-        .insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed)
+        .insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, fixed.clone())
         .unwrap();
+    box_mesh
+        .insert_attrib_data::<VertexType, VertexIndex>(
+            VERTEX_TYPE_ATTRIB,
+            vertex_types_from_fixed(&fixed),
+        )
+        .unwrap();
+    box_mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
+        MATERIAL_ID_ATTRIB,
+        vec![0; box_mesh.num_cells()],
+    );
 
     box_mesh
 }

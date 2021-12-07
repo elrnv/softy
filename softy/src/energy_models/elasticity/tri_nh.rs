@@ -7,9 +7,11 @@ use unroll::unroll_for_loops;
 use crate::objects::shell::interior_edge::*;
 use geo::ops::*;
 use geo::prim::Triangle;
+use num_traits::Float;
 use tensr::*;
 
 use super::LinearElementEnergy;
+use crate::Real;
 
 // TODO: Remove reinterpret when bytemuck implements Pod for all arrays.
 
@@ -134,7 +136,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             T::infinity()
         } else {
             let half = T::from(0.5).unwrap();
-            let log_C_det = C_det.ln();
+            let log_C_det = Float::ln(C_det);
             let _2 = T::from(2.0).unwrap();
             area * half
                 * (mu * (I - _2 - log_C_det)
@@ -162,7 +164,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
             [Vector3::zero(); 3]
         } else {
             let F_inv_tr = C.inverse().unwrap() * F;
-            let logJ = T::from(0.5).unwrap() * C_det.ln();
+            let logJ = T::from(0.5).unwrap() * Float::ln(C_det);
             let P = F * mu + F_inv_tr * (lambda * logJ - mu);
             let H = DX_inv.transpose() * P * area;
             [H[0], H[1], -H[0] - H[1]]
@@ -189,7 +191,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
         let C = F * F.transpose();
         let C_det = C.determinant();
         if C_det > T::zero() {
-            let alpha = mu - lambda * T::from(0.5).unwrap() * C_det.ln();
+            let alpha = mu - lambda * T::from(0.5).unwrap() * Float::ln(C_det);
 
             let C_inv_tr = C.inverse_transpose().unwrap();
             let F_inv_tr: Matrix2x3<_> = C_inv_tr.transpose() * F;
@@ -248,7 +250,7 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
         let C = F * F.transpose();
         let C_det = C.determinant();
         if C_det > T::zero() {
-            let alpha = mu - lambda * T::from(0.5).unwrap() * C_det.ln();
+            let alpha = mu - lambda * T::from(0.5).unwrap() * Float::ln(C_det);
 
             let C_inv = C.inverse().unwrap();
             let F_inv: Matrix3x2<_> = (C_inv * F).transpose();
@@ -268,13 +270,13 @@ impl<T: Real> LinearElementEnergy<T> for NeoHookeanTriEnergy<T> {
 }
 
 pub struct DiscreteShellBendingEnergy<'a, T> {
-    cur_pos: &'a [[T; 3]],
-    faces: &'a [[usize; 3]],
-    edge: InteriorEdge,
-    prev_theta: T,
-    ref_theta: T,
-    ref_shape: T,
-    stiffness: T,
+    pub cur_pos: &'a [[T; 3]],
+    pub faces: &'a [[usize; 3]],
+    pub edge: InteriorEdge,
+    pub prev_theta: T,
+    pub ref_theta: T,
+    pub ref_shape: T,
+    pub stiffness: T,
 }
 
 impl<T: Real> DiscreteShellBendingEnergy<'_, T> {
@@ -367,7 +369,7 @@ impl<T: Real> DiscreteShellTanBendingEnergy<'_, T> {
             .edge
             .incremental_angle(self.prev_theta, self.cur_pos, |f, i| self.faces[f][i]);
         let theta_strain = theta - self.ref_theta;
-        let tan_strain = (theta_strain * half).tan() * _2;
+        let tan_strain = Float::tan(theta_strain * half) * _2;
         self.ref_shape * self.stiffness * tan_strain * tan_strain * half
     }
 
@@ -382,8 +384,8 @@ impl<T: Real> DiscreteShellTanBendingEnergy<'_, T> {
             .edge
             .incremental_angle(self.prev_theta, self.cur_pos, |f, i| self.faces[f][i]);
         let theta_strain = theta - self.ref_theta;
-        let tan_strain = (theta_strain * half).tan() * _2;
-        let tan_strain_dth_sqrt = T::one() / (theta_strain * half).cos();
+        let tan_strain = Float::tan(theta_strain * half) * _2;
+        let tan_strain_dth_sqrt = T::one() / Float::cos(theta_strain * half);
         let tan_strain_dth = tan_strain_dth_sqrt * tan_strain_dth_sqrt;
         self.ref_shape * self.stiffness * tan_strain * tan_strain_dth
     }
@@ -431,8 +433,8 @@ impl<T: Real> DiscreteShellTanBendingEnergy<'_, T> {
         let _2 = T::from(2.0).unwrap();
         let theta = edge.incremental_angle(prev_theta, cur_pos, |f, i| faces[f][i]);
         let theta_strain = theta - ref_theta;
-        let tan_strain = (theta_strain * half).tan() * _2;
-        let sec = T::one() / (theta_strain * half).cos();
+        let tan_strain = Float::tan(theta_strain * half) * _2;
+        let sec = T::one() / Float::cos(theta_strain * half);
         let tan_strain_dth = sec * sec;
         let tan_strain_ddth = tan_strain_dth * (tan_strain_dth + tan_strain * tan_strain * half);
         let d2w_dth2 = stiffness * ref_shape * tan_strain_ddth; // ∂²W/∂θ²

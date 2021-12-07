@@ -1,7 +1,5 @@
 use crate::Real;
 
-use tensr::DSMatrix;
-
 use super::{SolveResult, Status};
 
 /// Implementation of the BiConjugate Gradient STABilized (BiCGSTAB) algorithm for
@@ -50,7 +48,7 @@ where
     /// `matvec` takes in the vector `x` and the output mutable slice. If `matvec` returns
     /// false, then the computation stops and the `SolveResult` will report an interrupted status.
     #[inline]
-    pub fn solve<F>(&mut self, mut matvec: F, x: &mut [T], b: &mut [T]) -> SolveResult
+    pub fn solve<F>(&mut self, matvec: F, x: &mut [T], b: &mut [T]) -> SolveResult
     where
         F: FnMut(&[T], &mut [T]) -> bool,
     {

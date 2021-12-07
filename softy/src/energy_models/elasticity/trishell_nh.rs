@@ -2,7 +2,6 @@
 //! Neo-Hookean energy model for triangle shells.
 
 use num_traits::FromPrimitive;
-use num_traits::Zero;
 use rayon::prelude::*;
 use unroll::unroll_for_loops;
 
@@ -13,7 +12,7 @@ use tensr::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::trishell::*;
-use crate::objects::*;
+use crate::Real;
 
 use super::{tri_nh::*, TriEnergy};
 
@@ -152,13 +151,13 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
 
         // Membrane energy
         let membrane: T = zip!(
-            tri_elems.damping.iter().map(|x| T::from(x).unwrap()),
-            tri_elems.density.iter().map(|x| T::from(x).unwrap()),
-            tri_elems.ref_area.iter().map(|x| T::from(x).unwrap()),
+            tri_elems.damping.iter().map(|&x| T::from(x).unwrap()),
+            tri_elems.density.iter().map(|&x| T::from(x).unwrap()),
+            tri_elems.ref_area.iter().map(|&x| T::from(x).unwrap()),
             tri_elems.ref_tri_shape_mtx_inv.iter(),
             tri_elems.triangles.iter(),
-            tri_elems.lambda.iter().map(|x| T::from(x).unwrap()),
-            tri_elems.mu.iter().map(|x| T::from(x).unwrap()),
+            tri_elems.lambda.iter().map(|&x| T::from(x).unwrap()),
+            tri_elems.mu.iter().map(|&x| T::from(x).unwrap()),
         )
         .map(|(damping, density, area, &DX_inv, face, lambda, mu)| {
             let tri_x1 = Triangle::from_indexed_slice(face, pos1);
@@ -175,7 +174,7 @@ impl<T: Real, E: TriEnergy<T>> Energy<T> for TriShellElasticity<'_, E> {
             tri_energy.energy() + {
                 // damping (viscosity)
                 // Note: damping is already scaled by dt
-                if density != 0.0 {
+                if density != T::zero() {
                     area * dFTdF_tr * half * T::from(density).unwrap() * damping
                 } else {
                     T::zero()
@@ -513,13 +512,13 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
                 unsafe { reinterpret::reinterpret_mut_slice(&mut values[..tri_entries]) };
 
             let hess_iter = hess_chunks.par_iter_mut().zip(zip!(
-                tri_elems.damping.par_iter().map(|x| T::from(x).unwrap()),
-                tri_elems.density.par_iter().map(|x| T::from(x).unwrap()),
-                tri_elems.ref_area.par_iter().map(|x| T::from(x).unwrap()),
+                tri_elems.damping.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.density.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.ref_area.par_iter().map(|&x| T::from(x).unwrap()),
                 tri_elems.ref_tri_shape_mtx_inv.par_iter(),
                 tri_elems.triangles.par_iter(),
-                tri_elems.lambda.par_iter().map(|x| T::from(x).unwrap()),
-                tri_elems.mu.par_iter().map(|x| T::from(x).unwrap()),
+                tri_elems.lambda.par_iter().map(|&x| T::from(x).unwrap()),
+                tri_elems.mu.par_iter().map(|&x| T::from(x).unwrap()),
             ));
 
             hess_iter.for_each(
@@ -622,11 +621,16 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
 #[cfg(test)]
 mod tests {
     use crate::Mesh;
+    use geo::attrib::Attrib;
+    use geo::mesh::topology::*;
     use geo::mesh::VertexPositions;
 
+    use crate::attrib_defines::*;
     use crate::energy_models::elasticity::test_utils::*;
     use crate::energy_models::test_utils::*;
+    use crate::fem::nl::state::VertexType;
     use crate::objects::trishell::TriShell;
+    use crate::objects::*;
 
     use super::*;
 
@@ -661,25 +665,47 @@ mod tests {
         test_trimeshes()
             .into_iter()
             .map(|mesh| {
+                let mesh = Mesh::from(mesh);
+                let vertex_types = mesh
+                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
+                    .unwrap();
                 (
-                    TriShell::try_from_mesh_and_material(
-                        &Mesh::from(mesh),
-                        membrane_only_material(),
+                    TriShell::try_from_mesh_and_materials(
+                        &mesh,
+                        &[membrane_only_material().into()][..],
+                        vertex_types,
                     )
                     .unwrap(),
                     mesh.vertex_positions().to_vec(),
                 )
             })
             .chain(test_trimeshes().into_iter().map(|mesh| {
+                let mesh = Mesh::from(mesh);
+                let vertex_types = mesh
+                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
+                    .unwrap();
                 (
-                    TriShell::try_from_mesh_and_material(&Mesh::from(mesh), bend_only_material())
-                        .unwrap(),
+                    TriShell::try_from_mesh_and_materials(
+                        &mesh,
+                        &[bend_only_material().into()][..],
+                        vertex_types,
+                    )
+                    .unwrap(),
                     mesh.vertex_positions().to_vec(),
                 )
             }))
             .chain(test_trimeshes().into_iter().map(|mesh| {
+                let mesh = Mesh::from(mesh);
+                let vertex_types = mesh
+                    .attrib_as_slice::<VertexType, VertexIndex>(VERTEX_TYPE_ATTRIB)
+                    .unwrap();
                 (
-                    TriShell::try_from_mesh_and_material(&Mesh::from(mesh), material()).unwrap(),
+                    TriShell::try_from_mesh_and_materials(
+                        &mesh,
+                        &[material().into()][..],
+                        vertex_types,
+                    )
+                    .unwrap(),
                     mesh.vertex_positions().to_vec(),
                 )
             }))

@@ -5,13 +5,14 @@ use flatk::zip;
 use geo::attrib::Attrib;
 use geo::mesh::topology::*;
 use geo::prim::Tetrahedron;
-use tensr::{IntoData, Real, Vector3};
+use tensr::{IntoData, Vector3};
 
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::solid::*;
 use crate::objects::tetsolid::*;
+use crate::Real;
 
 const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 12;
 const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET: usize = 12;
@@ -211,12 +212,12 @@ impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
     }
 }
 
-pub(crate) struct TetSolidInertia<'a>(pub &'a TetSolid);
+pub(crate) struct TetSolidInertia<'a>(pub &'a TetElements);
 
 impl<T: Real> Energy<T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
-        let tet_elems = &self.0.tet_elements;
+        let tet_elems = &self.0;
 
         let vel0: &[Vector3<T>] = bytemuck::cast_slice(v0);
         let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
@@ -248,7 +249,7 @@ impl<T: Real> Energy<T> for TetSolidInertia<'_> {
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
-        let tet_elems = &self.0.tet_elements;
+        let tet_elems = &self.0;
 
         let vel0: &[Vector3<X>] = bytemuck::cast_slice(v0);
         let vel1: &[Vector3<T>] = bytemuck::cast_slice(v1);
@@ -283,11 +284,11 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidInertia<'_> {
 
 impl EnergyHessianTopology for TetSolidInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
-        self.0.tet_elements.num_elements() * NUM_HESSIAN_TRIPLETS_PER_TET
+        self.0.num_elements() * NUM_HESSIAN_TRIPLETS_PER_TET
     }
 
     fn num_hessian_diagonal_nnz(&self) -> usize {
-        self.0.tet_elements.num_elements() * NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET
+        self.0.num_elements() * NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET
     }
 
     fn energy_hessian_rows_cols_offset<I: FromPrimitive + Send + bytemuck::Pod>(
@@ -299,7 +300,7 @@ impl EnergyHessianTopology for TetSolidInertia<'_> {
         assert_eq!(rows.len(), self.energy_hessian_size());
         assert_eq!(cols.len(), self.energy_hessian_size());
 
-        let tet_elems = &self.0.tet_elements;
+        let tet_elems = &self.0;
 
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_row_chunks: &mut [[I; NUM_HESSIAN_TRIPLETS_PER_TET]] =
@@ -333,7 +334,7 @@ impl EnergyHessianTopology for TetSolidInertia<'_> {
     ) {
         assert_eq!(indices.len(), self.energy_hessian_size());
 
-        let tet_elems = &self.0.tet_elements;
+        let tet_elems = &self.0;
 
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_chunks: &mut [[MatrixElementIndex; NUM_HESSIAN_TRIPLETS_PER_TET]] =
@@ -363,7 +364,7 @@ impl<T: Real> EnergyHessian<T> for TetSolidInertia<'_> {
     fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {
         assert_eq!(values.len(), self.energy_hessian_size());
 
-        let tet_elems = &self.0.tet_elements;
+        let tet_elems = &self.0;
 
         // Break up the hessian triplets into chunks of elements for each tet.
         let hess_chunks: &mut [[T; NUM_HESSIAN_TRIPLETS_PER_TET]] =

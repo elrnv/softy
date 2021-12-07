@@ -3,16 +3,15 @@
 //use std::path::Path;
 //use geo::io::save_tetmesh;
 use super::tet_nh::NeoHookeanTetEnergy;
-use super::{LinearElementEnergy, TetEnergy};
+use super::TetEnergy;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::tetsolid::TetElements;
-use crate::objects::*;
 use crate::Real;
 use flatk::zip;
 use geo::ops::*;
 use geo::prim::Tetrahedron;
-use num_traits::{FromPrimitive, Zero};
+use num_traits::FromPrimitive;
 use rayon::prelude::*;
 use reinterpret::*;
 use tensr::*;
@@ -369,10 +368,13 @@ impl<T: Real + Send + Sync, E: TetEnergy<T>> EnergyHessian<T> for TetSolidElasti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::energy_models::elasticity::test_utils::*;
-    use crate::energy_models::test_utils::*;
-    use crate::objects::tetsolid::TetElements;
-    use geo::mesh::{Mesh, VertexPositions};
+    use crate::attrib_defines::*;
+    use crate::energy_models::{elasticity::test_utils::*, test_utils::*};
+    use crate::fem::nl::solver::SolverBuilder;
+    use crate::fem::nl::state::VertexType;
+    use crate::objects::{tetsolid::TetElements, *};
+    use geo::attrib::*;
+    use geo::mesh::{topology::VertexIndex, Mesh, VertexPositions};
 
     fn material() -> SolidMaterial {
         SolidMaterial::new(0)
@@ -390,14 +392,19 @@ mod tests {
 
         test_tetmeshes()
             .into_iter()
-            .map(|tetmesh| Mesh::from(tetmesh))
-            .flat_map(|mesh| {
+            .map(|tetmesh| Mesh::from(tetmesh.inverted()))
+            .flat_map(|mut mesh| {
+                SolverBuilder::init_cell_vertex_ref_pos_attribute(&mut mesh).unwrap();
+                let materials = vec![material.into()];
+                let vertex_types =
+                    crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
                 std::iter::once((
                     // Prepare attributes relevant for elasticity computations.
                     TetElements::try_from_mesh_and_materials(
                         ElasticityModel::NeoHookean,
                         &mesh,
-                        &[material.into()][..],
+                        &materials,
+                        vertex_types.as_slice(),
                     )
                     .unwrap(),
                     mesh.vertex_positions().to_vec(),
@@ -407,7 +414,8 @@ mod tests {
                     TetElements::try_from_mesh_and_materials(
                         ElasticityModel::StableNeoHookean,
                         &mesh,
-                        &[material.into()][..],
+                        &materials,
+                        vertex_types.as_slice(),
                     )
                     .unwrap(),
                     mesh.vertex_positions().to_vec(),

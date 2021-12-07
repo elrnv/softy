@@ -1,13 +1,15 @@
 use unroll::unroll_for_loops;
 
-use geo::attrib::Attrib;
+use flatk::{Get, View};
 use geo::mesh::topology::*;
 use geo::mesh::CellType;
 use geo::prim::Triangle;
-use tensr::*;
+use num_traits::Float;
+use tensr::{IntoData, IntoTensor, Matrix, Matrix3, Vector3};
 
 use crate::attrib_defines::*;
 use crate::fem::nl::state::VertexType;
+use crate::Real;
 use crate::{Error, Mesh, TriMesh};
 
 /// An `InteriorEdge` is an manifold edge with exactly two neighboring faces.
@@ -75,16 +77,16 @@ impl InteriorEdge {
     pub fn tile_span<T, F>(&self, get_ref_pos: F) -> T
     where
         T: Real,
-        F: Fn(usize, usize) -> [T; 3],
+        F: Fn(usize, usize) -> [T; 3] + Clone,
     {
         let [f0x0, f0x1, f0x2] = [
-            self.face_vert(get_ref_pos, 0, 0).into_tensor(),
-            self.face_vert(get_ref_pos, 0, 1).into_tensor(),
-            self.face_vert(get_ref_pos, 0, 2).into_tensor(),
+            self.face_vert(get_ref_pos.clone(), 0, 0).into_tensor(),
+            self.face_vert(get_ref_pos.clone(), 0, 1).into_tensor(),
+            self.face_vert(get_ref_pos.clone(), 0, 2).into_tensor(),
         ];
         let [f1x1, f1x0, f1x3] = [
-            self.face_vert(get_ref_pos, 1, 0).into_tensor(),
-            self.face_vert(get_ref_pos, 1, 1).into_tensor(),
+            self.face_vert(get_ref_pos.clone(), 1, 0).into_tensor(),
+            self.face_vert(get_ref_pos.clone(), 1, 1).into_tensor(),
             self.face_vert(get_ref_pos, 1, 2).into_tensor(),
         ];
         debug_assert_ne!((f0x1 - f0x0).norm_squared(), T::zero());
@@ -100,16 +102,19 @@ impl InteriorEdge {
 
     /// Get edge verts followed by tangent verts `x0` to `x3`.
     #[inline]
-    pub fn verts(&self, faces: impl Fn(usize, usize) -> usize) -> [usize; 4] {
-        let [v0, v1] = self.edge_verts(faces);
+    pub fn verts(&self, faces: impl Fn(usize, usize) -> usize + Clone) -> [usize; 4] {
+        let [v0, v1] = self.edge_verts(faces.clone());
         let [v2, v3] = self.tangent_verts(faces);
         [v0, v1, v2, v3]
     }
 
     /// Get the vertex indices of the edge endpoints.
     #[inline]
-    pub fn edge_verts(&self, faces: impl Fn(usize, usize) -> usize) -> [usize; 2] {
-        [self.face_vert(faces, 0, 0), self.face_vert(faces, 0, 1)]
+    pub fn edge_verts(&self, faces: impl Fn(usize, usize) -> usize + Clone) -> [usize; 2] {
+        [
+            self.face_vert(faces.clone(), 0, 0),
+            self.face_vert(faces, 0, 1),
+        ]
     }
 
     /// Get the vertex positions of the edge vertices in reference configuration for each face.
@@ -117,11 +122,17 @@ impl InteriorEdge {
     pub fn ref_edge_verts<T, F>(&self, ref_pos: F) -> [[[T; 3]; 2]; 2]
     where
         T: Real,
-        F: Fn(usize, usize) -> [T; 3],
+        F: Fn(usize, usize) -> [T; 3] + Clone,
     {
         [
-            [self.face_vert(ref_pos, 0, 0), self.face_vert(ref_pos, 0, 1)],
-            [self.face_vert(ref_pos, 1, 0), self.face_vert(ref_pos, 1, 1)],
+            [
+                self.face_vert(ref_pos.clone(), 0, 0),
+                self.face_vert(ref_pos.clone(), 0, 1),
+            ],
+            [
+                self.face_vert(ref_pos.clone(), 1, 0),
+                self.face_vert(ref_pos, 1, 1),
+            ],
         ]
     }
 
@@ -132,9 +143,12 @@ impl InteriorEdge {
     pub fn tangent_verts<U, F>(&self, faces: F) -> [U; 2]
     where
         U: Copy,
-        F: Fn(usize, usize) -> U,
+        F: Fn(usize, usize) -> U + Clone,
     {
-        [self.face_vert(faces, 0, 2), self.face_vert(faces, 1, 2)]
+        [
+            self.face_vert(faces.clone(), 0, 2),
+            self.face_vert(faces, 1, 2),
+        ]
     }
 
     /// Compute the reference edge length.
@@ -148,7 +162,7 @@ impl InteriorEdge {
     pub fn ref_length<T, F>(&self, ref_pos: F) -> T
     where
         T: Real,
-        F: Fn(usize, usize) -> [T; 3],
+        F: Fn(usize, usize) -> [T; 3] + Clone,
     {
         let [[f0x0, f0x1], [f1x0, f1x1]] = self.ref_edge_verts(ref_pos);
         ((Vector3::new(f0x1) - Vector3::new(f0x0)).norm()
@@ -161,7 +175,7 @@ impl InteriorEdge {
     pub fn edge_vector<T, F>(&self, pos: &[[T; 3]], faces: F) -> Vector3<T>
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
         let [v0, v1] = self.edge_verts(faces);
         Vector3::new(pos[v1]) - Vector3::new(pos[v0])
@@ -173,7 +187,7 @@ impl InteriorEdge {
     pub fn face0_tangent<T, F>(&self, pos: &[[T; 3]], faces: F) -> Vector3<T>
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
         let [v0, v1] = [
             faces(self.faces[0], self.edge_start[0] as usize),
@@ -188,17 +202,22 @@ impl InteriorEdge {
     pub fn face1_tangent<T, F>(&self, pos: &[[T; 3]], faces: F) -> Vector3<T>
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
-        let [v0, v1] = [self.face_vert(faces, 0, 0), self.tangent_verts(faces)[1]];
-        debug_assert!(v0 == self.face_vert(faces, 1, 1) || v0 == self.face_vert(faces, 1, 0));
+        let [v0, v1] = [
+            self.face_vert(faces.clone(), 0, 0),
+            self.tangent_verts(faces.clone())[1],
+        ];
+        debug_assert!(
+            v0 == self.face_vert(faces.clone(), 1, 1) || v0 == self.face_vert(faces, 1, 0)
+        );
         Vector3::new(pos[v1]) - Vector3::new(pos[v0])
     }
 
     /// Return `true` if the adjacent faces have the same orientation.
     #[inline]
-    pub fn is_oriented(&self, faces: impl Fn(usize, usize) -> usize) -> bool {
-        self.face_vert(faces, 0, 0) != self.face_vert(faces, 1, 0)
+    pub fn is_oriented(&self, faces: impl Fn(usize, usize) -> usize + Clone) -> bool {
+        self.face_vert(faces.clone(), 0, 0) != self.face_vert(faces, 1, 0)
     }
 
     /// Compute the area weighted normals of adjacent faces.
@@ -209,7 +228,7 @@ impl InteriorEdge {
     pub fn face_area_normals<T, F>(&self, pos: &[[T; 3]], faces: F) -> [Vector3<T>; 2]
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
         let f0 = [
             faces(self.faces[0], 0),
@@ -246,11 +265,11 @@ impl InteriorEdge {
     pub(crate) fn edge_angle<T, F>(&self, pos: &[[T; 3]], faces: F) -> T
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
-        let [an0, an1] = self.face_area_normals(pos, faces);
+        let [an0, an1] = self.face_area_normals(pos, faces.clone());
         let t = self.face0_tangent(pos, faces);
-        an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
+        Float::atan2(an0.cross(an1).norm(), an0.dot(an1)) * -Float::signum(an1.dot(t))
     }
 
     /// Compute the reflex of the dihedral angle made by the faces neighboring this edge from
@@ -262,7 +281,7 @@ impl InteriorEdge {
     pub(crate) fn ref_edge_angle<T, F>(&self, ref_pos: F) -> T
     where
         T: Real,
-        F: Fn(usize, usize) -> [T; 3],
+        F: Fn(usize, usize) -> [T; 3] + Clone,
     {
         let f0 = [
             ref_pos(self.faces[0], 0),
@@ -276,13 +295,13 @@ impl InteriorEdge {
             ref_pos(self.faces[1], 2),
         ];
         let an1 = Vector3::new(Triangle::new(f1).area_normal());
-        let rv = self.ref_edge_verts(ref_pos);
+        let rv = self.ref_edge_verts(ref_pos.clone());
 
         // Check if the edge is coincident between the two faces. If so, use the angle between them
         // as the reference angle.
         if rv[0] == rv[1] || rv[0][0] == rv[1][1] && rv[0][1] == rv[1][0] {
             let t = self.tangent_verts(ref_pos)[0].into_tensor() - rv[0][0].into_tensor();
-            an0.cross(an1).norm().atan2(an0.dot(an1)) * -an1.dot(t).signum()
+            Float::atan2(an0.cross(an1).norm(), an0.dot(an1)) * -Float::signum(an1.dot(t))
         } else {
             T::zero()
         }
@@ -312,7 +331,7 @@ impl InteriorEdge {
     pub(crate) fn incremental_angle<T, F>(&self, ref_angle: T, pos: &[[T; 3]], faces: F) -> T
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
         let pi = T::from(std::f64::consts::PI).unwrap();
         let two_pi = T::from(2.0 * std::f64::consts::PI).unwrap();
@@ -336,11 +355,11 @@ impl InteriorEdge {
     pub(crate) fn edge_angle_gradient<T, F>(&self, pos: &[[T; 3]], faces: F) -> [[T; 3]; 4]
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
-        let [an0, an1] = self.face_area_normals(pos, faces);
-        let e0 = self.edge_vector(pos, faces);
-        let e1 = self.face0_tangent(pos, faces);
+        let [an0, an1] = self.face_area_normals(pos, faces.clone());
+        let e0 = self.edge_vector(pos, faces.clone());
+        let e1 = self.face0_tangent(pos, faces.clone());
         let e2 = self.face1_tangent(pos, faces);
         let a0_squared = an0.norm_squared();
         let a1_squared = an1.norm_squared();
@@ -394,11 +413,11 @@ impl InteriorEdge {
     ) -> ([[T; 6]; 4], [[[T; 3]; 3]; 5])
     where
         T: Real,
-        F: Fn(usize, usize) -> usize,
+        F: Fn(usize, usize) -> usize + Clone,
     {
-        let [an0, an1] = self.face_area_normals(pos, faces);
-        let e0 = self.edge_vector(pos, faces);
-        let e1 = self.face0_tangent(pos, faces);
+        let [an0, an1] = self.face_area_normals(pos, faces.clone());
+        let e0 = self.edge_vector(pos, faces.clone());
+        let e1 = self.face0_tangent(pos, faces.clone());
         let e2 = self.face1_tangent(pos, faces);
         let e0_norm_squared = e0.norm_squared();
         let a0_squared = an0.norm_squared();
@@ -410,7 +429,7 @@ impl InteriorEdge {
         // None of the triangles are degenerate, thus e0 must have non-zero length.
         debug_assert_ne!(e0_norm_squared, T::zero());
 
-        let e0_norm = e0_norm_squared.sqrt();
+        let e0_norm = Float::sqrt(e0_norm_squared);
         let e0u = e0.transpose() / e0_norm;
         let e0u_e1 = (e0u * e1).into_data()[0];
         let e0u_e2 = (e0u * e2).into_data()[0];

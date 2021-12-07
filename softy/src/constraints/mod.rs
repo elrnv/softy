@@ -1,16 +1,18 @@
 pub mod point_contact;
 pub mod volume;
 
+use num_traits::Zero;
+use std::cell::RefCell;
+use tensr::Vector3;
+
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::FrictionImpulses;
 use crate::matrix::MatrixElementIndex;
 use crate::Error;
+use crate::Real;
 use crate::TriMesh;
-use num_traits::Zero;
-use std::cell::RefCell;
-use tensr::Vector3;
 
 //pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;

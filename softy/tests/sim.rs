@@ -1,6 +1,6 @@
 mod test_utils;
 
-use geo::attrib::*;
+use geo::attrib::Attrib;
 use geo::mesh::topology::*;
 use softy::*;
 pub use test_utils::*;
@@ -21,7 +21,7 @@ fn sim_test() {
     ];
     let indices = vec![[5, 2, 4, 0], [3, 2, 5, 0], [1, 0, 3, 5]];
     let mut mesh = TetMesh::new(verts, indices);
-    mesh.add_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
+    mesh.insert_attrib_data::<i8, VertexIndex>(FIXED_ATTRIB, vec![0, 0, 1, 1, 0, 0])
         .unwrap();
 
     let ref_verts = vec![
@@ -33,7 +33,7 @@ fn sim_test() {
         [1.0, 0.0, 1.0],
     ];
 
-    mesh.add_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
+    mesh.insert_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .unwrap();
 
     assert!(

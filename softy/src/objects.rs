@@ -1,7 +1,6 @@
 use geo::attrib::{self, Attrib, AttribIndex, VertexAttrib};
 use geo::mesh::{topology::*, VertexPositions};
 pub use material::*;
-pub use tetmesh_surface::*;
 //pub use shell::*;
 //pub use solid::*;
 

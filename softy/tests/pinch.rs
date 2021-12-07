@@ -1,5 +1,6 @@
 mod test_utils;
 
+use geo::attrib::Attrib;
 use geo::mesh::*;
 use softy::opt_fem::*;
 use softy::*;

@@ -1,7 +1,8 @@
 use approx::*;
 
+use geo::attrib::Attrib;
 use geo::mesh::topology::VertexIndex;
-use geo::mesh::{Attrib, VertexPositions};
+use geo::mesh::VertexPositions;
 use softy::nl_fem::*;
 use softy::*;
 pub use test_utils::*;
@@ -36,14 +37,19 @@ fn equilibrium() {
         .unwrap()[2] = 1;
 
     let mut solver = SolverBuilder::new(params)
-        .add_soft_shell(PolyMesh::from(mesh.clone()), soft_shell_material())
+        .set_mesh(Mesh::from(mesh.clone()))
+        .set_materials(vec![soft_shell_material().into(); 1])
         .build::<f64>()
         .expect("Failed to build a solver for a three triangle test.");
     assert!(solver.step().is_ok());
 
     // Expect the tet to remain in original configuration
-    let solution = &solver.shell(0).trimesh;
-    compare_meshes(solution, &mesh, 1e-6);
+    let shell = &solver.shell();
+    let solution_mesh = TriMesh::new(
+        solver.vertex_positions().to_vec(),
+        shell.triangle_elements.triangles.clone(),
+    );
+    compare_meshes(&solution_mesh, &mesh, 1e-6);
 }
 
 #[test]
@@ -54,12 +60,17 @@ fn simple_static_undeformed() {
     mesh.vertex_positions_mut()[0][2] = 0.0; // Unbend
 
     let mut solver = SolverBuilder::new(SimParams { ..STATIC_NL_PARAMS })
-        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+        .set_mesh(Mesh::from(mesh.clone()))
+        .set_materials(vec![soft_shell_material().into(); 1])
         .build::<f64>()
         .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
-    let solution = &solver.shell(0).trimesh;
+    let shell = &solver.shell();
+    let solution = TriMesh::new(
+        solver.vertex_positions().to_vec(),
+        shell.triangle_elements.triangles.clone(),
+    );
 
     let verts = solution.vertex_positions();
 
@@ -79,12 +90,17 @@ fn static_deformed() {
     init_logger();
     let mesh = make_three_tri_mesh();
     let mut solver = SolverBuilder::new(SimParams { ..STATIC_NL_PARAMS })
-        .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+        .set_mesh(Mesh::from(mesh.clone()))
+        .set_materials(vec![soft_shell_material().into()])
         .build::<f64>()
         .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
-    let solution = &solver.shell(0).trimesh;
+    let shell = &solver.shell();
+    let solution = TriMesh::new(
+        solver.vertex_positions().to_vec(),
+        shell.triangle_elements.triangles.clone(),
+    );
 
     let verts = solution.vertex_positions();
 
@@ -112,12 +128,17 @@ fn dynamic_deformed() {
         gravity: [0.0f32, -9.81, 0.0],
         ..DYNAMIC_NL_PARAMS
     })
-    .add_soft_shell(PolyMesh::from(mesh), soft_shell_material())
+    .set_mesh(Mesh::from(mesh))
+    .set_materials(vec![soft_shell_material().into()])
     .build::<f64>()
     .expect("Failed to build a solver for a three triangle test.");
 
     assert!(solver.step().is_ok());
-    let solution = &solver.shell(0).trimesh;
+    let shell = &solver.shell();
+    let solution = TriMesh::new(
+        solver.vertex_positions().to_vec(),
+        shell.triangle_elements.triangles.clone(),
+    );
 
     let verts = solution.vertex_positions();
 

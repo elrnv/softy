@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs};
 use crate::inf_norm;
+use crate::Real;
 use tensr::*;
 
 // Parameters for the Newton solver.
@@ -154,12 +155,13 @@ where
             problem,
             params,
             outer_callback,
-            inner_callback,
+            //inner_callback,
             workspace,
+            ..
         } = self;
         let TrustRegionWorkspace {
             r,
-            jtr,
+            //jtr,
             r_cur,
             r_next,
             j_rows,
@@ -168,6 +170,7 @@ where
             j_mapping,
             j,
             x_prev,
+            ..
         } = &mut *workspace.borrow_mut();
 
         let mut iterations = 0;

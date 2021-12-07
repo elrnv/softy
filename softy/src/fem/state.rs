@@ -4,12 +4,13 @@ use autodiff as ad;
 use flatk::Component;
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
-use num_traits::Zero;
+use num_traits::{Float, Zero};
 use tensr::*;
 
 use crate::attrib_defines::*;
 use crate::objects::shell::*;
 use crate::objects::solid::*;
+use crate::Real;
 
 /// Integrate rotation axis-angle.
 /// `k0` is previous axis-angle vector.
@@ -633,7 +634,7 @@ impl<T: Real> State<T, ad::FT<T>> {
                 .iter_mut()
                 .zip(q_cur.iter())
                 .for_each(|(GeneralizedState { q, dq }, &x0)| {
-                    *q = dq.mul_add(T::from(dt).unwrap(), x0)
+                    *q = Float::mul_add(*dq, T::from(dt).unwrap(), x0)
                 });
         }
 
@@ -675,7 +676,7 @@ impl<T: Real> State<T, ad::FT<T>> {
         // Integrate all (positional) degrees of freedom using standard implicit Euler.
         // Note this code includes rigid motion, but we will overwrite those below.
         zip!(q_next.iter_mut(), q_cur.iter(), v.iter()).for_each(|(q_next, &q_cur, v_next)| {
-            *q_next = v_next.mul_add(S::from(dt).unwrap(), S::from(q_cur).unwrap())
+            *q_next = Float::mul_add(*v_next, S::from(dt).unwrap(), S::from(q_cur).unwrap())
         });
 
         // Integrate rigid rotation.
@@ -734,9 +735,11 @@ impl<T: Real> State<T, ad::FT<T>> {
         zip!(q_next.iter_mut(), q_cur.iter(), v_cur.iter(), v.iter()).for_each(
             |(q_next, &q_cur, &v_cur, &v_next)| {
                 // `q_next = q_cur + h*((1-alpha)*v_next + alpha*v_cur)`
-                *q_next = v_next
-                    .mul_add(T::one() - alpha, v_cur * alpha)
-                    .mul_add(dt, q_cur);
+                *q_next = Float::mul_add(
+                    Float::mul_add(v_next, T::one() - alpha, v_cur * alpha),
+                    dt,
+                    q_cur,
+                );
             },
         );
 

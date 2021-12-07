@@ -173,7 +173,7 @@ fn tet_push() -> Result<(), Error> {
     let mut tetmesh = PlatonicSolidBuilder::build_tetrahedron();
 
     // Set fixed vertices
-    tetmesh.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
+    tetmesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
 
     let trimesh = PolyMesh::new(tri_verts.clone(), &tri);
 
@@ -502,10 +502,10 @@ fn two_tets_in_contact() -> Result<(), Error> {
     tet_top.translate([0.0, 0.9, 0.0]); // translate up by 0.3
 
     // Fix bottom tet at the base.
-    tet_bottom.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
+    tet_bottom.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![0, 1, 1, 1])?;
 
     // Fix top tet at the peak vertex and one other vertex to simplify the problem.
-    tet_top.add_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])?;
+    tet_top.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, vec![1, 1, 0, 0])?;
 
     // Set contact parameters
     let kernel = KernelType::Approximate {

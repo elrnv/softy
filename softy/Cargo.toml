@@ -21,7 +21,7 @@ num-traits = "0.2"
 image = "0.23" # For visualizing large sparse matrices
 utils = { path = "../utils" }
 is_sorted = "0.1"
-sprs = "0.11"
+sprs = "0.10"
 sprs-ldl = "0.9"
 ndarray = "0.15"
 af = { package = "arrayfire", git = "https://github.com/elrnv/arrayfire-rust.git", optional = true }

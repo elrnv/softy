@@ -5,12 +5,13 @@ use crate::objects::shell::*;
 use crate::objects::solid::TetMeshSolid;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
+use crate::Real;
 use flatk::zip;
 use geo::attrib::Attrib;
 use geo::mesh::topology::*;
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};
-use tensr::{Real, Vector3};
+use tensr::Vector3;
 
 /// This trait defines a convenient accessor for the specific gravity implementation for a given
 /// object.
@@ -23,12 +24,12 @@ pub trait Gravity<'a, E> {
  */
 
 pub struct TetSolidGravity<'a> {
-    solid: &'a TetSolid,
+    solid: &'a TetElements,
     g: Vector3<f64>,
 }
 
 impl<'a> TetSolidGravity<'a> {
-    pub fn new(solid: &'a TetSolid, gravity: [f64; 3]) -> TetSolidGravity<'a> {
+    pub fn new(solid: &'a TetElements, gravity: [f64; 3]) -> TetSolidGravity<'a> {
         TetSolidGravity {
             solid,
             g: gravity.into(),
@@ -42,7 +43,7 @@ impl<T: Real> Energy<T> for TetSolidGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
         let pos1: &[Vector3<T>] = bytemuck::cast_slice(x1);
-        let tet_elems = &self.solid.tet_elements;
+        let tet_elems = &self.solid;
         let tet_iter = tet_elems
             .tets
             .iter()
@@ -69,7 +70,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for TetSolidGravity<'_> {
     fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
         debug_assert_eq!(grad.len(), _x0.len());
 
-        let tet_elems = &self.solid.tet_elements;
+        let tet_elems = &self.solid;
         let gradient: &mut [Vector3<T>] = bytemuck::cast_slice_mut(grad);
 
         let g = self.g.cast::<T>();

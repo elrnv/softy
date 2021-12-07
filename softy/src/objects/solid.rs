@@ -10,7 +10,7 @@ use crate::energy_models::elasticity::*;
 use crate::energy_models::gravity::*;
 use crate::energy_models::inertia::*;
 use crate::energy_models::Either;
-use crate::objects::{material::*, *};
+use crate::objects::{material::*, tetmesh_surface::TetMeshSurface, *};
 use crate::TetMesh;
 
 /// A soft solid represented by a tetmesh. It is effectively a tetrahedral mesh decorated by

@@ -1,11 +1,7 @@
 use std::cell::RefCell;
 
-use num_traits::Zero;
-
-use autodiff as ad;
 use geo::attrib::Attrib;
 use geo::mesh::{topology::*, VertexPositions};
-use geo::ops::{ShapeMatrix, Volume};
 use tensr::*;
 
 use super::mcp::*;
@@ -17,12 +13,11 @@ use crate::attrib_defines::*;
 use crate::constraints::point_contact::compute_contact_penalty;
 use crate::constraints::*;
 use crate::contact::*;
-use crate::fem::ref_tet;
 use crate::inf_norm;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::objects::*;
-use crate::{Error, Mesh, PointCloud, PolyMesh, TetMesh, TriMesh};
+use crate::{Error, Mesh, PointCloud};
 use crate::{Real, Real64};
 
 #[derive(Clone, Debug)]
@@ -123,7 +118,7 @@ impl SolverBuilder {
     pub(crate) fn init_cell_vertex_ref_pos_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         // If the attribute already exists, just leave it alone.
         if let Ok(_) =
-            mesh.attrib_check::<RefPosType, CellVertexIndex>(REFERENCE_FACE_VERTEX_POS_ATTRIB)
+            mesh.attrib_check::<RefPosType, CellVertexIndex>(REFERENCE_CELL_VERTEX_POS_ATTRIB)
         {
             return Ok(());
         }
@@ -150,46 +145,10 @@ impl SolverBuilder {
         }
 
         mesh.attrib_or_insert_data::<RefPosType, CellVertexIndex>(
-            REFERENCE_FACE_VERTEX_POS_ATTRIB,
+            REFERENCE_CELL_VERTEX_POS_ATTRIB,
             ref_pos.as_slice(),
         )?;
         Ok(())
-    }
-
-    /// Compute vertex masses on the given solid and shell elements.
-    pub fn compute_vertex_masses(
-        solid: &TetSolid,
-        shell: &TriShell,
-        num_vertices: usize,
-    ) -> Vec<MassType> {
-        let mut masses = vec![0.0; num_vertices];
-
-        for (&vol, &density, cell) in zip!(
-            solid.nh_tet_elements.ref_volume.iter(),
-            solid.nh_tet_elements.density.iter(),
-            solid.nh_tet_elements.tets.iter(),
-        )
-        .chain(zip!(
-            solid.snh_tet_elements.ref_volume.iter(),
-            solid.snh_tet_elements.density.iter(),
-            solid.snh_tet_elements.tets.iter(),
-        )) {
-            for i in 0..4 {
-                masses[cell[i]] += 0.25 * vol * f64::from(density);
-            }
-        }
-
-        for (&area, &density, cell) in zip!(
-            shell.triangle_elements.ref_area.iter(),
-            shell.triangle_elements.density.iter(),
-            shell.triangle_elements.triangles.iter(),
-        ) {
-            for i in 0..3 {
-                masses[cell[i]] += area * f64::from(density) / 3.0;
-            }
-        }
-
-        masses
     }
 
     //fn build_rigid_bodies(
@@ -207,66 +166,67 @@ impl SolverBuilder {
     //}
 
     /// Helper function to compute the maximum element mass in the problem.
-    fn compute_max_element_mass(solid: &TetSolid, shell: &TriShell) -> f64 {
+    fn compute_max_element_mass(_solid: &TetSolid, _shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper function to compute the minimum element mass in the problem.
-    fn compute_min_element_mass(solid: &TetSolid, shell: &TriShell) -> f64 {
+    fn compute_min_element_mass(_solid: &TetSolid, _shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper to compute max object size (diameter) over all deformable or rigid objects.
     /// This is used for normalizing the problem.
-    fn compute_max_size(solids: &TetSolid, shell: &TriShell) -> f64 {
+    fn compute_max_size(_solids: &TetSolid, _shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper to compute max element size. This is used for normalizing tolerances.
-    fn compute_max_element_size(solid: &TetSolid, shell: &TriShell) -> f64 {
+    fn compute_max_element_size(_solid: &TetSolid, _shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper function to compute the maximum elastic modulus of all given meshes.
     /// This aids in figuring out the correct scaling for the problem.
-    fn compute_max_modulus(solid: &TetSolid, shell: &TriShell) -> Result<f32, Error> {
+    fn compute_max_modulus(_solid: &TetSolid, _shell: &TriShell) -> Result<f32, Error> {
         Ok(1.0)
     }
 
     /// Helper function to compute the maximum elastic bending stiffness.
-    fn compute_max_bending_stiffness(shell: &TriShell) -> f64 {
+    fn compute_max_bending_stiffness(_shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper to compute min element size. This is used for normalizing tolerances.
-    fn compute_min_element_size(solid: &TetSolid, shell: &TriShell) -> f64 {
+    fn compute_min_element_size(_solid: &TetSolid, _shell: &TriShell) -> f64 {
         1.0
     }
 
     /// Helper function to compute the minimum elastic modulus of all given meshes.
     /// This aids in figuring out the correct scaling for the problem.
-    fn compute_min_modulus(solid: &TetSolid, shell: &TriShell) -> Result<f32, Error> {
+    fn compute_min_modulus(_solid: &TetSolid, _shell: &TriShell) -> Result<f32, Error> {
         Ok(1.0)
     }
 
     /// Helper function to compute the minimum elastic bending stiffness.
-    fn compute_min_bending_stiffness(shell: &TriShell) -> f64 {
+    fn compute_min_bending_stiffness(_shell: &TriShell) -> f64 {
         1.0
     }
 
     pub(crate) fn build_problem<T: Real>(&self) -> Result<NLProblem<T>, Error> {
         let SolverBuilder {
             sim_params: params,
-            mesh,
+            mut mesh,
             materials,
             frictional_contacts,
         } = self.clone();
 
         // Compute the reference position attribute temporarily.
         // This is used when building the simulation elements and constraints of the mesh.
-        Self::init_cell_vertex_ref_pos_attribute(&mut mesh);
+        Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
 
-        let state = State::try_from_mesh_and_materials(&mesh, &materials)?;
+        let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
+        let state = State::try_from_mesh_and_materials(&mesh, &materials, &vertex_type)?;
 
         let volume_constraints = Self::build_volume_constraints(&mesh, &materials)?;
 
@@ -371,8 +331,6 @@ impl SolverBuilder {
             .min(min_element_inertia_scale)
             .min(min_element_gravity_scale)
             .min(min_element_bending_scale);
-
-        let num_variables = state.dof.storage().len();
 
         Ok(NLProblem {
             state: RefCell::new(state),
@@ -544,16 +502,20 @@ where
         self.problem_mut().update_vertices(pts)
     }
 
+    /// Returns the solved positions of the vertices.
+    pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
+        self.problem().vertex_positions(&self.solution)
+    }
+
     /// Update the `mesh` and `prev_pos` with the current solution.
     fn commit_solution(&mut self, relax_max_step: bool) {
         {
-            let and_velocity = !self.sim_params.clear_velocity;
             let Self {
                 solver, solution, ..
             } = self;
 
             // Advance internal state (positions and velocities) of the problem.
-            solver.problem_mut().advance(&solution, and_velocity);
+            solver.problem_mut().advance(&solution);
         }
 
         // Reduce max_step for next iteration if the solution was a good one.
@@ -576,14 +538,14 @@ where
         }
     }
 
-    /// Revert previously committed solution. We just advance in the opposite direction.
-    fn revert_solution(&mut self) {
-        self.problem_mut().revert_prev_step();
-    }
+    ///// Revert previously committed solution. We just advance in the opposite direction.
+    //fn revert_solution(&mut self) {
+    //    self.problem_mut().retreat();
+    //}
 
-    fn initial_residual_error(&self) -> f64 {
-        self.problem().initial_residual_error
-    }
+    //fn initial_residual_error(&self) -> f64 {
+    //    self.problem().initial_residual_error
+    //}
 
     //fn save_current_active_constraint_set(&mut self) {
     //    let Solver {
@@ -703,6 +665,7 @@ where
                             solver.problem_mut().kappa /= 2.0;
                         }
                         self.commit_solution(false);
+                        // Kill velocities if needed.
                         // On success, update the mesh with useful metrics.
                         //self.problem_mut().update_mesh_data();
                         break Ok(result);

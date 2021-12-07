@@ -4,7 +4,7 @@ use crate::matrix::*;
 use crate::Error;
 use crate::Material;
 use crate::{Mesh, TetMesh};
-use geo::{attrib::*, mesh::topology::*, ops::Volume};
+use geo::{attrib::*, mesh::topology::*, mesh::CellType, ops::Volume};
 use tensr::{Matrix3, Vector3};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,16 +37,17 @@ impl VolumeConstraint {
         let ref_pos =
             mesh.attrib_as_slice::<RefPosType, CellVertexIndex>(REFERENCE_VERTEX_POS_ATTRIB)?;
 
-        let unique_zones = mesh
+        let mut unique_zones = mesh
             .attrib_clone_into_vec::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)
             .unwrap_or_else(|_| vec![0; 1]);
         unique_zones.sort();
         unique_zones.dedup();
         Ok(unique_zones
             .iter()
-            .map(|zone| {
-                let cell_iter = mesh
+            .map(|&zone| {
+                let zone_cells: Vec<_> = mesh
                     .cell_iter()
+                    .zip(mesh.cell_type_iter())
                     .zip(
                         mesh.attrib_iter::<VolumeZoneIdType, CellIndex>(VOLUME_ZONE_ID_ATTRIB)
                             .unwrap_or_else(|_| Box::new(std::iter::repeat(&0))),
@@ -55,18 +56,22 @@ impl VolumeConstraint {
                         mesh.attrib_iter::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB)
                             .unwrap_or_else(|_| Box::new(std::iter::repeat(&0))),
                     )
-                    .filter_map(|((cell, &cell_zone), &mtl_id)| {
-                        if cell_zone == zone
-                            && materials[mtl_id.max(0) as usize].volume_preservation()
-                        {
-                            Some(cell)
-                        } else {
-                            None
+                    .filter_map(|(((cell, cell_type), &cell_zone), &mtl_id)| {
+                        if let Material::Solid(mtl) = materials[mtl_id.max(0) as usize] {
+                            if cell_zone == zone
+                                && mtl.volume_preservation()
+                                && cell.len() == 4
+                                && cell_type == CellType::Tetrahedron
+                            {
+                                return Some([cell[0], cell[1], cell[2], cell[3]]);
+                            }
                         }
-                    });
-                let rest_volume = cell_iter
-                    .clone()
-                    .map(|&cell| {
+                        None
+                    })
+                    .collect();
+                let rest_volume = zone_cells
+                    .iter()
+                    .map(|cell| {
                         let tet = [
                             ref_pos[cell[0]],
                             ref_pos[cell[1]],
@@ -76,7 +81,8 @@ impl VolumeConstraint {
                         crate::fem::ref_tet(&tet).signed_volume()
                     })
                     .sum();
-                let surface_topo = TetMesh::surface_topo_from_tets(cell_iter);
+
+                let surface_topo = TetMesh::surface_topo_from_tets(zone_cells.iter());
                 VolumeConstraint {
                     surface_topo,
                     rest_volume,

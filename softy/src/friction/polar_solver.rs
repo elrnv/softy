@@ -409,7 +409,6 @@ impl ipopt::NewtonProblem for SemiImplicitFrictionPolarProblem<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::*;
     use approx::*;
     //use crate::*;
     //use std::path::PathBuf;

@@ -5,13 +5,14 @@ use flatk::zip;
 use geo::attrib::Attrib;
 use geo::mesh::topology::*;
 use geo::prim::Triangle;
-use tensr::{AsTensor, IntoData, IntoTensor, Real, Vector3};
+use tensr::{AsTensor, IntoData, IntoTensor, Vector3};
 
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::shell::*;
 use crate::objects::trishell::*;
+use crate::Real;
 
 const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 9;
 const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI: usize = 9;

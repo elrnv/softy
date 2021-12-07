@@ -1,10 +1,11 @@
 use num_traits::FromPrimitive;
 use unroll::unroll_for_loops;
 
-use tensr::{Chunked3, IntoData, Matrix2x3, Matrix3, Real, Vector3};
+use tensr::{Chunked3, IntoData, Matrix2x3, Matrix3, Vector3};
 
 use crate::energy::*;
 use crate::matrix::*;
+use crate::Real;
 
 const NUM_HESSIAN_TRIPLETS: usize = 9;
 const NUM_HESSIAN_DIAGONAL_TRIPLETS: usize = 6;
@@ -180,7 +181,7 @@ mod tests {
             .iter()
             .map(|shell| match shell.inertia().unwrap() {
                 Either::Left(_) => unreachable!(),
-                Either::Right(inertia) => (inertia, &[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]),
+                Either::Right(inertia) => (inertia, &[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]][..]),
             })
             .collect()
     }

@@ -1,12 +1,11 @@
 pub mod elasticity;
 pub mod gravity;
 pub mod inertia;
-//pub mod velocity_diff;
 
 use crate::energy::*;
 use crate::matrix::MatrixElementIndex;
+use crate::Real;
 use num_traits::FromPrimitive;
-use tensr::Real;
 
 /// Define a nullable energy, which is used to represent zero energies. For example
 /// a fixed mesh can use this energy in place of elasticity, gravity or inertia.

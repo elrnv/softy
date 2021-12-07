@@ -2,27 +2,19 @@ use std::cell::RefCell;
 
 use autodiff as ad;
 use flatk::*;
-use geo::attrib::Attrib;
-use geo::mesh::{topology::*, VertexPositions};
-use num_traits::{One, Zero};
-use rayon::prelude::*;
-use tensr::Tensor;
+use geo::mesh::VertexPositions;
+use num_traits::{Float, Zero};
+use tensr::{AsMutTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
-use crate::attrib_defines::*;
 use crate::constraint::*;
-use crate::constraints::{
-    //point_contact::{compute_contact_force_magnitude, PointContactConstraint},
-    volume::VolumeConstraint,
-    ContactConstraint,
-};
-use crate::contact::{ContactJacobian, ContactJacobianView, TripletContactJacobian};
+use crate::constraints::volume::VolumeConstraint;
+use crate::contact::ContactJacobianView;
 use crate::energy::{EnergyGradient, EnergyHessian, EnergyHessianTopology};
-use crate::energy_models::{elasticity::*, gravity::*, inertia::*};
+use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
-use crate::objects::*;
 use crate::PointCloud;
 use crate::{Real, Real64};
 
@@ -116,13 +108,13 @@ impl<T: Real> NLProblem<T> {
         1.0 //utils::approx_power_of_two64(100.0 / (self.time_step() * self.max_element_force_scale))
     }
 
-    fn volume_constraint_scale(&self) -> f64 {
-        1.0
-    }
+    //fn volume_constraint_scale(&self) -> f64 {
+    //    1.0
+    //}
 
-    fn contact_constraint_scale(&self) -> f64 {
-        1.0
-    }
+    //fn contact_constraint_scale(&self) -> f64 {
+    //    1.0
+    //}
 
     pub fn time_step(&self) -> f64 {
         if self.is_static() {
@@ -139,6 +131,16 @@ impl<T: Real> NLProblem<T> {
     fn is_static(&self) -> bool {
         self.time_step == 0.0
     }
+
+    /// Returns the solved positions of the vertices.
+    pub fn vertex_positions(&self, soln: &[T]) -> std::cell::Ref<[[T; 3]]> {
+        {
+            let mut state = self.state.borrow_mut();
+            state.update_vertices(soln);
+        }
+        let state = self.state.borrow();
+        std::cell::Ref::map(state, |s| s.vtx.state.pos.as_arrays())
+    }
 }
 
 impl<T: Real64> NLProblem<T> {
@@ -150,52 +152,54 @@ impl<T: Real64> NLProblem<T> {
         iter
     }
 
-    ///// Get the minimum contact radius among all contact problems.
-    /////
-    ///// If there are no contacts, simply return `None`.
-    //pub fn min_contact_radius(&self) -> Option<f64> {
-    //    self.frictional_contacts
-    //        .iter()
-    //        .map(|fc| fc.constraint.borrow().contact_radius())
-    //        .min_by(|a, b| a.partial_cmp(b).expect("Detected NaN contact radius"))
-    //}
-
-    /// Save an intermediate state of the solve.
+    /// Get the minimum contact radius among all contact problems.
     ///
-    /// This is used for debugging.
-    #[allow(dead_code)]
-    pub fn save_intermediate(&mut self, v: &[T], step: usize) {
-        self.integrate_step(v);
-        let mut ws = self.state.workspace.borrow_mut();
-        // Copy v into the workspace to be used in update_simulated_meshes.
-        ws.dof
-            .view_mut()
-            .storage_mut()
-            .state
-            .dq
-            .iter_mut()
-            .zip(v.iter())
-            .for_each(|(out, &v)| *out = v);
-
-        let mut solids = self.state.solids.clone();
-        let mut shells = self.state.shells.clone();
-        State::update_simulated_meshes_with(
-            &mut solids,
-            &mut shells,
-            ws.dof.view().map_storage(|dof| dof.state),
-            ws.vtx.view().map_storage(|vtx| vtx.state),
-        );
-        geo::io::save_tetmesh(
-            &solids[0].tetmesh,
-            &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
-        )
-        .unwrap();
+    /// If there are no contacts, simply return `None`.
+    pub fn min_contact_radius(&self) -> Option<f64> {
+        None
+        //self.frictional_contacts
+        //    .iter()
+        //    .map(|fc| fc.constraint.borrow().contact_radius())
+        //    .min_by(|a, b| a.partial_cmp(b).expect("Detected NaN contact radius"))
     }
+
+    //        /// Save an intermediate state of the solve.
+    //        ///
+    //        /// This is used for debugging.
+    //        #[allow(dead_code)]
+    //        pub fn save_intermediate(&mut self, v: &[T], step: usize) {
+    //            self.integrate_step(v);
+    //            let mut ws = self.state.workspace.borrow_mut();
+    //            // Copy v into the workspace to be used in update_simulated_meshes.
+    //            ws.dof
+    //                .view_mut()
+    //                .storage_mut()
+    //                .state
+    //                .dq
+    //                .iter_mut()
+    //                .zip(v.iter())
+    //                .for_each(|(out, &v)| *out = v);
+    //
+    //            let mut solids = self.state.solids.clone();
+    //            let mut shells = self.state.shells.clone();
+    //            State::update_simulated_meshes_with(
+    //                &mut solids,
+    //                &mut shells,
+    //                ws.dof.view().map_storage(|dof| dof.state),
+    //                ws.vtx.view().map_storage(|vtx| vtx.state),
+    //            );
+    //            geo::io::save_tetmesh(
+    //                &solids[0].tetmesh,
+    //                &std::path::PathBuf::from(format!("./out/predictor_{}.vtk", step)),
+    //            )
+    //            .unwrap();
+    //        }
 
     /// Update the state with the given points.
     pub fn update_vertices(&mut self, pts: &PointCloud) -> Result<(), crate::Error> {
         let new_pos = Chunked3::from_array_slice(pts.vertex_positions());
         self.state
+            .borrow_mut()
             .update_fixed_vertices(new_pos.view(), self.time_step())
     }
 
@@ -250,7 +254,7 @@ impl<T: Real64> NLProblem<T> {
     /// Return an estimate if any constraints have changed, though this estimate may have false
     /// negatives.
     pub fn update_constraint_set(&mut self) -> bool {
-        let mut changed = false; // Report if anything has changed to the caller.
+        let changed = false; // Report if anything has changed to the caller.
         changed
 
         //    let NLProblem {
@@ -330,88 +334,82 @@ impl<T: Real64> NLProblem<T> {
     //}
 
     /// Commit velocity by advancing the internal state by the given unscaled velocity `uv`.
-    ///
-    /// If `and_velocity` is `false`, then only positions are advanced, and velocities are reset.
-    /// This emulates a critically damped, or quasi-static simulation.
-    pub fn advance(&mut self, v: &[T], and_velocity: bool) {
+    pub fn advance(&mut self, v: &[T]) {
         self.integrate_step(v);
-        self.state.advance(v, and_velocity);
+        self.state.borrow_mut().advance(v);
     }
 
     /// Advance object data one step back.
-    pub fn revert_prev_step(&mut self) {
-        self.state.revert_prev_step();
-        // Clear any frictional impulses
-        for fc in self.frictional_contacts.iter() {
-            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
-                friction_data
-                    .collider_impulse
-                    .source_iter_mut()
-                    .for_each(|(x, y)| {
-                        *x = [T::zero(); 3];
-                        *y = [T::zero(); 3]
-                    });
-                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
-                    *x = [T::zero(); 3];
-                    *y = [T::zero(); 3]
-                });
-            }
-        }
-        for fc in self.frictional_contacts_ad.iter() {
-            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
-                friction_data
-                    .collider_impulse
-                    .source_iter_mut()
-                    .for_each(|(x, y)| {
-                        *x = [ad::F::zero(); 3];
-                        *y = [ad::F::zero(); 3]
-                    });
-                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
-                    *x = [ad::F::zero(); 3];
-                    *y = [ad::F::zero(); 3]
-                });
-            }
-        }
+    pub fn retreat(&mut self) {
+        self.state.borrow_mut().retreat();
+        //        // Clear any frictional impulses
+        //        for fc in self.frictional_contacts.iter() {
+        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
+        //                friction_data
+        //                    .collider_impulse
+        //                    .source_iter_mut()
+        //                    .for_each(|(x, y)| {
+        //                        *x = [T::zero(); 3];
+        //                        *y = [T::zero(); 3]
+        //                    });
+        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
+        //                    *x = [T::zero(); 3];
+        //                    *y = [T::zero(); 3]
+        //                });
+        //            }
+        //        }
+        //        for fc in self.frictional_contacts_ad.iter() {
+        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
+        //                friction_data
+        //                    .collider_impulse
+        //                    .source_iter_mut()
+        //                    .for_each(|(x, y)| {
+        //                        *x = [ad::F::zero(); 3];
+        //                        *y = [ad::F::zero(); 3]
+        //                    });
+        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
+        //                    *x = [ad::F::zero(); 3];
+        //                    *y = [ad::F::zero(); 3]
+        //                });
+        //            }
+        //        }
     }
 
-    pub fn update_max_step(&mut self, step: f64) {
-        for fc in self.frictional_contacts.iter_mut() {
-            fc.constraint.borrow_mut().update_max_step(step);
-        }
-        for fc in self.frictional_contacts_ad.iter_mut() {
-            fc.constraint.borrow_mut().update_max_step(step);
-        }
+    pub fn update_max_step(&mut self, _step: f64) {
+        //for fc in self.frictional_contacts.iter_mut() {
+        //    fc.constraint.borrow_mut().update_max_step(step);
+        //}
+        //for fc in self.frictional_contacts_ad.iter_mut() {
+        //    fc.constraint.borrow_mut().update_max_step(step);
+        //}
     }
-    pub fn update_radius_multiplier(&mut self, rad_mult: f64) {
-        for fc in self.frictional_contacts.iter_mut() {
-            fc.constraint
-                .borrow_mut()
-                .update_radius_multiplier(rad_mult);
-        }
-        for fc in self.frictional_contacts_ad.iter_mut() {
-            fc.constraint
-                .borrow_mut()
-                .update_radius_multiplier(rad_mult);
-        }
+    pub fn update_radius_multiplier(&mut self, _rad_mult: f64) {
+        //for fc in self.frictional_contacts.iter_mut() {
+        //    fc.constraint
+        //        .borrow_mut()
+        //        .update_radius_multiplier(rad_mult);
+        //}
+        //for fc in self.frictional_contacts_ad.iter_mut() {
+        //    fc.constraint
+        //        .borrow_mut()
+        //        .update_radius_multiplier(rad_mult);
+        //}
     }
 
     /// A convenience function to integrate the given velocity by the internal time step.
     ///
     /// For implicit integration this boils down to a simple multiply by the time step.
     pub fn integrate_step(&self, v: &[T]) {
-        let q_cur = self.state.dof.storage().cur.q.as_slice();
-        let mut ws = self.state.workspace.borrow_mut();
-        let q_next = ws.dof.storage_mut().state.q.as_mut_slice();
-
-        self.state.be_step(v, self.time_step(), q_cur, q_next);
+        let mut state = self.state.borrow_mut();
+        State::be_step(state.step_state(v), self.time_step());
         // or self.state.tr_step(v, self.time_step());
         // or self.state.bdf2_step(v, self.time_step(), gamma);
     }
 
     /// Convert a given array of contact forces to impulses.
-    fn contact_impulse_magnitudes(forces: &[f64], scale: f64) -> Vec<f64> {
-        forces.iter().map(|&cf| cf * scale).collect()
-    }
+    //fn contact_impulse_magnitudes(forces: &[f64], scale: f64) -> Vec<f64> {
+    //    forces.iter().map(|&cf| cf * scale).collect()
+    //}
 
     ///// Construct the global contact Jacobian matrix.
     /////
@@ -536,29 +534,29 @@ impl<T: Real64> NLProblem<T> {
 
     pub fn construct_effective_mass_inv(
         &self,
-        solution: &[T],
-        constraint_values: &[f64],
+        _solution: &[T],
+        _constraint_values: &[f64],
         jac: ContactJacobianView,
-        surface_vertex_offsets: ChunkedView<Offsets<&[usize]>>,
+        _surface_vertex_offsets: ChunkedView<Offsets<&[usize]>>,
     ) -> Tensor![f64; S S 3 3] {
-        let NLProblem {
-            ref frictional_contacts,
-            ref volume_constraints,
-            ref state,
-            ..
-        } = *self;
+        //let NLProblem {
+        //    //ref frictional_contacts,
+        //    ref volume_constraints,
+        //    ref state,
+        //    ..
+        //} = *self;
 
         // TODO: improve this computation by avoiding intermediate mass matrix computation.
 
         // Size of the effective mass matrix in each dimension.
         let size = jac.into_tensor().num_cols();
 
-        let mut blocks = Vec::with_capacity(size);
-        let mut block_indices = Vec::with_capacity(size);
+        let blocks = Vec::with_capacity(size);
+        let block_indices = Vec::with_capacity(size);
 
-        let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
+        //let multiplier_impulse_scale = self.time_step() / self.impulse_inv_scale();
 
-        let mut contact_offset = 0;
+        //let mut contact_offset = 0;
 
         //for fc in frictional_contacts.iter() {
         //    let FrictionalContactConstraint {
@@ -1276,7 +1274,7 @@ impl<T: Real64> NLProblem<T> {
 
     #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[T]) {
-        use na::{base::storage::Storage, DMatrix};
+        use na::DMatrix;
 
         if values.is_empty() {
             return;
@@ -1312,7 +1310,7 @@ impl<T: Real64> NLProblem<T> {
         writeln!(&mut f, "]").ok();
 
         let svd = na::SVD::new(jac, false, false);
-        let s: &[f64] = Storage::as_slice(&svd.singular_values.data);
+        let s: &[f64] = svd.singular_values.data.as_slice();
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         writeln!(&mut f, "cond_jac = {}", cond).ok();
@@ -1346,7 +1344,8 @@ impl<T: Real64> NLProblem<T> {
 
     fn jacobian_nnz(&self) -> usize {
         let mut num = 0;
-        for solid in self.state.solids.iter() {
+        {
+            let solid = &self.state.borrow().solid;
             num += 2 * solid.elasticity::<T>().energy_hessian_size()
                 - solid.elasticity::<T>().num_hessian_diagonal_nnz()
                 + if !self.is_static() {
@@ -1356,7 +1355,8 @@ impl<T: Real64> NLProblem<T> {
                     0
                 };
         }
-        for shell in self.state.shells.iter() {
+        {
+            let shell = &self.state.borrow().shell;
             num += 2 * shell.elasticity::<T>().energy_hessian_size()
                 - shell.elasticity::<T>().num_hessian_diagonal_nnz()
                 + if !self.is_static() {
@@ -1366,7 +1366,7 @@ impl<T: Real64> NLProblem<T> {
                     0
                 };
         }
-        for (_, vc) in self.volume_constraints.iter() {
+        for vc in self.volume_constraints.iter() {
             num +=
                 2 * vc.borrow().constraint_hessian_size() - vc.borrow().num_hessian_diagonal_nnz()
         }
@@ -1388,68 +1388,78 @@ impl<T: Real64> NLProblem<T> {
     /// For the velocity part of the force balance equation `M dv/dt - f(q, v) = 0`,
     /// this represents `M dv`.
     /// Strictly speaking this is equal to the momentum difference `M (v_+ - v_-)`.
-    fn add_momentum_diff<S: Real>(&self, state: ChunkedView<StepState<&[S], &mut [S]>>) {
-        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
+    fn add_momentum_diff<S: Real>(
+        &self,
+        state: ChunkedView<ResidualStepState<&[T], &[S], &mut [S]>>,
+    ) {
+        let ResidualStepState {
+            step_state: StepState { cur, next, .. },
+            r,
+        } = state.isolate(VERTEX_DOFS);
 
         self.state
+            .borrow()
             .solid
             .inertia()
             .add_energy_gradient(cur.dq, next.dq, r);
         self.state
+            .borrow()
             .shell
             .inertia()
             .add_energy_gradient(cur.dq, next.dq, r);
     }
 
-    //    /// Compute contact violation: `max(0, -min(d(q)))`
-    //    pub fn contact_violation(&self, constraint: &[T]) -> T {
-    //        T::zero().max(
-    //            -*constraint
-    //                .iter()
-    //                // If there is a NaN, propagate it down so it will appear in the violation.
-    //                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-    //                .unwrap_or(&T::infinity()),
-    //        )
-    //    }
-    //    pub fn contact_constraint(&self, v: &[T]) -> Chunked<Vec<T>> {
-    //        let WorkspaceData { dof, vtx } = &mut *self.state.workspace.borrow_mut();
-    //        let GeneralizedWorkspace {
-    //            state: GeneralizedState { q, .. },
-    //            ..
-    //        } = dof.view_mut().into_storage();
-    //        let VertexWorkspace {
-    //            state: VertexState { pos, .. },
-    //            ..
-    //        } = vtx.view_mut().into_storage();
-    //
-    //        // Integrate position.
-    //        let q_cur = self.state.dof.storage().cur.q.as_slice();
-    //        self.state.be_step(v, self.time_step(), q_cur, q);
-    //
-    //        let dof = self.state.dof.view();
-    //        let vtx = self.state.vtx.view();
-    //        let q = dof.map_storage(|_| &*q);
-    //        let mut pos = vtx.map_storage(|_| &mut *pos);
-    //
-    //        // Transfer position data to vertex position state (relevant for rigid bodies)
-    //        sync_pos(&self.state.shells, q, pos.view_mut());
-    //
-    //        let pos = pos.view(); // Convert to a read-only reference.
-    //
-    //        let mut constraint = Chunked::new();
-    //        for (i, fc) in self.frictional_contacts.iter().enumerate() {
-    //            let mut fc_constraint = fc.constraint.borrow_mut();
-    //
-    //            // Compute constraint (i.e. distance).
-    //            let n = fc_constraint.constraint_size();
-    //            constraint.push_iter(std::iter::repeat(T::zero()).take(n));
-    //
-    //            let obj_pos = self.state.mesh_vertex_subset(q, pos, fc.object_index);
-    //            let col_pos = self.state.mesh_vertex_subset(q, pos, fc.collider_index);
-    //            fc_constraint.constraint([obj_pos, col_pos], constraint.view_mut().isolate(i));
-    //        }
-    //        constraint
-    //    }
+    /// Compute contact violation: `max(0, -min(d(q)))`
+    pub fn contact_violation(&self, constraint: &[T]) -> T {
+        Float::max(
+            T::zero(),
+            -*constraint
+                .iter()
+                // If there is a NaN, propagate it down so it will appear in the violation.
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                .unwrap_or(&T::infinity()),
+        )
+    }
+    pub fn contact_constraint(&self, _v: &[T]) -> Chunked<Vec<T>> {
+        return Chunked::from_offsets(vec![0], vec![]);
+        //let WorkspaceData { dof, vtx } = &mut *self.state.workspace.borrow_mut();
+        //let GeneralizedWorkspace {
+        //    state: GeneralizedState { q, .. },
+        //    ..
+        //} = dof.view_mut().into_storage();
+        //let VertexWorkspace {
+        //    state: VertexState { pos, .. },
+        //    ..
+        //} = vtx.view_mut().into_storage();
+
+        //// Integrate position.
+        //let q_cur = self.state.dof.storage().cur.q.as_slice();
+        //self.state.be_step(v, self.time_step(), q_cur, q);
+
+        //let dof = self.state.dof.view();
+        //let vtx = self.state.vtx.view();
+        //let q = dof.map_storage(|_| &*q);
+        //let mut pos = vtx.map_storage(|_| &mut *pos);
+
+        //// Transfer position data to vertex position state (relevant for rigid bodies)
+        //sync_pos(&self.state.shells, q, pos.view_mut());
+
+        //let pos = pos.view(); // Convert to a read-only reference.
+
+        //let mut constraint = Chunked::new();
+        //for (i, fc) in self.frictional_contacts.iter().enumerate() {
+        //    let mut fc_constraint = fc.constraint.borrow_mut();
+
+        //    // Compute constraint (i.e. distance).
+        //    let n = fc_constraint.constraint_size();
+        //    constraint.push_iter(std::iter::repeat(T::zero()).take(n));
+
+        //    let obj_pos = self.state.mesh_vertex_subset(q, pos, fc.object_index);
+        //    let col_pos = self.state.mesh_vertex_subset(q, pos, fc.collider_index);
+        //    fc_constraint.constraint([obj_pos, col_pos], constraint.view_mut().isolate(i));
+        //}
+        //constraint
+    }
 
     //fn subtract_friction_and_contact_forces<S: Real>(
     //    &self,
@@ -1578,14 +1588,17 @@ impl<T: Real64> NLProblem<T> {
     /// `M dv/dt - f(q,v) = 0`, this function subtracts `f(q,v)`.
     fn subtract_force<S: Real>(
         &self,
-        state: ChunkedView<StepState<&[S], &mut [S]>>,
+        state: ChunkedView<ResidualStepState<&[T], &[S], &mut [S]>>,
         solid: &TetSolid,
         shell: &TriShell,
         //vfc: &mut [S],
         //frictional_contacts: &[FrictionalContactConstraint<S>],
         //lambda: &mut Vec<S>,
     ) {
-        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
+        let ResidualStepState {
+            step_state: StepState { cur, next, .. },
+            r,
+        } = state.isolate(VERTEX_DOFS);
 
         solid.elasticity().add_energy_gradient(cur.q, next.q, r);
         solid
@@ -1607,36 +1620,51 @@ impl<T: Real64> NLProblem<T> {
         //    lambda,
         //);
 
-        debug_assert!(state.storage().r.iter().all(|r| r.is_finite()));
+        debug_assert!(r.iter().all(|r| r.is_finite()));
     }
 
     /// Compute the backward Euler residual with automatic differentiation.
     fn be_residual_autodiff(&self) {
         let state = &mut *self.state.borrow_mut();
-        let step_state = state.dof.view_mut().map_storage(|dof| dof.step_state_ad());
-        // Clear residual vector.
         {
-            let r = step_state.storage_mut().r_ad.as_mut_slice();
-            r.iter_mut().for_each(|x| *x = ad::F::zero());
-        }
+            let mut res_state = state
+                .dof
+                .view_mut()
+                .map_storage(|dof| dof.into_residual_step_state_ad());
+            // Clear residual vector.
+            res_state
+                .storage_mut()
+                .r
+                .iter_mut()
+                .for_each(|x| *x = ad::F::zero());
 
-        // Integrate position.
-        State::be_step(step_state, self.time_step());
+            // Integrate position.
+            State::be_step(res_state.map_storage(|s| s.step_state), self.time_step());
+        }
         state.update_vertices_ad();
 
-        self.subtract_force(
-            step_state,
-            &state.solid,
-            &state.shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
-        );
-
         {
-            let r = step_state.storage_mut().r_ad.as_mut_slice();
-            *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
+            let State {
+                dof, solid, shell, ..
+            } = state;
+
+            self.subtract_force(
+                dof.view_mut()
+                    .map_storage(|dof| dof.into_residual_step_state_ad()),
+                solid,
+                shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
+            );
         }
 
+        let mut res_state = state
+            .dof
+            .view_mut()
+            .map_storage(|dof| dof.into_residual_step_state_ad());
+        let r = &mut res_state.storage_mut().r;
+        *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
+
         if !self.is_static() {
-            self.add_momentum_diff(step_state);
+            self.add_momentum_diff(res_state);
         }
     }
 
@@ -1646,43 +1674,43 @@ impl<T: Real64> NLProblem<T> {
         r.iter_mut().for_each(|x| *x = T::zero());
 
         let state = &mut *self.state.borrow_mut();
-        let step_state = state
-            .dof
-            .view_mut()
-            .map_storage(move |dof| dof.step_state(dq, r));
+        {
+            let step_state = state.step_state(dq);
+            // Integrate position.
+            State::be_step(step_state, self.time_step());
+        }
 
-        // Integrate position.
-        State::be_step(step_state, self.time_step());
         state.update_vertices(dq);
 
         self.subtract_force(
-            step_state,
+            state
+                .dof
+                .view_mut()
+                .map_storage(|dof| dof.into_step_state(dq).with_residual(&mut *r)),
             &state.solid,
             &state.shell, //vfc, &self.frictional_contacts, lambda,
         );
 
-        step_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
+        let mut res_state = state
+            .dof
+            .view_mut()
+            .map_storage(|dof| dof.into_step_state(dq).with_residual(r));
+        *res_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
         if !self.is_static() {
-            self.add_momentum_diff(step_state);
+            self.add_momentum_diff(res_state);
         }
     }
 
     fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
         let mut rows = vec![0; self.jacobian_nnz()];
         let mut cols = vec![0; self.jacobian_nnz()];
-        // This is used for counting offsets.
-        let dq_cur = self
-            .state
-            .dof
-            .view()
-            .at(VERTEX_DOFS)
-            .map_storage(|dof| dof.cur.dq);
-
         let mut count = 0; // Constraint counter
 
+        let state = self.state.borrow();
+
         // Add energy indices
-        let solid = &self.state.solid;
+        let solid = &state.solid;
         let elasticity = solid.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity
@@ -1698,7 +1726,7 @@ impl<T: Real64> NLProblem<T> {
             count += n;
         }
 
-        let shell = &self.state.shell;
+        let shell = &state.shell;
         let elasticity = shell.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity
@@ -1715,7 +1743,7 @@ impl<T: Real64> NLProblem<T> {
         }
 
         // Add volume constraint indices
-        for (solid_idx, vc) in self.volume_constraints.iter() {
+        for vc in self.volume_constraints.iter() {
             for MatrixElementIndex { row, col } in vc.borrow().constraint_hessian_indices_iter() {
                 rows[count] = row;
                 cols[count] = col;
@@ -1746,32 +1774,38 @@ impl<T: Real64> NLProblem<T> {
     fn be_jacobian_values(
         &self,
         dq: &[T],
-        r: &[T],
+        _r: &[T],
         rows: &[usize],
         cols: &[usize],
         vals: &mut [T],
     ) {
         let state = &mut *self.state.borrow_mut();
-        let step_state = state
-            .dof
-            .view_mut()
-            .map_storage(|dof| dof.step_state(dq, r));
-        State::be_step(step_state, self.time_step());
+        State::be_step(
+            state
+                .dof
+                .view_mut()
+                .map_storage(|dof| dof.into_step_state(dq)),
+            self.time_step(),
+        );
         state.update_vertices(dq);
 
         let mut count = 0; // Values counter
-        let mut coff = 0; // Constraint offset
+                           //let mut coff = 0; // Constraint offset
 
         let dt = T::from(self.time_step()).unwrap();
 
         // Constraint scaling
-        let c_scale = dt * dt;
+        //let c_scale = dt * dt;
 
         // Multiply energy hessian by objective factor and scaling factors.
         let factor = T::from(self.impulse_inv_scale()).unwrap();
 
-        let StepState { cur, next, r, .. } = state.isolate(VERTEX_DOFS);
-        let elasticity = state.solid.elasticity::<T>();
+        let State {
+            dof, solid, shell, ..
+        } = state;
+
+        let StepState { cur, next, .. } = dof.view_mut().isolate(VERTEX_DOFS).into_step_state(dq);
+        let elasticity = solid.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
             cur.q,
@@ -1782,13 +1816,13 @@ impl<T: Real64> NLProblem<T> {
         count += n;
 
         if !self.is_static() {
-            let inertia = state.solid.inertia();
+            let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
             count += n;
         }
 
-        let elasticity = state.shell.elasticity::<T>();
+        let elasticity = shell.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
             cur.q,
@@ -1799,7 +1833,7 @@ impl<T: Real64> NLProblem<T> {
         count += n;
 
         if !self.is_static() {
-            let inertia = state.shell.inertia();
+            let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
             inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
             count += n;
@@ -1935,14 +1969,14 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
     /// Updates the lower and upper bounds of the problem.
     ///
     /// If the bounds change between solves, this function should be defined instead of `initial_bounds`.
-    fn update_bounds(&self, l: &mut [f64], u: &mut [f64]) {}
+    fn update_bounds(&self, _l: &mut [f64], _u: &mut [f64]) {}
 }
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
     #[inline]
     fn num_variables(&self) -> usize {
-        self.state.dof.storage().len()
+        self.state.borrow().dof.storage().len()
     }
 
     #[inline]
@@ -2003,8 +2037,10 @@ impl<T: Real> NLProblem<T> {
             ..
         } = self.clone();
 
+        let state = state.borrow();
+        let state = RefCell::new(state.clone_as_autodiff());
         NLProblem {
-            state: state.clone_as_autodiff(),
+            state,
             kappa,
             delta,
             volume_constraints,
@@ -2100,16 +2136,19 @@ pub(crate) fn perturb(x: &mut [ad::F1]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::fem::nl::*;
+    use crate::objects::*;
     use crate::test_utils::*;
+    use crate::Mesh;
 
     /// Verifies that the problem jacobian is implemented correctly.
     #[test]
     fn nl_problem_jacobian_one_tet() {
         init_logger();
         let mut solver_builder = SolverBuilder::new(sample_params());
-        solver_builder.add_solid(make_one_tet_mesh(), solid_material());
+        solver_builder
+            .set_mesh(Mesh::from(make_one_tet_mesh()))
+            .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
         assert!(problem.check_jacobian(true));
     }
@@ -2118,7 +2157,9 @@ mod tests {
     fn nl_problem_jacobian_three_tets() {
         init_logger();
         let mut solver_builder = SolverBuilder::new(sample_params());
-        solver_builder.add_solid(make_three_tet_mesh(), solid_material());
+        solver_builder
+            .set_mesh(Mesh::from(make_three_tet_mesh()))
+            .set_materials(vec![solid_material().into()]);
         let problem = solver_builder.build_problem::<f64>().unwrap();
         assert!(problem.check_jacobian(true));
     }

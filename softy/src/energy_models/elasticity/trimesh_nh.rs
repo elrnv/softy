@@ -2,7 +2,6 @@
 //! Neo-Hookean energy model for triangle meshes.
 
 use num_traits::FromPrimitive;
-use num_traits::Zero;
 use rayon::prelude::*;
 use unroll::unroll_for_loops;
 
@@ -20,6 +19,7 @@ use crate::energy::*;
 use crate::matrix::*;
 use crate::objects::shell::*;
 use crate::objects::*;
+use crate::Real;
 
 use super::{tri_nh::*, TriEnergy};
 

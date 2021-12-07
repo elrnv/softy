@@ -359,7 +359,13 @@ impl NonLinearProblem {
                 .tetmesh
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     "forward_friction",
-                    friction_impulse.view().at(0).at(idx).view().into(),
+                    friction_impulse
+                        .view()
+                        .at(0)
+                        .at(idx)
+                        .view()
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
         }
@@ -368,7 +374,13 @@ impl NonLinearProblem {
                 .trimesh
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     "forward_friction",
-                    friction_impulse.view().at(1).at(idx).view().into(),
+                    friction_impulse
+                        .view()
+                        .at(1)
+                        .at(idx)
+                        .view()
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
         }
@@ -1679,7 +1691,8 @@ impl NonLinearProblem {
                         .at(0)
                         .at(idx)
                         .view()
-                        .into(),
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             solid
@@ -1691,7 +1704,8 @@ impl NonLinearProblem {
                         .at(SOLIDS_INDEX)
                         .at(idx)
                         .view()
-                        .into(),
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             solid
@@ -1703,7 +1717,8 @@ impl NonLinearProblem {
                         .at(SOLIDS_INDEX)
                         .at(idx)
                         .view()
-                        .into(),
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             solid
@@ -1725,7 +1740,13 @@ impl NonLinearProblem {
                 .tetmesh
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     "collider_normals",
-                    normals.view().at(SOLIDS_INDEX).at(idx).view().into(),
+                    normals
+                        .view()
+                        .at(SOLIDS_INDEX)
+                        .at(idx)
+                        .view()
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
 
@@ -1746,35 +1767,48 @@ impl NonLinearProblem {
                         .at(1)
                         .at(idx)
                         .view()
-                        .into(),
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             shell
                 .trimesh
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     FRICTION_ATTRIB,
-                    friction_impulse.view().at(1).at(idx).view().into(),
+                    friction_impulse
+                        .view()
+                        .at(1)
+                        .at(idx)
+                        .view()
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             shell
                 .trimesh
                 .set_attrib_data::<ContactImpulseType, VertexIndex>(
                     CONTACT_ATTRIB,
-                    contact_impulse.view().at(1).at(idx).view().into(),
+                    contact_impulse
+                        .view()
+                        .at(1)
+                        .at(idx)
+                        .view()
+                        .into_arrays()
+                        .to_vec(),
                 )
                 .ok();
             shell
                 .trimesh
                 .set_attrib_data::<PotentialType, VertexIndex>(
                     POTENTIAL_ATTRIB,
-                    potential.view().at(1).at(idx).view().into(),
+                    potential.view().at(1).at(idx).view().to_vec(),
                 )
                 .ok();
             shell
                 .trimesh
                 .set_attrib_data::<PressureType, VertexIndex>(
                     PRESSURE_ATTRIB,
-                    pressure.view().at(1).at(idx).view().into(),
+                    pressure.view().at(1).at(idx).view().to_vec(),
                 )
                 .ok();
 
@@ -1782,7 +1816,7 @@ impl NonLinearProblem {
                 .trimesh
                 .set_attrib_data::<FrictionImpulseType, VertexIndex>(
                     "collider_normals",
-                    normals.view().at(1).at(idx).view().into(),
+                    normals.view().at(1).at(idx).view().into_arrays().to_vec(),
                 )
                 .ok();
 
@@ -1829,7 +1863,7 @@ impl NonLinearProblem {
     #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        use na::{base::storage::Storage, DMatrix};
+        use na::DMatrix;
 
         if values.is_empty() {
             return;
@@ -1866,7 +1900,7 @@ impl NonLinearProblem {
         writeln!(&mut f).ok();
 
         let svd = na::SVD::new(jac, false, false);
-        let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
+        let s: &[Number] = svd.singular_values.data.as_slice();
         let cond = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         log::debug!("Condition number of jacobian is: {}", cond);
@@ -1898,7 +1932,7 @@ impl NonLinearProblem {
     #[allow(dead_code)]
     pub fn print_hessian_svd(&self, values: &[Number]) {
         use ipopt::{BasicProblem, ConstrainedProblem};
-        use na::{base::storage::Storage, DMatrix};
+        use na::DMatrix;
 
         if values.is_empty() {
             return;
@@ -1937,7 +1971,7 @@ impl NonLinearProblem {
         writeln!(&mut f, "]").ok();
 
         let svd = na::SVD::new(hess, false, false);
-        let s: &[Number] = Storage::as_slice(&svd.singular_values.data);
+        let s: &[Number] = svd.singular_values.data.as_slice();
         let cond_hess = s.iter().max_by(|x, y| x.partial_cmp(y).unwrap()).unwrap()
             / s.iter().min_by(|x, y| x.partial_cmp(y).unwrap()).unwrap();
         log::debug!("Condition number of hessian is {}", cond_hess);

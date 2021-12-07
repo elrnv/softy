@@ -3,11 +3,17 @@
 //! two vectors.
 //!
 
-mod preamble;
 use approx::*;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use preamble::*;
+use rand::prelude::*;
 use tensr::Vector3;
+
+static SEED: [u8; 32] = [3; 32];
+
+pub fn vector3() -> tensr::Vector3<f64> {
+    let mut rng: StdRng = SeedableRng::from_seed(SEED);
+    tensr::Vector3::new([rng.gen(), rng.gen(), rng.gen()])
+}
 
 // NOTE: the cross product approach has multiple advantages:
 // 1. doesn't require the edge vector e
@@ -18,8 +24,8 @@ use tensr::Vector3;
 
 // n0 and n1 are normals, e is the edge, and t0 is another edge vector for triangle 0
 fn via_cross_product(
-    mut n0: Vector3<f64>,
-    mut n1: Vector3<f64>,
+    n0: Vector3<f64>,
+    n1: Vector3<f64>,
     t0: Vector3<f64>,
     _e: Vector3<f64>,
 ) -> f64 {

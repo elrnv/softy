@@ -1,5 +1,4 @@
 pub mod aref;
-//pub mod soap;
 
 pub use geo::index;
 pub use geo::index::CheckedIndex;

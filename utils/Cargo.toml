@@ -29,32 +29,5 @@ unstable = ["criterion/real_blackbox", "packed_simd"]
 default = ["sprs", "approx"]
 
 [[bench]]
-name = "sum"
-harness = false
-#[[bench]]
-#name = "vectorize"
-#harness = false
-[[bench]]
-name = "norm_squared"
-harness = false
-[[bench]]
-name = "trace"
-harness = false
-[[bench]]
-name = "determinant"
-harness = false
-[[bench]]
-name = "inverse"
-harness = false
-[[bench]]
-name = "transpose"
-harness = false
-[[bench]]
-name = "mtx_vec_mul"
-harness = false
-[[bench]]
-name = "mtx_mtx_mul"
-harness = false
-[[bench]]
 name = "angle"
 harness = false

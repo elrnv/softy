@@ -29,18 +29,17 @@
 const UT_StringHolder SOP_Softy::theSOPTypeName("hdk_softy"_sh);
 
 // Register sop operator
-void
-newSopOperator(OP_OperatorTable *table)
+void newSopOperator(OP_OperatorTable *table)
 {
     table->addOperator(new OP_Operator(
-                SOP_Softy::theSOPTypeName,   // Internal name
-                "Softy",                     // UI name
-                SOP_Softy::myConstructor,    // How to build the SOP
-                SOP_Softy::buildTemplates(), // My parameters
-                0,                              // Min # of sources
-                2,                              // Max # of sources
-                nullptr,                        // Local variables
-                OP_FLAG_GENERATOR));            // Flag it as generator
+        SOP_Softy::theSOPTypeName,   // Internal name
+        "Softy",                     // UI name
+        SOP_Softy::myConstructor,    // How to build the SOP
+        SOP_Softy::buildTemplates(), // My parameters
+        0,                           // Min # of sources
+        1,                           // Max # of sources
+        nullptr,                     // Local variables
+        OP_FLAG_GENERATOR));         // Flag it as generator
     softy::init_env_logger();
 }
 
@@ -494,11 +493,11 @@ static const char *theDsFile = R"THEDSFILE(
 }
 )THEDSFILE";
 
-int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Template *) {
+int SOP_Softy::clearSolverCache(void *data, int index, float t, const PRM_Template *)
+{
     softy::clear_solver_registry();
     return 0;
 }
-
 
 PRM_Template *
 SOP_Softy::buildTemplates()
@@ -510,18 +509,18 @@ SOP_Softy::buildTemplates()
 
 class SOP_SoftyVerb : public SOP_NodeVerb
 {
-    public:
-        SOP_SoftyVerb() {}
-        virtual ~SOP_SoftyVerb() {}
+public:
+    SOP_SoftyVerb() {}
+    virtual ~SOP_SoftyVerb() {}
 
-        virtual SOP_NodeParms *allocParms() const { return new SOP_SoftyParms(); }
-        virtual UT_StringHolder name() const { return SOP_Softy::theSOPTypeName; }
+    virtual SOP_NodeParms *allocParms() const { return new SOP_SoftyParms(); }
+    virtual UT_StringHolder name() const { return SOP_Softy::theSOPTypeName; }
 
-        virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
+    virtual CookMode cookMode(const SOP_NodeParms *parms) const { return COOK_GENERATOR; }
 
-        virtual void cook(const CookParms &cookparms) const;
+    virtual void cook(const CookParms &cookparms) const;
 
-        static const SOP_NodeVerb::Register<SOP_SoftyVerb> theVerb;
+    static const SOP_NodeVerb::Register<SOP_SoftyVerb> theVerb;
 };
 
 const SOP_NodeVerb::Register<SOP_SoftyVerb> SOP_SoftyVerb::theVerb;
@@ -532,21 +531,23 @@ SOP_Softy::cookVerb() const
     return SOP_SoftyVerb::theVerb.get();
 }
 
-void
-write_solver_data(GU_Detail *detail, softy::StepResult res, int64 solver_id) {
+void write_solver_data(GU_Detail *detail, softy::StepResult res, int64 solver_id)
+{
     // Create the registry id attribute on the output detail so we don't lose the solver for the
     // next time step.
-    GA_RWHandleID attrib( detail->addIntTuple(GA_ATTRIB_GLOBAL, "softy", 1, GA_Defaults(-1), 0, 0,
-                GA_STORE_INT64) );
+    GA_RWHandleID attrib(detail->addIntTuple(GA_ATTRIB_GLOBAL, "softy", 1, GA_Defaults(-1), 0, 0,
+                                             GA_STORE_INT64));
     attrib.set(GA_Offset(0), solver_id);
 
     // Add the simulation meshes into the current detail
-    if (detail) {
-        softy::add_meshes(*detail, std::move(res.meshes));
+    if (detail)
+    {
+        softy::add_mesh(*detail, std::move(res.mesh));
     }
 }
 
-std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparms) {
+std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparms)
+{
     // Gather simulation parameters
     softy::SimParams sim_params;
     sim_params.time_step = sopparms.getTimeStep();
@@ -555,42 +556,48 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
 
     // Get material properties.
     const auto &sop_materials = sopparms.getMaterials();
-    for (const auto & sop_mtl : sop_materials) {
+    for (const auto &sop_mtl : sop_materials)
+    {
         softy::MaterialProperties mtl_props;
         auto sop_objtype = static_cast<SOP_SoftyEnums::ObjectType>(sop_mtl.objtype);
-        switch (sop_objtype) {
-            case SOP_SoftyEnums::ObjectType::SOLID:
-                mtl_props.object_type = softy::ObjectType::Solid;
-                break;
-            case SOP_SoftyEnums::ObjectType::SHELL:
-                mtl_props.object_type = softy::ObjectType::Shell;
-                break;
-            case SOP_SoftyEnums::ObjectType::RIGID:
-                mtl_props.object_type = softy::ObjectType::Rigid;
-                break;
+        switch (sop_objtype)
+        {
+        case SOP_SoftyEnums::ObjectType::SOLID:
+            mtl_props.object_type = softy::ObjectType::Solid;
+            break;
+        case SOP_SoftyEnums::ObjectType::SHELL:
+            mtl_props.object_type = softy::ObjectType::Shell;
+            break;
+        case SOP_SoftyEnums::ObjectType::RIGID:
+            mtl_props.object_type = softy::ObjectType::Rigid;
+            break;
         }
 
         auto sop_elasticity_model = static_cast<SOP_SoftyEnums::ElasticityModel>(sop_mtl.elasticitymodel);
-        switch (sop_elasticity_model) {
-            case SOP_SoftyEnums::ElasticityModel::SNH:
-                mtl_props.elasticity_model = softy::ElasticityModel::StableNeoHookean;
-                break;
-            case SOP_SoftyEnums::ElasticityModel::NH:
-                mtl_props.elasticity_model = softy::ElasticityModel::NeoHookean;
-                break;
+        switch (sop_elasticity_model)
+        {
+        case SOP_SoftyEnums::ElasticityModel::SNH:
+            mtl_props.elasticity_model = softy::ElasticityModel::StableNeoHookean;
+            break;
+        case SOP_SoftyEnums::ElasticityModel::NH:
+            mtl_props.elasticity_model = softy::ElasticityModel::NeoHookean;
+            break;
         }
 
         auto sop_stiffnesstype = static_cast<SOP_SoftyEnums::StiffnessType>(sop_mtl.stiffnesstype);
-        if (sop_stiffnesstype == SOP_SoftyEnums::StiffnessType::SHEARBULK) { 
-            mtl_props.bulk_modulus = sop_mtl.volumestiffness*1.0e3;
-            mtl_props.shear_modulus = sop_mtl.shapestiffness*1.0e3;
-        } else {
+        if (sop_stiffnesstype == SOP_SoftyEnums::StiffnessType::SHEARBULK)
+        {
+            mtl_props.bulk_modulus = sop_mtl.volumestiffness * 1.0e3;
+            mtl_props.shear_modulus = sop_mtl.shapestiffness * 1.0e3;
+        }
+        else
+        {
             // K = E / 3(1-2v)
             // G = E / 2(1+v)
             auto nu = sop_mtl.poissonratio;
-            auto E = sop_mtl.youngmodulus*1.0e3;
-            mtl_props.bulk_modulus = E / (3.0*(1.0 - 2.0*nu));
-            mtl_props.shear_modulus = E / (2.0*(1.0 + nu));
+            auto E = sop_mtl.youngmodulus * 1.0e3;
+            mtl_props.bulk_modulus = E / (3.0 * (1.0 - 2.0 * nu));
+            mtl_props.shear_modulus = E / (2.0 * (1.0 + nu));
         }
 
         mtl_props.bending_stiffness = sop_mtl.bendingstiffness;
@@ -599,19 +606,20 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
         sim_params.materials.push_back(mtl_props);
     }
 
-    switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType())) {
-        case SOP_SoftyEnums::SolverType::NEWTON:
-            sim_params.solver_type = softy::SolverType::Newton;
-            break;
-        case SOP_SoftyEnums::SolverType::NEWTONBT:
-            sim_params.solver_type = softy::SolverType::NewtonBacktracking;
-            break;
-        case SOP_SoftyEnums::SolverType::TRUSTREGION:
-            sim_params.solver_type = softy::SolverType::TrustRegion;
-            break;
-        case SOP_SoftyEnums::SolverType::IPOPT:
-            sim_params.solver_type = softy::SolverType::Ipopt;
-            break;
+    switch (static_cast<SOP_SoftyEnums::SolverType>(sopparms.getSolverType()))
+    {
+    case SOP_SoftyEnums::SolverType::NEWTON:
+        sim_params.solver_type = softy::SolverType::Newton;
+        break;
+    case SOP_SoftyEnums::SolverType::NEWTONBT:
+        sim_params.solver_type = softy::SolverType::NewtonBacktracking;
+        break;
+    case SOP_SoftyEnums::SolverType::TRUSTREGION:
+        sim_params.solver_type = softy::SolverType::TrustRegion;
+        break;
+    case SOP_SoftyEnums::SolverType::IPOPT:
+        sim_params.solver_type = softy::SolverType::Ipopt;
+        break;
     }
     sim_params.clear_velocity = sopparms.getClearVelocity();
     sim_params.tolerance = sopparms.getInnerTolerance();
@@ -627,79 +635,90 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
     // Get frictional contact params.
     const auto &sop_frictional_contacts = sopparms.getFrictionalContacts();
     rust::Vec<softy::FrictionalContactParams> frictional_contact_vec;
-    for (const auto & sop_fc: sop_frictional_contacts) {
+    for (const auto &sop_fc : sop_frictional_contacts)
+    {
         softy::FrictionalContactParams fc_params;
         fc_params.object_material_id = sop_fc.objectmaterialid;
-        
+
         // Parse a string of integers into an std::vector<uint32_t>
         UT_String ut_collider_material_ids_str(sop_fc.collidermaterialids);
 
         std::stringstream ss(ut_collider_material_ids_str.toStdString());
         std::string token;
-        while (std::getline(ss, token, ' ')) {
-            if (!token.empty()) {
-                try {
+        while (std::getline(ss, token, ' '))
+        {
+            if (!token.empty())
+            {
+                try
+                {
                     fc_params.collider_material_ids.push_back(std::stoul(token));
                 }
-                catch (...) {
+                catch (...)
+                {
                     collider_material_id_parse_error = true;
                 }
             }
         }
 
-        switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel)) {
-            case SOP_SoftyEnums::Kernel::INTERPOLATING:
-                fc_params.kernel = softy::Kernel::Interpolating;
-                break;
-            case SOP_SoftyEnums::Kernel::APPROXIMATE:
-                fc_params.kernel = softy::Kernel::Approximate;
-                break;
-            case SOP_SoftyEnums::Kernel::CUBIC:
-                fc_params.kernel = softy::Kernel::Cubic;
-                break;
-            case SOP_SoftyEnums::Kernel::GLOBAL:
-                fc_params.kernel = softy::Kernel::Global;
-                break;
+        switch (static_cast<SOP_SoftyEnums::Kernel>(sop_fc.kernel))
+        {
+        case SOP_SoftyEnums::Kernel::INTERPOLATING:
+            fc_params.kernel = softy::Kernel::Interpolating;
+            break;
+        case SOP_SoftyEnums::Kernel::APPROXIMATE:
+            fc_params.kernel = softy::Kernel::Approximate;
+            break;
+        case SOP_SoftyEnums::Kernel::CUBIC:
+            fc_params.kernel = softy::Kernel::Cubic;
+            break;
+        case SOP_SoftyEnums::Kernel::GLOBAL:
+            fc_params.kernel = softy::Kernel::Global;
+            break;
         }
 
-        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype)) {
-            case SOP_SoftyEnums::ContactType::LINEARIZED:
-                fc_params.contact_type = softy::ContactType::LinearizedPoint;
-                break;
-            case SOP_SoftyEnums::ContactType::POINT:
-                fc_params.contact_type = softy::ContactType::Point;
-                break;
+        switch (static_cast<SOP_SoftyEnums::ContactType>(sop_fc.contacttype))
+        {
+        case SOP_SoftyEnums::ContactType::LINEARIZED:
+            fc_params.contact_type = softy::ContactType::LinearizedPoint;
+            break;
+        case SOP_SoftyEnums::ContactType::POINT:
+            fc_params.contact_type = softy::ContactType::Point;
+            break;
         }
 
         fc_params.radius_multiplier = sop_fc.radiusmult;
         fc_params.smoothness_tolerance = sop_fc.smoothtol;
         fc_params.contact_offset = sop_fc.contactoffset;
         fc_params.use_fixed = sop_fc.usefixed;
-        if (sop_fc.friction) {
+        if (sop_fc.friction)
+        {
             fc_params.smoothing_weight = sop_fc.smoothingweight;
             fc_params.friction_forwarding = sop_fc.frictionforwarding;
             fc_params.dynamic_cof = sop_fc.dynamiccof;
             fc_params.friction_inner_iterations = sop_fc.frictioninneriterations;
-        } else {
+        }
+        else
+        {
             fc_params.dynamic_cof = 0.0;
             fc_params.friction_inner_iterations = 0;
         }
         fc_params.friction_tolerance = sop_fc.frictiontolerance;
         sim_params.frictional_contacts.push_back(fc_params);
     }
-    
+
     sim_params.print_level = sopparms.getPrintLevel();
     sim_params.derivative_test = sopparms.getDerivativeTest();
     sim_params.friction_tolerance = sopparms.getFrictionTolerance();
     sim_params.contact_tolerance = sopparms.getContactTolerance();
 
-    switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy())) {
-        case SOP_SoftyEnums::MuStrategy::MONOTONE:
-            sim_params.mu_strategy = softy::MuStrategy::Monotone;
-            break;
-        case SOP_SoftyEnums::MuStrategy::ADAPTIVE:
-            sim_params.mu_strategy = softy::MuStrategy::Adaptive;
-            break;
+    switch (static_cast<SOP_SoftyEnums::MuStrategy>(sopparms.getMuStrategy()))
+    {
+    case SOP_SoftyEnums::MuStrategy::MONOTONE:
+        sim_params.mu_strategy = softy::MuStrategy::Monotone;
+        break;
+    case SOP_SoftyEnums::MuStrategy::ADAPTIVE:
+        sim_params.mu_strategy = softy::MuStrategy::Adaptive;
+        break;
     }
 
     sim_params.max_gradient_scaling = sopparms.getMaxGradientScaling();
@@ -708,12 +727,11 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms& sopparm
 }
 
 // Entry point to the SOP
-void
-SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
+void SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
 {
     const GU_Detail *input0 = cookparms.inputGeo(0);
-    const GU_Detail *input1 = cookparms.inputGeo(1);
-    if(!input0 && !input1) {
+    if (!input0)
+    {
         // No inputs, nothing to do.
         return;
     }
@@ -721,42 +739,33 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     softy::SimParams sim_params;
     bool collider_material_id_parse_error;
     std::tie(sim_params, collider_material_id_parse_error) =
-      build_sim_params(std::move(cookparms.parms<SOP_SoftyParms>()));
+        build_sim_params(std::move(cookparms.parms<SOP_SoftyParms>()));
 
     auto interrupt_checker = std::make_unique<hdkrs::InterruptChecker>("Solving Softy");
 
     int64 solver_id = -1;
 
-    // Select the main input (if input0 is missing we are solving for cloth only).
-    const GU_Detail *main_input = input0;
-    if (!main_input) {
-        main_input = input1;
-    }
-
     // Retrieve a unique ID for the solver being used by softy.
     // This will allow us to reuse existing memory in the solver.
-    GA_ROHandleID attrib(main_input->findIntTuple(GA_ATTRIB_GLOBAL, "softy", 1));
-    if (!attrib.isInvalid()) {
+    GA_ROHandleID attrib(input0->findIntTuple(GA_ATTRIB_GLOBAL, "softy", 1));
+    if (!attrib.isInvalid())
+    {
         solver_id = attrib.get(GA_Offset(0));
     }
 
-    auto meshes = softy::new_meshes();
+    auto mesh = softy::new_mesh();
 
-    if (solver_id < 0) {
+    if (solver_id < 0)
+    {
         // If there is no previously allocated solver we can use, we need to extract the geometry
         // from the detail. Otherwise, the geometry stored in the solver itself will be used.
-
-        if (input0) {
-            meshes->set_tetmesh(*input0);
-        }
-        if (input1) {
-            meshes->set_polymesh(*input1);
-        }
+        mesh->set(*input0);
     }
 
-    softy::SolverResult solver_res = softy::get_solver(solver_id, std::move(meshes), sim_params);
+    softy::SolverResult solver_res = softy::get_solver(solver_id, std::move(mesh), sim_params);
 
-    if (solver_res.id < 0) {
+    if (solver_res.id < 0)
+    {
         assert(solver_res.cook_result.tag == hdkrs::CookResultTag::ERROR);
         std::stringstream ss;
         ss << "Failed to create or retrieve a solver. ";
@@ -769,28 +778,30 @@ SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     // Check that we either have a new solver or we found a valid old one.
     UT_ASSERT(solver_id < 0 || solver_id == solver_res.id);
 
-    auto mesh_points = softy::new_mesh_points();
+    auto points = softy::new_point_cloud();
 
-    if (solver_id >= 0) {
-        if (input0)
-            mesh_points->set_tetmesh_points(*input0);
-        if (input1)
-            mesh_points->set_polymesh_points(*input1);
+    if (solver_id >= 0)
+    {
+        points->set(*input0);
     }
 
-    softy::StepResult res = softy::step(std::move(solver_res.solver), std::move(mesh_points), std::move(interrupt_checker));
+    softy::StepResult res = softy::step(std::move(solver_res.solver), std::move(points), std::move(interrupt_checker));
 
-    switch (res.cook_result.tag) {
-        case hdkrs::CookResultTag::SUCCESS:
-            cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str()); break;
-        case hdkrs::CookResultTag::WARNING:
-            cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str()); break;
-        case hdkrs::CookResultTag::ERROR:
-            cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str());
-            std::cerr << res.cook_result.message << std::endl;
-            break;
+    switch (res.cook_result.tag)
+    {
+    case hdkrs::CookResultTag::SUCCESS:
+        cookparms.sopAddMessage(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str());
+        break;
+    case hdkrs::CookResultTag::WARNING:
+        cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str());
+        break;
+    case hdkrs::CookResultTag::ERROR:
+        cookparms.sopAddError(UT_ERROR_OUTSTREAM, res.cook_result.message.c_str());
+        std::cerr << res.cook_result.message << std::endl;
+        break;
     }
-    if (collider_material_id_parse_error) {
+    if (collider_material_id_parse_error)
+    {
         cookparms.sopAddWarning(UT_ERROR_OUTSTREAM, "Failed to parse some of the frictional contact collider material ids");
     }
 

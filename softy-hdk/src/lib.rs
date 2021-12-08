@@ -41,7 +41,7 @@ extern crate lazy_static;
 
 mod api;
 
-use hdkrs::{PointCloud, PolyMesh, TetMesh};
+use hdkrs::{PointCloud, PolyMesh, TetMesh, UnstructuredMesh};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -176,14 +176,24 @@ mod ffi {
     }
 
     pub struct StepResult {
-        meshes: Box<Meshes>,
+        mesh: Box<Mesh>,
         cook_result: CookResult,
     }
 
     pub struct SolveResult {
         solver_id: i64,
-        meshes: Box<Meshes>,
+        mesh: Box<Mesh>,
         cook_result: CookResult,
+    }
+    extern "Rust" {
+        type Points;
+        fn set(self: Pin<&mut Points>, detail: &GU_Detail);
+        fn new_point_cloud() -> Box<Points>;
+    }
+    extern "Rust" {
+        type Mesh;
+        fn set(self: Pin<&mut Mesh>, detail: &GU_Detail);
+        fn new_mesh() -> Box<Mesh>;
     }
     extern "Rust" {
         type MeshPoints;
@@ -201,16 +211,16 @@ mod ffi {
     extern "Rust" {
         type SoftySolver;
         fn init_env_logger();
-        fn register_new_solver(meshes: Box<Meshes>, sim_params: SimParams) -> RegistryResult;
+        fn register_new_solver(mesh: Box<Mesh>, sim_params: SimParams) -> RegistryResult;
         unsafe fn step<'a>(
             solver: Box<SoftySolver>,
-            mesh_points: Box<MeshPoints>,
+            points: Box<Points>,
             interrupt_checker: UniquePtr<InterruptChecker>,
         ) -> StepResult;
-        fn get_solver(solver_id: i64, meshes: Box<Meshes>, sim_params: SimParams) -> SolverResult;
+        fn get_solver(solver_id: i64, mesh: Box<Mesh>, sim_params: SimParams) -> SolverResult;
         fn clear_solver_registry();
 
-        fn add_meshes(detail: Pin<&mut GU_Detail>, meshes: Box<Meshes>);
+        fn add_mesh(detail: Pin<&mut GU_Detail>, meshes: Box<Mesh>);
     }
 
     #[namespace = "hdkrs"]
@@ -221,6 +231,20 @@ mod ffi {
 }
 
 use ffi::*;
+
+pub struct Mesh {
+    mesh: Option<UnstructuredMesh>,
+}
+
+fn new_mesh() -> Box<Mesh> {
+    Box::new(Mesh { mesh: None })
+}
+
+impl Mesh {
+    fn set(mut self: Pin<&mut Mesh>, detail: &GU_Detail) {
+        self.mesh = hdkrs::ffi::build_unstructured_mesh(detail).ok().map(|m| *m);
+    }
+}
 
 pub struct Meshes {
     tetmesh: Option<TetMesh>,
@@ -234,16 +258,30 @@ fn new_meshes() -> Box<Meshes> {
     })
 }
 
-fn new_mesh_points() -> Box<MeshPoints> {
-    Box::new(MeshPoints {
-        tetmesh_points: None,
-        polymesh_points: None,
-    })
+pub struct Points {
+    points: Option<PointCloud>,
+}
+
+fn new_point_cloud() -> Box<Points> {
+    Box::new(Points { points: None })
+}
+
+impl Points {
+    fn set(mut self: Pin<&mut Points>, detail: &GU_Detail) {
+        self.points = hdkrs::ffi::build_pointcloud(detail).ok().map(|m| *m);
+    }
 }
 
 pub struct MeshPoints {
     tetmesh_points: Option<PointCloud>,
     polymesh_points: Option<PointCloud>,
+}
+
+fn new_mesh_points() -> Box<MeshPoints> {
+    Box::new(MeshPoints {
+        tetmesh_points: None,
+        polymesh_points: None,
+    })
 }
 
 /// This function initializes env_logger. It will panic if called more than once.
@@ -254,12 +292,8 @@ pub fn init_env_logger() {
 }
 
 /// Register a new solver in the registry.
-pub fn register_new_solver(meshes: Box<Meshes>, sim_params: SimParams) -> RegistryResult {
-    match api::register_new_solver(
-        meshes.tetmesh.map(|m| m.0),
-        meshes.polymesh.map(|m| m.0),
-        sim_params,
-    ) {
+pub fn register_new_solver(mesh: Box<Mesh>, sim_params: SimParams) -> RegistryResult {
+    match api::register_new_solver(mesh.mesh.map(|m| m.0), sim_params) {
         Ok((id, _)) => RegistryResult {
             solver_id: i64::from(id),
             cook_result: hdkrs::interop::CookResult::Success(String::new()).into(),
@@ -280,12 +314,9 @@ fn validate_id(id: i64) -> Option<u32> {
     }
 }
 
-fn add_meshes(mut detail: Pin<&mut GU_Detail>, meshes: Box<Meshes>) {
-    if let Some(tetmesh) = meshes.tetmesh {
-        hdkrs::ffi::add_tetmesh(detail.as_mut(), &tetmesh);
-    }
-    if let Some(polymesh) = meshes.polymesh {
-        hdkrs::ffi::add_polymesh(detail, &polymesh);
+fn add_mesh(mut detail: Pin<&mut GU_Detail>, mesh: Box<Mesh>) {
+    if let Some(mesh) = mesh.mesh {
+        hdkrs::ffi::add_unstructured_mesh(detail.as_mut(), &mesh);
     }
 }
 
@@ -324,13 +355,8 @@ impl Into<Option<Arc<Mutex<dyn api::Solver>>>> for SoftySolver {
 
 /// Register a new solver in the registry. (C side)
 /// This function consumes `tetmesh` and `polymesh`.
-pub fn get_solver(solver_id: i64, meshes: Box<Meshes>, sim_params: SimParams) -> SolverResult {
-    match api::get_solver(
-        validate_id(solver_id),
-        meshes.tetmesh.map(|m| m.0),
-        meshes.polymesh.map(|m| m.0),
-        sim_params,
-    ) {
+pub fn get_solver(solver_id: i64, mesh: Box<Mesh>, sim_params: SimParams) -> SolverResult {
+    match api::get_solver(validate_id(solver_id), mesh.mesh.map(|m| m.0), sim_params) {
         Ok((id, solver)) => {
             assert!(Arc::strong_count(&solver) != 1);
             SolverResult {
@@ -355,19 +381,15 @@ pub fn clear_solver_registry() {
 /// Perform one step of the solve given a solver.
 pub fn step<'a>(
     solver: Box<SoftySolver>,
-    mesh_points: Box<MeshPoints>,
+    points: Box<Points>,
     mut interrupt_checker: cxx::UniquePtr<InterruptChecker>,
 ) -> StepResult {
-    let (tetmesh_mb, polymesh_mb, cook_result) = if let SoftySolver::Some(solver) = *solver {
+    let (mesh_mb, cook_result) = if let SoftySolver::Some(solver) = *solver {
         match solver.try_lock() {
-            Ok(mut solver) => api::step(
-                &mut *solver,
-                mesh_points.tetmesh_points.map(|m| m.0),
-                mesh_points.polymesh_points.map(|m| m.0),
-                move || interrupt_checker.pin_mut().check_interrupt(),
-            ),
+            Ok(mut solver) => api::step(&mut *solver, points.points.map(|m| m.0), move || {
+                interrupt_checker.pin_mut().check_interrupt()
+            }),
             Err(err) => (
-                None,
                 None,
                 hdkrs::interop::CookResult::Error(format!("Global solver lock: {}", err)),
             ),
@@ -375,32 +397,20 @@ pub fn step<'a>(
     } else {
         (
             None,
-            None,
             hdkrs::interop::CookResult::Error("Invalid solver".to_string()),
         )
     };
 
-    if let Some(solver_tetmesh) = tetmesh_mb {
-        if let Some(solver_polymesh) = polymesh_mb {
-            StepResult {
-                meshes: Box::new(Meshes {
-                    tetmesh: Some(solver_tetmesh.into()),
-                    polymesh: Some(solver_polymesh.reversed().into()),
-                }),
-                cook_result: cook_result.into(),
-            }
-        } else {
-            StepResult {
-                meshes: Box::new(Meshes {
-                    tetmesh: Some(solver_tetmesh.into()),
-                    polymesh: None,
-                }),
-                cook_result: cook_result.into(),
-            }
+    if let Some(solver_mesh) = mesh_mb {
+        StepResult {
+            mesh: Box::new(Mesh {
+                mesh: Some(solver_mesh.into()),
+            }),
+            cook_result: cook_result.into(),
         }
     } else {
         StepResult {
-            meshes: new_meshes(),
+            mesh: new_mesh(),
             cook_result: cook_result.into(),
         }
     }
@@ -409,30 +419,28 @@ pub fn step<'a>(
 /// Gets a valid solver and performs one step of the solve.
 pub fn solve<'a>(
     solver_id: i64,
-    meshes: Box<Meshes>,
+    mesh: Box<Mesh>,
     sim_params: SimParams,
     mut interrupt_checker: cxx::UniquePtr<InterruptChecker>,
 ) -> SolveResult {
     let (data, cook_result) = api::cook(
         validate_id(solver_id),
-        meshes.tetmesh.map(|m| m.0),
-        meshes.polymesh.map(|m| m.0),
+        mesh.mesh.map(|m| m.0),
         sim_params,
         move || interrupt_checker.pin_mut().check_interrupt(),
     );
-    if let Some((new_solver_id, solver_tetmesh)) = data {
+    if let Some((new_solver_id, solver_mesh)) = data {
         SolveResult {
             solver_id: i64::from(new_solver_id),
-            meshes: Box::new(Meshes {
-                tetmesh: Some(solver_tetmesh.into()),
-                polymesh: None,
+            mesh: Box::new(Mesh {
+                mesh: Some(solver_mesh.into()),
             }),
             cook_result: cook_result.into(),
         }
     } else {
         SolveResult {
             solver_id: -1,
-            meshes: new_meshes(),
+            mesh: new_mesh(),
             cook_result: cook_result.into(),
         }
     }

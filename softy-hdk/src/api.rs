@@ -1,9 +1,10 @@
 use crate::{ElasticityModel, MaterialProperties, SimParams};
-use geo::mesh::attrib::*;
+use geo::algo::split::TypedMesh;
+use geo::attrib::*;
 use geo::mesh::topology::*;
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy::{self, fem, PointCloud, PolyMesh, TetMesh, TetMeshExt};
+use softy::{self, fem, Mesh, PointCloud, PolyMesh, TetMesh, TetMeshExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use utils::mode_u32;
@@ -52,6 +53,7 @@ pub(crate) enum Error {
         object_type: ObjectType,
     },
     SolverCreate(softy::Error),
+    RequiredMeshAttribute(geo::attrib::Error),
 }
 
 impl From<softy::Error> for Error {
@@ -60,10 +62,15 @@ impl From<softy::Error> for Error {
     }
 }
 
+impl From<geo::attrib::Error> for Error {
+    fn from(err: geo::attrib::Error) -> Error {
+        Error::RequiredMeshAttribute(err)
+    }
+}
+
 pub(crate) fn get_solver(
     solver_id: Option<u32>,
-    tetmesh: Option<TetMesh>,
-    polymesh: Option<PolyMesh>,
+    mesh: Option<Mesh>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
     // Verify that the given id points to a valid solver.
@@ -80,7 +87,7 @@ pub(crate) fn get_solver(
         Ok((id, solver))
     } else {
         // Given solver id is invalid, need to create a new solver.
-        register_new_solver(tetmesh, polymesh, params)
+        register_new_solver(mesh, params)
     }
 }
 
@@ -175,6 +182,75 @@ impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
             },
         }
     }
+}
+
+/// Build a material from the given parameters and set it to the specified id.
+fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
+    let SimParams {
+        ref materials,
+        volume_constraint,
+        time_step,
+        ..
+    } = *params;
+
+    let mut material_library = Vec::new();
+
+    // Add a default fixed material.
+    material_library.push(softy::Material::Fixed(softy::FixedMaterial::new(0)));
+
+    // Add the rest of the materials as specified in the UI.
+    material_library.extend(
+        materials
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, material_props)| {
+                let material_id = idx + 1;
+
+                let MaterialProperties {
+                    object_type,
+                    bending_stiffness,
+                    elasticity_model,
+                    bulk_modulus,
+                    shear_modulus,
+                    density,
+                    damping,
+                } = *material_props;
+
+                match object_type {
+                    ObjectType::Solid => Some(softy::Material::Solid(
+                        softy::SolidMaterial::new(material_id as usize)
+                            .with_elasticity(
+                                softy::ElasticityParameters::from_bulk_shear_with_model(
+                                    bulk_modulus,
+                                    shear_modulus,
+                                    elasticity_model.into(),
+                                ),
+                            )
+                            .with_volume_preservation(volume_constraint)
+                            .with_density(density)
+                            .with_damping(damping, time_step),
+                    )),
+                    ObjectType::Shell => Some(softy::Material::SoftShell(
+                        softy::SoftShellMaterial::new(material_id as usize)
+                            .with_elasticity(softy::ElasticityParameters::from_bulk_shear(
+                                bulk_modulus,
+                                shear_modulus,
+                            ))
+                            .with_bending_stiffness(bending_stiffness)
+                            .with_density(density)
+                            .with_damping(damping, time_step),
+                    )),
+                    ObjectType::Rigid => Some(softy::Material::Rigid(softy::RigidMaterial::new(
+                        material_id as usize,
+                        density,
+                    ))),
+
+                    _ => None,
+                }
+            }),
+    );
+
+    material_library
 }
 
 /// Build a material from the given parameters and set it to the specified id.
@@ -333,8 +409,7 @@ fn get_frictional_contacts<'a>(
 }
 
 trait SolverBuilder {
-    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial);
-    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial);
+    fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error>;
     fn add_frictional_contact(
         &mut self,
         fc: softy::FrictionalContactParams,
@@ -343,11 +418,47 @@ trait SolverBuilder {
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
 }
 impl SolverBuilder for fem::opt::SolverBuilder {
-    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial) {
-        fem::opt::SolverBuilder::add_solid(self, tetmesh, material);
-    }
-    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial) {
-        fem::opt::SolverBuilder::add_shell(self, polymesh, material);
+    fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error> {
+        use geo::algo::SplitIntoConnectedComponents;
+        let meshes = mesh.split_into_typed_meshes();
+        for mesh in meshes.into_iter() {
+            match mesh {
+                TypedMesh::Tet(mut tetmesh) => {
+                    softy::init_mesh_source_index_attribute(&mut tetmesh)?;
+                    for mesh in TetMeshExt::from(tetmesh).split_into_connected_components() {
+                        let material_id = mesh
+                            .attrib_as_slice::<i32, CellIndex>("mtl_id")
+                            .map(|slice| {
+                                mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
+                                    .0
+                            })
+                            .unwrap_or(0);
+                        let solid_material = get_solid_material(params, material_id)?;
+                        fem::opt::SolverBuilder::add_solid(
+                            self,
+                            TetMesh::from(mesh),
+                            solid_material,
+                        );
+                    }
+                }
+                TypedMesh::Tri(mut trimesh) => {
+                    let mut mesh = PolyMesh::from(trimesh);
+                    softy::init_mesh_source_index_attribute(&mut mesh)?;
+                    for mesh in mesh.reversed().split_into_connected_components() {
+                        let material_id = mesh
+                            .attrib_as_slice::<i32, FaceIndex>("mtl_id")
+                            .map(|slice| {
+                                mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
+                                    .0
+                            })
+                            .unwrap_or(0);
+                        let shell_material = get_shell_material(params, material_id)?;
+                        fem::opt::SolverBuilder::add_shell(self, mesh, shell_material);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     fn add_frictional_contact(
         &mut self,
@@ -362,11 +473,10 @@ impl SolverBuilder for fem::opt::SolverBuilder {
 }
 
 impl SolverBuilder for fem::nl::SolverBuilder {
-    fn add_solid(&mut self, tetmesh: TetMesh, material: softy::SolidMaterial) {
-        fem::nl::SolverBuilder::add_solid(self, tetmesh, material);
-    }
-    fn add_shell(&mut self, polymesh: PolyMesh, material: softy::ShellMaterial) {
-        fem::nl::SolverBuilder::add_shell(self, polymesh, material);
+    fn set_mesh(&mut self, mut mesh: Mesh, _: &SimParams) -> Result<(), Error> {
+        softy::init_mesh_source_index_attribute(&mut mesh)?;
+        fem::nl::SolverBuilder::set_mesh(self, mesh);
+        Ok(())
     }
     fn add_frictional_contact(
         &mut self,
@@ -384,12 +494,10 @@ impl SolverBuilder for fem::nl::SolverBuilder {
 //#[allow(clippy::needless_pass_by_value)]
 #[inline]
 pub(crate) fn register_new_solver(
-    solid: Option<TetMesh>,
-    shell: Option<PolyMesh>,
+    mesh: Option<Mesh>,
     params: SimParams,
 ) -> Result<(u32, Arc<Mutex<dyn Solver>>), Error> {
-    use geo::algo::SplitIntoConnectedComponents;
-    if solid.is_none() && shell.is_none() {
+    if mesh.is_none() {
         return Err(Error::MissingSolverAndMesh);
     }
 
@@ -397,32 +505,15 @@ pub(crate) fn register_new_solver(
     let mut solver_builder: Box<dyn SolverBuilder> = match params.solver_type {
         SolverType::Ipopt => Box::new(fem::opt::SolverBuilder::new((&params).into())),
         // All other solvers are custom nonlinear system solvers.
-        _ => Box::new(fem::nl::SolverBuilder::new((&params).into())),
+        _ => {
+            let mut builder = Box::new(fem::nl::SolverBuilder::new((&params).into()));
+            builder.set_materials(build_material_library(&params));
+            builder
+        }
     };
 
-    if let Some(mut tetmesh) = solid {
-        softy::init_mesh_source_index_attribute(&mut tetmesh)?;
-        for mesh in TetMeshExt::from(tetmesh).split_into_connected_components() {
-            let material_id = mesh
-                .attrib_as_slice::<i32, CellIndex>("mtl_id")
-                .map(|slice| mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
-                .unwrap_or(0);
-            let solid_material = get_solid_material(&params, material_id)?;
-            solver_builder.add_solid(TetMesh::from(mesh), solid_material);
-        }
-    }
-
-    // Add a shell if one was given.
-    if let Some(mut polymesh) = shell {
-        softy::init_mesh_source_index_attribute(&mut polymesh)?;
-        for mesh in polymesh.reversed().split_into_connected_components() {
-            let material_id = mesh
-                .attrib_as_slice::<i32, FaceIndex>("mtl_id")
-                .map(|slice| mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 })).0)
-                .unwrap_or(0);
-            let shell_material = get_shell_material(&params, material_id)?;
-            solver_builder.add_shell(mesh, shell_material);
-        }
+    if let Some(mesh) = mesh {
+        solver_builder.set_mesh(mesh, &params)?;
     }
 
     for (frictional_contact, indices) in get_frictional_contacts(&params) {
@@ -465,67 +556,33 @@ pub(crate) fn register_new_solver(
 #[inline]
 pub(crate) fn step<F>(
     solver: &mut dyn Solver,
-    tetmesh_points: Option<PointCloud>,
-    polymesh_points: Option<PointCloud>,
+    mesh_points: Option<PointCloud>,
     check_interrupt: F,
-) -> (Option<TetMesh>, Option<PolyMesh>, CookResult)
+) -> (Option<Mesh>, CookResult)
 where
     F: FnMut() -> bool + Sync + Send + 'static,
 {
     solver.set_interrupter(Box::new(check_interrupt));
 
     // Update mesh points
-    if let Some(pts) = tetmesh_points {
-        match solver.update_solid_vertices(&pts) {
+    if let Some(pts) = mesh_points {
+        match solver.update_vertices(&pts) {
             Err(softy::Error::SizeMismatch) =>
-                return (None, None, CookResult::Error(
-                        format!("Input points ({}) don't coincide with solver TetMesh ({}).",
-                        pts.num_vertices(), solver.num_solid_vertices()))),
+                return (None, CookResult::Error(
+                        format!("Input points ({}) don't coincide with solver Mesh ({}).",
+                        pts.num_vertices(), solver.num_vertices()))),
             Err(softy::Error::AttribError { source }) =>
-                return (None, None, CookResult::Warning(
+                return (None, CookResult::Warning(
                         format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", source))),
             Err(err) =>
-                return (None, None, CookResult::Error(
-                        format!("Error updating tetmesh vertices. ({:?})", err))),
-            _ => {}
-        }
-    }
-
-    if let Some(pts) = polymesh_points {
-        match solver.update_shell_vertices(&pts) {
-            Err(softy::Error::SizeMismatch) => {
-                return (
-                    None,
-                    None,
-                    CookResult::Error(format!(
-                        "Input points ({}) don't coincide with solver PolyMesh ({}).",
-                        pts.num_vertices(),
-                        solver.num_shell_vertices()
-                    )),
-                )
-            }
-            Err(softy::Error::NoKinematicMesh) => {
-                return (
-                    None,
-                    None,
-                    CookResult::Warning("Missing kinematic mesh.".to_string()),
-                )
-            }
-            Err(err) => {
-                return (
-                    None,
-                    None,
-                    CookResult::Error(format!("Error updating polymesh vertices. ({:?})", err)),
-                )
-            }
+                return (None, CookResult::Error(
+                        format!("Error updating mesh vertices. ({:?})", err))),
             _ => {}
         }
     }
 
     let cook_result = convert_to_cookresult(solver.solve().into());
-    let solver_polymesh = PolyMesh::from(solver.shell_mesh());
-    let solver_tetmesh = solver.solid_mesh();
-    (Some(solver_tetmesh), Some(solver_polymesh), cook_result)
+    (Some(solver.mesh()), cook_result)
 }
 
 /// Clear all solvers from the registry and reset the counter.
@@ -543,21 +600,20 @@ pub(crate) fn clear_solver_registry() {
 #[inline]
 pub(crate) fn cook<F>(
     solver_id: Option<u32>,
-    tetmesh: Option<TetMesh>,
-    polymesh: Option<PolyMesh>,
+    mesh: Option<Mesh>,
     params: SimParams,
     check_interrupt: F,
-) -> (Option<(u32, TetMesh)>, CookResult)
+) -> (Option<(u32, Mesh)>, CookResult)
 where
     F: FnMut() -> bool + Sync + Send + 'static,
 {
-    match get_solver(solver_id, tetmesh, polymesh, params) {
+    match get_solver(solver_id, mesh, params) {
         Ok((solver_id, solver)) => {
             let mut solver = solver.lock().unwrap();
             solver.set_interrupter(Box::new(check_interrupt));
             let cook_result = convert_to_cookresult(solver.solve());
-            let solver_tetmesh = solver.solid_mesh();
-            (Some((solver_id, solver_tetmesh)), cook_result)
+            let solver_mesh = solver.mesh();
+            (Some((solver_id, solver_mesh)), cook_result)
         }
         Err(err) => (
             None,

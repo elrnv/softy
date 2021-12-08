@@ -16,7 +16,7 @@ libc = "*"
 hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 lazy_static = "1.1"
 log = "0.4"
-env_logger = "0.8"
+env_logger = "0.9"
 cxx = "1.0"
 
 [build-dependencies]

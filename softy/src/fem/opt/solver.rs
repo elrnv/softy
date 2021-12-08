@@ -24,7 +24,7 @@ use crate::{Error, PointCloud, PolyMesh, TetMesh, TriMesh};
 
 #[derive(Clone, Debug)]
 pub struct SolverBuilder {
-    sim_params: SimParams,
+    pub sim_params: SimParams,
     solids: Vec<(TetMesh, SolidMaterial)>,
     soft_shells: Vec<(PolyMesh, SoftShellMaterial)>,
     rigid_shells: Vec<(PolyMesh, RigidMaterial)>,

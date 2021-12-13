@@ -133,11 +133,7 @@ impl<T: Real> NLProblem<T> {
     }
 
     /// Returns the solved positions of the vertices.
-    pub fn vertex_positions(&self, soln: &[T]) -> std::cell::Ref<[[T; 3]]> {
-        {
-            let mut state = self.state.borrow_mut();
-            state.update_vertices(soln);
-        }
+    pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
         let state = self.state.borrow();
         std::cell::Ref::map(state, |s| s.vtx.state.pos.as_arrays())
     }

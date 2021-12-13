@@ -275,7 +275,7 @@ where
             //}
             //eprintln!("]");
             svd_values(j_dense.view());
-            write_jacobian_img(j_dense.view(), iterations);
+            //write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
             ////log::trace!("j_vals = {:?}", &j_vals);
@@ -617,6 +617,7 @@ fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
 
     log::debug!("J singular values: {:?}", dense.singular_values());
 }
+#[allow(dead_code)]
 fn write_jacobian_img<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>, iter: u32) {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());

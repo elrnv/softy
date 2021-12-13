@@ -114,6 +114,21 @@ impl SolverBuilder {
             .collect())
     }
 
+    /// A helper function to initialize the material id attribute if one doesn't already exist.
+    pub(crate) fn init_material_id(mesh: &mut Mesh) -> Result<(), Error> {
+        // If there is already an attribute with the right type, just leave it alone.
+        if let Ok(_) = mesh.attrib_check::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB) {
+            return Ok(());
+        }
+        // Remove an attribute with the same name if it exists since it will have the wrong type.
+        mesh.remove_attrib::<CellIndex>(MATERIAL_ID_ATTRIB).ok();
+        // If no attribute exists, just insert the new attribute with a default value.
+        // We know that this will not panic because above we removed any attribute with the same name.
+        mesh.attrib_or_insert_with_default::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB, 0)
+            .unwrap();
+        Ok(())
+    }
+
     /// A helper function to initialize the vertex velocity attribute.
     pub(crate) fn init_velocity_attribute(mesh: &mut Mesh) -> Result<(), Error> {
         // If there is already an attribute with the right type, just leave it alone.
@@ -250,6 +265,7 @@ impl SolverBuilder {
         init_mesh_source_index_attribute(&mut mesh)?;
         Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
         Self::init_velocity_attribute(&mut mesh)?;
+        Self::init_material_id(&mut mesh)?;
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
         let state = State::try_from_mesh_and_materials(&mesh, &materials, &vertex_type)?;
@@ -530,7 +546,7 @@ where
 
     /// Returns the solved positions of the vertices.
     pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
-        self.problem().vertex_positions(&self.solution)
+        self.problem().vertex_positions()
     }
 
     /// Update the `mesh` and `prev_pos` with the current solution.

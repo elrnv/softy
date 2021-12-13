@@ -43,11 +43,11 @@ pub struct NewtonWorkspace<T: Real> {
     r_next: Vec<T>,
     j_rows: Vec<usize>,
     j_cols: Vec<usize>,
-    j_vals: Vec<T>,
-    //// Mapping from original triplets given by the `j_*` members to the final
-    //// compressed sparse matrix.
-    j_mapping: Vec<usize>,
-    j: DSMatrix<T>,
+    //j_vals: Vec<T>,
+    ////// Mapping from original triplets given by the `j_*` members to the final
+    ////// compressed sparse matrix.
+    //j_mapping: Vec<usize>,
+    //j: DSMatrix<T>,
 }
 
 pub struct Newton<P, T: Real> {
@@ -89,33 +89,33 @@ where
 
         let (j_rows, j_cols) = problem.jacobian_indices();
         assert_eq!(j_rows.len(), j_cols.len());
-        let j_nnz = j_rows.len();
-        let j_vals = vec![T::zero(); j_nnz];
+        //let j_nnz = j_rows.len();
+        //let j_vals = vec![T::zero(); j_nnz];
 
-        // Construct a mapping from original triplets to final compressed matrix.
-        let mut j_mapping = (0..j_nnz).collect::<Vec<_>>();
+        //// Construct a mapping from original triplets to final compressed matrix.
+        //let mut j_mapping = (0..j_nnz).collect::<Vec<_>>();
 
-        j_mapping.sort_by(|&a, &b| {
-            j_rows[a]
-                .cmp(&j_rows[b])
-                .then_with(|| j_cols[a].cmp(&j_cols[b]))
-        });
+        //j_mapping.sort_by(|&a, &b| {
+        //    j_rows[a]
+        //        .cmp(&j_rows[b])
+        //        .then_with(|| j_cols[a].cmp(&j_cols[b]))
+        //});
 
-        // We use tensr to build the CSR matrix since it allows us to track
-        // where each element goes after compression.
-        let triplet_iter = j_mapping.iter().map(|&i| (j_rows[i], j_cols[i], j_vals[i]));
+        //// We use tensr to build the CSR matrix since it allows us to track
+        //// where each element goes after compression.
+        //let triplet_iter = j_mapping.iter().map(|&i| (j_rows[i], j_cols[i], j_vals[i]));
 
-        let j_uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, n, n);
+        //let j_uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, n, n);
 
-        let order = j_mapping.clone();
+        //let order = j_mapping.clone();
 
-        // Compress the CSR Jacobian matrix.
-        let j = j_uncompressed.pruned(
-            |_, _, _| true,
-            |src, dst| {
-                j_mapping[order[src]] = dst;
-            },
-        );
+        //// Compress the CSR Jacobian matrix.
+        //let j = j_uncompressed.pruned(
+        //    |_, _, _| true,
+        //    |src, dst| {
+        //        j_mapping[order[src]] = dst;
+        //    },
+        //);
 
         // Allocate space for the linear solver.
         let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
@@ -135,9 +135,9 @@ where
                 r_next,
                 j_rows,
                 j_cols,
-                j_vals,
-                j_mapping,
-                j,
+                //j_vals,
+                //j_mapping,
+                //j,
             }),
         }
     }
@@ -200,9 +200,9 @@ where
             r_next,
             j_rows,
             j_cols,
-            j_vals,
-            j_mapping,
-            j,
+            //j_vals,
+            //j_mapping,
+            //j,
             x_prev,
         } = &mut *workspace.borrow_mut();
 
@@ -263,7 +263,7 @@ where
             //let before_j = Instant::now();
             //problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
             // TODO: For debugging only
-            for (i, (jp, p)) in j_dense.iter_mut().zip(identity.iter()).enumerate() {
+            for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
                 problem.jacobian_product(x, &p, &r, &j_rows, &j_cols, jp)
             }
             //eprintln!("J = [");
@@ -576,6 +576,7 @@ fn log_debug_stats<T: Real>(
 /// Here `A` is the lower triangular part of a symmetric sparse matrix in CSR format,
 /// `b` is a dense right hand side vector and the output `x` is computed in `b`.
 #[allow(non_snake_case)]
+#[allow(dead_code)]
 fn sid_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) -> bool {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(A.num_rows(), A.num_cols());
@@ -590,6 +591,7 @@ fn sid_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) ->
     dense.lu().solve_mut(&mut b_vec)
 }
 
+#[allow(dead_code)]
 fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());

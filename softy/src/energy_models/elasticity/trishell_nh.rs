@@ -620,7 +620,6 @@ impl<T: Real + Send + Sync, E: TriEnergy<T> + Send + Sync> EnergyHessian<T>
 
 #[cfg(test)]
 mod tests {
-    use crate::nl_fem::state::VertexType;
     use crate::Mesh;
     use geo::mesh::VertexPositions;
 

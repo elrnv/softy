@@ -1,82 +1,78 @@
-mod test_utils;
+//mod test_utils;
 
-use approx::*;
-use geo::attrib::Attrib;
-use geo::mesh::builder::*;
-use geo::mesh::topology::*;
-use geo::mesh::VertexPositions;
-use geo::ops::transform::*;
-use softy::fem::nl::*;
-use softy::Error;
-use softy::*;
-use std::path::PathBuf;
-use test_utils::*;
+//use approx::*;
+//use geo::attrib::Attrib;
+//use geo::mesh::topology::*;
+//use geo::mesh::VertexPositions;
+//use softy::*;
+//use test_utils::*;
+//
+//pub fn medium_solid_material() -> SolidMaterial {
+//    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
+//}
 
-pub fn medium_solid_material() -> SolidMaterial {
-    default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
-}
+//fn compute_contact_constraint(
+//    sample_mesh: &PolyMesh,
+//    tetmesh: &TetMesh,
+//    kernel: KernelType,
+//) -> Vec<f32> {
+//    use implicits::*;
+//
+//    // There are currently two different ways to compute the implicit function representing the
+//    // contact constraint. Since this is a test we do it both ways and make sure the result is
+//    // the same. This doubles as a test for the implicits package.
+//
+//    let mut trimesh_copy = sample_mesh.clone();
+//    let surface_trimesh = tetmesh.surface_trimesh();
+//
+//    let params = implicits::Params {
+//        kernel,
+//        background_field: BackgroundFieldParams {
+//            field_type: BackgroundFieldType::DistanceBased,
+//            weighted: false,
+//        },
+//        sample_type: SampleType::Face,
+//        ..Default::default()
+//    };
+//
+//    let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
+//    compute_potential_debug(&mut trimesh_copy, &mut surface_polymesh, params, || false)
+//        .expect("Failed to compute constraint value");
+//
+//    let pot_attrib = trimesh_copy
+//        .direct_attrib_clone_into_vec::<f32, VertexIndex>("potential")
+//        .expect("Potential attribute doesn't exist");
+//
+//    {
+//        let surf =
+//            mls_from_trimesh(&surface_trimesh, params).expect("Failed to build implicit surface.");
+//
+//        let query_surf = surf.query_topo(sample_mesh.vertex_positions());
+//
+//        let mut pot_attrib64 = vec![0.0f64; sample_mesh.num_vertices()];
+//        query_surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib64);
+//
+//        // Make sure the two potentials are identical.
+//        println!("potential = {:?}", pot_attrib);
+//        println!("potential64 = {:?}", pot_attrib64);
+//        for (&x, &y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
+//            assert_relative_eq!(x, y as f32, max_relative = 1e-5);
+//        }
+//    }
+//
+//    pot_attrib.into_iter().map(|x| x as f32).collect()
+//}
 
-fn compute_contact_constraint(
-    sample_mesh: &PolyMesh,
-    tetmesh: &TetMesh,
-    kernel: KernelType,
-) -> Vec<f32> {
-    use implicits::*;
-
-    // There are currently two different ways to compute the implicit function representing the
-    // contact constraint. Since this is a test we do it both ways and make sure the result is
-    // the same. This doubles as a test for the implicits package.
-
-    let mut trimesh_copy = sample_mesh.clone();
-    let surface_trimesh = tetmesh.surface_trimesh();
-
-    let params = implicits::Params {
-        kernel,
-        background_field: BackgroundFieldParams {
-            field_type: BackgroundFieldType::DistanceBased,
-            weighted: false,
-        },
-        sample_type: SampleType::Face,
-        ..Default::default()
-    };
-
-    let mut surface_polymesh = PolyMesh::from(surface_trimesh.clone());
-    compute_potential_debug(&mut trimesh_copy, &mut surface_polymesh, params, || false)
-        .expect("Failed to compute constraint value");
-
-    let pot_attrib = trimesh_copy
-        .direct_attrib_clone_into_vec::<f32, VertexIndex>("potential")
-        .expect("Potential attribute doesn't exist");
-
-    {
-        let surf =
-            mls_from_trimesh(&surface_trimesh, params).expect("Failed to build implicit surface.");
-
-        let query_surf = surf.query_topo(sample_mesh.vertex_positions());
-
-        let mut pot_attrib64 = vec![0.0f64; sample_mesh.num_vertices()];
-        query_surf.potential(sample_mesh.vertex_positions(), &mut pot_attrib64);
-
-        // Make sure the two potentials are identical.
-        println!("potential = {:?}", pot_attrib);
-        println!("potential64 = {:?}", pot_attrib64);
-        for (&x, &y) in pot_attrib.iter().zip(pot_attrib64.iter()) {
-            assert_relative_eq!(x, y as f32, max_relative = 1e-5);
-        }
-    }
-
-    pot_attrib.into_iter().map(|x| x as f32).collect()
-}
-
-fn make_grids(i: usize) -> (PolyMesh, PolyMesh) {
-    let mut bottom_grid = make_grid(i);
-    bottom_grid.translate([0.0, -0.39, 0.0]);
-
-    let mut top_grid = make_grid(i);
-    top_grid.reverse();
-    top_grid.translate([0.0, 0.39, 0.0]);
-    (top_grid, bottom_grid)
-}
+//fn make_grids(i: usize) -> (PolyMesh, PolyMesh) {
+//    use geo::mesh::builder::*;
+//    let mut bottom_grid = make_grid(i);
+//    bottom_grid.translate([0.0, -0.39, 0.0]);
+//
+//    let mut top_grid = make_grid(i);
+//    top_grid.reverse();
+//    top_grid.translate([0.0, 0.39, 0.0]);
+//    (top_grid, bottom_grid)
+//}
 
 //#[test]
 //fn box_squish_full() -> Result<(), Error> {

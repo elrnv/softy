@@ -10,7 +10,7 @@ use tensr::{IntoData, IntoTensor, Matrix, Matrix3, Vector3};
 use crate::attrib_defines::*;
 use crate::fem::nl::state::VertexType;
 use crate::Real;
-use crate::{Error, Mesh, TriMesh};
+use crate::{Error, Mesh};
 
 /// An `InteriorEdge` is an manifold edge with exactly two neighboring faces.
 ///
@@ -668,7 +668,8 @@ pub(crate) fn compute_interior_edge_topology_from_mesh(
 ///
 /// Interior edges are edges which have exactly two adjacent faces.
 #[unroll_for_loops]
-pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorEdge> {
+#[cfg(feature = "optsolver")]
+pub(crate) fn compute_interior_edge_topology(trimesh: &crate::TriMesh) -> Vec<InteriorEdge> {
     // TODO: Move this algorithm to gut.
     // An edge is actually defined by a pair of vertices.
     // We iterate through all the faces and register each half edge (sorted by vertex index)
@@ -762,7 +763,6 @@ pub(crate) fn compute_interior_edge_topology(trimesh: &TriMesh) -> Vec<InteriorE
 mod tests {
     use approx::*;
     use autodiff::F1;
-    use hashbrown::HashSet;
 
     use super::*;
 
@@ -1027,7 +1027,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "optsolver")]
     fn compute_interior_edge_topology_small_test() {
+        use crate::TriMesh;
         // Make a test mesh.
 
         let pos = vec![
@@ -1055,11 +1057,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
+        let interior_edges: hashbrown::HashSet<_> = compute_interior_edge_topology(&trimesh)
             .into_iter()
             .collect();
 
-        let expected_interior_edges: HashSet<_> = vec![
+        let expected_interior_edges: hashbrown::HashSet<_> = vec![
             InteriorEdge {
                 faces: [1, 4],
                 edge_start: [1, 0],
@@ -1100,7 +1102,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "optsolver")]
     fn compute_interior_edge_topology_large_test() {
+        use crate::TriMesh;
         // Make a test mesh.
 
         let pos = vec![
@@ -1145,11 +1149,11 @@ mod tests {
 
         let trimesh = TriMesh::new(pos, verts);
 
-        let interior_edges: HashSet<_> = compute_interior_edge_topology(&trimesh)
+        let interior_edges: hashbrown::HashSet<_> = compute_interior_edge_topology(&trimesh)
             .into_iter()
             .collect();
 
-        let expected_interior_edges: HashSet<_> = vec![
+        let expected_interior_edges: hashbrown::HashSet<_> = vec![
             InteriorEdge {
                 faces: [3, 5],
                 edge_start: [0, 2],

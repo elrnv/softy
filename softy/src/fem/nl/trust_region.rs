@@ -42,7 +42,7 @@ impl std::fmt::Display for SolveResult {
 pub struct TrustRegionWorkspace<T> {
     x_prev: Vec<T>,
     r: Vec<T>,
-    jtr: Vec<T>,
+    //jtr: Vec<T>,
     r_cur: Vec<T>,
     r_next: Vec<T>,
     j_rows: Vec<usize>,
@@ -81,7 +81,7 @@ where
         let x_prev = vec![T::zero(); n];
 
         let r = vec![T::zero(); n];
-        let jtr = r.clone();
+        //let jtr = r.clone();
         let r_next = r.clone();
         let r_cur = r.clone();
 
@@ -125,7 +125,7 @@ where
             workspace: RefCell::new(TrustRegionWorkspace {
                 x_prev,
                 r,
-                jtr,
+                //jtr,
                 r_cur,
                 r_next,
                 j_rows,

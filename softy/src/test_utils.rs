@@ -426,10 +426,12 @@ pub fn make_box(i: usize) -> TetMesh {
     box_mesh
         .insert_attrib_data::<RefPosType, VertexIndex>(REFERENCE_VERTEX_POS_ATTRIB, ref_verts)
         .expect("Failed to add reference positions to box tetmesh");
-    box_mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
-        MATERIAL_ID_ATTRIB,
-        vec![0; box_mesh.num_cells()],
-    );
+    box_mesh
+        .insert_attrib_data::<MaterialIdType, CellIndex>(
+            MATERIAL_ID_ATTRIB,
+            vec![0; box_mesh.num_cells()],
+        )
+        .unwrap();
     box_mesh
 }
 
@@ -461,10 +463,12 @@ pub fn make_stretched_box(i: usize) -> TetMesh {
             vertex_types_from_fixed(&fixed),
         )
         .unwrap();
-    box_mesh.insert_attrib_data::<MaterialIdType, CellIndex>(
-        MATERIAL_ID_ATTRIB,
-        vec![0; box_mesh.num_cells()],
-    );
+    box_mesh
+        .insert_attrib_data::<MaterialIdType, CellIndex>(
+            MATERIAL_ID_ATTRIB,
+            vec![0; box_mesh.num_cells()],
+        )
+        .unwrap();
 
     box_mesh
 }

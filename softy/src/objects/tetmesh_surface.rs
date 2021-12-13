@@ -1,9 +1,12 @@
+#[cfg(feature = "optsolver")]
 use crate::attrib_defines::*;
+#[cfg(feature = "optsolver")]
 use crate::{TetMesh, TriMesh};
-use geo::attrib::Attrib;
-use geo::mesh::topology::*;
+#[cfg(feature = "optsolver")]
+use geo::{attrib::Attrib, mesh::topology::*};
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "optsolver")]
 pub(crate) struct TetMeshSurface {
     /// Vertex indices into the original tetmesh.
     pub indices: Vec<usize>,
@@ -11,6 +14,7 @@ pub(crate) struct TetMeshSurface {
     pub trimesh: TriMesh,
 }
 
+#[cfg(feature = "optsolver")]
 impl TetMeshSurface {
     /// Extract the triangle surface vertices of this tetmesh.
     ///
@@ -78,6 +82,7 @@ impl TetMeshSurface {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl From<&TetMesh> for TetMeshSurface {
     /// Extract the triangle surface of this tetmesh.
     ///

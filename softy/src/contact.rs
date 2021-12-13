@@ -1,13 +1,14 @@
 mod solver;
 
+#[cfg(feature = "optsolver")]
 use rayon::prelude::*;
 
 use crate::Real;
-use implicits::QueryTopo;
 use num_traits::Float;
 use tensr::*;
 
 use crate::friction::FrictionParams;
+#[cfg(feature = "optsolver")]
 use crate::Index;
 pub use solver::ContactSolver;
 
@@ -467,6 +468,7 @@ pub(crate) struct TripletContactJacobian<T> {
 }
 
 impl<T: Real> TripletContactJacobian<T> {
+    #[cfg(feature = "optsolver")]
     pub fn new() -> TripletContactJacobian<T> {
         TripletContactJacobian {
             block_indices: Vec::new(),
@@ -476,8 +478,9 @@ impl<T: Real> TripletContactJacobian<T> {
         }
     }
 
+    #[cfg(feature = "optsolver")]
     pub fn from_selection<'a>(
-        surf: &QueryTopo<T>,
+        surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
     ) -> TripletContactJacobian<T> {
         //let mut orig_cj_matrices = vec![[[T::zero(); 3]; 3]; surf.num_contact_jacobian_matrices()];
@@ -523,9 +526,10 @@ impl<T: Real> TripletContactJacobian<T> {
     ///
     /// The columns of the contact jacobian are indexed by surface vertex indices in the entire
     /// surface (as opposed to a subset) for objects and colliders.
+    #[cfg(feature = "optsolver")]
     pub fn append_selection<'a>(
         &mut self,
-        surf: &QueryTopo<T>,
+        surf: &implicits::QueryTopo<T>,
         active_contact_points: SelectView<'a, Chunked3<&'a [T]>>,
         contact_offset: usize,
         object_offset: usize,
@@ -699,7 +703,9 @@ pub type MassMatrixView<'a, T = f64> = DiagonalBlockMatrix3View<'a, T>;
 pub type Delassus<T = f64> = DSBlockMatrix3<T>;
 pub type DelassusView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 
+#[cfg(feature = "optsolver")]
 pub(crate) type EffectiveMassInv<T = f64> = DSBlockMatrix3<T>;
+#[cfg(feature = "optsolver")]
 pub(crate) type EffectiveMassInvView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 
 /// Global effective mass inverse.
@@ -708,7 +714,9 @@ pub(crate) type EffectiveMassInvView<'a, T = f64> = DSBlockMatrix3View<'a, T>;
 /// D D -> Dense object contact coupling (only active couplings are included)
 /// D D -> For each coupling only active contacts are considered.
 /// 3 3 -> Each vertex mass is a 3x3 block.
+#[cfg(feature = "optsolver")]
 pub(crate) type GlobalEffectiveMassInv<T = f64> = Tensor![T; D D D D 3 3];
+#[cfg(feature = "optsolver")]
 pub(crate) type GlobalEffectiveMassInvView<'a, T = f64> = Tensor![T; &'a D D D D 3 3];
 
 #[cfg(test)]

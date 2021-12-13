@@ -17,14 +17,14 @@ use crate::Real;
 pub const VERTEX_DOFS: usize = 0;
 pub const RIGID_DOFS: usize = 1;
 
-/// Integrate rotation axis-angle.
-/// `k0` is previous axis-angle vector.
-///
-/// The idea here is taken from https://arxiv.org/pdf/1604.08139.pdf
-#[inline]
-fn integrate_rotation<T: Real>(k0: Vector3<T>, dw: Vector3<T>) -> Vector3<T> {
-    (Quaternion::from_vector(k0) * Quaternion::from_vector(dw)).into_vector()
-}
+///// Integrate rotation axis-angle.
+///// `k0` is previous axis-angle vector.
+/////
+///// The idea here is taken from https://arxiv.org/pdf/1604.08139.pdf
+//#[inline]
+//fn integrate_rotation<T: Real>(k0: Vector3<T>, dw: Vector3<T>) -> Vector3<T> {
+//    (Quaternion::from_vector(k0) * Quaternion::from_vector(dw)).into_vector()
+//}
 
 /// The common generic state of a single particle at some point in time.
 /// This can be a vertex or the translational components of a rigid body.
@@ -88,8 +88,6 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
     /// Assume that vertices were previously sorted such that all the free
     /// vertices are at the beginning.
     pub fn new_chunked<X: Real, V: Real>(
-        solid: &TetSolid,
-        shell: &TriShell,
         // rigid: &RigidBody,
         vtx_pos: &[X],
         vtx_vel: &[V],
@@ -175,16 +173,9 @@ pub type GeneralizedCoords<T, F> = GeneralizedCoordsComponent<T, T, F, F, F>;
 
 impl<T: Real, F: Real> GeneralizedCoords<Vec<T>, Vec<F>> {
     /// Constructs a new generalized state from the given set of objects.
-    pub fn new_chunked(
-        solid: &TetSolid,
-        shell: &TriShell,
-        vtx_pos: &[T],
-        vtx_vel: &[T],
-        vertex_types: &[VertexType],
-    ) -> Chunked<Self> {
+    pub fn new_chunked(vtx_pos: &[T], vtx_vel: &[T], vertex_types: &[VertexType]) -> Chunked<Self> {
         let (offsets, cur) =
-            GeneralizedState::new_chunked(solid, shell, vtx_pos, vtx_vel, vertex_types)
-                .into_inner();
+            GeneralizedState::new_chunked(vtx_pos, vtx_vel, vertex_types).into_inner();
         let prev = cur.clone();
         let next_q = cur.q.clone();
         let next_ad = GeneralizedState {
@@ -503,8 +494,6 @@ impl<T: Real> State<T, ad::FT<T>> {
         // All non-fixed vertices that are not part of a rigid body are degrees
         // of freedom in this scheme.
         let dof = GeneralizedCoords::<Vec<T>, Vec<ad::FT<T>>>::new_chunked(
-            &solid,
-            &shell,
             // rigid,
             bytemuck::cast_slice(mesh.vertex_positions()),
             bytemuck::cast_slice(vel.as_slice()),

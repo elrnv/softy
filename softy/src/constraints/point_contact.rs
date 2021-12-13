@@ -974,32 +974,6 @@ pub fn compute_contact_force_magnitude<S: Real>(
     });
 }
 
-pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
-    if d.to_f32().unwrap() >= delta {
-        S::zero()
-    } else {
-        let delta = S::from(delta).unwrap();
-        let dd = delta - d;
-        (dd * dd) / delta
-    }
-}
-//pub fn compute_contact_penalty<S: Real>(
-//    // Input distance & Output force magnitude
-//    lambda: &mut [S],
-//    delta: f32,
-//) {
-//    lambda.iter_mut().for_each(|lambda| {
-//        let d = *lambda;
-//        *lambda = if d.to_f32().unwrap() >= delta {
-//            S::zero()
-//        } else {
-//            let delta = S::from(delta).unwrap();
-//            let dd = delta - d;
-//            (dd * dd * dd) / delta
-//        }
-//    });
-//}
-
 /// Enumerate non-empty neighborhoods in place.
 fn enumerate_nonempty_neighborhoods_inplace<T: Real>(surf: &QueryTopo<T>) -> Vec<Index> {
     neighborhood_indices_with(surf, |_, s| s != 0)

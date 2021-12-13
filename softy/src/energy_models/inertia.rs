@@ -4,6 +4,7 @@ mod rigid_shell;
 mod soft_shell;
 mod soft_solid;
 
+#[cfg(feature = "optsolver")]
 pub(crate) use rigid_shell::*;
 pub(crate) use soft_shell::*;
 pub(crate) use soft_solid::*;

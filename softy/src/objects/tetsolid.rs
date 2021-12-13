@@ -380,6 +380,7 @@ impl TetSolid {
     /// A mass attribute is added to the given `Mesh` if one doesn't already exist.
     /// Note that if the mesh already has a mass attribute on the vertices, it will be added to.
     /// To get fresh masses please zero out the mass attribute with `MassType` on `VertexIndex` topology (vertices).
+    #[allow(dead_code)]
     pub(crate) fn add_vertex_masses(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.nh_tet_elements.add_vertex_masses(mesh)?;
         self.snh_tet_elements.add_vertex_masses(mesh)
@@ -390,9 +391,10 @@ impl TetSolid {
     /// If the strain attribute exists on the mesh, this function will only add
     /// to the existing attribute, and will not overwrite any values not
     /// associated with tets of this `TetSolid`.
-    fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) {
-        self.nh_tet_elements.compute_strain_energy_attrib(mesh);
-        self.snh_tet_elements.compute_strain_energy_attrib(mesh);
+    #[allow(dead_code)]
+    fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) -> Result<(), Error> {
+        self.nh_tet_elements.compute_strain_energy_attrib(mesh)?;
+        self.snh_tet_elements.compute_strain_energy_attrib(mesh)
     }
 
     /// Given a mesh, compute the elastic forces per vertex due to tet
@@ -400,6 +402,7 @@ impl TetSolid {
     ///
     /// If the attribute doesn't already exists, it will be created, otherwise
     /// it will be added to.
+    #[allow(dead_code)]
     fn add_elastic_forces(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.nh_tet_elements.add_elastic_forces(mesh)?;
         self.snh_tet_elements.add_elastic_forces(mesh)

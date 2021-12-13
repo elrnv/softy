@@ -2,16 +2,21 @@ use num_traits::FromPrimitive;
 //use rayon::prelude::*;
 
 use flatk::zip;
+
+#[cfg(feature = "optsolver")]
+use crate::attrib_defines::*;
+#[cfg(feature = "optsolver")]
+use crate::objects::shell::*;
+#[cfg(feature = "optsolver")]
 use geo::attrib::Attrib;
+#[cfg(feature = "optsolver")]
 use geo::mesh::topology::*;
+
 use geo::prim::Triangle;
 use tensr::{AsTensor, IntoData, IntoTensor, Vector3};
 
-use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
-#[cfg(feature = "optsolver")]
-use crate::objects::shell::*;
 use crate::objects::trishell::*;
 use crate::Real;
 

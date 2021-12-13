@@ -10,7 +10,7 @@ use super::problem::{NLProblem, NonLinearProblem};
 use super::state::*;
 use super::{NLSolver, SimParams, SolveResult, Status};
 use crate::attrib_defines::*;
-use crate::constraints::point_contact::compute_contact_penalty;
+use crate::constraints::compute_contact_penalty;
 use crate::constraints::*;
 use crate::contact::*;
 use crate::inf_norm;

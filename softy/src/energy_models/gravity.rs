@@ -1,3 +1,4 @@
+#[cfg(feature = "optsolver")]
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
@@ -9,7 +10,9 @@ use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
 use crate::Real;
 use flatk::zip;
+#[cfg(feature = "optsolver")]
 use geo::attrib::Attrib;
+#[cfg(feature = "optsolver")]
 use geo::mesh::topology::*;
 use geo::ops::*;
 use geo::prim::{Tetrahedron, Triangle};

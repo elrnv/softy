@@ -1,10 +1,14 @@
 mod test_utils;
 
+#[cfg(feature = "optsolver")]
 use approx::*;
+#[cfg(feature = "optsolver")]
 use geo::mesh::VertexPositions;
+#[cfg(feature = "optsolver")]
 use geo::ops::transform::*;
 #[cfg(feature = "optsolver")]
 use softy::fem::opt::*;
+#[cfg(feature = "optsolver")]
 use softy::*;
 pub use test_utils::*;
 

@@ -12,6 +12,7 @@ const NUM_HESSIAN_DIAGONAL_TRIPLETS: usize = 6;
 
 pub(crate) struct RigidShellInertia {
     pub mass: f64,
+    #[cfg(feature = "optsolver")]
     pub cm: Vector3<f64>,
     pub inertia: Matrix3<f64>,
 }

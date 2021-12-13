@@ -561,6 +561,7 @@ impl TriShell {
     /// A mass attribute is added to the given `Mesh` if one doesn't already exist.
     /// Note that if the mesh already has a mass attribute on the vertices, it will be added to.
     /// To get fresh masses please zero out the mass attribute with `MassType` on `VertexIndex` topology (vertices).
+    #[allow(dead_code)]
     pub(crate) fn add_vertex_masses(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.triangle_elements.add_vertex_masses(mesh)
     }
@@ -570,6 +571,7 @@ impl TriShell {
     /// If the strain attribute exists on the mesh, this function will only add
     /// to the existing attribute, and will not overwrite any values not
     /// associated with triangle of this `TriShell`.
+    #[allow(dead_code)]
     fn compute_strain_energy_attrib(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.triangle_elements.compute_strain_energy_attrib(mesh)
     }
@@ -579,6 +581,7 @@ impl TriShell {
     ///
     /// If the attribute doesn't already exists, it will be created, otherwise
     /// it will be added to.
+    #[allow(dead_code)]
     fn add_elastic_forces(&self, mesh: &mut Mesh) -> Result<(), Error> {
         self.triangle_elements.add_elastic_forces(mesh)?;
         // TODO: implement forces due to dihedral potential (bending).

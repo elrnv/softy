@@ -1,26 +1,27 @@
+#[cfg(feature = "optsolver")]
 pub mod point_contact;
 pub mod volume;
 
-use num_traits::Zero;
-use std::cell::RefCell;
-use tensr::Vector3;
-
+#[cfg(feature = "optsolver")]
 use crate::attrib_defines::*;
-use crate::constraint::*;
+#[cfg(feature = "optsolver")]
 use crate::contact::*;
-use crate::friction::FrictionImpulses;
+#[cfg(feature = "optsolver")]
+use num_traits::Zero;
+
+use crate::constraint::*;
 use crate::matrix::MatrixElementIndex;
 use crate::Error;
 use crate::Real;
-use crate::TriMesh;
 
 //pub use self::linearized_point_contact::*;
+#[cfg(feature = "optsolver")]
 pub use self::point_contact::*;
 pub use self::volume::*;
 use tensr::*;
-use utils::aref::*;
 
 /// An struct describing a fixed, rigid or deformable contact surface.
+#[cfg(feature = "optsolver")]
 #[derive(Copy, Clone, Debug)]
 pub struct ContactSurface<M, T> {
     pub mesh: M,
@@ -28,6 +29,7 @@ pub struct ContactSurface<M, T> {
 }
 
 /// The kind of contact surface: fixed, rigid or deformable.
+#[cfg(feature = "optsolver")]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SurfaceKind<T> {
     Fixed,
@@ -35,6 +37,7 @@ pub enum SurfaceKind<T> {
     Deformable,
 }
 
+#[cfg(feature = "optsolver")]
 impl<M, T> ContactSurface<M, T> {
     pub fn deformable(mesh: M) -> Self {
         ContactSurface {
@@ -66,11 +69,11 @@ impl<M, T> ContactSurface<M, T> {
 /// Construct a new contact constraint based on the given parameters.
 #[cfg(feature = "optsolver")]
 pub fn build_contact_constraint<T: Real>(
-    object: ContactSurface<&TriMesh, f64>,
-    collider: ContactSurface<&TriMesh, f64>,
+    object: ContactSurface<&crate::TriMesh, f64>,
+    collider: ContactSurface<&crate::TriMesh, f64>,
     params: FrictionalContactParams,
-) -> Result<RefCell<PointContactConstraint<T>>, crate::Error> {
-    Ok(RefCell::new(PointContactConstraint::new(
+) -> Result<std::cell::RefCell<PointContactConstraint<T>>, crate::Error> {
+    Ok(std::cell::RefCell::new(PointContactConstraint::new(
         object,
         collider,
         params.kernel,
@@ -79,6 +82,33 @@ pub fn build_contact_constraint<T: Real>(
         params.contact_type == ContactType::LinearizedPoint,
     )?))
 }
+
+// TODO: move to a designated contact constraint.
+pub fn compute_contact_penalty<S: Real>(d: S, delta: f32) -> S {
+    if d.to_f32().unwrap() >= delta {
+        S::zero()
+    } else {
+        let delta = S::from(delta).unwrap();
+        let dd = delta - d;
+        (dd * dd) / delta
+    }
+}
+//pub fn compute_contact_penalty<S: Real>(
+//    // Input distance & Output force magnitude
+//    lambda: &mut [S],
+//    delta: f32,
+//) {
+//    lambda.iter_mut().for_each(|lambda| {
+//        let d = *lambda;
+//        *lambda = if d.to_f32().unwrap() >= delta {
+//            S::zero()
+//        } else {
+//            let delta = S::from(delta).unwrap();
+//            let dd = delta - d;
+//            (dd * dd * dd) / delta
+//        }
+//    });
+//}
 
 /// A common pattern occurring with contact constraints becoming active and inactive is remapping
 /// values computed in a simulation step to the values available in the next step with a different
@@ -206,11 +236,11 @@ pub trait ContactConstraint<T: Real>:
     /// Total number of contacts that could occur.
     fn num_potential_contacts(&self) -> usize;
     /// Provide the frictional contact data.
-    fn frictional_contact(&self) -> Option<&FrictionImpulses<T>>;
+    fn frictional_contact(&self) -> Option<&crate::friction::FrictionImpulses<T>>;
     /// Provide the frictional contact mutable data.
-    fn frictional_contact_mut(&mut self) -> Option<&mut FrictionImpulses<T>>;
+    fn frictional_contact_mut(&mut self) -> Option<&mut crate::friction::FrictionImpulses<T>>;
     /// Return a set of surface vertex indices that could be in contact.
-    fn active_surface_vertex_indices(&self) -> ARef<'_, [usize]>;
+    fn active_surface_vertex_indices(&self) -> utils::aref::ARef<'_, [usize]>;
 
     /// Clear the saved frictional contact impulse.
     fn clear_frictional_contact_impulse(&mut self) {
@@ -289,17 +319,17 @@ pub trait ContactConstraint<T: Real>:
                     let f = frictional_contact
                         .contact_basis
                         .to_contact_coordinates(r, contact_idx);
-                    Vector3::new(
+                    tensr::Vector3::new(
                         frictional_contact
                             .contact_basis
                             .from_contact_coordinates([T::zero(), f[1], f[2]], contact_idx)
                             .into(),
                     )
                 } else {
-                    Vector3::zero()
+                    tensr::Vector3::zero()
                 };
 
-                dissipation += Vector3::new(vel[0][i]).dot(r_t);
+                dissipation += tensr::Vector3::new(vel[0][i]).dot(r_t);
             }
         }
         dissipation

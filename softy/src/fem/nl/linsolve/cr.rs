@@ -1,5 +1,3 @@
-use tensr::DSMatrix;
-
 use crate::Real;
 
 use super::{SolveResult, Status};
@@ -15,8 +13,8 @@ pub struct ConjugateResidual<T: Real> {
     p: na::DVector<T>,
     Ar: na::DVector<T>,
     Ap: na::DVector<T>,
-    /// Preconditioner.
-    M: Option<DSMatrix<T>>,
+    ///// Preconditioner.
+    //M: Option<tensr::DSMatrix<T>>,
 }
 
 impl<T> ConjugateResidual<T>
@@ -36,7 +34,7 @@ where
             p,
             Ar,
             Ap,
-            M: None,
+            //M: None,
         }
     }
 

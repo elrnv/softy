@@ -4,7 +4,7 @@
 use num_traits::Zero;
 use unroll::unroll_for_loops;
 
-use crate::objects::shell::interior_edge::*;
+use crate::objects::interior_edge::*;
 use geo::ops::*;
 use geo::prim::Triangle;
 use num_traits::Float;

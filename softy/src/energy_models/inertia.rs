@@ -13,6 +13,7 @@ pub trait Inertia<'a, E> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "optsolver")]
 mod tests {
     use crate::objects::shell::*;
     use crate::objects::solid::*;

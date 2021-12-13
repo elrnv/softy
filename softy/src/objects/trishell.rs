@@ -16,7 +16,7 @@ use crate::objects::*;
 use crate::Mesh;
 use crate::Real;
 
-use super::shell::interior_edge::*;
+use super::interior_edge::*;
 
 fn shell_mtl_iter<'a>(
     mesh: &'a Mesh,

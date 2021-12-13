@@ -10,6 +10,7 @@ use tensr::{AsTensor, IntoData, IntoTensor, Vector3};
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
+#[cfg(feature = "optsolver")]
 use crate::objects::shell::*;
 use crate::objects::trishell::*;
 use crate::Real;
@@ -17,8 +18,10 @@ use crate::Real;
 const NUM_HESSIAN_TRIPLETS_PER_TRI: usize = 9;
 const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TRI: usize = 9;
 
+#[cfg(feature = "optsolver")]
 pub(crate) struct SoftTriMeshShellInertia<'a>(pub &'a TriMeshShell);
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> Energy<T> for SoftTriMeshShellInertia<'_> {
     #[allow(non_snake_case)]
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
@@ -53,6 +56,7 @@ impl<T: Real> Energy<T> for SoftTriMeshShellInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriMeshShellInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
@@ -93,6 +97,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriMeshShellInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl EnergyHessianTopology for SoftTriMeshShellInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.trimesh.num_faces() * NUM_HESSIAN_TRIPLETS_PER_TRI
@@ -169,6 +174,7 @@ impl EnergyHessianTopology for SoftTriMeshShellInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> EnergyHessian<T> for SoftTriMeshShellInertia<'_> {
     #[allow(non_snake_case)]
     fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {

@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::attrib_defines::*;
 use crate::fem::nl::{state::VertexType, LineSearch, SimParams as NLParams};
+#[cfg(feature = "optsolver")]
 use crate::fem::opt::{MuStrategy, SimParams as OptParams};
 use crate::objects::*;
 use crate::{PolyMesh, TetMesh, TriMesh};
@@ -15,6 +16,7 @@ use geo::mesh::topology::{CellIndex, FaceIndex, NumCells, NumFaces, VertexIndex}
 use geo::mesh::VertexPositions;
 use geo::ops::*;
 
+#[cfg(feature = "optsolver")]
 pub const STATIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
@@ -78,6 +80,7 @@ pub fn load_nl_params(path: impl AsRef<Path>) -> std::result::Result<NLParams, L
 //    ..STATIC_PARAMS
 //};
 
+#[cfg(feature = "optsolver")]
 pub const DYNAMIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.01),

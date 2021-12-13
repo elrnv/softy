@@ -16,7 +16,6 @@ use crate::TriMesh;
 
 //pub use self::linearized_point_contact::*;
 pub use self::point_contact::*;
-pub use self::point_contact::*;
 pub use self::volume::*;
 use tensr::*;
 use utils::aref::*;
@@ -65,6 +64,7 @@ impl<M, T> ContactSurface<M, T> {
 }
 
 /// Construct a new contact constraint based on the given parameters.
+#[cfg(feature = "optsolver")]
 pub fn build_contact_constraint<T: Real>(
     object: ContactSurface<&TriMesh, f64>,
     collider: ContactSurface<&TriMesh, f64>,
@@ -196,6 +196,7 @@ fn remap_values_complex_test() {
     );
 }
 
+#[cfg(feature = "optsolver")]
 pub trait ContactConstraint<T: Real>:
     for<'a> Constraint<'a, T, Input = [SubsetView<'a, Chunked3<&'a [T]>>; 2]>
     + for<'a> ContactConstraintJacobian<'a, T>

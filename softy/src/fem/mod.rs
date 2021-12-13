@@ -1,5 +1,7 @@
 pub mod nl;
+#[cfg(feature = "optsolver")]
 pub mod opt;
+#[cfg(feature = "optsolver")]
 pub mod state;
 
 use geo::prim::Tetrahedron;

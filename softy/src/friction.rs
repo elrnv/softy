@@ -1,7 +1,11 @@
 //mod elastic_solver;
+#[cfg(feature = "optsolver")]
 pub mod contact_solver;
+#[cfg(feature = "optsolver")]
 pub mod polar_solver;
+#[cfg(feature = "optsolver")]
 pub mod proj_solver;
+#[cfg(feature = "optsolver")]
 pub mod solver;
 
 use crate::contact::ContactBasis;

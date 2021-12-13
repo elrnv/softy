@@ -153,6 +153,7 @@ impl<T: Real> EnergyHessian<T> for RigidShellInertia {
 }
 
 #[cfg(test)]
+#[cfg(feature = "optsolver")]
 mod tests {
     use crate::objects::shell::*;
 

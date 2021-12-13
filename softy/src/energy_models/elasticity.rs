@@ -5,18 +5,22 @@ use tensr::{Matrix2, Matrix2x3, Matrix3, Vector3};
 //mod tet_inv_nh;
 mod tet_nh;
 mod tet_snh;
+#[cfg(feature = "optsolver")]
 mod tetmesh_nh;
 mod tetsolid_nh;
 mod tri_nh;
+#[cfg(feature = "optsolver")]
 mod trimesh_nh;
 mod trishell_nh;
 
 pub use tet_nh::*;
 pub use tet_snh::*;
 //pub use tet_inv_nh::*;
+#[cfg(feature = "optsolver")]
 pub use tetmesh_nh::*;
 pub use tetsolid_nh::*;
 pub use tri_nh::*;
+#[cfg(feature = "optsolver")]
 pub use trimesh_nh::*;
 pub use trishell_nh::*;
 
@@ -120,7 +124,7 @@ pub trait Elasticity<'a, E> {
 #[cfg(test)]
 mod test_utils {
     use super::*;
-    use crate::objects::shell::TriMeshShell;
+    use crate::objects::trishell::TriangleElements;
     use approx::*;
     use autodiff::F1 as F;
     use geo::ops::*;
@@ -379,7 +383,7 @@ mod test_utils {
 
         let df = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+            let DX_inv = TriangleElements::isotropic_tri_shape_matrix(Matrix2x3::new(
                 tri_x0.clone().shape_matrix(),
             ))
             .inverse()
@@ -404,7 +408,7 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                let DX_inv = TriangleElements::isotropic_tri_shape_matrix(Matrix2x3::new(
                     tri_x0.clone().shape_matrix(),
                 ))
                 .inverse()
@@ -446,7 +450,7 @@ mod test_utils {
 
         let ddf = {
             let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-            let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+            let DX_inv = TriangleElements::isotropic_tri_shape_matrix(Matrix2x3::new(
                 tri_x0.clone().shape_matrix(),
             ))
             .inverse()
@@ -477,7 +481,7 @@ mod test_utils {
             for i in 0..3 {
                 deformed_verts[vtx_idx][i] = F::var(deformed_verts[vtx_idx][i]);
                 let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
-                let DX_inv = TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(
+                let DX_inv = TriangleElements::isotropic_tri_shape_matrix(Matrix2x3::new(
                     tri_x0.clone().shape_matrix(),
                 ))
                 .inverse()
@@ -534,10 +538,11 @@ mod test_utils {
 
         let tri_x0 = Triangle::from_indexed_slice(&face, &verts);
 
-        let DX_inv =
-            TriMeshShell::isotropic_tri_shape_matrix(Matrix2x3::new(tri_x0.clone().shape_matrix()))
-                .inverse()
-                .unwrap();
+        let DX_inv = TriangleElements::isotropic_tri_shape_matrix(Matrix2x3::new(
+            tri_x0.clone().shape_matrix(),
+        ))
+        .inverse()
+        .unwrap();
         let tri_x1 = Triangle::from_indexed_slice(&face, &deformed_verts);
         let Dx = Matrix2x3::new(tri_x1.clone().shape_matrix());
         let energy = E::new(Dx, DX_inv, 1.0, 1.0, 1.0);

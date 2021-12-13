@@ -10,6 +10,7 @@ use tensr::{IntoData, Vector3};
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
+#[cfg(feature = "optsolver")]
 use crate::objects::solid::*;
 use crate::objects::tetsolid::*;
 use crate::Real;
@@ -17,8 +18,10 @@ use crate::Real;
 const NUM_HESSIAN_TRIPLETS_PER_TET: usize = 12;
 const NUM_HESSIAN_DIAGONAL_TRIPLETS_PER_TET: usize = 12;
 
+#[cfg(feature = "optsolver")]
 pub(crate) struct TetMeshInertia<'a>(pub &'a TetMeshSolid);
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn energy(&self, v0: &[T], v1: &[T]) -> T {
@@ -56,6 +59,7 @@ impl<T: Real> Energy<T> for TetMeshInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn add_energy_gradient(&self, v0: &[X], v1: &[T], grad_f: &mut [T]) {
@@ -97,6 +101,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl EnergyHessianTopology for TetMeshInertia<'_> {
     fn energy_hessian_size(&self) -> usize {
         self.0.tetmesh.num_cells() * NUM_HESSIAN_TRIPLETS_PER_TET
@@ -174,6 +179,7 @@ impl EnergyHessianTopology for TetMeshInertia<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> EnergyHessian<T> for TetMeshInertia<'_> {
     #[allow(non_snake_case)]
     fn energy_hessian_values(&self, _v0: &[T], _v1: &[T], scale: T, values: &mut [T]) {

@@ -8,11 +8,16 @@ use crate::attrib_defines::*;
 use crate::Error;
 
 pub mod material;
+#[cfg(feature = "optsolver")]
 pub mod shell;
+#[cfg(feature = "optsolver")]
 pub mod solid;
 pub mod tetmesh_surface;
 pub mod tetsolid;
 pub mod trishell;
+
+pub(crate) mod interior_edge;
+pub use interior_edge::*;
 
 /// A utility for initializing the source index attribute to use for updating mesh vertices.
 ///

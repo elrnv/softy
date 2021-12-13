@@ -18,7 +18,7 @@ use crate::constraint::*;
 use crate::contact::*;
 use crate::friction::*;
 use crate::matrix::*;
-use crate::objects::shell::TriMeshShell;
+use crate::objects::trishell::TriShell;
 use crate::Error;
 use crate::Real;
 use crate::TriMesh;
@@ -72,6 +72,7 @@ impl<T: Real> MassData<T> {
 
 /// Enforce a contact constraint on a mesh against animated vertices. This constraint prevents
 /// vertices from occupying the same space as a smooth representation of the simulation mesh.
+#[cfg(feature = "optsolver")]
 #[derive(Clone, Debug)]
 pub struct PointContactConstraint<T = f64>
 where
@@ -121,6 +122,7 @@ where
     collider_vertex_topo: Chunked<Vec<(usize, f64)>>,
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> PointContactConstraint<T> {
     pub fn clone_cast<S: Real>(&self) -> PointContactConstraint<S> {
         PointContactConstraint {
@@ -735,7 +737,7 @@ impl<T: Real> PointContactConstraint<T> {
                     let translation = rigid_motion[1].unwrap()[0];
                     let rotation = rigid_motion[1].unwrap()[1];
                     MassMatrixInv::Dense(
-                        TriMeshShell::rigid_effective_mass_inv(
+                        TriShell::rigid_effective_mass_inv(
                             *mass,
                             translation.into_tensor(),
                             rotation.into_tensor(),
@@ -1027,6 +1029,7 @@ fn neighborhood_indices_with<T: Real>(
     neighborhood_indices
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
     // Get the total number of contacts that could potentially occur.
     fn num_potential_contacts(&self) -> usize {
@@ -1842,6 +1845,7 @@ impl<T: Real> ContactConstraint<T> for PointContactConstraint<T> {
 
 pub(crate) type Input<'a, T> = [SubsetView<'a, Chunked3<&'a [T]>>; 2]; // Object and collider vertices
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> PointContactConstraint<T> {
     pub(crate) fn constraint_size(&self) -> usize {
         self.implicit_surface.num_neighborhoods()
@@ -2412,6 +2416,7 @@ impl<T: Real> PointContactConstraint<T> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
     type Input = [SubsetView<'a, Chunked3<&'a [T]>>; 2]; // Object and collider vertices
 
@@ -2480,6 +2485,7 @@ impl<'a, T: Real> Constraint<'a, T> for PointContactConstraint<T> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
     fn constraint_jacobian_size(&self) -> usize {
         let num_obj = if !self.object_is_fixed() {
@@ -2565,6 +2571,7 @@ impl<T: Real> ContactConstraintJacobian<'_, T> for PointContactConstraint<T> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<'a, T: Real> ContactConstraintHessian<'a, T> for PointContactConstraint<T> {
     type InputDual = &'a [T];
     fn constraint_hessian_size(&self) -> usize {
@@ -2658,6 +2665,7 @@ mod tests {
 
     /// Test the `fill_background_potential` function on a small grid.
     #[test]
+    #[cfg(feature = "optsolver")]
     fn background_fill_test() {
         // Make a small grid.
         let mut grid = TriMesh::from(

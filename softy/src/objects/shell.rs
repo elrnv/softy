@@ -15,9 +15,6 @@ use crate::objects::*;
 use crate::Real;
 use crate::TriMesh;
 
-pub(crate) mod interior_edge;
-pub use interior_edge::*;
-
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum FixedVerts {
     Zero,

@@ -3,11 +3,13 @@ mod test_utils;
 use approx::*;
 use geo::mesh::VertexPositions;
 use geo::ops::transform::*;
+#[cfg(feature = "optsolver")]
 use softy::fem::opt::*;
 use softy::*;
 pub use test_utils::*;
 
 /// Helper function to generate a simple solver for two initially deformed tets under gravity.
+#[cfg(feature = "optsolver")]
 fn two_tet_solver() -> Solver {
     let tet1 = make_one_deformed_tet_mesh();
     let mut tet2 = make_one_deformed_tet_mesh();
@@ -22,6 +24,7 @@ fn two_tet_solver() -> Solver {
 }
 
 #[test]
+#[cfg(feature = "optsolver")]
 fn two_deformed_tets_test() {
     let mut solver = two_tet_solver();
     assert!(solver.step().is_ok());
@@ -46,6 +49,7 @@ fn two_deformed_tets_test() {
 }
 
 #[test]
+#[cfg(feature = "optsolver")]
 fn volume_constraint() -> Result<(), Error> {
     let tet1 = make_one_deformed_tet_mesh();
     let mut tet2 = make_one_deformed_tet_mesh();

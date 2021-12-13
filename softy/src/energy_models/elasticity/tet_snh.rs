@@ -8,7 +8,6 @@ use geo::ops::*;
 use geo::prim::Tetrahedron;
 use tensr::*;
 
-use super::tetmesh_nh::TetMeshElasticity;
 use super::tetsolid_nh::TetSolidElasticity;
 use super::LinearElementEnergy;
 use crate::Real;
@@ -259,10 +258,13 @@ impl<T: Real> LinearElementEnergy<T> for StableNeoHookeanTetEnergy<T> {
     }
 }
 
-pub type TetMeshStableNeoHookean<'a, T> = TetMeshElasticity<'a, StableNeoHookeanTetEnergy<T>>;
+#[cfg(feature = "optsolver")]
+pub type TetMeshStableNeoHookean<'a, T> =
+    super::tetmesh_nh::TetMeshElasticity<'a, StableNeoHookeanTetEnergy<T>>;
 pub type TetSolidStableNeoHookean<'a, T> = TetSolidElasticity<'a, StableNeoHookeanTetEnergy<T>>;
 
 #[cfg(test)]
+#[cfg(feature = "optsolver")]
 mod tests {
     use geo::mesh::VertexPositions;
 

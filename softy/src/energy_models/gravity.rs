@@ -1,7 +1,9 @@
 use crate::attrib_defines::*;
 use crate::energy::*;
 use crate::matrix::*;
+#[cfg(feature = "optsolver")]
 use crate::objects::shell::*;
+#[cfg(feature = "optsolver")]
 use crate::objects::solid::TetMeshSolid;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
@@ -103,11 +105,13 @@ impl<T: Real> EnergyHessian<T> for TetSolidGravity<'_> {
 }
 
 /// A constant directional force.
+#[cfg(feature = "optsolver")]
 pub struct TetMeshGravity<'a> {
     solid: &'a TetMeshSolid,
     g: Vector3<f64>,
 }
 
+#[cfg(feature = "optsolver")]
 impl<'a> TetMeshGravity<'a> {
     pub fn new(solid: &'a TetMeshSolid, gravity: [f64; 3]) -> TetMeshGravity<'a> {
         TetMeshGravity {
@@ -119,6 +123,7 @@ impl<'a> TetMeshGravity<'a> {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
+#[cfg(feature = "optsolver")]
 impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
@@ -149,6 +154,7 @@ impl<T: Real> Energy<T> for TetMeshGravity<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
@@ -178,6 +184,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for TetMeshGravity<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl EnergyHessianTopology for TetMeshGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
@@ -187,6 +194,7 @@ impl EnergyHessianTopology for TetMeshGravity<'_> {
     }
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
+#[cfg(feature = "optsolver")]
 impl<T: Real> EnergyHessian<T> for TetMeshGravity<'_> {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
@@ -282,11 +290,13 @@ impl<T: Real> EnergyHessian<T> for SoftTriShellGravity<'_> {
  */
 
 /// A constant directional force.
+#[cfg(feature = "optsolver")]
 pub struct SoftTriMeshShellGravity<'a> {
     shell: &'a TriMeshShell,
     g: Vector3<f64>,
 }
 
+#[cfg(feature = "optsolver")]
 impl<'a> SoftTriMeshShellGravity<'a> {
     pub fn new(shell: &'a TriMeshShell, gravity: [f64; 3]) -> SoftTriMeshShellGravity<'a> {
         SoftTriMeshShellGravity {
@@ -298,6 +308,7 @@ impl<'a> SoftTriMeshShellGravity<'a> {
 
 /// Define energy for gravity.
 /// Gravity is a position based energy.
+#[cfg(feature = "optsolver")]
 impl<T: Real> Energy<T> for SoftTriMeshShellGravity<'_> {
     /// Since gravity depends on position, `x` is expected to be a position quantity.
     fn energy(&self, _x0: &[T], x1: &[T]) -> T {
@@ -328,6 +339,7 @@ impl<T: Real> Energy<T> for SoftTriMeshShellGravity<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriMeshShellGravity<'_> {
     /// Add the gravity gradient to the given global vector.
     fn add_energy_gradient(&self, _x0: &[X], _x1: &[T], grad: &mut [T]) {
@@ -359,6 +371,7 @@ impl<X: Real, T: Real> EnergyGradient<X, T> for SoftTriMeshShellGravity<'_> {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl EnergyHessianTopology for SoftTriMeshShellGravity<'_> {
     fn energy_hessian_size(&self) -> usize {
         0
@@ -369,6 +382,7 @@ impl EnergyHessianTopology for SoftTriMeshShellGravity<'_> {
     fn energy_hessian_indices_offset(&self, _: MatrixElementIndex, _: &mut [MatrixElementIndex]) {}
 }
 
+#[cfg(feature = "optsolver")]
 impl<T: Real> EnergyHessian<T> for SoftTriMeshShellGravity<'_> {
     fn energy_hessian_values(&self, _x0: &[T], _x1: &[T], _scale: T, _vals: &mut [T]) {}
 }
@@ -423,6 +437,7 @@ impl<T: Real> EnergyHessian<T> for RigidShellGravity {
 }
 
 #[cfg(test)]
+#[cfg(feature = "optsolver")]
 mod tests {
     use super::*;
     use crate::energy_models::test_utils::*;

@@ -96,11 +96,7 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
         // All the free vertices are considered as degrees of freedom.
         // We sorted the vertices such that free vertices come first.
 
-        let num_vert_coords = vtx_pos.len();
-        let num_free_vert_coords = vertex_type
-            .binary_search(&VertexType::Free.next_variant())
-            .map(|x| x * 3)
-            .unwrap_or(num_vert_coords);
+        let num_free_vert_coords = vertex_type.partition_point(|&key| key < VertexType::Fixed) * 3;
 
         let q = vtx_pos
             .iter()
@@ -116,6 +112,7 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
             //.chain(rigid.translation())
             //.chain(rigid.orientation())
             .collect();
+        dbg!(&num_free_vert_coords);
 
         Chunked::from_offsets(vec![0, num_free_vert_coords], GeneralizedState { q, dq })
     }
@@ -136,25 +133,82 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
 //}
 
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
-pub struct VertexWorkspaceComponent<X, V, XAD, VAD, G, L, FC, LAD, FCAD, M, I, VT> {
+pub struct VertexWorkspaceComponent<X, V, XAD, VAD, R, RAD, L, LAD, FC, FCAD, M, I, VT> {
     #[component]
-    pub state: ParticleState<X, V>,
+    pub cur: ParticleState<X, V>,
     #[component]
-    pub state_ad: ParticleState<XAD, VAD>,
-    /// Gradient for all meshes for which the generalized coordinates don't coincide
-    /// with vertex positions.
-    pub grad: G,
+    pub next: ParticleState<X, V>,
+    #[component]
+    pub next_ad: ParticleState<XAD, VAD>,
+    pub residual: R,
+    pub residual_ad: RAD,
     pub lambda: L,
-    pub vfc: FC,
     pub lambda_ad: LAD,
+    pub vfc: FC,
     pub vfc_ad: FCAD,
     pub mass_inv: M,
     pub orig_index: I,
     pub vertex_type: VT,
 }
 
-pub type VertexWorkspace<V, VF, S, I, VT> =
-    VertexWorkspaceComponent<V, V, VF, VF, V, V, V, VF, VF, S, I, VT>;
+pub type VertexWorkspace<V, VF, S, SF, I, VT> =
+    VertexWorkspaceComponent<V, V, VF, VF, V, VF, S, SF, V, VF, S, I, VT>;
+
+impl<T: Real, F: Real>
+    VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<F>, Vec<usize>, Vec<VertexType>>
+{
+    pub fn residual_state(&mut self) -> Chunked3<ResidualState<&[T], &[T], &mut [T]>> {
+        Chunked3::from_flat(ResidualState {
+            cur: ParticleState {
+                pos: self.cur.pos.storage().as_slice(),
+                vel: self.cur.vel.storage().as_slice(),
+            },
+            next: ParticleState {
+                pos: self.next.pos.storage().as_slice(),
+                vel: self.next.vel.storage().as_slice(),
+            },
+            r: self.residual.storage_mut().as_mut_slice(),
+        })
+    }
+    pub fn residual_state_ad(&mut self) -> Chunked3<ResidualState<&[T], &[F], &mut [F]>> {
+        Chunked3::from_flat(ResidualState {
+            cur: ParticleState {
+                pos: self.cur.pos.storage().as_slice(),
+                vel: self.cur.vel.storage().as_slice(),
+            },
+            next: ParticleState {
+                pos: self.next_ad.pos.storage().as_slice(),
+                vel: self.next_ad.vel.storage().as_slice(),
+            },
+            r: self.residual_ad.storage_mut().as_mut_slice(),
+        })
+    }
+}
+
+impl<'a, T: Real, F: Real>
+    VertexWorkspace<
+        Chunked3<&'a mut [T]>,
+        Chunked3<&'a mut [F]>,
+        &'a mut [T],
+        &'a mut [F],
+        &'a mut [usize],
+        &'a mut [VertexType],
+    >
+{
+    pub fn into_residual_state_ad(self) -> Chunked3<ResidualState<&'a [T], &'a [F], &'a mut [F]>> {
+        Chunked3::from_flat(ResidualState {
+            cur: ParticleState {
+                pos: self.cur.pos.into_storage(),
+                vel: self.cur.vel.into_storage(),
+            },
+            next: ParticleState {
+                pos: self.next_ad.pos.into_storage(),
+                vel: self.next_ad.vel.into_storage(),
+            },
+            r: self.residual_ad.into_storage(),
+        })
+    }
+}
 
 /// Generalized coordinates with past and present states.
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
@@ -215,36 +269,21 @@ impl<T: Real, F: Real> GeneralizedCoords<&mut [T], &mut [F]> {
         );
     }
 
-    /// Retreat all degrees of freedom forward.
-    ///
-    /// This is the opposite of `advance`.
-    pub fn retreat(&mut self) {
-        self.iter_mut().for_each(
-            |GeneralizedCoords {
-                 prev, cur, next_q, ..
-             }| {
-                *next_q = *cur.q;
-                *cur.q = *prev.q;
-                *cur.dq = *prev.dq;
-                // TODO: Do we need to keep around a prev prev step?
-            },
-        );
-    }
-
-    pub fn residual_step_state_ad(&mut self) -> ResidualStepState<&[T], &[F], &mut [F]> {
-        StepState {
-            prev_q: self.prev.q.view(),
-            cur: GeneralizedState {
-                q: self.cur.q.view(),
-                dq: self.cur.dq.view(),
-            },
-            next: GeneralizedState {
-                q: self.next_ad.q.view_mut(),
-                dq: self.next_ad.dq.view(),
-            },
-        }
-        .with_residual(self.r_ad.view_mut())
-    }
+    ///// Retreat all degrees of freedom forward.
+    /////
+    ///// This is the opposite of `advance`.
+    //pub fn retreat(&mut self) {
+    //    self.iter_mut().for_each(
+    //        |GeneralizedCoords {
+    //             prev, cur, next_q, ..
+    //         }| {
+    //            *next_q = *cur.q;
+    //            *cur.q = *prev.q;
+    //            *cur.dq = *prev.dq;
+    //            // TODO: Do we need to keep around a prev prev step?
+    //        },
+    //    );
+    //}
 
     pub fn step_state<'dq>(&mut self, dq_next: &'dq [T]) -> StepStateV<&[T], &'dq [T], &mut [T]> {
         StepStateV {
@@ -262,21 +301,6 @@ impl<T: Real, F: Real> GeneralizedCoords<&mut [T], &mut [F]> {
 }
 
 impl<'a, T: Real, F: Real> GeneralizedCoords<&'a mut [T], &'a mut [F]> {
-    pub fn into_residual_step_state_ad(self) -> ResidualStepState<&'a [T], &'a [F], &'a mut [F]> {
-        StepState {
-            prev_q: &*self.prev.q,
-            cur: GeneralizedState {
-                q: &*self.cur.q,
-                dq: &*self.cur.dq,
-            },
-            next: GeneralizedState {
-                q: self.next_ad.q,
-                dq: &*self.next_ad.dq,
-            },
-        }
-        .with_residual(self.r_ad)
-    }
-
     pub fn into_step_state<'dq>(
         self,
         dq_next: &'dq [T],
@@ -290,6 +314,20 @@ impl<'a, T: Real, F: Real> GeneralizedCoords<&'a mut [T], &'a mut [F]> {
             next: GeneralizedState {
                 q: self.next_q,
                 dq: dq_next,
+            },
+        }
+    }
+
+    pub fn into_step_state_ad(self) -> StepStateV<&'a [T], &'a [F], &'a mut [F]> {
+        StepStateV {
+            prev_q: self.prev.q,
+            cur: GeneralizedState {
+                q: self.cur.q,
+                dq: self.cur.dq,
+            },
+            next: GeneralizedState {
+                q: self.next_ad.q,
+                dq: self.next_ad.dq,
             },
         }
     }
@@ -337,8 +375,14 @@ pub struct State<T, F> {
     pub dof: Chunked<GeneralizedCoords<Vec<T>, Vec<F>>>,
 
     /// Per vertex positions, velocities and other workspace quantities.
-    pub vtx:
-        VertexWorkspace<Chunked3<Vec<T>>, Chunked3<Vec<F>>, Vec<T>, Vec<usize>, Vec<VertexType>>,
+    pub vtx: VertexWorkspace<
+        Chunked3<Vec<T>>,
+        Chunked3<Vec<F>>,
+        Vec<T>,
+        Vec<F>,
+        Vec<usize>,
+        Vec<VertexType>,
+    >,
 
     pub shell: TriShell,
     pub solid: TetSolid,
@@ -364,19 +408,6 @@ impl Default for VertexType {
     }
 }
 
-impl VertexType {
-    /// Returns the next varient in the order of definition.
-    const fn next_variant(&self) -> Self {
-        use VertexType::*;
-        match *self {
-            Free => Rigid,
-            Rigid => Fixed,
-            Fixed => Ignored,
-            Ignored => Free,
-        }
-    }
-}
-
 /// Generalized state variables used for time integration.
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
 pub struct StepStateComponent<P, CQ, CD, NQ, ND> {
@@ -390,25 +421,18 @@ pub struct StepStateComponent<P, CQ, CD, NQ, ND> {
 pub type StepState<Const, ConstF, MutF> = StepStateComponent<Const, Const, Const, MutF, ConstF>;
 pub type StepStateV<Const, ConstV, Mut> = StepStateComponent<Const, Const, Const, Mut, ConstV>;
 
-impl<P, CQ, CD, NQ, ND> StepStateComponent<P, CQ, CD, NQ, ND> {
-    pub fn with_residual<R>(self, r: R) -> ResidualStepStateComponent<P, CQ, CD, NQ, ND, R> {
-        ResidualStepStateComponent {
-            step_state: self,
-            r,
-        }
-    }
-}
-
 /// Generalized state variables used for time integration.
 #[derive(Copy, Clone, Debug, PartialEq, Default, Component)]
-pub struct ResidualStepStateComponent<P, CQ, CD, NQ, ND, R> {
+pub struct ResidualStateComponent<CX, CV, NX, NV, R> {
     #[component]
-    pub step_state: StepStateComponent<P, CQ, CD, NQ, ND>,
+    pub cur: ParticleState<CX, CV>,
+    #[component]
+    pub next: ParticleState<NX, NV>,
     pub r: R,
 }
 
-pub type ResidualStepState<Const, ConstF, MutF> =
-    ResidualStepStateComponent<Const, Const, Const, MutF, ConstF, MutF>;
+pub type ResidualState<Const, ConstF, MutF> =
+    ResidualStateComponent<Const, Const, ConstF, ConstF, MutF>;
 
 pub fn sort_mesh_vertices_by_type(mesh: &mut Mesh, materials: &[Material]) -> Vec<VertexType> {
     // Enumerate all vertices so that fixed vertices are put at the end.
@@ -494,7 +518,6 @@ impl<T: Real> State<T, ad::FT<T>> {
         // All non-fixed vertices that are not part of a rigid body are degrees
         // of freedom in this scheme.
         let dof = GeneralizedCoords::<Vec<T>, Vec<ad::FT<T>>>::new_chunked(
-            // rigid,
             bytemuck::cast_slice(mesh.vertex_positions()),
             bytemuck::cast_slice(vel.as_slice()),
             &vertex_type,
@@ -503,8 +526,42 @@ impl<T: Real> State<T, ad::FT<T>> {
         // Masses don't usually change so we can initialize them now.
         let mass = Self::compute_vertex_masses(&solid, &shell, num_verts);
 
+        let next: ParticleState<Chunked3<Vec<_>>, Chunked3<Vec<_>>> = ParticleState {
+            pos: mesh
+                .vertex_position_iter()
+                .map(|x| x.as_tensor().cast::<T>().into_data())
+                .collect(),
+            vel: vel
+                .iter()
+                .map(|x| x.as_tensor().cast::<T>().into_data())
+                .collect(),
+        };
+
+        let next_ad_pos = next
+            .pos
+            .iter()
+            .map(|pos| pos.as_tensor().cast::<ad::FT<T>>().into_data())
+            .collect();
+        let next_ad_vel = next
+            .vel
+            .iter()
+            .map(|v| v.as_tensor().cast::<ad::FT<T>>().into_data())
+            .collect();
+
         // This is the vertex workspace which gets updated on demand.
         let vtx = VertexWorkspace {
+            cur: next.clone(),
+            next,
+            next_ad: ParticleState {
+                pos: next_ad_pos,
+                vel: next_ad_vel,
+            },
+            residual: Chunked3::from_flat(vec![T::zero(); num_verts * 3]),
+            residual_ad: Chunked3::from_flat(vec![ad::FT::<T>::zero(); num_verts * 3]),
+            lambda: vec![T::zero(); num_verts],
+            lambda_ad: vec![ad::FT::<T>::zero(); num_verts],
+            vfc: Chunked3::from_flat(vec![T::zero(); num_verts * 3]),
+            vfc_ad: Chunked3::from_flat(vec![ad::FT::<T>::zero(); num_verts * 3]),
             mass_inv: mass
                 .into_iter()
                 .take(num_free_verts)
@@ -519,13 +576,6 @@ impl<T: Real> State<T, ad::FT<T>> {
                 .map(|&i| usize::from(i))
                 .collect(),
             vertex_type: vertex_type.to_vec(),
-            ..VertexWorkspace::<
-                Chunked3<Vec<T>>,
-                Chunked3<Vec<ad::FT<T>>>,
-                Vec<T>,
-                Vec<usize>,
-                Vec<VertexType>,
-            >::default()
         };
 
         assert_eq!(vtx.mass_inv.len(), num_verts);
@@ -596,18 +646,21 @@ impl<T: Real> State<T, ad::FT<T>> {
             Chunked3<&[T]>,
             Chunked3<&[ad::FT<T>]>,
             &[T],
+            &[ad::FT<T>],
             &[usize],
             &[VertexType],
         >| VertexWorkspace {
-            state: convert_vtx_state(&ws.state),
-            state_ad: ParticleState {
-                pos: convert3_ad(ws.state_ad.pos),
-                vel: convert3_ad(ws.state_ad.vel),
+            cur: convert_vtx_state(&ws.cur),
+            next: convert_vtx_state(&ws.next),
+            next_ad: ParticleState {
+                pos: convert3_ad(ws.next_ad.pos),
+                vel: convert3_ad(ws.next_ad.vel),
             },
-            grad: convert3(ws.grad),
-            lambda: convert3(ws.lambda),
+            residual: convert3(ws.residual),
+            residual_ad: convert3_ad(ws.residual_ad),
+            lambda: convert(ws.lambda),
+            lambda_ad: convert_ad(ws.lambda_ad),
             vfc: convert3(ws.vfc),
-            lambda_ad: convert3_ad(ws.lambda_ad),
             vfc_ad: convert3_ad(ws.vfc_ad),
             mass_inv: convert(ws.mass_inv),
             orig_index: ws.orig_index.to_vec(),
@@ -627,6 +680,16 @@ impl<T: Real> State<T, ad::FT<T>> {
     }
 
     /// Transfer state from degrees of freedom to vertex state.
+    pub fn update_cur_vertices(&mut self) {
+        let Self { dof, vtx, .. } = self;
+        let dof_cur = dof.view().map_storage(|dof| GeneralizedState {
+            q: dof.cur.q,
+            dq: dof.cur.dq,
+        });
+        vtx.cur.view_mut().update_with(dof_cur);
+    }
+
+    /// Transfer state from degrees of freedom to vertex state.
     ///
     /// This ensures that vertex data queried by constraint functions is current.
     pub fn update_vertices(&mut self, dq_next: &[T]) {
@@ -635,7 +698,7 @@ impl<T: Real> State<T, ad::FT<T>> {
             q: dof.next_q,
             dq: dq_next,
         });
-        vtx.state.view_mut().update_with(dof_next);
+        vtx.next.view_mut().update_with(dof_next);
     }
 
     /// Transfer state from degrees of freedom to vertex state.
@@ -647,7 +710,7 @@ impl<T: Real> State<T, ad::FT<T>> {
             q: dof.next_ad.q,
             dq: dof.next_ad.dq,
         });
-        vtx.state_ad.view_mut().update_with(dof_next);
+        vtx.next_ad.view_mut().update_with(dof_next);
     }
 
     /// Build a `StepState` view of the state.
@@ -994,25 +1057,33 @@ impl<T: Real> State<T, ad::FT<T>> {
         let new_pos_iter = self.vtx.orig_index.iter().map(|&idx| new_pos.get(idx));
 
         let Self {
-            vtx: VertexWorkspace {
-                state, vertex_type, ..
-            },
+            vtx:
+                VertexWorkspace {
+                    cur,
+                    next,
+                    vertex_type,
+                    ..
+                },
             ..
         } = self;
 
-        // Only update fixed vertices, if no such attribute exists, return an error.
-        state
-            .iter_mut()
+        // Only update fixed vertices.
+        cur.iter_mut()
+            .zip(next.iter())
+            .zip(vertex_type.iter())
+            .filter(|(_, &vt)| vt == VertexType::Fixed)
+            .for_each(|((cur, next), _)| {
+                let cur_pos = cur.pos.as_mut_tensor();
+                let cur_vel = cur.vel.as_mut_tensor();
+                let next_pos = next.pos.as_tensor();
+                *cur_vel = (*next_pos - *cur_pos) * dt_inv;
+                *cur_pos = *next_pos;
+            });
+        next.iter_mut()
             .zip(new_pos_iter)
             .zip(vertex_type.iter())
-            .filter_map(|(data, &vt)| {
-                if vt == VertexType::Fixed {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-            .for_each(|(ParticleState { pos, vel }, new_pos)| {
+            .filter(|(_, &vt)| vt == VertexType::Fixed)
+            .for_each(|((ParticleState { pos, vel }, new_pos), _)| {
                 // Update the vertices we find in the given `new_pos` collection.
                 if let Some(&new_pos) = new_pos {
                     *vel.as_mut_tensor() =
@@ -1152,50 +1223,46 @@ impl<T: Real> State<T, ad::FT<T>> {
     pub fn advance(&mut self, dq_next: &[T]) {
         // Advance degrees of freedom.
         self.dof.storage_mut().view_mut().advance(dq_next);
-        // Update vertex data with the new state.
-        self.update_vertices(dq_next);
+        // Update vertex data with the current state.
+        self.update_cur_vertices();
 
         let Self { vtx, shell, .. } = self;
 
         // Update edge angles for shells.
-        let pos_next = vtx
-            .state
-            .view()
-            .map_storage(|state| state.pos)
-            .into_arrays();
-        shell.update_dihedral_angles(pos_next);
+        let cur_pos = vtx.cur.view().map_storage(|state| state.pos).into_arrays();
+        shell.update_dihedral_angles(cur_pos);
     }
 
-    /// Reverts to previous step.
-    ///
-    /// This is the opposite of `advance`.
-    pub fn retreat(&mut self) {
-        let State {
-            dof, vtx, shell, ..
-        } = self;
+    ///// Reverts to previous step.
+    /////
+    ///// This is the opposite of `advance`.
+    //pub fn retreat(&mut self) {
+    //    let State {
+    //        dof, vtx, shell, ..
+    //    } = self;
 
-        // Retreat degrees of freedom.
-        dof.storage_mut().view_mut().retreat();
-        // Update vertex data with the old state.
-        vtx.state
-            .view_mut()
-            .update_with(dof.view().map_storage(|dof| dof.cur));
+    //    // Retreat degrees of freedom.
+    //    dof.storage_mut().view_mut().retreat();
+    //    // Update vertex data with the old state.
+    //    vtx.next
+    //        .view_mut()
+    //        .update_with(dof.view().map_storage(|dof| dof.cur));
 
-        // Update edge angles for shells.
-        let pos_prev = vtx
-            .state
-            .view()
-            .map_storage(|state| state.pos)
-            .into_arrays();
-        shell.update_dihedral_angles(pos_prev);
-    }
+    //    // Update edge angles for shells.
+    //    let pos_prev = vtx
+    //        .next
+    //        .view()
+    //        .map_storage(|state| state.pos)
+    //        .into_arrays();
+    //    shell.update_dihedral_angles(pos_prev);
+    //}
 
     /// Updates the given input vertex positions and velocities with the current vertex state.
     ///
     /// Note that to get the latest state into vertex quantities, `update` must be called first.
     pub fn update_input(&self, input_vtx_pos: &mut [[f64; 3]], input_vtx_vel: &mut [[f64; 3]]) {
         self.vtx
-            .state
+            .next
             .view()
             .iter()
             .zip(self.vtx.orig_index.iter())

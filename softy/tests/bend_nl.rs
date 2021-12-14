@@ -41,7 +41,9 @@ fn equilibrium() {
         .set_materials(vec![soft_shell_material().into(); 1])
         .build::<f64>()
         .expect("Failed to build a solver for a three triangle test.");
-    assert!(solver.step().is_ok());
+    let result = solver.step();
+    dbg!(&result);
+    assert!(result.is_ok());
 
     // Expect the tet to remain in original configuration
     let shell = &solver.shell();

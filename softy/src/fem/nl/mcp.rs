@@ -53,7 +53,10 @@ where
         seen.iter_mut().for_each(|x| *x = false);
 
         let (l, u) = &*self.bounds.borrow();
-        for (&i, &j, v) in zip!(rows.iter(), cols.iter(), values.iter_mut()) {
+        let n = l.len();
+        for (&i, &j, v) in
+            zip!(rows.iter(), cols.iter(), values.iter_mut()).filter(|(&i, &j, _)| i < n && j < n)
+        {
             let u = T::from(u[i]).unwrap();
             let l = T::from(l[i]).unwrap();
             if r[i] <= x[i] - u || r[i] >= x[i] - l {
@@ -68,16 +71,8 @@ where
             }
         }
     }
-    fn jacobian_product(
-        &self,
-        x: &[T],
-        p: &[T],
-        r: &[T],
-        rows: &[usize],
-        cols: &[usize],
-        jp: &mut [T],
-    ) {
-        self.problem.jacobian_product(x, p, r, rows, cols, jp);
+    fn jacobian_product(&self, x: &[T], p: &[T], r: &[T], jp: &mut [T]) {
+        self.problem.jacobian_product(x, p, r, jp);
         let (l, u) = &*self.bounds.borrow();
         zip!(
             x.par_iter(),

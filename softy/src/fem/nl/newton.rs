@@ -8,6 +8,7 @@ use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
 use crate::inf_norm;
+use crate::Index;
 use crate::Real;
 
 // Parameters for the Newton solver.
@@ -43,11 +44,11 @@ pub struct NewtonWorkspace<T: Real> {
     r_next: Vec<T>,
     j_rows: Vec<usize>,
     j_cols: Vec<usize>,
-    //j_vals: Vec<T>,
-    ////// Mapping from original triplets given by the `j_*` members to the final
-    ////// compressed sparse matrix.
-    //j_mapping: Vec<usize>,
-    //j: DSMatrix<T>,
+    j_vals: Vec<T>,
+    /// Mapping from original triplets given by the `j_*` members to the final
+    /// compressed sparse matrix.
+    j_mapping: Vec<Index>,
+    j: DSMatrix<T>,
 }
 
 pub struct Newton<P, T: Real> {
@@ -89,33 +90,37 @@ where
 
         let (j_rows, j_cols) = problem.jacobian_indices();
         assert_eq!(j_rows.len(), j_cols.len());
-        //let j_nnz = j_rows.len();
-        //let j_vals = vec![T::zero(); j_nnz];
+        let j_nnz = j_rows.len();
+        let j_vals = vec![T::zero(); j_nnz];
 
-        //// Construct a mapping from original triplets to final compressed matrix.
-        //let mut j_mapping = (0..j_nnz).collect::<Vec<_>>();
+        // Construct a mapping from original triplets to final compressed matrix.
+        let mut j_entries = (0..j_nnz).collect::<Vec<_>>();
 
-        //j_mapping.sort_by(|&a, &b| {
-        //    j_rows[a]
-        //        .cmp(&j_rows[b])
-        //        .then_with(|| j_cols[a].cmp(&j_cols[b]))
-        //});
+        j_entries.sort_by(|&a, &b| {
+            j_rows[a]
+                .cmp(&j_rows[b])
+                .then_with(|| j_cols[a].cmp(&j_cols[b]))
+        });
 
-        //// We use tensr to build the CSR matrix since it allows us to track
-        //// where each element goes after compression.
-        //let triplet_iter = j_mapping.iter().map(|&i| (j_rows[i], j_cols[i], j_vals[i]));
+        let mut j_mapping = vec![Index::INVALID; j_entries.len()];
+        let j_entries = j_entries
+            .into_iter()
+            .filter(|&i| j_rows[i] < n && j_cols[i] < n)
+            .collect::<Vec<_>>();
 
-        //let j_uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, n, n);
+        // We use tensr to build the CSR matrix since it allows us to track
+        // where each element goes after compression.
+        let triplet_iter = j_entries.iter().map(|&i| (j_rows[i], j_cols[i], j_vals[i]));
 
-        //let order = j_mapping.clone();
+        let j_uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, n, n);
 
-        //// Compress the CSR Jacobian matrix.
-        //let j = j_uncompressed.pruned(
-        //    |_, _, _| true,
-        //    |src, dst| {
-        //        j_mapping[order[src]] = dst;
-        //    },
-        //);
+        // Compress the CSR Jacobian matrix.
+        let j = j_uncompressed.pruned(
+            |_, _, _| true,
+            |src, dst| {
+                j_mapping[j_entries[src]] = Index::new(dst);
+            },
+        );
 
         // Allocate space for the linear solver.
         let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
@@ -135,9 +140,9 @@ where
                 r_next,
                 j_rows,
                 j_cols,
-                //j_vals,
-                //j_mapping,
-                //j,
+                j_vals,
+                j_mapping,
+                j,
             }),
         }
     }
@@ -186,9 +191,10 @@ where
         let Self {
             problem,
             params,
-            inner_callback,
+            //inner_callback,
             outer_callback,
             workspace,
+            ..
         } = self;
 
         let NewtonWorkspace {
@@ -200,9 +206,9 @@ where
             r_next,
             j_rows,
             j_cols,
-            //j_vals,
-            //j_mapping,
-            //j,
+            j_vals,
+            j_mapping,
+            j,
             x_prev,
         } = &mut *workspace.borrow_mut();
 
@@ -261,10 +267,10 @@ where
 
             // Update Jacobian values.
             //let before_j = Instant::now();
-            //problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
+            problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
             // TODO: For debugging only
             for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
-                problem.jacobian_product(x, &p, &r, &j_rows, &j_cols, jp)
+                problem.jacobian_product(x, &p, &r, jp)
             }
             //eprintln!("J = [");
             //for jp in j_dense.iter() {
@@ -275,20 +281,22 @@ where
             //}
             //eprintln!("]");
             svd_values(j_dense.view());
-            //write_jacobian_img(j_dense.view(), iterations);
+            write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
             ////log::trace!("j_vals = {:?}", &j_vals);
 
             //// Zero out Jacobian.
-            //j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
+            j.storage_mut().iter_mut().for_each(|x| *x = T::zero());
             //j_sprs.data_mut().iter_mut().for_each(|x| *x = T::zero());
 
             // Update the Jacobian matrix.
-            //for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
-            //j.storage_mut()[pos] += j_val;
-            //    j_sprs.data_mut()[pos] += j_val;
-            //}
+            for (&pos, &j_val) in j_mapping.iter().zip(j_vals.iter()) {
+                if let Some(pos) = pos.into_option() {
+                    j.storage_mut()[pos] += j_val;
+                    //j_sprs.data_mut()[pos] += j_val;
+                }
+            }
 
             //log::trace!("r = {:?}", &r);
 
@@ -308,38 +316,39 @@ where
                 .min(((r_cur_norm - linsolve_result.residual).abs() / r_prev_norm) as f32);
 
             r_cur.copy_from_slice(&r);
-            linsolve_result = linsolve.solve(
-                |p, out| {
-                    let t_begin_jprod = Instant::now();
-                    problem.jacobian_product(x, p, r_cur, j_rows, j_cols, out);
-                    //out.iter_mut().for_each(|x| *x = T::zero());
-                    //j.view()
-                    //    .add_mul_in_place_par(p.as_tensor(), out.as_mut_tensor());
-                    jprod_linsolve_time += Instant::now() - t_begin_jprod;
-                    inner_callback.borrow_mut()(CallbackArgs {
-                        residual: r_cur.as_slice(),
-                        x,
-                        problem,
-                    })
-                },
-                p.as_mut_slice(),
-                r.as_mut_slice(),
-            );
+            //linsolve_result = linsolve.solve(
+            //    |p, out| {
+            //        let t_begin_jprod = Instant::now();
+            //        problem.jacobian_product(x, p, r_cur, out);
+            //        //out.iter_mut().for_each(|x| *x = T::zero());
+            //        //j.view()
+            //        //    .add_mul_in_place_par(p.as_tensor(), out.as_mut_tensor());
+            //        jprod_linsolve_time += Instant::now() - t_begin_jprod;
+            //        inner_callback.borrow_mut()(CallbackArgs {
+            //            residual: r_cur.as_slice(),
+            //            x,
+            //            problem,
+            //        })
+            //    },
+            //    p.as_mut_slice(),
+            //    r.as_mut_slice(),
+            //);
 
-            linsolve_time += Instant::now() - t_begin_linsolve;
             //log::trace!("linsolve result: {:?}", linsolve_result);
 
-            //if !sid_solve_mut(j.view(), r.as_mut_slice()) {
-            //    break SolveResult {
-            //        iterations,
-            //        status: Status::LinearSolveError,
-            //    };
-            //}
+            if !sid_solve_mut(j.view(), r.as_mut_slice()) {
+                break SolveResult {
+                    iterations,
+                    status: Status::LinearSolveError,
+                };
+            }
 
             // r is now the search direction, rename to avoid confusion.
-            //let p = r.as_slice();
+            p.copy_from_slice(r.as_slice());
 
-            // log::trace!("p = {:?}", &r);
+            log::trace!("p = {:?}", &r);
+
+            linsolve_time += Instant::now() - t_begin_linsolve;
 
             // Check solution:
             // Compute out = J * p
@@ -420,7 +429,7 @@ where
                     //jp.iter_mut().for_each(|x| *x = T::zero());
                     //j.view()
                     //    .add_mul_in_place_par(p.as_tensor(), jp.as_mut_tensor());
-                    problem.jacobian_product(x, p, r_cur, j_rows, j_cols, jp.as_mut_slice());
+                    problem.jacobian_product(x, p, r_cur, jp.as_mut_slice());
                     jprod_ls_time += Instant::now() - t_begin_jprod;
 
                     // TRADITIONAL BACKTRACKING:
@@ -587,7 +596,9 @@ fn sid_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) ->
         }
     }
 
+    dbg!(&b);
     let mut b_vec: na::DVectorSliceMut<T> = b.into();
+    dbg!(&dense);
     dense.lu().solve_mut(&mut b_vec)
 }
 

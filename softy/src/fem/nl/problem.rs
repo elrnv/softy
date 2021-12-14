@@ -135,7 +135,7 @@ impl<T: Real> NLProblem<T> {
     /// Returns the solved positions of the vertices.
     pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
         let state = self.state.borrow();
-        std::cell::Ref::map(state, |s| s.vtx.state.pos.as_arrays())
+        std::cell::Ref::map(state, |s| s.vtx.cur.pos.as_arrays())
     }
 }
 
@@ -335,41 +335,41 @@ impl<T: Real64> NLProblem<T> {
         self.state.borrow_mut().advance(v);
     }
 
-    /// Advance object data one step back.
-    pub fn retreat(&mut self) {
-        self.state.borrow_mut().retreat();
-        //        // Clear any frictional impulses
-        //        for fc in self.frictional_contacts.iter() {
-        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
-        //                friction_data
-        //                    .collider_impulse
-        //                    .source_iter_mut()
-        //                    .for_each(|(x, y)| {
-        //                        *x = [T::zero(); 3];
-        //                        *y = [T::zero(); 3]
-        //                    });
-        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
-        //                    *x = [T::zero(); 3];
-        //                    *y = [T::zero(); 3]
-        //                });
-        //            }
-        //        }
-        //        for fc in self.frictional_contacts_ad.iter() {
-        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
-        //                friction_data
-        //                    .collider_impulse
-        //                    .source_iter_mut()
-        //                    .for_each(|(x, y)| {
-        //                        *x = [ad::F::zero(); 3];
-        //                        *y = [ad::F::zero(); 3]
-        //                    });
-        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
-        //                    *x = [ad::F::zero(); 3];
-        //                    *y = [ad::F::zero(); 3]
-        //                });
-        //            }
-        //        }
-    }
+    //    /// Advance object data one step back.
+    //    pub fn retreat(&mut self) {
+    //        self.state.borrow_mut().retreat();
+    //        //        // Clear any frictional impulses
+    //        //        for fc in self.frictional_contacts.iter() {
+    //        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
+    //        //                friction_data
+    //        //                    .collider_impulse
+    //        //                    .source_iter_mut()
+    //        //                    .for_each(|(x, y)| {
+    //        //                        *x = [T::zero(); 3];
+    //        //                        *y = [T::zero(); 3]
+    //        //                    });
+    //        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
+    //        //                    *x = [T::zero(); 3];
+    //        //                    *y = [T::zero(); 3]
+    //        //                });
+    //        //            }
+    //        //        }
+    //        //        for fc in self.frictional_contacts_ad.iter() {
+    //        //            if let Some(friction_data) = fc.constraint.borrow_mut().frictional_contact_mut() {
+    //        //                friction_data
+    //        //                    .collider_impulse
+    //        //                    .source_iter_mut()
+    //        //                    .for_each(|(x, y)| {
+    //        //                        *x = [ad::F::zero(); 3];
+    //        //                        *y = [ad::F::zero(); 3]
+    //        //                    });
+    //        //                friction_data.object_impulse.iter_mut().for_each(|(x, y)| {
+    //        //                    *x = [ad::F::zero(); 3];
+    //        //                    *y = [ad::F::zero(); 3]
+    //        //                });
+    //        //            }
+    //        //        }
+    //    }
 
     pub fn update_max_step(&mut self, _step: f64) {
         //for fc in self.frictional_contacts.iter_mut() {
@@ -1338,6 +1338,7 @@ impl<T: Real64> NLProblem<T> {
      * End of debugging functions
      */
 
+    /// Conservatively estimates the number of non-zeros in the Jacobian.
     fn jacobian_nnz(&self) -> usize {
         let mut num = 0;
         {
@@ -1386,17 +1387,13 @@ impl<T: Real64> NLProblem<T> {
     /// Strictly speaking this is equal to the momentum difference `M (v_+ - v_-)`.
     fn add_momentum_diff<S: Real>(
         &self,
-        state: ChunkedView<ResidualStepState<&[T], &[S], &mut [S]>>,
+        state: ResidualState<&[T], &[S], &mut [S]>,
         solid: &TetSolid,
         shell: &TriShell,
     ) {
-        let ResidualStepState {
-            step_state: StepState { cur, next, .. },
-            r,
-        } = state.isolate(VERTEX_DOFS);
-
-        solid.inertia().add_energy_gradient(cur.dq, next.dq, r);
-        shell.inertia().add_energy_gradient(cur.dq, next.dq, r);
+        let ResidualState { cur, next, r } = state;
+        solid.inertia().add_energy_gradient(cur.vel, next.vel, r);
+        shell.inertia().add_energy_gradient(cur.vel, next.vel, r);
     }
 
     /// Compute contact violation: `max(0, -min(d(q)))`
@@ -1578,26 +1575,23 @@ impl<T: Real64> NLProblem<T> {
     /// `M dv/dt - f(q,v) = 0`, this function subtracts `f(q,v)`.
     fn subtract_force<S: Real>(
         &self,
-        state: ChunkedView<ResidualStepState<&[T], &[S], &mut [S]>>,
+        state: ResidualState<&[T], &[S], &mut [S]>,
         solid: &TetSolid,
         shell: &TriShell,
         //vfc: &mut [S],
         //frictional_contacts: &[FrictionalContactConstraint<S>],
         //lambda: &mut Vec<S>,
     ) {
-        let ResidualStepState {
-            step_state: StepState { cur, next, .. },
-            r,
-        } = state.isolate(VERTEX_DOFS);
+        let ResidualState { cur, next, r } = state;
 
-        solid.elasticity().add_energy_gradient(cur.q, next.q, r);
+        solid.elasticity().add_energy_gradient(cur.pos, next.pos, r);
         solid
             .gravity(self.gravity)
-            .add_energy_gradient(cur.q, next.q, r);
-        shell.elasticity().add_energy_gradient(cur.q, next.q, r);
+            .add_energy_gradient(cur.pos, next.pos, r);
+        shell.elasticity().add_energy_gradient(cur.pos, next.pos, r);
         shell
             .gravity(self.gravity)
-            .add_energy_gradient(cur.q, next.q, r);
+            .add_energy_gradient(cur.pos, next.pos, r);
 
         //self.subtract_friction_and_contact_forces(
         //    q,
@@ -1617,45 +1611,53 @@ impl<T: Real64> NLProblem<T> {
     fn be_residual_autodiff(&self) {
         let state = &mut *self.state.borrow_mut();
         {
-            let mut res_state = state
+            let mut step_state = state
                 .dof
                 .view_mut()
-                .map_storage(|dof| dof.into_residual_step_state_ad());
-            // Clear residual vector.
-            res_state
-                .storage_mut()
-                .r
-                .iter_mut()
-                .for_each(|x| *x = ad::F::zero());
+                .map_storage(|dof| dof.into_step_state_ad());
 
             // Integrate position.
-            State::be_step(res_state.map_storage(|s| s.step_state), self.time_step());
+            State::be_step(step_state, self.time_step());
         }
         state.update_vertices_ad();
 
         {
             let State {
-                dof, solid, shell, ..
+                vtx, solid, shell, ..
             } = state;
 
+            // Clear residual vector.
+            vtx.residual_ad
+                .storage_mut()
+                .iter_mut()
+                .for_each(|x| *x = ad::F::zero());
+
             self.subtract_force(
-                dof.view_mut()
-                    .map_storage(|dof| dof.into_residual_step_state_ad()),
+                vtx.residual_state_ad().into_storage(),
                 solid,
                 shell, //vtx_state, vfc, &self.frictional_contacts_ad, lambda,
             );
         }
 
-        let mut res_state = state
-            .dof
-            .view_mut()
-            .map_storage(|dof| dof.into_residual_step_state_ad());
+        let mut res_state = state.vtx.residual_state_ad();
         let r = &mut res_state.storage_mut().r;
         *r.as_mut_tensor() *= ad::FT::cst(T::from(self.time_step()).unwrap());
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state, &state.solid, &state.shell);
+            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
         }
+
+        // Transfer residual to degrees of freedom.
+        state
+            .dof
+            .view_mut()
+            .isolate(VERTEX_DOFS)
+            .r_ad
+            .iter_mut()
+            .zip(state.vtx.residual_ad.storage().iter())
+            .for_each(|(dof_r, vtx_r)| {
+                *dof_r = *vtx_r;
+            })
     }
 
     /// Compute the backward Euler residual.
@@ -1673,23 +1675,25 @@ impl<T: Real64> NLProblem<T> {
         state.update_vertices(dq);
 
         self.subtract_force(
-            state
-                .dof
-                .view_mut()
-                .map_storage(|dof| dof.into_step_state(dq).with_residual(&mut *r)),
+            state.vtx.residual_state().into_storage(),
             &state.solid,
             &state.shell, //vfc, &self.frictional_contacts, lambda,
         );
 
-        let mut res_state = state
-            .dof
-            .view_mut()
-            .map_storage(|dof| dof.into_step_state(dq).with_residual(r));
+        let mut res_state = state.vtx.residual_state();
         *res_state.storage_mut().r.as_mut_tensor() *= T::from(self.time_step()).unwrap();
 
         if !self.is_static() {
-            self.add_momentum_diff(res_state, &state.solid, &state.shell);
+            self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
         }
+
+        // Transfer residual to degrees of freedom.
+        r.iter_mut()
+            .take(state.dof.view().isolate(VERTEX_DOFS).len())
+            .zip(state.vtx.residual.storage().iter())
+            .for_each(|(dof_r, vtx_r)| {
+                *dof_r = *vtx_r;
+            })
     }
 
     fn jacobian_indices(&self) -> (Vec<usize>, Vec<usize>) {
@@ -1744,20 +1748,25 @@ impl<T: Real64> NLProblem<T> {
         // Duplicate off-diagonal indices to form a complete matrix.
         let (rows_begin, rows_end) = rows.split_at_mut(count);
         let (cols_begin, cols_end) = cols.split_at_mut(count);
-        let mut i = 0;
-        for (&r, &c) in rows_begin.iter().zip(cols_begin.iter()) {
-            if r != c {
-                cols_end[i] = r;
-                rows_end[i] = c;
-                i += 1;
-            }
-        }
-        count += i;
+
+        // TODO: Parallelize this function
+        let num_off_diagonals = rows_begin
+            .iter()
+            .zip(cols_begin.iter())
+            .filter(|(&r, &c)| r != c)
+            .zip(rows_end.iter_mut().zip(cols_end.iter_mut()))
+            .map(|((&r, &c), (out_r, out_c))| {
+                *out_c = r;
+                *out_r = c;
+            })
+            .count();
+        count += num_off_diagonals;
 
         // TODO: Add frictional contact indices
 
         assert_eq!(count, rows.len());
         assert_eq!(count, cols.len());
+
         (rows, cols)
     }
 
@@ -1791,15 +1800,15 @@ impl<T: Real64> NLProblem<T> {
         let factor = T::from(self.impulse_inv_scale()).unwrap();
 
         let State {
-            dof, solid, shell, ..
+            vtx, solid, shell, ..
         } = state;
 
-        let StepState { cur, next, .. } = dof.view_mut().isolate(VERTEX_DOFS).into_step_state(dq);
+        let ResidualState { cur, next, .. } = vtx.residual_state().into_storage();
         let elasticity = solid.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
-            cur.q,
-            next.q,
+            cur.pos,
+            next.pos,
             dt * dt * factor,
             &mut vals[count..count + n],
         );
@@ -1808,15 +1817,15 @@ impl<T: Real64> NLProblem<T> {
         if !self.is_static() {
             let inertia = solid.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
+            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
             count += n;
         }
 
         let elasticity = shell.elasticity::<T>();
         let n = elasticity.energy_hessian_size();
         elasticity.energy_hessian_values(
-            cur.q,
-            next.q,
+            cur.pos,
+            next.pos,
             dt * dt * factor,
             &mut vals[count..count + n],
         );
@@ -1825,7 +1834,7 @@ impl<T: Real64> NLProblem<T> {
         if !self.is_static() {
             let inertia = shell.inertia();
             let n = inertia.energy_hessian_size();
-            inertia.energy_hessian_values(cur.dq, next.dq, factor, &mut vals[count..count + n]);
+            inertia.energy_hessian_values(cur.vel, next.vel, factor, &mut vals[count..count + n]);
             count += n;
         }
 
@@ -1869,14 +1878,7 @@ impl<T: Real64> NLProblem<T> {
         debug_assert!(vals.iter().all(|x| x.is_finite()));
     }
 
-    fn be_jacobian_product(
-        &self,
-        v: &[T],
-        p: &[T],
-        _rows: &[usize],
-        _cols: &[usize],
-        jp: &mut [T],
-    ) {
+    fn be_jacobian_product(&self, v: &[T], p: &[T], jp: &mut [T]) {
         {
             let State { dof, .. } = &mut *self.state.borrow_mut();
             let dq_ad = &mut dof.storage_mut().next_ad.dq;
@@ -1931,15 +1933,7 @@ pub trait NonLinearProblem<T: Real> {
     fn jacobian_values(&self, x: &[T], r: &[T], rows: &[usize], cols: &[usize], values: &mut [T]);
 
     /// Compute the residual and simultaneously its Jacobian product with the given vector `p`.
-    fn jacobian_product(
-        &self,
-        x: &[T],
-        p: &[T],
-        r: &[T],
-        rows: &[usize],
-        cols: &[usize],
-        jp: &mut [T],
-    );
+    fn jacobian_product(&self, x: &[T], p: &[T], r: &[T], jp: &mut [T]);
 }
 
 /// A Mixed complementarity problem is a non-linear problem subject to box constraints.
@@ -1984,16 +1978,8 @@ impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
         self.be_jacobian_values(v, r, rows, cols, vals);
     }
     #[inline]
-    fn jacobian_product(
-        &self,
-        v: &[T],
-        p: &[T],
-        _r: &[T],
-        rows: &[usize],
-        cols: &[usize],
-        jp: &mut [T],
-    ) {
-        self.be_jacobian_product(v, p, rows, cols, jp);
+    fn jacobian_product(&self, v: &[T], p: &[T], _r: &[T], jp: &mut [T]) {
+        self.be_jacobian_product(v, p, jp);
     }
 }
 

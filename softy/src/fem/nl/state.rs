@@ -723,6 +723,15 @@ impl<T: Real> State<T, ad::FT<T>> {
             .map_storage(|dof| dof.into_step_state(v))
     }
 
+    /// Build a `StepState` view of the state for auto-differentiated values.
+    pub fn step_state_ad(
+        &mut self,
+    ) -> ChunkedView<StepState<&[T], &[ad::FT<T>], &mut [ad::FT<T>]>> {
+        self.dof
+            .view_mut()
+            .map_storage(|dof| dof.into_step_state_ad())
+    }
+
     ///// Update vertex velocities of vertices not in q (dofs).
     //pub fn sync_vel<S: Real>(
     //    shells: &[TriMeshShell],

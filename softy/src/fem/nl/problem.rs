@@ -1267,7 +1267,6 @@ impl<T: Real64> NLProblem<T> {
     /*
      * The following functions are there for debugging jacobians and hessians
      */
-
     #[allow(dead_code)]
     pub fn print_jacobian_svd(&self, values: &[T]) {
         use na::DMatrix;
@@ -1283,7 +1282,9 @@ impl<T: Real64> NLProblem<T> {
         let ncols = n;
         let mut jac = DMatrix::<f64>::zeros(nrows, ncols);
         for ((&row, &col), &v) in rows.iter().zip(cols.iter()).zip(values.iter()) {
-            jac[(row as usize, col as usize)] += v.to_f64().unwrap();
+            if row < nrows && col < ncols {
+                jac[(row as usize, col as usize)] += v.to_f64().unwrap();
+            }
         }
 
         write_jacobian_img(&jac, *self.iter_counter.borrow() as u32);
@@ -1610,14 +1611,10 @@ impl<T: Real64> NLProblem<T> {
     /// Compute the backward Euler residual with automatic differentiation.
     fn be_residual_autodiff(&self) {
         let state = &mut *self.state.borrow_mut();
-        {
-            let mut step_state = state
-                .dof
-                .view_mut()
-                .map_storage(|dof| dof.into_step_state_ad());
 
+        {
             // Integrate position.
-            State::be_step(step_state, self.time_step());
+            State::be_step(state.step_state_ad(), self.time_step());
         }
         state.update_vertices_ad();
 
@@ -1662,10 +1659,8 @@ impl<T: Real64> NLProblem<T> {
 
     /// Compute the backward Euler residual.
     fn be_residual(&self, dq: &[T], r: &mut [T]) {
-        // Clear residual vector.
-        r.iter_mut().for_each(|x| *x = T::zero());
-
         let state = &mut *self.state.borrow_mut();
+
         {
             let step_state = state.step_state(dq);
             // Integrate position.
@@ -1673,6 +1668,14 @@ impl<T: Real64> NLProblem<T> {
         }
 
         state.update_vertices(dq);
+
+        // Clear residual vector.
+        state
+            .vtx
+            .residual
+            .storage_mut()
+            .iter_mut()
+            .for_each(|x| *x = T::zero());
 
         self.subtract_force(
             state.vtx.residual_state().into_storage(),
@@ -1779,13 +1782,7 @@ impl<T: Real64> NLProblem<T> {
         vals: &mut [T],
     ) {
         let state = &mut *self.state.borrow_mut();
-        State::be_step(
-            state
-                .dof
-                .view_mut()
-                .map_storage(|dof| dof.into_step_state(dq)),
-            self.time_step(),
-        );
+        State::be_step(state.step_state(dq), self.time_step());
         state.update_vertices(dq);
 
         let mut count = 0; // Values counter
@@ -2054,7 +2051,9 @@ impl<T: Real> NLProblem<T> {
         let mut jac_ad = vec![vec![0.0; n]; n];
         let mut jac = vec![vec![0.0; n]; n];
         for (&row, &col, &val) in zip!(jac_rows.iter(), jac_cols.iter(), jac_values.iter()) {
-            jac[row][col] += val.value();
+            if row < n && col < n {
+                jac[row][col] += val.value();
+            }
         }
 
         let mut success = true;

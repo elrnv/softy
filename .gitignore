@@ -4,5 +4,5 @@
 Cargo.lock
 **/out
 **/render
-/backup
+**/backup
 .vscode

@@ -13,7 +13,8 @@ geo = { path = "../geo" }
 utils = { path = "../utils" }
 softy = { path = "../softy" }
 libc = "*"
-hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
+#hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
+hdkrs = { path = "../../hdkrs/hdkrs" }
 lazy_static = "1.1"
 log = "0.4"
 env_logger = "0.9"
@@ -22,3 +23,6 @@ cxx = "1.0"
 [build-dependencies]
 cxx-build = "1.0"
 cmake = { git = "https://github.com/elrnv/cmake-rs.git" }
+
+[features]
+optsolver = ["softy/optsolver"]

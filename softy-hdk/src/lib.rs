@@ -146,6 +146,12 @@ mod ffi {
         pub tolerance: f32,
         pub max_iterations: u32,
         pub outer_tolerance: f32,
+        pub residual_criterion: bool,
+        pub residual_tolerance: f32,
+        pub velocity_criterion: bool,
+        pub velocity_tolerance: f32,
+        pub acceleration_criterion: bool,
+        pub acceleration_tolerance: f32,
         pub max_outer_iterations: u32,
 
         // Ipopt

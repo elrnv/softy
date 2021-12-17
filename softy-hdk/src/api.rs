@@ -1,13 +1,16 @@
 use crate::{ElasticityModel, MaterialProperties, SimParams};
-use geo::algo::split::TypedMesh;
+
+#[cfg(feature = "optsolver")]
 use geo::attrib::*;
+#[cfg(feature = "optsolver")]
 use geo::mesh::topology::*;
 use geo::NumVertices;
 use hdkrs::interop::CookResult;
-use softy::{self, fem, Mesh, PointCloud, PolyMesh, TetMesh, TetMeshExt};
+use softy::{self, fem, Mesh, PointCloud};
+#[cfg(feature = "optsolver")]
+use softy::{PolyMesh, TetMesh, TetMeshExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use utils::mode_u32;
 
 mod solver;
 
@@ -48,12 +51,14 @@ lazy_static! {
 pub(crate) enum Error {
     RegistryFull,
     MissingSolverAndMesh,
+    #[cfg(feature = "optsolver")]
     MaterialObjectMismatch {
         material_id: u32,
         object_type: ObjectType,
     },
     SolverCreate(softy::Error),
     RequiredMeshAttribute(geo::attrib::Error),
+    UnsupportedSolver,
 }
 
 impl From<softy::Error> for Error {
@@ -99,7 +104,12 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             gravity,
             clear_velocity,
             tolerance,
-            outer_tolerance,
+            residual_criterion,
+            residual_tolerance,
+            acceleration_criterion,
+            acceleration_tolerance,
+            velocity_criterion,
+            velocity_tolerance,
             max_iterations,
             max_outer_iterations,
             derivative_test,
@@ -121,7 +131,9 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             },
             gravity: [0.0, -gravity, 0.0],
             clear_velocity,
-            tolerance: outer_tolerance,
+            residual_tolerance: if residual_criterion { Some(residual_tolerance) } else { None },
+            velocity_tolerance: if velocity_criterion { Some(velocity_tolerance) } else { None },
+            acceleration_tolerance: if acceleration_criterion { Some(acceleration_tolerance) } else { None },
             max_iterations: max_outer_iterations,
             linsolve_tolerance: tolerance,
             max_linsolve_iterations: max_iterations,
@@ -133,6 +145,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
     }
 }
 
+#[cfg(feature = "optsolver")]
 impl<'a> Into<fem::opt::SimParams> for &'a SimParams {
     fn into(self) -> fem::opt::SimParams {
         let SimParams {
@@ -254,6 +267,7 @@ fn build_material_library(params: &SimParams) -> Vec<softy::Material> {
 }
 
 /// Build a material from the given parameters and set it to the specified id.
+#[cfg(feature = "optsolver")]
 fn get_solid_material(params: &SimParams, material_id: u32) -> Result<softy::SolidMaterial, Error> {
     let SimParams {
         ref materials,
@@ -298,6 +312,7 @@ fn get_solid_material(params: &SimParams, material_id: u32) -> Result<softy::Sol
 }
 
 /// Build a shell material from the given parameters and set it to the specified id.
+#[cfg(feature = "optsolver")]
 fn get_shell_material(params: &SimParams, material_id: u32) -> Result<softy::ShellMaterial, Error> {
     let SimParams {
         ref materials,
@@ -417,9 +432,10 @@ trait SolverBuilder {
     );
     fn build(&mut self) -> Result<Arc<Mutex<dyn Solver>>, Error>;
 }
+#[cfg(feature = "optsolver")]
 impl SolverBuilder for fem::opt::SolverBuilder {
     fn set_mesh(&mut self, mesh: Mesh, params: &SimParams) -> Result<(), Error> {
-        use geo::algo::SplitIntoConnectedComponents;
+        use geo::algo::{split::TypedMesh, SplitIntoConnectedComponents};
         let meshes = mesh.split_into_typed_meshes();
         for mesh in meshes.into_iter() {
             match mesh {
@@ -429,7 +445,7 @@ impl SolverBuilder for fem::opt::SolverBuilder {
                         let material_id = mesh
                             .attrib_as_slice::<i32, CellIndex>("mtl_id")
                             .map(|slice| {
-                                mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
+                                utils::mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
                                     .0
                             })
                             .unwrap_or(0);
@@ -448,7 +464,7 @@ impl SolverBuilder for fem::opt::SolverBuilder {
                         let material_id = mesh
                             .attrib_as_slice::<i32, FaceIndex>("mtl_id")
                             .map(|slice| {
-                                mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
+                                utils::mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
                                     .0
                             })
                             .unwrap_or(0);
@@ -503,7 +519,10 @@ pub(crate) fn register_new_solver(
 
     // Build a basic solver with a solid material.
     let mut solver_builder: Box<dyn SolverBuilder> = match params.solver_type {
+        #[cfg(feature = "optsolver")]
         SolverType::Ipopt => Box::new(fem::opt::SolverBuilder::new((&params).into())),
+        #[cfg(not(feature = "optsolver"))]
+        SolverType::Ipopt => return Err(Error::UnsupportedSolver),
         // All other solvers are custom nonlinear system solvers.
         _ => {
             let mut builder = Box::new(fem::nl::SolverBuilder::new((&params).into()));

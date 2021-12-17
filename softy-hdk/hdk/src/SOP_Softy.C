@@ -377,7 +377,6 @@ static const char *theDsFile = R"THEDSFILE(
                 "trustregion" "Trust Region"
             }
         }
-
         parm {
             name "clearvelocity"
             cppname "ClearVelocity"
@@ -410,6 +409,67 @@ static const char *theDsFile = R"THEDSFILE(
             type log
             default { "1e-5" }
             range { 0.0 1.0 }
+            hidewhen "{ solvertype != ipopt }"
+        }
+        parm {
+            name    "residualcriterion"
+            cppname "ResidualCriterion"
+            label ""
+            nolabel
+            type    toggle
+            joinnext
+            default { "on" }
+            hidewhen "{ solvertype == ipopt }"
+        }
+        parm {
+            name    "residualtolerance"
+            cppname "ResidualTolerance"
+            label   "Residual Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ solvertype == ipopt }"
+            disablewhen "{ residualcriterion == 0 }"
+        }
+        parm {
+            name    "accelerationcriterion"
+            cppname "AccelerationCriterion"
+            label ""
+            nolabel
+            type    toggle
+            joinnext
+            default { "off" }
+            hidewhen "{ solvertype == ipopt }"
+        }
+        parm {
+            name    "accelerationtolerance"
+            cppname "AccelerationTolerance"
+            label   "Acceleration Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ solvertype == ipopt }"
+            disablewhen "{ accelerationcriterion == 0 }"
+        }
+        parm {
+            name    "velocitycriterion"
+            cppname "VelocityCriterion"
+            label ""
+            nolabel
+            type    toggle
+            joinnext
+            default { "on" }
+            hidewhen "{ solvertype == ipopt }"
+        }
+        parm {
+            name "velocitytolerance"
+            cppname "VelocityTolerance"
+            label   "Velocity Tolerance"
+            type log
+            default { "1e-5" }
+            range { 0.0 1.0 }
+            hidewhen "{ solvertype == ipopt }"
+            disablewhen "{ velocitycriterion == 0 }"
         }
 
         parm {
@@ -487,7 +547,6 @@ static const char *theDsFile = R"THEDSFILE(
                 range { 0! 12! }
             }
         }
-
     }
 
 }
@@ -625,6 +684,12 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();
     sim_params.outer_tolerance = sopparms.getOuterTolerance();
+    sim_params.residual_criterion = sopparms.getResidualCriterion();
+    sim_params.residual_tolerance = sopparms.getResidualTolerance();
+    sim_params.acceleration_criterion = sopparms.getAccelerationCriterion();
+    sim_params.acceleration_tolerance = sopparms.getAccelerationTolerance();
+    sim_params.velocity_criterion = sopparms.getVelocityCriterion();
+    sim_params.velocity_tolerance = sopparms.getVelocityTolerance();
     sim_params.max_outer_iterations = sopparms.getMaxOuterIterations();
 
     sim_params.volume_constraint = sopparms.getVolumeConstraint();

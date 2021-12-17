@@ -1,6 +1,8 @@
 use geo::algo::split::TypedMesh;
 use geo::attrib::*;
-use softy::{fem, Error, Mesh, PointCloud, SimResult, TetMesh, TriMesh, SOURCE_INDEX_ATTRIB};
+use softy::{fem, Error, Mesh, PointCloud, SimResult, TetMesh, TriMesh};
+#[cfg(feature = "optsolver")]
+use softy::SOURCE_INDEX_ATTRIB;
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856
@@ -16,6 +18,7 @@ pub trait Solver: Send {
     fn set_interrupter(&mut self, interrupter: Box<dyn FnMut() -> bool + Send>);
 }
 
+#[cfg(feature = "optsolver")]
 impl Solver for fem::opt::Solver {
     #[inline]
     fn solve(&mut self) -> SimResult {

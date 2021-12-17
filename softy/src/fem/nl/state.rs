@@ -112,7 +112,6 @@ impl<Q: Real, D: Real> GeneralizedState<Vec<Q>, Vec<D>> {
             //.chain(rigid.translation())
             //.chain(rigid.orientation())
             .collect();
-        dbg!(&num_free_vert_coords);
 
         Chunked::from_offsets(vec![0, num_free_vert_coords], GeneralizedState { q, dq })
     }

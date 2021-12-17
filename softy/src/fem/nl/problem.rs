@@ -7,6 +7,7 @@ use num_traits::{Float, Zero};
 use tensr::{AsMutTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
+use crate::Mesh;
 use crate::constraint::*;
 use crate::constraints::volume::VolumeConstraint;
 use crate::contact::ContactJacobianView;
@@ -101,9 +102,19 @@ pub struct NLProblem<T: Real> {
     pub max_element_force_scale: f64,
     /// The minimum scale of the energy gradient intended to be used for rescaling the objective gradient.
     pub min_element_force_scale: f64,
+    /// Original mesh used to create this problem.
+    pub original_mesh: Mesh,
 }
 
 impl<T: Real> NLProblem<T> {
+    /// Get the current iteration count and reset it.
+    pub fn pop_iteration_count(&mut self) -> usize {
+        let iter = self.iterations;
+        // Reset count
+        self.iterations = 0;
+        iter
+    }
+
     pub fn impulse_inv_scale(&self) -> f64 {
         1.0 //utils::approx_power_of_two64(100.0 / (self.time_step() * self.max_element_force_scale))
     }
@@ -132,22 +143,49 @@ impl<T: Real> NLProblem<T> {
         self.time_step == 0.0
     }
 
-    /// Returns the solved positions of the vertices.
-    pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
-        let state = self.state.borrow();
-        std::cell::Ref::map(state, |s| s.vtx.cur.pos.as_arrays())
+    /// Returns the solved positions of the vertices in the original order.
+    pub fn vertex_positions(&self) -> Vec<[T; 3]> {
+        let State {
+            vtx: VertexWorkspace {
+                orig_index,
+                cur,
+                ..
+            },
+            ..
+        } = &*self.state.borrow();
+        let pos = cur.pos.as_arrays();
+        let mut out = vec![[T::zero();3]; pos.len()];
+        // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
+        orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = *pos);
+        out
+    }
+
+    /// Returns a reference to the original mesh used to create this problem with updated values.
+    pub fn mesh(&self) -> Mesh {
+        use tensr::AsTensor;
+        let mut mesh = self.original_mesh.clone();
+        let out = mesh.vertex_positions_mut();
+
+        // Update positions
+        let State {
+            vtx: VertexWorkspace {
+                orig_index,
+                cur,
+                ..
+            },
+            ..
+        } = &*self.state.borrow();
+        let pos = cur.pos.as_arrays();
+        // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
+        orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+
+        // TODO: add additional attributes.
+
+        mesh
     }
 }
 
 impl<T: Real64> NLProblem<T> {
-    /// Get the current iteration count and reset it.
-    pub fn pop_iteration_count(&mut self) -> usize {
-        let iter = self.iterations;
-        // Reset count
-        self.iterations = 0;
-        iter
-    }
-
     /// Get the minimum contact radius among all contact problems.
     ///
     /// If there are no contacts, simply return `None`.
@@ -2007,6 +2045,7 @@ impl<T: Real> NLProblem<T> {
             max_size,
             max_element_force_scale,
             min_element_force_scale,
+            original_mesh,
             ..
         } = self.clone();
 
@@ -2025,6 +2064,7 @@ impl<T: Real> NLProblem<T> {
             max_size,
             max_element_force_scale,
             min_element_force_scale,
+            original_mesh,
         }
     }
 

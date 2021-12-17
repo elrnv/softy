@@ -21,8 +21,9 @@ fn soft_shell_material() -> SoftShellMaterial {
 fn equilibrium() {
     init_logger();
     let params = SimParams {
-        gravity: [0.0f32, 0.0, 0.0],
+        gravity: [0.0f32, -9.8, 0.0],
         tolerance: 1e-5, // This is a fairly strict tolerance.
+        time_step: Some(0.01),
         ..STATIC_NL_PARAMS
     };
 
@@ -36,6 +37,8 @@ fn equilibrium() {
     mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
         .unwrap()[2] = 1;
 
+    geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh.clone()), "out/four_tri.vtk");
+
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh.clone()))
         .set_materials(vec![soft_shell_material().into(); 1])
@@ -45,10 +48,10 @@ fn equilibrium() {
     dbg!(&result);
     assert!(result.is_ok());
 
-    // Expect the tet to remain in original configuration
+    // Expect the triangles to remain in original configuration
     let shell = &solver.shell();
     let solution_mesh = TriMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         shell.triangle_elements.triangles.clone(),
     );
     compare_meshes(&solution_mesh, &mesh, 1e-6);
@@ -70,7 +73,7 @@ fn simple_static_undeformed() {
     assert!(solver.step().is_ok());
     let shell = &solver.shell();
     let solution = TriMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         shell.triangle_elements.triangles.clone(),
     );
 
@@ -100,7 +103,7 @@ fn static_deformed() {
     assert!(solver.step().is_ok());
     let shell = &solver.shell();
     let solution = TriMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         shell.triangle_elements.triangles.clone(),
     );
 
@@ -138,7 +141,7 @@ fn dynamic_deformed() {
     assert!(solver.step().is_ok());
     let shell = &solver.shell();
     let solution = TriMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         shell.triangle_elements.triangles.clone(),
     );
 

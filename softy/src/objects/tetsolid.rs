@@ -23,7 +23,7 @@ fn solid_mtl_iter<'a>(
     Ok(orig_cell_indices.iter().map(move |&orig_cell_idx| {
         let mtl_id = mtl_id[orig_cell_idx];
         // CAST: safely clamping mtl_id below at 0 before converting to usize.
-        if let Material::Solid(mtl) = &materials[mtl_id.max(0) as usize] {
+        if let Material::Solid(mtl) = &materials[mtl_id as usize] {
             Ok(mtl)
         } else {
             Err(Error::ObjectMaterialMismatch)
@@ -58,7 +58,7 @@ impl TetElements {
             .zip(mtl_id_iter)
             .enumerate()
             .filter_map(|(i, ((cell, ty), &mtl_id))| {
-                if let Material::Solid(mtl) = &materials[mtl_id.max(0) as usize] {
+                if let Material::Solid(mtl) = &materials[mtl_id as usize] {
                     if mtl.model() == model
                         && TetSolid::is_valid_cell(cell, ty)
                         && (vertex_type[cell[0]] != VertexType::Fixed
@@ -414,6 +414,11 @@ impl TetSolid {
             .tets
             .iter()
             .chain(self.snh_tet_elements.tets.iter())
+    }
+
+    /// Returns the total number of tetrahedra represented in this solid.
+    pub fn num_elements(&self) -> usize {
+        self.nh_tet_elements.num_elements() + self.snh_tet_elements.num_elements()
     }
 }
 

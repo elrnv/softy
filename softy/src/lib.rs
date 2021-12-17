@@ -73,7 +73,7 @@ pub enum Error {
     },
     #[error("Inverted reference element detected")]
     InvertedReferenceElement { inverted: Vec<usize> },
-    #[error("Error during main non-linear solve step")]
+    #[error("Error during main non-linear solve step: {result:?}")]
     NLSolveError { result: nl_fem::SolveResult },
     #[cfg(feature = "optsolver")]
     #[error("Error during main optimization solve step")]

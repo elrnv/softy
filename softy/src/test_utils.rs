@@ -37,7 +37,9 @@ pub const STATIC_NL_PARAMS: NLParams = NLParams {
     gravity: [0.0f32, -9.81, 0.0],
     time_step: None,
     clear_velocity: false,
-    tolerance: 1e-5,
+    residual_tolerance: Some(1e-5),
+    acceleration_tolerance: None,
+    velocity_tolerance: Some(1e-5),
     max_iterations: 300,
     linsolve_tolerance: 1e-9,
     max_linsolve_iterations: 10000,
@@ -461,12 +463,6 @@ pub fn make_stretched_box(i: usize) -> TetMesh {
         .insert_attrib_data::<VertexType, VertexIndex>(
             VERTEX_TYPE_ATTRIB,
             vertex_types_from_fixed(&fixed),
-        )
-        .unwrap();
-    box_mesh
-        .insert_attrib_data::<MaterialIdType, CellIndex>(
-            MATERIAL_ID_ATTRIB,
-            vec![0; box_mesh.num_cells()],
         )
         .unwrap();
 

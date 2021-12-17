@@ -46,7 +46,7 @@ fn equilibrium() {
     // Expect the box to remain in original configuration
     let solid = &solver.solid();
     let solution = TetMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         solid.nh_tet_elements.tets.clone(),
     );
     compare_meshes(&solution, &mesh, 1e-6);

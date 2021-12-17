@@ -115,16 +115,95 @@ impl SolverBuilder {
     }
 
     /// A helper function to initialize the material id attribute if one doesn't already exist.
-    pub(crate) fn init_material_id(mesh: &mut Mesh) -> Result<(), Error> {
-        // If there is already an attribute with the right type, just leave it alone.
-        if let Ok(_) = mesh.attrib_check::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB) {
-            return Ok(());
+    ///
+    /// This function also sets all ids that are out of bounds to 0, to avoid out of bounds errors,
+    /// so the attribute can be used to directly index the slice of materials.
+    pub(crate) fn init_material_id_attribute(mesh: &mut Mesh, num_materials: usize) -> Result<(), Error> {
+        use std::convert::TryFrom;
+        let normalize_id = move |id: MaterialIdType| {
+            if id >= MaterialIdType::try_from(num_materials).unwrap() {
+                0
+            } else {
+                id.max(0)
+            }
+        };
+
+        // If there is already an attribute with the right type, normalize the ids.
+        if let Ok(attrib) = mesh.attrib_mut::<CellIndex>(MATERIAL_ID_ATTRIB) {
+            if let Ok(attrib_slice) = attrib.as_mut_slice::<MaterialIdType>() {
+                attrib_slice.iter_mut().for_each(|id| *id = normalize_id(*id));
+                return Ok(());
+            }
         }
         // Remove an attribute with the same name if it exists since it will have the wrong type.
-        mesh.remove_attrib::<CellIndex>(MATERIAL_ID_ATTRIB).ok();
+        if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(MATERIAL_ID_ATTRIB) {
+            if let Ok(iter) = attrib.iter::<i32>() {
+                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u8>() {
+                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u32>() {
+                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                return Ok(());
+            }
+        }
         // If no attribute exists, just insert the new attribute with a default value.
         // We know that this will not panic because above we removed any attribute with the same name.
         mesh.attrib_or_insert_with_default::<MaterialIdType, CellIndex>(MATERIAL_ID_ATTRIB, 0)
+            .unwrap();
+        Ok(())
+    }
+
+    /// A helper function to initialize the fixed attribute if one doesn't already exist.
+    pub(crate) fn init_fixed_attribute(mesh: &mut Mesh) -> Result<(), Error> {
+        use num_traits::{Zero, One};
+        use std::convert::TryFrom;
+        let normalize_id = move |id: FixedIntType| {
+            if id != FixedIntType::zero() {
+                FixedIntType::one()
+            } else {
+                FixedIntType::zero()
+            }
+        };
+
+        // If there is already an attribute with the right type, leave values at either 0 or set to 1 if non-zero.
+        if let Ok(attrib) = mesh.attrib_mut::<VertexIndex>(FIXED_ATTRIB) {
+            if let Ok(attrib_slice) = attrib.as_mut_slice::<FixedIntType>() {
+                attrib_slice.iter_mut().for_each(|id| *id = normalize_id(*id));
+                return Ok(());
+            }
+        }
+        // Remove an attribute with the same name if it exists since it will have the wrong type.
+        if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(FIXED_ATTRIB) {
+            if let Ok(iter) = attrib.iter::<i32>() {
+                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<i64>() {
+                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u8>() {
+                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u32>() {
+                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
+                return Ok(());
+            } else if let Ok(iter) = attrib.iter::<u64>() {
+                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
+                return Ok(());
+            }
+        }
+        // If no attribute exists, just insert the new attribute with a default value.
+        // We know that this will not panic because above we removed any attribute with the same name.
+        mesh.attrib_or_insert_with_default::<FixedIntType, VertexIndex>(FIXED_ATTRIB, 0)
             .unwrap();
         Ok(())
     }
@@ -260,12 +339,16 @@ impl SolverBuilder {
             frictional_contacts,
         } = self.clone();
 
+        // Keep the original mesh around for easy inspection and visualization purposes.
+        let orig_mesh = mesh.clone();
+
         // Compute the reference position attribute temporarily.
         // This is used when building the simulation elements and constraints of the mesh.
         init_mesh_source_index_attribute(&mut mesh)?;
         Self::init_cell_vertex_ref_pos_attribute(&mut mesh)?;
         Self::init_velocity_attribute(&mut mesh)?;
-        Self::init_material_id(&mut mesh)?;
+        Self::init_material_id_attribute(&mut mesh, materials.len())?;
+        Self::init_fixed_attribute(&mut mesh)?;
 
         let vertex_type = crate::fem::nl::state::sort_mesh_vertices_by_type(&mut mesh, &materials);
         let state = State::try_from_mesh_and_materials(&mesh, &materials, &vertex_type)?;
@@ -389,6 +472,7 @@ impl SolverBuilder {
             max_size,
             max_element_force_scale: max_scale,
             min_element_force_scale: min_scale,
+            original_mesh: orig_mesh,
         })
     }
 
@@ -412,9 +496,10 @@ impl SolverBuilder {
         let params = self.sim_params.clone();
 
         let r_scale = problem.min_element_force_scale;
-        let r_tol = params.tolerance * r_scale as f32;
+        let r_tol = params.residual_tolerance.unwrap_or(0.0) * r_scale as f32;
 
-        let x_tol = params.tolerance;
+        let x_tol = params.velocity_tolerance.unwrap_or(0.0);
+        let a_tol = params.acceleration_tolerance.unwrap_or(0.0);
 
         log::info!("Simulation Parameters:\n{:#?}", params);
         log::info!("r_tol: {:?}", r_tol);
@@ -427,6 +512,7 @@ impl SolverBuilder {
             NewtonParams {
                 r_tol,
                 x_tol,
+                a_tol,
                 max_iter: params.max_iterations,
                 linsolve_tol: params.linsolve_tolerance,
                 linsolve_max_iter: params.max_linsolve_iterations,
@@ -524,6 +610,10 @@ where
         std::cell::Ref::map(self.problem().state.borrow(), |state| &state.shell)
     }
 
+    pub fn mesh(&self) -> Mesh {
+        self.problem().mesh()
+    }
+
     /// Get simulation parameters.
     pub fn params(&self) -> SimParams {
         self.sim_params.clone()
@@ -544,8 +634,8 @@ where
         self.problem_mut().update_vertices(pts)
     }
 
-    /// Returns the solved positions of the vertices.
-    pub fn vertex_positions(&self) -> std::cell::Ref<[[T; 3]]> {
+    /// Returns the solved positions of the vertices in original order.
+    pub fn vertex_positions(&self) -> Vec<[T; 3]> {
         self.problem().vertex_positions()
     }
 
@@ -618,13 +708,7 @@ where
     //fn all_contacts_linear(&self) -> bool {
     //    self.problem().all_contacts_linear()
     //}
-}
 
-impl<S, T> Solver<S, T>
-where
-    T: Real64 + na::RealField,
-    S: NLSolver<NLProblem<T>, T>,
-{
     /// Run the non-linear solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
         let Self {
@@ -674,7 +758,7 @@ where
 
                     let delta = sim_params.contact_tolerance as f64;
                     let denom: f64 = (compute_contact_penalty(0.0, delta as f32)
-                        - sim_params.tolerance as f64 / solver.problem().kappa)
+                        - sim_params.residual_tolerance.unwrap_or(0.0) as f64 / solver.problem().kappa)
                         .min(0.5 * delta)
                         .max(f64::EPSILON);
 

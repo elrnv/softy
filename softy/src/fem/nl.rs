@@ -27,7 +27,9 @@ pub struct SimParams {
     /// critical damping) where the time step and density effectively determines the
     /// regularization.
     pub clear_velocity: bool,
-    pub tolerance: f32,
+    pub residual_tolerance: Option<f32>,
+    pub acceleration_tolerance: Option<f32>,
+    pub velocity_tolerance: Option<f32>,
     pub max_iterations: u32,
     pub linsolve_tolerance: f32,
     pub max_linsolve_iterations: u32,
@@ -61,12 +63,19 @@ pub type Callback<T> = Box<dyn FnMut(CallbackArgs<T>) -> bool + Send + 'static>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
+    /// Solve was successful.
     Success,
+    /// The number of iterations exceeded maximum before stopping criterion was satisfied.
     MaximumIterationsExceeded,
+    /// The number of contact iterations exceeded the maximum before stopping criterion was satisfied.
     MaximumContactIterationsExceeded,
+    /// A problem with the linear solve occurred.
+    ///
+    /// This is typically a conditioning or invertibility issue.
     LinearSolveError,
     Diverged,
     StepTooLarge,
+    NothingToSolve,
     Interrupted,
 }
 

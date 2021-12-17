@@ -7,7 +7,6 @@ use tensr::*;
 use super::linsolve::*;
 use super::problem::NonLinearProblem;
 use super::{Callback, CallbackArgs, NLSolver, SolveResult, Status};
-use crate::inf_norm;
 use crate::Index;
 use crate::Real;
 
@@ -18,6 +17,8 @@ pub struct NewtonParams {
     pub r_tol: f32,
     /// Variable tolerance.
     pub x_tol: f32,
+    /// Acceleration tolerance.
+    pub a_tol: f32,
     /// Maximum number of Newton iterations permitted.
     pub max_iter: u32,
     /// Residual tolerance for the linear solve.
@@ -188,6 +189,12 @@ where
     /// This version of [`solve`] does not rely on the `initial_point` method of
     /// the problem definition. Instead the given `x` is used as the initial point.
     fn solve_with(&mut self, x: &mut [T]) -> SolveResult {
+        if x.is_empty() {
+            return SolveResult {
+                iterations: 0,
+                status: Status::NothingToSolve,
+            };
+        }
         let Self {
             problem,
             params,
@@ -220,6 +227,7 @@ where
         // Convert to sprs format for debugging. The CSR structure is preserved.
         //let mut j_sprs: sprs::CsMat<T> = j.clone().into();
 
+        let a_tol = T::from(params.a_tol).unwrap();
         let r_tol = T::from(params.r_tol).unwrap();
         let x_tol = T::from(params.x_tol).unwrap();
 
@@ -269,9 +277,9 @@ where
             //let before_j = Instant::now();
             problem.jacobian_values(x, &r, &j_rows, &j_cols, j_vals.as_mut_slice());
             // TODO: For debugging only
-            for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
-                problem.jacobian_product(x, &p, &r, jp)
-            }
+            //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
+            //    problem.jacobian_product(x, &p, &r, jp)
+            //}
             //eprintln!("J = [");
             //for jp in j_dense.iter() {
             //    for j in jp.iter() {
@@ -280,8 +288,8 @@ where
             //    eprintln!(";");
             //}
             //eprintln!("]");
-            svd_values(j_dense.view());
-            write_jacobian_img(j_dense.view(), iterations);
+            //svd_values(j_dense.view());
+            //write_jacobian_img(j_dense.view(), iterations);
             //jprod_time += Instant::now() - before_j;
 
             ////log::trace!("j_vals = {:?}", &j_vals);
@@ -405,12 +413,11 @@ where
 
             // Compute the residual for the full step.
             let t_begin_residual = Instant::now();
-
             problem.residual(&x, r_next.as_mut_slice());
-
             residual_time += Instant::now() - t_begin_residual;
 
             let ls_count = if rho >= 1.0 {
+                r_next_norm = r_next.as_tensor().norm().to_f64().unwrap();
                 1
             } else {
                 // Line search.
@@ -488,15 +495,17 @@ where
 
             let denom = x.as_tensor().norm() + T::one();
 
+            let dx_norm = num_traits::Float::sqrt(
+                x_prev
+                    .iter()
+                    .zip(x.iter())
+                    .map(|(&a, &b)| (a - b) * (a - b))
+                    .sum::<T>());
+
             // Check the convergence condition.
-            if r_next_norm < r_tol.to_f64().unwrap()
-                && num_traits::Float::sqrt(
-                    x_prev
-                        .iter()
-                        .zip(x.iter())
-                        .map(|(&a, &b)| (a - b) * (a - b))
-                        .sum::<T>(),
-                ) < x_tol * denom
+            if (r_tol > T::zero() && r_next_norm < r_tol.to_f64().unwrap())
+                || (x_tol > T::zero() && dx_norm < x_tol * denom)
+                || (a_tol > T::zero() && r_next_norm < a_tol.to_f64().unwrap())
             {
                 break SolveResult {
                     iterations,
@@ -550,7 +559,7 @@ where
  */
 fn log_debug_stats_header() {
     log::debug!(
-        "    i |   res-2    |   d-inf    |   x-inf    | lin # |  lin err   |   sigma    | ls # "
+        "    i |   res-2    |    d-2     |    x-2     | lin # |  lin err   |   sigma    | ls # "
     );
     log::debug!(
         "------+------------+------------+------------+-------+------------+------------+------"
@@ -569,10 +578,10 @@ fn log_debug_stats<T: Real>(
         "{i:>5} |  {res2:10.3e} | {di:10.3e} | {xi:10.3e} | {lin:>5} | {linerr:10.3e} | {sigma:10.3e} | {ls:>4} ",
         i = iterations,
         res2 = r.as_tensor().norm().to_f64().unwrap(),
-        di = inf_norm(x_prev.iter().zip(x.iter()).map(|(&a, &b)| a - b))
+        di = x_prev.iter().zip(x.iter()).map(|(&a, &b)| (a - b)*(a-b)).sum::<T>()
             .to_f64()
-            .unwrap(),
-        xi = inf_norm(x.iter().cloned()).to_f64().unwrap(),
+            .unwrap().sqrt(),
+        xi = x.as_tensor().norm().to_f64().unwrap(),
         lin = linsolve_result.iterations,
         linerr = linsolve_result.error,
         sigma = sigma,
@@ -596,9 +605,7 @@ fn sid_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) ->
         }
     }
 
-    dbg!(&b);
     let mut b_vec: na::DVectorSliceMut<T> = b.into();
-    dbg!(&dense);
     dense.lu().solve_mut(&mut b_vec)
 }
 

@@ -17,4 +17,5 @@ rpath = false
 
 [patch.crates-io]
 autodiff = {git = "https://github.com/elrnv/autodiff.git"}
-meshx = {git = "https://github.com/elrnv/meshx.git"}
+meshx = { git = "https://github.com/elrnv/meshx.git" }
+vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }

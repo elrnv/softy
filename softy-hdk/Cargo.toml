@@ -13,8 +13,7 @@ geo = { path = "../geo" }
 utils = { path = "../utils" }
 softy = { path = "../softy" }
 libc = "*"
-#hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
-hdkrs = { path = "../../hdkrs/hdkrs" }
+hdkrs = { git = "https://github.com/elrnv/hdkrs.git" }
 lazy_static = "1.1"
 log = "0.4"
 env_logger = "0.9"

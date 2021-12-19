@@ -9,6 +9,7 @@ members = [
     "cimplicits",
     "implicits-hdk",
     "benchmark",
+    "accelerate",
 ]
 
 [profile.release]
@@ -19,3 +20,6 @@ rpath = false
 autodiff = {git = "https://github.com/elrnv/autodiff.git"}
 meshx = { git = "https://github.com/elrnv/meshx.git" }
 vtkio = { git = "https://github.com/elrnv/vtkio.git", branch = "no-lzma" }
+
+[patch.'https://github.com/Andlon/mkl-sys']
+mkl-sys = { git = "https://github.com/elrnv/mkl-sys.git" }

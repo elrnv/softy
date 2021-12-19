@@ -72,7 +72,7 @@ pub enum Status {
     /// A problem with the linear solve occurred.
     ///
     /// This is typically a conditioning or invertibility issue.
-    LinearSolveError,
+    LinearSolveError(SparseDirectSolveError),
     Diverged,
     StepTooLarge,
     NothingToSolve,

@@ -31,6 +31,7 @@ find_package( hdkrs REQUIRED )
 
 if(APPLE)
     find_library( MACOS_SECURITY Security )
+    find_library( MACOS_ACCELERATE Accelerate )
 endif(APPLE)
 
 set( library_name sop_softy )
@@ -47,7 +48,7 @@ add_library( ${library_name} SHARED
 # Link against the Houdini libraries, and add required include directories and
 # compile definitions.
 target_link_libraries( ${library_name}
-    PUBLIC Houdini ${MACOS_SECURITY}
+    PUBLIC Houdini ${MACOS_SECURITY} ${MACOS_ACCELERATE}
     PRIVATE ${Softy_LIBRARIES} )
 
 if(WIN32)

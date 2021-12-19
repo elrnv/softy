@@ -3,6 +3,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tensr::*;
+#[cfg(target_os = "macos")]
+use accelerate::*;
+#[cfg(not(target_os = "macos"))]
+use mkl_corrode as mkl;
 
 use super::linsolve::*;
 use super::problem::NonLinearProblem;
@@ -35,6 +39,148 @@ impl std::fmt::Display for SolveResult {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum SparseDirectSolveError {
+    FactorizationFailed,
+    MatrixIsSingular,
+    InternalError,
+    ParameterError,
+    Released,
+}
+
+impl SparseDirectSolveError {
+    pub fn result_from_status<T>(val: T, status: SparseStatus) -> Result<T, SparseDirectSolveError> {
+        match status {
+            SparseStatus::Ok => Ok(val),
+            SparseStatus::FactorizationFailed => Err(SparseDirectSolveError::FactorizationFailed),
+            SparseStatus::MatrixIsSingular => Err(SparseDirectSolveError::MatrixIsSingular),
+            SparseStatus::InternalError => Err(SparseDirectSolveError::InternalError),
+            SparseStatus::ParameterError => Err(SparseDirectSolveError::ParameterError),
+            SparseStatus::Released => Err(SparseDirectSolveError::Released),
+        }
+    }
+    pub fn status(self) -> SparseStatus {
+         match self {
+            SparseDirectSolveError::FactorizationFailed   => SparseStatus::FactorizationFailed,
+            SparseDirectSolveError::MatrixIsSingular      => SparseStatus::MatrixIsSingular,
+            SparseDirectSolveError::InternalError         => SparseStatus::InternalError,
+            SparseDirectSolveError::ParameterError        => SparseStatus::ParameterError,
+            SparseDirectSolveError::Released              => SparseStatus::Released,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub enum Factorization {
+    Symbolic(SparseSymbolicFactorization),
+    Numeric(SparseFactorizationF64)
+}
+
+#[cfg(target_os = "macos")]
+impl From<SparseSymbolicFactorization> for Factorization {
+    fn from(s: SparseSymbolicFactorization) -> Factorization {
+        Factorization::Symbolic(s)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Factorization {
+    fn factor(&mut self, mtx: &SparseMatrixF64) -> Result<(), SparseDirectSolveError>{
+        match self {
+            Factorization::Symbolic(sym) => {
+                let f = mtx.factor_with(sym);
+                let status = f.status();
+                *self = Factorization::Numeric(f);
+                SparseDirectSolveError::result_from_status((), status)
+            }
+            Factorization::Numeric(num) => {
+                let status = num.refactor(mtx);
+                SparseDirectSolveError::result_from_status((), status)
+            }
+        }
+    }
+
+    /// Solve system using the current numerical factorization.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the matrix has not yet been numerically factorized.
+    /// To avoid panics, call `factor` before calling this function.
+    fn solve_in_place<'a>(&self, rhs: &'a mut [f64]) -> Result<&'a [f64], SparseDirectSolveError> {
+        match self {
+            Factorization::Symbolic(_) => unreachable!(),
+            Factorization::Numeric(num) => {
+                let status = num.solve_in_place(&mut *rhs);
+                SparseDirectSolveError::result_from_status(&*rhs, status)
+            }
+        }
+    }
+}
+
+/// Solver solely responsible for the sparse direct linear solve.
+///
+/// This is done via third party libraries like MKL or Accelerate.
+/// This struct also helps isolate conditionally compiled code from the rest of the solver.
+pub struct SparseDirectSolver {
+    r64: Vec<f64>,
+    #[cfg(target_os = "macos")]
+    mtx: SparseMatrixF64<'static>,
+    #[cfg(target_os = "macos")]
+    factorization: Factorization,
+    #[cfg(not(target_os = "macos"))]
+    mtx: mkl::SparseMatrix<f64>,
+    #[cfg(not(target_os = "macos"))]
+    solver: mkl::Solver<T>,
+}
+
+impl SparseDirectSolver {
+    pub fn new<T: Real>(m: DSMatrixView<T>) -> SparseDirectSolver {
+        use std::convert::TryFrom;
+        let num_variables = m.num_rows();
+        let mut values = Vec::new();
+        let mut row_indices= Vec::new();
+        let mut col_indices= Vec::new();
+        values.reserve(m.storage().len());
+        row_indices.reserve(m.storage().len());
+        col_indices.reserve(m.storage().len());
+        for (row_idx, row) in m.into_data().iter().enumerate() {
+            for (col_idx, val) in row.into_iter() {
+                values.push(val.to_f64().unwrap());
+                row_indices.push(i32::try_from(row_idx).unwrap());
+                col_indices.push(i32::try_from(col_idx).unwrap());
+            }
+        }
+        let mtx= SparseMatrixF64::from_coordinate(
+            i32::try_from(m.num_rows()).unwrap(), i32::try_from(m.num_cols()).unwrap(), 1, SparseAttributes::new().transposed(), col_indices.as_slice(), row_indices.as_slice(), values.as_slice()
+        );
+        let symbolic_factorization = mtx.structure().symbolic_factor(SparseFactorizationType::QR);
+        SparseDirectSolver {
+            r64: vec![0.0; num_variables],
+            mtx,
+            factorization: Factorization::from(symbolic_factorization),
+        }
+    }
+
+    pub fn update_values<T: Real>(&mut self, data: &[T]) {
+        assert_eq!(data.len(), self.mtx.data().len());
+        self.mtx.data_mut().iter_mut().zip(data.iter()).for_each(|(output, input)| *output = input.to_f64().unwrap());
+    }
+
+    pub fn refactor(&mut self) -> Result<(), SparseDirectSolveError>{
+        self.factorization.factor(&self.mtx)
+    }
+
+    pub fn update_rhs<T: Real>(&mut self, r: &[T]) {
+        self.r64.iter_mut().zip(r.iter()).for_each(|(out_f64, in_t)| *out_f64 = in_t.to_f64().unwrap());
+    }
+
+    pub fn solve<T: Real>(&mut self, r: &[T]) -> Result<&[f64], SparseDirectSolveError> {
+        self.update_rhs(&r);
+        self.factorization.factor(&self.mtx)?;
+        self.factorization.solve_in_place(&mut self.r64)
+    }
+}
+
 pub struct NewtonWorkspace<T: Real> {
     linsolve: BiCGSTAB<T>,
     x_prev: Vec<T>,
@@ -50,6 +196,7 @@ pub struct NewtonWorkspace<T: Real> {
     /// compressed sparse matrix.
     j_mapping: Vec<Index>,
     j: DSMatrix<T>,
+    sparse_solver: SparseDirectSolver,
 }
 
 pub struct Newton<P, T: Real> {
@@ -66,10 +213,45 @@ pub struct Newton<P, T: Real> {
     pub workspace: RefCell<NewtonWorkspace<T>>,
 }
 
+fn sparse_matrix_and_mapping<T: Real>(rows: &[usize], cols: &[usize], vals: &[T], mtx_size: usize) -> (DSMatrix<T>, Vec<Index>) {
+    let nnz = rows.len();
+    assert_eq!(nnz, cols.len());
+    assert_eq!(nnz, vals.len());
+    // Construct a mapping from original triplets to final compressed matrix.
+    let mut entries = (0..nnz).collect::<Vec<_>>();
+
+    entries.sort_by(|&a, &b| {
+        rows[a]
+            .cmp(&rows[b])
+            .then_with(|| cols[a].cmp(&cols[b]))
+    });
+
+    let mut mapping = vec![Index::INVALID; entries.len()];
+    let entries = entries
+        .into_iter()
+        .filter(|&i| rows[i] < mtx_size && cols[i] < mtx_size)
+        .collect::<Vec<_>>();
+
+    // We use tensr to build the CSR matrix since it allows us to track
+    // where each element goes after compression.
+    let triplet_iter = entries.iter().map(|&i| (rows[i], cols[i], vals[i]));
+
+    let uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, mtx_size, mtx_size);
+
+    // Compress the CSR matrix.
+    let mtx = uncompressed.pruned(
+        |_, _, _| true,
+        |src, dst| {
+            mapping[entries[src]] = Index::new(dst);
+        },
+    );
+    (mtx, mapping)
+}
+
 impl<T, P> Newton<P, T>
-where
-    T: Real,
-    P: NonLinearProblem<T>,
+    where
+        T: Real,
+        P: NonLinearProblem<T>,
 {
     pub fn new(
         problem: P,
@@ -94,37 +276,12 @@ where
         let j_nnz = j_rows.len();
         let j_vals = vec![T::zero(); j_nnz];
 
-        // Construct a mapping from original triplets to final compressed matrix.
-        let mut j_entries = (0..j_nnz).collect::<Vec<_>>();
-
-        j_entries.sort_by(|&a, &b| {
-            j_rows[a]
-                .cmp(&j_rows[b])
-                .then_with(|| j_cols[a].cmp(&j_cols[b]))
-        });
-
-        let mut j_mapping = vec![Index::INVALID; j_entries.len()];
-        let j_entries = j_entries
-            .into_iter()
-            .filter(|&i| j_rows[i] < n && j_cols[i] < n)
-            .collect::<Vec<_>>();
-
-        // We use tensr to build the CSR matrix since it allows us to track
-        // where each element goes after compression.
-        let triplet_iter = j_entries.iter().map(|&i| (j_rows[i], j_cols[i], j_vals[i]));
-
-        let j_uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, n, n);
-
-        // Compress the CSR Jacobian matrix.
-        let j = j_uncompressed.pruned(
-            |_, _, _| true,
-            |src, dst| {
-                j_mapping[j_entries[src]] = Index::new(dst);
-            },
-        );
+        let (j, j_mapping) = sparse_matrix_and_mapping(&j_rows, &j_cols, &j_vals, n);
 
         // Allocate space for the linear solver.
         let linsolve = BiCGSTAB::new(n, params.linsolve_max_iter, params.linsolve_tol);
+
+        let sparse_solver = SparseDirectSolver::new(j.view());
 
         Newton {
             problem,
@@ -144,6 +301,7 @@ where
                 j_vals,
                 j_mapping,
                 j,
+                sparse_solver,
             }),
         }
     }
@@ -206,6 +364,7 @@ where
 
         let NewtonWorkspace {
             linsolve,
+            x_prev,
             r,
             p,
             jp,
@@ -216,7 +375,7 @@ where
             j_vals,
             j_mapping,
             j,
-            x_prev,
+            sparse_solver,
         } = &mut *workspace.borrow_mut();
 
         let mut iterations = 0;
@@ -231,7 +390,7 @@ where
         let r_tol = T::from(params.r_tol).unwrap();
         let x_tol = T::from(params.x_tol).unwrap();
 
-        let mut linsolve_result = super::linsolve::SolveResult::default();
+        let linsolve_result = super::linsolve::SolveResult::default();
 
         log_debug_stats_header();
         log_debug_stats(0, 0, linsolve_result, linsolve.tol, &r, x, &x_prev);
@@ -249,15 +408,15 @@ where
         // Keep track of norms to avoid having to recompute them
         let mut r_prev_norm = r.as_tensor().norm().to_f64().unwrap();
         let mut r_cur_norm = r_prev_norm;
-        let mut r_next_norm = r_cur_norm;
+        let mut r_next_norm;
 
-        let mut j_dense =
-            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
-        let mut identity =
-            ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
-        for (i, id) in identity.iter_mut().enumerate() {
-            id[i] = T::one();
-        }
+        //let mut j_dense =
+        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        //let mut identity =
+        //    ChunkedN::from_flat_with_stride(x.len(), vec![T::zero(); x.len() * r.len()]);
+        //for (i, id) in identity.iter_mut().enumerate() {
+        //    id[i] = T::one();
+        //}
 
         let result = loop {
             //log::trace!("Previous r norm: {}", r_prev_norm);
@@ -305,6 +464,7 @@ where
                     //j_sprs.data_mut()[pos] += j_val;
                 }
             }
+            sparse_solver.update_values(j.storage());
 
             //log::trace!("r = {:?}", &r);
 
@@ -344,15 +504,18 @@ where
 
             //log::trace!("linsolve result: {:?}", linsolve_result);
 
-            if !sid_solve_mut(j.view(), r.as_mut_slice()) {
-                break SolveResult {
+            let result = sparse_solver.solve(&r);
+            let r64 = match result {
+                Err(err) => break SolveResult {
                     iterations,
-                    status: Status::LinearSolveError,
-                };
-            }
+                    status: Status::LinearSolveError(err),
+                },
+                Ok(r) => r
+            };
 
             // r is now the search direction, rename to avoid confusion.
-            p.copy_from_slice(r.as_slice());
+            p.iter_mut().zip(r64.iter()).for_each(|(p, &r64)| *p = T::from(r64).unwrap());
+            //p.copy_from_slice(r.as_slice());
 
             log::trace!("p = {:?}", &r);
 
@@ -589,13 +752,10 @@ fn log_debug_stats<T: Real>(
     );
 }
 
-/// Solves a sparse symmetric indefinite system `Ax = b`.
-///
-/// Here `A` is the lower triangular part of a symmetric sparse matrix in CSR format,
-/// `b` is a dense right hand side vector and the output `x` is computed in `b`.
+/// Solves a dense potentially indefinite system `Ax = b`.
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-fn sid_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) -> bool {
+fn dense_solve_mut<T: Real + na::ComplexField>(A: DSMatrixView<T>, b: &mut [T]) -> bool {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(A.num_rows(), A.num_cols());
 
@@ -623,6 +783,7 @@ fn eig<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     log::debug!("J eigenvalues: {:?}", dense.complex_eigenvalues());
 }
 
+#[allow(dead_code)]
 fn svd_values<T: Real + na::ComplexField>(mtx: ChunkedN<&[T]>) {
     // nalgebra dense prototype using lu.
     let mut dense = na::DMatrix::zeros(mtx.len(), mtx.len());

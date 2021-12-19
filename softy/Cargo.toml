@@ -34,6 +34,10 @@ rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.7"
 partition = "0.1" # Fast in-place slice partitioning.
+mkl-corrode = { git = "https://github.com/Andlon/mkl-corrode.git", features = ["ilp64", "openmp"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+accelerate = { package = "accelerate-framework", git = "https://github.com/elrnv/accelerate-rs.git" }
 
 [dev-dependencies]
 criterion = "0.3"

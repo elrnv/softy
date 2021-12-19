@@ -22,7 +22,7 @@ fn equilibrium() {
     init_logger();
     let params = SimParams {
         gravity: [0.0f32, -9.8, 0.0],
-        tolerance: 1e-5, // This is a fairly strict tolerance.
+        residual_tolerance: 1e-5.into(), // This is a fairly strict tolerance.
         time_step: Some(0.01),
         ..STATIC_NL_PARAMS
     };
@@ -37,7 +37,7 @@ fn equilibrium() {
     mesh.attrib_as_mut_slice::<FixedIntType, VertexIndex>(FIXED_ATTRIB)
         .unwrap()[2] = 1;
 
-    geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh.clone()), "out/four_tri.vtk");
+    //geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh.clone()), "out/four_tri.vtk");
 
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh.clone()))

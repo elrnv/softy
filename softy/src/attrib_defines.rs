@@ -19,6 +19,7 @@ pub const CONTACT_ATTRIB: &str = "contact";
 pub(crate) const VERTEX_TYPE_ATTRIB: &str = "__softy_internal_vertex_type";
 pub(crate) const STRAIN_ENERGY_ATTRIB: &str = "strain_energy";
 pub(crate) const MASS_ATTRIB: &str = "mass";
+pub const RESIDUAL_ATTRIB: &str = "residual";
 
 #[cfg(feature = "optsolver")]
 mod optsolver_defines {
@@ -63,3 +64,4 @@ pub type RefAngleType = f32;
 pub(crate) type ElasticForceType = [f64; 3];
 pub type FrictionImpulseType = [f64; 3];
 pub type ContactImpulseType = [f64; 3];
+pub type ResidualType = [f64; 3];

@@ -2,12 +2,14 @@ use std::cell::RefCell;
 
 use autodiff as ad;
 use flatk::*;
-use geo::mesh::VertexPositions;
+use geo::attrib::*;
+use geo::mesh::{topology::*, VertexPositions};
 use num_traits::{Float, Zero};
 use tensr::{AsMutTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
 use crate::Mesh;
+use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::constraints::volume::VolumeConstraint;
 use crate::contact::ContactJacobianView;
@@ -159,7 +161,9 @@ impl<T: Real> NLProblem<T> {
         orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = *pos);
         out
     }
+}
 
+impl<T: Real64> NLProblem<T> {
     /// Returns a reference to the original mesh used to create this problem with updated values.
     pub fn mesh(&self) -> Mesh {
         use tensr::AsTensor;
@@ -167,25 +171,34 @@ impl<T: Real> NLProblem<T> {
         let out = mesh.vertex_positions_mut();
 
         // Update positions
-        let State {
-            vtx: VertexWorkspace {
-                orig_index,
-                cur,
+        {
+            let State {
+                vtx: VertexWorkspace {
+                    orig_index,
+                    cur,
+                    ..
+                },
                 ..
-            },
-            ..
-        } = &*self.state.borrow();
-        let pos = cur.pos.as_arrays();
-        // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
-        orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+            } = &*self.state.borrow();
+            let pos = cur.pos.as_arrays();
+            // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
+            orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+        }
 
         // TODO: add additional attributes.
-
+        self.compute_residual(&mut mesh);
         mesh
     }
-}
 
-impl<T: Real64> NLProblem<T> {
+    fn compute_residual(&self, mesh: &mut Mesh) {
+        use tensr::AsTensor;
+        self.compute_vertex_be_residual();
+        let state = &mut *self.state.borrow_mut();
+        let vertex_residuals: Vec<_> = state.vtx.residual_state().map_storage(|state| state.r).iter().map(|v| v.as_tensor().cast::<f64>().into_data()).collect();
+        // Should not panic since vertex_residuals should have the same number of elements as vertices.
+        mesh.set_attrib_data::<ResidualType, VertexIndex>(RESIDUAL_ATTRIB, vertex_residuals).unwrap();
+    }
+
     /// Get the minimum contact radius among all contact problems.
     ///
     /// If there are no contacts, simply return `None`.
@@ -1166,142 +1179,6 @@ impl<T: Real64> NLProblem<T> {
     //        pressure
     //    }
 
-    /// Update the solid and shell meshes with relevant simulation data.
-    //pub fn update_mesh_data(&mut self) {
-    //    let contact_impulse = self.contact_impulse();
-    //    let friction_impulse = self.friction_impulse();
-    //    let friction_corrector_impulse = self.friction_corrector_impulse();
-    //    let pressure = self.pressure(contact_impulse.view());
-    //    let potential = self.contact_potential();
-    //    let normals = self.collider_normals();
-    //    for (idx, solid) in self.state.solids.iter_mut().enumerate() {
-    //        // Write back friction and contact impulses
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                "friction_corrector",
-    //                friction_corrector_impulse
-    //                    .view()
-    //                    .at(0)
-    //                    .at(idx)
-    //                    .view()
-    //                    .into(),
-    //            )
-    //            .ok();
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                FRICTION_ATTRIB,
-    //                friction_impulse
-    //                    .view()
-    //                    .at(SOLIDS_INDEX)
-    //                    .at(idx)
-    //                    .view()
-    //                    .into(),
-    //            )
-    //            .ok();
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<ContactImpulseType, VertexIndex>(
-    //                CONTACT_ATTRIB,
-    //                contact_impulse
-    //                    .view()
-    //                    .at(SOLIDS_INDEX)
-    //                    .at(idx)
-    //                    .view()
-    //                    .into(),
-    //            )
-    //            .ok();
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<PotentialType, VertexIndex>(
-    //                POTENTIAL_ATTRIB,
-    //                potential.view().at(SOLIDS_INDEX).at(idx).view().into(),
-    //            )
-    //            .ok();
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<PressureType, VertexIndex>(
-    //                PRESSURE_ATTRIB,
-    //                pressure.view().at(SOLIDS_INDEX).at(idx).view().into(),
-    //            )
-    //            .ok();
-
-    //        solid
-    //            .tetmesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                "collider_normals",
-    //                normals.view().at(SOLIDS_INDEX).at(idx).view().into(),
-    //            )
-    //            .ok();
-
-    //        // Write back elastic strain energy for visualization.
-    //        Self::compute_strain_energy_attrib(solid);
-
-    //        // Write back elastic forces on each node.
-    //        Self::compute_elastic_forces_attrib(solid);
-    //    }
-    //    for (idx, shell) in self.state.shells.iter_mut().enumerate() {
-    //        // Write back friction and contact impulses
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                "friction_corrector",
-    //                friction_corrector_impulse
-    //                    .view()
-    //                    .at(1)
-    //                    .at(idx)
-    //                    .view()
-    //                    .into(),
-    //            )
-    //            .ok();
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                FRICTION_ATTRIB,
-    //                friction_impulse.view().at(1).at(idx).view().into(),
-    //            )
-    //            .ok();
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<ContactImpulseType, VertexIndex>(
-    //                CONTACT_ATTRIB,
-    //                contact_impulse.view().at(1).at(idx).view().into(),
-    //            )
-    //            .ok();
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<PotentialType, VertexIndex>(
-    //                POTENTIAL_ATTRIB,
-    //                potential.view().at(1).at(idx).view().into(),
-    //            )
-    //            .ok();
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<PressureType, VertexIndex>(
-    //                PRESSURE_ATTRIB,
-    //                pressure.view().at(1).at(idx).view().into(),
-    //            )
-    //            .ok();
-
-    //        shell
-    //            .trimesh
-    //            .set_attrib_data::<FrictionImpulseType, VertexIndex>(
-    //                "collider_normals",
-    //                normals.view().at(1).at(idx).view().into(),
-    //            )
-    //            .ok();
-
-    //        if let ShellData::Soft { .. } = shell.data {
-    //            // Write back elastic strain energy for visualization.
-    //            shell.compute_strain_energy_attrib();
-
-    //            // Write back elastic forces on each node.
-    //            shell.compute_elastic_forces_attrib();
-    //        }
-    //    }
-    //}
-
     /*
      * The following functions are there for debugging jacobians and hessians
      */
@@ -1695,17 +1572,15 @@ impl<T: Real64> NLProblem<T> {
             })
     }
 
-    /// Compute the backward Euler residual.
-    fn be_residual(&self, dq: &[T], r: &mut [T]) {
+    /// Update current vertex state to coincide with current dof state.
+    pub fn update_cur_vertices(&mut self) {
         let state = &mut *self.state.borrow_mut();
+        state.update_cur_vertices();
+    }
 
-        {
-            let step_state = state.step_state(dq);
-            // Integrate position.
-            State::be_step(step_state, self.time_step());
-        }
-
-        state.update_vertices(dq);
+    /// Compute the bE residual on simulated vertices.
+    fn compute_vertex_be_residual(&self) {
+        let state = &mut *self.state.borrow_mut();
 
         // Clear residual vector.
         state
@@ -1727,8 +1602,23 @@ impl<T: Real64> NLProblem<T> {
         if !self.is_static() {
             self.add_momentum_diff(res_state.into_storage(), &state.solid, &state.shell);
         }
+    }
+
+    /// Compute the backward Euler residual.
+    fn be_residual(&self, dq: &[T], r: &mut [T]) {
+        {
+            let state = &mut *self.state.borrow_mut();
+            let step_state = state.step_state(dq);
+            // Integrate position.
+            State::be_step(step_state, self.time_step());
+
+            state.update_vertices(dq);
+        }
+
+        self.compute_vertex_be_residual();
 
         // Transfer residual to degrees of freedom.
+        let state = &*self.state.borrow();
         r.iter_mut()
             .take(state.dof.view().isolate(VERTEX_DOFS).len())
             .zip(state.vtx.residual.storage().iter())
@@ -2195,7 +2085,9 @@ mod tests {
             gravity: [0.0, -9.81, 0.0],
             time_step: Some(0.01),
             clear_velocity: false,
-            tolerance: 1e-2,
+            residual_tolerance: 1e-2.into(),
+            acceleration_tolerance: None,
+            velocity_tolerance: 1e-2.into(),
             max_iterations: 1,
             linsolve_tolerance: 1e-3,
             max_linsolve_iterations: 300,

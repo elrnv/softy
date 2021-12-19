@@ -1229,15 +1229,16 @@ impl<T: Real> State<T, ad::FT<T>> {
     ///
     /// If `dq_next` is given, then velocities are also advanced.
     pub fn advance(&mut self, dq_next: &[T]) {
+        // Update vertex data with the next state.
+        self.update_vertices(dq_next);
+
         // Advance degrees of freedom.
         self.dof.storage_mut().view_mut().advance(dq_next);
-        // Update vertex data with the current state.
-        self.update_cur_vertices();
 
         let Self { vtx, shell, .. } = self;
 
         // Update edge angles for shells.
-        let cur_pos = vtx.cur.view().map_storage(|state| state.pos).into_arrays();
+        let cur_pos = vtx.next.view().map_storage(|state| state.pos).into_arrays();
         shell.update_dihedral_angles(cur_pos);
     }
 

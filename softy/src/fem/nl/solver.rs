@@ -724,6 +724,9 @@ where
 
         solver.problem_mut().update_constraint_set();
 
+        // Update the current vertex data using the current dof state.
+        solver.problem_mut().update_cur_vertices();
+
         let mut contact_iterations = 5i32;
 
         // Loop to resolve all contacts.

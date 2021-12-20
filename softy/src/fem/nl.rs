@@ -54,6 +54,7 @@ pub struct CallbackArgs<'a, T>
 where
     T: 'static,
 {
+    pub iteration: u32,
     pub residual: &'a [T],
     pub x: &'a [T],
     pub problem: &'a mut dyn NonLinearProblem<T>,

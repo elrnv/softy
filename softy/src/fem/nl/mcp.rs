@@ -28,6 +28,10 @@ where
     T: Real,
     P: MixedComplementarityProblem<T>,
 {
+    #[inline]
+    fn mesh_with(&self, dq: &[T]) -> crate::Mesh {
+        self.problem.mesh_with(dq)
+    }
     fn num_variables(&self) -> usize {
         self.problem.num_variables()
     }

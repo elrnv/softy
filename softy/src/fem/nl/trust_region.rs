@@ -196,6 +196,7 @@ where
         log_debug_stats(0, 0, &r, x, &x_prev);
         loop {
             if !(outer_callback.borrow_mut())(CallbackArgs {
+                iteration: iterations,
                 residual: r.as_slice(),
                 x,
                 problem,

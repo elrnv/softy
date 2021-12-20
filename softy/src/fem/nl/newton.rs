@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-use tensr::*;
 #[cfg(target_os = "macos")]
 use accelerate::*;
 #[cfg(not(target_os = "macos"))]
 use mkl_corrode as mkl;
+use serde::{Deserialize, Serialize};
+use tensr::*;
 
 use super::linsolve::*;
 use super::problem::NonLinearProblem;
@@ -49,7 +49,10 @@ pub enum SparseDirectSolveError {
 }
 
 impl SparseDirectSolveError {
-    pub fn result_from_status<T>(val: T, status: SparseStatus) -> Result<T, SparseDirectSolveError> {
+    pub fn result_from_status<T>(
+        val: T,
+        status: SparseStatus,
+    ) -> Result<T, SparseDirectSolveError> {
         match status {
             SparseStatus::Ok => Ok(val),
             SparseStatus::FactorizationFailed => Err(SparseDirectSolveError::FactorizationFailed),
@@ -60,12 +63,12 @@ impl SparseDirectSolveError {
         }
     }
     pub fn status(self) -> SparseStatus {
-         match self {
-            SparseDirectSolveError::FactorizationFailed   => SparseStatus::FactorizationFailed,
-            SparseDirectSolveError::MatrixIsSingular      => SparseStatus::MatrixIsSingular,
-            SparseDirectSolveError::InternalError         => SparseStatus::InternalError,
-            SparseDirectSolveError::ParameterError        => SparseStatus::ParameterError,
-            SparseDirectSolveError::Released              => SparseStatus::Released,
+        match self {
+            SparseDirectSolveError::FactorizationFailed => SparseStatus::FactorizationFailed,
+            SparseDirectSolveError::MatrixIsSingular => SparseStatus::MatrixIsSingular,
+            SparseDirectSolveError::InternalError => SparseStatus::InternalError,
+            SparseDirectSolveError::ParameterError => SparseStatus::ParameterError,
+            SparseDirectSolveError::Released => SparseStatus::Released,
         }
     }
 }
@@ -73,7 +76,7 @@ impl SparseDirectSolveError {
 #[cfg(target_os = "macos")]
 pub enum Factorization {
     Symbolic(SparseSymbolicFactorization),
-    Numeric(SparseFactorizationF64)
+    Numeric(SparseFactorizationF64),
 }
 
 #[cfg(target_os = "macos")]
@@ -85,7 +88,7 @@ impl From<SparseSymbolicFactorization> for Factorization {
 
 #[cfg(target_os = "macos")]
 impl Factorization {
-    fn factor(&mut self, mtx: &SparseMatrixF64) -> Result<(), SparseDirectSolveError>{
+    fn factor(&mut self, mtx: &SparseMatrixF64) -> Result<(), SparseDirectSolveError> {
         match self {
             Factorization::Symbolic(sym) => {
                 let f = mtx.factor_with(sym);
@@ -138,8 +141,8 @@ impl SparseDirectSolver {
         use std::convert::TryFrom;
         let num_variables = m.num_rows();
         let mut values = Vec::new();
-        let mut row_indices= Vec::new();
-        let mut col_indices= Vec::new();
+        let mut row_indices = Vec::new();
+        let mut col_indices = Vec::new();
         values.reserve(m.storage().len());
         row_indices.reserve(m.storage().len());
         col_indices.reserve(m.storage().len());
@@ -150,8 +153,14 @@ impl SparseDirectSolver {
                 col_indices.push(i32::try_from(col_idx).unwrap());
             }
         }
-        let mtx= SparseMatrixF64::from_coordinate(
-            i32::try_from(m.num_rows()).unwrap(), i32::try_from(m.num_cols()).unwrap(), 1, SparseAttributes::new().transposed(), col_indices.as_slice(), row_indices.as_slice(), values.as_slice()
+        let mtx = SparseMatrixF64::from_coordinate(
+            i32::try_from(m.num_rows()).unwrap(),
+            i32::try_from(m.num_cols()).unwrap(),
+            1,
+            SparseAttributes::new().transposed(),
+            col_indices.as_slice(),
+            row_indices.as_slice(),
+            values.as_slice(),
         );
         let symbolic_factorization = mtx.structure().symbolic_factor(SparseFactorizationType::QR);
         SparseDirectSolver {
@@ -163,15 +172,22 @@ impl SparseDirectSolver {
 
     pub fn update_values<T: Real>(&mut self, data: &[T]) {
         assert_eq!(data.len(), self.mtx.data().len());
-        self.mtx.data_mut().iter_mut().zip(data.iter()).for_each(|(output, input)| *output = input.to_f64().unwrap());
+        self.mtx
+            .data_mut()
+            .iter_mut()
+            .zip(data.iter())
+            .for_each(|(output, input)| *output = input.to_f64().unwrap());
     }
 
-    pub fn refactor(&mut self) -> Result<(), SparseDirectSolveError>{
+    pub fn refactor(&mut self) -> Result<(), SparseDirectSolveError> {
         self.factorization.factor(&self.mtx)
     }
 
     pub fn update_rhs<T: Real>(&mut self, r: &[T]) {
-        self.r64.iter_mut().zip(r.iter()).for_each(|(out_f64, in_t)| *out_f64 = in_t.to_f64().unwrap());
+        self.r64
+            .iter_mut()
+            .zip(r.iter())
+            .for_each(|(out_f64, in_t)| *out_f64 = in_t.to_f64().unwrap());
     }
 
     pub fn solve<T: Real>(&mut self, r: &[T]) -> Result<&[f64], SparseDirectSolveError> {
@@ -213,18 +229,19 @@ pub struct Newton<P, T: Real> {
     pub workspace: RefCell<NewtonWorkspace<T>>,
 }
 
-fn sparse_matrix_and_mapping<T: Real>(rows: &[usize], cols: &[usize], vals: &[T], mtx_size: usize) -> (DSMatrix<T>, Vec<Index>) {
+fn sparse_matrix_and_mapping<T: Real>(
+    rows: &[usize],
+    cols: &[usize],
+    vals: &[T],
+    mtx_size: usize,
+) -> (DSMatrix<T>, Vec<Index>) {
     let nnz = rows.len();
     assert_eq!(nnz, cols.len());
     assert_eq!(nnz, vals.len());
     // Construct a mapping from original triplets to final compressed matrix.
     let mut entries = (0..nnz).collect::<Vec<_>>();
 
-    entries.sort_by(|&a, &b| {
-        rows[a]
-            .cmp(&rows[b])
-            .then_with(|| cols[a].cmp(&cols[b]))
-    });
+    entries.sort_by(|&a, &b| rows[a].cmp(&rows[b]).then_with(|| cols[a].cmp(&cols[b])));
 
     let mut mapping = vec![Index::INVALID; entries.len()];
     let entries = entries
@@ -236,7 +253,8 @@ fn sparse_matrix_and_mapping<T: Real>(rows: &[usize], cols: &[usize], vals: &[T]
     // where each element goes after compression.
     let triplet_iter = entries.iter().map(|&i| (rows[i], cols[i], vals[i]));
 
-    let uncompressed = DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, mtx_size, mtx_size);
+    let uncompressed =
+        DSMatrix::from_sorted_triplets_iter_uncompressed(triplet_iter, mtx_size, mtx_size);
 
     // Compress the CSR matrix.
     let mtx = uncompressed.pruned(
@@ -249,9 +267,9 @@ fn sparse_matrix_and_mapping<T: Real>(rows: &[usize], cols: &[usize], vals: &[T]
 }
 
 impl<T, P> Newton<P, T>
-    where
-        T: Real,
-        P: NonLinearProblem<T>,
+where
+    T: Real,
+    P: NonLinearProblem<T>,
 {
     pub fn new(
         problem: P,
@@ -382,6 +400,7 @@ where
 
         // Initialize the residual.
         problem.residual(x, r.as_mut_slice());
+        //let num_variables = x.len();
 
         // Convert to sprs format for debugging. The CSR structure is preserved.
         //let mut j_sprs: sprs::CsMat<T> = j.clone().into();
@@ -422,6 +441,7 @@ where
             //log::trace!("Previous r norm: {}", r_prev_norm);
             //log::trace!("Current  r norm: {}", r_cur_norm);
             if !(outer_callback.borrow_mut())(CallbackArgs {
+                iteration: iterations,
                 residual: r.as_slice(),
                 x,
                 problem,
@@ -438,6 +458,15 @@ where
             // TODO: For debugging only
             //for (jp, p) in j_dense.iter_mut().zip(identity.iter()) {
             //    problem.jacobian_product(x, &p, &r, jp)
+            //}
+            //for jd in j_dense.storage_mut().iter_mut() {
+            //    *jd = T::zero();
+            //}
+            //let mut j_dense_view = j_dense.view_mut();
+            //for ((&r, &c), &v) in j_rows.iter().zip(j_cols.iter()).zip(j_vals.iter()) {
+            //    if r < num_variables && c < num_variables {
+            //        j_dense_view[r][c] += v;
+            //    }
             //}
             //eprintln!("J = [");
             //for jp in j_dense.iter() {
@@ -506,15 +535,19 @@ where
 
             let result = sparse_solver.solve(&r);
             let r64 = match result {
-                Err(err) => break SolveResult {
-                    iterations,
-                    status: Status::LinearSolveError(err),
-                },
-                Ok(r) => r
+                Err(err) => {
+                    break SolveResult {
+                        iterations,
+                        status: Status::LinearSolveError(err),
+                    }
+                }
+                Ok(r) => r,
             };
 
             // r is now the search direction, rename to avoid confusion.
-            p.iter_mut().zip(r64.iter()).for_each(|(p, &r64)| *p = T::from(r64).unwrap());
+            p.iter_mut()
+                .zip(r64.iter())
+                .for_each(|(p, &r64)| *p = T::from(r64).unwrap());
             //p.copy_from_slice(r.as_slice());
 
             log::trace!("p = {:?}", &r);
@@ -663,7 +696,8 @@ where
                     .iter()
                     .zip(x.iter())
                     .map(|(&a, &b)| (a - b) * (a - b))
-                    .sum::<T>());
+                    .sum::<T>(),
+            );
 
             // Check the convergence condition.
             if (r_tol > T::zero() && r_next_norm < r_tol.to_f64().unwrap())

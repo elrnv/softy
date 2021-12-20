@@ -118,7 +118,10 @@ impl SolverBuilder {
     ///
     /// This function also sets all ids that are out of bounds to 0, to avoid out of bounds errors,
     /// so the attribute can be used to directly index the slice of materials.
-    pub(crate) fn init_material_id_attribute(mesh: &mut Mesh, num_materials: usize) -> Result<(), Error> {
+    pub(crate) fn init_material_id_attribute(
+        mesh: &mut Mesh,
+        num_materials: usize,
+    ) -> Result<(), Error> {
         use std::convert::TryFrom;
         let normalize_id = move |id: MaterialIdType| {
             if id >= MaterialIdType::try_from(num_materials).unwrap() {
@@ -131,23 +134,40 @@ impl SolverBuilder {
         // If there is already an attribute with the right type, normalize the ids.
         if let Ok(attrib) = mesh.attrib_mut::<CellIndex>(MATERIAL_ID_ATTRIB) {
             if let Ok(attrib_slice) = attrib.as_mut_slice::<MaterialIdType>() {
-                attrib_slice.iter_mut().for_each(|id| *id = normalize_id(*id));
+                attrib_slice
+                    .iter_mut()
+                    .for_each(|id| *id = normalize_id(*id));
                 return Ok(());
             }
         }
         // Remove an attribute with the same name if it exists since it will have the wrong type.
         if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(MATERIAL_ID_ATTRIB) {
             if let Ok(iter) = attrib.iter::<i32>() {
-                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
-                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(
+                    MATERIAL_ID_ATTRIB,
+                    mtl_ids,
+                )?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u8>() {
-                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
-                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(
+                    MATERIAL_ID_ATTRIB,
+                    mtl_ids,
+                )?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u32>() {
-                let mtl_ids = iter.map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0))).collect();
-                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(MATERIAL_ID_ATTRIB, mtl_ids)?;
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(MaterialIdType::try_from(id).unwrap_or(0)))
+                    .collect();
+                mesh.insert_attrib_data::<MaterialIdType, VertexIndex>(
+                    MATERIAL_ID_ATTRIB,
+                    mtl_ids,
+                )?;
                 return Ok(());
             }
         }
@@ -160,7 +180,7 @@ impl SolverBuilder {
 
     /// A helper function to initialize the fixed attribute if one doesn't already exist.
     pub(crate) fn init_fixed_attribute(mesh: &mut Mesh) -> Result<(), Error> {
-        use num_traits::{Zero, One};
+        use num_traits::{One, Zero};
         use std::convert::TryFrom;
         let normalize_id = move |id: FixedIntType| {
             if id != FixedIntType::zero() {
@@ -173,30 +193,42 @@ impl SolverBuilder {
         // If there is already an attribute with the right type, leave values at either 0 or set to 1 if non-zero.
         if let Ok(attrib) = mesh.attrib_mut::<VertexIndex>(FIXED_ATTRIB) {
             if let Ok(attrib_slice) = attrib.as_mut_slice::<FixedIntType>() {
-                attrib_slice.iter_mut().for_each(|id| *id = normalize_id(*id));
+                attrib_slice
+                    .iter_mut()
+                    .for_each(|id| *id = normalize_id(*id));
                 return Ok(());
             }
         }
         // Remove an attribute with the same name if it exists since it will have the wrong type.
         if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(FIXED_ATTRIB) {
             if let Ok(iter) = attrib.iter::<i32>() {
-                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
+                    .collect();
                 mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<i64>() {
-                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
+                    .collect();
                 mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u8>() {
-                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
+                    .collect();
                 mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u32>() {
-                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
+                    .collect();
                 mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
                 return Ok(());
             } else if let Ok(iter) = attrib.iter::<u64>() {
-                let mtl_ids = iter.map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0))).collect();
+                let mtl_ids = iter
+                    .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
+                    .collect();
                 mesh.insert_attrib_data::<FixedIntType, VertexIndex>(FIXED_ATTRIB, mtl_ids)?;
                 return Ok(());
             }
@@ -518,7 +550,19 @@ impl SolverBuilder {
                 linsolve_max_iter: params.max_linsolve_iterations,
                 line_search: params.line_search,
             },
-            Box::new(move |_| interrupt_checker()),
+            Box::new(move |_args| {
+                //let mesh = _args.problem.mesh_with(_args.x);
+                //let meshes = mesh.split_into_typed_meshes();
+                //for (i, mesh) in meshes.into_iter().enumerate() {
+                //    match mesh {
+                //        geo::algo::split::TypedMesh::Tri(mesh) =>
+                //            geo::io::save_polymesh(&geo::mesh::PolyMesh::from(mesh), &format!("./out/polymesh{}_{}.vtk", i, _args.iteration)).unwrap(),
+                //        geo::algo::split::TypedMesh::Tet(mesh) =>
+                //            geo::io::save_tetmesh(&mesh, &format!("./out/tetmesh{}_{}.vtk", i, _args.iteration)).unwrap(),
+                //    }
+                //}
+                interrupt_checker()
+            }),
             Box::new(|_| true),
         );
 
@@ -761,7 +805,8 @@ where
 
                     let delta = sim_params.contact_tolerance as f64;
                     let denom: f64 = (compute_contact_penalty(0.0, delta as f32)
-                        - sim_params.residual_tolerance.unwrap_or(0.0) as f64 / solver.problem().kappa)
+                        - sim_params.residual_tolerance.unwrap_or(0.0) as f64
+                            / solver.problem().kappa)
                         .min(0.5 * delta)
                         .max(f64::EPSILON);
 

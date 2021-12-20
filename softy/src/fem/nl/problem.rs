@@ -8,7 +8,6 @@ use num_traits::{Float, Zero};
 use tensr::{AsMutTensor, IntoData, IntoTensor, Matrix, Tensor};
 
 use super::state::*;
-use crate::Mesh;
 use crate::attrib_defines::*;
 use crate::constraint::*;
 use crate::constraints::volume::VolumeConstraint;
@@ -18,6 +17,7 @@ use crate::energy_models::{gravity::*, inertia::*};
 use crate::matrix::*;
 use crate::objects::tetsolid::*;
 use crate::objects::trishell::*;
+use crate::Mesh;
 use crate::PointCloud;
 use crate::{Real, Real64};
 
@@ -149,21 +149,58 @@ impl<T: Real> NLProblem<T> {
     pub fn vertex_positions(&self) -> Vec<[T; 3]> {
         let State {
             vtx: VertexWorkspace {
-                orig_index,
-                cur,
-                ..
+                orig_index, next, ..
             },
             ..
         } = &*self.state.borrow();
-        let pos = cur.pos.as_arrays();
-        let mut out = vec![[T::zero();3]; pos.len()];
+        let pos = next.pos.as_arrays();
+        let mut out = vec![[T::zero(); 3]; pos.len()];
         // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
-        orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = *pos);
+        orig_index
+            .iter()
+            .zip(pos.iter())
+            .for_each(|(&i, pos)| out[i] = *pos);
         out
     }
 }
 
 impl<T: Real64> NLProblem<T> {
+    /// Returns a reference to the original mesh used to create this problem with updated position values from the given velocity degrees of freedom.
+    pub fn mesh_with(&self, dq: &[T]) -> Mesh {
+        use tensr::AsTensor;
+        let mut mesh = self.original_mesh.clone();
+        let out = mesh.vertex_positions_mut();
+
+        assert!(dq.len() % 3 == 0);
+        {
+            let state = &mut *self.state.borrow_mut();
+            let step_state = state.step_state(dq);
+            // Integrate position.
+            State::be_step(step_state, self.time_step());
+
+            state.update_vertices(dq);
+        }
+
+        // Update positions
+        {
+            let State {
+                vtx: VertexWorkspace {
+                    orig_index, next, ..
+                },
+                ..
+            } = &*self.state.borrow();
+            let pos = next.pos.as_arrays();
+            // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
+            orig_index
+                .iter()
+                .zip(pos.iter())
+                .for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+        }
+
+        // TODO: add additional attributes.
+        //self.compute_residual(&mut mesh);
+        mesh
+    }
     /// Returns a reference to the original mesh used to create this problem with updated values.
     pub fn mesh(&self) -> Mesh {
         use tensr::AsTensor;
@@ -174,15 +211,16 @@ impl<T: Real64> NLProblem<T> {
         {
             let State {
                 vtx: VertexWorkspace {
-                    orig_index,
-                    cur,
-                    ..
+                    orig_index, next, ..
                 },
                 ..
             } = &*self.state.borrow();
-            let pos = cur.pos.as_arrays();
-            // TODO: add original_order to state so we can iterate (in parallel) over out insated here.
-            orig_index.iter().zip(pos.iter()).for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
+            let pos = next.pos.as_arrays();
+            // TODO: add original_order to state so we can iterate (in parallel) over out instead here.
+            orig_index
+                .iter()
+                .zip(pos.iter())
+                .for_each(|(&i, pos)| out[i] = pos.as_tensor().cast::<f64>().into_data());
         }
 
         // TODO: add additional attributes.
@@ -194,9 +232,16 @@ impl<T: Real64> NLProblem<T> {
         use tensr::AsTensor;
         self.compute_vertex_be_residual();
         let state = &mut *self.state.borrow_mut();
-        let vertex_residuals: Vec<_> = state.vtx.residual_state().map_storage(|state| state.r).iter().map(|v| v.as_tensor().cast::<f64>().into_data()).collect();
+        let vertex_residuals: Vec<_> = state
+            .vtx
+            .residual_state()
+            .map_storage(|state| state.r)
+            .iter()
+            .map(|v| v.as_tensor().cast::<f64>().into_data())
+            .collect();
         // Should not panic since vertex_residuals should have the same number of elements as vertices.
-        mesh.set_attrib_data::<ResidualType, VertexIndex>(RESIDUAL_ATTRIB, vertex_residuals).unwrap();
+        mesh.set_attrib_data::<ResidualType, VertexIndex>(RESIDUAL_ATTRIB, vertex_residuals)
+            .unwrap();
     }
 
     /// Get the minimum contact radius among all contact problems.
@@ -1825,6 +1870,9 @@ impl<T: Real64> NLProblem<T> {
 }
 
 pub trait NonLinearProblem<T: Real> {
+    /// Returns a mesh updated with the given velocity information.
+    fn mesh_with(&self, dq: &[T]) -> Mesh;
+
     /// Returns the number of unknowns for the problem.
     fn num_variables(&self) -> usize;
     /// Constructs the initial point for the problem.
@@ -1883,6 +1931,10 @@ pub trait MixedComplementarityProblem<T: Real>: NonLinearProblem<T> {
 
 /// Prepare the problem for Newton iterations.
 impl<T: Real64> NonLinearProblem<T> for NLProblem<T> {
+    #[inline]
+    fn mesh_with(&self, dq: &[T]) -> Mesh {
+        NLProblem::mesh_with(self, dq)
+    }
     #[inline]
     fn num_variables(&self) -> usize {
         self.state.borrow().dof.storage().len()

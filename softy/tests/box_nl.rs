@@ -21,7 +21,7 @@ pub fn medium_solid_material() -> SolidMaterial {
 /// tetrahedralized box. This example also uses a softer material and a momentum term
 /// (dynamics enabled), which is more sensitive to perturbations.
 #[test]
-fn equilibrium() {
+fn equilibrium() -> Result<(), Error> {
     init_logger();
     let params = SimParams {
         max_iterations: 1,
@@ -39,9 +39,8 @@ fn equilibrium() {
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh.clone()))
         .set_materials(vec![soft_material.into()])
-        .build::<f64>()
-        .expect("Failed to create solver for soft box equilibrium test");
-    assert!(solver.step().is_ok());
+        .build::<f64>()?;
+    solver.step()?;
 
     // Expect the box to remain in original configuration
     let solid = &solver.solid();
@@ -50,6 +49,7 @@ fn equilibrium() {
         solid.nh_tet_elements.tets.clone(),
     );
     compare_meshes(&solution, &mesh, 1e-6);
+    Ok(())
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn stretch_plain() -> Result<(), Error> {
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_stretched.vtk"))?;
     let solid = &solver.solid();
     let solution = TetMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         solid.nh_tet_elements.tets.clone(),
     );
     compare_meshes(&solution, &expected, 1e-2);
@@ -110,7 +110,7 @@ fn twist_plain() -> Result<(), Error> {
     let expected: TetMesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twisted.vtk"))?;
     let solid = &solver.solid();
     let solution = TetMesh::new(
-        solver.vertex_positions().to_vec(),
+        solver.vertex_positions(),
         solid.nh_tet_elements.tets.clone(),
     );
     compare_meshes(&solution, &expected, 1e-3);

@@ -1,3 +1,4 @@
+use num_traits::ToPrimitive;
 use std::cell::RefCell;
 
 use geo::attrib::Attrib;
@@ -200,7 +201,7 @@ impl SolverBuilder {
             }
         }
         // Remove an attribute with the same name if it exists since it will have the wrong type.
-        if let Ok(attrib) = mesh.remove_attrib::<CellIndex>(FIXED_ATTRIB) {
+        if let Ok(attrib) = mesh.remove_attrib::<VertexIndex>(FIXED_ATTRIB) {
             if let Ok(iter) = attrib.iter::<i32>() {
                 let mtl_ids = iter
                     .map(|&id| normalize_id(FixedIntType::try_from(id).unwrap_or(0)))
@@ -571,6 +572,7 @@ impl SolverBuilder {
             sim_params: params,
             max_step: 0.0,
             solution: vec![T::zero(); num_variables],
+            iteration_count: 0,
         })
     }
 
@@ -612,6 +614,8 @@ pub struct Solver<S, T> {
     ///
     /// This is also used as warm start for subsequent steps.
     solution: Vec<T>,
+    /// Counts the number of times `step` is called.
+    iteration_count: u32,
 }
 
 impl<S, T> Solver<S, T>
@@ -755,6 +759,8 @@ where
 
     /// Run the non-linear solver on one time step.
     pub fn step(&mut self) -> Result<SolveResult, Error> {
+        let dt = self.time_step();
+        self.iteration_count += 1;
         let Self {
             sim_params,
             solver,
@@ -773,9 +779,21 @@ where
 
         let mut contact_iterations = 5i32;
 
+        let velocity_clear_steps = if sim_params.velocity_clear_frequency > 0.0 {
+            (1.0 / (f64::from(sim_params.velocity_clear_frequency) * dt))
+                .round()
+                .to_u32()
+                .unwrap()
+        } else {
+            u32::MAX
+        };
+
         // Loop to resolve all contacts.
         loop {
+            /***     Main solve step     ***/
             let result = solver.solve_with(solution.as_mut_slice());
+            /*******************************/
+
             log::trace!("Solve Result: {}", &result);
             match result.status {
                 Status::Success | Status::MaximumIterationsExceeded => {
@@ -840,8 +858,9 @@ where
                         }
                         self.commit_solution(false);
                         // Kill velocities if needed.
-                        // On success, update the mesh with useful metrics.
-                        //self.problem_mut().update_mesh_data();
+                        if self.iteration_count % velocity_clear_steps == 0 {
+                            self.solver.problem_mut().clear_velocities();
+                        }
                         break Ok(result);
                     }
                 }

@@ -6,13 +6,6 @@ use softy::{ElasticityParameters, Error, Mesh, SolidMaterial, TetMesh};
 use std::path::PathBuf;
 pub use test_utils::*;
 
-fn stretch_nl_params() -> NLParams {
-    NLParams {
-        gravity: [0.0f32, 0.0, 0.0],
-        ..load_nl_params("assets/static_nl_params.ron").unwrap()
-    }
-}
-
 pub fn medium_solid_material() -> SolidMaterial {
     default_solid().with_elasticity(ElasticityParameters::from_bulk_shear(300e6, 100e6))
 }
@@ -25,7 +18,8 @@ fn equilibrium() -> Result<(), Error> {
     init_logger();
     let params = SimParams {
         max_iterations: 1,
-        ..DYNAMIC_NL_PARAMS
+        gravity: [0.0f32; 3],
+        ..static_nl_params()
     };
 
     let soft_material = SolidMaterial::new(0)
@@ -57,7 +51,8 @@ fn stretch_plain() -> Result<(), Error> {
     init_logger();
     let mesh = make_stretched_box(4);
     let mut solver = SolverBuilder::new(NLParams {
-        ..stretch_nl_params()
+        gravity: [0.0f32, 0.0, 0.0],
+        ..static_nl_params()
     })
     .set_mesh(Mesh::from(mesh))
     .set_materials(vec![medium_solid_material().into()])
@@ -100,7 +95,8 @@ fn twist_plain() -> Result<(), Error> {
         .with_elasticity(ElasticityParameters::from_young_poisson(1000.0, 0.0));
     let mesh = geo::io::load_tetmesh(&PathBuf::from("assets/box_twist.vtk"))?;
     let params = NLParams {
-        ..stretch_nl_params()
+        gravity: [0.0f32, 0.0, 0.0],
+        ..static_nl_params()
     };
     let mut solver = SolverBuilder::new(params)
         .set_mesh(Mesh::from(mesh))

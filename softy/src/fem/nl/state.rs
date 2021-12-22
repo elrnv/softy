@@ -1242,6 +1242,16 @@ impl<T: Real> State<T, ad::FT<T>> {
         shell.update_dihedral_angles(cur_pos);
     }
 
+    pub fn clear_velocities(&mut self) {
+        self.dof
+            .storage_mut()
+            .view_mut()
+            .cur
+            .dq
+            .iter_mut()
+            .for_each(|v| *v = T::zero());
+    }
+
     ///// Reverts to previous step.
     /////
     ///// This is the opposite of `advance`.

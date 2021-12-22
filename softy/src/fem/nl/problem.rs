@@ -231,17 +231,23 @@ impl<T: Real64> NLProblem<T> {
     fn compute_residual(&self, mesh: &mut Mesh) {
         use tensr::AsTensor;
         self.compute_vertex_be_residual();
-        let state = &mut *self.state.borrow_mut();
-        let vertex_residuals: Vec<_> = state
+        let state = &*self.state.borrow();
+        let vertex_residuals = state.vtx.view().map_storage(|state| state.residual);
+        let mut orig_order_vertex_residuals = vec![[0.0; 3]; vertex_residuals.len()];
+        state
             .vtx
-            .residual_state()
-            .map_storage(|state| state.r)
+            .orig_index
             .iter()
-            .map(|v| v.as_tensor().cast::<f64>().into_data())
-            .collect();
+            .zip(vertex_residuals.iter())
+            .for_each(|(&i, v)| {
+                orig_order_vertex_residuals[i] = v.as_tensor().cast::<f64>().into_data()
+            });
         // Should not panic since vertex_residuals should have the same number of elements as vertices.
-        mesh.set_attrib_data::<ResidualType, VertexIndex>(RESIDUAL_ATTRIB, vertex_residuals)
-            .unwrap();
+        mesh.set_attrib_data::<ResidualType, VertexIndex>(
+            RESIDUAL_ATTRIB,
+            orig_order_vertex_residuals,
+        )
+        .unwrap();
     }
 
     /// Get the minimum contact radius among all contact problems.
@@ -1623,6 +1629,12 @@ impl<T: Real64> NLProblem<T> {
         state.update_cur_vertices();
     }
 
+    /// Clear current velocity dofs.
+    pub fn clear_velocities(&mut self) {
+        let state = &mut *self.state.borrow_mut();
+        state.clear_velocities();
+    }
+
     /// Compute the bE residual on simulated vertices.
     fn compute_vertex_be_residual(&self) {
         let state = &mut *self.state.borrow_mut();
@@ -2136,7 +2148,7 @@ mod tests {
         SimParams {
             gravity: [0.0, -9.81, 0.0],
             time_step: Some(0.01),
-            clear_velocity: false,
+            velocity_clear_frequency: 0.0,
             residual_tolerance: 1e-2.into(),
             acceleration_tolerance: None,
             velocity_tolerance: 1e-2.into(),

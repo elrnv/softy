@@ -5,7 +5,7 @@ use tensr::{IntoData, Vector3};
 use thiserror::Error;
 
 use crate::attrib_defines::*;
-use crate::fem::nl::{state::VertexType, LineSearch, SimParams as NLParams};
+use crate::fem::nl::{state::VertexType, SimParams as NLParams};
 #[cfg(feature = "optsolver")]
 use crate::fem::opt::{MuStrategy, SimParams as OptParams};
 use crate::objects::*;
@@ -33,21 +33,9 @@ pub const STATIC_OPT_PARAMS: OptParams = OptParams {
     log_file: None,
 };
 
-pub const STATIC_NL_PARAMS: NLParams = NLParams {
-    gravity: [0.0f32, -9.81, 0.0],
-    time_step: None,
-    clear_velocity: false,
-    residual_tolerance: Some(1e-5),
-    acceleration_tolerance: None,
-    velocity_tolerance: Some(1e-5),
-    max_iterations: 300,
-    linsolve_tolerance: 1e-9,
-    max_linsolve_iterations: 10000,
-    line_search: LineSearch::default_backtracking(),
-    jacobian_test: false,
-    friction_tolerance: 1e-5,
-    contact_tolerance: 1e-5,
-};
+pub fn static_nl_params() -> NLParams {
+    load_nl_params("assets/static_nl_params.ron").unwrap()
+}
 
 #[derive(Error, Debug)]
 pub enum LoadParamsError {
@@ -87,12 +75,6 @@ pub const DYNAMIC_OPT_PARAMS: OptParams = OptParams {
     gravity: [0.0f32, 0.0, 0.0],
     time_step: Some(0.01),
     ..STATIC_OPT_PARAMS
-};
-
-pub const DYNAMIC_NL_PARAMS: NLParams = NLParams {
-    gravity: [0.0f32, 0.0, 0.0],
-    time_step: Some(0.01),
-    ..STATIC_NL_PARAMS
 };
 
 // Note: The key to getting reliable simulations here is to keep bulk_modulus, shear_modulus

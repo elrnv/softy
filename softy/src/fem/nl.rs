@@ -23,10 +23,12 @@ pub use trust_region::*;
 pub struct SimParams {
     pub gravity: [f32; 3],
     pub time_step: Option<f32>,
-    /// Clear the velocity between consecutive steps to emulate quasi-static simulation (or
-    /// critical damping) where the time step and density effectively determines the
+    /// Clear the velocity between steps with frequency given in Hz.
+    ///
+    /// This can emulate quasi-static simulation (or critical damping)
+    /// where the time step and density effectively determines the
     /// regularization.
-    pub clear_velocity: bool,
+    pub velocity_clear_frequency: f32,
     pub residual_tolerance: Option<f32>,
     pub acceleration_tolerance: Option<f32>,
     pub velocity_tolerance: Option<f32>,

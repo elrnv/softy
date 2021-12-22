@@ -102,7 +102,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             solver_type,
             time_step,
             gravity,
-            clear_velocity,
+            velocity_clear_frequency,
             tolerance,
             residual_criterion,
             residual_tolerance,
@@ -130,7 +130,7 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
                 None
             },
             gravity: [0.0, -gravity, 0.0],
-            clear_velocity,
+            velocity_clear_frequency,
             residual_tolerance: if residual_criterion { Some(residual_tolerance) } else { None },
             velocity_tolerance: if velocity_criterion { Some(velocity_tolerance) } else { None },
             acceleration_tolerance: if acceleration_criterion { Some(acceleration_tolerance) } else { None },

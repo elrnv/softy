@@ -142,7 +142,7 @@ mod ffi {
 
         // Solver params
         pub solver_type: SolverType,
-        pub clear_velocity: bool,
+        pub velocity_clear_frequency: f32,
         pub tolerance: f32,
         pub max_iterations: u32,
         pub outer_tolerance: f32,

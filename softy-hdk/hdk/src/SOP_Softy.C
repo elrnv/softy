@@ -378,11 +378,12 @@ static const char *theDsFile = R"THEDSFILE(
             }
         }
         parm {
-            name "clearvelocity"
-            cppname "ClearVelocity"
-            label "Clear Velocity"
-            type toggle
-            default { "off" }
+            name "velocityclearfrequency"
+            cppname "VelocityClearFrequency"
+            label "Velocity Clear Frequency"
+            type float
+            default { "0.0" }
+            range { 0 100000 }
         }
 
         parm {
@@ -680,7 +681,7 @@ std::pair<softy::SimParams, bool> build_sim_params(const SOP_SoftyParms &sopparm
         sim_params.solver_type = softy::SolverType::Ipopt;
         break;
     }
-    sim_params.clear_velocity = sopparms.getClearVelocity();
+    sim_params.velocity_clear_frequency = sopparms.getVelocityClearFrequency();
     sim_params.tolerance = sopparms.getInnerTolerance();
     sim_params.max_iterations = sopparms.getMaxInnerIterations();
     sim_params.outer_tolerance = sopparms.getOuterTolerance();

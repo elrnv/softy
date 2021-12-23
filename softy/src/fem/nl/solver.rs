@@ -786,7 +786,7 @@ where
                 .unwrap()
         } else {
             u32::MAX
-        };
+        }.max(1);
 
         // Loop to resolve all contacts.
         loop {

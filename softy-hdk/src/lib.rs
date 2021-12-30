@@ -306,7 +306,7 @@ pub fn register_new_solver(mesh: Box<Mesh>, sim_params: SimParams) -> RegistryRe
         },
         Err(err) => RegistryResult {
             solver_id: -1,
-            cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
+            cook_result: hdkrs::interop::CookResult::Error(format!("{}", err)).into(),
         },
     }
 }
@@ -374,7 +374,7 @@ pub fn get_solver(solver_id: i64, mesh: Box<Mesh>, sim_params: SimParams) -> Sol
         Err(err) => SolverResult {
             id: -1,
             solver: Box::new(SoftySolver::None),
-            cook_result: hdkrs::interop::CookResult::Error(format!("Error: {:?}", err)).into(),
+            cook_result: hdkrs::interop::CookResult::Error(format!("{}", err)).into(),
         },
     }
 }

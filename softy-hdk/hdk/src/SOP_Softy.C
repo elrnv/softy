@@ -834,7 +834,7 @@ void SOP_SoftyVerb::cook(const SOP_NodeVerb::CookParms &cookparms) const
     {
         assert(solver_res.cook_result.tag == hdkrs::CookResultTag::ERROR);
         std::stringstream ss;
-        ss << "Failed to create or retrieve a solver. ";
+        ss << "Failed to create or retrieve a solver: ";
         ss << solver_res.cook_result.message;
         cookparms.sopAddError(UT_ERROR_OUTSTREAM, ss.str().c_str());
         std::cerr << ss.str() << std::endl;

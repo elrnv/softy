@@ -1,4 +1,7 @@
-use crate::{ElasticityModel, MaterialProperties, SimParams};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use thiserror::Error;
 
 #[cfg(feature = "optsolver")]
 use geo::attrib::*;
@@ -9,8 +12,8 @@ use hdkrs::interop::CookResult;
 use softy::{self, fem, Mesh, PointCloud};
 #[cfg(feature = "optsolver")]
 use softy::{PolyMesh, TetMesh, TetMeshExt};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+
+use crate::{ElasticityModel, MaterialProperties, SimParams};
 
 mod solver;
 
@@ -47,30 +50,24 @@ lazy_static! {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub(crate) enum Error {
+    #[error("Solver registry is full")]
     RegistryFull,
+    #[error("Missing solver and mesh")]
     MissingSolverAndMesh,
+    #[error("Object type ({object_type:?}) does not match material {material_id}")]
     #[cfg(feature = "optsolver")]
     MaterialObjectMismatch {
         material_id: u32,
         object_type: ObjectType,
     },
-    SolverCreate(softy::Error),
-    RequiredMeshAttribute(geo::attrib::Error),
+    #[error("Failed to create solver: {0}")]
+    SolverCreate(#[from] softy::Error),
+    #[error("Missing required mesh attribute: {0}")]
+    RequiredMeshAttribute(#[from] geo::attrib::Error),
+    #[error("Specified solver is unsupported")]
     UnsupportedSolver,
-}
-
-impl From<softy::Error> for Error {
-    fn from(err: softy::Error) -> Error {
-        Error::SolverCreate(err)
-    }
-}
-
-impl From<geo::attrib::Error> for Error {
-    fn from(err: geo::attrib::Error) -> Error {
-        Error::RequiredMeshAttribute(err)
-    }
 }
 
 pub(crate) fn get_solver(
@@ -131,9 +128,21 @@ impl<'a> Into<softy::nl_fem::SimParams> for &'a SimParams {
             },
             gravity: [0.0, -gravity, 0.0],
             velocity_clear_frequency,
-            residual_tolerance: if residual_criterion { Some(residual_tolerance) } else { None },
-            velocity_tolerance: if velocity_criterion { Some(velocity_tolerance) } else { None },
-            acceleration_tolerance: if acceleration_criterion { Some(acceleration_tolerance) } else { None },
+            residual_tolerance: if residual_criterion {
+                Some(residual_tolerance)
+            } else {
+                None
+            },
+            velocity_tolerance: if velocity_criterion {
+                Some(velocity_tolerance)
+            } else {
+                None
+            },
+            acceleration_tolerance: if acceleration_criterion {
+                Some(acceleration_tolerance)
+            } else {
+                None
+            },
             max_iterations: max_outer_iterations,
             linsolve_tolerance: tolerance,
             max_linsolve_iterations: max_iterations,
@@ -445,8 +454,14 @@ impl SolverBuilder for fem::opt::SolverBuilder {
                         let material_id = mesh
                             .attrib_as_slice::<i32, CellIndex>("mtl_id")
                             .map(|slice| {
-                                utils::mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
-                                    .0
+                                utils::mode_u32(slice.iter().map(|&x| {
+                                    if x < 0 {
+                                        0u32
+                                    } else {
+                                        x as u32
+                                    }
+                                }))
+                                .0
                             })
                             .unwrap_or(0);
                         let solid_material = get_solid_material(params, material_id)?;
@@ -464,8 +479,14 @@ impl SolverBuilder for fem::opt::SolverBuilder {
                         let material_id = mesh
                             .attrib_as_slice::<i32, FaceIndex>("mtl_id")
                             .map(|slice| {
-                                utils::mode_u32(slice.iter().map(|&x| if x < 0 { 0u32 } else { x as u32 }))
-                                    .0
+                                utils::mode_u32(slice.iter().map(|&x| {
+                                    if x < 0 {
+                                        0u32
+                                    } else {
+                                        x as u32
+                                    }
+                                }))
+                                .0
                             })
                             .unwrap_or(0);
                         let shell_material = get_shell_material(params, material_id)?;
@@ -592,10 +613,10 @@ where
                         pts.num_vertices(), solver.num_vertices()))),
             Err(softy::Error::AttribError { source }) =>
                 return (None, CookResult::Warning(
-                        format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({:?})", source))),
+                        format!("Failed to find 8-bit integer attribute \"fixed\", which marks animated vertices. ({})", source))),
             Err(err) =>
                 return (None, CookResult::Error(
-                        format!("Error updating mesh vertices. ({:?})", err))),
+                        format!("Error updating mesh vertices. ({})", err))),
             _ => {}
         }
     }

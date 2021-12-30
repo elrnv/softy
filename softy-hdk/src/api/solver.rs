@@ -1,8 +1,8 @@
 use geo::algo::split::TypedMesh;
 use geo::attrib::*;
-use softy::{fem, Error, Mesh, PointCloud, SimResult, TetMesh, TriMesh};
 #[cfg(feature = "optsolver")]
 use softy::SOURCE_INDEX_ATTRIB;
+use softy::{fem, Error, Mesh, PointCloud, SimResult, TetMesh, TriMesh};
 
 // NOTE: We avoid using associated types here because of a compiler bug:
 // https://github.com/rust-lang/rust/issues/23856

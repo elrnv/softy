@@ -21,6 +21,7 @@ list( APPEND CMAKE_PREFIX_PATH "$ENV{HFS}/toolkit/cmake" )
 file( READ "${CMAKE_BINARY_DIR}/rust/out_dir_hdkrs.txt" hdkrs_OUT_DIR )
 list( APPEND CMAKE_PREFIX_PATH "${hdkrs_OUT_DIR}/cmake")
 
+set( CARGO_TARGET_DIR "${hdkrs_OUT_DIR}/../../..")
 set( Softy_DIR "${CMAKE_SOURCE_DIR}")
 
 # Locate Houdini's libraries and header files.

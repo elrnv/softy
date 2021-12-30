@@ -1,10 +1,6 @@
-if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    set( Softy_LIB_DIR "${CMAKE_SOURCE_DIR}/../../target/debug" )
-else()
-    set( Softy_LIB_DIR "${CMAKE_SOURCE_DIR}/../../target/release" )
-endif()
+set( Softy_LIB_DIR "${CARGO_TARGET_DIR}" )
 
-find_path( Softy_INCLUDE_DIR softy/src/lib.rs.h PATHS "${CMAKE_SOURCE_DIR}/../../target/cxxbridge" DOC "Softy include directory")
+find_path( Softy_INCLUDE_DIR softy/src/lib.rs.h PATHS "${CARGO_TARGET_DIR}/../cxxbridge" DOC "Softy include directory")
 find_library( Softy_LIBRARY softyhdk PATHS ${Softy_LIB_DIR} DOC "Softy library directory")
 
 include(FindPackageHandleStandardArgs)

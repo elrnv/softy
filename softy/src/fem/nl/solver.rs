@@ -574,10 +574,10 @@ impl SolverBuilder {
 
         // Allocate space for constraint multipliers.
         let mut constraint_sizes = vec![volume_constraints.len()];
-        constraint_sizes.extend(
+        constraint_sizes.push(
             frictional_contact_constraints
                 .iter()
-                .map(|fc| fc.constraint.borrow().constraint_size()),
+                .map(|fc| fc.constraint.borrow().constraint_size()).sum(),
         );
         let num_constraints: usize = constraint_sizes.iter().sum();
         state.lambda = Chunked::from_sizes(&constraint_sizes, vec![T::zero(); num_constraints]);
